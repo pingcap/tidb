@@ -17,7 +17,6 @@ package storeapi
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"path"
 	"strings"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 )
@@ -94,13 +94,6 @@ type WalkOption struct {
 	StartAfter string
 }
 
-// ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
-type ReadSeekCloser interface {
-	io.Reader
-	io.Seeker
-	io.Closer
-}
-
 // Uploader upload file with chunks.
 type Uploader interface {
 	// UploadPart upload part of file data to storage
@@ -114,6 +107,14 @@ type WriterOption struct {
 	Concurrency int
 	PartSize    int64
 }
+
+// MaxUploadParts is the maximum number of parts a single multipart-uploaded
+// object may have. S3, GCS and OSS all cap this at 10000.
+const MaxUploadParts = 10000
+
+// ErrExceedMaxUploadParts is returned by a Create'd writer when a single object
+// would need more than MaxUploadParts parts.
+var ErrExceedMaxUploadParts = errors.New("data exceeds the object store's per-object multipart upload part limit")
 
 // ReaderOption reader option.
 type ReaderOption struct {
@@ -164,8 +165,8 @@ type Storage interface {
 	URI() string
 
 	// Create opens a file writer by path. path is relative path to storage base
-	// path. The old file under same path will be overwritten. Currently only s3
-	// implemented WriterOption.
+	// path. The old file under same path will be overwritten. Not all backends
+	// honor WriterOption; see each backend's Create implementation.
 	Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
@@ -201,7 +202,7 @@ type Options struct {
 	// make sure we can access the storage correctly before execute tasks.
 	CheckPermissions []Permission
 
-	// S3Retryer is the retryer for create s3 storage, if it is nil,
+	// S3Retryer is the retryer for the created s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
 	S3Retryer aws.Retryer
 

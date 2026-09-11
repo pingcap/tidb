@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -556,12 +557,12 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 	// retry for 3 times
 	currGID := getGlobalID(ctx, t, store)
 	var counter int64
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGenGIDRetryableError", `3*return(true)`)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onGenGIDRetry", func() {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/jobsubmit/mockGenGIDRetryableError", `3*return(true)`)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/jobsubmit/onGenGIDRetry", func() {
 		m := submitter.DDLJobDoneChMap()
-		require.Equal(t, 1, len(m.Keys()))
-		_, ok := m.Load(currGID + counter*100 + 2)
-		require.True(t, ok)
+		// The retry hook runs after the transaction failure path cleans up
+		// registered job-done channels, and before the next retry registers new ones.
+		require.Empty(t, m.Keys())
 		counter++
 		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			m := meta.NewMutator(txn)
@@ -594,4 +595,82 @@ func TestSubmitJobAfterDDLIsClosed(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, ddlErr)
 	require.Equal(t, "context canceled", ddlErr.Error())
+}
+
+func TestCreateMaterializedViewLogJobTableIDs(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	dom.DDL().OwnerManager().CampaignCancel()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	const baseTableID int64 = 900000000000000000
+	jobW := ddl.NewJobWrapperWithArgs(
+		&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionCreateMaterializedViewLog, SchemaName: "test", TableName: "$mlog$t"},
+		&model.CreateMaterializedViewLogArgs{TableInfo: &model.TableInfo{MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: baseTableID}}},
+		false,
+	)
+	submitter := ddl.NewJobSubmitterForTest()
+	require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{jobW}))
+
+	rows := tk.MustQuery(fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", jobW.ID)).Rows()
+	require.Len(t, rows, 1)
+	tableIDs := strings.Split(rows[0][0].(string), ",")
+	require.Len(t, tableIDs, 2)
+	require.ElementsMatch(t, []string{strconv.FormatInt(jobW.TableID, 10), strconv.FormatInt(baseTableID, 10)}, tableIDs)
+}
+
+func TestCreateMaterializedViewJobTableIDs(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	dom.DDL().OwnerManager().CampaignCancel()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	const mlogTableID int64 = 900000000000000001
+	jobW := ddl.NewJobWrapperWithArgs(
+		&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionCreateMaterializedView, SchemaName: "test", TableName: "mv"},
+		&model.CreateMaterializedViewArgs{
+			TableInfo:    &model.TableInfo{MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{900000000000000000}}},
+			MLogTableIDs: []int64{mlogTableID},
+		},
+		false,
+	)
+	submitter := ddl.NewJobSubmitterForTest()
+	require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{jobW}))
+
+	rows := tk.MustQuery(fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", jobW.ID)).Rows()
+	require.Len(t, rows, 1)
+	tableIDs := strings.Split(rows[0][0].(string), ",")
+	require.Len(t, tableIDs, 2)
+	require.ElementsMatch(t, []string{strconv.FormatInt(jobW.TableID, 10), strconv.FormatInt(mlogTableID, 10)}, tableIDs)
+}
+
+func TestCreateMaterializedViewJobTableIDsMultiMLog(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	dom.DDL().OwnerManager().CampaignCancel()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	const (
+		mlogTableID1 int64 = 900000000000000012
+		mlogTableID2 int64 = 900000000000000013
+	)
+	jobW := ddl.NewJobWrapperWithArgs(
+		&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionCreateMaterializedView, SchemaName: "test", TableName: "mv_multi"},
+		&model.CreateMaterializedViewArgs{
+			TableInfo:    &model.TableInfo{MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{900000000000000010, 900000000000000011}}},
+			MLogTableIDs: []int64{mlogTableID1, mlogTableID2, mlogTableID1},
+		},
+		false,
+	)
+	submitter := ddl.NewJobSubmitterForTest()
+	require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{jobW}))
+
+	rows := tk.MustQuery(fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", jobW.ID)).Rows()
+	require.Len(t, rows, 1)
+	tableIDs := strings.Split(rows[0][0].(string), ",")
+	require.Len(t, tableIDs, 3)
+	require.ElementsMatch(t, []string{strconv.FormatInt(jobW.TableID, 10), strconv.FormatInt(mlogTableID1, 10), strconv.FormatInt(mlogTableID2, 10)}, tableIDs)
 }

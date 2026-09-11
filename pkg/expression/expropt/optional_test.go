@@ -108,6 +108,17 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 			verifyProvider = func(ctx exprctx.EvalContext, val exprctx.OptionalEvalPropProvider) {
 				require.Same(t, vars, assertReaderFuncValue(t, ctx, r.GetSessionVars))
 			}
+		case exprctx.OptPropSessionContext:
+			p = SessionContextPropProvider(func() SessionContext { return nil })
+			r := SessionContextPropReader{}
+			reader = r
+			verifyNoProvider = func(ctx exprctx.EvalContext) {
+				assertReaderFuncReturnErr(t, ctx, r.GetSessionContext)
+			}
+			verifyProvider = func(ctx exprctx.EvalContext, val exprctx.OptionalEvalPropProvider) {
+				require.Nil(t, val.(SessionContextPropProvider)())
+				require.Nil(t, assertReaderFuncValue(t, ctx, r.GetSessionContext))
+			}
 		case exprctx.OptPropInfoSchema:
 			type mockIsType struct {
 				infoschema.MetaOnlyInfoSchema

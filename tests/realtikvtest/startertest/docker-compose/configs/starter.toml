@@ -1,0 +1,9 @@
+deploy-mode = "starter"
+max-allowed-packet = 65536
+tikv-worker-url = "tikv-worker:19000"
+
+[tikv-client]
+txn-chunk-writer-addr = "tikv-worker:19000"
+txn-chunk-writer-concurrency = 2
+txn-chunk-max-size = 262144
+txn-file-min-mutation-size = 1048576

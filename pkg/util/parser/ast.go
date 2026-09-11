@@ -26,7 +26,7 @@ import (
 // GetDefaultDB checks if all tables in the AST have explicit DBName. If not, return specified DBName.
 func GetDefaultDB(sel ast.StmtNode, dbName string) string {
 	implicitDB := &implicitDatabase{}
-	sel.Accept(implicitDB)
+	ast.Walk(sel, implicitDB)
 	if implicitDB.hasImplicit {
 		return dbName
 	}
@@ -37,20 +37,20 @@ type implicitDatabase struct {
 	hasImplicit bool
 }
 
-func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (i *implicitDatabase) Enter(in ast.Node) (skipChildren bool) {
 	switch x := in.(type) {
 	case *ast.TableName:
 		if x.Schema.L == "" {
 			i.hasImplicit = true
 		}
-		return in, true
+		return true
 	default:
-		return in, i.hasImplicit
+		return i.hasImplicit
 	}
 }
 
-func (*implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+func (*implicitDatabase) Leave(ast.Node) bool {
+	return true
 }
 
 func findTablePos(s, t string) int {

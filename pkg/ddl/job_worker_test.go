@@ -64,7 +64,7 @@ func TestAddBatchJobError(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	ctx := testkit.NewSession(t, store)
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockAddBatchDDLJobsErr", `return(true)`))
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/jobsubmit/mockAddBatchDDLJobsErr", `return(true)`))
 	// Test the job runner should not hang forever.
 	job := &model.Job{
 		Version:             model.GetJobVerInUse(),
@@ -77,7 +77,7 @@ func TestAddBatchJobError(t *testing.T) {
 	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "mockAddBatchDDLJobsErr")
-	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockAddBatchDDLJobsErr"))
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/jobsubmit/mockAddBatchDDLJobsErr"))
 }
 
 func TestParallelDDL(t *testing.T) {
@@ -223,6 +223,16 @@ func TestJobNeedGC(t *testing.T) {
 	job = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone}
 	require.True(t, ddl.JobNeedGC(job))
 	job = &model.Job{Type: model.ActionAddPrimaryKey, State: model.JobStateRollbackDone}
+	require.True(t, ddl.JobNeedGC(job))
+	job = &model.Job{Type: model.ActionDropMaterializedView, State: model.JobStateDone}
+	require.True(t, ddl.JobNeedGC(job))
+	job = &model.Job{Type: model.ActionDropMaterializedViewLog, State: model.JobStateDone}
+	require.True(t, ddl.JobNeedGC(job))
+	job = &model.Job{Type: model.ActionCreateMaterializedView, State: model.JobStateDone, TableID: 123}
+	require.False(t, ddl.JobNeedGC(job))
+	job = &model.Job{Type: model.ActionCreateMaterializedView, State: model.JobStateRollbackDone}
+	require.False(t, ddl.JobNeedGC(job))
+	job = &model.Job{Type: model.ActionCreateMaterializedView, State: model.JobStateRollbackDone, TableID: 123}
 	require.True(t, ddl.JobNeedGC(job))
 
 	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{

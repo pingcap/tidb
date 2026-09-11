@@ -95,6 +95,46 @@ func TestRUV2ExecutorCounterReturnsCachedKnownLabels(t *testing.T) {
 	}
 }
 
+func TestRUV3MetricDefinitions(t *testing.T) {
+	require.Equal(t,
+		[]string{"ddl", "read", "write", "analyze", "other"},
+		[]string{LblSQLTypeDDL, LblSQLTypeRead, LblSQLTypeWrite, LblSQLTypeAnalyze, LblSQLTypeOther},
+	)
+	require.Equal(t, []string{"tikv", "tiflash"}, []string{LblEngineTiKV, LblEngineTiFlash})
+
+	InitRUV3Metrics()
+	RUV3Total.Add(1)
+	RUV3BySQLType.WithLabelValues(LblSQLTypeRead).Add(2)
+	RUV3ByEngine.WithLabelValues(LblEngineTiKV).Add(3)
+
+	registry := prometheus.NewRegistry()
+	require.NoError(t, registry.Register(RUV3Total))
+	require.NoError(t, registry.Register(RUV3BySQLType))
+	require.NoError(t, registry.Register(RUV3ByEngine))
+	families, err := registry.Gather()
+	require.NoError(t, err)
+
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_ru_total"))
+	requireMetricFamilyHasLabel(
+		t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, LblSQLTypeRead,
+	)
+	requireMetricFamilyHasLabel(
+		t, families, "tidb_ruv3_ru_by_engine_total", LblEngine, LblEngineTiKV,
+	)
+}
+
+func requireMetricFamilyHasLabel(t *testing.T, families []*dto.MetricFamily, familyName, labelName, labelValue string) {
+	t.Helper()
+	family := findMetricFamily(families, familyName)
+	require.NotNil(t, family)
+	for _, metric := range family.GetMetric() {
+		if metricHasLabelValue(metric, labelName, labelValue) {
+			return
+		}
+	}
+	require.Failf(t, "missing metric label", "metric family %s has no label %s=%s", familyName, labelName, labelValue)
+}
+
 func TestStmtSummaryMetricLabels(t *testing.T) {
 	InitStmtSummaryMetrics()
 	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowRecordCount))

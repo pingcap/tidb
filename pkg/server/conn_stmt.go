@@ -209,7 +209,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			paramValues = data[pos+1:]
 		}
 
-		err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		err = stmt.CheckLongDataSize()
+		if err == nil {
+			err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		}
 		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
 		errReset := stmt.Reset()
 		if errReset != nil {
@@ -311,13 +314,9 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	clearConnectionAlive := func() {}
-	checkingConnectionAlive := false
-	if planCacheStmt != nil && planCacheStmt.PreparedAst != nil {
-		checkingConnectionAlive = shouldInstallConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
-		if checkingConnectionAlive {
-			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
-			defer clearConnectionAlive()
-		}
+	if shouldInstallConnectionAlive(execStmt, vars) {
+		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		defer clearConnectionAlive()
 	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if rs == nil || err != nil {
@@ -325,10 +324,6 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	var lazy bool
 	if rs != nil {
-		if !checkingConnectionAlive {
-			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
-			defer clearConnectionAlive()
-		}
 		defer func() {
 			if !lazy {
 				rs.Close()

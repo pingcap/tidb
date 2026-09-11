@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "test_driver",
@@ -18,4 +18,19 @@ go_library(
         "//pkg/parser/types",
         "@com_github_pingcap_errors//:errors",
     ],
+)
+
+go_test(
+    name = "test_driver_test",
+    timeout = "short",
+    srcs = ["accept_in_place_test.go"],
+    embed = [":test_driver"],
+    embedsrcs = [
+        "accept_in_place_test.go",
+        "test_driver.go",
+        "test_driver_datum.go",
+        "test_driver_helper.go",
+        "test_driver_mydecimal.go",
+    ],
+    flaky = True,
 )

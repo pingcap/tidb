@@ -19,52 +19,87 @@ import (
 	"testing"
 
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
-func TestHandleFilter(t *testing.T) {
-	var hf *HandleFilter
-	// we allow nil HandleFilter
-	require.False(t, hf.needSkip(tidbkv.IntHandle(1)))
+func TestKeyFilter(t *testing.T) {
+	var keyFilter *KeyFilter
+	// we allow nil KeyFilter
+	require.False(t, keyFilter.isHandledGlobally(tidbkv.Key("row-key-1")))
+	require.False(t, keyFilter.isHandledLocally("row-key-1"))
+	keyFilter.addLocal("row-key-1")
 
-	sharedSize := atomic.Int64{}
-	set := NewBoundedHandleSet(nil, &sharedSize, 1024)
-	set.Add(tidbkv.IntHandle(1))
-	hf = NewHandleFilter(set)
-	require.True(t, hf.needSkip(tidbkv.IntHandle(1)))
-	require.False(t, hf.needSkip(tidbkv.IntHandle(2)))
+	var sharedSize atomic.Int64
+	globalSet := NewBoundedKeySet(nil, &sharedSize, 1024)
+	localSet := NewBoundedKeySet(nil, &sharedSize, 1024)
+	globalSet.Add(tidbkv.Key("row-key-1"))
+	keyFilter = NewKeyFilter(globalSet, localSet)
+	require.True(t, keyFilter.isHandledGlobally(tidbkv.Key("row-key-1")))
+	require.False(t, keyFilter.isHandledGlobally(tidbkv.Key("row-key-2")))
+	require.False(t, keyFilter.isHandledLocally("row-key-2"))
+	keyFilter.addLocal("row-key-2")
+	require.True(t, keyFilter.isHandledLocally("row-key-2"))
+	require.False(t, keyFilter.isHandledGlobally(tidbkv.Key("row-key-2")))
 }
 
-func TestBoundedHandleSet(t *testing.T) {
+func TestBoundedKeySet(t *testing.T) {
+	t.Run("partition handle uses physical row key", func(t *testing.T) {
+		const logicalTableID int64 = 100
+		rowKey1 := encodeDataRowKey(logicalTableID, tidbkv.NewPartitionHandle(101, tidbkv.IntHandle(1)))
+		rowKey2 := encodeDataRowKey(logicalTableID, tidbkv.NewPartitionHandle(102, tidbkv.IntHandle(1)))
+
+		require.Equal(t, tablecodec.EncodeRowKeyWithHandle(101, tidbkv.IntHandle(1)), rowKey1)
+		require.Equal(t, tablecodec.EncodeRowKeyWithHandle(102, tidbkv.IntHandle(1)), rowKey2)
+		require.NotEqual(t, rowKey1, rowKey2)
+	})
+
+	t.Run("string keys honor size limit", func(t *testing.T) {
+		var sharedSize atomic.Int64
+		set := NewBoundedKeySet(zap.NewNop(), &sharedSize, 1024)
+		require.False(t, set.containsStrKey("row-key"))
+		set.addStr("row-key")
+		require.True(t, set.containsStrKey("row-key"))
+		require.EqualValues(t, int64(len("row-key"))+rowKeyMapEntryShallowSize, sharedSize.Load())
+
+		var exceededSize atomic.Int64
+		exceededSet := NewBoundedKeySet(zap.NewNop(), &exceededSize, 0)
+		exceededSet.addStr("row-key")
+		require.True(t, exceededSet.BoundExceeded())
+		require.False(t, exceededSet.containsStrKey("row-key"))
+		require.Zero(t, exceededSize.Load())
+	})
+
 	logger, err := zap.NewDevelopment()
 	require.NoError(t, err)
 	sharedSize := atomic.Int64{}
-	limit := 3 * (1 + handleMapEntryShallowSize)
-	set := NewBoundedHandleSet(logger, &sharedSize, limit)
-	require.False(t, set.Contains(tidbkv.IntHandle(1)))
+	limit := 3 * (1 + rowKeyMapEntryShallowSize)
+	set := NewBoundedKeySet(logger, &sharedSize, limit)
+	require.False(t, set.Contains(tidbkv.Key{1}))
 
-	// add handles within limit
+	// add row keys within limit
 	for i := range 3 {
-		set.Add(tidbkv.IntHandle(i + 1))
-		require.True(t, set.Contains(tidbkv.IntHandle(i+1)))
+		rowKey := tidbkv.Key{byte(i + 1)}
+		set.Add(rowKey)
+		require.True(t, set.Contains(rowKey))
 	}
 	require.EqualValues(t, limit, sharedSize.Load())
 	require.True(t, set.BoundExceeded())
 
-	// adding another handle exceeds limit
-	set.Add(tidbkv.IntHandle(4))
-	require.False(t, set.Contains(tidbkv.IntHandle(4)))
+	// adding another row key exceeds limit
+	set.Add(tidbkv.Key{4})
+	require.False(t, set.Contains(tidbkv.Key{4}))
 
 	// create another set with the shared current size, it should exceed limit directly
-	set2 := NewBoundedHandleSet(logger, &sharedSize, limit)
+	set2 := NewBoundedKeySet(logger, &sharedSize, limit)
 	require.True(t, set2.BoundExceeded())
-	set2.Add(tidbkv.IntHandle(5))
-	require.False(t, set2.Contains(tidbkv.IntHandle(5)))
+	set2.Add(tidbkv.Key{5})
+	require.False(t, set2.Contains(tidbkv.Key{5}))
 
 	// merge sets
 	set2.Merge(nil)
-	require.Empty(t, set2.handles)
+	require.Empty(t, set2.rowKeys)
 	set2.Merge(set)
-	require.EqualValues(t, set.handles, set2.handles)
+	require.EqualValues(t, set.rowKeys, set2.rowKeys)
 }

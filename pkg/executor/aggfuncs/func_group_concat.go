@@ -191,6 +191,26 @@ func (e *baseGroupConcatDistinct4String) AppendFinalResult2Chunk(sctx AggFuncUpd
 	return nil
 }
 
+func (e *baseGroupConcatDistinct4String) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4GroupConcatDistinct)(partialResult)
+	resBuf := spillHelper.serializePartialResult4GroupConcatDistinct(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseGroupConcatDistinct4String) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseGroupConcatDistinct4String) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4GroupConcatDistinct)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4GroupConcatDistinct(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
 func (e *baseGroupConcatDistinct4String) SetTruncated(t *int32) {
 	e.truncated = t

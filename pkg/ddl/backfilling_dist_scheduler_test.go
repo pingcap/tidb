@@ -23,7 +23,6 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -70,8 +70,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB", "return(1048576)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB", "return(1048576)")
 	/// 1. test partition table.
 	tk.MustExec("create table tp1(id int primary key, v int, key idx (id)) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
@@ -93,6 +92,13 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
+	var taskMetaView struct {
+		Summary *struct {
+			IndexKVSize uint64 `json:"index_kv_size"`
+		} `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMetaView))
+	require.Nil(t, taskMetaView.Summary)
 	for i, par := range tblInfo.Partition.Definitions {
 		var subTask ddl.BackfillSubTaskMeta
 		require.NoError(t, json.Unmarshal(metas[i], &subTask))
@@ -133,7 +139,57 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
-	// 2.2.2 BackfillStepReadIndex
+
+	// 2.2.2 transient region discontinuity should be retried.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPhysicalTableRegionDiscontinuity", "1*return()")
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+
+	// 2.2.3 a retry after allocating some subtask timestamps should not return a partial or duplicate plan.
+	tk.MustExec("create table t3(id bigint primary key)")
+	tk.MustExec("insert into t3 values (1), (9999)")
+	tk.MustQuery("split table t3 by (5000)").Check(testkit.Rows("1 1"))
+	multiRegionTask, server := createAddIndexTask(t, dom, "test", "t3", proto.Backfill, false)
+	require.Nil(t, server)
+	multiRegionTask.Step = sch.GetNextStep(&multiRegionTask.TaskBase)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", "return(1)")
+	expectedMetas, err := sch.OnNextSubtasksBatch(ctx, nil, multiRegionTask, execIDs, multiRegionTask.Step)
+	require.NoError(t, err)
+	require.Len(t, expectedMetas, 2)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAllocNewTSError", "1*return(false)->1*return(true)")
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, multiRegionTask, execIDs, multiRegionTask.Step)
+	require.NoError(t, err)
+	require.Len(t, metas, len(expectedMetas))
+	for i := range expectedMetas {
+		var expected, actual ddl.BackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal(expectedMetas[i], &expected))
+		require.NoError(t, json.Unmarshal(metas[i], &actual))
+		require.Equal(t, expected.PhysicalTableID, actual.PhysicalTableID)
+		require.Equal(t, expected.RowStart, actual.RowStart)
+		require.Equal(t, expected.RowEnd, actual.RowEnd)
+	}
+
+	// 2.2.4 transient region discontinuity should also be retried when planning the merge-temp-index step.
+	tk.MustExec("create table t4(id bigint primary key, v bigint, key idx(v))")
+	mergeTask, server := createAddIndexTask(t, dom, "test", "t4", proto.Backfill, false)
+	require.Nil(t, server)
+	mergeTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
+	require.NoError(t, err)
+	var mergeTaskMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(mergeTask.Meta, &mergeTaskMeta))
+	mergeTaskMeta.EleIDs = []int64{mergeTable.Meta().Indices[0].ID}
+	mergeTaskMeta.MergeTempIndex = true
+	mergeTask.Meta, err = json.Marshal(&mergeTaskMeta)
+	require.NoError(t, err)
+	mergeTask.Step = proto.BackfillStepMergeTempIndex
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMergeTempIndexRegionDiscontinuity", "1*return()")
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, mergeTask, execIDs, mergeTask.Step)
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+
+	// 2.2.5 BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
@@ -225,32 +281,74 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 
 	// update meta, same as import into.
 	sortStepMeta := &ddl.BackfillSubTaskMeta{
-		MetaGroups: []*globalsort.SortedKVMeta{{
-			StartKey:    []byte("ta"),
-			EndKey:      []byte("tc"),
-			TotalKVSize: 12,
-			MultipleFilesStats: []simplesst.MultipleFilesStat{
-				{
-					Filenames: [][2]string{
-						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+		EleIDs: []int64{10, 20},
+		MetaGroups: []*globalsort.SortedKVMeta{
+			{
+				StartKey:    []byte("ta"),
+				EndKey:      []byte("tc"),
+				TotalKVSize: 12,
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+						},
 					},
 				},
 			},
-		}},
+			{
+				StartKey:    []byte("td"),
+				EndKey:      []byte("tf"),
+				TotalKVSize: 30,
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{"gs://sort-bucket/data/2", "gs://sort-bucket/data/2.stat"},
+						},
+					},
+				},
+			},
+		},
 	}
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
 	}
-	// 2. to merge-sort stage.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
-	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
+
+	// Write-and-ingest planning can be retried out of sequence. A failed attempt
+	// must not mutate the task meta, while a retry records the read-index total.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGlobalSortIngestPlanErr", "1*return()")
+	originalTaskMeta := append([]byte(nil), task.Meta...)
+	var taskMetaView struct {
+		EleIDs          []int64 `json:"ele_ids"`
+		CloudStorageURI string  `json:"cloud_storage_uri"`
+		Summary         *struct {
+			IndexKVSize uint64 `json:"index_kv_size"`
+		} `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal(originalTaskMeta, &taskMetaView))
+	originalEleIDs := append([]int64(nil), taskMetaView.EleIDs...)
+	originalCloudStorageURI := taskMetaView.CloudStorageURI
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, proto.BackfillStepWriteAndIngest)
+	require.EqualError(t, err, "mock global-sort ingest planning error")
+	require.Empty(t, subtaskMetas)
+	require.Equal(t, originalTaskMeta, task.Meta)
+
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, proto.BackfillStepWriteAndIngest)
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMetaView))
+	require.Equal(t, originalEleIDs, taskMetaView.EleIDs)
+	require.Equal(t, originalCloudStorageURI, taskMetaView.CloudStorageURI)
+	require.NotNil(t, taskMetaView.Summary)
+	require.Equal(t, uint64(42), taskMetaView.Summary.IndexKVSize)
+
+	// 2. to merge-sort stage.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 2)
 	nextStep = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepMergeSort, nextStep)
 
@@ -264,33 +362,37 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	task.Step = nextStep
 	gotSubtasks, err = mgr.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
-	mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
-		MetaGroups: []*globalsort.SortedKVMeta{{
-			StartKey:    []byte("ta"),
-			EndKey:      []byte("tc"),
-			TotalKVSize: 12,
-			MultipleFilesStats: []simplesst.MultipleFilesStat{
-				{
-					Filenames: [][2]string{
-						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+	require.Len(t, gotSubtasks, 2)
+	mergeTotals := []uint64{17, 23}
+	for i, s := range gotSubtasks {
+		mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
+			EleIDs: []int64{int64((i + 1) * 10)},
+			MetaGroups: []*globalsort.SortedKVMeta{{
+				StartKey:    []byte("ta"),
+				EndKey:      []byte("tc"),
+				TotalKVSize: mergeTotals[i],
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{fmt.Sprintf("gs://sort-bucket/merged/%d", i), fmt.Sprintf("gs://sort-bucket/merged/%d.stat", i)},
+						},
 					},
 				},
-			},
-		}},
-	}
-	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
-	require.NoError(t, err)
-	for _, s := range gotSubtasks {
+			}},
+		}
+		mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
+		require.NoError(t, err)
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, mergeSortStepMetaBytes))
 	}
 	// 3. to write&ingest stage.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest"))
-	})
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMetaView))
+	require.Equal(t, originalEleIDs, taskMetaView.EleIDs)
+	require.Equal(t, originalCloudStorageURI, taskMetaView.CloudStorageURI)
+	require.NotNil(t, taskMetaView.Summary)
+	require.Equal(t, uint64(40), taskMetaView.Summary.IndexKVSize)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepWriteAndIngest, task.Step)
 	// 4. to done stage.
@@ -426,10 +528,30 @@ func TestBackfillTaskMetaVersion(t *testing.T) {
 	// Test the default version.
 	meta := &ddl.BackfillTaskMeta{}
 	require.Equal(t, ddl.BackfillTaskMetaVersion0, meta.Version)
+	metaBytes, err := json.Marshal(meta)
+	require.NoError(t, err)
+	var zeroMetaView struct {
+		Summary json.RawMessage `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal(metaBytes, &zeroMetaView))
+	require.Nil(t, zeroMetaView.Summary)
 
 	// Test the new version.
 	meta = &ddl.BackfillTaskMeta{
 		Version: ddl.BackfillTaskMetaVersion1,
 	}
 	require.Equal(t, ddl.BackfillTaskMetaVersion1, meta.Version)
+
+	// Optional fields are decode-compatible without a task-meta version bump.
+	require.NoError(t, json.Unmarshal([]byte(`{"summary":{"index_kv_size":0}}`), meta))
+	metaBytes, err = json.Marshal(meta)
+	require.NoError(t, err)
+	var summaryMetaView struct {
+		Summary map[string]json.RawMessage `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal(metaBytes, &summaryMetaView))
+	require.NotNil(t, summaryMetaView.Summary)
+	indexKVSize, ok := summaryMetaView.Summary["index_kv_size"]
+	require.True(t, ok)
+	require.JSONEq(t, "0", string(indexKVSize))
 }

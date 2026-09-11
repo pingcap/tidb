@@ -22,7 +22,6 @@ import (
 
 const (
 	flagTaskName                = "task-name"
-	flagStateStorageSubDir      = "state-storage-sub-dir"
 	flagRetryInterval           = "retry-interval"
 	flagCalcPollInterval        = "calc.poll-interval"
 	flagCalcMetaReadConcurrency = "calc.meta-read-concurrency"
@@ -30,7 +29,6 @@ const (
 
 type Config struct {
 	service.Config
-	StateStorageSubDir string
 }
 
 func DefaultConfig() Config {
@@ -48,11 +46,6 @@ func DefaultConfig() Config {
 func DefineFlags(flags *pflag.FlagSet) {
 	defaults := DefaultConfig()
 	flags.String(flagTaskName, "", "The name of the upstream log backup task.")
-	flags.String(
-		flagStateStorageSubDir,
-		defaults.StateStorageSubDir,
-		"The relative subdirectory under the selected replication status storage used to persist CRR resume state.",
-	)
 	flags.Duration(
 		flagRetryInterval,
 		defaults.RetryInterval,
@@ -75,10 +68,6 @@ func (cfg *Config) Parse(flags *pflag.FlagSet) error {
 
 	var err error
 	cfg.TaskName, err = flags.GetString(flagTaskName)
-	if err != nil {
-		return err
-	}
-	cfg.StateStorageSubDir, err = flags.GetString(flagStateStorageSubDir)
 	if err != nil {
 		return err
 	}

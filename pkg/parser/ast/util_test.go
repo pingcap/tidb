@@ -121,7 +121,7 @@ func TestUnionReadOnly(t *testing.T) {
 // For test only.
 func CleanNodeText(node Node) {
 	var cleaner nodeTextCleaner
-	node.Accept(&cleaner)
+	Walk(node, &cleaner)
 }
 
 // nodeTextCleaner clean the text of a node and it's child node.
@@ -129,8 +129,8 @@ func CleanNodeText(node Node) {
 type nodeTextCleaner struct {
 }
 
-// Enter implements Visitor interface.
-func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
+// Enter implements InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Enter(in Node) bool {
 	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	if v, ok := in.(ValueExpr); ok && v != nil {
@@ -170,12 +170,12 @@ func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 	case *ColumnDef:
 		node.Tp.CleanElemIsBinaryLit()
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (checker *nodeTextCleaner) Leave(in Node) (out Node, ok bool) {
-	return in, true
+// Leave implements InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Leave(in Node) bool {
+	return true
 }
 
 type NodeRestoreTestCase struct {

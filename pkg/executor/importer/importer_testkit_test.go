@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -216,7 +217,14 @@ func TestGetTargetNodeCpuCnt(t *testing.T) {
 
 func TestPostProcess(t *testing.T) {
 	ctx := context.Background()
-	store := testkit.CreateMockStore(t)
+	integration.BeforeTestExternal(t)
+	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	t.Cleanup(func() {
+		testEtcdCluster.Terminate(t)
+	})
+	store := testkit.CreateMockStore(t, mockstore.WithPDAddr([]string{
+		testEtcdCluster.Members[0].ClientURLs[0].String(),
+	}))
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return tk.Session(), nil
@@ -254,17 +262,6 @@ func TestPostProcess(t *testing.T) {
 	table, err = do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("db"), ast.NewCIStr("tb2"))
 	require.NoError(t, err)
 	plan.TableInfo, plan.DesiredTableInfo = table.Meta(), table.Meta()
-	integration.BeforeTestExternal(t)
-	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	t.Cleanup(func() {
-		testEtcdCluster.Terminate(t)
-	})
-	tidbCfg := tidb.GetGlobalConfig()
-	pathBak := tidbCfg.Path
-	defer func() {
-		tidbCfg.Path = pathBak
-	}()
-	tidbCfg.Path = testEtcdCluster.Members[0].ClientURLs[0].String()
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), map[autoid.AllocatorType]int64{
 		autoid.RowIDAllocType: 123,
 	}, plan, localChecksum, logger))

@@ -17,6 +17,7 @@ package partition
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"math/rand"
 	"slices"
 	"strconv"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -36,10 +38,75 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
+
+func TestPartitionTableUsesTableCollationSnapshot(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(origin)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_collate_snapshot (
+		a varchar(16) collate utf8mb4_general_ci
+	) partition by list columns (a) (
+		partition p0 values in ('a'),
+		partition p_default values in (default)
+	)`)
+	tk.MustExec(`create table t_key_collate_snapshot (
+		a varchar(16) collate utf8mb4_general_ci
+	) partition by key(a) partitions 8`)
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_collate_snapshot"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	keyTbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_key_collate_snapshot"))
+	require.NoError(t, err)
+	keyTblInfo := keyTbl.Meta()
+
+	collate.SetNewCollationEnabledForTest(true)
+	snapshotTbl, err := tables.TableFromMetaWithCollate(false, autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+
+	pt := snapshotTbl.GetPartitionedTable()
+	require.NotNil(t, pt)
+	physicalTbl, err := pt.GetPartitionByRow(tk.Session().GetExprCtx().GetEvalCtx(), types.MakeDatums("A"))
+	require.NoError(t, err)
+	require.Equal(t, tblInfo.Partition.Definitions[1].ID, physicalTbl.GetPhysicalID())
+
+	keySnapshotTbl, err := tables.TableFromMetaWithCollate(false, autoid.NewAllocators(keyTblInfo.SepAutoInc()), keyTblInfo)
+	require.NoError(t, err)
+	keyPt := keySnapshotTbl.GetPartitionedTable()
+	require.NotNil(t, keyPt)
+	keyPartitionIdx := func(useNewCollate bool, val string) int {
+		h := crc32.NewIEEE()
+		h.Write(collate.GetCollatorWithCollate(useNewCollate, "utf8mb4_general_ci").Key(val))
+		return int(h.Sum32() % uint32(len(keyTblInfo.Partition.Definitions)))
+	}
+	var (
+		keyVal         string
+		expectedKeyIdx int
+	)
+	for _, val := range []string{"A", "B", "Aa", "aA", "abc", "ABC", "xYz"} {
+		oldIdx := keyPartitionIdx(false, val)
+		if oldIdx != keyPartitionIdx(true, val) {
+			keyVal = val
+			expectedKeyIdx = oldIdx
+			break
+		}
+	}
+	require.NotEmpty(t, keyVal)
+	keyDatum := types.NewStringDatum(keyVal)
+	keyDatum.SetCollation("utf8mb4_general_ci")
+	physicalTbl, err = keyPt.GetPartitionByRow(tk.Session().GetExprCtx().GetEvalCtx(), []types.Datum{keyDatum})
+	require.NoError(t, err)
+	require.Equal(t, keyTblInfo.Partition.Definitions[expectedKeyIdx].ID, physicalTbl.GetPhysicalID())
+}
 
 func TestPartitionAddRecord(t *testing.T) {
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))

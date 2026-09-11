@@ -28,6 +28,8 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/operation"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -112,7 +114,8 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 	err := FastUnmarshalMetaData(ctx, s,
 		0,
 		until,
-		ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
+		ms.MetadataDownloadBatchSize,
+		func(string) bool { return false }, func(filename string, raw []byte) error {
 			m, err := ms.Helper.ParseToMetadataHard(raw)
 			if err != nil {
 				return err
@@ -136,7 +139,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 					})
 				}
 				metadataMap.Lock()
-				metadataMap.metas[path] = &MetadataInfo{
+				metadataMap.metas[filename] = &MetadataInfo{
 					MinTS:          m.MinTs,
 					FileGroupInfos: fileGroupInfos,
 				}
@@ -144,7 +147,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 			}
 			// filter out the metadatas whose ts-range is overlap with [until, +inf)
 			// and calculate their minimum begin-default-ts
-			ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
+			ts, ok := UpdateShiftTS(filename, m, until, mathutil.MaxUint)
 			if ok {
 				metadataMap.Lock()
 				if ts < metadataMap.shiftUntilTS {
@@ -162,12 +165,6 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 		log.Warn("calculate shift-ts", zap.Uint64("start-ts", until), zap.Uint64("shift-ts", metadataMap.shiftUntilTS))
 	}
 	return metadataMap.shiftUntilTS, nil
-}
-
-// LoadFrom loads data from an external storage into the stream metadata set. (Now only for test)
-func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storeapi.Storage) error {
-	_, err := ms.LoadUntilAndCalculateShiftTS(ctx, s, math.MaxUint64)
-	return err
 }
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *FileGroupInfo) (shouldBreak bool)) {
@@ -295,7 +292,28 @@ func SetTSToFile(
 	return truncateAndWrite(ctx, s, filename, []byte(content))
 }
 
-func UpdateShiftTS(m *pb.Metadata, startTS uint64, restoreTS uint64) (uint64, bool) {
+// TryParseTaggedBackupMetaFileNameWrapper parses the tagged backupmeta file name
+// from a backupmeta path after stripping its directory and meta suffix.
+func TryParseTaggedBackupMetaFileNameWrapper(filename string) (backupmetas.ParsedName, error) {
+	baseName := strings.TrimSuffix(path.Base(filename), metaSuffix)
+	return backupmetas.TryParseTaggedBackupMetaFileName(baseName)
+}
+
+func UpdateShiftTS(filename string, m *pb.Metadata, startTS, restoreTS uint64) (uint64, bool) {
+	parsedName, err := TryParseTaggedBackupMetaFileNameWrapper(filename)
+	if err == nil {
+		ts, status := parsedName.CalculateShiftTS(startTS, restoreTS)
+		switch status {
+		case backupmetas.ShiftTSFound:
+			return ts, true
+		case backupmetas.ShiftTSNotFound:
+			return 0, false
+		}
+	}
+	return UpdateShiftTSFromMetadata(m, startTS, restoreTS)
+}
+
+func UpdateShiftTSFromMetadata(m *pb.Metadata, startTS uint64, restoreTS uint64) (uint64, bool) {
 	var (
 		minBeginTS uint64
 		isExist    bool
@@ -485,11 +503,21 @@ layers = {
   { sn = 2, content = [ compaction, deleteFiles, ... ] },
 */
 type MigrationExt struct {
-	s      storeapi.Storage
-	prefix string
+	s                storeapi.Storage
+	prefix           string
+	operationContext operation.Context
 	// The hooks used for tracking the execution.
 	// See the `Hooks` type for more details.
 	Hooks Hooks
+}
+
+// WithOperationContext tags locks created by mutating migration operations.
+// Callers that use GetReadLock, AppendMigration, or MergeAndMigrateTo must set
+// an initialized operation context so those methods can fail before creating an
+// unowned lock.
+func (m MigrationExt) WithOperationContext(ctx operation.Context) MigrationExt {
+	m.operationContext = ctx
+	return m
 }
 
 type Hooks interface {
@@ -653,7 +681,11 @@ type Migrations struct {
 
 // GetReadLock locks the storage and make sure there won't be other one modify this backup.
 func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (objstore.RemoteLock, error) {
-	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint)
+	input, err := m.operationContext.LockMeta(operation.LockResourceMigrationRead, hint)
+	if err != nil {
+		return objstore.RemoteLock{}, errors.Annotate(err, "failed to build migration read lock metadata")
+	}
+	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, input)
 }
 
 // OrderedMigration is a migration with its path and sequence number.
@@ -757,9 +789,10 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 
 func (m MigrationExt) DryRun(f func(MigrationExt)) []objstore.Effect {
 	batchSelf := MigrationExt{
-		s:      objstore.Batch(m.s),
-		prefix: m.prefix,
-		Hooks:  m.Hooks,
+		s:                objstore.Batch(m.s),
+		prefix:           m.prefix,
+		operationContext: m.operationContext,
+		Hooks:            m.Hooks,
 	}
 	f(batchSelf)
 	return batchSelf.s.(*objstore.Batched).ReadOnlyEffects()
@@ -770,15 +803,25 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []objstore.Effect {
 // 2. Acquire write lock on append path (prevents concurrent appends)
 func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
 	readLock, appendLock objstore.RemoteLock, err error) {
-	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
-	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)")
+	readInput, err := m.operationContext.LockMeta(operation.LockResourceMigrationRead, hint+" (read)")
+	if err != nil {
+		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err,
+			"failed to build migration read lock metadata")
+	}
+	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, readInput)
 	if err != nil {
 		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err,
 			"failed to acquire read lock for append operation")
 	}
 
 	// Phase 2: Acquire write lock on append path to prevent concurrent appends
-	appendLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)")
+	appendInput, err := m.operationContext.LockMeta(operation.LockResourceMigrationAppend, hint+" (append)")
+	if err != nil {
+		readLock.UnlockOnCleanUp(ctx)
+		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err,
+			"failed to build migration append lock metadata")
+	}
+	appendLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, appendInput)
 	if err != nil {
 		// If append lock fails, release the read lock
 		readLock.UnlockOnCleanUp(ctx)
@@ -890,21 +933,25 @@ func (m MigrationExt) MergeAndMigrateTo(
 	ctx context.Context,
 	targetSpec int,
 	opts ...MergeAndMigrateToOpt,
-) (result MergeAndMigratedTo) {
+) (result MergeAndMigratedTo, err error) {
 	config := mergeAndMigrateToConfig{}
 	for _, o := range opts {
 		o(&config)
 	}
 
 	if !config.skipLockingInTest {
-		lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, lockPrefix,
-			"StreamTruncation: MergeMigration")
+		input, err := m.operationContext.LockMeta(
+			operation.LockResourceMigrationWrite, "StreamTruncation: MergeMigration")
+		if err != nil {
+			return result, errors.Annotate(err, "failed to build migration write lock metadata")
+		}
+		lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, lockPrefix, input)
 		if err != nil {
 			result.MigratedTo = MigratedTo{
 				Warnings: []error{
 					errors.Annotate(err, "failed to get the lock, nothing will happen"),
 				}}
-			return
+			return result, nil
 		}
 		defer lock.UnlockOnCleanUp(ctx)
 	}
@@ -915,7 +962,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 			Warnings: []error{
 				errors.Annotate(err, "failed to load migrations, nothing will happen"),
 			}}
-		return
+		return result, nil
 	}
 	result.Base = migs.Base
 	for _, mig := range migs.Layers {
@@ -943,7 +990,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 
 	if config.interactiveCheck != nil && !config.interactiveCheck(ctx, newBase) {
 		result.Warnings = append(result.Warnings, errors.New("User aborted, nothing will happen"))
-		return
+		return result, nil
 	}
 
 	migTo := &result.MigratedTo
@@ -965,7 +1012,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 		)
 		// Put the new BASE here anyway. The caller may want this.
 		result.NewBase = newBase
-		return
+		return result, nil
 	}
 
 	for _, mig := range result.Source {
@@ -987,7 +1034,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 	if err != nil {
 		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to save the new base"))
 	}
-	return
+	return result, nil
 }
 
 type migrateToOpt func(*migToOpt)

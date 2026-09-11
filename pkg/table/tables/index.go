@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -34,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -42,12 +43,13 @@ import (
 	"go.uber.org/zap"
 )
 
-var indexConditionECtx exprctx.BuildContext
+var indexConditionECtx *exprstatic.ExprContext
 
 // indexPartialCondition is a data structure to help implement the partial index.
 type indexPartialCondition struct {
 	conditionExpr expression.Expression
-	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk for evaluating partial index condition for each time.
+	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk
+	// for evaluating partial index condition for each time.
 	// It's only initialized if the `partialConditionExpr` is not nil.
 	conditionEvalBufferPool sync.Pool
 }
@@ -57,19 +59,19 @@ type index struct {
 	idxInfo  *model.IndexInfo
 	tblInfo  *model.TableInfo
 	phyTblID int64
-	// initNeedRestoreData is used to initialize `needRestoredData` in `index.Create()`.
-	// This routine cannot be done in `NewIndex()` because `needRestoreData` relies on `NewCollationEnabled()` and
-	// the collation global variable is initialized *after* `NewIndex()`.
+	// needRestoredData is initialized on first use. sync.Once makes the cached value
+	// safe for index instances shared by concurrent writers.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
-
+	encoder             codec.Encoder
 	indexPartialCondition
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
-func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
-		if model.ColumnNeedRestoredData(idxCol, colInfos) {
+		col := colInfos[idxCol.Offset]
+		if types.NeedRestoredDataWithCollate(model.GetIdxChangingFieldType(idxCol, col), useNewCollate) {
 			return true
 		}
 	}
@@ -78,42 +80,55 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
-	index := &index{
+	return newIndex(physicalID, tblInfo, indexInfo, collate.NewCollationEnabled())
+}
+
+func newIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, useNewCollate bool) (*index, error) {
+	idx := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
+		encoder:  codec.NewEncoder(useNewCollate),
 	}
-
-	conditionString := indexInfo.ConditionExprString
-	if len(conditionString) > 0 {
-		var err error
-		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString, expression.WithTableInfo("", tblInfo))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		index.conditionEvalBufferPool = sync.Pool{
-			New: func() any {
-				// For INSERT path, it'll only pass all writable columns.
-				// For UPDATE/DELETE path, it'll contain all columns.
-				// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
-				// the offsets of related columns in the expression. Therefore, it's fine to always record all
-				// columns here.
-				evalBufferTypes := make([]*types.FieldType, 0, len(tblInfo.Columns)+1)
-				for _, col := range tblInfo.Columns {
-					evalBufferTypes = append(evalBufferTypes, &col.FieldType)
-				}
-
-				if !tblInfo.HasClusteredIndex() {
-					// If the table doesn't have clustered index, we need to append an extra handle column.
-					evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
-				}
-
-				evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
-				return &evalBuffer
-			},
-		}
+	if err := idx.initPartialCondition(); err != nil {
+		return nil, err
 	}
-	return index, nil
+	return idx, nil
+}
+
+func (c *index) initPartialCondition() error {
+	conditionString := c.idxInfo.ConditionExprString
+	if len(conditionString) == 0 {
+		return nil
+	}
+	ctx := indexConditionECtx.Apply(exprstatic.WithNewCollationEnabled(c.encoder.UseNewCollate()))
+	conditionExpr, err := expression.ParseSimpleExpr(ctx, conditionString, expression.WithTableInfo("", c.tblInfo))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.conditionExpr = conditionExpr
+	c.conditionEvalBufferPool = sync.Pool{
+		New: func() any {
+			// For INSERT path, it'll only pass all writable columns.
+			// For UPDATE/DELETE path, it'll contain all columns.
+			// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
+			// the offsets of related columns in the expression. Therefore, it's fine to always record all
+			// columns here.
+			evalBufferTypes := make([]*types.FieldType, 0, len(c.tblInfo.Columns)+1)
+			for _, col := range c.tblInfo.Columns {
+				evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+			}
+
+			if !c.tblInfo.HasClusteredIndex() {
+				// If the table doesn't have clustered index, we need to append an extra handle column.
+				evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
+			}
+
+			evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
+			return &evalBuffer
+		},
+	}
+	return nil
 }
 
 // Meta returns index info.
@@ -166,7 +181,8 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 		return
 	}
 
-	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, fullHandle, buf)
+	key, distinct, err = tablecodec.GenIndexKey(c.encoder, loc, c.tblInfo, c.idxInfo,
+		idxTblID, indexedValues, fullHandle, buf)
 	err = ec.HandleError(err)
 	return
 }
@@ -175,14 +191,15 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
-		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+		c.needRestoredData = NeedRestoredData(c.encoder.UseNewCollate(), c.idxInfo.Columns, c.tblInfo.Columns)
 	})
 
 	if err := c.castIndexValuesToChangingTypes(indexedValues); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
+	idx, err := tablecodec.GenIndexValuePortal(c.encoder.UseNewCollate(), loc, c.tblInfo,
+		c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }

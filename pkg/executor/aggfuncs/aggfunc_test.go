@@ -116,13 +116,19 @@ func newParallelDistinctAggTestCase(funcName string, dataTypes []*types.FieldTyp
 	case mysql.TypeLonglong:
 		dataGenFunc = func() types.Datum {
 			for {
-				newVal := rand.Intn(1000000000) - 500000000
+				newVal := rand.Intn(1000000000)
+				if !mysql.HasUnsignedFlag(dataTypes[0].GetFlag()) {
+					newVal -= 500000000
+				}
 				_, ok := intDatums[newVal]
 				if ok {
 					continue
 				}
 
 				intDatums[newVal] = struct{}{}
+				if mysql.HasUnsignedFlag(dataTypes[0].GetFlag()) {
+					return types.NewUintDatum(uint64(newVal))
+				}
 				return types.NewIntDatum(int64(newVal))
 			}
 		}
@@ -264,12 +270,26 @@ func newParallelDistinctAggTestCase(funcName string, dataTypes []*types.FieldTyp
 			panic("Not supported in test")
 		}
 		testCase.result = buildParallelDistinctVarianceResult(funcName, insertedIdxs, datumsForNDV)
-	case ast.AggFuncSum:
+	case ast.AggFuncSum, ast.AggFuncSumInt:
 		if len(insertedIdxs) == 0 {
 			testCase.result = types.NewDatum(nil)
 			break
 		}
 		switch dataTypes[0].GetType() {
+		case mysql.TypeLonglong:
+			if mysql.HasUnsignedFlag(dataTypes[0].GetFlag()) {
+				var s uint64
+				for idx := range insertedIdxs {
+					s += datumsForNDV[idx][0].GetUint64()
+				}
+				testCase.result = types.NewUintDatum(s)
+			} else {
+				var s int64
+				for idx := range insertedIdxs {
+					s += datumsForNDV[idx][0].GetInt64()
+				}
+				testCase.result = types.NewIntDatum(s)
+			}
 		case mysql.TypeDouble:
 			s := float64(0)
 			for idx := range insertedIdxs {

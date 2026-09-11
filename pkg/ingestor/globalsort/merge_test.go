@@ -49,6 +49,11 @@ func TestSplitDataFiles(t *testing.T) {
 		result      [][]string
 	}{
 		{
+			paths:       nil,
+			concurrency: 1,
+			result:      nil,
+		},
+		{
 			paths:       allPaths[:1],
 			concurrency: 1,
 			result:      [][]string{allPaths[:1]},
@@ -116,6 +121,7 @@ func TestSplitDataFiles(t *testing.T) {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
 			result := splitDataFiles(c.paths, c.concurrency)
 			require.Equal(t, c.result, result)
+			require.Equal(t, len(result), getTargetFileCount(len(c.paths), c.concurrency))
 		})
 	}
 

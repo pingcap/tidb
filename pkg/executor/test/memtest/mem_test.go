@@ -56,8 +56,11 @@ func TestGlobalMemArbitrator(t *testing.T) {
 
 	tk.MustExecToErr("set @@tidb_mem_arbitrator_mode = standard") // only global
 	require.Equal(t, tk.ExecToErr("set global tidb_mem_arbitrator_mode = 1").Error(), "tidb_mem_arbitrator_mode: disable; standard; priority;")
-	require.Equal(t, memory.ArbitratorModeDisable, memory.GlobalMemArbitrator().WorkMode())
-	require.True(t, memory.GlobalMemArbitrator() == nil)
+	require.Equal(t, memory.ArbitratorModePriority, memory.GlobalMemArbitrator().WorkMode())
+
+	tk.MustExec("set global tidb_mem_arbitrator_mode = default")
+	tk.MustQuery("select @@tidb_mem_arbitrator_mode").Check(testkit.Rows("priority"))
+	require.Equal(t, memory.ArbitratorModePriority, memory.GlobalMemArbitrator().WorkMode())
 
 	tk.MustExec("set global tidb_mem_arbitrator_mode = standard")
 	tk.MustQuery("select @@tidb_mem_arbitrator_mode").Check(testkit.Rows("standard"))
@@ -67,10 +70,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	tk.MustQuery("select @@tidb_mem_arbitrator_mode").Check(testkit.Rows("priority"))
 	require.Equal(t, memory.ArbitratorModePriority, memory.GlobalMemArbitrator().WorkMode())
 
-	tk.MustExec("set global tidb_mem_arbitrator_mode = default")
-	tk.MustQuery("select @@tidb_mem_arbitrator_mode").Check(testkit.Rows("disable"))
-	require.Equal(t, memory.ArbitratorModeDisable, memory.GlobalMemArbitrator().WorkMode())
-
+	tk.MustExec("set global tidb_mem_arbitrator_mode = disable")
 	const maxServerLimit uint64 = 1e15
 	maxServerLimitStr := fmt.Sprintf("%d", maxServerLimit)
 	tk.MustExec(fmt.Sprintf("set global tidb_server_memory_limit=%d", maxServerLimit))

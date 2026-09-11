@@ -26,6 +26,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var (
+	_ ast.InPlaceVisitor = (*colNameInOnDupExtractor)(nil)
+	_ ast.InPlaceVisitor = (*importIntoCollAssignmentChecker)(nil)
+	_ ast.InPlaceVisitor = (*userVariableChecker)(nil)
+	_ ast.InPlaceVisitor = (*subqueryExprExtractor)(nil)
+	_ ast.InPlaceVisitor = (*AggregateFuncExtractor)(nil)
+	_ ast.InPlaceVisitor = (*WindowFuncExtractor)(nil)
+)
+
 func tableNamesAsStr(tableNames []*ast.TableName) string {
 	names := []string{}
 	for _, tn := range tableNames {

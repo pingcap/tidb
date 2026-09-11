@@ -16,6 +16,7 @@ package execdetails
 
 import (
 	"bytes"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -70,6 +71,12 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
+	// TpExplainRURuntimeStats is the tp for ExplainRURuntimeStats
+	TpExplainRURuntimeStats
+	// TpHashStateRuntimeStats is the tp for typed hash-state evidence.
+	TpHashStateRuntimeStats
+	// TpWriteRuntimeStats is the type for processed DML work.
+	TpWriteRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -78,6 +85,99 @@ type RuntimeStats interface {
 	Merge(RuntimeStats)
 	Clone() RuntimeStats
 	Tp() int
+}
+
+// WriteRuntimeStats records processed DML work for one executor Open lifecycle.
+// The executor owns it until Close registers it; successful finalization consumes it.
+type WriteRuntimeStats struct {
+	CPUWork float64
+}
+
+// String keeps the typed accounting evidence out of textual execution details.
+func (*WriteRuntimeStats) String() string { return "" }
+
+// Tp implements RuntimeStats.
+func (*WriteRuntimeStats) Tp() int { return TpWriteRuntimeStats }
+
+// Clone implements RuntimeStats.
+func (s *WriteRuntimeStats) Clone() RuntimeStats { return &WriteRuntimeStats{CPUWork: s.CPUWork} }
+
+// Merge implements RuntimeStats.
+func (s *WriteRuntimeStats) Merge(other RuntimeStats) {
+	if other, ok := other.(*WriteRuntimeStats); ok {
+		s.CPUWork += other.CPUWork
+	}
+}
+
+// HashStateRowsSnapshot is a value-only snapshot of entries admitted to
+// lookup/group structures. Consumers read it after statement teardown so it
+// includes work from producers that stopped before emitting their results.
+type HashStateRowsSnapshot struct {
+	Rows int64
+}
+
+// Invalid reports an overflowed row count.
+func (s HashStateRowsSnapshot) Invalid() bool {
+	return s.Rows < 0
+}
+
+// HashStateRuntimeStats accumulates constructed hash entries for one root
+// executor Open. It is display-neutral and merges across repeated executions.
+type HashStateRuntimeStats struct {
+	rows atomic.Int64
+}
+
+// NewHashStateRuntimeStats initializes an empty construction counter.
+func NewHashStateRuntimeStats() *HashStateRuntimeStats {
+	return &HashStateRuntimeStats{}
+}
+
+// AddRows records constructed lookup/group entries, including spill/restore
+// rounds. A negative sentinel preserves overflow through subsequent updates.
+func (s *HashStateRuntimeStats) AddRows(rows uint64) {
+	for {
+		current := s.rows.Load()
+		if current < 0 {
+			return
+		}
+		next := int64(-1)
+		if rows <= uint64(math.MaxInt64-current) {
+			next = current + int64(rows)
+		}
+		if s.rows.CompareAndSwap(current, next) {
+			return
+		}
+	}
+}
+
+// HashStateRowsSnapshot returns a scalar copy of the construction counter.
+func (s *HashStateRuntimeStats) HashStateRowsSnapshot() HashStateRowsSnapshot {
+	return HashStateRowsSnapshot{Rows: s.rows.Load()}
+}
+
+// String keeps typed evidence out of EXPLAIN runtime-stat rendering.
+func (*HashStateRuntimeStats) String() string { return "" }
+
+// Tp implements RuntimeStats.
+func (*HashStateRuntimeStats) Tp() int { return TpHashStateRuntimeStats }
+
+// Clone implements RuntimeStats.
+func (s *HashStateRuntimeStats) Clone() RuntimeStats {
+	cloned := &HashStateRuntimeStats{}
+	cloned.rows.Store(s.rows.Load())
+	return cloned
+}
+
+// Merge implements RuntimeStats.
+func (s *HashStateRuntimeStats) Merge(other RuntimeStats) {
+	if other, ok := other.(*HashStateRuntimeStats); ok {
+		snapshot := other.HashStateRowsSnapshot()
+		if snapshot.Invalid() {
+			s.rows.Store(-1)
+		} else {
+			s.AddRows(uint64(snapshot.Rows))
+		}
+	}
 }
 
 type basicCopRuntimeStats struct {
@@ -123,9 +223,10 @@ func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	}
 	if e.tiflashStats != nil {
 		stats.tiflashStats = &TiflashStats{
-			scanContext:    e.tiflashStats.scanContext.Clone(),
-			waitSummary:    e.tiflashStats.waitSummary.Clone(),
-			networkSummary: e.tiflashStats.networkSummary.Clone(),
+			scanContext:         e.tiflashStats.scanContext.Clone(),
+			columnarScanContext: e.tiflashStats.columnarScanContext.Clone(),
+			waitSummary:         e.tiflashStats.waitSummary.Clone(),
+			networkSummary:      e.tiflashStats.networkSummary.Clone(),
 		}
 	}
 	return stats
@@ -148,6 +249,7 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 			e.tiflashStats = &TiflashStats{}
 		}
 		e.tiflashStats.scanContext.Merge(tmp.tiflashStats.scanContext)
+		e.tiflashStats.columnarScanContext.Merge(tmp.tiflashStats.columnarScanContext)
 		e.tiflashStats.waitSummary.Merge(tmp.tiflashStats.waitSummary)
 		e.tiflashStats.networkSummary.Merge(tmp.tiflashStats.networkSummary)
 	}
@@ -164,6 +266,12 @@ func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionS
 			e.tiflashStats = &TiflashStats{}
 		}
 		e.tiflashStats.scanContext.mergeExecSummary(tiflashScanContext)
+	}
+	if columnarScanContext := summary.GetColumnarScanContext(); columnarScanContext != nil {
+		if e.tiflashStats == nil {
+			e.tiflashStats = &TiflashStats{}
+		}
+		e.tiflashStats.columnarScanContext.mergeExecSummary(columnarScanContext)
 	}
 	if tiflashWaitSummary := summary.GetTiflashWaitSummary(); tiflashWaitSummary != nil {
 		if e.tiflashStats == nil {
@@ -207,10 +315,16 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      basicCopRuntimeStats
-	scanDetail util.ScanDetail
-	timeDetail util.TimeDetail
-	storeType  kv.StoreType
+	stats               basicCopRuntimeStats
+	scanDetail          util.ScanDetail
+	timeDetail          util.TimeDetail
+	readPoolTaskDetails *util.PoolTaskDetails
+	storeType           kv.StoreType
+	// summaryRows and summaryCount are a checked evidence path for consumers
+	// that must distinguish missing execution summaries from an observed zero.
+	// The legacy basic stats above remain unchanged for EXPLAIN formatting.
+	summaryRows  int64
+	summaryCount uint64
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -221,6 +335,13 @@ func (crs *CopRuntimeStats) GetActRows() int64 {
 // GetTasks return total tasks of CopRuntimeStats
 func (crs *CopRuntimeStats) GetTasks() int32 {
 	return int32(crs.stats.procTimes.size)
+}
+
+func (crs *CopRuntimeStats) recordSummaryEvidence(summary *tipb.ExecutorExecutionSummary) {
+	// The response owner validates all required summary fields before recording
+	// any plan in the response; mergeExecSummary relies on the same contract.
+	crs.summaryRows += int64(summary.GetNumProducedRows())
+	crs.summaryCount++
 }
 
 var zeroTimeDetail = util.TimeDetail{}
@@ -246,7 +367,10 @@ func (crs *CopRuntimeStats) String() string {
 						buf.WriteString(", ")
 						buf.WriteString(crs.stats.tiflashStats.networkSummary.String())
 					}
-					if !crs.stats.tiflashStats.scanContext.Empty() {
+					if !crs.stats.tiflashStats.columnarScanContext.Empty() {
+						buf.WriteString(", ")
+						buf.WriteString(crs.stats.tiflashStats.columnarScanContext.String())
+					} else if !crs.stats.tiflashStats.scanContext.Empty() {
 						buf.WriteString(", ")
 						buf.WriteString(crs.stats.tiflashStats.scanContext.String())
 					}
@@ -293,6 +417,10 @@ func (crs *CopRuntimeStats) String() string {
 				buf.WriteString(", ")
 				buf.WriteString(timeDetailStr)
 			}
+		}
+		if !crs.readPoolTaskDetails.Empty() {
+			buf.WriteString(", read_pool:")
+			buf.WriteString(crs.readPoolTaskDetails.String())
 		}
 	}
 	return buf.String()
@@ -444,10 +572,17 @@ func (e *BasicRuntimeStats) GetTime() int64 {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	rootStats    map[int]*RootRuntimeStats
-	copStats     map[int]*CopRuntimeStats
-	stmtCopStats StmtCopRuntimeStats
-	mu           sync.Mutex
+	rootStats                  map[int]*RootRuntimeStats
+	copStats                   map[int]*CopRuntimeStats
+	analyzeScanBytes           map[int]float64
+	copResponseSummaryExpected map[int]copResponseSummaryExpectation
+	stmtCopStats               StmtCopRuntimeStats
+	mu                         sync.Mutex
+}
+
+type copResponseSummaryExpectation struct {
+	count   uint64
+	invalid bool
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -464,12 +599,64 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 		for k := range reuse.copStats {
 			delete(reuse.copStats, k)
 		}
+		for k := range reuse.analyzeScanBytes {
+			delete(reuse.analyzeScanBytes, k)
+		}
+		for k := range reuse.copResponseSummaryExpected {
+			delete(reuse.copResponseSummaryExpected, k)
+		}
 		return reuse
 	}
 	return &RuntimeStatsColl{
-		rootStats: make(map[int]*RootRuntimeStats),
-		copStats:  make(map[int]*CopRuntimeStats),
+		rootStats:                  make(map[int]*RootRuntimeStats),
+		copStats:                   make(map[int]*CopRuntimeStats),
+		copResponseSummaryExpected: make(map[int]copResponseSummaryExpectation),
 	}
+}
+
+// EstimateScanBytes estimates physical scan bytes from one logical scan request.
+// It intentionally runs before scan details from independent requests are merged
+// because the ratio is not linear across requests.
+func EstimateScanBytes(totalKeys, processedKeys, processedBytes int64) (float64, bool) {
+	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
+		return 0, false
+	}
+	if processedKeys == 0 {
+		return 0, processedBytes == 0
+	}
+	if totalKeys == 0 || processedBytes == 0 {
+		return 0, false
+	}
+	scanBytes := float64(processedBytes) / float64(processedKeys) * float64(totalKeys)
+	if scanBytes < 0 || math.IsNaN(scanBytes) || math.IsInf(scanBytes, 0) {
+		return 0, false
+	}
+	return scanBytes, true
+}
+
+// RecordAnalyzeScanBytes adds one logical Analyze request's scan-byte estimate.
+func (e *RuntimeStatsColl) RecordAnalyzeScanBytes(planID int, scanBytes float64) {
+	if e == nil || planID <= 0 || scanBytes < 0 || math.IsNaN(scanBytes) || math.IsInf(scanBytes, 0) {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.analyzeScanBytes == nil {
+		e.analyzeScanBytes = make(map[int]float64)
+	}
+	e.analyzeScanBytes[planID] += scanBytes
+}
+
+// GetAnalyzeScanBytes returns the statement total accumulated from logical
+// Analyze requests before their scan-detail fields were flattened together.
+func (e *RuntimeStatsColl) GetAnalyzeScanBytes(planID int) (float64, bool) {
+	if e == nil {
+		return 0, false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	scanBytes, ok := e.analyzeScanBytes[planID]
+	return scanBytes, ok
 }
 
 // RegisterStats register execStat for a executor.
@@ -525,6 +712,18 @@ func (e *RuntimeStatsColl) GetStmtCopRuntimeStats() StmtCopRuntimeStats {
 	return e.stmtCopStats
 }
 
+// GetRootStatsIfExists gets existing runtime stats without creating an empty
+// entry when planID has not registered any root stats.
+func (e *RuntimeStatsColl) GetRootStatsIfExists(planID int) (*RootRuntimeStats, bool) {
+	if e == nil {
+		return nil, false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runtimeStats, exists := e.rootStats[planID]
+	return runtimeStats, exists
+}
+
 // GetRootStats gets execStat for a executor.
 func (e *RuntimeStatsColl) GetRootStats(planID int) *RootRuntimeStats {
 	e.mu.Lock()
@@ -548,6 +747,146 @@ func (e *RuntimeStatsColl) GetPlanActRows(planID int) int64 {
 	return runtimeStats.GetActRows()
 }
 
+// RootRowsSnapshot is a value-only copy of one root operator's row evidence.
+type RootRowsSnapshot struct {
+	Rows     int64
+	observed bool
+	invalid  bool
+}
+
+// Observed reports whether at least one executor Next call recorded rows.
+func (s RootRowsSnapshot) Observed() bool {
+	return !s.invalid && s.Rows >= 0 && s.observed
+}
+
+// Invalid reports malformed row or record counters.
+func (s RootRowsSnapshot) Invalid() bool {
+	return s.invalid || s.Rows < 0
+}
+
+// GetRootRowsSnapshot returns scalar evidence without creating a root-stats
+// entry or exposing a live BasicRuntimeStats pointer.
+func (e *RuntimeStatsColl) GetRootRowsSnapshot(planID int) RootRowsSnapshot {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	root, ok := e.rootStats[planID]
+	if !ok || root == nil || root.basic == nil {
+		return RootRowsSnapshot{}
+	}
+	rows := root.basic.rows.Load()
+	records := root.basic.loop.Load()
+	return RootRowsSnapshot{
+		Rows:     rows,
+		observed: records > 0,
+		invalid:  rows < 0 || records < 0,
+	}
+}
+
+// CopRowsSnapshot is a value-only copy of TiKV execution-summary evidence.
+// ExpectedSummaries counts received responses that should contain this plan's
+// summary; it is response-summary coverage, not physical-attempt coverage.
+type CopRowsSnapshot struct {
+	Rows              int64
+	ObservedSummaries uint64
+	ExpectedSummaries uint64
+	Invalid           bool
+}
+
+// Complete reports whether every received-response expectation has one valid
+// execution summary. A real zero has equal positive counts and Rows == 0.
+func (s CopRowsSnapshot) Complete() bool {
+	return s.Observed() && s.ObservedSummaries == s.ExpectedSummaries
+}
+
+// Observed reports whether at least one valid response summary can contribute
+// rows. Missing summary slots remain visible through Complete and are skipped;
+// contradictory counts and negative row counts are not usable.
+func (s CopRowsSnapshot) Observed() bool {
+	return !s.Invalid && s.Rows >= 0 && s.ExpectedSummaries > 0 &&
+		s.ObservedSummaries > 0 && s.ObservedSummaries <= s.ExpectedSummaries
+}
+
+// RecordExpectedCopResponseSummaries records the summary slots owned by one
+// consumed TiKV response. It must run before validating the returned summary
+// slice so missing or mismatched summaries remain observable.
+func (e *RuntimeStatsColl) RecordExpectedCopResponseSummaries(planIDs []int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, planID := range planIDs {
+		if planID <= 0 {
+			continue
+		}
+		expectation := e.copResponseSummaryExpected[planID]
+		expectation.count++
+		e.copResponseSummaryExpected[planID] = expectation
+	}
+}
+
+// InvalidateCopResponseSummaries marks every summary slot in one malformed
+// response vector unusable. The caller records the response expectations first,
+// so missing vectors can remain partial without being classified as malformed.
+func (e *RuntimeStatsColl) InvalidateCopResponseSummaries(planIDs []int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, planID := range planIDs {
+		if planID <= 0 {
+			continue
+		}
+		expectation := e.copResponseSummaryExpected[planID]
+		expectation.invalid = true
+		e.copResponseSummaryExpected[planID] = expectation
+	}
+}
+
+// GetCopRowsSnapshot returns checked row and response-summary evidence for one
+// cop plan lookup key without exposing its mutable runtime-stat object.
+func (e *RuntimeStatsColl) GetCopRowsSnapshot(planID int) CopRowsSnapshot {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	expectation := e.copResponseSummaryExpected[planID]
+	snapshot := CopRowsSnapshot{
+		ExpectedSummaries: expectation.count,
+		Invalid:           expectation.invalid,
+	}
+	if stats, ok := e.copStats[planID]; ok && stats != nil {
+		snapshot.Rows = stats.summaryRows
+		snapshot.ObservedSummaries = stats.summaryCount
+		snapshot.Invalid = snapshot.Invalid || snapshot.ObservedSummaries > snapshot.ExpectedSummaries
+	}
+	return snapshot
+}
+
+// GetRootWriteCPUWork returns a scalar snapshot, distinguishing missing evidence from zero work.
+func (e *RuntimeStatsColl) GetRootWriteCPUWork(planID int) (float64, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if root := e.rootStats[planID]; root != nil {
+		for _, stats := range root.groupRss {
+			if provider, ok := stats.(*WriteRuntimeStats); ok {
+				return provider.CPUWork, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// GetRootHashStateRowsSnapshot returns the typed hash-state provider's scalar
+// snapshot without exposing the live runtime-stat object.
+func (e *RuntimeStatsColl) GetRootHashStateRowsSnapshot(planID int) (HashStateRowsSnapshot, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	root, ok := e.rootStats[planID]
+	if !ok || root == nil {
+		return HashStateRowsSnapshot{}, false
+	}
+	for _, stats := range root.groupRss {
+		if provider, ok := stats.(*HashStateRuntimeStats); ok {
+			return provider.HashStateRowsSnapshot(), true
+		}
+	}
+	return HashStateRowsSnapshot{}, false
+}
+
 // GetCopStats gets the CopRuntimeStats specified by planID.
 func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	e.mu.Lock()
@@ -557,6 +896,18 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 		return nil
 	}
 	return copStats
+}
+
+// GetCopScanDetail returns a value snapshot of the scan detail collected for
+// the cop plan identified by planID.
+func (e *RuntimeStatsColl) GetCopScanDetail(planID int) (util.ScanDetail, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		return util.ScanDetail{}, false
+	}
+	return copStats.scanDetail, true
 }
 
 // GetCopCountAndRows returns the total cop-tasks count and total rows of all cop-tasks.
@@ -580,8 +931,15 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 	return 0, false
 }
 
-// RecordCopStats records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, scan *util.ScanDetail, time util.TimeDetail, summary *tipb.ExecutorExecutionSummary) int {
+// RecordCopStats records a specific cop task's execution details.
+func (e *RuntimeStatsColl) RecordCopStats(
+	planID int,
+	storeType kv.StoreType,
+	scan *util.ScanDetail,
+	time util.TimeDetail,
+	readPoolTaskDetails *util.PoolTaskDetails,
+	summary *tipb.ExecutorExecutionSummary,
+) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
@@ -600,6 +958,7 @@ func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, sc
 		}
 		copStats.timeDetail.Merge(&time)
 	}
+	copStats.readPoolTaskDetails = mergeReadPoolTaskDetails(copStats.readPoolTaskDetails, readPoolTaskDetails)
 	if summary != nil {
 		// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 		// summary, use it overwrite the planID
@@ -614,6 +973,7 @@ func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, sc
 				e.copStats[planID] = copStats
 			}
 		}
+		copStats.recordSummaryEvidence(summary)
 		copStats.stats.mergeExecSummary(summary)
 		e.stmtCopStats.mergeExecSummary(summary)
 	}
@@ -636,6 +996,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, 
 		}
 		e.copStats[planID] = copStats
 	}
+	copStats.recordSummaryEvidence(summary)
 	copStats.stats.mergeExecSummary(summary)
 	e.stmtCopStats.mergeExecSummary(summary)
 	return planID
@@ -1060,4 +1421,47 @@ func (e *RURuntimeStats) Merge(other RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (*RURuntimeStats) Tp() int {
 	return TpRURuntimeStats
+}
+
+// ExplainRURuntimeStats stores per-operator RU values for EXPLAIN ANALYZE FORMAT='ru'.
+type ExplainRURuntimeStats struct {
+	SelfRU float64
+	CumRU  float64
+}
+
+// String implements the RuntimeStats interface.
+func (e *ExplainRURuntimeStats) String() string {
+	if e == nil || (e.SelfRU == 0 && e.CumRU == 0) {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 24))
+	buf.WriteString("selfRU:")
+	buf.WriteString(strconv.FormatFloat(e.SelfRU, 'f', 2, 64))
+	buf.WriteString(", cumRU:")
+	buf.WriteString(strconv.FormatFloat(e.CumRU, 'f', 2, 64))
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *ExplainRURuntimeStats) Clone() RuntimeStats {
+	if e == nil {
+		return &ExplainRURuntimeStats{}
+	}
+	return &ExplainRURuntimeStats{
+		SelfRU: e.SelfRU,
+		CumRU:  e.CumRU,
+	}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *ExplainRURuntimeStats) Merge(other RuntimeStats) {
+	if tmp, ok := other.(*ExplainRURuntimeStats); ok {
+		e.SelfRU += tmp.SelfRU
+		e.CumRU += tmp.CumRU
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (*ExplainRURuntimeStats) Tp() int {
+	return TpExplainRURuntimeStats
 }

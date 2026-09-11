@@ -1401,17 +1401,28 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	setAmplifyFactorFn(2)
 	defer setAmplifyFactorFn(1)
 	s.tk.MustExec("create table t (a int, b int);")
-	checkResourceParamFn := func(thread, maxNode int) {
+	checkResourceParamFn := func(jobID int64, thread, maxNode int) {
+		taskKey := importinto.TaskKey(jobID)
+		taskRows := s.tk.MustQuery(`
+			with global_tasks as (
+				select id, max_node_count from mysql.tidb_global_task where task_key = ?
+				union all
+				select id, max_node_count from mysql.tidb_global_task_history where task_key = ?
+			)
+			select id, max_node_count from global_tasks
+			`, taskKey, taskKey).Rows()
+		require.Len(s.T(), taskRows, 1)
+		taskID := taskRows[0][0].(string)
+		require.Equal(s.T(), fmt.Sprintf("%d", maxNode), taskRows[0][1].(string))
+
 		s.tk.MustQuery(`
-		with
-		all_subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history order by end_time desc limit 1)
-		select concurrency from all_subtasks
-		`).Check(testkit.Rows(fmt.Sprintf("%d", thread)))
-		s.tk.MustQuery(`
-		with
-		global_tasks as (table mysql.tidb_global_task union table mysql.tidb_global_task_history order by end_time desc limit 1)
-		select max_node_count from global_tasks
-		`).Check(testkit.Rows(fmt.Sprintf("%d", maxNode)))
+			with all_subtasks as (
+				select id, concurrency, end_time from mysql.tidb_background_subtask where task_key = ?
+				union all
+				select id, concurrency, end_time from mysql.tidb_background_subtask_history where task_key = ?
+			)
+			select concurrency from all_subtasks order by end_time desc, id desc limit 1
+			`, taskID, taskID).Check(testkit.Rows(fmt.Sprintf("%d", thread)))
 	}
 	testCases := []struct {
 		tblName    string
@@ -1430,9 +1441,12 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 			s.tk.MustExec("create table import_into." + tc.tblName + " (a int, b int);")
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", fmt.Sprintf("return(%d)", tc.factor))
 			sql := fmt.Sprintf(`IMPORT INTO import_into.%s FROM 'gs://mock-datasize-test/t.csv?endpoint=%s'`, tc.tblName, gcsEndpoint)
-			s.tk.MustQuery(sql)
+			rows := s.tk.MustQuery(sql).Rows()
+			require.Len(t, rows, 1)
+			jobID, err := strconv.ParseInt(rows[0][fmap["JobID"]].(string), 10, 64)
+			require.NoError(t, err)
 			s.tk.MustQuery("SELECT * FROM import_into." + tc.tblName + ";").Check(testkit.Rows("1 1", "2 2"))
-			checkResourceParamFn(tc.threadCnt, tc.maxNodeCnt)
+			checkResourceParamFn(jobID, tc.threadCnt, tc.maxNodeCnt)
 		})
 	}
 
@@ -1441,10 +1455,13 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 		s.tk.MustExec("create table import_into.t_files(a int, b int);")
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", fmt.Sprintf("return(%d)", 10*units.GiB))
 		sql := fmt.Sprintf(`IMPORT INTO import_into.t_files FROM 'gs://mock-datasize-test/*.csv?endpoint=%s'`, gcsEndpoint)
-		s.tk.MustQuery(sql)
+		rows := s.tk.MustQuery(sql).Rows()
+		require.Len(t, rows, 1)
+		jobID, err := strconv.ParseInt(rows[0][fmap["JobID"]].(string), 10, 64)
+		require.NoError(t, err)
 		s.tk.MustQuery("SELECT * FROM import_into.t_files;").Sort().Check(testkit.Rows(
 			"1 1", "2 2", "3 3", "4 4", "5 5"))
-		checkResourceParamFn(7, 1)
+		checkResourceParamFn(jobID, 7, 1)
 	})
 }
 

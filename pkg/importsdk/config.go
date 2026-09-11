@@ -125,7 +125,9 @@ func WithDataCharacterSet(charset string) SDKOption {
 	}
 }
 
-// WithMaxScanFiles specifies custom file scan limitation
+// WithMaxScanFiles specifies a file scan limit. Automatic mapping requires a
+// complete listing and returns an error if the limit is exceeded. Explicit file
+// routers retain the existing partial-scan behavior.
 func WithMaxScanFiles(limit int) SDKOption {
 	return func(cfg *SDKConfig) {
 		if limit > 0 {
@@ -142,7 +144,8 @@ func WithEstimateRealSize(estimate bool) SDKOption {
 	}
 }
 
-// WithSkipInvalidFiles specifies whether sdk need raise error on found invalid files
+// WithSkipInvalidFiles allows skipping invalid tables in generic sources.
+// Aurora automatic mappings never skip validation or invalid table mappings.
 func WithSkipInvalidFiles(skip bool) SDKOption {
 	return func(cfg *SDKConfig) {
 		cfg.skipInvalidFiles = skip

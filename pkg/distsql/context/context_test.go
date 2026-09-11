@@ -82,6 +82,7 @@ func TestContextDetach(t *testing.T) {
 		EnablePaging:                  true,
 		MinPagingSize:                 1,
 		MaxPagingSize:                 1,
+		PagingSizeBytes:               1,
 		RequestSourceType:             "a",
 		ExplicitRequestSourceType:     "b",
 		StoreBatchSize:                1,
@@ -111,6 +112,7 @@ func TestContextDetach(t *testing.T) {
 			"$.RunawayChecker",
 			"$.RUConsumptionReporter",
 			"$.ExecDetails",
+			"$.QueryCopStoreLimiter",
 		}))
 
 	staticObj := obj.Detach()

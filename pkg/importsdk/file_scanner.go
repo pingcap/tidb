@@ -17,6 +17,7 @@ package importsdk
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -54,6 +55,7 @@ type fileScanner struct {
 	loader             *mydump.MDLoader
 	logger             log.Logger
 	config             *SDKConfig
+	auroraSource       bool
 }
 
 const redactedInvalidSourcePath = "<redacted-invalid-source>"
@@ -95,10 +97,14 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	if !cfg.estimateRealSize {
 		loaderOptions = append(loaderOptions, mydump.WithSkipRealSizeEstimation(true))
 	}
+	if len(cfg.fileRouteRules) == 0 {
+		loaderOptions = append(loaderOptions, mydump.WithAuroraAutoMapping())
+	}
 
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
 		if loader == nil || !errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
+			store.Close()
 			return nil, errors.Annotatef(ErrCreateLoader, "source=%s, charset=%s, err=%v", redactedSourcePath, cfg.charset, err)
 		}
 	}
@@ -110,6 +116,7 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 		loader:             loader,
 		logger:             cfg.logger,
 		config:             cfg,
+		auroraSource:       loader.IsAuroraSource(),
 	}, nil
 }
 
@@ -184,7 +191,7 @@ func (s *fileScanner) GetTableMetas(context.Context) ([]*TableMeta, error) {
 		for _, tblMeta := range dbMeta.Tables {
 			tableMeta, err := s.buildTableMeta(dbMeta, tblMeta, allFiles)
 			if err != nil {
-				if s.config.skipInvalidFiles {
+				if s.config.skipInvalidFiles && !s.auroraSource {
 					s.logger.Warn("skipping table due to invalid files", zap.String("database", dbMeta.Name), zap.String("table", tblMeta.Name), zap.Error(err))
 					continue
 				}
@@ -221,7 +228,7 @@ func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSi
 		for _, tblMeta := range dbMeta.Tables {
 			singleReplicaSize, err := s.estimateOneTableSize(ctx, tblMeta)
 			if err != nil {
-				if s.config.skipInvalidFiles {
+				if s.config.skipInvalidFiles && !s.auroraSource {
 					s.logger.Warn("skipping table during size estimation", zap.String("database", dbMeta.Name), zap.String("table", tblMeta.Name), zap.Error(err))
 					continue
 				}
@@ -275,9 +282,22 @@ func (s *fileScanner) buildTableMeta(
 		return nil, errors.Trace(err)
 	}
 	uri := s.store.URI()
+	// URL encoding does not escape glob syntax in the importer's decoded path.
+	if s.auroraSource && strings.ContainsAny(uri, "*?[]\\") {
+		return nil, errors.New("Aurora source prefix contains glob metacharacters")
+	}
 	// import into only support absolute path
 	uri = strings.TrimPrefix(uri, "file://")
 	tableMeta.WildcardPath = strings.TrimSuffix(uri, "/") + "/" + wildcard
+	if s.auroraSource {
+		// Storage URI and file paths contain raw object keys. Encode them once
+		// when constructing the remote URL so literal percent sequences survive
+		// the importer's URL parsing. Local absolute paths must stay raw.
+		if scheme, rest, remote := strings.Cut(tableMeta.WildcardPath, "://"); remote {
+			host, path, _ := strings.Cut(rest, "/")
+			tableMeta.WildcardPath = (&url.URL{Scheme: scheme, Host: host, Path: "/" + path}).String()
+		}
+	}
 
 	return tableMeta, nil
 }

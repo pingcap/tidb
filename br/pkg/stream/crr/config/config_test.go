@@ -37,7 +37,6 @@ func TestParse(t *testing.T) {
 	crrconfig.DefineFlags(flags)
 	require.NoError(t, flags.Parse([]string{
 		"--task-name", "task",
-		"--state-storage-sub-dir", "state/subdir",
 		"--retry-interval", "7s",
 		"--calc.poll-interval", "3s",
 		"--calc.meta-read-concurrency", "9",
@@ -46,7 +45,6 @@ func TestParse(t *testing.T) {
 	cfg := crrconfig.Config{}
 	require.NoError(t, cfg.Parse(flags))
 	require.Equal(t, "task", cfg.TaskName)
-	require.Equal(t, "state/subdir", cfg.StateStorageSubDir)
 	require.Equal(t, 7*time.Second, cfg.RetryInterval)
 	require.Equal(t, 3*time.Second, cfg.PollInterval)
 	require.Equal(t, 9, cfg.MetaReadConcurrency)

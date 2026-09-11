@@ -33,6 +33,62 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMaxParenthesesDepth(t *testing.T) {
+	p := parser.New()
+	nestedExpr := func(depth int) string {
+		return "select " + strings.Repeat("(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedFuncExpr := func(depth int) string {
+		return "select " + strings.Repeat("f(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedLeadingHint := func(depth int) string {
+		return "select /*+ LEADING(" + strings.Repeat("(", depth) + "t" + strings.Repeat(")", depth) + ") */ * from t"
+	}
+
+	_, err := p.ParseOneStmt(nestedExpr(10000), "", "")
+	require.NoError(t, err)
+
+	_, err = p.ParseOneStmt(nestedExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedFuncExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedLeadingHint(10000), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+}
+
+func TestMaxASTDepth(t *testing.T) {
+	p := parser.New()
+	nestedCaseExpr := func(depth int) string {
+		return "select " + strings.Repeat("case when true then ", depth) + "1" + strings.Repeat(" else 0 end", depth)
+	}
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "binary operation chain",
+			sql:  "select " + strings.Repeat("1+", 11000) + "1",
+		},
+		{
+			name: "unary operation chain",
+			sql:  "select " + strings.Repeat("!", 11000) + "1",
+		},
+		{
+			name: "case expression chain",
+			sql:  nestedCaseExpr(11000),
+		},
+	} {
+		_, err := p.ParseOneStmt(tc.sql, "", "")
+		require.Error(t, err, tc.name)
+		require.Contains(t, err.Error(), "AST nesting depth exceeds maximum", tc.name)
+	}
+}
+
 func TestSimple(t *testing.T) {
 	p := parser.New()
 
@@ -84,7 +140,7 @@ func TestSimple(t *testing.T) {
 		"add_columnar_replica_on_demand", "auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
-		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"start", "global", "operate", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers", "language",
@@ -375,6 +431,93 @@ func RunTest(t *testing.T, table []testCase, enableWindowFunc bool, MariaDB bool
 			RunRestoreTest(t, tbl.src, tbl.restore, enableWindowFunc, MariaDB)
 		}
 	}
+}
+
+func TestMaterializedViewDDLStatements(t *testing.T) {
+	table := []testCase{
+		{"CREATE MATERIALIZED VIEW mv (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW mv (a) COMMENT 'c1' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW LOG ON t (a,b) PURGE IMMEDIATE ALERT ROWS 10", true, "CREATE MATERIALIZED VIEW LOG ON \x60t\x60 (\x60a\x60, \x60b\x60) PURGE IMMEDIATE ALERT ROWS 10"},
+		{"CREATE MATERIALIZED VIEW LOG ON t (a) PURGE NEXT 300", true, "CREATE MATERIALIZED VIEW LOG ON \x60t\x60 (\x60a\x60) PURGE NEXT 300"},
+		{"ALTER MATERIALIZED VIEW mv COMMENT = 'c2', REFRESH START WITH now() NEXT 300, ATTRIBUTES = 'y'", true, "ALTER MATERIALIZED VIEW \x60mv\x60 COMMENT = 'c2', REFRESH START WITH NOW() NEXT 300, ATTRIBUTES = 'y'"},
+		{"ALTER MATERIALIZED VIEW mv COMMENT 'c2'", true, "ALTER MATERIALIZED VIEW \x60mv\x60 COMMENT = 'c2'"},
+		{"ALTER MATERIALIZED VIEW mv REFRESH", true, "ALTER MATERIALIZED VIEW \x60mv\x60 REFRESH"},
+		{"ALTER MATERIALIZED VIEW LOG ON t PURGE, ADD COLUMN (b,c)", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE, ADD COLUMN (\x60b\x60, \x60c\x60)"},
+		{"ALTER MATERIALIZED VIEW LOG ON t PURGE", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE"},
+		{"DROP MATERIALIZED VIEW IF EXISTS mv", true, "DROP MATERIALIZED VIEW IF EXISTS \x60mv\x60"},
+		{"DROP MATERIALIZED VIEW LOG IF EXISTS ON t", true, "DROP MATERIALIZED VIEW LOG IF EXISTS ON \x60t\x60"},
+	}
+	RunTest(t, table, false, false)
+	wantTypes := []ast.StmtNode{
+		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
+		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
+		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{},
+		&ast.AlterMaterializedViewLogStmt{}, &ast.AlterMaterializedViewLogStmt{},
+		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
+	}
+	p := parser.New()
+	for i, tc := range table {
+		stmt, err := p.ParseOneStmt(tc.src, "", "")
+		require.NoError(t, err, tc.src)
+		require.IsType(t, wantTypes[i], stmt, tc.src)
+	}
+}
+
+func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
+	p := parser.New()
+	dupCases := []struct {
+		sql       string
+		substring string
+	}{
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' COMMENT = 'c2' AS SELECT 1",
+			substring: "Duplicate COMMENT specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2 AS SELECT 1",
+			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2 AS SELECT 1",
+			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2",
+			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW LOG",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2",
+			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW LOG",
+		},
+	}
+	for _, c := range dupCases {
+		_, err := p.ParseOneStmt(c.sql, "", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), c.substring, c.sql)
+	}
+}
+
+func TestMaterializedViewCreateOptionOrder(t *testing.T) {
+	p := parser.New()
+	invalidCases := []string{
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' REFRESH FAST AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' ATTRIBUTES = 'y' AS SELECT 1",
+	}
+	for _, sql := range invalidCases {
+		_, err := p.ParseOneStmt(sql, "", "")
+		require.Error(t, err, sql)
+	}
+}
+
+func TestMaterializedViewLogCreatePurgeClauseSyntax(t *testing.T) {
+	p := parser.New()
+	_, err := p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE START WITH now()", "", "")
+	require.Error(t, err)
+	_, err = p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE", "", "")
+	require.Error(t, err)
 }
 
 func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFunc bool, MariaDB bool) {
@@ -832,6 +975,8 @@ func TestDMLStmt(t *testing.T) {
 		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` ON `t2`.`id`=`t3`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` ON `t1`.`id`=`t2`.`id`) LEFT JOIN `t3` ON `t3`.`id`=`t2`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false, ""},
+		{"select * from t1 full join t2 on t1.a = t2.a", true, "SELECT * FROM `t1` AS `full` JOIN `t2` ON `t1`.`a`=`t2`.`a`"},
+		{"select * from t1 full outer join t2 on t1.a <=> t2.a", true, "SELECT * FROM `t1` FULL OUTER JOIN `t2` ON `t1`.`a`<=>`t2`.`a`"},
 		{"select * from t1 join t2 left join t3 using (id)", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3 using (id)", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` USING (`id`)) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3", false, ""},
@@ -1120,6 +1265,12 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show distribution jobs where id > 0", true, "SHOW DISTRIBUTION JOBS WHERE `id`>0"},
 		{"show distribution job 1 where id > 0", false, ""},
 		{"show distribution job 1", true, "SHOW DISTRIBUTION JOB 1"},
+
+		// for active storage class transitions
+		{"show storage_class transitions", true, "SHOW STORAGE_CLASS TRANSITIONS"},
+		{"show storage_class transitions like 'orders%'", true, "SHOW STORAGE_CLASS TRANSITIONS LIKE _UTF8MB4'orders%'"},
+		{"show storage_class transitions where direction = 'TO_IA'", true, "SHOW STORAGE_CLASS TRANSITIONS WHERE `direction`=_UTF8MB4'TO_IA'"},
+		{"show storage class transitions", false, ""},
 
 		// for cancel distribution job JOBID
 		{"cancel distribution job", false, ""},
@@ -1449,6 +1600,8 @@ func TestDBAStmt(t *testing.T) {
 		{"set char set default", true, "SET CHARSET DEFAULT"},
 
 		{"set role `role1`", true, "SET ROLE `role1`@`%`"},
+		{"set role auto", false, ""},
+		{"set role `auto`", true, "SET ROLE `auto`@`%`"},
 		{"SET ROLE DEFAULT", true, "SET ROLE DEFAULT"},
 		{"SET ROLE ALL", true, "SET ROLE ALL"},
 		{"SET ROLE ALL EXCEPT `role1`, `role2`", true, "SET ROLE ALL EXCEPT `role1`@`%`, `role2`@`%`"},
@@ -1467,7 +1620,8 @@ func TestDBAStmt(t *testing.T) {
 		{"show config", true, "SHOW CONFIG"},
 		{"show config where type='tidb'", true, "SHOW CONFIG WHERE `type`=_UTF8MB4'tidb'"},
 		{"show config where instance='127.0.0.1:3306'", true, "SHOW CONFIG WHERE `instance`=_UTF8MB4'127.0.0.1:3306'"},
-		{"create table CONFIG (a int)", true, "CREATE TABLE `CONFIG` (`a` INT)"}, // check that `CONFIG` is unreserved keyword
+		{"create table CONFIG (a int)", true, "CREATE TABLE `CONFIG` (`a` INT)"},   // check that `CONFIG` is unreserved keyword
+		{"create table AUTO (AUTO int)", true, "CREATE TABLE `AUTO` (`AUTO` INT)"}, // check that AUTO remains usable as an identifier
 
 		// for FLUSH statement
 		{"flush no_write_to_binlog tables tbl1 with read lock", true, "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1` WITH READ LOCK"},
@@ -1722,6 +1876,18 @@ func TestBuiltin(t *testing.T) {
 
 		{"SELECT LEAST(), LEAST(1, 2, 3);", true, "SELECT LEAST(),LEAST(1, 2, 3)"},
 
+		{"SELECT INTERVAL()", false, ""},
+		{"SELECT INTERVAL(1)", false, ""},
+		{"SELECT INTERVAL(1, 0)", true, "SELECT INTERVAL(1, 0)"},
+		{"SELECT NOW() + INTERVAL(1+2) DAY `add`", true, "SELECT DATE_ADD(NOW(), INTERVAL (1+2) DAY) AS `add`"},
+		{"SELECT d + INTERVAL (q - 1) QUARTER", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT d - INTERVAL (q - 1) QUARTER", true, "SELECT DATE_SUB(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT INTERVAL (q - 1) QUARTER + d", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ADDDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT ADDDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT SUBDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT SUBDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ROW(ROW(1,2),3), ROW(1,ROW(2,3))", true, "SELECT ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT (1,2), ((1,2),3), (1,(2,3))", true, "SELECT ROW(1,2),ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT MAKEDATE(YEAR(d), 1) + INTERVAL (QUARTER(d) - 1) QUARTER", true, "SELECT DATE_ADD(MAKEDATE(YEAR(`d`), 1), INTERVAL (QUARTER(`d`)-1) QUARTER)"},
 		{"SELECT INTERVAL(1, 0, 1, 2)", true, "SELECT INTERVAL(1, 0, 1, 2)"},
 		{"SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2", true, "SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2"},
 		{"SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)", true, "SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)"},
@@ -2262,12 +2428,20 @@ func TestBuiltin(t *testing.T) {
 		{`select max(distinct all c1) from t;`, true, "SELECT MAX(DISTINCT `c1`) FROM `t`"},
 		{`select max(distinctrow all c1) from t;`, true, "SELECT MAX(DISTINCT `c1`) FROM `t`"},
 		{`select max(c2) from t;`, true, "SELECT MAX(`c2`) FROM `t`"},
+		{`select max_count(c1,c2) from t;`, false, ""},
+		{`select max_count(distinct c1) from t;`, false, ""},
+		{`select max_count(c2) from t;`, true, "SELECT MAX_COUNT(`c2`) FROM `t`"},
+		{`select max_count(all c1) from t;`, true, "SELECT MAX_COUNT(`c1`) FROM `t`"},
 		{`select min(c1,c2) from t;`, false, ""},
 		{`select min(distinct c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinctrow c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinct all c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinctrow all c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(c2) from t;`, true, "SELECT MIN(`c2`) FROM `t`"},
+		{`select min_count(c1,c2) from t;`, false, ""},
+		{`select min_count(distinct c1) from t;`, false, ""},
+		{`select min_count(c2) from t;`, true, "SELECT MIN_COUNT(`c2`) FROM `t`"},
+		{`select min_count(all c1) from t;`, true, "SELECT MIN_COUNT(`c1`) FROM `t`"},
 		{`select sum(c1,c2) from t;`, false, ""},
 		{`select sum(distinct c1) from t;`, true, "SELECT SUM(DISTINCT `c1`) FROM `t`"},
 		{`select sum(distinctrow c1) from t;`, true, "SELECT SUM(DISTINCT `c1`) FROM `t`"},
@@ -3033,6 +3207,7 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE t (c TEXT) default CHARACTER SET utf8, default COLLATE utf8_general_ci;", true, "CREATE TABLE `t` (`c` TEXT) DEFAULT CHARACTER SET = UTF8 DEFAULT COLLATE = UTF8_GENERAL_CI"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1, PRE_SPLIT_REGIONS = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1 PRE_SPLIT_REGIONS = 1"},
+		{"CREATE TABLE t (c TEXT) PRE_SPLIT_REGIONS AUTO;", false, ""},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
 		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true, "CREATE TABLE IF NOT EXISTS `general_log` (`event_time` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` MEDIUMTEXT NOT NULL,`thread_id` BIGINT(20) UNSIGNED NOT NULL,`server_id` INT(10) UNSIGNED NOT NULL,`command_type` VARCHAR(64) NOT NULL,`argument` MEDIUMBLOB NOT NULL) ENGINE = CSV DEFAULT CHARACTER SET = UTF8 COMMENT = 'General log'"}, // TODO: The number yacc in parentheses has not been implemented yet.
 		// For reference_definition in column_definition.
@@ -3270,13 +3445,25 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) USING RTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING RTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
-		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 'a'", false, ""},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = auto", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS AUTO PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4 PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = FOO", false, ""},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 'AUTO'", false, ""},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = `AUTO`", false, ""},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) CLUSTERED PRE_SPLIT_REGIONS = 4"},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) NONCLUSTERED PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) PRE_SPLIT_REGIONS = AUTO"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (by (1, 'a'), (2, 'b'), (3, 'c'));", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BY (1,_UTF8MB4'a'),(2,_UTF8MB4'b'),(3,_UTF8MB4'c'))"},
 		{"ALTER TABLE t ADD INDEX (a) comment 'a' PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) COMMENT 'a' PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
 		{"CREATE INDEX idx ON t (a, b) pre_split_regions = 100", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = 100"},
+		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS AUTO", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = AUTO"},
+		// Simulate an older parser that does not advertise the AUTO capability:
+		// the unsupported feature comment is ignored while add-index still parses.
+		{"CREATE INDEX idx ON t (a, b) /*T![unsupported_auto_presplit] PRE_SPLIT_REGIONS = AUTO */", true, "CREATE INDEX `idx` ON `t` (`a`, `b`)"},
 		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
 		{"ALTER TABLE t ADD INDEX idx(a) pre_split_regions = 100, ADD INDEX idx2(b) pre_split_regions = (by(1),(2),(3))", true, "ALTER TABLE `t` ADD INDEX `idx`(`a`) PRE_SPLIT_REGIONS = 100, ADD INDEX `idx2`(`b`) PRE_SPLIT_REGIONS = (BY (1),(2),(3))"},
 		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING HASH COMMENT 'a'"},
@@ -4256,6 +4443,55 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
 	}
 	RunTest(t, table, false, false)
+
+	t.Run("unsupported MySQL create table option", func(t *testing.T) {
+		const (
+			sql           = "CREATE TABLE `t` (`id` BIGINT NOT NULL) START TRANSACTION"
+			withEngineSQL = "CREATE TABLE t (a INT) ENGINE=InnoDB START TRANSACTION"
+		)
+
+		p := parser.New()
+		_, err := p.ParseOneStmt(sql, "", "")
+		require.Error(t, err)
+
+		p.SetParserConfig(parser.ParserConfig{
+			EnableWindowFunction:         true,
+			EnableStrictDoubleTypeCheck:  true,
+			EnableUnsupportedMySQLSyntax: true,
+		})
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		createStmt, ok := stmt.(*ast.CreateTableStmt)
+		require.True(t, ok)
+		require.Len(t, createStmt.Options, 1)
+		require.Equal(t, ast.TableOptionStartTransaction, createStmt.Options[0].Tp)
+
+		var sb strings.Builder
+		require.NoError(t, stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &sb)))
+		require.Equal(t, "CREATE TABLE `t` (`id` BIGINT NOT NULL) START TRANSACTION", sb.String())
+		restoredStmt, err := p.ParseOneStmt(sb.String(), "", "")
+		require.NoError(t, err)
+		CleanNodeText(stmt)
+		CleanNodeText(restoredStmt)
+		require.Equal(t, stmt, restoredStmt)
+
+		stmt, err = p.ParseOneStmt(withEngineSQL, "", "")
+		require.NoError(t, err)
+		createStmt, ok = stmt.(*ast.CreateTableStmt)
+		require.True(t, ok)
+		require.Len(t, createStmt.Options, 2)
+		require.Equal(t, ast.TableOptionEngine, createStmt.Options[0].Tp)
+		require.Equal(t, ast.TableOptionStartTransaction, createStmt.Options[1].Tp)
+
+		_, err = p.ParseOneStmt("ALTER TABLE t START TRANSACTION", "", "")
+		require.Error(t, err)
+		_, err = p.ParseOneStmt("CREATE SEQUENCE s START TRANSACTION", "", "")
+		require.Error(t, err)
+
+		p.Reset()
+		_, err = p.ParseOneStmt(sql, "", "")
+		require.Error(t, err)
+	})
 }
 
 func TestHintError(t *testing.T) {
@@ -5303,6 +5539,8 @@ func TestPrivilege(t *testing.T) {
 		{"CREATE ROLE `test-role`, `role1`@'localhost'", true, "CREATE ROLE `test-role`@`%`, `role1`@`localhost`"},
 		{"CREATE ROLE `test-role`", true, "CREATE ROLE `test-role`@`%`"},
 		{"CREATE ROLE role1", true, "CREATE ROLE `role1`@`%`"},
+		{"CREATE ROLE auto", false, ""},
+		{"CREATE ROLE `auto`", true, "CREATE ROLE `auto`@`%`"},
 		{"CREATE ROLE `role1`@'localhost'", true, "CREATE ROLE `role1`@`localhost`"},
 		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password", true, "CREATE USER `bug19354014user`@`%` IDENTIFIED WITH 'mysql_native_password'"},
 		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password by 'new-password'", true, "CREATE USER `bug19354014user`@`%` IDENTIFIED WITH 'mysql_native_password' BY 'new-password'"},
@@ -5381,6 +5619,7 @@ func TestPrivilege(t *testing.T) {
 		{"GRANT ALL ON TABLE db1.* TO 'jeffrey'@'localhost';", true, "GRANT ALL ON TABLE `db1`.* TO `jeffrey`@`localhost`"},
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' WITH GRANT OPTION;", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost` WITH GRANT OPTION"},
 		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true, "GRANT SELECT ON `db2`.`invoice` TO `jeffrey`@`localhost`"},
+		{"GRANT OPERATE VIEW ON db2.invoice TO 'jeffrey'@'localhost';", true, "GRANT OPERATE VIEW ON `db2`.`invoice` TO `jeffrey`@`localhost`"},
 		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true, "GRANT ALL ON *.* TO `someuser`@`somehost`"},
 		{"GRANT ALL ON *.* TO 'SOMEuser'@'SOMEhost';", true, "GRANT ALL ON *.* TO `SOMEuser`@`somehost`"},
 		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true, "GRANT SELECT, INSERT ON *.* TO `someuser`@`somehost`"},
@@ -5413,6 +5652,7 @@ func TestPrivilege(t *testing.T) {
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'LOCalhost';", true, "REVOKE ALL ON `db1`.* FROM `jeffrey`@`localhost`"},
 		{"REVOKE SELECT ON db2.invoice FROM 'jeffrey'@'localhost';", true, "REVOKE SELECT ON `db2`.`invoice` FROM `jeffrey`@`localhost`"},
+		{"REVOKE OPERATE VIEW ON db2.invoice FROM 'jeffrey'@'localhost';", true, "REVOKE OPERATE VIEW ON `db2`.`invoice` FROM `jeffrey`@`localhost`"},
 		{"REVOKE ALL ON *.* FROM 'someuser'@'somehost';", true, "REVOKE ALL ON *.* FROM `someuser`@`somehost`"},
 		{"REVOKE SELECT, INSERT ON *.* FROM 'someuser'@'somehost';", true, "REVOKE SELECT, INSERT ON *.* FROM `someuser`@`somehost`"},
 		{"REVOKE ALL ON mydb.* FROM 'someuser'@'somehost';", true, "REVOKE ALL ON `mydb`.* FROM `someuser`@`somehost`"},
@@ -5445,6 +5685,40 @@ func TestPrivilegeMariaDBDisabled(t *testing.T) {
 	// Test with additional MariaDB syntax DISABLED (arg three for RunTest==false)
 	table := []testCase{
 		{"GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'", false, "GRANT REPLICATION CLIENT ON *.* TO `user1`@`localhost`"},
+	}
+	RunTest(t, table, false, false)
+}
+
+func TestSystemVersionedColumnMariaDBEnabled(t *testing.T) {
+	// MariaDB system-versioned table period columns. Accepted only when the
+	// parser is in MariaDB mode. Restore emits the canonical form
+	// `GENERATED ALWAYS AS ROW {START|END}` even when the input omitted the
+	// `GENERATED ALWAYS` prefix (normalisation, not byte-for-byte lossless).
+	table := []testCase{
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)"},
+		// Bare `AS ROW START/END` (no `GENERATED ALWAYS`) parses and gets
+		// canonicalised on restore.
+		{"CREATE TABLE t (a TIMESTAMP(6) AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) AS ROW END)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END)"},
+		// ALTER TABLE ... MODIFY/CHANGE must accept the same column option
+		// so the CREATE/ADD and MODIFY/CHANGE code paths stay consistent.
+		{"ALTER TABLE t MODIFY COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", true, "ALTER TABLE `t` MODIFY COLUMN `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START"},
+		{"ALTER TABLE t CHANGE COLUMN a a TIMESTAMP(6) GENERATED ALWAYS AS ROW END", true, "ALTER TABLE `t` CHANGE COLUMN `a` `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END"},
+		{"ALTER TABLE t ADD COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", true, "ALTER TABLE `t` ADD COLUMN `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START"},
+	}
+	RunTest(t, table, false, true)
+}
+
+func TestSystemVersionedColumnMariaDBDisabled(t *testing.T) {
+	// MariaDB system-versioned period columns must be rejected when MariaDB
+	// mode is off so MySQL-strict parsing is unaffected, on every DDL path.
+	table := []testCase{
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)", false, ""},
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)", false, ""},
+		{"ALTER TABLE t MODIFY COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", false, ""},
+		{"ALTER TABLE t CHANGE COLUMN a a TIMESTAMP(6) GENERATED ALWAYS AS ROW END", false, ""},
 	}
 	RunTest(t, table, false, false)
 }
@@ -5503,18 +5777,18 @@ type subqueryChecker struct {
 	t    *testing.T
 }
 
-// Enter implements ast.Visitor interface.
-func (sc *subqueryChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (sc *subqueryChecker) Enter(inNode ast.Node) bool {
 	if expr, ok := inNode.(*ast.SubqueryExpr); ok {
 		require.Equal(sc.t, sc.text, expr.Query.Text())
-		return inNode, true
+		return true
 	}
-	return inNode, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (sc *subqueryChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	return inNode, true
+// Leave implements ast.InPlaceVisitor interface.
+func (*subqueryChecker) Leave(ast.Node) bool {
+	return true
 }
 
 func TestSubquery(t *testing.T) {
@@ -5562,7 +5836,7 @@ func TestSubquery(t *testing.T) {
 	for _, tbl := range tests {
 		stmt, err := p.ParseOneStmt(tbl.input, "", "")
 		require.NoError(t, err)
-		stmt.Accept(&subqueryChecker{
+		ast.Walk(stmt, &subqueryChecker{
 			text: tbl.text,
 			t:    t,
 		})
@@ -6916,8 +7190,8 @@ type windowFrameBoundChecker struct {
 	t      *testing.T
 }
 
-// Enter implements ast.Visitor interface.
-func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) bool {
 	if _, ok := inNode.(*ast.FrameBound); ok {
 		wfc.fb = inNode.(*ast.FrameBound)
 		if wfc.fb.Unit != ast.TimeUnitInvalid {
@@ -6925,11 +7199,11 @@ func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, sk
 			require.False(wfc.t, ok)
 		}
 	}
-	return inNode, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+// Leave implements ast.InPlaceVisitor interface.
+func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) bool {
 	if _, ok := inNode.(*ast.FrameBound); ok {
 		wfc.fb = nil
 	}
@@ -6939,7 +7213,7 @@ func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bo
 		}
 		wfc.unit = wfc.fb.Unit
 	}
-	return inNode, true
+	return true
 }
 
 // For issue #51
@@ -6960,7 +7234,7 @@ func TestVisitFrameBound(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tbl.s, "", "")
 		require.NoError(t, err)
 		checker := windowFrameBoundChecker{t: t}
-		stmt.Accept(&checker)
+		ast.Walk(stmt, &checker)
 		require.Equal(t, tbl.exprRc, checker.exprRc)
 		require.Equal(t, tbl.unit, checker.unit)
 	}
@@ -7209,7 +7483,7 @@ func TestSignedInt64OutOfRange(t *testing.T) {
 // For test only.
 func CleanNodeText(node ast.Node) {
 	var cleaner nodeTextCleaner
-	node.Accept(&cleaner)
+	ast.Walk(node, &cleaner)
 }
 
 // nodeTextCleaner clean the text of a node and it's child node.
@@ -7223,19 +7497,19 @@ func cleanPartition(n ast.Node) {
 		if p.Interval != nil {
 			p.Interval.SetText(nil, "")
 			p.Interval.SetOriginTextPosition(0)
-			p.Interval.IntervalExpr.Expr.Accept(&tmpCleaner)
+			ast.Walk(p.Interval.IntervalExpr.Expr, &tmpCleaner)
 			if p.Interval.FirstRangeEnd != nil {
-				(*p.Interval.FirstRangeEnd).Accept(&tmpCleaner)
+				ast.Walk(*p.Interval.FirstRangeEnd, &tmpCleaner)
 			}
 			if p.Interval.LastRangeEnd != nil {
-				(*p.Interval.LastRangeEnd).Accept(&tmpCleaner)
+				ast.Walk(*p.Interval.LastRangeEnd, &tmpCleaner)
 			}
 		}
 	}
 }
 
-// Enter implements Visitor interface.
-func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Enter(in ast.Node) bool {
 	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	if v, ok := in.(ast.ValueExpr); ok && v != nil {
@@ -7319,12 +7593,12 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	case *ast.PartitionOptions:
 		cleanPartition(node)
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (checker *nodeTextCleaner) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+// Leave implements ast.InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Leave(in ast.Node) bool {
+	return true
 }
 
 // For BRIE
@@ -7821,14 +8095,14 @@ func TestGBKEncoding(t *testing.T) {
 	stmt, _, err := p.ParseSQL(sql)
 	require.NoError(t, err)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.NotEqual(t, "测试表", checker.tblName)
 	require.NotEqual(t, "测试列", checker.colName)
 
 	gbkOpt := parser.CharsetClient("gbk")
 	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	require.NoError(t, err)
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.Equal(t, "测试表", checker.tblName)
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GBK测试用例", checker.expr)
@@ -7869,14 +8143,14 @@ func TestGB18030Encoding(t *testing.T) {
 	stmt, _, err := p.ParseSQL(sql)
 	require.NoError(t, err)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.NotEqual(t, "测试表", checker.tblName)
 	require.NotEqual(t, "测试列", checker.colName)
 
 	gb18030Opt := parser.CharsetClient("gb18030")
 	stmt, _, err = p.ParseSQL(sql, gb18030Opt)
 	require.NoError(t, err)
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.Equal(t, "测试表", checker.tblName)
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GB18030测试用例", checker.expr)
@@ -7913,26 +8187,26 @@ type gbkEncodingChecker struct {
 	expr    string
 }
 
-func (g *gbkEncodingChecker) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+func (g *gbkEncodingChecker) Enter(n ast.Node) bool {
 	if tn, ok := n.(*ast.TableName); ok {
 		g.tblName = tn.Name.O
-		return n, false
+		return false
 	}
 	if cn, ok := n.(*ast.ColumnName); ok {
 		g.colName = cn.Name.O
-		return n, false
+		return false
 	}
 	if c, ok := n.(*ast.ColumnOption); ok {
 		if ve, ok := c.Expr.(ast.ValueExpr); ok {
 			g.expr = ve.GetString()
-			return n, false
+			return false
 		}
 	}
-	return n, false
+	return false
 }
 
-func (g *gbkEncodingChecker) Leave(n ast.Node) (node ast.Node, ok bool) {
-	return n, true
+func (*gbkEncodingChecker) Leave(ast.Node) bool {
+	return true
 }
 
 func TestInsertStatementMemoryAllocation(t *testing.T) {
@@ -8165,12 +8439,45 @@ func TestExplainExplore(t *testing.T) {
 // TestCompatMariaDB is to test for MariaDB specific table options
 func TestCompatMariaDB(t *testing.T) {
 	cases := []testCase{
+		{`CREATE TABLE uuid (uuid int)`, true, "CREATE TABLE `uuid` (`uuid` INT)"},
+		{`CREATE TABLE t1 (a TEXT DEFAULT UUID())`, true, "CREATE TABLE `t1` (`a` TEXT DEFAULT (UUID()))"},
+		{`CREATE TABLE t1 (pk varchar(36) DEFAULT uuid())`, true, "CREATE TABLE `t1` (`pk` VARCHAR(36) DEFAULT (UUID()))"},
+		{`CREATE TABLE t1 AS SELECT uuid(), length(uuid())`, true, "CREATE TABLE `t1` AS SELECT UUID(),LENGTH(UUID())"},
+		{`CREATE TABLE t4 (a INT(11) DEFAULT NULL, b BIGINT(20) DEFAULT uuid_short()) SELECT * FROM t3`, true, "CREATE TABLE `t4` (`a` INT(11) DEFAULT NULL,`b` BIGINT(20) DEFAULT (UUID_SHORT())) AS SELECT * FROM `t3`"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_CHECKSUM=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_CHECKSUM = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSED=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSED = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSION_LEVEL = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) TRANSACTIONAL=0`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) TRANSACTIONAL = 0"},
 		{`CREATE TABLE t (id int PRIMARY KEY) IETF_QUOTES=YES`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) IETF_QUOTES = YES"},
 		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
+	}
+	RunTest(t, cases, false, false)
+}
+
+func TestUUIDTypeMariaDBEnabled(t *testing.T) {
+	cases := []testCase{
+		{`CREATE TABLE t (id UUID)`, true, "CREATE TABLE `t` (`id` CHAR(36))"},
+		{`CREATE TABLE t1 (a UUID, b VARCHAR(32) NOT NULL)`, true, "CREATE TABLE `t1` (`a` CHAR(36),`b` VARCHAR(32) NOT NULL)"},
+		{`CREATE TABLE uuid (uuid UUID NOT NULL DEFAULT UUID())`, true, "CREATE TABLE `uuid` (`uuid` CHAR(36) NOT NULL DEFAULT (UUID()))"},
+	}
+	RunTest(t, cases, false, true)
+}
+
+func TestUUIDKeywordCompatibility(t *testing.T) {
+	cases := []testCase{
+		{`SELECT uuid FROM t`, true, "SELECT `uuid` FROM `t`"},
+		{`SELECT uuid.uuid FROM uuid`, true, "SELECT `uuid`.`uuid` FROM `uuid`"},
+		{`SELECT 1 AS uuid`, true, "SELECT 1 AS `uuid`"},
+		{`SELECT * FROM t AS uuid`, true, "SELECT * FROM `t` AS `uuid`"},
+		{`ALTER TABLE t ADD COLUMN uuid INT`, true, "ALTER TABLE `t` ADD COLUMN `uuid` INT"},
+		{`CREATE TABLE t (uuid INT, KEY uuid (uuid))`, true, "CREATE TABLE `t` (`uuid` INT,INDEX `uuid`(`uuid`))"},
+	}
+	RunTest(t, cases, false, false)
+}
+
+func TestUUIDTypeMariaDBDisabled(t *testing.T) {
+	cases := []testCase{
+		{`CREATE TABLE t (id UUID)`, false, ""},
 	}
 	RunTest(t, cases, false, false)
 }

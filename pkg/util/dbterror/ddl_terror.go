@@ -37,6 +37,8 @@ var (
 	ErrPausedDDLJob = ClassDDL.NewStd(mysql.ErrPausedDDLJob)
 	// ErrBDRRestrictedDDL means the DDL is restricted in BDR mode.
 	ErrBDRRestrictedDDL = ClassDDL.NewStd(mysql.ErrBDRRestrictedDDL)
+	// ErrDDLAutoPausedByKVDiskFull means TiDB paused the DDL job because a storage node disk is full.
+	ErrDDLAutoPausedByKVDiskFull = ClassDDL.NewStd(mysql.ErrDDLAutoPausedByKVDiskFull)
 	// ErrRunMultiSchemaChanges means we run multi schema changes.
 	ErrRunMultiSchemaChanges = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change for %s"), nil))
 	// ErrOperateSameColumn means we change the same columns multiple times in a DDL.
@@ -432,6 +434,10 @@ var (
 	ErrUnsupportedTiFlashOperationForSysOrMemTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for system table and memory table"), nil))
 	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
 	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for table contains %s charset"), nil))
+	// ErrTiFlashColumnarStorageCheckFailed is returned when the Columnar Storage flag cannot be read (fail-closed).
+	ErrTiFlashColumnarStorageCheckFailed = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` because the Columnar Storage status of cluster %s cannot be verified, please retry later"), nil))
+	// ErrTiFlashColumnarStorageNotEnabled is returned when SET TIFLASH REPLICA n (n>0) is rejected because Columnar Storage is off.
+	ErrTiFlashColumnarStorageNotEnabled = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` because Columnar Storage is not enabled for cluster %s (tidb_columnar_storage_enabled=%q)"), nil))
 	// ErrTiFlashBackfillIndex is the error that tiflash backfill the index failed.
 	ErrTiFlashBackfillIndex = ClassDDL.NewStdErr(mysql.ErrTiFlashBackfillIndex,
 		parser_mysql.Message(mysql.MySQLErrName[mysql.ErrTiFlashBackfillIndex].Raw, nil))
