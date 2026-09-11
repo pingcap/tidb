@@ -90,6 +90,14 @@ type LocalWriterConfig struct {
 type EngineConfig struct {
 	// TableInfo is the corresponding tidb table info
 	TableInfo *checkpoints.TidbTableInfo
+	// TiCIWriteEnabled indicates whether this engine should write TiCI data.
+	TiCIWriteEnabled bool
+	// TiCIIndexID identifies the TiCI index this engine writes when TiCIWriteEnabled is true.
+	// It must be non-zero for TiCI write engines and is ignored otherwise.
+	TiCIIndexID int64
+	// TiCIHeaderCommitTS overrides the commit ts used for TiCI header.
+	// When it is 0, TiCI header uses the ingest data TS.
+	TiCIHeaderCommitTS uint64
 	// local backend specified configuration
 	Local LocalEngineConfig
 	// local backend external engine specified configuration
@@ -192,6 +200,10 @@ type Backend interface {
 	// ShouldPostProcess returns whether KV-specific post-processing should be
 	// performed for this backend. Post-processing includes checksum and analyze.
 	ShouldPostProcess() bool
+
+	// PostProcess performs post-processing tasks after all engines are imported.
+	// This is called after all ImportEngine operations are completed.
+	PostProcess(ctx context.Context) error
 
 	OpenEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
 

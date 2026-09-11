@@ -191,6 +191,32 @@ func ExtractColumnsFromExpressions(result []*Column, exprs []Expression, filter 
 	return result
 }
 
+// ExtractColumnsFromExpressionsIgnoringFTS extracts columns while skipping the
+// arguments of FTS functions, which are evaluated by the TiCI index library.
+func ExtractColumnsFromExpressionsIgnoringFTS(result []*Column, exprs []Expression, filter func(*Column) bool) []*Column {
+	for _, expr := range exprs {
+		result = extractColumnsIgnoringFTS(result, expr, filter)
+	}
+	return result
+}
+
+func extractColumnsIgnoringFTS(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		if filter == nil || filter(v) {
+			result = append(result, v)
+		}
+	case *ScalarFunction:
+		if _, ok := FTSFuncMap[v.FuncName.L]; ok {
+			return result
+		}
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsIgnoringFTS(result, arg, filter)
+		}
+	}
+	return result
+}
+
 func extractColumns(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
 	switch v := expr.(type) {
 	case *Column:
@@ -590,6 +616,14 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
+			if _, local := FTSMysqlMatchAgainstLocalEvalInfo(v); local {
+				// MATCH ... AGAINST keeps planner-initialized local evaluation state
+				// in its signature, so rebuild it by cloning and replacing all args.
+				cloned := v.Clone().(*ScalarFunction)
+				copy(cloned.Function.getArgs(), refExprArr.Result())
+				cloned.CleanHashCode()
+				return true, hasFail, cloned
+			}
 			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
 			if err != nil {
 				return true, true, v
@@ -692,6 +726,11 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf = x.Clone()
 			sf := newSf.(*ScalarFunction)
 			sf.GetArgs()[0] = newArgs[0]
+			sf.CleanHashCode()
+		} else if _, local := FTSMysqlMatchAgainstLocalEvalInfo(x); local {
+			newSf = x.Clone()
+			sf := newSf.(*ScalarFunction)
+			copy(sf.Function.getArgs(), newArgs)
 			sf.CleanHashCode()
 		} else {
 			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)

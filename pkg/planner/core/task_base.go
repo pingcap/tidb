@@ -185,25 +185,12 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
-	collectPartitionInfosFromMPPPlan(p, t.p)
+	collectScanPartitionInfosFromMPPPlan(p, t.p)
 	rt := &RootTask{}
 	rt.SetPlan(p)
 
 	if len(t.rootTaskConds) > 0 {
-		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
-		// so this Selection will be executed in TiDB.
-		_, isTableScan := t.p.(*PhysicalTableScan)
-		_, isSelection := t.p.(*PhysicalSelection)
-		if isSelection {
-			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
-		}
-		if !isTableScan {
-			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
-			// It's only for TableScan. This is ensured by converting mppTask to rootTask just after TableScan is built,
-			// so no other operators are added into this mppTask.
-			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
-			return base.InvalidTask.(*RootTask)
-		}
+		// Residual filters from table or TiCI index scans execute after the MPP reader.
 		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.rootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
@@ -398,6 +385,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.QueryBlockOffset())
+		p.StoreType = p.IndexPlans[0].(*PhysicalIndexScan).StoreType
 		p.PlanPartInfo = t.physPlanPartInfo
 		p.SetStats(t.indexPlan.StatsInfo())
 		newTask.SetPlan(p)

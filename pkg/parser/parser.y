@@ -159,6 +159,7 @@ import (
 	hourMicrosecond   "HOUR_MICROSECOND"
 	hourMinute        "HOUR_MINUTE"
 	hourSecond        "HOUR_SECOND"
+	hybrid            "HYBRID"
 	ifKwd             "IF"
 	ignore            "IGNORE"
 	ilike             "ILIKE"
@@ -533,6 +534,7 @@ import (
 	optional              "OPTIONAL"
 	packKeys              "PACK_KEYS"
 	pageSym               "PAGE"
+	parameter             "PARAMETER"
 	parser                "PARSER"
 	partial               "PARTIAL"
 	partitioning          "PARTITIONING"
@@ -3884,6 +3886,23 @@ ConstraintElem:
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
+		}
+		$$ = c
+	}
+|	"HYBRID" KeyOrIndexOpt IndexName '(' IndexPartSpecificationList ')' IndexOptionList
+	{
+		c := &ast.Constraint{
+			Tp:           ast.ConstraintHybrid,
+			Keys:         $5.([]*ast.IndexPartSpecification),
+			Name:         $3.(*ast.NullString).String,
+			IsEmptyIndex: $3.(*ast.NullString).Empty,
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
 		}
 		$$ = c
 	}
@@ -4383,6 +4402,10 @@ IndexKeyTypeOpt:
 |	"FULLTEXT"
 	{
 		$$ = ast.IndexKeyTypeFullText
+	}
+|	"HYBRID"
+	{
+		$$ = ast.IndexKeyTypeHybrid
 	}
 |	"VECTOR"
 	{
@@ -6638,6 +6661,8 @@ IndexOptionList:
 				opt1.Global = true
 			} else if opt2.Condition != nil {
 				opt1.Condition = opt2.Condition
+			} else if len(opt2.TiCIParameter) > 0 {
+				opt1.TiCIParameter = opt2.TiCIParameter
 			}
 			$$ = opt1
 		}
@@ -6661,8 +6686,6 @@ IndexOption:
 		$$ = &ast.IndexOption{
 			ParserName: model.NewCIStr($3),
 		}
-		yylex.AppendError(yylex.Errorf("The WITH PARASER clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	"COMMENT" stringLit
 	{
@@ -6699,6 +6722,10 @@ IndexOption:
 		$$ = &ast.IndexOption{
 			Condition: $2.(ast.ExprNode),
 		}
+	}
+|	"PARAMETER" stringLit
+	{
+		$$ = &ast.IndexOption{TiCIParameter: $2}
 	}
 
 /*
@@ -6770,6 +6797,10 @@ IndexTypeName:
 |	"HNSW"
 	{
 		$$ = model.IndexTypeHNSW
+	}
+|	"HYBRID"
+	{
+		$$ = model.IndexTypeHybrid
 	}
 
 IndexInvisible:
@@ -6871,6 +6902,7 @@ UnReservedKeyword:
 |	"OFFSET"
 |	"PACK_KEYS"
 |	"PARSER"
+|	"PARAMETER"
 |	"PASSWORD" %prec lowerThanEq
 |	"PREPARE"
 |	"PRE_SPLIT_REGIONS"

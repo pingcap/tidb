@@ -477,6 +477,10 @@ type StatementContext struct {
 	// build round encountered a non-correlated IN subquery eligible for the
 	// correlate-to-Apply alternative.
 	AlternativeLogicalPlanPreferCorrelate bool
+	// AlternativeLogicalPlanHasLocalFTS records an index-backed local MATCH candidate.
+	AlternativeLogicalPlanHasLocalFTS bool
+	// AlternativeLogicalPlanLocalFTS selects local evaluation during an alternative build.
+	AlternativeLogicalPlanLocalFTS bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -647,6 +651,8 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanDecorrelatedApply = false
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
+	sc.AlternativeLogicalPlanHasLocalFTS = false
+	sc.AlternativeLogicalPlanLocalFTS = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has

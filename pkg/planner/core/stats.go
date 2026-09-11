@@ -15,13 +15,16 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -38,12 +41,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -134,12 +139,29 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	}
 	ds.CheckPartialIndexes()
 	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
-	// Fill index paths for all paths.
+	// Cleanup the unused TiCI indexes. They are not suitable for normal reads.
+	ds.CleanUnusedTiCIIndexes()
+	var commonHandleInfoForTiCI *model.IndexInfo
+	firstTiCIIndex := true
+	// Fill index paths for all paths. TiCI needs the common-handle metadata
+	// to derive its shard-pruning columns and row layout.
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
+			commonHandleInfoForTiCI = path.Index
 			continue
 		}
-		err := fillIndexPath(ds, path, ds.PushedDownConds)
+		if path.Index.IsTiCIIndex() && firstTiCIIndex {
+			firstTiCIIndex = false
+			if commonHandleInfoForTiCI == nil && ds.TableInfo.IsCommonHandle {
+				for _, index := range ds.TableInfo.Indices {
+					if index.Primary {
+						commonHandleInfoForTiCI = index
+						break
+					}
+				}
+			}
+		}
+		err := fillIndexPath(ds, path, ds.PushedDownConds, commonHandleInfoForTiCI)
 		if err != nil {
 			return nil, err
 		}
@@ -171,16 +193,38 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	return ds.StatsInfo(), nil
 }
 
-func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
+func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, possiblePK *model.IndexInfo) error {
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
-	path.Ranges = ranger.FullRange()
+	ticiType := distsql.NotTiCIIndex
+	if path.Index.IsTiCIIndex() {
+		if path.Index.HasExtraTiCIShardingKey() {
+			ticiType = distsql.TiCIShardExtraShardingKey
+			path.Ranges = ranger.FullRange()
+		} else if ds.TableInfo.IsCommonHandle {
+			ticiType = distsql.TiCIShardCommonHandle
+			path.Ranges = ranger.FullNotNullRange()
+		} else {
+			ticiType = distsql.TiCIShardIntHandle
+			// Int Handle's range is a special one.
+			unsignedFlag := false
+			// We will not get the column for the _tidb_rowid case.
+			if intHandle := ds.TableInfo.GetPkColInfo(); intHandle != nil {
+				unsignedFlag = mysql.HasUnsignedFlag(intHandle.GetFlag())
+			}
+			path.Ranges = ranger.FullIntRange(unsignedFlag)
+		}
+		path.IdxCols, path.IdxColLens = util.TiCIIndexInfo2ShardCols(ds.Columns, ds.Schema().Columns, path.Index, possiblePK)
+		path.FullIdxCols, path.FullIdxColLens = util.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, path.Index)
+	} else {
+		path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+			util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+		path.Ranges = ranger.FullRange()
+	}
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
-	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
-		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
+	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) && ticiType == distsql.NotTiCIIndex {
 		handleCol := ds.GetPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
 			alreadyHandle := false
@@ -202,8 +246,209 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 			}
 		}
 	}
-	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, ticiType)
 	return err
+}
+
+func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
+	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.SCtx())
+		defer debugtrace.LeaveContextCommon(ds.SCtx())
+	}
+	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
+	countAfterAccess := defaultTiCISearchPathCount(ds)
+	// TiCI count estimation is only used to refine multi-table plan choices.
+	// StmtCtx.Tables is de-duplicated, so self-joins on one table use the local fallback.
+	if len(ds.SCtx().GetSessionVars().StmtCtx.Tables) > 1 {
+		if count, ok := deriveTiCISearchPathStats(ds, path); ok {
+			countAfterAccess = count
+		}
+	} else {
+		// For a single-table FTS query, there is no join-order decision to refine
+		// with a remote TiCI estimate. Use the average rows per distinct indexed
+		// text value as the local default instead of the capped selectivity fallback.
+		countAfterAccess = deriveSingleTableTiCISearchPathCount(ds, path)
+	}
+	updateTiCISearchPathStats(ds, path, countAfterAccess)
+}
+
+func defaultTiCISearchPathCount(ds *logicalop.DataSource) float64 {
+	return min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
+}
+
+func deriveSingleTableTiCISearchPathCount(ds *logicalop.DataSource, path *util.AccessPath) float64 {
+	totalRows := float64(ds.StatisticTable.RealtimeCount)
+	if totalRows <= 0 {
+		return 0
+	}
+	ndv, ok := estimateTiCISearchPathNDV(ds, path)
+	if !ok || ndv <= 0 {
+		return defaultTiCISearchPathCount(ds)
+	}
+	return totalRows / max(ndv, 1)
+}
+
+func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
+	if !canUseTiCISearchPathNDV(path.AccessConds) {
+		return 0, false
+	}
+	// Prefer the columns referenced by the FTS predicate. If extraction cannot find
+	// them, fall back to the full TiCI index columns so multi-column fulltext indexes
+	// still get a stable local estimate.
+	matchedCols := expression.ExtractColumnsFromExpressions(nil, path.AccessConds, func(col *expression.Column) bool {
+		if col == nil {
+			return false
+		}
+		for _, idxCol := range path.FullIdxCols {
+			if idxCol != nil && col.EqualColumn(idxCol) {
+				return true
+			}
+		}
+		return false
+	})
+	if len(matchedCols) == 0 {
+		matchedCols = path.FullIdxCols
+	}
+	ndv := 0.0
+	for _, col := range matchedCols {
+		if col == nil {
+			continue
+		}
+		colStats := ds.StatisticTable.GetCol(col.ID)
+		if ds.StatisticTable.Pseudo || colStats == nil || !colStats.IsStatsInitialized() {
+			// Avoid EstimateColumnNDV's synthetic no-stats NDV; keep no-stats
+			// behavior on the conservative capped fallback.
+			return 0, false
+		}
+		ndv = max(ndv, cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID))
+	}
+	return ndv, true
+}
+
+// canUseTiCISearchPathNDV returns true only for search literals whose selectivity
+// can be approximated from value NDV without invoking standard tokenization.
+// Terms with operators or punctuation, such as "ab.cd" or "*abc", must go
+// through the formal FTS tokenizer before we can reason about their real terms,
+// so they keep the conservative fallback estimate.
+func canUseTiCISearchPathNDV(accessConds []expression.Expression) bool {
+	if len(accessConds) != 1 {
+		return false
+	}
+	sf, ok := accessConds[0].(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch sf.FuncName.L {
+	case ast.FTSMatchWord, ast.FTSMatchPhrase:
+	default:
+		return false
+	}
+	args := sf.GetArgs()
+	if len(args) < 2 {
+		return false
+	}
+	query, ok := args[0].(*expression.Constant)
+	if !ok || query.Value.IsNull() {
+		return false
+	}
+	return isSimpleFTSSearchWord(query.Value.GetString())
+}
+
+func isSimpleFTSSearchWord(query string) bool {
+	if query == "" {
+		return false
+	}
+	for i := range len(query) {
+		ch := query[i]
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func updateTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath, countAfterAccess float64) {
+	calcSelectivity := func(filters []expression.Expression) float64 {
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, filters, nil)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			return cost.SelectionFactor
+		}
+		return selectivity
+	}
+
+	path.CountAfterAccess = countAfterAccess
+	path.CountAfterIndex = countAfterAccess
+	countAfterFilters := countAfterAccess
+	if len(path.IndexFilters) > 0 {
+		selectivity := calcSelectivity(path.IndexFilters)
+		path.CountAfterIndex = countAfterAccess * selectivity
+		countAfterFilters = path.CountAfterIndex
+	}
+	if len(path.TableFilters) > 0 {
+		selectivity := calcSelectivity(path.TableFilters)
+		countAfterFilters *= selectivity
+	}
+	// TODO: Let deriveStatsByFilter produce this final DataSource stats after TiCI FTS
+	// predicates can participate in normal selectivity estimation. Today those predicates
+	// are consumed into FtsQueryInfo before deriveStatsByFilter runs, and the TiCI search
+	// count is only known during path stats derivation.
+	ds.SetStats(ds.TableStats.ScaleByExpectCnt(countAfterFilters))
+}
+
+func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
+	sctx, ok := ds.SCtx().(sessionctx.Context)
+	if !ok || path == nil || path.Index == nil || path.FtsQueryInfo == nil || len(path.Ranges) == 0 {
+		return 0, false
+	}
+	if !variable.EnableTiCIEstimate.Load() {
+		return 0, false
+	}
+	provider, ok := sctx.GetStore().(kv.TiCIEstimateCountProvider)
+	if !ok {
+		return 0, false
+	}
+	tableID := ds.PhysicalTableID
+	if tableID == 0 {
+		tableID = ds.TableInfo.ID
+	}
+	keyRanges, err := distsql.TiCIIndexRangesToKVRanges(sctx.GetDistSQLCtx(), []int64{tableID}, path.Index.ID, path.Ranges, getTiCIShardType(ds, path))
+	if err != nil {
+		return 0, false
+	}
+	tzName, tzOffset := timeutil.Zone(sctx.GetSessionVars().Location())
+	count, err := provider.EstimateTiCICount(context.Background(), &kv.TiCIEstimateCountRequest{
+		TableID:        tableID,
+		IndexID:        path.Index.ID,
+		FTSQueryInfo:   path.FtsQueryInfo,
+		KeyRanges:      keyRanges,
+		TimeZoneName:   tzName,
+		TimeZoneOffset: tzOffset,
+	}, 50*time.Millisecond)
+	if err != nil {
+		return 0, false
+	}
+	plannerCount := min(float64(count), float64(ds.StatisticTable.RealtimeCount))
+	logutil.BgLogger().Debug("TiCI estimate count succeeded",
+		zap.Int64("tableID", tableID),
+		zap.String("indexName", path.Index.Name.O),
+		zap.Int64("indexID", path.Index.ID),
+		zap.Uint64("estimatedCount", count),
+		zap.Float64("plannerCountAfterAccess", plannerCount),
+		zap.Int64("realtimeCount", ds.StatisticTable.RealtimeCount),
+		zap.Int("rangeCount", len(path.Ranges)))
+	return plannerCount, true
+}
+
+func getTiCIShardType(ds *logicalop.DataSource, path *util.AccessPath) distsql.TiCIShardType {
+	if path.Index.HybridInfo != nil && path.Index.HybridInfo.Sharding != nil {
+		return distsql.TiCIShardExtraShardingKey
+	}
+	if ds.TableInfo.IsCommonHandle {
+		return distsql.TiCIShardCommonHandle
+	}
+	return distsql.TiCIShardIntHandle
 }
 
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
@@ -353,7 +598,7 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	if len(conds) == 0 {
 		return nil
 	}
-	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl); err != nil {
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, distsql.NotTiCIIndex); err != nil {
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
@@ -389,9 +634,12 @@ func detachCondAndBuildRangeForPath(
 	path *util.AccessPath,
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
+	ticiType distsql.TiCIShardType,
 ) error {
 	if len(path.IdxCols) == 0 {
-		path.TableFilters = conds
+		if ticiType == distsql.NotTiCIIndex {
+			path.TableFilters = conds
+		}
 		return nil
 	}
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
@@ -399,6 +647,12 @@ func detachCondAndBuildRangeForPath(
 		return err
 	}
 	path.Ranges = res.Ranges
+	if ticiType != distsql.NotTiCIIndex {
+		if ticiType == distsql.TiCIShardIntHandle {
+			path.Ranges = fixTiCIIndexRangesForIntHandle(path.Ranges, path.IdxCols[0].RetType.GetFlag()&mysql.UnsignedFlag > 0)
+		}
+		return nil
+	}
 	path.AccessConds = res.AccessConds
 	path.TableFilters = res.RemainedConds
 	path.EqCondCount = res.EqCondCount
@@ -413,6 +667,50 @@ func detachCondAndBuildRangeForPath(
 	}
 	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, path.IdxCols)
 	return err
+}
+
+// fixTiCIIndexRangesForIntHandle fixes the TiCI index ranges for int handle.
+// For normal index range, its min value is NULL or the MinNotNull, and max value is MaxValue.
+// But for TiCI index range which directly uses table's int pk range, we should set the min value to the min int value and max value to max int value.
+// And unlike the normal index, the code converting the int pk's range to the final kv.KeyRange doesn't handle the NULL.
+// So after calling the function of extract normal index ranges, we need to fix the ranges for TiCI index with int handle.
+func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) []*ranger.Range {
+	// isUnsigned indicates whether the handle is unsigned.
+	// Now we just cast the unsigned int to int and then store the int value inside the Datum.
+	// We wrap the uint64/int64 with Datum here to keep us untouched with Datum's internal representation.
+	var setMin, setMax func(ran *ranger.Range)
+	if isUnsigned {
+		setMin = func(ran *ranger.Range) {
+			ran.LowVal[0].SetUint64(0)
+		}
+		setMax = func(ran *ranger.Range) {
+			ran.HighVal[0].SetUint64(math.MaxUint64)
+		}
+	} else {
+		setMin = func(ran *ranger.Range) {
+			ran.LowVal[0].SetInt64(math.MinInt64)
+		}
+		setMax = func(ran *ranger.Range) {
+			ran.HighVal[0].SetInt64(math.MaxInt64)
+		}
+	}
+	for i := len(ranges) - 1; i >= 0; i-- {
+		ran := ranges[i]
+		// Remove the [NULL, NULL] which is invalid when generating int handle's kv.KeyRange.
+		if ran.HighVal[0].IsNull() {
+			ranges = slices.Delete(ranges, i, i+1)
+			continue
+		}
+		// Convert the min and max value to the int min/max value.
+		if ran.LowVal[0].IsNull() || ran.LowVal[0].Kind() == types.KindMinNotNull {
+			setMin(ran)
+			ran.LowExclude = false
+		}
+		if ran.HighVal[0].Kind() == types.KindMaxValue {
+			setMax(ran)
+		}
+	}
+	return ranges
 }
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
@@ -600,6 +898,9 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 				return err
 			}
 			path.IsSingleScan = true
+		} else if path.FtsQueryInfo != nil {
+			deriveSearchPathStats(ds, path)
+			path.IsSingleScan = isTiCISingleScan(ds, path.FullIdxCols, path.FullIdxColLens, path)
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
 			// Reevaluate path.IsSingleScan because it may have been set incorrectly
@@ -677,6 +978,18 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	// heuristic rule pruning other path should consider hint prefer.
 	// If no hints and some path matches a heuristic rule, just remove other possible paths.
 	if selected != nil {
+		selectedMatched := false
+		for _, path := range ds.PossibleAccessPaths {
+			if path == selected {
+				selectedMatched = true
+				break
+			}
+		}
+		// Some paths may have been pruned earlier because an FTS function forces
+		// a TiCI path. Do not let a removed heuristic candidate prune that path.
+		if !selectedMatched {
+			return nil
+		}
 		// heuristic rule pruning only affect current DS's PossibleAccessPaths, where physical plan will be generated.
 		ds.PossibleAccessPaths[0] = selected
 		ds.PossibleAccessPaths = ds.PossibleAccessPaths[:1]

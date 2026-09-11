@@ -1198,7 +1198,7 @@ func isTiKVIndexByName(idxName pmodel.CIStr, indexInfo *model.IndexInfo, tblInfo
 	if idxName.L == "primary" && tblInfo.PKIsHandle {
 		return true
 	}
-	return indexInfo != nil && !indexInfo.IsTiFlashLocalIndex()
+	return indexInfo != nil && !indexInfo.IsNonKVIndex()
 }
 
 func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo, suppressWarning bool) bool {
@@ -1248,7 +1248,7 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, bool, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1298,6 +1298,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		}
 	}
 
+	hasTiCIIndex := false
+	ticiIndexPaths := make([]*util.AccessPath, 0, len(publicPaths))
+
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			// Filter out invisible index, because they are not visible for optimizer
@@ -1310,7 +1313,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if check && latestIndexes == nil {
 				latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tblInfo.ID, 0)
 				if err != nil {
-					return nil, err
+					return nil, false, err
 				}
 			}
 			if check {
@@ -1318,9 +1321,20 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			if index.VectorInfo != nil {
+			// A TiCI fulltext index must remain an index access path here. Its
+			// PhysicalIndexScan is redirected to TiFlash after FTS validation.
+			// Treating it as a generic non-KV path would make IsTablePath classify
+			// it as a plain TiFlash table scan and discard the FTS query info.
+			if index.IsTiCIIndex() {
+				path := &util.AccessPath{Index: index}
+				publicPaths = append(publicPaths, path)
+				hasTiCIIndex = true
+				ticiIndexPaths = append(ticiIndexPaths, path)
+				continue
+			}
+			if index.IsNonKVIndex() {
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
-				// So the current way to use the vector indexes is to require the TiFlash Replica to be available.
+				// So the current way to use non-KV indexes is to require the TiFlash Replica to be available.
 				if !tblInfo.TiFlashReplica.Available {
 					continue
 				}
@@ -1411,7 +1425,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				err := plannererrors.ErrKeyDoesNotExist.FastGenByArgs(idxName, tblInfo.Name)
 				// if hint is from comment-style sql hints, we should throw a warning instead of error.
 				if i < indexHintsLen {
-					return nil, err
+					return nil, false, err
 				}
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -1425,7 +1439,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
 				if i < indexHintsLen {
-					return nil, err
+					return nil, false, err
 				}
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -1479,8 +1493,8 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// If all available paths are Multi-Valued Index, Partial index or other index that need to check its usability in later phase,
-	// it's possible that all these path are inapplicable,
+	// If all available paths are Multi-Valued Index, Partial Index, TiCI Index or another index whose usability
+	// must be checked later, all of these paths may turn out to be inapplicable,
 	// so that the table paths are still added here to avoid failing to find any physical plan.
 	allUndeterminedPath := true
 	for _, availablePath := range available {
@@ -1492,8 +1506,24 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	if allUndeterminedPath {
 		available = append(available, tablePath)
 	}
+	if hasTiCIIndex {
+		// Following previous comments, we add back the unhinted TiCI index paths.
+		// And remove them later after we decide the availability of each index.
+		tiCIIndexMap := make(map[int64]*util.AccessPath)
+		for _, path := range ticiIndexPaths {
+			tiCIIndexMap[path.Index.ID] = path
+		}
+		for _, path := range available {
+			if path.Index != nil && path.Index.IsTiCIIndex() {
+				delete(tiCIIndexMap, path.Index.ID)
+			}
+		}
+		for _, path := range tiCIIndexMap {
+			available = append(available, path)
+		}
+	}
 
-	return available, nil
+	return available, hasUseOrForce, nil
 }
 
 func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, tblName pmodel.CIStr, dbName pmodel.CIStr) ([]*util.AccessPath, error) {
@@ -1505,15 +1535,16 @@ func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, t
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {
+		engine := isolationReadEngineForPath(paths[i].StoreType)
 		// availableEngineStr is for warning message.
-		if _, ok := availableEngine[paths[i].StoreType]; !ok {
-			availableEngine[paths[i].StoreType] = struct{}{}
+		if _, ok := availableEngine[engine]; !ok {
+			availableEngine[engine] = struct{}{}
 			if availableEngineStr != "" {
 				availableEngineStr += ", "
 			}
-			availableEngineStr += paths[i].StoreType.Name()
+			availableEngineStr += engine.Name()
 		}
-		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
+		if _, ok := isolationReadEngines[engine]; !ok && engine != kv.TiDB {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
@@ -1540,6 +1571,13 @@ func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, t
 		}
 	}
 	return paths, err
+}
+
+func isolationReadEngineForPath(storeType kv.StoreType) kv.StoreType {
+	if storeType == kv.TiCI {
+		return kv.TiFlash
+	}
+	return storeType
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
@@ -1786,7 +1824,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName p
 			is.Columns = append(is.Columns, c.ColumnInfo)
 		}
 	}
-	is.initSchema(append(is.IdxCols, commonCols...), true)
+	is.initSchemaForTiKVIndex(append(is.IdxCols, commonCols...), true)
 
 	// It's double read case.
 	ts := PhysicalTableScan{
@@ -2231,7 +2269,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 				// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 				indexStateAnalyzable := idx.State == model.StatePublic ||
 					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
-				if idx.MVIndex || idx.VectorInfo != nil || !indexStateAnalyzable {
+				if idx.MVIndex || idx.IsNonKVIndex() || !indexStateAnalyzable {
 					continue
 				}
 				for _, idxCol := range idx.Columns {
@@ -2527,6 +2565,10 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		if originIdx.VectorInfo != nil {
 			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", originIdx.Name.L))
+			continue
+		}
+		if originIdx.FullTextInfo != nil {
+			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -3023,6 +3065,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
 				continue
 			}
+			if idx.FullTextInfo != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", idx.Name.L))
+				continue
+			}
 			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tnW.TableInfo, partitionNames, physicalIDs, version)...)
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tnW.TableInfo, true, nil)
@@ -3104,6 +3150,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
 			continue
 		}
+		if idx.FullTextInfo != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", idx.Name.L))
+			continue
+		}
 		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
 	}
 	return p, nil
@@ -3137,6 +3187,10 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			}
 			if idx.VectorInfo != nil {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
+				continue
+			}
+			if idx.FullTextInfo != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", idx.Name.L))
 				continue
 			}
 

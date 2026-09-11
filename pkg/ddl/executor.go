@@ -1154,6 +1154,9 @@ func (e *executor) createTableWithInfoJob(
 		SessionVars:         make(map[string]string),
 	}
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	if err := e.captureFullTextIndexSysvarsToJobFromTableInfo(ctx, job, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1240,6 +1243,11 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		SessionVars:    make(map[string]string),
 	}
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	for _, info := range infos {
+		if err := e.captureFullTextIndexSysvarsToJobFromTableInfo(ctx, job, info); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	var err error
 
@@ -1802,7 +1810,9 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			case ast.ConstraintPrimaryKey:
 				err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintFulltext:
-				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
+				err = e.createFullTextIndex(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+			case ast.ConstraintHybrid:
+				err = e.createHybridIndex(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintCheck:
 				if !variable.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
@@ -4761,6 +4771,151 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	return errors.Trace(err)
 }
 
+func checkTableTypeForFulltextIndex(tblInfo *model.TableInfo) error {
+	if err := checkTableTypeForHybridIndex(tblInfo); err != nil {
+		return err
+	}
+	if tblInfo.GetPartitionInfo() != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index on partitioned table")
+	}
+	return nil
+}
+
+func checkTableTypeForHybridIndex(tblInfo *model.TableInfo) error {
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Hybrid Index")
+	}
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("hybrid index")
+	}
+	return nil
+}
+
+func (e *executor) createFullTextIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tblInfo := t.Meta()
+	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
+	if err != nil || indexName.L == "" {
+		return errors.Trace(err)
+	}
+	if _, err = buildFullTextIndexInfo(tblInfo, indexName, indexPartSpecifications, indexOption, model.StateNone); err != nil {
+		return errors.Trace(err)
+	}
+	if indexOption != nil {
+		sessionVars := ctx.GetSessionVars()
+		if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongTableComment); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+	job.Version = model.GetJobVerInUse()
+	job.Type = model.ActionAddFullTextIndex
+	job.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(ctx))
+	job.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
+	// indexPartSpecifications[i].Expr can not be unmarshaled, so we set them to nil.
+	for _, spec := range indexPartSpecifications {
+		spec.Expr = nil
+	}
+
+	if err := e.captureFullTextIndexSysvarsToJob(ctx, job, indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+		}},
+		OpType: model.OpAddIndex,
+	}
+
+	err = e.doDDLJob2(ctx, job, args)
+	// key exists, but if_not_exists flags is true, so we ignore this error.
+	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	return errors.Trace(err)
+}
+
+func (e *executor) createHybridIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tblInfo := t.Meta()
+	if err := checkTableTypeForHybridIndex(tblInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
+	if err != nil || indexName.L == "" {
+		return errors.Trace(err)
+	}
+	if indexOption == nil {
+		indexOption = &ast.IndexOption{}
+	}
+	indexOption.Tp = pmodel.IndexTypeHybrid
+	if _, err := buildHybridInfoWithCheck(indexPartSpecifications, indexOption, tblInfo); err != nil {
+		return errors.Trace(err)
+	}
+	if _, _, err := buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, false); err != nil {
+		return errors.Trace(err)
+	}
+
+	sessionVars := ctx.GetSessionVars()
+	if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongTableComment); err != nil {
+		return errors.Trace(err)
+	}
+
+	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+	job.Version = model.GetJobVerInUse()
+	job.Type = model.ActionAddHybridIndex
+	job.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(ctx))
+	job.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
+
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+		}},
+		OpType: model.OpAddIndex,
+	}
+
+	err = e.doDDLJob2(ctx, job, args)
+	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	return errors.Trace(err)
+}
+
 func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
@@ -4836,7 +4991,6 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
-
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, true, ifNotExists)
 	if err != nil {
@@ -4891,6 +5045,132 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	return errors.Trace(err)
 }
 
+func (e *executor) captureFullTextIndexSysvarsToJob(sctx sessionctx.Context, job *model.Job, indexOption *ast.IndexOption) error {
+	parser := model.FullTextParserTypeStandardV1
+	if indexOption != nil && indexOption.ParserName.L != "" {
+		parser = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
+	}
+
+	sessVars := sctx.GetSessionVars()
+	getVar := func(name string) (string, error) {
+		val, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		return val, errors.Trace(err)
+	}
+
+	maxTokenSize, err := getVar(variable.InnodbFtMaxTokenSize)
+	if err != nil {
+		return err
+	}
+	minTokenSize, err := getVar(variable.InnodbFtMinTokenSize)
+	if err != nil {
+		return err
+	}
+	ngramTokenSize, err := getVar(variable.NgramTokenSize)
+	if err != nil {
+		return err
+	}
+	enableStopword, err := getVar(variable.InnodbFtEnableStopword)
+	if err != nil {
+		return err
+	}
+	serverStopwordTable, err := getVar(variable.InnodbFtServerStopwordTable)
+	if err != nil {
+		return err
+	}
+	userStopwordTable, err := getVar(variable.InnodbFtUserStopwordTable)
+	if err != nil {
+		return err
+	}
+
+	// Validate token size constraints early.
+	if parser == model.FullTextParserTypeStandardV1 {
+		minVal, err := strconv.ParseInt(minTokenSize, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		maxVal, err := strconv.ParseInt(maxTokenSize, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if minVal > maxVal {
+			return variable.ErrWrongValueForVar.GenWithStackByArgs(variable.InnodbFtMinTokenSize, minTokenSize)
+		}
+	}
+
+	// Validate stopword table schema if it will be used by standard parser.
+	if parser == model.FullTextParserTypeStandardV1 && variable.TiDBOptOn(enableStopword) {
+		stopwordTable := strings.TrimSpace(userStopwordTable)
+		stopwordTableVar := variable.InnodbFtUserStopwordTable
+		if stopwordTable == "" {
+			stopwordTable = strings.TrimSpace(serverStopwordTable)
+			stopwordTableVar = variable.InnodbFtServerStopwordTable
+		}
+		if stopwordTable != "" {
+			dbName, tblName, ok := splitFullTextStopwordTableName(stopwordTable)
+			if !ok {
+				return variable.ErrWrongValueForVar.GenWithStackByArgs(stopwordTableVar, stopwordTable)
+			}
+			is := e.infoCache.GetLatest()
+			tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblInfo := tbl.Meta()
+			// TiDB row-store tables are treated as InnoDB-compatible. TiFlash-only tables are not.
+			if tblInfo.IsColumnar {
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("stopword table must be an InnoDB table")
+			}
+			if len(tblInfo.Columns) != 1 || tblInfo.Columns[0].Name.L != "value" || tblInfo.Columns[0].FieldType.GetType() != mysql.TypeVarchar {
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("stopword table must contain a single VARCHAR column named value")
+			}
+		}
+	}
+
+	job.AddSessionVars(variable.InnodbFtMaxTokenSize, maxTokenSize)
+	job.AddSessionVars(variable.InnodbFtMinTokenSize, minTokenSize)
+	job.AddSessionVars(variable.NgramTokenSize, ngramTokenSize)
+	job.AddSessionVars(variable.InnodbFtEnableStopword, enableStopword)
+	job.AddSessionVars(variable.InnodbFtServerStopwordTable, serverStopwordTable)
+	job.AddSessionVars(variable.InnodbFtUserStopwordTable, userStopwordTable)
+	return nil
+}
+
+func (e *executor) captureFullTextIndexSysvarsToJobFromTableInfo(sctx sessionctx.Context, job *model.Job, tblInfo *model.TableInfo) error {
+	if tblInfo == nil {
+		return nil
+	}
+	for _, index := range tblInfo.Indices {
+		if index == nil || index.FullTextInfo == nil {
+			continue
+		}
+		indexOption := &ast.IndexOption{ParserName: pmodel.NewCIStr(index.FullTextInfo.ParserType.SQLName())}
+		if err := e.captureFullTextIndexSysvarsToJob(sctx, job, indexOption); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func splitFullTextStopwordTableName(raw string) (dbName string, tblName string, ok bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", false
+	}
+	parts := strings.Split(raw, "/")
+	if len(parts) != 2 {
+		parts = strings.Split(raw, ".")
+	}
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	dbName = strings.TrimSpace(parts[0])
+	tblName = strings.TrimSpace(parts[1])
+	if dbName == "" || tblName == "" {
+		return "", "", false
+	}
+	return dbName, tblName, true
+}
+
 func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
@@ -4938,9 +5218,14 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 
 func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
-	// not support Spatial and FullText index
-	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
+	if keyType == ast.IndexKeyTypeSpatial {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
+	}
+	if keyType == ast.IndexKeyTypeFullText {
+		return e.createFullTextIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+	}
+	if keyType == ast.IndexKeyTypeHybrid {
+		return e.createHybridIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	}
 	if keyType == ast.IndexKeyTypeVector {
 		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
@@ -5109,7 +5394,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 	}
 
 	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionAddHybridIndex, model.ActionAddFullTextIndex:
 		setReorgParam()
 		err := setDistTaskParam()
 		if err != nil {

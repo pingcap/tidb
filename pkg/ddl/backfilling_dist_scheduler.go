@@ -20,9 +20,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"slices"
 	"sort"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -40,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -51,6 +54,12 @@ type LitBackfillScheduler struct {
 	*scheduler.BaseScheduler
 	d          *ddl
 	GlobalSort bool
+}
+
+// storageWithPDAndCodec is the minimal store capability required by TiCI pre-split.
+type storageWithPDAndCodec interface {
+	kv.StorageWithPD
+	GetCodec() tikv.Codec
 }
 
 var _ scheduler.Extension = (*LitBackfillScheduler)(nil)
@@ -123,11 +132,11 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
 		if tblInfo.Partition != nil {
-			return generatePartitionPlan(ctx, storeWithPD, tblInfo)
+			return generatePartitionPlan(ctx, storeWithPD, tblInfo, backfillMeta.ScanSnapshotTS)
 		}
-		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
+		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), backfillMeta.ScanSnapshotTS, logger)
 	case proto.BackfillStepMergeSort:
-		return generateMergePlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, logger)
+		return generateMergePlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, backfillMeta.ScanSnapshotTS, logger)
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
@@ -139,18 +148,33 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 				metaArr = append(metaArr, metaBytes)
 				failpoint.Return(metaArr, nil)
 			})
+			storeWithPDAndCodec, err := getStorageWithPDAndCodec(sch.d.store)
+			if err != nil {
+				return nil, err
+			}
 			return generateGlobalSortIngestPlan(
 				ctx,
-				storeWithPD,
+				storeWithPDAndCodec,
 				taskHandle,
 				task,
+				&backfillMeta,
 				backfillMeta.CloudStorageURI,
+				backfillMeta.ScanSnapshotTS,
 				logger)
 		}
 		return nil, nil
 	default:
 		return nil, nil
 	}
+}
+
+// getStorageWithPDAndCodec validates that the store can provide both PD access and keyspace codec information.
+func getStorageWithPDAndCodec(store kv.Storage) (storageWithPDAndCodec, error) {
+	storeWithPDAndCodec, ok := store.(storageWithPDAndCodec)
+	if !ok {
+		return nil, errors.Errorf("store %T does not implement storageWithPDAndCodec", store)
+	}
+	return storeWithPDAndCodec, nil
 }
 
 // GetNextStep implements scheduler.Extension interface.
@@ -235,6 +259,7 @@ func generatePartitionPlan(
 	ctx context.Context,
 	store kv.StorageWithPD,
 	tblInfo *model.TableInfo,
+	scanSnapshotTS uint64,
 ) (metas [][]byte, err error) {
 	defs := tblInfo.Partition.Definitions
 	physicalIDs := make([]int64, len(defs))
@@ -252,6 +277,7 @@ func generatePartitionPlan(
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
 			TS:              importTS,
+			ScanSnapshotTS:  scanSnapshotTS,
 		}
 
 		metaBytes, err := json.Marshal(subTaskMeta)
@@ -271,6 +297,7 @@ func generateNonPartitionPlan(
 	job *model.Job,
 	useCloud bool,
 	nodeCnt int,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
@@ -338,9 +365,10 @@ func generateNonPartitionPlan(
 			}
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{
-				RowStart: batch[0].StartKey(),
-				RowEnd:   batch[len(batch)-1].EndKey(),
-				TS:       importTS,
+				RowStart:       batch[0].StartKey(),
+				RowEnd:         batch[len(batch)-1].EndKey(),
+				TS:             importTS,
+				ScanSnapshotTS: scanSnapshotTS,
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
@@ -391,10 +419,12 @@ func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) in
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
-	store kv.StorageWithPD,
+	store storageWithPDAndCodec,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	backfillMeta *BackfillTaskMeta,
 	cloudStorageURI string,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	var (
@@ -443,12 +473,32 @@ func generateGlobalSortIngestPlan(
 		if i < len(eleIDs) {
 			eleID = eleIDs[i]
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, scanSnapshotTS, logger)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		metaArr = append(metaArr, newMeta...)
 	}
+
+	if shouldCallTiCIPreSplit(backfillMeta) {
+		timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		err := triggerTiCIPreSplitImportShards(timeoutCtx, store, backfillMeta, cloudStorageURI, eleIDs, kvMetaGroups, logger)
+		cancel()
+		if err != nil {
+			logger.Error("tici pre-split shard failed, fallback to default global-sort ingest planning",
+				zap.Int64("taskID", task.ID),
+				zap.Int64("jobID", backfillMeta.Job.ID),
+				zap.String("jobType", backfillMeta.Job.Type.String()),
+				zap.Error(err))
+		}
+	}
+	failpoint.Inject("mockGenerateGlobalSortIngestPlanAfterPreSplit", func() {
+		m := &BackfillSubTaskMeta{
+			MetaGroups: []*external.SortedKVMeta{},
+		}
+		metaBytes, _ := m.Marshal()
+		failpoint.Return([][]byte{metaBytes}, nil)
+	})
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
 		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, external.PlanMetaPath(
@@ -470,6 +520,215 @@ func generateGlobalSortIngestPlan(
 	return metas, nil
 }
 
+// shouldCallTiCIPreSplit reports whether the current backfill job should try the TiCI pre-split optimization.
+func shouldCallTiCIPreSplit(backfillMeta *BackfillTaskMeta) bool {
+	if backfillMeta == nil {
+		return false
+	}
+	switch backfillMeta.Job.Type {
+	case model.ActionAddFullTextIndex, model.ActionAddHybridIndex:
+		return true
+	default:
+		return false
+	}
+}
+
+// triggerTiCIPreSplitImportShards builds and sends a best-effort TiCI pre-split request.
+func triggerTiCIPreSplitImportShards(
+	ctx context.Context,
+	store storageWithPDAndCodec,
+	backfillMeta *BackfillTaskMeta,
+	cloudStorageURI string,
+	eleIDs []int64,
+	kvMetaGroups []*external.SortedKVMeta,
+	logger *zap.Logger,
+) error {
+	reportGroups, err := buildTiCIPreSplitReportGroups(ctx, store, eleIDs, kvMetaGroups, cloudStorageURI, logger)
+	if err != nil {
+		return err
+	}
+	req, err := buildTiCIPreSplitImportShardsRequest(backfillMeta, reportGroups, kvMetaGroups)
+	if err != nil {
+		return err
+	}
+	if req == nil {
+		return nil
+	}
+	return tici.PreSplitImportShards(ctx, store, req)
+}
+
+// buildTiCIPreSplitImportShardsRequest merges per-range report groups into one TiCI request.
+func buildTiCIPreSplitImportShardsRequest(
+	backfillMeta *BackfillTaskMeta,
+	reportGroups []*tici.PreSplitImportShardMeta,
+	kvMetaGroups []*external.SortedKVMeta,
+) (*tici.PreSplitImportShardsRequest, error) {
+	if backfillMeta == nil {
+		return nil, errors.New("backfill meta is nil")
+	}
+	if len(reportGroups) == 0 {
+		return nil, nil
+	}
+	dataFileCount, statFileCount := countUniqueFilesForTiCIPreSplitRequest(kvMetaGroups)
+	req := &tici.PreSplitImportShardsRequest{
+		TidbTaskId:     ticiTaskIDForDDL(backfillMeta.Job.ID),
+		TableId:        backfillMeta.Job.TableID,
+		ScanSnapshotTs: backfillMeta.ScanSnapshotTS,
+		IndexIds:       append([]int64(nil), backfillMeta.EleIDs...),
+		DataFileCount:  dataFileCount,
+		StatFileCount:  statFileCount,
+		MetaGroups:     make([]*tici.PreSplitImportShardMeta, 0, len(reportGroups)),
+	}
+
+	for i, groupReq := range reportGroups {
+		if groupReq == nil {
+			return nil, errors.Errorf("report group %d is empty", i)
+		}
+		if len(req.StartKey) == 0 && len(req.EndKey) == 0 {
+			req.StartKey = groupReq.StartKey
+			req.EndKey = groupReq.EndKey
+		} else {
+			req.StartKey = external.BytesMin(req.StartKey, groupReq.StartKey)
+			req.EndKey = external.BytesMax(req.EndKey, groupReq.EndKey)
+		}
+		req.TotalKvSize += groupReq.TotalKvSize
+		req.TotalKvCnt += groupReq.TotalKvCnt
+		req.MetaGroups = append(req.MetaGroups, groupReq)
+		if groupReq.EleId > 0 && !slices.Contains(req.IndexIds, groupReq.EleId) {
+			req.IndexIds = append(req.IndexIds, groupReq.EleId)
+		}
+	}
+	return req, nil
+}
+
+// countUniqueFilesForTiCIPreSplitRequest deduplicates shared data/stat files before filling request metadata.
+func countUniqueFilesForTiCIPreSplitRequest(
+	kvMetaGroups []*external.SortedKVMeta,
+) (dataFileCount int32, statFileCount int32) {
+	dataFiles := make(map[string]struct{})
+	statFiles := make(map[string]struct{})
+	for _, kvMeta := range kvMetaGroups {
+		if kvMeta == nil {
+			continue
+		}
+		for _, dataFile := range kvMeta.GetDataFiles() {
+			dataFiles[dataFile] = struct{}{}
+		}
+		for _, statFile := range kvMeta.GetStatFiles() {
+			statFiles[statFile] = struct{}{}
+		}
+	}
+	return int32(len(dataFiles)), int32(len(statFiles))
+}
+
+const ticiPreSplitReportGroupSize int64 = units.GiB
+
+// buildTiCIPreSplitReportGroups splits all KV meta groups into TiCI report groups with exact size and key counts.
+func buildTiCIPreSplitReportGroups(
+	ctx context.Context,
+	store kv.StorageWithPD,
+	eleIDs []int64,
+	kvMetaGroups []*external.SortedKVMeta,
+	cloudStorageURI string,
+	logger *zap.Logger,
+) ([]*tici.PreSplitImportShardMeta, error) {
+	failpoint.Inject("mockBuildTiCIPreSplitReportGroups", func() {
+		reportGroups := make([]*tici.PreSplitImportShardMeta, 0, len(kvMetaGroups))
+		for i, kvMeta := range kvMetaGroups {
+			if kvMeta == nil {
+				continue
+			}
+			reportGroup := &tici.PreSplitImportShardMeta{
+				StartKey:      kvMeta.StartKey,
+				EndKey:        kvMeta.EndKey,
+				TotalKvSize:   kvMeta.TotalKVSize,
+				TotalKvCnt:    kvMeta.TotalKVCnt,
+				DataFileCount: int32(len(kvMeta.GetDataFiles())),
+				StatFileCount: int32(len(kvMeta.GetStatFiles())),
+			}
+			if i < len(eleIDs) {
+				reportGroup.EleId = eleIDs[i]
+			}
+			reportGroups = append(reportGroups, reportGroup)
+		}
+		failpoint.Return(reportGroups, nil)
+	})
+	reportGroups := make([]*tici.PreSplitImportShardMeta, 0, len(kvMetaGroups))
+	for i, kvMeta := range kvMetaGroups {
+		if kvMeta == nil {
+			return nil, errors.Errorf("subtask kv group %d is empty", i)
+		}
+		eleID := int64(0)
+		if i < len(eleIDs) {
+			eleID = eleIDs[i]
+		}
+		groups, err := splitTiCIPreSplitReportGroupsForOneKVMetaGroup(ctx, store, kvMeta, eleID, cloudStorageURI, logger)
+		if err != nil {
+			return nil, err
+		}
+		reportGroups = append(reportGroups, groups...)
+	}
+	return reportGroups, nil
+}
+
+// splitTiCIPreSplitReportGroupsForOneKVMetaGroup turns one KV meta group into TiCI pre-split report groups.
+func splitTiCIPreSplitReportGroupsForOneKVMetaGroup(
+	ctx context.Context,
+	store kv.StorageWithPD,
+	kvMeta *external.SortedKVMeta,
+	eleID int64,
+	cloudStorageURI string,
+	logger *zap.Logger,
+) ([]*tici.PreSplitImportShardMeta, error) {
+	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
+		return nil, nil
+	}
+	splitter, err := getRangeSplitterWithGroupSize(ctx, store, cloudStorageURI, ticiPreSplitReportGroupSize, kvMeta.MultipleFilesStats, logger)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err := splitter.Close()
+		if err != nil {
+			logger.Error("failed to close tici pre-split range splitter", zap.Error(err))
+		}
+	}()
+
+	reportGroups := make([]*tici.PreSplitImportShardMeta, 0, max(1, int(kvMeta.TotalKVSize/uint64(ticiPreSplitReportGroupSize))+1))
+	startKey := kvMeta.StartKey
+	var endKey kv.Key
+	for {
+		endKeyOfGroup, dataFiles, statFiles, groupSize, groupKeyCnt, _, _, err := splitter.SplitOneRangesGroup()
+		if err != nil {
+			return nil, err
+		}
+		if len(endKeyOfGroup) == 0 {
+			endKey = kvMeta.EndKey
+		} else {
+			endKey = kv.Key(endKeyOfGroup).Clone()
+		}
+		if bytes.Compare(startKey, endKey) >= 0 {
+			return nil, errors.Errorf("invalid tici report range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		}
+		reportGroup := &tici.PreSplitImportShardMeta{
+			EleId:         eleID,
+			StartKey:      startKey,
+			EndKey:        endKey,
+			TotalKvSize:   groupSize,
+			TotalKvCnt:    groupKeyCnt,
+			DataFileCount: int32(len(dataFiles)),
+			StatFileCount: int32(len(statFiles)),
+		}
+		reportGroups = append(reportGroups, reportGroup)
+		if len(endKeyOfGroup) == 0 {
+			break
+		}
+		startKey = endKey
+	}
+	return reportGroups, nil
+}
+
 func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
 	pdCli := store.GetPDClient()
 	p, l, err := pdCli.GetTS(ctx)
@@ -487,12 +746,30 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	eleID int64,
 	cloudStorageURI string,
 	instanceCnt int64,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) (metaArr []*BackfillSubTaskMeta, err error) {
 	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
 		// Skip global sort for empty table.
 		return nil, nil
 	}
+	failpoint.Inject("mockSplitSubtaskMetaForOneKVMetaGroup", func() {
+		m := &BackfillSubTaskMeta{
+			MetaGroups: []*external.SortedKVMeta{{
+				StartKey:    kvMeta.StartKey,
+				EndKey:      kvMeta.EndKey,
+				TotalKVSize: kvMeta.TotalKVSize,
+				TotalKVCnt:  kvMeta.TotalKVCnt,
+			}},
+			DataFiles:      kvMeta.GetDataFiles(),
+			StatFiles:      kvMeta.GetStatFiles(),
+			ScanSnapshotTS: scanSnapshotTS,
+		}
+		if eleID > 0 {
+			m.EleIDs = []int64{eleID}
+		}
+		failpoint.Return([]*BackfillSubTaskMeta{m}, nil)
+	})
 	importTS, err := allocNewTS(ctx, store)
 	if err != nil {
 		return nil, err
@@ -516,7 +793,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	startKey := kvMeta.StartKey
 	var endKey kv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, _, _, interiorRangeJobKeys, interiorRegionSplitKeys, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
@@ -543,8 +820,11 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
-				StartKey:    startKey,
-				EndKey:      endKey,
+				StartKey: startKey,
+				EndKey:   endKey,
+				// Keep the historical evenly-divided size in ingest subtask meta
+				// for compatibility. TiCI pre-split report groups calculate exact
+				// per-group size/count separately.
 				TotalKVSize: kvMeta.TotalKVSize / uint64(instanceCnt),
 			}},
 			DataFiles:      dataFiles,
@@ -552,6 +832,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			RangeJobKeys:   rangeJobKeys,
 			RangeSplitKeys: regionSplitKeys,
 			TS:             importTS,
+			ScanSnapshotTS: scanSnapshotTS,
 		}
 		if eleID > 0 {
 			m.EleIDs = []int64{eleID}
@@ -571,6 +852,7 @@ func generateMergePlan(
 	task *proto.Task,
 	nodeCnt int,
 	cloudStorageURI string,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
@@ -635,8 +917,9 @@ func generateMergePlan(
 		}
 		for _, files := range dataFilesGroup {
 			m := &BackfillSubTaskMeta{
-				DataFiles: files,
-				EleIDs:    eleID,
+				DataFiles:      files,
+				EleIDs:         eleID,
+				ScanSnapshotTS: scanSnapshotTS,
 			}
 			metaArr = append(metaArr, m)
 		}
@@ -671,6 +954,22 @@ func getRangeSplitter(
 	multiFileStat []external.MultipleFilesStat,
 	logger *zap.Logger,
 ) (*external.RangeSplitter, error) {
+	rangeGroupSize := totalSize / instanceCnt
+	if rangeGroupSize <= 0 {
+		rangeGroupSize = 1
+	}
+	return getRangeSplitterWithGroupSize(ctx, store, cloudStorageURI, rangeGroupSize, multiFileStat, logger)
+}
+
+// getRangeSplitterWithGroupSize builds a range splitter that groups ranges by the provided target size.
+func getRangeSplitterWithGroupSize(
+	ctx context.Context,
+	store kv.StorageWithPD,
+	cloudStorageURI string,
+	rangeGroupSize int64,
+	multiFileStat []external.MultipleFilesStat,
+	logger *zap.Logger,
+) (*external.RangeSplitter, error) {
 	backend, err := storage.ParseBackend(cloudStorageURI, nil)
 	if err != nil {
 		return nil, err
@@ -680,7 +979,6 @@ func getRangeSplitter(
 		return nil, err
 	}
 
-	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
 
 	var regionSplitSize = int64(config.SplitRegionSize)

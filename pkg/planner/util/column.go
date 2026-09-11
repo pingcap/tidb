@@ -17,6 +17,7 @@ package util
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -126,4 +127,43 @@ func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*expression.Column, ind
 	fullCols []*expression.Column, fullLens []int,
 ) {
 	return indexInfo2ColsImpl(colInfos, cols, index, extractPrefixCols|extractFullCols)
+}
+
+// TiCIIndexInfo2ShardCols gets the columns used to prune TiCI shards.
+// An explicit Hybrid sharding key takes precedence; otherwise the table handle
+// determines the TiCI storage-key layout.
+func TiCIIndexInfo2ShardCols(
+	colInfos []*model.ColumnInfo,
+	cols []*expression.Column,
+	index *model.IndexInfo,
+	pkInfo *model.IndexInfo,
+) ([]*expression.Column, []int) {
+	if index.HybridInfo != nil && index.HybridInfo.Sharding != nil {
+		retCols := make([]*expression.Column, 0, len(index.HybridInfo.Sharding.Columns))
+		lens := make([]int, 0, len(index.HybridInfo.Sharding.Columns))
+		for _, indexCol := range index.HybridInfo.Sharding.Columns {
+			col := indexCol2Col(colInfos, cols, indexCol)
+			if col == nil {
+				return retCols, lens
+			}
+			retCols = append(retCols, col)
+			length := indexCol.Length
+			if length != types.UnspecifiedLength && length == col.RetType.GetFlen() {
+				length = types.UnspecifiedLength
+			}
+			lens = append(lens, length)
+		}
+		return retCols, lens
+	}
+	if pkInfo != nil {
+		return IndexInfo2PrefixCols(colInfos, cols, pkInfo)
+	}
+	for _, colInfo := range colInfos {
+		if mysql.HasPriKeyFlag(colInfo.GetFlag()) {
+			if col := expression.ColInfo2Col(cols, colInfo); col != nil {
+				return []*expression.Column{col}, []int{types.UnspecifiedLength}
+			}
+		}
+	}
+	return nil, nil
 }

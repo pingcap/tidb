@@ -62,6 +62,8 @@ type batchCopTask struct {
 	// PartitionTableRegions indicates region infos for each partition table, used by scanning partitions in batch.
 	// Thus, one of `regionInfos` and `PartitionTableRegions` must be nil.
 	PartitionTableRegions []*coprocessor.TableRegions
+
+	TableShardInfos []*coprocessor.TableShardInfos // table shard infos for each executor
 }
 
 type batchCopResponse struct {
@@ -1253,9 +1255,14 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		}
 		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
 	} else {
-		// TODO: merge the if branch.
-		ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
+		if req.StoreType == kv.TiFlash && req.FullText {
+			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
+			tasks, err = buildBatchCopTasksForFullText(ctx, c.store.kvStore, req.FullTextInfo.TableID, req.FullTextInfo.IndexID, req.FullTextInfo.ExecutorID, ranges)
+		} else {
+			// TODO: merge the if branch.
+			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
+			tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
+		}
 	}
 
 	if err != nil {
@@ -1404,6 +1411,23 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
+	if batchTask.TableShardInfos != nil {
+		retryRanges, retryShardIDs := collectFullTextRetryRanges(batchTask.TableShardInfos)
+		if len(retryRanges) == 0 {
+			return nil, errors.New("tiflash_fts retry has no remaining ranges")
+		}
+		for _, shardID := range retryShardIDs {
+			b.store.GetTiCIShardCache().InvalidateCachedShard(shardID)
+		}
+		return buildBatchCopTasksForFullText(
+			ctx,
+			b.store,
+			b.req.FullTextInfo.TableID,
+			b.req.FullTextInfo.IndexID,
+			b.req.FullTextInfo.ExecutorID,
+			NewKeyRanges(retryRanges),
+		)
+	}
 	if batchTask.regionInfos != nil {
 		var ranges []kv.KeyRange
 		for _, ri := range batchTask.regionInfos {
@@ -1442,6 +1466,30 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 	return ret, err
 }
 
+func collectFullTextRetryRanges(tableShardInfos []*coprocessor.TableShardInfos) ([]kv.KeyRange, []uint64) {
+	retryRanges := make([]kv.KeyRange, 0, len(tableShardInfos))
+	retryShardIDs := make([]uint64, 0, len(tableShardInfos))
+	seenShardIDs := make(map[uint64]struct{}, len(tableShardInfos))
+	for _, tableShardInfo := range tableShardInfos {
+		for _, shardInfo := range tableShardInfo.ShardInfos {
+			if _, ok := seenShardIDs[shardInfo.ShardId]; !ok {
+				seenShardIDs[shardInfo.ShardId] = struct{}{}
+				retryShardIDs = append(retryShardIDs, shardInfo.ShardId)
+			}
+			for _, ran := range shardInfo.Ranges {
+				retryRanges = append(retryRanges, kv.KeyRange{
+					StartKey: ran.Start,
+					EndKey:   ran.End,
+				})
+			}
+		}
+	}
+	slices.SortFunc(retryRanges, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
+	})
+	return retryRanges, retryShardIDs
+}
+
 // TiFlashReadTimeoutUltraLong represents the max time that tiflash request may take, since it may scan many regions for tiflash.
 const TiFlashReadTimeoutUltraLong = 3600 * time.Second
 
@@ -1461,6 +1509,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		TableRegions:    task.PartitionTableRegions,
 		ConnectionId:    b.req.ConnID,
 		ConnectionAlias: b.req.ConnAlias,
+		TableShardInfos: task.TableShardInfos,
 	}
 
 	rgName := b.req.ResourceGroupName
@@ -1550,6 +1599,19 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 				logutil.BgLogger().Info("stale regions are too many, so we omit the rest ones")
 				break
 			}
+		}
+		return
+	}
+
+	if len(response.RetryShards) > 0 {
+		logutil.BgLogger().Info("multiple shards are stale and need to be refreshed", zap.Int("shards size", len(response.RetryShards)))
+		for idx, retry := range response.RetryShards {
+			if idx < 10 {
+				logutil.BgLogger().Info("invalid shard because tiflash detected stale shard", zap.Uint64("shard id", retry.ShardId))
+			} else if idx == 10 {
+				logutil.BgLogger().Info("stale shards are too many, so we only print the first 10 stale shards")
+			}
+			b.store.GetTiCIShardCache().InvalidateCachedShard(retry.ShardId)
 		}
 		return
 	}
@@ -1728,4 +1790,52 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	}
 	failpointCheckForConsistentHash(res)
 	return res, nil
+}
+
+func buildBatchCopTasksForFullText(ctx context.Context, store *kvStore, tableID int64, indexID int64, executorID string, keyRanges *KeyRanges) ([]*batchCopTask, error) {
+	cmdType := tikvrpc.CmdBatchCop
+	cache := store.GetTiCIShardCache()
+	tasks := make([]*batchCopTask, 0)
+	ret, err := cache.BatchLocateKeyRanges(ctx, tableID, indexID, keyRanges.ToRanges())
+	if err != nil {
+		return nil, err
+	}
+	if len(ret) == 0 {
+		return nil, errors.New("No shard info found")
+	}
+
+	storeShard := make(map[string][]*coprocessor.ShardInfo)
+	for _, shard := range ret {
+		// Always use the first local cache address as the store address.
+		if _, ok := storeShard[shard.localCacheAddrs[0]]; !ok {
+			storeShard[shard.localCacheAddrs[0]] = make([]*coprocessor.ShardInfo, 0)
+		}
+		storeShard[shard.localCacheAddrs[0]] = append(storeShard[shard.localCacheAddrs[0]], &coprocessor.ShardInfo{
+			ShardId:    shard.ShardID,
+			ShardEpoch: shard.Epoch,
+			Ranges:     shard.Ranges.ToPBRanges(),
+		})
+	}
+
+	for addr, shardInfos := range storeShard {
+		tableShardInfos := []*coprocessor.TableShardInfos{}
+		tableShardInfos = append(tableShardInfos, &coprocessor.TableShardInfos{
+			ExecutorId: executorID,
+			ShardInfos: shardInfos,
+		})
+
+		tasks = append(tasks, &batchCopTask{
+			ctx: &tikv.RPCContext{
+				Addr: addr,
+			},
+			cmdType:         cmdType,
+			storeAddr:       addr,
+			TableShardInfos: tableShardInfos,
+		})
+	}
+
+	if len(tasks) == 0 {
+		return nil, errors.New("tiflash_fts node is unavailable")
+	}
+	return tasks, nil
 }

@@ -242,13 +242,15 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	if !checkVectorAggPushDown(ctx, aggFunc) {
 		return false
 	}
-	ret := true
+	var ret bool
 	switch storeType {
-	case kv.TiFlash:
+	case kv.TiFlash, kv.TiCI:
 		ret = CheckAggPushFlash(ctx, aggFunc)
 	case kv.TiKV:
 		// TiKV does not support group_concat now
 		ret = aggFunc.Name != ast.AggFuncGroupConcat
+	default:
+		return false
 	}
 	if ret {
 		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)

@@ -91,6 +91,12 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	}
 	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
 	copy(cloned.constColsByCond, op.constColsByCond)
+	if op.FtsQueryInfo != nil {
+		return nil, false
+	}
+	if op.PlanPartInfo != nil {
+		return nil, false
+	}
 	return cloned, true
 }
 
@@ -221,7 +227,7 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 	}
 	cloned.TablePlans = flattenListPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
-	if op.TableScanAndPartitionInfos != nil {
+	if op.ScanAndPartitionInfos != nil {
 		return nil, false
 	}
 	return cloned, true

@@ -16,17 +16,22 @@ package ddl_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -47,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1153,6 +1159,32 @@ LOOP:
 	tk.MustExec("drop table test_drop_index")
 }
 
+func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	enableMockTiCIBackfill(t)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists th")
+	tk.MustExec("create table th(a int, v varchar(20))")
+
+	param := `'{"inverted":{"columns":["a"]}, "sharding_key":{"columns":["a"]}}'`
+	tk.MustExec("create hybrid index h_idx on th(a) parameter " + param)
+	tk.MustExec("drop index h_idx on th")
+
+	tk.MustExec("alter table th add hybrid index h_idx(a) parameter " + param)
+	tk.MustExec("alter table th drop index h_idx")
+
+	tk.MustExec("drop table if exists th2")
+	tk.MustExec("create table th2(a int, hybrid index h_idx(a) parameter " + param + ")")
+	tk.MustExec("drop table th2")
+}
+
 func TestAnonymousIndex(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
@@ -1430,6 +1462,48 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		"Unsupported set vector index invisible")
 }
 
+func TestHybridIndexOnPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	enableMockTiCIBackfill(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+
+	tk.MustExec("drop table if exists pt_create, pt_alter;")
+	tk.MustExec(`create table pt_create(a int, b varchar(255), c int)
+partition by range (a) (
+        partition p0 values less than (10),
+        partition p1 values less than (20)
+);`)
+	tk.MustExec(`create hybrid index idx_hybrid on pt_create(b, c) parameter '{"fulltext":[{"columns":["b"]}],"inverted":{"columns":["c"]},"sharding_key":{"columns":["b"]}}'`)
+	tbl := external.GetTableByName(t, tk, "test", "pt_create")
+	idx := tbl.Meta().FindIndexByName("idx_hybrid")
+	require.NotNil(t, idx)
+	require.Equal(t, pmodel.IndexTypeHybrid, idx.Tp)
+	require.NotNil(t, idx.HybridInfo)
+	require.Len(t, idx.HybridInfo.FullText, 1)
+	require.Len(t, idx.HybridInfo.Inverted, 1)
+
+	tk.MustExec(`create table pt_alter(a int, b varchar(255), c int)
+partition by range (a) (
+        partition p0 values less than (5),
+        partition p1 values less than (15)
+);`)
+	tk.MustExec(`alter table pt_alter add hybrid index idx_hybrid_alter(b, c) parameter '{"fulltext":[{"columns":["b"]}],"inverted":{"columns":["c"]},"sharding_key":{"columns":["b"]}}'`)
+	tbl = external.GetTableByName(t, tk, "test", "pt_alter")
+	idx = tbl.Meta().FindIndexByName("idx_hybrid_alter")
+	require.NotNil(t, idx)
+	require.Equal(t, pmodel.IndexTypeHybrid, idx.Tp)
+	require.NotNil(t, idx.HybridInfo)
+	require.Len(t, idx.HybridInfo.FullText, 1)
+	require.Len(t, idx.HybridInfo.Inverted, 1)
+}
+
 func TestAddVectorIndexSimple(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -1615,6 +1689,307 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.Equal(t, false, tbl.Meta().Indices[2].VectorInfo == nil)
 }
 
+func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t_create, sw;")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	limit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(1)
+	defer func() {
+		variable.SetDDLErrorCountLimit(limit)
+	}()
+	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(10 * time.Millisecond)
+	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+	enableMockTiCIBackfill(t)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockNewTiCIDataWriterGroupManagerCtx", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexRequest", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockGetCloudStoragePrefix", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+
+	tk.MustExec("create table sw (value varchar(20))")
+	tk.MustExec("insert into sw values ('a'), ('the'), ('foo'), ('foo')")
+
+	tk.MustExec("set @@global.innodb_ft_min_token_size=1")
+	tk.MustExec("set @@global.innodb_ft_max_token_size=10")
+	tk.MustExec("set @@innodb_ft_enable_stopword=on")
+	tk.MustExec("set @@innodb_ft_user_stopword_table='test/sw'")
+
+	// CREATE TABLE with FULLTEXT INDEX should also pass sysvars + stopwords.
+	tici.ResetMockTiCICreateIndexRequest()
+	tk.MustExec("create table t_create (id int, c text, fulltext index fts_idx(c))")
+	raw := tici.GetMockTiCICreateIndexRequest()
+	require.NotEmpty(t, raw)
+	assertTiCIFulltextParserInfo(t, raw)
+
+	tk.MustExec("create table t (id int, c text)")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+
+	tici.ResetMockTiCICreateIndexRequest()
+	tici.ResetMockTiCIGetImportStoragePrefixRequest()
+	tici.ResetMockTiCIFinishIndexUploadRequest()
+	tk.MustExec("alter table t add fulltext index fts_idx(c)")
+
+	raw = tici.GetMockTiCICreateIndexRequest()
+	require.NotEmpty(t, raw)
+	assertTiCIFulltextParserInfo(t, raw)
+	for _, name := range []string{"t_create", "t"} {
+		index := external.GetTableByName(t, tk, "test", name).Meta().FindIndexByName("fts_idx")
+		require.Equal(t, &model.FullTextParserConfig{
+			InnodbFtMinTokenSize: 1, InnodbFtMaxTokenSize: 10,
+			NgramTokenSize: 2, InnodbFtEnableStopword: true,
+		}, index.FullTextInfo.ParserConfig)
+	}
+
+	rows := tk.MustQuery("admin show ddl jobs 1").Rows()
+	require.Len(t, rows, 1)
+	jobID, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	expectedTaskID := ddl.TaskKey(jobID, false)
+
+	// Empty-table fulltext add-index skips reorg/backfill, so TiCI upload finalization is
+	// still exercised here but GetImportStoragePrefix is not.
+	raw = tici.GetMockTiCIFinishIndexUploadRequest()
+	require.NotEmpty(t, raw)
+	var finishReq tici.FinishImportIndexUploadRequest
+	require.NoError(t, json.Unmarshal(raw, &finishReq))
+	require.Equal(t, expectedTaskID, finishReq.TidbTaskId)
+}
+
+// A retried CREATE must publish the settings captured by its job, even when
+// global variables change after the first metadata-write attempt.
+func TestFullTextParserConfigCreateRetry(t *testing.T) {
+	for _, failurePoint := range []string{"checkOwnerCheckAllVersionsWaitTime", "mockErrorAfterCreateTiCIIndexes"} {
+		t.Run(failurePoint, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table parent (id int primary key)")
+			tk.MustExec("set @@global.innodb_ft_min_token_size=4")
+			tk.MustExec("set @@global.innodb_ft_max_token_size=80")
+			tk.MustExec("set @@global.ngram_token_size=3")
+			tk.MustExec("set @@innodb_ft_enable_stopword=off")
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexRequest", `return(1)`)
+			originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+			ddl.SetWaitTimeWhenErrorOccurred(time.Millisecond)
+			t.Cleanup(func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) })
+
+			tici.ResetMockTiCICreateIndexRequest()
+			var retried atomic.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type != model.ActionCreateTable || job.ErrorCount == 0 || retried.Swap(true) {
+					return
+				}
+				if failurePoint == "mockErrorAfterCreateTiCIIndexes" {
+					// TiCI has already accepted the first request, but table metadata
+					// has not committed. Check both this request and the retry below.
+					var first tici.CreateIndexRequest
+					require.NoError(t, first.Unmarshal(tici.GetMockTiCICreateIndexRequest()))
+					require.Equal(t, "4", first.ParserInfo.ParserParams["innodb_ft_min_token_size"])
+					require.Equal(t, "80", first.ParserInfo.ParserParams["innodb_ft_max_token_size"])
+					require.Equal(t, "OFF", first.ParserInfo.ParserParams["innodb_ft_enable_stopword"])
+				}
+				other := testkit.NewTestKit(t, store)
+				other.MustExec("set @@global.innodb_ft_min_token_size=5")
+				other.MustExec("set @@global.innodb_ft_max_token_size=81")
+				other.MustExec("set @@global.ngram_token_size=4")
+			})
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/"+failurePoint, `1*return(true)->return(false)`)
+			tk.MustExec("create table fts_retry (id int, c text, fulltext index ft(c))")
+			require.True(t, retried.Load())
+			config := external.GetTableByName(t, tk, "test", "fts_retry").Meta().FindIndexByName("ft").FullTextInfo.ParserConfig
+			require.Equal(t, &model.FullTextParserConfig{
+				InnodbFtMinTokenSize: 4, InnodbFtMaxTokenSize: 80,
+				NgramTokenSize: 3, InnodbFtEnableStopword: false,
+			}, config)
+			var req tici.CreateIndexRequest
+			require.NoError(t, req.Unmarshal(tici.GetMockTiCICreateIndexRequest()))
+			require.Equal(t, "4", req.ParserInfo.ParserParams["innodb_ft_min_token_size"])
+			require.Equal(t, "80", req.ParserInfo.ParserParams["innodb_ft_max_token_size"])
+			require.Equal(t, "OFF", req.ParserInfo.ParserParams["innodb_ft_enable_stopword"])
+
+			// LIKE creates a new physical index with the new job's settings, rather
+			// than copying the old index's analyzer snapshot.
+			tk.MustExec("create table fts_like like fts_retry")
+			tk.MustExec("create table fts_fk (id int, c text, fulltext index ft(c), foreign key (id) references parent(id))")
+			for _, name := range []string{"fts_like", "fts_fk"} {
+				index := external.GetTableByName(t, tk, "test", name).Meta().FindIndexByName("ft")
+				require.Equal(t, model.StatePublic, index.State)
+				require.Equal(t, &model.FullTextParserConfig{
+					InnodbFtMinTokenSize: 5, InnodbFtMaxTokenSize: 81,
+					NgramTokenSize: 4, InnodbFtEnableStopword: false,
+				}, index.FullTextInfo.ParserConfig)
+			}
+		})
+	}
+}
+
+func TestFulltextIndexRequiresGlobalSortForBackfill(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	})
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_empty(id int, c text)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_empty")
+	tk.MustExec("alter table t_empty add fulltext index fts_idx(c) with parser standard")
+
+	tk.MustExec("create table t_non_empty(id int, c text)")
+	tk.MustExec("insert into t_non_empty values (1, 'hello world')")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_non_empty")
+	tk.MustContainErrMsg("alter table t_non_empty add fulltext index fts_idx(c) with parser standard",
+		"fulltext index on non-empty table requires global sort")
+}
+
+func TestFulltextIndexProbeErrorDoesNotBecomeGlobalSortError(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCheckTableReorgWorkCanSkip", `return("error")`)
+
+	limit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(1)
+	defer func() {
+		variable.SetDDLErrorCountLimit(limit)
+	}()
+	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(10 * time.Millisecond)
+	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	})
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_probe_err(id int, c text)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_probe_err")
+
+	err := tk.ExecToErr("alter table t_probe_err add fulltext index fts_idx(c) with parser standard")
+	require.ErrorContains(t, err, "mock check table reorg work can skip error")
+	require.NotContains(t, err.Error(), "requires global sort")
+}
+
+func TestFulltextIndexCheckAddIndexProgressTransition(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `1*return(false)->return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCloudImportExecutor", `return()`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_cloud_storage_uri = '%s'", startFakeGCSSortURI(t)))
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	})
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(id int, c text)")
+	tk.MustExec("insert into t values (1, 'hello world')")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- tk.ExecToErr("alter table t add fulltext index fts_idx(c) with parser standard")
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case err := <-doneCh:
+			doneCh <- err
+			return false
+		default:
+		}
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		if err != nil {
+			return false
+		}
+		idx := tbl.Meta().FindIndexByName("fts_idx")
+		return idx != nil && idx.State != model.StatePublic
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, <-doneCh)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("fts_idx")
+	require.NotNil(t, idx)
+	require.Equal(t, model.StatePublic, idx.State)
+}
+
+func startFakeGCSSortURI(t *testing.T) string {
+	t.Helper()
+
+	const host = "127.0.0.1"
+	l, err := net.Listen("tcp", host+":0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+
+	server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+		Scheme:     "http",
+		Host:       host,
+		Port:       uint16(port),
+		PublicHost: fmt.Sprintf("%s:%d", host, port),
+	})
+	require.NoError(t, err)
+	t.Cleanup(server.Stop)
+
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	return fmt.Sprintf(
+		"gs://sorted/addindex?endpoint=http://%s:%d/storage/v1/&access-key=aaaaaa&secret-access-key=bbbbbb",
+		host,
+		port,
+	)
+}
+
+func assertTiCIFulltextParserInfo(t *testing.T, raw []byte) {
+	t.Helper()
+
+	var req tici.CreateIndexRequest
+	require.NoError(t, req.Unmarshal(raw))
+	require.NotNil(t, req.ParserInfo)
+
+	parserParams := req.ParserInfo.ParserParams
+	require.Equal(t, "standard", parserParams["parser_name"])
+	require.Equal(t, "1", parserParams["innodb_ft_min_token_size"])
+	require.Equal(t, "10", parserParams["innodb_ft_max_token_size"])
+	require.Equal(t, "ON", parserParams["innodb_ft_enable_stopword"])
+	require.Equal(t, "test/sw", parserParams["innodb_ft_user_stopword_table"])
+
+	stopwords := append([]string(nil), req.ParserInfo.StopWords...)
+	sort.Strings(stopwords)
+	require.Equal(t, []string{"a", "foo", "the"}, stopwords)
+}
+
 func TestAddVectorIndexRollback(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -1730,4 +2105,132 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col1, col2)) PARTITION BY HASH (col1) PARTITIONS 2")
 	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
 	tk.MustExec("admin check table t")
+}
+
+func TestHybridIndexShardingKeyColumns(t *testing.T) {
+	enableMockTiCIBackfill(t)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(col1 int, col2 varchar(255), col3 int, col4 int)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	tk.MustContainErrMsg(`create hybrid index idx_bad on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
+		"sharding_key": {"columns": ["col3"]}
+	}'`, "column 'col3' referenced in HYBRID index PARAMETER must appear in index definition")
+
+	tk.MustContainErrMsg(`create hybrid index idx_missing_sharding on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]}
+	}'`, "HYBRID index PARAMETER must define sharding_key")
+
+	tk.MustExec(`create hybrid index idx_ok on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
+		"sharding_key": {"columns": ["col1", "col4"]}
+	}'`)
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("idx_ok")
+	require.NotNil(t, idx)
+	require.NotNil(t, idx.HybridInfo)
+	require.NotNil(t, idx.HybridInfo.Sharding)
+	require.Len(t, idx.HybridInfo.Sharding.Columns, 2)
+	require.Equal(t, "col1", idx.HybridInfo.Sharding.Columns[0].Name.O)
+	require.Equal(t, "col4", idx.HybridInfo.Sharding.Columns[1].Name.O)
+}
+
+func TestHybridIndexCreateTiCIOnce(t *testing.T) {
+	enableMockTiCIBackfill(t)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `1*return(true)->return(false)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(col1 int, col2 varchar(255), col3 int, col4 int)")
+	tk.MustExec("insert into t values (1, 'a', 2, 3)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	tk.MustExec(`create hybrid index idx_ok on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
+		"sharding_key": {"columns": ["col1", "col4"]}
+		}'`)
+}
+
+func TestHybridIndexCheckAddIndexProgressTransition(t *testing.T) {
+	enableMockTiCIBackfill(t)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `1*return(false)->return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(col1 int, col2 varchar(255), col3 int, col4 int)")
+	tk.MustExec("insert into t values (1, 'a', 2, 3)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	createHybridIndexSQL := `create hybrid index idx_progress on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
+		"sharding_key": {"columns": ["col1", "col4"]}
+	}'`
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- tk.ExecToErr(createHybridIndexSQL)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case err := <-doneCh:
+			doneCh <- err
+			return false
+		default:
+		}
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		if err != nil {
+			return false
+		}
+		idx := tbl.Meta().FindIndexByName("idx_progress")
+		return idx != nil && idx.State != model.StatePublic
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, <-doneCh)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("idx_progress")
+	require.NotNil(t, idx)
+	require.Equal(t, model.StatePublic, idx.State)
+}
+
+func TestUniqueTiCIHybridIndexRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 int, c2 varchar(255))")
+
+	tk.MustContainErrMsg(`create unique index idx_h on t(c1, c2) using hybrid parameter '{
+		"inverted": {"columns": ["c2"]},
+		"sort": {"columns": ["c1"]},
+		"sharding_key": {"columns": ["c1"]}
+	}'`, "HYBRID index does not support UNIQUE")
 }

@@ -341,6 +341,10 @@ const (
 	// produce an equivalent same-order index join candidate.
 	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
 
+	// TiDBEnableLocalMatchAgainst enables local no-score MATCH ... AGAINST evaluation.
+	// With alternative logical plans enabled, it competes with native TiCI on cost.
+	TiDBEnableLocalMatchAgainst = "tidb_enable_local_match_against"
+
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -899,6 +903,9 @@ const (
 	// TiDBEnableStatsUpdateDuringDDL indicate the embedded analyze behavior inside ddl.
 	TiDBEnableStatsUpdateDuringDDL = "tidb_stats_update_during_ddl"
 
+	// TiDBEnableTiCIEstimate indicates whether to call TiCI to estimate full-text search row counts.
+	TiDBEnableTiCIEstimate = "tidb_enable_tici_estimate"
+
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
@@ -1350,6 +1357,7 @@ const (
 	DefOptEnableCorrelationAdjustment       = true
 	DefOptEnableNoDecorrelateInSelect       = false
 	DefOptEnableAlternativeLogicalPlans     = false
+	DefTiDBEnableLocalMatchAgainst          = false
 	DefOptEnableSemiJoinRewrite             = false
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9
@@ -1571,6 +1579,7 @@ const (
 	DefTiDBGenerateBinaryPlan                         = true
 	DefEnableTiDBGCAwareMemoryTrack                   = false
 	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBEnableTiCIEstimate                         = true
 	DefTiDBEnableStatsUpdateDuringDDL                 = false
 	DefTiDBEnableTmpStorageOnOOM                      = true
 	DefTiDBEnableMDL                                  = true
@@ -1718,6 +1727,7 @@ var (
 	EnablePProfSQLCPU             = atomic.NewBool(false)
 	EnableBatchDML                = atomic.NewBool(false)
 	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	EnableTiCIEstimate            = atomic.NewBool(DefTiDBEnableTiCIEstimate)
 	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
 	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency

@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -504,7 +505,7 @@ func accessPathsForConds(
 			if !isInIndexMergeHints(ds, newPath.Index.Name.L) {
 				continue
 			}
-			err := fillIndexPath(ds, newPath, conditions)
+			err := fillIndexPath(ds, newPath, conditions, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
@@ -1384,7 +1385,7 @@ func buildPartialPath4MVIndex(
 		partialPath.FullIdxCols = append(partialPath.FullIdxCols, idxCols[i])
 		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, length)
 	}
-	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl); err != nil {
+	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl, distsql.NotTiCIIndex); err != nil {
 		return nil, false, err
 	}
 	if len(partialPath.AccessConds) != len(accessFilters) || len(partialPath.TableFilters) > 0 {

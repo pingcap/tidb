@@ -728,14 +728,15 @@ const (
 type IndexOption struct {
 	node
 
-	KeyBlockSize uint64
-	Tp           model.IndexType
-	Comment      string
-	ParserName   model.CIStr
-	Visibility   IndexVisibility
-	PrimaryKeyTp model.PrimaryKeyType
-	Global       bool
-	Condition    ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+	KeyBlockSize  uint64
+	Tp            model.IndexType
+	Comment       string
+	ParserName    model.CIStr
+	Visibility    IndexVisibility
+	PrimaryKeyTp  model.PrimaryKeyType
+	Global        bool
+	Condition     ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+	TiCIParameter string   `json:"tici_parameter,omitempty"`
 }
 
 // IsEmpty is true if only default options are given
@@ -748,7 +749,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
-		n.Condition != nil {
+		n.Condition != nil ||
+		len(n.TiCIParameter) > 0 {
 		return false
 	}
 	return true
@@ -797,6 +799,15 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("COMMENT ")
 		ctx.WriteString(n.Comment)
+		hasPrevOption = true
+	}
+
+	if n.TiCIParameter != "" {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("PARAMETER ")
+		ctx.WriteString(n.TiCIParameter)
 		hasPrevOption = true
 	}
 
@@ -861,6 +872,8 @@ const (
 	ConstraintUniqIndex
 	ConstraintForeignKey
 	ConstraintFulltext
+	// ConstraintHybrid is only used in AST.
+	ConstraintHybrid
 	ConstraintCheck
 	ConstraintVector
 )
@@ -917,6 +930,8 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE INDEX")
 	case ConstraintFulltext:
 		ctx.WriteKeyWord("FULLTEXT")
+	case ConstraintHybrid:
+		ctx.WriteKeyWord("HYBRID INDEX")
 	case ConstraintCheck:
 		if n.Name != "" {
 			ctx.WriteKeyWord("CONSTRAINT ")
@@ -1827,6 +1842,8 @@ const (
 	IndexKeyTypeUnique
 	IndexKeyTypeSpatial
 	IndexKeyTypeFullText
+	// IndexKeyTypeHybrid is only used in AST.
+	IndexKeyTypeHybrid
 	IndexKeyTypeVector
 )
 
@@ -1857,6 +1874,8 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SPATIAL ")
 	case IndexKeyTypeFullText:
 		ctx.WriteKeyWord("FULLTEXT ")
+	case IndexKeyTypeHybrid:
+		ctx.WriteKeyWord("HYBRID ")
 	case IndexKeyTypeVector:
 		ctx.WriteKeyWord("VECTOR ")
 	}

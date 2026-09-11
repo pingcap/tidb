@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -72,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -83,6 +85,7 @@ import (
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -384,6 +387,12 @@ func BuildIndexInfo(
 		return nil, errors.Trace(err)
 	}
 
+	if isUnique {
+		if indexOption != nil && indexOption.Tp == pmodel.IndexTypeHybrid {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index does not support UNIQUE")
+		}
+	}
+
 	// Create index info.
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,
@@ -398,6 +407,13 @@ func BuildIndexInfo(
 			return nil, errors.Trace(err)
 		}
 		idxInfo.VectorInfo = vectorInfo
+	}
+	if indexOption != nil && indexOption.Tp == pmodel.IndexTypeHybrid {
+		hybridInfo, err := buildHybridInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.HybridInfo = hybridInfo
 	}
 
 	var err error
@@ -438,6 +454,748 @@ func BuildIndexInfo(
 	}
 
 	return idxInfo, nil
+}
+
+type hybridIndexParameter struct {
+	FullText []hybridFullTextSpec   `json:"fulltext"`
+	Vector   []hybridVectorSpec     `json:"vector"`
+	Inverted hybridInvertedSpecList `json:"inverted"`
+	Sort     *hybridSortSpec        `json:"sort"`
+	Sharding *hybridShardingSpec    `json:"sharding_key"`
+}
+
+type hybridFullTextSpec struct {
+	Columns   stringList                   `json:"columns"`
+	IndexInfo *hybridFullTextIndexInfoSpec `json:"index_info"`
+}
+
+type hybridVectorSpec struct {
+	Columns   stringList                 `json:"columns"`
+	IndexInfo *hybridVectorIndexInfoSpec `json:"index_info"`
+}
+
+type hybridVectorIndexInfoSpec struct {
+	DistanceMetric string            `json:"distance_metric"`
+	Dimension      *uint64           `json:"dimension"`
+	Options        map[string]string `json:"options"`
+}
+
+type hybridInvertedSpec struct {
+	Columns stringList      `json:"columns"`
+	Params  map[string]any  `json:"params"`
+	Sort    *hybridSortSpec `json:"sort"`
+}
+
+type hybridInvertedSpecList []*hybridInvertedSpec
+
+type hybridSortSpec struct {
+	Columns    stringList `json:"columns"`
+	Directions []string   `json:"directions"`
+	Order      []string   `json:"order"`
+}
+
+type hybridShardingSpec struct {
+	Columns stringList `json:"columns"`
+}
+
+type stringList []string
+
+func (s *stringList) UnmarshalJSON(data []byte) error {
+	dataStr := strings.TrimSpace(string(data))
+	if len(dataStr) == 0 || dataStr == "null" {
+		*s = nil
+		return nil
+	}
+	if dataStr[0] == '"' {
+		var v string
+		if err := json.Unmarshal(data, &v); err != nil {
+			return errors.Trace(err)
+		}
+		v = strings.TrimSpace(v)
+		if v == "" {
+			*s = []string{}
+		} else {
+			*s = []string{v}
+		}
+		return nil
+	}
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return errors.Trace(err)
+	}
+	result := make([]string, 0, len(arr))
+	for _, str := range arr {
+		result = append(result, strings.TrimSpace(str))
+	}
+	*s = result
+	return nil
+}
+
+type hybridFullTextIndexInfoSpec struct {
+	Analyzer     *hybridFullTextAnalyzerSpec  `json:"analyzer"`
+	Tokenizer    *hybridFullTextTokenizerSpec `json:"tokenizer"`
+	TokenFilters []string                     `json:"token_filter"`
+}
+
+func (s *hybridFullTextIndexInfoSpec) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || strings.TrimSpace(string(data)) == "null" {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+	for k, v := range raw {
+		switch strings.ToLower(k) {
+		case "analyzer":
+			var analyzer hybridFullTextAnalyzerSpec
+			if err := json.Unmarshal(v, &analyzer); err != nil {
+				return errors.Trace(err)
+			}
+			s.Analyzer = &analyzer
+		case "tokenizer":
+			var tokenizer hybridFullTextTokenizerSpec
+			if err := json.Unmarshal(v, &tokenizer); err != nil {
+				return errors.Trace(err)
+			}
+			s.Tokenizer = &tokenizer
+		case "token_filter":
+			var list stringList
+			if err := json.Unmarshal(v, &list); err != nil {
+				return errors.Trace(err)
+			}
+			s.TokenFilters = list
+		default:
+			// Ignore unknown fields for forward compatibility.
+		}
+	}
+	return nil
+}
+
+func (s *hybridFullTextIndexInfoSpec) toModel() *model.HybridFulltextIndexInfo {
+	if s == nil {
+		return nil
+	}
+	info := &model.HybridFulltextIndexInfo{}
+	if s.Analyzer != nil {
+		info.Analyzer = s.Analyzer.toModel()
+	}
+	if s.Tokenizer != nil {
+		info.Tokenizer = s.Tokenizer.toModel()
+	}
+	if len(s.TokenFilters) > 0 {
+		info.TokenFilters = append([]string(nil), s.TokenFilters...)
+	}
+	return info
+}
+
+type hybridFullTextAnalyzerSpec struct {
+	Type   string
+	Params map[string]any
+}
+
+func (s *hybridFullTextAnalyzerSpec) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+	for k, v := range raw {
+		if strings.EqualFold(k, "type") {
+			if err := json.Unmarshal(v, &s.Type); err != nil {
+				return errors.Trace(err)
+			}
+			s.Type = strings.TrimSpace(s.Type)
+			continue
+		}
+		if s.Params == nil {
+			s.Params = make(map[string]any)
+		}
+		val, err := decodeJSONToInterface(v)
+		if err != nil {
+			return err
+		}
+		s.Params[k] = val
+	}
+	return nil
+}
+
+func (s *hybridFullTextAnalyzerSpec) toModel() *model.HybridFulltextAnalyzer {
+	if s == nil {
+		return nil
+	}
+	cfg := &model.HybridFulltextAnalyzer{Type: s.Type}
+	if len(s.Params) > 0 {
+		cfg.Params = cloneInterfaceMap(s.Params)
+	}
+	return cfg
+}
+
+type hybridFullTextTokenizerSpec struct {
+	Type    string
+	Options map[string]any
+}
+
+func (s *hybridFullTextTokenizerSpec) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+	for k, v := range raw {
+		if strings.EqualFold(k, "type") {
+			if err := json.Unmarshal(v, &s.Type); err != nil {
+				return errors.Trace(err)
+			}
+			s.Type = strings.TrimSpace(s.Type)
+			continue
+		}
+		if s.Options == nil {
+			s.Options = make(map[string]any)
+		}
+		val, err := decodeJSONToInterface(v)
+		if err != nil {
+			return err
+		}
+		s.Options[k] = val
+	}
+	return nil
+}
+
+func (s *hybridFullTextTokenizerSpec) toModel() *model.HybridFulltextTokenizer {
+	if s == nil {
+		return nil
+	}
+	cfg := &model.HybridFulltextTokenizer{Type: s.Type}
+	if len(s.Options) > 0 {
+		cfg.Options = cloneInterfaceMap(s.Options)
+	}
+	return cfg
+}
+
+func (s *hybridVectorIndexInfoSpec) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return nil
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+
+	for k, v := range raw {
+		switch strings.ToLower(k) {
+		case "distance_metric":
+			var metric string
+			if err := json.Unmarshal(v, &metric); err != nil {
+				return errors.Trace(err)
+			}
+			metric = strings.TrimSpace(metric)
+			if metric != "" {
+				s.DistanceMetric = metric
+			}
+		case "dimension":
+			dim, err := parseHybridVectorDimension(v)
+			if err != nil {
+				return err
+			}
+			s.Dimension = dim
+		case "options":
+			opts, err := parseHybridVectorOptions(v)
+			if err != nil {
+				return err
+			}
+			if len(opts) > 0 {
+				if s.Options == nil {
+					s.Options = make(map[string]string, len(opts))
+				}
+				for optKey, optVal := range opts {
+					s.Options[optKey] = optVal
+				}
+			}
+		default:
+			val, err := decodeJSONToInterface(v)
+			if err != nil {
+				return err
+			}
+			strVal, err := hybridVectorOptionValueToString(val)
+			if err != nil {
+				return err
+			}
+			if s.Options == nil {
+				s.Options = make(map[string]string)
+			}
+			s.Options[k] = strVal
+		}
+	}
+
+	return nil
+}
+
+func (s *hybridVectorIndexInfoSpec) toModel() *model.HybridVectorIndexInfo {
+	if s == nil {
+		return nil
+	}
+	info := &model.HybridVectorIndexInfo{}
+	if strings.TrimSpace(s.DistanceMetric) != "" {
+		info.DistanceMetric = strings.ToUpper(strings.TrimSpace(s.DistanceMetric))
+	}
+	if s.Dimension != nil {
+		dim := *s.Dimension
+		info.Dimension = &dim
+	}
+	if len(s.Options) > 0 {
+		info.Options = make(map[string]string, len(s.Options))
+		for k, v := range s.Options {
+			info.Options[k] = v
+		}
+	}
+	return info
+}
+
+func (s *hybridInvertedSpec) UnmarshalJSON(data []byte) error {
+	dataStr := strings.TrimSpace(string(data))
+	if len(dataStr) == 0 || dataStr == "null" {
+		return nil
+	}
+	if dataStr[0] == '"' {
+		var v string
+		if err := json.Unmarshal(data, &v); err != nil {
+			return errors.Trace(err)
+		}
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index inverted component must specify explicit columns")
+	}
+	type rawSpec struct {
+		Columns json.RawMessage            `json:"columns"`
+		Params  map[string]json.RawMessage `json:"params"`
+		Sort    *hybridSortSpec            `json:"sort"`
+	}
+	var raw rawSpec
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+	if len(raw.Columns) > 0 {
+		var list stringList
+		if err := json.Unmarshal(raw.Columns, &list); err != nil {
+			return errors.Trace(err)
+		}
+		s.Columns = list
+	}
+	if len(raw.Params) > 0 {
+		s.Params = make(map[string]any, len(raw.Params))
+		for k, v := range raw.Params {
+			val, err := decodeJSONToInterface(v)
+			if err != nil {
+				return err
+			}
+			s.Params[k] = val
+		}
+	}
+	if raw.Sort != nil {
+		s.Sort = raw.Sort
+	}
+	return nil
+}
+
+func (l *hybridInvertedSpecList) UnmarshalJSON(data []byte) error {
+	dataStr := strings.TrimSpace(string(data))
+	if len(dataStr) == 0 || dataStr == "null" {
+		*l = nil
+		return nil
+	}
+	if dataStr[0] == '{' {
+		var spec hybridInvertedSpec
+		if err := json.Unmarshal(data, &spec); err != nil {
+			return errors.Trace(err)
+		}
+		*l = []*hybridInvertedSpec{&spec}
+		return nil
+	}
+	if dataStr[0] == '[' {
+		var list []*hybridInvertedSpec
+		if err := json.Unmarshal(data, &list); err != nil {
+			return errors.Trace(err)
+		}
+		*l = list
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index inverted component must be an object or array")
+}
+
+func decodeJSONToInterface(data json.RawMessage) (any, error) {
+	if data == nil {
+		return nil, nil
+	}
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return value, nil
+}
+
+func parseHybridVectorDimension(raw json.RawMessage) (*uint64, error) {
+	val, err := decodeJSONToInterface(raw)
+	if err != nil {
+		return nil, err
+	}
+	switch v := val.(type) {
+	case nil:
+		return nil, nil
+	case float64:
+		if v < 0 {
+			return nil, errors.Trace(errors.Errorf("hybrid vector index dimension must be non-negative, got %v", v))
+		}
+		asStr := strconv.FormatFloat(v, 'f', -1, 64)
+		parsed, err := strconv.ParseUint(asStr, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if float64(parsed) != v {
+			return nil, errors.Trace(errors.Errorf("hybrid vector index dimension must be an integer, got %v", v))
+		}
+		dim := parsed
+		return &dim, nil
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return nil, nil
+		}
+		parsed, err := strconv.ParseUint(trimmed, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		dim := parsed
+		return &dim, nil
+	default:
+		return nil, errors.Trace(errors.Errorf("hybrid vector index dimension must be numeric, got %T", v))
+	}
+}
+
+func parseHybridVectorOptions(raw json.RawMessage) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return nil, nil
+	}
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &rawMap); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rawMap) == 0 {
+		return nil, nil
+	}
+	opts := make(map[string]string, len(rawMap))
+	for key, value := range rawMap {
+		val, err := decodeJSONToInterface(value)
+		if err != nil {
+			return nil, err
+		}
+		strVal, err := hybridVectorOptionValueToString(val)
+		if err != nil {
+			return nil, err
+		}
+		opts[key] = strVal
+	}
+	return opts, nil
+}
+
+func hybridVectorOptionValueToString(val any) (string, error) {
+	switch v := val.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return strings.TrimSpace(v), nil
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64), nil
+	case bool:
+		return strconv.FormatBool(v), nil
+	default:
+		bytes, err := json.Marshal(v)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		return string(bytes), nil
+	}
+}
+
+func cloneInterfaceMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = deepCloneInterface(v)
+	}
+	return dst
+}
+
+func deepCloneInterface(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return cloneInterfaceMap(val)
+	case []any:
+		if len(val) == 0 {
+			return []any{}
+		}
+		res := make([]any, len(val))
+		for i, elem := range val {
+			res[i] = deepCloneInterface(elem)
+		}
+		return res
+	case json.RawMessage:
+		if val == nil {
+			return json.RawMessage(nil)
+		}
+		return append(json.RawMessage(nil), val...)
+	default:
+		return val
+	}
+}
+
+func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption,
+	tblInfo *model.TableInfo) (*model.HybridIndexInfo, error) {
+	if indexOption == nil || strings.TrimSpace(indexOption.TiCIParameter) == "" {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index must specify PARAMETER option")
+	}
+	paramLiteral := strings.TrimSpace(indexOption.TiCIParameter)
+	if unquoted, err := types.UnquoteString(paramLiteral); err == nil {
+		paramLiteral = unquoted
+	}
+	var param hybridIndexParameter
+	if err := json.Unmarshal([]byte(paramLiteral), &param); err != nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("invalid HYBRID index PARAMETER: %v", err))
+	}
+	if len(param.FullText) == 0 && len(param.Vector) == 0 && len(param.Inverted) == 0 {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index PARAMETER must define at least one component")
+	}
+	if param.Sharding == nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index PARAMETER must define sharding_key")
+	}
+
+	indexColumns := make(map[string]*model.ColumnInfo, len(indexPartSpecifications))
+	for _, idxPart := range indexPartSpecifications {
+		if idxPart.Column == nil {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index only supports column references")
+		}
+		if idxPart.Length != types.UnspecifiedLength {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index does not support prefix length")
+		}
+		if idxPart.Desc {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index does not support DESC order")
+		}
+		colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+		if colInfo == nil {
+			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name, tblInfo.Name)
+		}
+		indexColumns[idxPart.Column.Name.L] = colInfo
+	}
+
+	resolveColumn := func(name string) (*model.ColumnInfo, error) {
+		lowered := strings.ToLower(strings.TrimSpace(name))
+		if lowered == "" {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index PARAMETER contains empty column name")
+		}
+		if colInfo, ok := indexColumns[lowered]; ok {
+			return colInfo, nil
+		}
+		if findColumnByName(lowered, tblInfo) == nil {
+			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(name, tblInfo.Name)
+		}
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("column '%s' referenced in HYBRID index PARAMETER must appear in index definition", name))
+	}
+
+	info := &model.HybridIndexInfo{}
+	makeIndexColumn := func(colInfo *model.ColumnInfo) *model.IndexColumn {
+		return &model.IndexColumn{
+			Name:   colInfo.Name,
+			Offset: colInfo.Offset,
+			Length: types.UnspecifiedLength,
+		}
+	}
+
+	if len(param.FullText) > 0 {
+		info.FullText = make([]*model.HybridFullTextSpec, 0, len(param.FullText))
+		for i, spec := range param.FullText {
+			if len(spec.Columns) == 0 {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("HYBRID index fulltext component %d must specify columns", i+1))
+			}
+			columns := make([]*model.IndexColumn, 0, len(spec.Columns))
+			for _, colName := range spec.Columns {
+				colInfo, err := resolveColumn(colName)
+				if err != nil {
+					return nil, err
+				}
+				if !types.IsString(colInfo.FieldType.GetType()) {
+					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("HYBRID index fulltext column '%s' must be of string type", colInfo.Name.O))
+				}
+				columns = append(columns, makeIndexColumn(colInfo))
+			}
+			component := &model.HybridFullTextSpec{Columns: columns}
+			if spec.IndexInfo != nil {
+				component.IndexInfo = spec.IndexInfo.toModel()
+			}
+			info.FullText = append(info.FullText, component)
+		}
+	}
+
+	if len(param.Vector) > 0 {
+		info.Vector = make([]*model.HybridVectorSpec, 0, len(param.Vector))
+		for i, spec := range param.Vector {
+			if len(spec.Columns) == 0 {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("HYBRID index vector component %d must specify columns", i+1))
+			}
+			columns := make([]*model.IndexColumn, 0, len(spec.Columns))
+			for _, colName := range spec.Columns {
+				colInfo, err := resolveColumn(colName)
+				if err != nil {
+					return nil, err
+				}
+				if colInfo.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
+					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("HYBRID index vector column '%s' must be of VECTOR type", colInfo.Name.O))
+				}
+				columns = append(columns, makeIndexColumn(colInfo))
+			}
+			component := &model.HybridVectorSpec{Columns: columns}
+			if spec.IndexInfo != nil {
+				component.IndexInfo = spec.IndexInfo.toModel()
+			}
+			info.Vector = append(info.Vector, component)
+		}
+	}
+
+	var sortSpec *hybridSortSpec
+	if param.Sort != nil {
+		sortSpec = param.Sort
+	}
+
+	var shardingSpec *hybridShardingSpec
+	if param.Sharding != nil {
+		// Keep the sharding spec separate so it can reuse the same column validation
+		// (index-only column restriction) as other components.
+		shardingSpec = param.Sharding
+	}
+
+	if len(param.Inverted) > 0 {
+		info.Inverted = make([]*model.HybridInvertedSpec, 0, len(param.Inverted))
+		for i, spec := range param.Inverted {
+			if len(spec.Columns) == 0 {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("HYBRID index inverted component %d must specify columns", i+1))
+			}
+			component := &model.HybridInvertedSpec{}
+			component.Columns = make([]*model.IndexColumn, 0, len(spec.Columns))
+			for _, colName := range spec.Columns {
+				colInfo, err := resolveColumn(colName)
+				if err != nil {
+					return nil, err
+				}
+				component.Columns = append(component.Columns, makeIndexColumn(colInfo))
+			}
+			if len(spec.Params) > 0 {
+				component.Params = cloneInterfaceMap(spec.Params)
+			}
+			if spec.Sort != nil {
+				if sortSpec != nil {
+					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index sort can only be specified once")
+				}
+				sortSpec = spec.Sort
+			}
+			info.Inverted = append(info.Inverted, component)
+		}
+	}
+
+	if sortSpec != nil {
+		sortInfo, err := buildHybridSortSpec(sortSpec, resolveColumn)
+		if err != nil {
+			return nil, err
+		}
+		info.Sort = sortInfo
+	}
+
+	if shardingSpec != nil {
+		shardingInfo, err := buildHybridShardingSpec(shardingSpec, resolveColumn)
+		if err != nil {
+			return nil, err
+		}
+		info.Sharding = shardingInfo
+	}
+
+	return info, nil
+}
+
+func buildHybridSortSpec(spec *hybridSortSpec, resolveColumn func(string) (*model.ColumnInfo, error)) (*model.HybridSortSpec, error) {
+	if spec == nil {
+		return nil, nil
+	}
+	if len(spec.Columns) == 0 {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index sort must specify columns")
+	}
+	columns := make([]*model.IndexColumn, 0, len(spec.Columns))
+	for _, colName := range spec.Columns {
+		colInfo, err := resolveColumn(colName)
+		if err != nil {
+			return nil, err
+		}
+		columns = append(columns, &model.IndexColumn{
+			Name:   colInfo.Name,
+			Offset: colInfo.Offset,
+			Length: types.UnspecifiedLength,
+		})
+	}
+	orders := spec.Order
+	if len(orders) == 0 && len(spec.Directions) > 0 {
+		orders = spec.Directions
+	}
+	if len(orders) != 0 && len(orders) != len(columns) {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index sort order length mismatch")
+	}
+	normalized := make([]bool, len(columns))
+	for i := range columns {
+		direction := "asc"
+		raw := "asc"
+		if len(orders) > 0 {
+			raw = orders[i]
+			direction = strings.TrimSpace(strings.ToLower(raw))
+			if direction == "" {
+				direction = "asc"
+			}
+		}
+		if direction != "asc" && direction != "desc" {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("HYBRID index sort order '%s' is invalid", raw))
+		}
+		normalized[i] = direction != "desc"
+	}
+	return &model.HybridSortSpec{
+		Columns: columns,
+		IsAsc:   normalized,
+	}, nil
+}
+
+func buildHybridShardingSpec(spec *hybridShardingSpec, resolveColumn func(string) (*model.ColumnInfo, error)) (*model.HybridShardingSpec, error) {
+	if spec == nil {
+		return nil, nil
+	}
+	if len(spec.Columns) == 0 {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index sharding_key must specify columns")
+	}
+	columns := make([]*model.IndexColumn, 0, len(spec.Columns))
+	for _, colName := range spec.Columns {
+		// resolveColumn enforces that sharding keys are part of the index definition
+		// (in addition to existing column existence checks).
+		colInfo, err := resolveColumn(colName)
+		if err != nil {
+			return nil, err
+		}
+		columns = append(columns, &model.IndexColumn{
+			Name:   colInfo.Name,
+			Offset: colInfo.Offset,
+			Length: types.UnspecifiedLength,
+		})
+	}
+	return &model.HybridShardingSpec{Columns: columns}, nil
 }
 
 func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
@@ -495,6 +1253,95 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 		Dimension:      uint64(colInfo.FieldType.GetFlen()),
 		DistanceMetric: distanceMetric,
 	}, exprStr, nil
+}
+
+func buildFullTextIndexInfo(
+	tblInfo *model.TableInfo,
+	indexName pmodel.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+	state model.SchemaState,
+) (*model.IndexInfo, error) {
+	if err := checkTooLongIndex(indexName); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(indexPartSpecifications) == 0 {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index must specify at least one column")
+	}
+
+	parserType := model.FullTextParserTypeStandardV1
+	if indexOption != nil && indexOption.ParserName.L != "" {
+		parserType = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
+	}
+	if parserType == model.FullTextParserTypeInvalid {
+		return nil, dbterror.ErrUnsupportedIndexType.FastGen("Unsupported parser '%s'", indexOption.ParserName.O)
+	}
+
+	indexColumns := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
+	seenColumns := make(map[string]struct{}, len(indexPartSpecifications))
+	for _, idxPart := range indexPartSpecifications {
+		if idxPart.Column == nil {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index must specific at least one column")
+		}
+		if idxPart.Length != types.UnspecifiedLength {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index does not support prefix length")
+		}
+		if idxPart.Desc {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index does not support DESC order")
+		}
+		colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+		if colInfo == nil {
+			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name.L, tblInfo.Name)
+		}
+		if !types.IsString(colInfo.FieldType.GetType()) {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("only support string type, but this is type: %s", colInfo.FieldType.String()))
+		}
+		if _, exists := seenColumns[colInfo.Name.L]; exists {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index contains a duplicate column")
+		}
+		seenColumns[colInfo.Name.L] = struct{}{}
+		for _, idx := range tblInfo.Indices {
+			if idx.FullTextInfo == nil {
+				continue
+			}
+			if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
+				continue
+			}
+			existingParser := idx.FullTextInfo.ParserType
+			if existingParser == "" {
+				existingParser = model.FullTextParserTypeStandardV1
+			}
+			if existingParser != parserType {
+				return nil, dbterror.ErrDupKeyName.GenWithStack(
+					fmt.Sprintf("fulltext index '%s' already exist on column %s",
+						idx.Name, colInfo.Name))
+			}
+		}
+		indexColumns = append(indexColumns, &model.IndexColumn{
+			Name: colInfo.Name, Offset: colInfo.Offset, Length: types.UnspecifiedLength,
+		})
+	}
+	if indexOption != nil && indexOption.Visibility == ast.IndexVisibilityInvisible {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index does not support INVISIBLE")
+	}
+	if indexOption != nil && indexOption.Global {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index does not support GLOBAL")
+	}
+	if indexOption != nil && indexOption.Condition != nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index does not support a partial condition")
+	}
+
+	idxInfo := &model.IndexInfo{
+		Name:         indexName,
+		State:        state,
+		Tp:           pmodel.IndexTypeBtree,
+		Columns:      indexColumns,
+		FullTextInfo: &model.FullTextIndexInfo{ParserType: parserType},
+	}
+	if indexOption != nil {
+		idxInfo.Comment = indexOption.Comment
+	}
+	return idxInfo, nil
 }
 
 // AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
@@ -771,6 +1618,466 @@ func checkAndBuildIndexInfo(
 	return indexInfo, nil
 }
 
+func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
+		ver, err = onDropIndex(jobCtx, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
+	// Handle normal job.
+	schemaID := job.SchemaID
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	args, err := model.GetModifyIndexArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if len(args.IndexArgs) != 1 {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("add fulltext index expects one index argument, got %d", len(args.IndexArgs))
+	}
+
+	a := args.IndexArgs[0]
+	indexInfo := tblInfo.FindIndexByName(a.IndexName.L)
+	if indexInfo == nil {
+		indexInfo, err = buildFullTextIndexInfo(tblInfo, a.IndexName, a.IndexPartSpecifications, a.IndexOption, model.StateNone)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		indexInfo.ID = AllocateIndexID(tblInfo)
+		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+		if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	} else if indexInfo.FullTextInfo == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("fulltext index", indexInfo.State)
+	} else if indexInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrDupKeyName.GenWithStackByArgs(a.IndexName)
+	}
+	originalState := indexInfo.State
+	switch indexInfo.State {
+	case model.StateNone:
+		// Keep the fulltext add-index state machine aligned with onCreateIndex
+		// for fast-reorg setup.
+		err = initForReorgIndexes(w, job, []*model.IndexInfo{indexInfo})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
+		indexInfo.State = model.StateDeleteOnly
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateDeleteOnly
+	case model.StateDeleteOnly:
+		indexInfo.State = model.StateWriteOnly
+		_, err = checkPrimaryKeyNotNull(jobCtx, w, job, tblInfo, indexInfo)
+		if err != nil {
+			break
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		indexInfo.State = model.StateWriteReorganization
+		_, err = checkPrimaryKeyNotNull(jobCtx, w, job, tblInfo, indexInfo)
+		if err != nil {
+			break
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		// Initialize SnapshotVer to 0 for later reorganization check.
+		job.SnapshotVer = 0
+		job.SchemaState = model.StateWriteReorganization
+	case model.StateWriteReorganization:
+		tbl, err := getTable(jobCtx.getAutoIDRequirement(), schemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		if job.IsCancelling() {
+			return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, dbterror.ErrCancelledDDLJob)
+		}
+
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			skipReorg, err := checkIfTableReorgWorkCanSkipWithError(w.store, w.sess.Session(), tbl, job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			if !skipReorg {
+				if err := ensureFulltextIndexReorgMeta(job); err != nil {
+					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+				}
+			}
+			// TiCI add-index ingest needs the add-index scan snapshot TS
+			// wired into its WriteHeader (not ingestData.GetTS()),
+			// so job.SnapshotVer will be captured and propagated
+			// through dist-task metadata.
+			if !job.ReorgMeta.TiCIIndexCreated {
+				parserInfo, err := w.buildTiCIFulltextParserInfo(jobCtx, job, indexInfo)
+				if err != nil {
+					if !isRetryableJobError(err, job.ErrorCount) {
+						return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+					}
+					return ver, errors.Trace(err)
+				}
+				err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName, parserInfo)
+				if err != nil {
+					if !isRetryableJobError(err, job.ErrorCount) {
+						return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+					}
+					return ver, errors.Trace(err)
+				}
+				job.ReorgMeta.TiCIIndexCreated = true
+			}
+
+			var done bool
+			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, []*model.IndexInfo{indexInfo})
+			if !done {
+				return ver, err
+			}
+
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
+			// AnalyzeStateSkipped may come from older owners before this branch
+			// was split; run FinishIndexUpload once for compatibility.
+			taskID := ticiTaskIDForDDL(job.ID)
+			// FinishIndexUpload should run after the reorg ingest
+			// completes using the lightweight helper
+			// to finalize TiCI uploads here.
+			if err := tici.FinishIndexUpload(jobCtx.stepCtx, jobCtx.store, taskID); err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateDone, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			var done bool
+			if done, err = tici.CheckAddIndexProgress(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("[ddl] check TiCI fulltext index progress failed",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", job.ReorgMeta.AnalyzeState),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID),
+					zap.Error(err))
+				return ver, errors.Trace(err)
+			}
+			if !done {
+				logutil.DDLLogger().Debug("[ddl] wait for TiCI fulltext index ready",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", job.ReorgMeta.AnalyzeState),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID))
+				if err := waitTiCIAddIndexProgressPoll(jobCtx.stepCtx); err != nil {
+					return ver, errors.Trace(err)
+				}
+				return ver, nil
+			}
+
+			// Publish the creation-time parser settings together with the public index.
+			config, err := fullTextParserConfigFromJob(job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			indexInfo.FullTextInfo.ParserConfig = config
+
+			AddIndexColumnFlag(tblInfo, indexInfo)
+			indexInfo.State = model.StatePublic
+
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			finishedArgs := &model.ModifyIndexArgs{
+				IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
+				PartitionIDs: getPartitionIDs(tblInfo),
+				OpType:       model.OpAddIndex,
+			}
+			job.FillFinishedArgs(finishedArgs)
+
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			logutil.DDLLogger().Info("[ddl] run add fulltext index job done",
+				zap.Int64("ver", ver),
+				zap.String("charset", job.Charset),
+				zap.String("collation", job.Collate))
+		}
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+	}
+
+	return ver, errors.Trace(err)
+}
+
+func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	if job.IsRollingback() {
+		ver, err = onDropIndex(jobCtx, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
+	schemaID := job.SchemaID
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err := checkTableTypeForHybridIndex(tblInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	args, err := model.GetModifyIndexArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if len(args.IndexArgs) != 1 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("HYBRID index only supports one index per DDL job")
+	}
+
+	a := args.IndexArgs[0]
+	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, false, false, a)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// The condition in the index option is not marshaled, so we need to set it here.
+	if len(a.ConditionString) > 0 {
+		indexInfo.ConditionExprString = a.ConditionString
+		// As we've updated the `ConditionExprString`, we need to rebuild the AffectColumn.
+		indexInfo.AffectColumn, err = buildAffectColumn(indexInfo, tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	originalState := indexInfo.State
+	switch indexInfo.State {
+	case model.StateNone:
+		// Keep the hybrid add-index state machine aligned with onCreateIndex
+		// for fast-reorg setup.
+		err = initForReorgIndexes(w, job, []*model.IndexInfo{indexInfo})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
+		indexInfo.State = model.StateDeleteOnly
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != model.StateDeleteOnly)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateDeleteOnly
+	case model.StateDeleteOnly:
+		indexInfo.State = model.StateWriteOnly
+		_, err = checkPrimaryKeyNotNull(jobCtx, w, job, tblInfo, indexInfo)
+		if err != nil {
+			break
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateWriteOnly)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		indexInfo.State = model.StateWriteReorganization
+		_, err = checkPrimaryKeyNotNull(jobCtx, w, job, tblInfo, indexInfo)
+		if err != nil {
+			break
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateWriteReorganization)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SnapshotVer = 0
+		job.SchemaState = model.StateWriteReorganization
+	case model.StateWriteReorganization:
+		tbl, err := getTable(jobCtx.getAutoIDRequirement(), schemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		if job.IsCancelling() {
+			return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, dbterror.ErrCancelledDDLJob)
+		}
+
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			skipReorg, err := checkIfTableReorgWorkCanSkipWithError(w.store, w.sess.Session(), tbl, job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			if !skipReorg {
+				if err := ensureHybridIndexReorgMeta(job); err != nil {
+					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+				}
+			}
+			// TiCI add-index ingest needs the add-index scan snapshot TS
+			// wired into its WriteHeader (not ingestData.GetTS()),
+			// so job.SnapshotVer will be captured and propagated
+			// through dist-task metadata.
+			if !job.ReorgMeta.TiCIIndexCreated {
+				err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName, nil)
+				if err != nil {
+					if !isRetryableJobError(err, job.ErrorCount) {
+						return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+					}
+					return ver, errors.Trace(err)
+				}
+				job.ReorgMeta.TiCIIndexCreated = true
+			}
+
+			var done bool
+			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, []*model.IndexInfo{indexInfo})
+			if !done {
+				return ver, err
+			}
+
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
+			// AnalyzeStateSkipped may come from older owners before this branch
+			// was split; run FinishIndexUpload once for compatibility.
+			taskID := ticiTaskIDForDDL(job.ID)
+			// FinishIndexUpload should run after the reorg ingest
+			// completes using the lightweight helper
+			// to finalize TiCI uploads here.
+			if err := tici.FinishIndexUpload(jobCtx.stepCtx, jobCtx.store, taskID); err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateDone, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			var done bool
+			if done, err = tici.CheckAddIndexProgress(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("[ddl] check TiCI hybrid index progress failed",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", job.ReorgMeta.AnalyzeState),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID),
+					zap.Error(err))
+				return ver, errors.Trace(err)
+			}
+			if !done {
+				logutil.DDLLogger().Debug("[ddl] wait for TiCI hybrid index ready",
+					zap.Int64("jobID", job.ID),
+					zap.Int8("analyzeState", job.ReorgMeta.AnalyzeState),
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID))
+				if err := waitTiCIAddIndexProgressPoll(jobCtx.stepCtx); err != nil {
+					return ver, errors.Trace(err)
+				}
+				return ver, nil
+			}
+
+			AddIndexColumnFlag(tblInfo, indexInfo)
+			indexInfo.State = model.StatePublic
+
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			finishedArgs := &model.ModifyIndexArgs{
+				IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
+				PartitionIDs: getPartitionIDs(tblInfo),
+				OpType:       model.OpAddIndex,
+			}
+			job.FillFinishedArgs(finishedArgs)
+
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			logutil.DDLLogger().Info("[ddl] run add hybrid index job done",
+				zap.Int64("ver", ver),
+				zap.String("charset", job.Charset),
+				zap.String("collation", job.Collate))
+		}
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+	}
+
+	return ver, errors.Trace(err)
+}
+
+func ensureHybridIndexReorgMeta(job *model.Job) error {
+	if job.ReorgMeta == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("hybrid index requires distributed fast reorg ingest")
+	}
+	// Hybrid index requires DXF + fast reorg ingest only; reject other modes early.
+	if !job.ReorgMeta.IsDistReorg || !job.ReorgMeta.IsFastReorg {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("hybrid index requires distributed fast reorg ingest")
+	}
+	reorgTp, err := pickBackfillType(job)
+	if err != nil {
+		return err
+	}
+	if reorgTp != model.ReorgTypeIngest {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("hybrid index requires ingest backfill")
+	}
+	return nil
+}
+
+const ticiAddIndexProgressPollInterval = 2 * time.Second
+
+func waitTiCIAddIndexProgressPoll(ctx context.Context) error {
+	timer := time.NewTimer(ticiAddIndexProgressPollInterval)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+		return ctx.Err()
+	}
+}
+
+func ensureFulltextIndexReorgMeta(job *model.Job) error {
+	if job.ReorgMeta == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("fulltext index requires distributed fast reorg ingest")
+	}
+	// Fulltext index requires DXF + fast reorg ingest only; reject other modes early.
+	if !job.ReorgMeta.IsDistReorg || !job.ReorgMeta.IsFastReorg {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("fulltext index requires distributed fast reorg ingest")
+	}
+	if !job.ReorgMeta.UseCloudStorage {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("fulltext index on non-empty table requires global sort; set @@global.tidb_cloud_storage_uri")
+	}
+	reorgTp, err := pickBackfillType(job)
+	if err != nil {
+		return err
+	}
+	if reorgTp != model.ReorgTypeIngest {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("fulltext index requires ingest backfill")
+	}
+	return nil
+}
+
 func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
@@ -858,6 +2165,15 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 			err = infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tbl.Meta().ID)
 			if err != nil {
 				return ver, errors.Trace(err)
+			}
+			if indexInfo.FullTextInfo != nil {
+				parserInfo, err := w.buildTiCIFulltextParserInfo(jobCtx, job, indexInfo)
+				if err != nil {
+					return ver, errors.Trace(err)
+				}
+				if err := tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName, parserInfo); err != nil {
+					return ver, errors.Trace(err)
+				}
 			}
 			job.SnapshotVer = currVer.Ver
 			return ver, nil
@@ -997,6 +2313,180 @@ func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table
 	}
 
 	return true, notAddedIndexCnt, addedIndexCnt, nil
+}
+
+const (
+	// maxFullTextStopwordCount limits how many stopwords can be read from a stopword table per FULLTEXT index creation.
+	// It is a safety limit to avoid excessive memory usage / oversized TiCI requests.
+	maxFullTextStopwordCount = 10000
+	// maxFullTextStopwordBytes limits total stopword payload bytes per FULLTEXT index creation.
+	maxFullTextStopwordBytes = 1 << 20 // 1MiB
+)
+
+// fullTextParserConfigFromJob captures only scalar analyzer settings. TiCI still
+// resolves custom stopwords through the existing DDL path; local evaluation uses
+// its built-in stopwords and may therefore produce different results.
+func fullTextParserConfigFromJob(job *model.Job) (*model.FullTextParserConfig, error) {
+	config := &model.FullTextParserConfig{
+		InnodbFtMinTokenSize:   3,
+		InnodbFtMaxTokenSize:   84,
+		NgramTokenSize:         2,
+		InnodbFtEnableStopword: true,
+	}
+	var err error
+	if value, ok := job.GetSessionVars(variable.InnodbFtMinTokenSize); ok {
+		config.InnodbFtMinTokenSize, err = strconv.Atoi(value)
+		if err != nil {
+			return nil, errors.Annotate(err, "invalid innodb_ft_min_token_size")
+		}
+	}
+	if value, ok := job.GetSessionVars(variable.InnodbFtMaxTokenSize); ok {
+		config.InnodbFtMaxTokenSize, err = strconv.Atoi(value)
+		if err != nil {
+			return nil, errors.Annotate(err, "invalid innodb_ft_max_token_size")
+		}
+	}
+	if value, ok := job.GetSessionVars(variable.NgramTokenSize); ok {
+		config.NgramTokenSize, err = strconv.Atoi(value)
+		if err != nil {
+			return nil, errors.Annotate(err, "invalid ngram_token_size")
+		}
+	}
+	if value, ok := job.GetSessionVars(variable.InnodbFtEnableStopword); ok {
+		config.InnodbFtEnableStopword = variable.TiDBOptOn(value)
+	}
+	return config, nil
+}
+
+func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job, indexInfo *model.IndexInfo) (*tici.ParserInfo, error) {
+	getJobSysVar := func(name, fallback string) string {
+		if val, ok := job.GetSessionVars(name); ok {
+			return val
+		}
+		return fallback
+	}
+
+	if indexInfo == nil || indexInfo.FullTextInfo == nil {
+		return nil, errors.New("missing fulltext info")
+	}
+
+	var parserType tici.ParserType
+	parserParams := make(map[string]string, 8)
+	switch indexInfo.FullTextInfo.ParserType {
+	case model.FullTextParserTypeStandardV1:
+		parserType = tici.ParserType_DEFAULT_PARSER
+		parserParams["parser_name"] = "standard"
+		parserParams[variable.InnodbFtMinTokenSize] = getJobSysVar(variable.InnodbFtMinTokenSize, "3")
+		parserParams[variable.InnodbFtMaxTokenSize] = getJobSysVar(variable.InnodbFtMaxTokenSize, "84")
+	case model.FullTextParserTypeMultilingualV1, model.FullTextParserTypeNgramV1:
+		// Multilingual parser is currently treated as an n-gram based tokenizer.
+		parserType = tici.ParserType_OTHER_PARSER
+		if indexInfo.FullTextInfo.ParserType == model.FullTextParserTypeMultilingualV1 {
+			parserParams["parser_name"] = "multilingual"
+		} else {
+			parserParams["parser_name"] = "ngram"
+		}
+		parserParams[variable.NgramTokenSize] = getJobSysVar(variable.NgramTokenSize, "2")
+	default:
+		parserType = tici.ParserType_OTHER_PARSER
+		parserParams["parser_name"] = indexInfo.FullTextInfo.ParserType.SQLName()
+	}
+
+	enableStopword := getJobSysVar(variable.InnodbFtEnableStopword, variable.On)
+	parserParams[variable.InnodbFtEnableStopword] = enableStopword
+	parserParams[variable.InnodbFtServerStopwordTable] = getJobSysVar(variable.InnodbFtServerStopwordTable, "")
+	parserParams[variable.InnodbFtUserStopwordTable] = getJobSysVar(variable.InnodbFtUserStopwordTable, "")
+
+	var stopWords []string
+	if indexInfo.FullTextInfo.ParserType == model.FullTextParserTypeStandardV1 && variable.TiDBOptOn(enableStopword) {
+		stopwordTable := strings.TrimSpace(parserParams[variable.InnodbFtUserStopwordTable])
+		if stopwordTable == "" {
+			stopwordTable = strings.TrimSpace(parserParams[variable.InnodbFtServerStopwordTable])
+		}
+		if stopwordTable != "" {
+			dbName, tblName, ok := splitFullTextStopwordTableName(stopwordTable)
+			if !ok {
+				return nil, errors.Errorf(
+					"invalid stopword table name %q (expected 'db_name/table_name'); set @@global.%s or @@global.%s (or disable stopwords with @@global.%s=OFF) before creating FULLTEXT index",
+					stopwordTable,
+					variable.InnodbFtUserStopwordTable,
+					variable.InnodbFtServerStopwordTable,
+					variable.InnodbFtEnableStopword,
+				)
+			}
+			stopwords, err := w.readFullTextStopwords(jobCtx, dbName, tblName)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			stopWords = stopwords
+		}
+	}
+
+	return &tici.ParserInfo{
+		ParserType:   parserType,
+		ParserParams: parserParams,
+		StopWords:    stopWords,
+	}, nil
+}
+
+func (w *worker) readFullTextStopwords(jobCtx *jobContext, dbName, tblName string) (stopwords []string, err error) {
+	const label = "ddl_read_fulltext_stopwords"
+	startTime := time.Now()
+	defer func() {
+		metrics.DDLJobTableDuration.WithLabelValues(label + "-" + metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}()
+
+	var sb strings.Builder
+	sqlescape.MustFormatSQL(&sb, "SELECT `value` FROM %n.%n", dbName, tblName)
+
+	ctx := jobCtx.stepCtx
+	if ctx.Value(kv.RequestSourceKey) == nil {
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	}
+	rs, err := w.sess.Context.GetSQLExecutor().ExecuteInternal(ctx, sb.String())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if rs == nil {
+		return nil, nil
+	}
+	defer terror.Call(rs.Close)
+
+	stopwords = make([]string, 0, 64)
+	seen := make(map[string]struct{}, 64)
+	totalBytes := 0
+
+	req := rs.NewChunk(nil)
+	for {
+		if err := rs.Next(ctx, req); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		iter := chunk.NewIterator4Chunk(req)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			if row.IsNull(0) {
+				continue
+			}
+			word := strings.TrimSpace(row.GetString(0))
+			if word == "" {
+				continue
+			}
+			if _, ok := seen[word]; ok {
+				continue
+			}
+			seen[word] = struct{}{}
+			stopwords = append(stopwords, word)
+			totalBytes += len(word)
+			if len(stopwords) > maxFullTextStopwordCount || totalBytes > maxFullTextStopwordBytes {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("stopword table is too large")
+			}
+		}
+		req = chunk.Renew(req, 1024)
+	}
+	slices.Sort(stopwords)
+	return stopwords, nil
 }
 
 func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (ver int64, err error) {
@@ -1480,22 +2970,50 @@ func checkIfTableReorgWorkCanSkip(
 	tbl table.Table,
 	job *model.Job,
 ) bool {
+	skipReorg, err := checkIfTableReorgWorkCanSkipWithError(store, sessCtx, tbl, job)
+	if err != nil {
+		return false
+	}
+	return skipReorg
+}
+
+func checkIfTableReorgWorkCanSkipWithError(
+	store kv.Storage,
+	sessCtx sessionctx.Context,
+	tbl table.Table,
+	job *model.Job,
+) (bool, error) {
+	failpoint.Inject("mockCheckTableReorgWorkCanSkip", func(_val failpoint.Value) {
+		if val, ok := _val.(string); ok && val == "error" {
+			failpoint.Return(false, errors.New("mock check table reorg work can skip error"))
+		}
+	})
 	if job.SnapshotVer != 0 {
 		// Reorg work has begun.
-		return false
+		return false, nil
 	}
 	txn, err := sessCtx.Txn(false)
 	validTxn := err == nil && txn != nil && txn.Valid()
 	intest.Assert(validTxn)
 	if !validTxn {
+		if err == nil {
+			err = errors.New("check if table is empty failed")
+		}
 		logutil.DDLLogger().Warn("check if table is empty failed", zap.Error(err))
-		return false
+		return false, errors.Trace(err)
 	}
 	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
-	return checkIfTableIsEmpty(ctx, store, tbl, startTS)
+	isEmpty, err := checkIfTableIsEmpty(ctx, store, tbl, startTS)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if !isEmpty {
+		return false, nil
+	}
+	return true, nil
 }
 
 func checkIfTableIsEmpty(
@@ -1503,15 +3021,19 @@ func checkIfTableIsEmpty(
 	store kv.Storage,
 	tbl table.Table,
 	startTS uint64,
-) bool {
+) (bool, error) {
 	if pTbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range pTbl.GetAllPartitionIDs() {
 			pTbl := pTbl.GetPartition(pid)
-			if !checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS) {
-				return false
+			isEmpty, err := checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS)
+			if err != nil {
+				return false, err
+			}
+			if !isEmpty {
+				return false, nil
 			}
 		}
-		return true
+		return true, nil
 	}
 	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
@@ -1523,14 +3045,14 @@ func checkIfPhysicalTableIsEmpty(
 	store kv.Storage,
 	tbl table.PhysicalTable,
 	startTS uint64,
-) bool {
+) (bool, error) {
 	hasRecord, err := existsTableRow(ctx, store, tbl, startTS)
 	intest.Assert(err == nil)
 	if err != nil {
 		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
-		return false
+		return false, errors.Trace(err)
 	}
-	return !hasRecord
+	return !hasRecord, nil
 }
 
 func checkIfTempIndexReorgWorkCanSkip(
@@ -1656,6 +3178,17 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
+func shouldSkipTempIndexMerge(allIndexInfos []*model.IndexInfo) bool {
+	for _, indexInfo := range allIndexInfos {
+		if indexInfo.HybridInfo != nil || indexInfo.FullTextInfo != nil {
+			// Hybrid and fulltext (TiCI) indexes do not write to TiKV, so the transactional
+			// temp-index merge path must be skipped.
+			return true
+		}
+	}
+	return false
+}
+
 func doReorgWorkForCreateIndex(
 	w *worker,
 	jobCtx *jobContext,
@@ -1668,6 +3201,7 @@ func doReorgWorkForCreateIndex(
 	if err != nil {
 		return false, ver, err
 	}
+	skipTempIndexMerge := shouldSkipTempIndexMerge(allIndexInfos)
 	if !reorgTp.NeedMergeProcess() {
 		skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
 		if skipReorg {
@@ -1705,6 +3239,13 @@ func doReorgWorkForCreateIndex(
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
 		}
+		if skipTempIndexMerge {
+			for _, indexInfo := range allIndexInfos {
+				indexInfo.BackfillState = model.BackfillStateInapplicable
+			}
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+			return true, ver, errors.Trace(err)
+		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
@@ -1712,6 +3253,13 @@ func doReorgWorkForCreateIndex(
 		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
+		if skipTempIndexMerge {
+			for _, indexInfo := range allIndexInfos {
+				indexInfo.BackfillState = model.BackfillStateInapplicable
+			}
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+			return true, ver, errors.Trace(err)
+		}
 		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
 			if MockDMLExecutionStateBeforeMerge != nil {
 				MockDMLExecutionStateBeforeMerge()
@@ -1729,6 +3277,13 @@ func doReorgWorkForCreateIndex(
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateMerging:
+		if skipTempIndexMerge {
+			for _, indexInfo := range allIndexInfos {
+				indexInfo.BackfillState = model.BackfillStateInapplicable
+			}
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+			return true, ver, errors.Trace(err)
+		}
 		skipReorg := checkIfTempIndexReorgWorkCanSkip(w.store, w.sess.Session(), tbl, allIndexInfos, job)
 		if !skipReorg {
 			done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, true)
@@ -1936,11 +3491,14 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		isTiFlashIndex := false
+		isTiFlashIndex, isTiCIIndex := false, false
 		indexIDs := make([]int64, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
 			if indexInfo.IsTiFlashLocalIndex() {
 				isTiFlashIndex = true
+			}
+			if indexInfo.IsTiCIIndex() {
+				isTiCIIndex = true
 			}
 			indexInfo.State = model.StateNone
 			// Set column index flag.
@@ -1966,6 +3524,14 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			// Send sync schema notification to TiFlash.
 			if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
 				logutil.DDLLogger().Warn("run drop tiflash index but syncing schema failed", zap.Error(err))
+			}
+		}
+		if isTiCIIndex {
+			// Drop full text index on TiCI.
+			for _, indexID := range indexIDs {
+				if err := tici.DropFullTextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexID); err != nil {
+					logutil.DDLLogger().Warn("run drop full text index but dropping index on TiCI failed", zap.Error(err))
+				}
 			}
 		}
 
@@ -2003,7 +3569,9 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 				return ver, errors.Trace(err)
 			}
 			dropArgs.IndexArgs[0].IndexID = indexIDs[0]
-			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].VectorInfo != nil
+			// IsVector is the legacy V1 marker used to suppress delete-range
+			// generation for indexes that have no data in TiKV.
+			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].IsNonKVIndex()
 			if !allIndexInfos[0].Global {
 				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
 			}
@@ -2867,6 +4435,16 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
+// TaskKey generates a task key for the backfill job.
+func TaskKey(jobID int64, mergeTempIdx bool) string {
+	return ddlutil.BuildBackfillTaskKey(jobID, mergeTempIdx)
+}
+
+// ticiTaskIDForDDL identifies the primary TiCI add-index backfill task.
+func ticiTaskIDForDDL(jobID int64) string {
+	return TaskKey(jobID, false)
+}
+
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
@@ -2874,7 +4452,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
-	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
+	taskKey := TaskKey(reorgInfo.Job.ID, false)
 	g, ctx := errgroup.WithContext(w.workCtx)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 
@@ -2958,7 +4536,10 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 			EstimateRowSize: rowSize,
-			Version:         BackfillTaskMetaVersion1,
+			// For hybrid add-index, this snapshot TS should be plumbed into TiCI
+			// WriteHeader so CDC can align with the initial scan snapshot.
+			ScanSnapshotTS: job.SnapshotVer,
+			Version:        BackfillTaskMetaVersion1,
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -3477,7 +5058,7 @@ func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
-		if index.Meta().IsTiFlashLocalIndex() {
+		if index.Meta().IsNonKVIndex() {
 			continue
 		}
 		if index.Meta().Global {
@@ -3702,7 +5283,7 @@ func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) 
 func isColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
 	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
 	for _, idx := range indexesToChange {
-		if idx.IndexInfo.VectorInfo != nil {
+		if idx.IndexInfo.IsNonKVIndex() {
 			return true
 		}
 	}

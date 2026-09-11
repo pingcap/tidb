@@ -30,6 +30,7 @@ const (
 	FlagConstantPropagation
 	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
+	FlagFTSQuickValidation
 	FlagEliminateOuterJoin
 	FlagPartitionProcessor
 	FlagCollectPredicateColumnsPoint

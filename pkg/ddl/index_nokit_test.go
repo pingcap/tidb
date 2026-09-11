@@ -26,9 +26,40 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func TestBuildFullTextIndexInfo(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		Name: pmodel.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{Name: pmodel.NewCIStr("title"), Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: pmodel.NewCIStr("body"), Offset: 1, FieldType: *types.NewFieldType(mysql.TypeBlob)},
+			{Name: pmodel.NewCIStr("id"), Offset: 2, FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		},
+	}
+	parts := []*ast.IndexPartSpecification{
+		{Column: &ast.ColumnName{Name: pmodel.NewCIStr("title")}, Length: types.UnspecifiedLength},
+		{Column: &ast.ColumnName{Name: pmodel.NewCIStr("body")}, Length: types.UnspecifiedLength},
+	}
+
+	idx, err := buildFullTextIndexInfo(tblInfo, pmodel.NewCIStr("fts"), parts, nil, model.StateNone)
+	require.NoError(t, err)
+	require.Equal(t, pmodel.NewCIStr("fts"), idx.Name)
+	require.Len(t, idx.Columns, 2)
+	require.Equal(t, model.FullTextParserTypeStandardV1, idx.FullTextInfo.ParserType)
+	require.True(t, idx.IsNonKVIndex())
+
+	_, err = buildFullTextIndexInfo(tblInfo, pmodel.NewCIStr("bad"), []*ast.IndexPartSpecification{
+		{Column: &ast.ColumnName{Name: pmodel.NewCIStr("id")}, Length: types.UnspecifiedLength},
+	}, nil, model.StateNone)
+	require.EqualError(t, err, "[ddl:8200]Unsupported only support string type, but this is type: bigint(20)")
+}
 
 func TestModifyTaskParamLoop(t *testing.T) {
 	type env struct {
@@ -207,4 +238,140 @@ func TestModifyTaskParamLoop(t *testing.T) {
 			e.jobID, e.taskID, 1, 2, 3)
 		require.True(t, e.ctrl.Satisfied())
 	})
+}
+
+func TestBuildFullTextInfoWithCheckParser(t *testing.T) {
+	newIdxPart := func(name string) *ast.IndexPartSpecification {
+		return &ast.IndexPartSpecification{
+			Column: &ast.ColumnName{Name: pmodel.NewCIStr(name)},
+			Length: types.UnspecifiedLength,
+		}
+	}
+	tblInfo := &model.TableInfo{
+		Name: pmodel.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{Name: pmodel.NewCIStr("c1"), Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: pmodel.NewCIStr("c2"), Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: pmodel.NewCIStr("c3"), Offset: 2, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: pmodel.NewCIStr("c4"), Offset: 3, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: pmodel.NewCIStr("c5"), Offset: 4, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+		},
+	}
+	idxParts := []*ast.IndexPartSpecification{
+		newIdxPart("c1"), newIdxPart("c2"), newIdxPart("c3"), newIdxPart("c4"), newIdxPart("c5"),
+	}
+
+	idx, err := buildFullTextIndexInfo(tblInfo, pmodel.NewCIStr("fts"), idxParts, nil, model.StateNone)
+	require.NoError(t, err)
+	require.Equal(t, model.FullTextParserTypeStandardV1, idx.FullTextInfo.ParserType)
+
+	idx, err = buildFullTextIndexInfo(tblInfo, pmodel.NewCIStr("fts"), idxParts, &ast.IndexOption{ParserName: pmodel.NewCIStr("standard")}, model.StateNone)
+	require.NoError(t, err)
+	require.Equal(t, model.FullTextParserTypeStandardV1, idx.FullTextInfo.ParserType)
+
+	idx, err = buildFullTextIndexInfo(tblInfo, pmodel.NewCIStr("fts"), idxParts, &ast.IndexOption{ParserName: pmodel.NewCIStr("ngram")}, model.StateNone)
+	require.NoError(t, err)
+	require.Equal(t, model.FullTextParserTypeNgramV1, idx.FullTextInfo.ParserType)
+}
+
+func TestFullTextParserConfigFromJob(t *testing.T) {
+	job := &model.Job{SessionVars: make(map[string]string)}
+	job.AddSessionVars("innodb_ft_min_token_size", "4")
+	job.AddSessionVars("innodb_ft_max_token_size", "80")
+	job.AddSessionVars("ngram_token_size", "3")
+	job.AddSessionVars("innodb_ft_enable_stopword", "OFF")
+	config, err := fullTextParserConfigFromJob(job)
+	require.NoError(t, err)
+	require.Equal(t, &model.FullTextParserConfig{
+		InnodbFtMinTokenSize: 4, InnodbFtMaxTokenSize: 80,
+		NgramTokenSize: 3, InnodbFtEnableStopword: false,
+	}, config)
+	// The TiCI request must continue to use the job, even if index metadata
+	// carries a different snapshot (for example, from CREATE TABLE LIKE).
+	index := &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{
+		ParserType:   model.FullTextParserTypeStandardV1,
+		ParserConfig: &model.FullTextParserConfig{InnodbFtMinTokenSize: 9},
+	}}
+	info, err := (&worker{}).buildTiCIFulltextParserInfo(nil, job, index)
+	require.NoError(t, err)
+	require.Equal(t, "4", info.ParserParams["innodb_ft_min_token_size"])
+	require.Equal(t, "80", info.ParserParams["innodb_ft_max_token_size"])
+	require.Equal(t, "OFF", info.ParserParams["innodb_ft_enable_stopword"])
+	require.Equal(t, 9, index.FullTextInfo.ParserConfig.InnodbFtMinTokenSize)
+	defaults, err := fullTextParserConfigFromJob(&model.Job{})
+	require.NoError(t, err)
+	require.Equal(t, &model.FullTextParserConfig{
+		InnodbFtMinTokenSize: 3, InnodbFtMaxTokenSize: 84,
+		NgramTokenSize: 2, InnodbFtEnableStopword: true,
+	}, defaults)
+}
+
+func TestTiCIAddPartitionParserSnapshot(t *testing.T) {
+	job := &model.Job{Type: model.ActionAddTablePartition, SessionVars: map[string]string{
+		"innodb_ft_min_token_size": "2", "innodb_ft_max_token_size": "84",
+		"ngram_token_size": "2", "innodb_ft_enable_stopword": "ON",
+	}}
+	tbl := &model.TableInfo{}
+	for i, minSize := range []int{5, 7} {
+		tbl.Indices = append(tbl.Indices, &model.IndexInfo{ID: int64(i + 1), FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+			ParserConfig: &model.FullTextParserConfig{
+				InnodbFtMinTokenSize: minSize, InnodbFtMaxTokenSize: 70,
+				NgramTokenSize: 3, InnodbFtEnableStopword: false,
+			},
+		}})
+	}
+	tbl.Indices = append(tbl.Indices, &model.IndexInfo{ID: 3, FullTextInfo: &model.FullTextIndexInfo{
+		ParserType: model.FullTextParserTypeNgramV1,
+		ParserConfig: &model.FullTextParserConfig{
+			InnodbFtMinTokenSize: 5, InnodbFtMaxTokenSize: 70,
+			NgramTokenSize: 3, InnodbFtEnableStopword: false,
+		},
+	}})
+	groups, err := (&worker{}).buildTiCIAddPartitionGroups(nil, job, tbl)
+	require.NoError(t, err)
+	require.Len(t, groups, 3)
+	for _, group := range groups {
+		require.Len(t, group.indexIDs, 1)
+		params := group.parserInfo.ParserParams
+		require.Equal(t, "OFF", params["innodb_ft_enable_stopword"])
+		switch group.indexIDs[0] {
+		case 1:
+			require.Equal(t, "5", params["innodb_ft_min_token_size"])
+			require.Equal(t, "70", params["innodb_ft_max_token_size"])
+		case 2:
+			require.Equal(t, "7", params["innodb_ft_min_token_size"])
+		case 3:
+			require.Equal(t, "3", params["ngram_token_size"])
+		}
+	}
+	require.Equal(t, "2", job.SessionVars["innodb_ft_min_token_size"])
+	require.Equal(t, "ON", job.SessionVars["innodb_ft_enable_stopword"])
+	groups, err = (&worker{}).buildTiCIAddPartitionGroups(nil, &model.Job{}, tbl)
+	require.NoError(t, err)
+	require.Len(t, groups, 3)
+	// Legacy metadata without a snapshot retains the existing job-based behavior.
+	tbl.Indices = tbl.Indices[:1]
+	tbl.Indices[0].FullTextInfo.ParserConfig = nil
+	groups, err = (&worker{}).buildTiCIAddPartitionGroups(nil, job, tbl)
+	require.NoError(t, err)
+	require.Equal(t, "2", groups[0].parserInfo.ParserParams["innodb_ft_min_token_size"])
+}
+
+func TestDropColumnNonKVIndexErrors(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		index   *model.IndexInfo
+		message string
+	}{
+		{"vector", &model.IndexInfo{VectorInfo: &model.VectorIndexInfo{}}, "with Vector Key covered now"},
+		{"fulltext", &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{}}, "with non-KV index covered now"},
+		{"hybrid", &model.IndexInfo{HybridInfo: &model.HybridIndexInfo{}}, "with non-KV index covered now"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.index.Columns = []*model.IndexColumn{{Name: pmodel.NewCIStr("b")}}
+			require.ErrorContains(t, isColumnCanDropWithIndex("b", []*model.IndexInfo{tt.index}), tt.message)
+			require.NoError(t, isColumnCanDropWithIndex("a", []*model.IndexInfo{tt.index}))
+		})
+	}
 }

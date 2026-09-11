@@ -95,13 +95,14 @@ var (
 	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
 
-type tableScanAndPartitionInfo struct {
+type scanAndPartitionInfo struct {
 	tableScan        *PhysicalTableScan
+	indexScan        *PhysicalIndexScan
 	physPlanPartInfo *PhysPlanPartInfo
 }
 
-// MemoryUsage return the memory usage of tableScanAndPartitionInfo
-func (t *tableScanAndPartitionInfo) MemoryUsage() (sum int64) {
+// MemoryUsage return the memory usage of scanAndPartitionInfo
+func (t *scanAndPartitionInfo) MemoryUsage() (sum int64) {
 	if t == nil {
 		return
 	}
@@ -109,6 +110,9 @@ func (t *tableScanAndPartitionInfo) MemoryUsage() (sum int64) {
 	sum += t.physPlanPartInfo.MemoryUsage()
 	if t.tableScan != nil {
 		sum += t.tableScan.MemoryUsage()
+	}
+	if t.indexScan != nil {
+		sum += t.indexScan.MemoryUsage()
 	}
 	return
 }
@@ -157,14 +161,23 @@ type PhysicalTableReader struct {
 
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
-	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
-	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
+	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 scan
+	ScanAndPartitionInfos []scanAndPartitionInfo `plan-cache-clone:"must-nil"`
+}
+
+// SetTablePlanForTest sets the private table plan for executor regression tests.
+func (p *PhysicalTableReader) SetTablePlanForTest(plan base.PhysicalPlan) {
+	p.tablePlan = plan
 }
 
 // LoadTableStats loads the stats of the table read by this plan.
 func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	loadTableStats(ctx, ts.Table, ts.physicalTableID)
+	switch scan := p.TablePlans[0].(type) {
+	case *PhysicalTableScan:
+		loadTableStats(ctx, scan.Table, scan.physicalTableID)
+	case *PhysicalIndexScan:
+		loadTableStats(ctx, scan.Table, scan.physicalTableID)
+	}
 }
 
 // PhysPlanPartInfo indicates partition helper info in physical plan.
@@ -254,7 +267,7 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 		sum += p.tablePlan.MemoryUsage()
 	}
 	// since TablePlans is the flats of tablePlan, so we don't count it
-	for _, pInfo := range p.TableScanAndPartitionInfos {
+	for _, pInfo := range p.ScanAndPartitionInfos {
 		sum += pInfo.MemoryUsage()
 	}
 	return
@@ -357,6 +370,8 @@ type PhysicalIndexReader struct {
 
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
+
+	StoreType kv.StoreType
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -507,6 +522,13 @@ type PhysicalIndexLookUpReader struct {
 	// required by cost calculation
 	expectedCnt uint64
 	keepOrder   bool
+
+	// IndexStoreType indicates table read from which type of store.
+	IndexStoreType kv.StoreType
+
+	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
+	// BatchCop and MPP, currently, the latter two are only used in TiFlash
+	ReadReqType ReadReqType
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -519,6 +541,8 @@ func (p *PhysicalIndexLookUpReader) Clone(newCtx base.PlanContext) (base.Physica
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.IndexLookUpPushDown = p.IndexLookUpPushDown
+	cloned.IndexStoreType = p.IndexStoreType
+	cloned.ReadReqType = p.ReadReqType
 	cloned.IndexPlansUnNatureOrders = maps.Clone(p.IndexPlansUnNatureOrders)
 	if cloned.IndexPlans, err = clonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
 		return nil, err
@@ -813,6 +837,7 @@ type PhysicalIndexScan struct {
 	isPartition bool
 	Desc        bool
 	KeepOrder   bool
+	FullText    bool
 	// ByItems only for partition table with orderBy + pushedLimit
 	ByItems []*util.ByItems
 
@@ -843,6 +868,45 @@ type PhysicalIndexScan struct {
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 
 	NotAlwaysValid bool
+
+	StoreType kv.StoreType
+
+	FtsQueryInfo *tipb.FTSQueryInfo `plan-cache-clone:"must-nil"`
+
+	// PlanPartInfo carries partition-pruning metadata for TiCI MPP IndexScan.
+	// TiKV IndexScan keeps using the outer IndexReader/IndexLookUpReader's PlanPartInfo.
+	PlanPartInfo *PhysPlanPartInfo `plan-cache-clone:"must-nil"`
+}
+
+// TryToPassTiCITopN checks whether the TopN can be embedded into a TiCI index scan.
+func (p *PhysicalIndexScan) TryToPassTiCITopN(topN *PhysicalTopN) {
+	hybridSearchInfo := p.Index.HybridInfo
+	if hybridSearchInfo == nil || hybridSearchInfo.Sort == nil {
+		return
+	}
+	orderPos := 0
+	for _, byItem := range topN.ByItems {
+		// All order by items should be covered by hybrid index sort columns.
+		if orderPos >= len(hybridSearchInfo.Sort.Columns) {
+			return
+		}
+		switch x := byItem.Expr.(type) {
+		case *expression.Column:
+			if byItem.Desc != !hybridSearchInfo.Sort.IsAsc[orderPos] {
+				return
+			}
+			colID := p.Table.Columns[hybridSearchInfo.Sort.Columns[orderPos].Offset].ID
+			if colID != x.ID {
+				return
+			}
+			orderPos++
+		case *expression.ScalarFunction:
+			return
+		}
+	}
+	p.FtsQueryInfo.TopK = new(uint32)
+	// The passed TopN here may be the global one. We need to consider the offset.
+	*p.FtsQueryInfo.TopK = uint32(topN.Count) + uint32(topN.Offset)
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -904,6 +968,9 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	}
 	if p.dataSourceSchema != nil {
 		sum += p.dataSourceSchema.MemoryUsage()
+	}
+	if p.PlanPartInfo != nil {
+		sum += p.PlanPartInfo.MemoryUsage()
 	}
 	// slice memory usage
 	for _, cond := range p.AccessCondition {
@@ -2474,6 +2541,17 @@ func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
 // IsPartition returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 	return p.isPartition, p.physicalTableID
+}
+
+// IsTiCIFTSScan returns whether this is a TiCI full-text search scan.
+func (p *PhysicalIndexScan) IsTiCIFTSScan() bool {
+	return p != nil && p.Index != nil && p.Index.IsTiCIIndex() && p.FtsQueryInfo != nil
+}
+
+// SetTiCIPartition binds a cloned TiCI MPP scan to one physical partition.
+func (p *PhysicalIndexScan) SetTiCIPartition(id int64) {
+	p.isPartition = true
+	p.physicalTableID = id
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.

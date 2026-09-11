@@ -206,6 +206,8 @@ func (t IndexType) String() string {
 		return "HYPO"
 	case IndexTypeHNSW:
 		return "HNSW"
+	case IndexTypeHybrid:
+		return "HYBRID"
 	default:
 		return ""
 	}
@@ -219,6 +221,7 @@ const (
 	IndexTypeRtree
 	IndexTypeHypo
 	IndexTypeHNSW
+	IndexTypeHybrid
 )
 
 // ReferOptionType is the type for refer options.

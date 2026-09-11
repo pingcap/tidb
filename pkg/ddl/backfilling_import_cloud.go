@@ -76,6 +76,9 @@ func newCloudImportExecutor(
 func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	ctx = lightningmetric.WithCommonMetric(ctx, m.metric)
+	failpoint.Inject("mockCloudImportExecutor", func() {
+		failpoint.Return(nil)
+	})
 	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, hasUniqueIndex(m.indexes), false, m.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
@@ -87,11 +90,27 @@ func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	}
 	m.backend = bd
 	m.backendCtx = bCtx
+	// Collect the new TiCI index IDs and initialize the TiCI writer group if needed.
+	var newTiCIIndexIDs []int64
+	for _, idx := range m.indexes {
+		if idx.IsTiCIIndex() {
+			newTiCIIndexIDs = append(newTiCIIndexIDs, idx.ID)
+		}
+	}
+	if len(newTiCIIndexIDs) > 0 {
+		taskID := ticiTaskIDForDDL(m.job.ID)
+		if err := bd.InitTiCIWriterGroup(ctx, nil, m.ptbl.Meta(), m.job.SchemaName, taskID, newTiCIIndexIDs); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
+	failpoint.Inject("mockCloudImportExecutor", func() {
+		failpoint.Return(nil)
+	})
 
 	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
@@ -110,6 +129,8 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, idxID)
 
+	ticiHeaderCommitTS := getTiCIHeaderCommitTSForCloudImport(currentIdx, sm.ScanSnapshotTS)
+
 	all := external.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
 		all.Merge(g)
@@ -121,6 +142,9 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		jobKeys = sm.RangeSplitKeys
 	}
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
+		TiCIWriteEnabled:   currentIdx != nil && currentIdx.IsTiCIIndex(),
+		TiCIIndexID:        getTiCIIndexIDForCloudImport(currentIdx, idxID),
+		TiCIHeaderCommitTS: ticiHeaderCommitTS,
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,
 			DataFiles:     sm.DataFiles,
@@ -170,13 +194,29 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	return kv.ErrKeyExists
 }
 
+func getTiCIHeaderCommitTSForCloudImport(currentIdx *model.IndexInfo, scanSnapshotTS uint64) uint64 {
+	if currentIdx == nil || !currentIdx.IsTiCIIndex() {
+		return 0
+	}
+	return scanSnapshotTS
+}
+
+func getTiCIIndexIDForCloudImport(currentIdx *model.IndexInfo, idxID int64) int64 {
+	if currentIdx == nil || !currentIdx.IsTiCIIndex() {
+		return 0
+	}
+	return idxID
+}
+
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	failpoint.InjectCall("cloudImportExecutorCleanup", m.backend)
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	if m.backendCtx != nil {
 		m.backendCtx.Close()
 	}
-	m.backend.Close()
+	if m.backend != nil {
+		m.backend.Close()
+	}
 	return nil
 }
 
@@ -223,6 +263,9 @@ func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 // ResourceModified change the concurrency for ingest
 func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
 	logutil.Logger(ctx).Info("cloud import executor update resource")
+	if m.backend == nil {
+		return nil
+	}
 	newConcurrency := int(newResource.CPU.Capacity())
 	if newConcurrency == m.backend.GetWorkerConcurrency() {
 		return nil

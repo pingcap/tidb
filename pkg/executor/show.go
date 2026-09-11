@@ -1257,6 +1257,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.HybridInfo != nil {
+			fmt.Fprintf(buf, "  HYBRID INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
@@ -1282,6 +1286,18 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		}
 		if idxInfo.ConditionExprString != "" {
 			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)
+		}
+		if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
+		}
+		if idxInfo.HybridInfo != nil {
+			paramLiteral, err := hybridParameterJSONForShow(tableInfo, idxInfo)
+			if err != nil {
+				return err
+			}
+			if len(paramLiteral) > 0 {
+				fmt.Fprintf(buf, " PARAMETER '%s'", format.OutputFormat(paramLiteral))
+			}
 		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
@@ -2438,6 +2454,9 @@ func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 		if info.Summary.ConflictedRows > 0 {
 			msg = fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictedRows)
 		}
+		if ticiMsg := formatTiCIIndexResultMessage(info.Summary.TiCIIndexSummary); ticiMsg != "" {
+			msg = strings.TrimSpace(msg + " " + ticiMsg)
+		}
 		result.AppendString(8, msg)
 	} else {
 		result.AppendString(8, info.ErrorMessage)
@@ -2454,6 +2473,40 @@ func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 		result.AppendTime(11, info.EndTime)
 	}
 	result.AppendString(12, info.CreatedBy)
+}
+
+func formatTiCIIndexResultMessage(summary *importer.TiCIIndexSummary) string {
+	if summary == nil || !summary.Incomplete {
+		return ""
+	}
+	msgItems := []string{
+		"TiKV import completed, but TiCI full-text index is incomplete; rebuild the full-text index and clean TiCI metadata if needed.",
+	}
+	if summary.Reason != "" {
+		msgItems = append(msgItems, fmt.Sprintf("reason: %s.", summary.Reason))
+	}
+	if summary.TableID != 0 {
+		msgItems = append(msgItems, fmt.Sprintf("table ID: %d.", summary.TableID))
+	}
+	if len(summary.IndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("index IDs: %v.", summary.IndexIDs))
+	}
+	if len(summary.ReadyIndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("ready index IDs: %v.", summary.ReadyIndexIDs))
+	}
+	if len(summary.PendingIndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("pending index IDs: %v.", summary.PendingIndexIDs))
+	}
+	if len(summary.FailedIndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("failed index IDs: %v.", summary.FailedIndexIDs))
+	}
+	if len(summary.ErrorIndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("error index IDs: %v.", summary.ErrorIndexIDs))
+	}
+	if summary.ErrorMessage != "" {
+		msgItems = append(msgItems, fmt.Sprintf("error: %s.", summary.ErrorMessage))
+	}
+	return strings.Join(msgItems, " ")
 }
 
 func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
@@ -2664,4 +2717,239 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	return fn(sysCtx)
+}
+
+type hybridFullTextSpecForShow struct {
+	Columns   []string                       `json:"columns"`
+	IndexInfo *model.HybridFulltextIndexInfo `json:"index_info,omitempty"`
+}
+
+type hybridVectorSpecForShow struct {
+	Columns   []string                     `json:"columns"`
+	IndexInfo *model.HybridVectorIndexInfo `json:"index_info,omitempty"`
+}
+
+type hybridInvertedSpecForShow struct {
+	Columns []string       `json:"columns,omitempty"`
+	Params  map[string]any `json:"params,omitempty"`
+}
+
+type hybridSortSpecForShow struct {
+	Columns []string `json:"columns,omitempty"`
+	Order   []string `json:"order,omitempty"`
+}
+
+type hybridShardingSpecForShow struct {
+	Columns []string `json:"columns,omitempty"`
+}
+
+type hybridIndexInfoForShow struct {
+	FullText []*hybridFullTextSpecForShow `json:"fulltext,omitempty"`
+	Vector   []*hybridVectorSpecForShow   `json:"vector,omitempty"`
+	Inverted []*hybridInvertedSpecForShow `json:"inverted,omitempty"`
+	Sort     *hybridSortSpecForShow       `json:"sort,omitempty"`
+	Sharding *hybridShardingSpecForShow   `json:"sharding_key,omitempty"`
+}
+
+func hybridIndexColumnsToNames(cols []*model.IndexColumn) []string {
+	if len(cols) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(cols))
+	for _, col := range cols {
+		if col == nil {
+			continue
+		}
+		names = append(names, col.Name.O)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
+}
+
+func hybridParameterJSONForShow(tableInfo *model.TableInfo, idxInfo *model.IndexInfo) (string, error) {
+	info := idxInfo.HybridInfo
+	if info == nil {
+		return "", nil
+	}
+	_ = tableInfo
+
+	clone := info.Clone()
+	if clone == nil {
+		return "", nil
+	}
+
+	pruneEmptyFullText := func(list []*model.HybridFullTextSpec) []*model.HybridFullTextSpec {
+		if len(list) == 0 {
+			return nil
+		}
+		filtered := make([]*model.HybridFullTextSpec, 0, len(list))
+		for _, item := range list {
+			if item == nil {
+				continue
+			}
+			if len(item.Columns) == 0 {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		return filtered
+	}
+
+	pruneEmptyVector := func(list []*model.HybridVectorSpec) []*model.HybridVectorSpec {
+		if len(list) == 0 {
+			return nil
+		}
+		filtered := make([]*model.HybridVectorSpec, 0, len(list))
+		for _, item := range list {
+			if item == nil {
+				continue
+			}
+			if len(item.Columns) == 0 {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		return filtered
+	}
+
+	pruneEmptyInverted := func(list []*model.HybridInvertedSpec) []*model.HybridInvertedSpec {
+		if len(list) == 0 {
+			return nil
+		}
+		filtered := make([]*model.HybridInvertedSpec, 0, len(list))
+		for _, item := range list {
+			if item == nil {
+				continue
+			}
+			if len(item.Columns) == 0 && len(item.Params) == 0 {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		return filtered
+	}
+
+	clone.FullText = pruneEmptyFullText(clone.FullText)
+	clone.Vector = pruneEmptyVector(clone.Vector)
+	clone.Inverted = pruneEmptyInverted(clone.Inverted)
+	if clone.Sort != nil && len(clone.Sort.Columns) == 0 {
+		clone.Sort = nil
+	}
+	if clone.Sharding != nil && len(clone.Sharding.Columns) == 0 {
+		clone.Sharding = nil
+	}
+
+	if len(clone.FullText) == 0 && len(clone.Vector) == 0 && len(clone.Inverted) == 0 && clone.Sort == nil && clone.Sharding == nil {
+		return "", nil
+	}
+
+	show := &hybridIndexInfoForShow{}
+	if len(clone.FullText) > 0 {
+		show.FullText = make([]*hybridFullTextSpecForShow, 0, len(clone.FullText))
+		for _, spec := range clone.FullText {
+			if spec == nil {
+				continue
+			}
+			columns := hybridIndexColumnsToNames(spec.Columns)
+			if len(columns) == 0 {
+				continue
+			}
+			show.FullText = append(show.FullText, &hybridFullTextSpecForShow{
+				Columns:   columns,
+				IndexInfo: spec.IndexInfo,
+			})
+		}
+		if len(show.FullText) == 0 {
+			show.FullText = nil
+		}
+	}
+	if len(clone.Vector) > 0 {
+		show.Vector = make([]*hybridVectorSpecForShow, 0, len(clone.Vector))
+		for _, spec := range clone.Vector {
+			if spec == nil {
+				continue
+			}
+			columns := hybridIndexColumnsToNames(spec.Columns)
+			if len(columns) == 0 {
+				continue
+			}
+			show.Vector = append(show.Vector, &hybridVectorSpecForShow{
+				Columns:   columns,
+				IndexInfo: spec.IndexInfo,
+			})
+		}
+		if len(show.Vector) == 0 {
+			show.Vector = nil
+		}
+	}
+	if len(clone.Inverted) > 0 {
+		show.Inverted = make([]*hybridInvertedSpecForShow, 0, len(clone.Inverted))
+		for _, spec := range clone.Inverted {
+			if spec == nil {
+				continue
+			}
+			columns := hybridIndexColumnsToNames(spec.Columns)
+			if len(columns) == 0 && len(spec.Params) == 0 {
+				continue
+			}
+			inv := &hybridInvertedSpecForShow{
+				Columns: columns,
+			}
+			if len(spec.Params) > 0 {
+				inv.Params = spec.Params
+			}
+			show.Inverted = append(show.Inverted, inv)
+		}
+		if len(show.Inverted) == 0 {
+			show.Inverted = nil
+		}
+	}
+	if clone.Sort != nil {
+		columns := hybridIndexColumnsToNames(clone.Sort.Columns)
+		if len(columns) > 0 {
+			orders := make([]string, len(columns))
+			for i := range columns {
+				if i < len(clone.Sort.IsAsc) {
+					if clone.Sort.IsAsc[i] {
+						orders[i] = "asc"
+					} else {
+						orders[i] = "desc"
+					}
+				} else {
+					orders[i] = "asc"
+				}
+			}
+			show.Sort = &hybridSortSpecForShow{
+				Columns: columns,
+				Order:   orders,
+			}
+		}
+	}
+	if clone.Sharding != nil {
+		columns := hybridIndexColumnsToNames(clone.Sharding.Columns)
+		if len(columns) > 0 {
+			show.Sharding = &hybridShardingSpecForShow{Columns: columns}
+		}
+	}
+
+	if len(show.FullText) == 0 && len(show.Vector) == 0 && len(show.Inverted) == 0 && show.Sort == nil && show.Sharding == nil {
+		return "", nil
+	}
+
+	bytes, err := gjson.Marshal(show)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(bytes), nil
 }

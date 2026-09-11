@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // IndexLookUpPushDownByType indicates whether to use index lookup push down optimization where it comes.
@@ -43,7 +44,11 @@ const (
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type AccessPath struct {
-	Index          *model.IndexInfo
+	Index *model.IndexInfo
+	// For row indexes, FullIdxCols contains every index column and IdxCols is
+	// the access-condition prefix. For TiCI indexes, FullIdxCols contains the
+	// columns returned by the index (excluding separately handled PK columns),
+	// while IdxCols contains the columns used for shard pruning.
 	FullIdxCols    []*expression.Column
 	FullIdxColLens []int
 	IdxCols        []*expression.Column
@@ -108,6 +113,9 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+
+	FtsQueryInfo *tipb.FTSQueryInfo
+
 	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
 	IndexLookUpPushDownBy IndexLookUpPushDownByType
 
@@ -174,6 +182,17 @@ func (path *AccessPath) Clone() *AccessPath {
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 		PartIdxCondNotAlwaysValid:    path.PartIdxCondNotAlwaysValid,
+	}
+	if path.FtsQueryInfo != nil {
+		ftsQueryInfo := *path.FtsQueryInfo
+		ftsQueryInfo.Columns = slices.Clone(path.FtsQueryInfo.Columns)
+		ftsQueryInfo.ColumnNames = slices.Clone(path.FtsQueryInfo.ColumnNames)
+		ftsQueryInfo.XXX_unrecognized = slices.Clone(path.FtsQueryInfo.XXX_unrecognized)
+		if path.FtsQueryInfo.TopK != nil {
+			topK := *path.FtsQueryInfo.TopK
+			ftsQueryInfo.TopK = &topK
+		}
+		ret.FtsQueryInfo = &ftsQueryInfo
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -448,7 +467,7 @@ func (path *AccessPath) IsUndetermined() bool {
 	if path.IsTablePath() || path.Index == nil {
 		return false
 	}
-	if path.Index.MVIndex || path.Index.HasCondition() {
+	if path.Index.MVIndex || path.Index.HasCondition() || path.Index.IsTiCIIndex() {
 		return true
 	}
 	return false

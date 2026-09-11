@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -74,10 +75,19 @@ var allTestCase = []testCancelJob{
 	{"alter table t drop index v_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add vector index v_idx_2((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
 	{"alter table t drop index v_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add vector index v_idx_3((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
 	{"alter table t drop index v_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add vector index v_idx_4((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
-	// Add vector key
+	// Drop full text index
+	{"alter table t drop index fts_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add fulltext index fts_idx_2(ctxt)"}},
+	{"alter table t drop index fts_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add fulltext index fts_idx_3(ctxt)"}},
+	{"alter table t drop index fts_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add fulltext index fts_idx_4(ctxt)"}},
+	// Add vector index
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateNone, true, false, nil},
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateDeleteOnly, true, true, nil},
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateWriteOnly, true, true, nil},
+	// Add full text index
+	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateNone, true, false, nil},
+	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t add fulltext index fts_idx_x(ctxt)", false, model.StatePublic, false, true, nil},
 	// Add column.
 	{"alter table t add column c4 bigint", true, model.StateNone, true, false, nil},
 	{"alter table t add column c4 bigint", true, model.StateDeleteOnly, true, true, nil},
@@ -224,8 +234,10 @@ func TestCancelVariousJobs(t *testing.T) {
 		}, 10*time.Second, 10*time.Millisecond)
 	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
+	fulltextSortURI := startFakeGCSSortURI(t)
 
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
@@ -249,7 +261,7 @@ func TestCancelVariousJobs(t *testing.T) {
 		partition p4 values less than (7096)
    	);`)
 	tk.MustExec(`create table t (
-		c1 int, c2 int, c3 int, c11 tinyint, v2 vector(3), index fk_c1(c1)
+		c1 int, c2 int, c3 int, c11 tinyint, v2 vector(3), index fk_c1(c1), ctxt TEXT
 	);`)
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 
@@ -261,14 +273,31 @@ func TestCancelVariousJobs(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(2048)`)
 
 	// Change some configurations.
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 8")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(2048)`)
+	enableMockTiCIBackfill(t)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCloudImportExecutor", `return()`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess"))
 	}()
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+	})
 
 	i := atomicutil.NewInt64(0)
 	canceled := atomicutil.NewBool(false)
@@ -303,6 +332,11 @@ func TestCancelVariousJobs(t *testing.T) {
 		t.Logf("running test case %d: %s", j, tc.sql)
 		i.Store(int64(j))
 		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
+		if requiresFulltextGlobalSort(tc) {
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_cloud_storage_uri = '%s'", fulltextSortURI))
+		} else {
+			tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
+		}
 		if tc.onJobBefore {
 			resetHook()
 			for _, prepareSQL := range tc.prepareSQL {
@@ -342,6 +376,18 @@ func TestCancelVariousJobs(t *testing.T) {
 			}
 		}
 	}
+}
+
+func requiresFulltextGlobalSort(tc testCancelJob) bool {
+	if strings.Contains(tc.sql, "fulltext index") {
+		return true
+	}
+	for _, sql := range tc.prepareSQL {
+		if strings.Contains(sql, "fulltext index") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCancelForAddUniqueIndex(t *testing.T) {

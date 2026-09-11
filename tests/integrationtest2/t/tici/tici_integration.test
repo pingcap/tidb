@@ -1,0 +1,54 @@
+# Test tici + TiCDC S3 sink (FTS)
+
+CREATE DATABASE IF NOT EXISTS tici_integration;
+USE tici_integration;
+
+DROP TABLE IF EXISTS t1;
+DROP TABLE IF EXISTS t2;
+DROP TABLE IF EXISTS t3;
+DROP TABLE IF EXISTS t4;
+
+CREATE TABLE IF NOT EXISTS t1(id varchar(10),body TEXT,PRIMARY KEY (id) CLUSTERED);
+ALTER TABLE t1 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
+INSERT INTO t1 VALUES
+(1, 'This is the first test pdata, used to demonstrate the insert operation'),
+(2, 'The second record contains some sample text for testing'),
+(3, 'Third entry: verifying the TEXT field''s ability to store longer content'),
+(4, 'Fourth data row, which can be used for subsequent query or analysis tests'),
+(5, 'Fifth sample entry to complete the basic insertion example');
+
+CREATE TABLE IF NOT EXISTS t2(id varchar(10),content TEXT,PRIMARY KEY (id) CLUSTERED);
+ALTER TABLE t2 ADD FULLTEXT INDEX ft_index (content) WITH PARSER standard;
+INSERT INTO t2 VALUES
+(1, 'This is the first test data, used to demonstrate the insert operation'),
+(2, 'The second record contains some sample text for testing'),
+(3, 'Third entry: verifying the TEXT field''s ability to store longer content'),
+(4, 'Fourth data row, which can be used for subsequent query or analysis tests'),
+(5, 'Fifth sample entry to complete the basic insertion example');
+
+# Non-empty table FULLTEXT index add should succeed and be queryable.
+CREATE TABLE IF NOT EXISTS t3(id varchar(10), body TEXT, PRIMARY KEY (id) CLUSTERED);
+INSERT INTO t3 VALUES
+(1, 'hello world from non-empty table case'),
+(2, 'another row for fulltext query');
+ALTER TABLE t3 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
+
+# Create multiple fulltext index by backfilling on the same table
+# And to verify the primary key with trailing spaces
+CREATE TABLE IF NOT EXISTS t4(id varchar(10),body1 TEXT,body2 TEXT,PRIMARY KEY (id) CLUSTERED);
+INSERT INTO t4 VALUES
+(1, 'This is the first test x data, used to demonstrate the insert operation','database tidb'),
+(2, 'The second record contains some sample text for testing', 'backfilling data'),
+(3, 'Third entry: verifying the TEXT field''s ability to store longer content', 'some text'),
+(4, 'Fourth data row, which can be used for subsequent query or analysis tests', 'index engine'),
+(5, 'Fifth sample entry to complete the basic insertion example', 'import engine'),
+('ts1 ', 'This is the first test x data, used to demonstrate trailing-space PK', 'trailing pk row');
+ALTER TABLE t4 ADD FULLTEXT INDEX ft_idx1 (body1) WITH PARSER standard;
+ALTER TABLE t4 ADD FULLTEXT INDEX ft_idx2 (body2) WITH PARSER standard;
+
+DO SLEEP(30);
+SELECT * FROM t1 WHERE fts_match_word('first', body);
+SELECT * FROM t2 WHERE fts_match_word('first', content);
+SELECT * FROM t3 WHERE fts_match_word('hello', body);
+SELECT id, HEX(id) AS id_hex, body1 FROM t4 WHERE fts_match_word('first', body1) ORDER BY HEX(id);
+SELECT id,body2 FROM t4 WHERE fts_match_word('data', body2);
