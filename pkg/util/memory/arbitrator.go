@@ -2530,7 +2530,7 @@ func (m *MemArbitrator) HandleRuntimeStats(s memStats) {
 }
 
 func (m *MemArbitrator) tryUpdateTrackedMemStats(utimeMilli int64) bool {
-	if m.avoidance.heapTracked.lastUpdateUtimeMilli.Load()+defTrackMemStatsDurMilli <= utimeMilli {
+	if m.avoidance.heapTracked.lastUpdateUtimeMilli.Load()+200 <= utimeMilli {
 		// var top3 top3DigestDataGroup
 		m.updateTrackedHeapStats(nil)
 		// m.digestProfileCache.top3.merge(top3, m.approxUnixTimeSec())
