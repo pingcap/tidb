@@ -320,7 +320,7 @@ type StmtExecInfo struct {
 
 // StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.
 type StmtExecLazyInfo interface {
-	GetOriginalSQL() string
+	GetOriginalSQL(redactAtCapture bool) string
 	GetEncodedPlan() (string, string, any)
 	GetBinaryPlan() string
 	GetPlanDigest() string
@@ -741,7 +741,7 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
 	return &stmtSummaryStats{
-		sampleSQL: formatSQL(sei.LazyInfo.GetOriginalSQL()),
+		sampleSQL: formatSQL(sei.LazyInfo.GetOriginalSQL(true)),
 		charset:   sei.Charset,
 		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.

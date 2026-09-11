@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -837,4 +838,80 @@ func closeStmtSummary() {
 	})
 	stmtsummaryv2.GlobalStmtSummary.Close()
 	_ = os.Remove(config.GetGlobalConfig().Instance.StmtSummaryFilename)
+}
+
+func TestStatementSummarySampleRedaction(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	oldSummary := stmtsummaryv2.GlobalStmtSummary
+	t.Cleanup(func() { stmtsummaryv2.GlobalStmtSummary = oldSummary })
+	for _, persistent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("persistent=%t", persistent), func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), "statements.log")
+			summary, err := stmtsummaryv2.NewStmtSummary(&stmtsummaryv2.Config{Filename: filename})
+			require.NoError(t, err)
+			t.Cleanup(summary.Close)
+			stmtsummaryv2.GlobalStmtSummary = summary
+			config.UpdateGlobal(func(c *config.Config) {
+				c.Instance.StmtSummaryEnablePersistent = persistent
+				c.Instance.StmtSummaryFilename = filename
+			})
+			store := testkit.CreateMockStore(t)
+			tk := newTestKitWithRoot(t, store)
+			t.Cleanup(func() { tk.MustExec("set global tidb_redact_log = OFF") })
+			tk.MustQuery("show global variables like 'tidb_stmt_summary_enable_persistent'").Check(testkit.Rows("tidb_stmt_summary_enable_persistent " + map[bool]string{false: "OFF", true: "ON"}[persistent]))
+			tk.MustExec("create table sample_redaction (id int)")
+			const sql = "select * from sample_redaction where id = 42"
+			const preparedSQL = "select * from sample_redaction where id = ?"
+			normalized := parser.Normalize(sql, "ON")
+			for _, globalMode := range []string{"OFF", "ON", "MARKER"} {
+				tk.MustExec("set global tidb_redact_log = " + globalMode)
+				for _, sessionMode := range []string{"OFF", "ON", "MARKER"} {
+					// This session setting is internal; SQL SET SESSION is intentionally rejected.
+					require.NoError(t, tk.Session().GetSessionVars().SetSystemVarWithoutValidation("tidb_redact_log", sessionMode))
+					tk.MustExec("set tidb_enable_non_prepared_plan_cache = 0")
+					tk.MustExec("set global tidb_enable_stmt_summary = 0")
+					tk.MustExec("set global tidb_enable_stmt_summary = 1")
+					tk.MustQuery(sql)
+					expected := sql
+					expectedPrepared := preparedSQL + " [arguments: 42]"
+					if !persistent {
+						switch sessionMode {
+						case "ON":
+							expected, expectedPrepared = normalized, normalized
+						case "MARKER":
+							expected = "‹" + sql + "›"
+							expectedPrepared = "‹" + expectedPrepared + "›"
+						}
+					}
+					// A subsequent execution must not replace the first sample.
+					tk.MustQuery("select * from sample_redaction where id = 99")
+					for _, table := range []string{"statements_summary", "statements_summary_history"} {
+						tk.MustQuery("select query_sample_text, exec_count from information_schema." + table + " where digest_text = '" + normalized + "'").Check(testkit.Rows(expected + " 2"))
+					}
+					tk.MustExec("prepare s from '" + preparedSQL + "'")
+					tk.MustExec("set @id = 42")
+					tk.MustExec("set global tidb_enable_stmt_summary = 0")
+					tk.MustExec("set global tidb_enable_stmt_summary = 1")
+					tk.MustExec("execute s using @id")
+					tk.MustQuery("select query_sample_text from information_schema.statements_summary where digest_text = '" + normalized + "'").Check(testkit.Rows(expectedPrepared))
+					tk.MustExec("deallocate prepare s")
+				}
+			}
+			// Session changes do not control file redaction. Existing memory samples
+			// and persisted files are not reinterpreted when the log setting changes.
+			tk.MustExec("set global tidb_redact_log = ON")
+			require.NoError(t, tk.Session().GetSessionVars().SetSystemVarWithoutValidation("tidb_redact_log", "OFF"))
+			expectedMemory := preparedSQL + " [arguments: 42]"
+			if !persistent {
+				expectedMemory = "‹" + expectedMemory + "›"
+			}
+			tk.MustQuery("select query_sample_text from information_schema.statements_summary where digest_text = '" + normalized + "'").Check(testkit.Rows(expectedMemory))
+			if persistent {
+				summary.Close()
+				tk.MustQuery("select query_sample_text from information_schema.statements_summary_history where digest_text = '" + normalized + "'").Check(testkit.Rows(normalized))
+				tk.MustExec("set global tidb_redact_log = OFF")
+				tk.MustQuery("select query_sample_text from information_schema.statements_summary_history where digest_text = '" + normalized + "'").Check(testkit.Rows(normalized))
+			}
+		})
+	}
 }

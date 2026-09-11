@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -1057,4 +1058,42 @@ func TestDMLRowsColMultiplyRUV2SQLPath(t *testing.T) {
 	tk.MustExec("insert into dup_t values (1, 10)")
 	tk.MustExec("insert into dup_s values (1, 100), (1, 200)")
 	require.Equal(t, int64(2), runDML("update dup_t join dup_s on dup_t.a = dup_s.a set dup_t.b = dup_t.b + 1"))
+}
+
+func TestStatementSummaryOriginalSQL(t *testing.T) {
+	ctx := mock.NewContext()
+	vars := ctx.GetSessionVars()
+	stmt := &executor.ExecStmt{Ctx: ctx}
+	for _, mode := range []string{"OFF", "ON", "MARKER"} {
+		vars.EnableRedactLog = mode
+		vars.StmtCtx.OriginalSQL = "select '中文‹secret›'"
+		require.Equal(t, "select '中文‹secret›'", stmt.GetOriginalSQL(false), mode)
+		expectedLog := "select '中文‹secret›'"
+		switch mode {
+		case "ON":
+			expectedLog = "select ?"
+		case "MARKER":
+			expectedLog = "‹select '中文‹‹secret››'›"
+		}
+		require.Equal(t, expectedLog, stmt.GetOriginalSQL(true), "non-persistent summaries preserve session redaction")
+		require.Equal(t, expectedLog, stmt.GetTextToLog(false), "shared log formatting must still redact")
+		// Prepared values are retained in the summary sample, including a cached execution.
+		vars.StmtCtx.OriginalSQL = "select ?"
+		vars.PlanCacheParams.Append(types.NewIntDatum(42))
+		require.Equal(t, "select ? [arguments: 42]", stmt.GetOriginalSQL(false), mode)
+		vars.PlanCacheParams.SetForNonPrepCache(true)
+		require.Equal(t, "select ?", stmt.GetOriginalSQL(false), mode)
+		vars.PlanCacheParams.Reset()
+		vars.PlanCacheParams.SetForNonPrepCache(false)
+
+		node, err := parser.New().ParseOneStmt("create user u identified by 'credential'", "", "")
+		require.NoError(t, err)
+		stmt.StmtNode = node
+		vars.StmtCtx.OriginalSQL = "create user u identified by 'credential'"
+		sample := stmt.GetOriginalSQL(false)
+		require.Equal(t, node.(ast.SensitiveStmtNode).SecureText(), sample)
+		require.NotContains(t, sample, "credential")
+		require.NotContains(t, stmt.GetOriginalSQL(true), "credential")
+		stmt.StmtNode = nil
+	}
 }

@@ -19,12 +19,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestColumn(t *testing.T) {
@@ -275,4 +278,15 @@ func (mockColumnInfo) getInstanceAddr() string {
 func (mockColumnInfo) getTimeLocation() *time.Location {
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	return loc
+}
+
+func TestStatementSummaryDecodePlanLogUsesNormalizedSQL(t *testing.T) {
+	core, observed := observer.New(zap.ErrorLevel)
+	t.Cleanup(log.ReplaceGlobals(zap.New(core), &log.ZapProperties{}))
+	record := &StmtRecord{SampleSQL: "select 'secret'", NormalizedSQL: "select ?", SamplePlan: "invalid plan"}
+	require.Empty(t, columnFactoryMap[PlanStr](nil, record))
+	require.Equal(t, "select 'secret'", record.SampleSQL)
+	entries := observed.FilterMessage("decode plan in statement summary failed").All()
+	require.Len(t, entries, 1)
+	require.Equal(t, "select ?", entries[0].ContextMap()["query"])
 }
