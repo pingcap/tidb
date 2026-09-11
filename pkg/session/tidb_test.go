@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -26,14 +27,17 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -51,6 +55,36 @@ import (
 
 type recordingObserver struct {
 	count int
+}
+
+func TestShouldCheckConnectionAliveBeforeCommit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		node ast.StmtNode
+		want bool
+	}{
+		{"insert", &ast.InsertStmt{}, true},
+		{"update", &ast.UpdateStmt{}, true},
+		{"delete", &ast.DeleteStmt{}, true},
+		{"select", &ast.SelectStmt{}, false},
+		{"commit", &ast.CommitStmt{}, false},
+		{"rollback", &ast.RollbackStmt{}, false},
+		{"ddl", &ast.CreateTableStmt{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vars := variable.NewSessionVars(nil)
+			stmt := &executor.ExecStmt{StmtNode: tc.node}
+			for _, start := range []time.Time{{}, time.Now(), time.Now().Add(-2 * time.Second)} {
+				vars.StartTime = start
+				require.Equal(t, tc.want, shouldCheckConnectionAliveBeforeCommit(vars, stmt), "start=%v", start)
+			}
+			vars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+			require.False(t, shouldCheckConnectionAliveBeforeCommit(vars, stmt))
+			vars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+			vars.SetStatusFlag(mysql.ServerStatusAutocommit, false)
+			require.False(t, shouldCheckConnectionAliveBeforeCommit(vars, stmt))
+		})
+	}
 }
 
 func (o *recordingObserver) Observe(float64) {
