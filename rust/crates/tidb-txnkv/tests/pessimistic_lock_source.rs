@@ -229,8 +229,14 @@ struct ScriptedTikv {
     recorded: Arc<Mutex<Recorded>>,
     /// Hold rollback replies until every region in the round is published.
     rollback_batch_width: usize,
+    rollback_packets: Arc<Mutex<Vec<RollbackReply>>>,
     rollback_responses: Arc<Mutex<Vec<KvrpcPessimisticRollbackResponse>>>,
 }
+
+type RollbackReply = (
+    tokio::sync::mpsc::Sender<Result<BatchCommandsResponse, tonic::Status>>,
+    BatchCommandsResponse,
+);
 
 impl ScriptedTikv {
     fn new(locks: Vec<LockOutcome>) -> Self {
@@ -239,6 +245,7 @@ impl ScriptedTikv {
             prewrite_blocked_by: Arc::new(Mutex::new(None)),
             recorded: Arc::new(Mutex::new(Recorded::default())),
             rollback_batch_width: 1,
+            rollback_packets: Arc::new(Mutex::new(Vec::new())),
             rollback_responses: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -400,7 +407,6 @@ impl Tikv for ScriptedTikv {
         let mut inbound = request.into_inner();
         let (responses, response_rx) = tokio::sync::mpsc::channel(8);
         tokio::spawn(async move {
-            let mut rollback_packets = Vec::new();
             while let Ok(Some(packet)) = inbound.message().await {
                 for (request_id, request) in packet.request_ids.into_iter().zip(packet.requests) {
                     let Some(cmd) = request.cmd else { continue };
@@ -421,12 +427,19 @@ impl Tikv for ScriptedTikv {
                         ..BatchCommandsResponse::default()
                     };
                     if rollback {
-                        rollback_packets.push(packet);
-                        if rollback_packets.len() < service.rollback_batch_width {
-                            continue;
-                        }
-                        for packet in rollback_packets.drain(..) {
-                            if responses.send(Ok(packet)).await.is_err() {
+                        // Regions may arrive on different physical streams.
+                        // Count the whole round, then reply on each origin.
+                        let ready = {
+                            let mut held = service.rollback_packets.lock().unwrap();
+                            held.push((responses.clone(), packet));
+                            if held.len() < service.rollback_batch_width {
+                                Vec::new()
+                            } else {
+                                std::mem::take(&mut *held)
+                            }
+                        };
+                        for (reply, packet) in ready {
+                            if reply.send(Ok(packet)).await.is_err() {
                                 return;
                             }
                         }
@@ -1268,6 +1281,37 @@ fn commit_declares_a_for_update_ts_constraint_for_a_lock_taken_with_conflict() {
 // -----------------------------------------------------------------------------
 // Releasing locks and committing
 // -----------------------------------------------------------------------------
+
+#[test]
+fn rollback_fixture_barrier_spans_distinct_streams() {
+    let mut service = ScriptedTikv::new(Vec::new());
+    service.rollback_batch_width = 2;
+    let recorded = Arc::clone(&service.recorded);
+    let server = TestServer::start(service);
+    let mut first = TonicCoprocessorClient::new().unwrap();
+    let mut second = TonicCoprocessorClient::new().unwrap();
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
+    let request = |key: &[u8]| KvrpcPessimisticRollbackRequest {
+        start_version: START_TS,
+        for_update_ts: START_TS,
+        keys: vec![key.to_vec()],
+        ..Default::default()
+    };
+    let mut first_pending = first.begin_transaction_pessimistic_rollback(
+        &server.store_address(), None, &request(PRIMARY_KEY), &Default::default(), &call).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while recorded.lock().unwrap().pessimistic_rollbacks.is_empty() {
+        assert!(Instant::now() < deadline, "first rollback did not arrive");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(first_pending.try_complete().unwrap().is_none(),
+        "one published region cannot release the round");
+    let mut second_pending = second.begin_transaction_pessimistic_rollback(
+        &server.store_address(), None, &request(SECOND_KEY), &Default::default(), &call).unwrap();
+    first_pending.complete(&call).unwrap().unwrap();
+    second_pending.complete(&call).unwrap().unwrap();
+    assert_eq!(recorded.lock().unwrap().pessimistic_rollbacks.len(), 2);
+}
 
 #[test]
 fn rollback_publishes_every_region_before_waiting_for_a_response() {

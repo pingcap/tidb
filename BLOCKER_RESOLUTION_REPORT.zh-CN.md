@@ -1,5 +1,34 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 rollback 测试屏障跨 BatchCommands stream 同步
+
+txnkv 全量曾在 rollback_publishes_every_region_before_waiting_for_a_response
+超时，单跑通过。fixture 把两 region 的 rollback 回复缓存在各自 stream
+局部 Vec 中，分到不同连接时每边都只看到一个请求，永远不回复。
+固定 master 对应 client-go `internal/client/conn_pool.go::Get` 对连接池
+轮询，测试不得要求两个 region 恰好共享 stream。
+
+新增固定两客户端/两 stream 回归，旧实现 2.02 秒 DeadlineExceeded，
+`/tmp/rollback-barrier-red.log`。fixture 现在按同一服务的 round 收集回复，
+达到原要求的两个请求才释放，并保留每个回复的原 stream sender。锁在
+await 前释放，不改生产连接数或 rollback 实现。新增检查第一请求已到达时
+没有提前响应，两条 stream 均完成后记录恰好两个 rollback。
+
+Ready 验证：
+
+```bash
+RUSTFLAGS='' RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-txnkv --test all rollback_fixture_barrier_spans_distinct_streams -- --nocapture
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-txnkv --test all
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all
+make lint
+git diff --check
+```
+
+窄回归 0.03 秒通过，`/tmp/rollback-barrier-green.log`；全量 416 passed、
+0 failed、10 原 ignored，5.02 秒，`/tmp/rollback-barrier-full-green.log`。
+lint 退出 0，`/tmp/rollback-barrier-lint.log`。整体目标仍继续，未将这一测试
+集全绿替代原始完整命令集合的验收。
+
 ## 2026-09-11 transport-retry：RPC 读超时不是查询总时限
 
 原真实失败 `/tmp/transport-retry-current.log` 在绑定 lazy response 后停 leader，
