@@ -358,7 +358,8 @@ rust_root_sql -e "
   GRANT SELECT (customer) ON conv.orders TO 'rustmade'@'%';
 "
 wait_for_go_grant "GRANT SELECT,UPDATE ON \`conv\`.\`orders\` TO 'rustmade'@'%'"
-wait_for_go_grant "GRANT SELECT(\`customer\`) ON \`conv\`.\`orders\` TO 'rustmade'@'%'"
+# Go privileges/cache.go::privOnColumnsToString emits the bare column name.
+wait_for_go_grant "GRANT SELECT(customer) ON \`conv\`.\`orders\` TO 'rustmade'@'%'"
 
 echo "and the other direction: the Go TiDB grants, the Rust node's watch fires"
 

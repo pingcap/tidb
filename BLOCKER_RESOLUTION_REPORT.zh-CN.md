@@ -1,5 +1,28 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 列级授权输出断言与后续失败
+
+固定 master `pkg/privilege/privileges/cache.go:1973-2012` 将 ColumnName
+直接放入 `SELECT(...)`，不加反引号。将 convergence 的列级授权期望修正为
+`GRANT SELECT(customer) ON ...`。真实 red `/tmp/convergence-allocator-master.log`
+等满 60 秒且最后输出正是无反引号形式；修改后
+`/tmp/convergence-column-grant-master.log` 该断言通过，也观察到了 Go 修改后的
+全局 SELECT,INSERT,UPDATE 及 scoped INSERT 授权。bash -n、git diff --check、
+make lint 通过（`/tmp/convergence-column-grant-lint.log`）。完整命令沿用固定
+master + nightly 的 convergence 命令，未改生产权限行为。
+
+完整 convergence 仍失败：DROP USER 返回 1105，内部 unique index lookup
+报告 `no statement snapshot is bound to this session's cluster storage`。
+此外反向全局授权观察目前只匹配 UPDATE，可能提前匹配已有表级 UPDATE，
+应在后续收紧为完整全局 grant 字符串，不能仅据该 marker 声称 watch 验证充分。
+
+原 transport-retry 本轮直接运行，独立 target 确实仍存在，无需改为 all。
+`RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-transport-retry.sh`
+失败于 `realtikv_transport_retry.rs:399`：同一 lazy response 在 leader 停止后
+恢复时报 `Source("query deadline exceeded")`，运行 7.28 秒，日志
+`/tmp/transport-retry-current.log`。这不是入口或 readiness 错误。两脚本均已
+退出并执行清理；剩余工作继续按具体失败修复，整体目标未完成。
+
 ## 2026-09-11 账户 row-ID 分配使用独立事务
 
 真实 red `/tmp/convergence-account-master.log` 的 CREATE USER 在 TID:4
