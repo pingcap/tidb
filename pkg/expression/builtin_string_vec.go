@@ -256,6 +256,7 @@ func (b *builtinRightUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
+	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -264,12 +265,8 @@ func (b *builtinRightUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 
 		str := buf.GetString(i)
 		runes := []rune(str)
-		strLength, rightLength := len(runes), int(nums[i])
-		if rightLength > strLength {
-			rightLength = strLength
-		} else if rightLength < 0 {
-			rightLength = 0
-		}
+		strLength := len(runes)
+		rightLength := normalizeRightLength(strLength, nums[i], unsigned)
 
 		result.AppendString(string(runes[strLength-rightLength:]))
 	}
@@ -2799,18 +2796,15 @@ func (b *builtinRightSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, res
 	}
 	right := buf2.Int64s()
 	result.ReserveString(n)
+	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		str, rightLength := buf.GetString(i), int(right[i])
+		str := buf.GetString(i)
 		strLength := len(str)
-		if rightLength > strLength {
-			rightLength = strLength
-		} else if rightLength < 0 {
-			rightLength = 0
-		}
+		rightLength := normalizeRightLength(strLength, right[i], unsigned)
 		result.AppendString(str[strLength-rightLength:])
 	}
 	return nil
