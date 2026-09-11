@@ -1948,6 +1948,23 @@ func checkAlterTableMaterializedViewConstraints(
 	return checkAlterTableBaseTableMLogColumnConstraints(ctx, is, tblInfo, specs, op)
 }
 
+func checkBaseTableMaterializedViewDependencyConstraints(tblInfo *model.TableInfo, op string) error {
+	if tblInfo.MaterializedViewBase == nil {
+		return nil
+	}
+	if len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s with materialized view dependencies", op),
+		)
+	}
+	if tblInfo.MaterializedViewBase.MLogID != 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s with materialized view log", op),
+		)
+	}
+	return nil
+}
+
 // CheckIndexOperationMaterializedViewConstraints checks whether an index operation is allowed on an MV-related table.
 func CheckIndexOperationMaterializedViewConstraints(_ *variable.SessionVars, tblInfo *model.TableInfo, op string, unique bool) error {
 	if tblInfo.MaterializedViewLog != nil {
@@ -2817,6 +2834,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
 	}
+	if err = checkBaseTableMaterializedViewDependencyConstraints(t.Meta(), "ALTER TABLE ... PARTITION BY"); err != nil {
+		return err
+	}
 
 	meta := t.Meta().Clone()
 	if isReservedSchemaObjInNextGen(meta.ID) {
@@ -2964,6 +2984,9 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+	if err = checkBaseTableMaterializedViewDependencyConstraints(t.Meta(), "ALTER TABLE ... REMOVE PARTITIONING"); err != nil {
+		return err
 	}
 
 	meta := t.Meta().Clone()
@@ -3504,8 +3527,24 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 	if len(nt.ForeignKeys) > 0 {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
+	if err := checkExchangePartitionMaterializedViewConstraints(pt, "partitioned table"); err != nil {
+		return err
+	}
+	return checkExchangePartitionMaterializedViewConstraints(nt, "non-partitioned table")
+}
 
-	return nil
+func checkExchangePartitionMaterializedViewConstraints(tblInfo *model.TableInfo, tableRole string) error {
+	if tblInfo.MaterializedViewLog != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("EXCHANGE PARTITION on %s with materialized view log", tableRole),
+		)
+	}
+	if tblInfo.MaterializedView != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("EXCHANGE PARTITION on %s materialized view table", tableRole),
+		)
+	}
+	return checkBaseTableMaterializedViewDependencyConstraints(tblInfo, fmt.Sprintf("EXCHANGE PARTITION on %s", tableRole))
 }
 
 func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {

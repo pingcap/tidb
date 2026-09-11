@@ -30,11 +30,15 @@ go_library(
 go_test(
     name = "ddl_test",
     timeout = "short",
-    srcs = ["ddl_test.go"],
+    srcs = [
+        "ddl_test.go",
+        "subscriber_internal_test.go",
+    ],
+    embed = [":ddl"],
     flaky = True,
-    shard_count = 24,
+    shard_count = 25,
     deps = [
-        ":ddl",
+        "//pkg/ddl/notifier",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/planner/cardinality",
