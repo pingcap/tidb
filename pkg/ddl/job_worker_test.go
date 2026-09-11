@@ -23,16 +23,223 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 const testLease = 5 * time.Second
+
+func TestDDLJobRU(t *testing.T) {
+	requireExpectedJobRU := func(t *testing.T, ru float64) {
+		t.Helper()
+		if kerneltype.IsNextGen() {
+			require.Positive(t, ru)
+			return
+		}
+		require.Zero(t, ru)
+	}
+	expectedMetricRU := func(ru float64) float64 {
+		if kerneltype.IsNextGen() {
+			return ru
+		}
+		return 0
+	}
+
+	t.Run("general job persists active RU unchanged", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		totalRUBefore := testutil.ToFloat64(metrics.RUV3Total)
+		ddlRUBefore := testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)
+		tikvRUBefore := testutil.ToFloat64(metrics.RUV3ByEngineTiKV)
+
+		var mu sync.Mutex
+		var jobID int64
+		var activeRU float64
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, updateErr *error) {
+			if job.Type != model.ActionCreateTable || job.TableName != "t_ddl_ru_general" || *updateErr != nil {
+				return
+			}
+			mu.Lock()
+			jobID = job.ID
+			activeRU = job.RU
+			mu.Unlock()
+		})
+
+		tk.MustExec("create table t_ddl_ru_general (a int)")
+
+		mu.Lock()
+		capturedJobID, capturedActiveRU := jobID, activeRU
+		mu.Unlock()
+		require.NotZero(t, capturedJobID)
+		requireExpectedJobRU(t, capturedActiveRU)
+		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobID)
+		require.NoError(t, err)
+		require.NotNil(t, historyJob)
+		require.Equal(t, capturedActiveRU, historyJob.RU)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3Total)-totalRUBefore, 1e-9)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)-ddlRUBefore, 1e-9)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3ByEngineTiKV)-tikvRUBefore, 1e-9)
+	})
+
+	t.Run("reorg job is excluded", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t_ddl_ru_reorg (a int)")
+
+		var mu sync.Mutex
+		var jobID int64
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, updateErr *error) {
+			if job.Type != model.ActionAddIndex || job.TableName != "t_ddl_ru_reorg" || *updateErr != nil {
+				return
+			}
+			mu.Lock()
+			jobID = job.ID
+			mu.Unlock()
+		})
+
+		tk.MustExec("alter table t_ddl_ru_reorg add index idx(a)")
+
+		mu.Lock()
+		capturedJobID := jobID
+		mu.Unlock()
+		require.NotZero(t, capturedJobID)
+		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobID)
+		require.NoError(t, err)
+		require.NotNil(t, historyJob)
+		require.Zero(t, historyJob.RU)
+	})
+
+	t.Run("commit retry reloads durable RU", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+
+		const commitFailpoint = "github.com/pingcap/tidb/pkg/session/mockCommitError8942"
+		var armOnce sync.Once
+		var armMu sync.Mutex
+		var armErr error
+		var armed bool
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type != model.ActionCreateTable || job.TableName != "t_ddl_ru_retry" {
+				return
+			}
+			armOnce.Do(func() {
+				err := failpoint.Enable(commitFailpoint, `1*return(true)`)
+				armMu.Lock()
+				armErr = err
+				armed = err == nil
+				armMu.Unlock()
+				if err == nil {
+					t.Cleanup(func() {
+						require.NoError(t, failpoint.Disable(commitFailpoint))
+					})
+				}
+			})
+		})
+
+		var observationsMu sync.Mutex
+		var jobIDs []int64
+		var ruValues []float64
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, updateErr *error) {
+			if job.Type != model.ActionCreateTable || job.TableName != "t_ddl_ru_retry" || *updateErr != nil {
+				return
+			}
+			observationsMu.Lock()
+			jobIDs = append(jobIDs, job.ID)
+			ruValues = append(ruValues, job.RU)
+			observationsMu.Unlock()
+		})
+
+		tk.MustExec("create table t_ddl_ru_retry (a int)")
+
+		armMu.Lock()
+		capturedArmErr := armErr
+		capturedArmed := armed
+		armMu.Unlock()
+		require.NoError(t, capturedArmErr)
+		require.True(t, capturedArmed)
+		observationsMu.Lock()
+		capturedJobIDs := append([]int64(nil), jobIDs...)
+		capturedRUValues := append([]float64(nil), ruValues...)
+		observationsMu.Unlock()
+		require.GreaterOrEqual(t, len(capturedJobIDs), 2)
+		require.Equal(t, capturedJobIDs[0], capturedJobIDs[1])
+		require.Equal(t, capturedRUValues[0], capturedRUValues[1])
+		requireExpectedJobRU(t, capturedRUValues[0])
+		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobIDs[0])
+		require.NoError(t, err)
+		require.NotNil(t, historyJob)
+		require.Equal(t, capturedRUValues[len(capturedRUValues)-1], historyJob.RU)
+	})
+
+	t.Run("history commit retry publishes RU once", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		totalRUBefore := testutil.ToFloat64(metrics.RUV3Total)
+		ddlRUBefore := testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)
+		tikvRUBefore := testutil.ToFloat64(metrics.RUV3ByEngineTiKV)
+
+		const commitFailpoint = "github.com/pingcap/tidb/pkg/session/mockCommitError8942"
+		var armOnce sync.Once
+		var mu sync.Mutex
+		var armErr error
+		var armed bool
+		var jobID int64
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterFinishDDLJob", func(job *model.Job) {
+			if job.Type != model.ActionCreateTable || job.TableName != "t_ddl_ru_history_retry" || !job.IsSynced() {
+				return
+			}
+			mu.Lock()
+			jobID = job.ID
+			mu.Unlock()
+			armOnce.Do(func() {
+				err := failpoint.Enable(commitFailpoint, `1*return(true)`)
+				mu.Lock()
+				armErr = err
+				armed = err == nil
+				mu.Unlock()
+				if err == nil {
+					t.Cleanup(func() {
+						require.NoError(t, failpoint.Disable(commitFailpoint))
+					})
+				}
+			})
+		})
+
+		tk.MustExec("create table t_ddl_ru_history_retry (a int)")
+
+		mu.Lock()
+		capturedArmErr, capturedArmed, capturedJobID := armErr, armed, jobID
+		mu.Unlock()
+		require.NoError(t, capturedArmErr)
+		require.True(t, capturedArmed)
+		require.NotZero(t, capturedJobID)
+		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobID)
+		require.NoError(t, err)
+		require.NotNil(t, historyJob)
+		requireExpectedJobRU(t, historyJob.RU)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3Total)-totalRUBefore, 1e-9)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)-ddlRUBefore, 1e-9)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3ByEngineTiKV)-tikvRUBefore, 1e-9)
+	})
+}
 
 func TestCheckOwner(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)

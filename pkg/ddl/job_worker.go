@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
@@ -203,6 +204,10 @@ const (
 	// backgroundWorker is the worker that can use auto-scaled tidb-workers in next-gen.
 	backgroundWorker workerType = 2
 )
+
+// TODO: Refactor this weight and the statement RU weights in
+// pkg/executor/statement_ru_result.go into a shared location, then make them configurable.
+const ddlTxnRUKVBytesWeight = 1.0
 
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
@@ -439,6 +444,11 @@ func JobNeedGC(job *model.Job) bool {
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
+	// Failed DDL jobs are not accounted for yet. Clear any RU accumulated by
+	// earlier steps before moving a cancelled or rolled-back job to history.
+	if job.IsCancelled() || job.IsRollbackDone() {
+		job.RU = 0
+	}
 	if JobNeedGC(job) {
 		err = w.delRangeManager.addDelRangeJob(w.workCtx, job)
 		if err != nil {
@@ -582,9 +592,29 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	if err != nil {
 		return err
 	}
+	if kerneltype.IsNextGen() && job.IsSynced() && job.RU > 0 {
+		metrics.RUV3Total.Add(job.RU)
+		metrics.RUV3BySQLTypeDDL.Add(job.RU)
+		metrics.RUV3ByEngineTiKV.Add(job.RU)
+		w.reportJobRUV3Consumption(job.RU)
+	}
 	cleanupDDLReorgHandles(job, w.sess)
 	jobCtx.notifyDone()
 	return nil
+}
+
+func (w *worker) reportJobRUV3Consumption(totalRU float64) {
+	if totalRU <= 0 {
+		return
+	}
+	dctx := w.sess.GetDistSQLCtx()
+	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
+		return
+	}
+	// General DDL jobs do not persist the submitter's resource group yet. The
+	// internal DDL worker session therefore reports them to its default group.
+	// DDL RU is derived from transaction KV bytes, so attribute it to TiKV.
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, totalRU, 0, 0)
 }
 
 func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
@@ -616,6 +646,21 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 	// set request source type to DDL type
 	txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
 	return txn, err
+}
+
+func (w *worker) accountJobRU(job *model.Job) error {
+	// Only general DDL jobs on NextGen calculate RU for now.
+	if !kerneltype.IsNextGen() || w.tp != generalWorker {
+		return nil
+	}
+	txn, err := w.sess.Txn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The DDL job-table update happens after this sample, and the history-table
+	// writes happen in the final transaction. These internal writes are excluded.
+	job.RU += float64(txn.Size()) * ddlTxnRUKVBytesWeight
+	return nil
 }
 
 // transitOneJobStep runs one step of the DDL job and persist the new job
@@ -735,6 +780,11 @@ func (w *worker) transitOneJobStep(
 
 	err = w.registerMDLInfo(job, schemaVer)
 	if err != nil {
+		w.sess.Rollback()
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+		return 0, err
+	}
+	if err = w.accountJobRU(job); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err

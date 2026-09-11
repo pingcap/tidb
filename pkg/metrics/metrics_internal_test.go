@@ -104,6 +104,8 @@ func TestRUV3MetricDefinitions(t *testing.T) {
 
 	InitRUV3Metrics()
 	RUV3Total.Add(1)
+	RUV3BySQLTypeDDL.Add(2)
+	RUV3ByEngineTiKV.Add(3)
 	RUV3BySQLType.WithLabelValues("select").Add(2)
 	AddRUV3Results(3, 4, 7, "select")
 	RUV3Unit.WithLabelValues("tikv", "hash_agg", LblRUV3UnitCPUWork).Add(5)
@@ -119,6 +121,7 @@ func TestRUV3MetricDefinitions(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_ru_total"))
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, LblSQLTypeDDL)
 	requireMetricFamilyHasLabel(
 		t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, "select",
 	)

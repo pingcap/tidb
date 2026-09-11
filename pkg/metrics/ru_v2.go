@@ -46,21 +46,22 @@ var (
 
 // RUv3 metrics.
 var (
-	RUV3Total      prometheus.Counter
-	RUV3BySQLType  *prometheus.CounterVec
-	RUV3ByEngine   *prometheus.CounterVec
-	RUV3Unit       *prometheus.CounterVec
-	RUV3Statements *prometheus.CounterVec
-	ruv3TiDB       prometheus.Counter
-	ruv3TiKV       prometheus.Counter
-	ruv3Select     prometheus.Counter
-	ruv3Insert     prometheus.Counter
-	ruv3Replace    prometheus.Counter
-	ruv3Update     prometheus.Counter
-	ruv3Delete     prometheus.Counter
-	ruv3Commit     prometheus.Counter
-	ruv3Analyze    prometheus.Counter
-	ruv3Other      prometheus.Counter
+	RUV3Total        prometheus.Counter
+	RUV3BySQLType    *prometheus.CounterVec
+	RUV3BySQLTypeDDL prometheus.Counter
+	RUV3ByEngine     *prometheus.CounterVec
+	RUV3ByEngineTiKV prometheus.Counter
+	RUV3Unit         *prometheus.CounterVec
+	RUV3Statements   *prometheus.CounterVec
+	ruv3TiDB         prometheus.Counter
+	ruv3Select       prometheus.Counter
+	ruv3Insert       prometheus.Counter
+	ruv3Replace      prometheus.Counter
+	ruv3Update       prometheus.Counter
+	ruv3Delete       prometheus.Counter
+	ruv3Commit       prometheus.Counter
+	ruv3Analyze      prometheus.Counter
+	ruv3Other        prometheus.Counter
 )
 
 // RUV3 unit label constants define the label name and values for RU v3 raw unit metrics.
@@ -321,6 +322,7 @@ func InitRUV3Metrics() {
 			Help:      "Counter of resource unit consumption by SQL type for RU v3.",
 		}, []string{LblSQLType},
 	)
+	RUV3BySQLTypeDDL = RUV3BySQLType.WithLabelValues(LblSQLTypeDDL)
 
 	ruv3Select = RUV3BySQLType.WithLabelValues("select")
 	ruv3Insert = RUV3BySQLType.WithLabelValues("insert")
@@ -340,7 +342,7 @@ func InitRUV3Metrics() {
 		}, []string{LblEngine},
 	)
 	ruv3TiDB = RUV3ByEngine.WithLabelValues("tidb")
-	ruv3TiKV = RUV3ByEngine.WithLabelValues(LblEngineTiKV)
+	RUV3ByEngineTiKV = RUV3ByEngine.WithLabelValues(LblEngineTiKV)
 
 	RUV3Unit = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
@@ -382,7 +384,7 @@ func AddRUV3Results(tikvRU, tidbRU, totalRU float64, sqlType string) {
 	}
 	RUV3Total.Add(totalRU)
 	counter.Add(totalRU)
-	ruv3TiKV.Add(tikvRU)
+	RUV3ByEngineTiKV.Add(tikvRU)
 	ruv3TiDB.Add(tidbRU)
 }
 

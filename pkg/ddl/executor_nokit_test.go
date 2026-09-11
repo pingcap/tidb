@@ -393,3 +393,41 @@ func TestIsUndroppableTable(t *testing.T) {
 		})
 	}
 }
+
+func TestMaterializedViewPartitionDependencyConstraints(t *testing.T) {
+	t.Run("base table dependencies", func(t *testing.T) {
+		baseWithMLog := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 1},
+		}
+		err := checkBaseTableMaterializedViewDependencyConstraints(baseWithMLog, "ALTER TABLE ... REMOVE PARTITIONING")
+		require.ErrorContains(t, err, "ALTER TABLE ... REMOVE PARTITIONING with materialized view log")
+
+		baseWithMViews := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MViewIDs: []int64{2}},
+		}
+		err = checkBaseTableMaterializedViewDependencyConstraints(baseWithMViews, "ALTER TABLE ... PARTITION BY")
+		require.ErrorContains(t, err, "ALTER TABLE ... PARTITION BY with materialized view dependencies")
+
+		require.NoError(t, checkBaseTableMaterializedViewDependencyConstraints(&model.TableInfo{}, "ALTER TABLE ... PARTITION BY"))
+	})
+
+	t.Run("exchange table roles", func(t *testing.T) {
+		err := checkExchangePartitionMaterializedViewConstraints(
+			&model.TableInfo{MaterializedViewLog: &model.MaterializedViewLogInfo{}},
+			"non-partitioned table",
+		)
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view log")
+
+		err = checkExchangePartitionMaterializedViewConstraints(
+			&model.TableInfo{MaterializedView: &model.MaterializedViewInfo{}},
+			"non-partitioned table",
+		)
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table materialized view table")
+
+		err = checkExchangePartitionMaterializedViewConstraints(
+			&model.TableInfo{MaterializedViewBase: &model.MaterializedViewBaseInfo{MViewIDs: []int64{2}}},
+			"partitioned table",
+		)
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table with materialized view dependencies")
+	})
+}

@@ -464,6 +464,7 @@ func (e *Engine) updateActiveIngestDataFlags() {
 		}
 	}
 	e.activeIngestDataFlags = res
+	failpoint.InjectCall("afterUpdateActiveIngestDataFlags")
 }
 
 // handleConcurrencyChange handles the concurrency change for this engine. If
@@ -488,7 +489,11 @@ func (e *Engine) handleConcurrencyChange(ctx context.Context, currBatchSize int)
 	startTime := time.Now()
 	logger.Info("waiting ingest data batch size change")
 
-	tick := time.NewTicker(time.Second)
+	tickInterval := time.Second
+	failpoint.Inject("fastHandleConcurrencyChangeTicker", func() {
+		tickInterval = 10 * time.Millisecond
+	})
+	tick := time.NewTicker(tickInterval)
 	defer func() {
 		tick.Stop()
 	}()
@@ -778,7 +783,8 @@ type MemoryIngestData struct {
 	kvs []simplesst.KVPair
 	ts  uint64
 
-	memBuf          []*membuf.Buffer
+	memBuf []*membuf.Buffer
+	// released is published after all release work has completed.
 	released        *atomic.Bool
 	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
@@ -911,9 +917,6 @@ func (m *MemoryIngestData) DecRef() {
 }
 
 func (m *MemoryIngestData) release() {
-	if !m.released.CAS(false, true) {
-		return
-	}
 	m.kvs = nil
 	for _, b := range m.memBuf {
 		b.Destroy()
@@ -922,6 +925,7 @@ func (m *MemoryIngestData) release() {
 	if m.onRelease != nil {
 		m.onRelease()
 	}
+	m.released.Store(true)
 }
 
 // Finish implements IngestData.Finish.

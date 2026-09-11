@@ -52,6 +52,44 @@ func mustExecMViewMaintenance(t *testing.T, tk *testkit.TestKit, sql string) {
 	require.Nil(t, rs)
 }
 
+func TestMaterializedViewPartitionDDLConstraints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_partition_mlog (id bigint not null, v int not null)")
+	tk.MustExec("create materialized view log on t_partition_mlog (id, v)")
+	err := tk.ExecToErr(`alter table t_partition_mlog
+partition by range (id) (
+  partition p0 values less than (100),
+  partition p1 values less than maxvalue
+)`)
+	require.ErrorContains(t, err, "ALTER TABLE ... PARTITION BY with materialized view log")
+
+	tk.MustExec(`create table t_partitioned (
+  id bigint not null primary key,
+  v int not null
+)
+partition by range (id) (
+  partition p0 values less than (100),
+  partition p1 values less than maxvalue
+)`)
+	tk.MustExec("create table t_exchange_base (id bigint not null, v int not null)")
+	tk.MustExec("create materialized view log on t_exchange_base (id, v)")
+	tk.MustExec("create materialized view mv_exchange (v, cnt) as select v, count(*) from t_exchange_base group by v")
+	tk.MustExec("set @@tidb_enable_exchange_partition = 1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition = 0")
+
+	err = tk.ExecToErr("alter table t_partitioned exchange partition p0 with table t_exchange_base")
+	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view dependencies")
+
+	err = tk.ExecToErr("alter table t_partitioned exchange partition p0 with table `$mlog$t_exchange_base`")
+	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view log")
+
+	err = tk.ExecToErr("alter table t_partitioned exchange partition p0 with table mv_exchange")
+	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table materialized view table")
+}
+
 func TestAlterMaterializedViewRefreshDisableScheduleIgnoresAlertDeleteFailure(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)

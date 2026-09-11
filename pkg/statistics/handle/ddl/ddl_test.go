@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -30,6 +31,38 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSubscriberHandlesMaterializedViewMetadataEvents(t *testing.T) {
+	mvInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("mv")}
+	mlogInfo := &model.TableInfo{ID: 2, Name: ast.NewCIStr("$mlog$t")}
+	oldMVInfo := mvInfo.Clone()
+	oldMLogInfo := mlogInfo.Clone()
+
+	tests := []struct {
+		name  string
+		event *notifier.SchemaChangeEvent
+	}{
+		{
+			name:  "refresh",
+			event: notifier.NewAlterMaterializedViewRefreshEvent(mvInfo, oldMVInfo),
+		},
+		{
+			name:  "attributes",
+			event: notifier.NewAlterMaterializedViewAttributesEvent(mvInfo, oldMVInfo),
+		},
+		{
+			name:  "log purge",
+			event: notifier.NewAlterMaterializedViewLogPurgeEvent(mlogInfo, oldMLogInfo),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := ddl.NewDDLHandler(nil, nil)
+			require.NoError(t, h.HandleDDLEvent(context.Background(), nil, tt.event))
+		})
+	}
+}
 
 func TestDDLAfterLoad(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)

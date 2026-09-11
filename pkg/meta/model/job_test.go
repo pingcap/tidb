@@ -67,6 +67,7 @@ func TestJobCodec(t *testing.T) {
 		ID:         1,
 		TableID:    2,
 		SchemaID:   1,
+		RU:         12.5,
 		BinlogInfo: &HistoryInfo{},
 		ReorgMeta: &DDLReorgMeta{
 			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
@@ -83,6 +84,7 @@ func TestJobCodec(t *testing.T) {
 	newJob := &Job{}
 	err = newJob.Decode(b)
 	require.NoError(t, err)
+	require.Equal(t, job.RU, newJob.RU)
 	require.Equal(t, job.BinlogInfo, newJob.BinlogInfo)
 	require.NoError(t, err)
 	require.Greater(t, len(newJob.String()), 0)
@@ -96,6 +98,7 @@ func TestJobCodec(t *testing.T) {
 	newJob = &Job{}
 	err = newJob.Decode(b1)
 	require.NoError(t, err)
+	require.Equal(t, job.RU, newJob.RU)
 	require.Equal(t, &HistoryInfo{}, newJob.BinlogInfo)
 	require.NoError(t, err)
 	require.Greater(t, len(newJob.String()), 0)
@@ -105,7 +108,14 @@ func TestJobCodec(t *testing.T) {
 	newJob = &Job{}
 	err = newJob.Decode(b2)
 	require.NoError(t, err)
+	require.Equal(t, job.RU, newJob.RU)
 	require.Greater(t, len(newJob.String()), 0)
+	legacyJob := &Job{}
+	require.NoError(t, legacyJob.Decode([]byte(`{"id":1}`)))
+	require.Zero(t, legacyJob.RU)
+	zeroRUJobBytes, err := legacyJob.Encode(true)
+	require.NoError(t, err)
+	require.NotContains(t, string(zeroRUJobBytes), `"ru"`)
 
 	job.State = JobStateDone
 	require.True(t, job.IsDone())
@@ -174,6 +184,7 @@ func TestJobClone(t *testing.T) {
 		SchemaName:      "test",
 		TableName:       "t",
 		State:           JobStateDone,
+		RU:              12.5,
 		MultiSchemaInfo: nil,
 		ResumeReason:    &JobResumeReason{Type: JobResumeReasonKVDiskFull},
 	}
@@ -185,6 +196,7 @@ func TestJobClone(t *testing.T) {
 	require.Equal(t, job.SchemaName, clone.SchemaName)
 	require.Equal(t, job.TableName, clone.TableName)
 	require.Equal(t, job.State, clone.State)
+	require.Equal(t, job.RU, clone.RU)
 	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
 	require.Equal(t, job.ResumeReason, clone.ResumeReason)
 }
@@ -207,7 +219,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-	require.Equal(t, 416, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 424, int(unsafe.Sizeof(Job{})), msg)
 	require.Equal(t, 168, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
