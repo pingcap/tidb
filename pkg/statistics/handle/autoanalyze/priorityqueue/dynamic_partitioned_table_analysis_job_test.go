@@ -98,6 +98,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 
 	valid, _ := job.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), initAnalyzeWorkerSysVars))
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze index.
 	is = dom.InfoSchema()
@@ -122,6 +123,17 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
 	// Because analyze one index will analyze all indexes and all columns together, so there are 5 jobs.
 	require.Len(t, rows, 5)
+}
+
+// AnalyzeExec shares the auto-analyze session with worker goroutines; warm
+// lazy sysvar entries so this test exercises partition-index analysis itself.
+func initAnalyzeWorkerSysVars(sctx sessionctx.Context) error {
+	for _, name := range []string{"tidb_build_stats_concurrency", "tidb_build_sampling_stats_concurrency"} {
+		if _, err := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
