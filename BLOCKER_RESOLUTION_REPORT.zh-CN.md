@@ -1,5 +1,30 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 851a578683 上的 readiness 完整复验
+
+本次核验代码为 `851a578683ef540c1ce0dbc9b48ab7838b433c59`，与远端 hparser-integration 一致。固定 Go master oracle 为 `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`。原 readiness 故障已经由独立提交 `1f89c30b65` 和 `9839a744e0` 修复，本次未重复修改生产代码。
+
+根因链路：Rust `sql_node.rs::ConcurrentSqlNode::bind` 先开放 TCP，再启动内存后台任务；`cluster_session_node/boot.rs` 随后安装信号处理器并输出 ready。旧 runner 在端口连通后只 grep 一次，恰好落在窗口内时失败退出，EXIT trap 随即终止节点，所以日志中没有后续 ready。固定 Go master `pkg/server/server.go` 同样先 net.Listen，后设置 health；TCP 连通不能作为应用初始化完成的判据。共享等待函数保留真实 ready 事件检查，并在进程提前退出或 180 秒内未 ready 时失败，没有伪造事件或放宽 SQL 断言。
+
+Ready 验证命令，工作目录 `/tmp/tidb-hparser-current`：
+
+```bash
+for runner in access-path analyze convergence repeatable-read; do
+  bash rust/scripts/test-access-path-readiness.sh run-realtikv-${runner}.sh || exit
+done
+bash -n rust/scripts/cluster-session-readiness.sh rust/scripts/test-access-path-readiness.sh rust/scripts/run-realtikv-{access-path,analyze,convergence,repeatable-read}.sh
+make lint > /tmp/readiness-851a578-lint.log 2>&1
+RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
+  ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+  ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+  ACCESS_PATH_KEEP_LOGS=/tmp/readiness-851a578-evidence \
+  bash rust/scripts/run-realtikv-access-path.sh > /tmp/readiness-851a578-replay.log 2>&1
+```
+
+四入口的延迟 ready、提前退出和永久无 ready 回归均通过；shell 语法、make lint 均退出 0。真实 access-path 完整脚本退出 0，日志第 2076 行为 `the access-path differential passed`。节点日志 `/tmp/readiness-851a578-evidence/rust-node.log:8` 记录地址 `127.0.0.1:47600`、schema_version=68、stats_loaded=4 的真实 ready。测试启动的节点和 playground 已由脚本清理。
+
+本次未运行另外三个 runner 的完整集成套件；未宣称其通过，也未宣称其他 SQL 失败、历史 chunk panic 或整个 Rust/Go/Bazel 质量目标完成。后续应使用实际失败 SQL 继续推进，不能再沿用“readiness 外部证据缺口”作为阻塞结论。
+
 ## 2026-09-11 LAG 常量默认值的 cast 折叠
 
 在 `97bdb64f61` 独立回归 `window_lag_still_converts_a_written_constant_default`，`/tmp/lag-default-red.log` 退出 101，整数默认值输出 3 而非 3.00。临时诊断 `/tmp/lag-default-trace.log` 证明整数默认值为 cast_decimal(Constant(3))，而 1.5 已是 Constant；物理 buildLeadLag 只对 Constant 做 RetTp 转换，前者错过目标 scale=2 的转换。
