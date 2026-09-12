@@ -942,36 +942,42 @@ func TestMultiSchemaModifyColumnWithIndex(t *testing.T) {
 }
 
 func TestParallelAlterTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ctx := context.Background()
-	var wg util.WaitGroupWrapper
 
 	checkParallelDDL := func(t *testing.T, createSQL, firstSQL, secondSQL string) (err1, err2 error) {
-		var (
-			submitted     = make(chan struct{}, 16)
-			startSchedule = make(chan struct{})
-		)
+		var wg util.WaitGroupWrapper
 
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(createSQL)
 
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
-			<-startSchedule
-		})
+		require.True(t, dom.DDL().OwnerManager().IsOwner())
+		dom.DDL().OwnerManager().CampaignCancel()
+		ddlOwnerPaused := true
+		defer func() {
+			if ddlOwnerPaused {
+				require.NoError(t, dom.DDL().OwnerManager().CampaignOwner())
+			}
+			wg.Wait()
+		}()
+		require.Eventually(t, func() bool {
+			return !dom.DDL().OwnerManager().IsOwner()
+		}, 10*time.Second, 100*time.Millisecond)
 
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetJobFromLimitCh", func(ch chan *ddl.JobWrapper) {
-			submitted <- struct{}{}
-		})
 		wg.Run(func() {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			_, err1 = tk1.Exec(firstSQL)
 		})
+		require.Eventually(t, func() bool {
+			gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
+			require.NoError(t, err)
+			return len(gotJobs) == 1
+		}, 10*time.Second, 100*time.Millisecond)
+
 		wg.Run(func() {
-			// wait until first ddl is submitted
-			<-submitted
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			_, err2 = tk1.Exec(secondSQL)
@@ -982,7 +988,11 @@ func TestParallelAlterTable(t *testing.T) {
 			return len(gotJobs) == 2
 		}, 10*time.Second, 100*time.Millisecond)
 
-		close(startSchedule)
+		require.NoError(t, dom.DDL().OwnerManager().CampaignOwner())
+		ddlOwnerPaused = false
+		require.Eventually(t, func() bool {
+			return dom.DDL().OwnerManager().IsOwner()
+		}, 10*time.Second, 100*time.Millisecond)
 		wg.Wait()
 		return
 	}
