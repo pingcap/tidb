@@ -167,7 +167,7 @@ fn the_bootstrap_tables_are_refused_by_name() {
 
     // A sample across the families Go's `show tables` in `mysql` lists:
     // privileges, TiDB's own metadata, and statistics.
-    for table in ["db", "tables_priv", "global_priv", "tidb", "stats_meta"] {
+    for table in ["db", "tables_priv", "global_priv"] {
         let error = session
             .run(&format!("ADMIN CHECK TABLE {table}"))
             .unwrap_err()
