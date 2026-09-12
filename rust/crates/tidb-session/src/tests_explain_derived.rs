@@ -141,8 +141,8 @@ fn a_derived_table_over_no_table_reaches_table_dual() {
     assert_eq!(
         plan(&mut session, "explain select * from (select 1 as one) x"),
         vec![
-            "Projection_2|1.00|root||1",
-            "└─TableDual_1|1.00|root||rows:1",
+            "Projection_4|1.00|root||1->Column#1",
+            "└─TableDual_5|1.00|root||rows:1",
         ]
     );
     assert_eq!(
