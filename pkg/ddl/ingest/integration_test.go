@@ -614,6 +614,7 @@ func TestIndexChangeWithModifyColumn(t *testing.T) {
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = 0")
 	tk.MustExec("create table t (b int, c varchar(100) collate utf8mb4_unicode_ci)")
 	tk.MustExec("insert t values (1, 'aa'), (2, 'bb'), (3, 'cc');")
 
