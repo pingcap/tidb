@@ -1456,27 +1456,9 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
         // them (`HashAggExec.dataInDisk`); dropping the helper here would
         // delete them before the caller can observe the round that spilled.
         self.parallel_spilled = spilled;
-
         let ret_types = self.meta.ret_field_types().to_vec();
-        let width = plan.agg_funcs.len();
+        let max_chunk_size = self.meta.max_chunk_size();
         self.parallel_output.clear();
-        // Go generateResultAndSend consumes each worker map without sorting
-        // groups. Finish a restored partition before loading the next one.
-        let mut append_map = |map: PipelineMap| -> Result<(), ExecError> {
-            for mut group in map.into_values() {
-                for (column, state) in group.states.iter_mut().enumerate() {
-                    let value = finish_agg_value(
-                        state,
-                        &plan.agg_funcs[column],
-                        &ret_types[column],
-                        &plan.ctx,
-                        &mut self.truncated[column],
-                    )?;
-                    self.parallel_output.push(value);
-                }
-            }
-            Ok(())
-        };
         if self
             .parallel_spilled
             .as_ref()
@@ -1486,19 +1468,33 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                 .parallel_spilled
                 .as_mut()
                 .expect("spilled data owns its partitions");
-            // Go restores one of the 256 partitions at a time and merges all
-            // partial-result files for that partition before moving on.
             for partition in (0..SPILLED_PARTITION_NUM).rev() {
                 let restored = spilled.restore_partition(partition, &plan.agg_funcs)?;
-                append_map(restored)?;
+                let (chunks, truncated) =
+                    finalize_map(restored, &plan, &ret_types, max_chunk_size)?;
+                merge_truncated(&mut self.truncated, &truncated);
+                self.parallel_output.extend(chunks);
             }
         } else {
-            for map in in_memory_maps.unwrap_or_default() {
-                append_map(map)?;
+            // Go: each final worker finalises its own groups into result
+            // chunks on its goroutine. One pool task per final map, results
+            // in map order; the session thread only queues the chunks.
+            let maps = in_memory_maps.unwrap_or_default();
+            let concurrency = self.pipeline_final_concurrency.max(1);
+            let tasks = maps.into_iter().map(|map| {
+                let plan = Arc::clone(&plan);
+                let ret_types = ret_types.clone();
+                move || finalize_map(map, &plan, &ret_types, max_chunk_size)
+            });
+            for result in crate::worker_pool::map(tasks, concurrency) {
+                let (chunks, truncated) = result?;
+                merge_truncated(&mut self.truncated, &truncated);
+                self.parallel_output.extend(chunks);
             }
         }
         if self.parallel_output.is_empty() && self.emit_default_row && plan.group_by.is_empty() {
             let mut states: Vec<AggState> = plan.agg_funcs.iter().map(AggState::new).collect();
+            let mut chunk = Chunk::new_with_capacity(&ret_types, 1);
             for (column, state) in states.iter_mut().enumerate() {
                 let value = finish_agg_value(
                     state,
@@ -1507,11 +1503,13 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                     &plan.ctx,
                     &mut self.truncated[column],
                 )?;
-                self.parallel_output.push(value);
+                chunk.append_datum(column, &value);
             }
+            if plan.agg_funcs.is_empty() {
+                chunk.set_num_virtual_rows(1);
+            }
+            self.parallel_output.push_back(chunk);
         }
-        self.parallel_output_width = width;
-        self.parallel_output_cursor = 0;
         self.parallel_output_active = true;
         self.executed = true;
         if child_drained {
@@ -1522,6 +1520,55 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
 }
 
 /// The plan pieces a partial worker folds rows with.
+/// Go `HashAggFinalWorker.getFinalResult`: one final map finalised into
+/// result chunks of at most `max_chunk_size` rows, on whichever thread owns
+/// the map. Returns the per-column truncation flags `finish_agg_value` set.
+fn finalize_map<C: Columns + Send + Sync + Clone + 'static>(
+    map: PipelineMap,
+    plan: &PipelinePlan<C>,
+    ret_types: &[FieldType],
+    max_chunk_size: usize,
+) -> Result<(Vec<Chunk>, Vec<bool>), ExecError> {
+    let width = plan.agg_funcs.len();
+    let mut truncated = vec![false; width];
+    let mut chunks = Vec::new();
+    let capacity = max_chunk_size.min(map.len()).max(1);
+    let mut current = Chunk::new_with_capacity(ret_types, capacity);
+    for mut group in map.into_values() {
+        for (column, state) in group.states.iter_mut().enumerate() {
+            let value = finish_agg_value(
+                state,
+                &plan.agg_funcs[column],
+                &ret_types[column],
+                &plan.ctx,
+                &mut truncated[column],
+            )?;
+            current.append_datum(column, &value);
+        }
+        if width == 0 {
+            // Go: `chk.SetNumVirtualRows(chk.NumRows() + 1)`, a group with
+            // no aggregate columns is still a row.
+            current.set_num_virtual_rows(current.num_rows() + 1);
+        }
+        if current.num_rows() >= max_chunk_size {
+            chunks.push(std::mem::replace(
+                &mut current,
+                Chunk::new_with_capacity(ret_types, max_chunk_size),
+            ));
+        }
+    }
+    if current.num_rows() > 0 {
+        chunks.push(current);
+    }
+    Ok((chunks, truncated))
+}
+
+fn merge_truncated(into: &mut [bool], from: &[bool]) {
+    for (target, flag) in into.iter_mut().zip(from) {
+        *target |= *flag;
+    }
+}
+
 struct FoldInputs<'a, C> {
     ctx: &'a C,
     group_by: &'a [Expression],

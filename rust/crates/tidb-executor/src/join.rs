@@ -4092,43 +4092,47 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// and anti-semi joins emit unmatched rows. This is Go v2 `ScanRowTable`,
     /// including build rows with NULL keys that were never in a hash bucket.
     fn drain_preserved_build_rows(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        let build_is_left = self.hash_build_is_left();
+        let probe_width = if build_is_left {
+            self.right_types.len()
+        } else {
+            self.left_types.len()
+        };
+        let kind = self.kind;
+        let output = &self.output;
         while !req.is_full() {
-            let row = {
-                let Some(hash) = self.hash.as_mut() else {
-                    return Ok(());
-                };
-                let Some(ptr) = hash.unmatched_build_scan else {
-                    return Ok(());
-                };
-                hash.unmatched_build_scan = hash.table.next_ptr(ptr);
-                let matched = hash.table.is_matched(ptr);
-                let emit = match self.kind {
-                    JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi => !matched,
-                    JoinKind::Semi => matched,
-                    JoinKind::LeftOuterSemi => true,
-                    JoinKind::Inner => false,
-                };
-                if !emit {
-                    None
-                } else {
-                    Some((
-                        hash.table
-                            .row(ptr, &mut hash.build_buf, &hash.build_types)
-                            .map_err(|error| ExecError::SpillFailed(error.to_string()))?,
-                        matched,
-                    ))
-                }
+            let Some(hash) = self.hash.as_mut() else {
+                return Ok(());
             };
-            if let Some((row, matched)) = row {
-                if matches!(self.kind, JoinKind::Left | JoinKind::Right) {
-                    self.append(req, &self.padded_row(&row));
-                } else if self.kind == JoinKind::LeftOuterSemi {
-                    self.append(req, &row);
-                    req.append_datum(self.output.width(), &Datum::Int(i64::from(matched)));
-                } else {
-                    self.append(req, &row);
-                }
+            let Some(ptr) = hash.unmatched_build_scan else {
+                return Ok(());
+            };
+            hash.unmatched_build_scan = hash.table.next_ptr(ptr);
+            let matched = hash.table.is_matched(ptr);
+            let emit = match kind {
+                JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi => !matched,
+                JoinKind::Semi => matched,
+                JoinKind::LeftOuterSemi => true,
+                JoinKind::Inner => false,
+            };
+            if !emit {
+                continue;
             }
+            // Go v2 `ScanRowTable` appends chunk rows: the build row lands on
+            // its own side and the probe side gets its NULL defaults, without
+            // a datum vector per row.
+            hash.table
+                .with_row(ptr, &mut hash.build_buf, |row| match kind {
+                    JoinKind::Left | JoinKind::Right => {
+                        output.unmatched(req, build_is_left, row, probe_width);
+                    }
+                    JoinKind::LeftOuterSemi => {
+                        output.preserved(req, row);
+                        req.append_datum(output.width(), &Datum::Int(i64::from(matched)));
+                    }
+                    _ => output.preserved(req, row),
+                })
+                .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
         }
         Ok(())
     }

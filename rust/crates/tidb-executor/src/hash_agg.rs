@@ -2206,9 +2206,10 @@ pub struct HashAggExec<C: HashAggContext> {
     /// Go `isChildDrained`.
     is_child_drained: bool,
     /// Flattened row-major output produced by the partial/final pipeline.
-    parallel_output: Vec<Datum>,
-    parallel_output_width: usize,
-    parallel_output_cursor: usize,
+    /// Result chunks the pipeline's final maps were finalised into on pool
+    /// workers (Go's final workers each `getFinalResult` into chunks),
+    /// served whole by `next`.
+    parallel_output: std::collections::VecDeque<Chunk>,
     parallel_output_active: bool,
     /// The parallel partial/final worker pipeline is engaged for this Open
     /// (Go `parallelExecValid`). Decided once per Open; `execute` never
@@ -2310,9 +2311,7 @@ impl<C: HashAggContext> HashAggExec<C> {
             num_of_spilled_chks: 0,
             offset_of_spilled_chks: 0,
             is_child_drained: false,
-            parallel_output: Vec::new(),
-            parallel_output_width: 0,
-            parallel_output_cursor: 0,
+            parallel_output: std::collections::VecDeque::new(),
             parallel_output_active: false,
             pipeline_mode: false,
             pipeline_partial_concurrency: 1,
@@ -2622,8 +2621,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.offset_of_spilled_chks = 0;
         self.is_child_drained = false;
         self.parallel_output.clear();
-        self.parallel_output_width = 0;
-        self.parallel_output_cursor = 0;
+        self.parallel_output.clear();
         self.parallel_output_active = false;
         self.pipeline_mode = false;
         #[cfg(test)]
@@ -2695,18 +2693,11 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         req.reset();
         loop {
             if self.parallel_output_active {
-                while self.parallel_output_cursor * self.parallel_output_width
-                    < self.parallel_output.len()
-                {
-                    let start = self.parallel_output_cursor * self.parallel_output_width;
-                    let row = &self.parallel_output[start..start + self.parallel_output_width];
-                    for (column, value) in row.iter().enumerate() {
-                        req.append_datum(column, value);
-                    }
-                    self.parallel_output_cursor += 1;
-                    if req.is_full() {
-                        return Ok(());
-                    }
+                // Go `parallelExec`: `req.SwapColumns(result.chk)`, one final
+                // result chunk per call.
+                if let Some(mut chunk) = self.parallel_output.pop_front() {
+                    std::mem::swap(req, &mut chunk);
+                    return Ok(());
                 }
                 self.parallel_output_active = false;
                 continue;
@@ -2752,8 +2743,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.ordered.clear();
         self.group_count = 0;
         self.parallel_output.clear();
-        self.parallel_output_width = 0;
-        self.parallel_output_cursor = 0;
+        self.parallel_output.clear();
         self.parallel_output_active = false;
         self.pipeline_mode = false;
         #[cfg(test)]
