@@ -337,6 +337,8 @@ pub enum PlanErrorKind {
     WrongNumberOfColumnsInSelect,
     /// Go `dbterror.ErrViewWrongList` (1353).
     ViewWrongList,
+    /// Go plannererrors.ErrViewInvalid (1356), with the qualified view name.
+    ViewInvalid(String),
     /// Go `plannererrors.ErrWrongGroupField` (1056).
     WrongGroupField(String),
     /// Go `plannererrors.ErrCTERecursiveRequiresUnion` (3573).
@@ -575,6 +577,18 @@ impl PlanError {
         Self {
             kind: PlanErrorKind::ViewWrongList,
             message: "View's SELECT and view's field list have different column counts".to_owned(),
+        }
+    }
+
+    /// Go plannererrors.ErrViewInvalid.
+    #[must_use]
+    pub fn view_invalid(database: &str, view: &str) -> Self {
+        let name = format!("{database}.{view}");
+        Self {
+            message: format!(
+                "View '{name}' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"
+            ),
+            kind: PlanErrorKind::ViewInvalid(name),
         }
     }
 

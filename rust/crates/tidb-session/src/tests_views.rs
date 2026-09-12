@@ -648,6 +648,40 @@ fn a_view_over_a_dropped_table_is_invalid() {
     );
 }
 
+#[test]
+fn invalid_view_dependencies_preserve_mysql_error_identity() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE dependency (a INT, b INT)").unwrap();
+    session
+        .run("CREATE VIEW invalid_columns AS SELECT a, b FROM dependency")
+        .unwrap();
+    session.run("ALTER TABLE dependency DROP COLUMN b").unwrap();
+    let error = session
+        .run("SELECT * FROM invalid_columns")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1356);
+    assert!(error.message.contains("test.invalid_columns"));
+    session
+        .run("CREATE VIEW invalid_table AS SELECT a FROM dependency")
+        .unwrap();
+    session.run("DROP TABLE dependency").unwrap();
+    let error = session
+        .run("SELECT * FROM invalid_table")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1356);
+    assert!(error.message.contains("test.invalid_table"));
+    assert_eq!(
+        session
+            .run("SELECT * FROM dependency")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1146
+    );
+}
+
 /// Where a view shows up in the metadata statements.
 #[test]
 fn views_appear_in_the_metadata_statements() {

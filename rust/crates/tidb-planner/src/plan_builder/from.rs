@@ -1643,7 +1643,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         self.qb_hint_state = outer_hint_state;
         self.outer_ctes = saved_ctes;
         self.building_cte = saved_building_cte;
-        let plan = built?;
+        let plan = built.map_err(|error| {
+            use crate::plan_base::PlanErrorKind;
+            // Go BuildDataSourceFromView preserves these planner errors;
+            // ordinary missing dependencies instead invalidate the view.
+            match error.kind() {
+                PlanErrorKind::Internal
+                | PlanErrorKind::FieldNotInGroupBy { .. }
+                | PlanErrorKind::FieldNotInAggregatedQuery { .. }
+                | PlanErrorKind::NotSupportedYet(_) => error,
+                _ => view_invalid(&view.db_name, &view.view_name),
+            }
+        })?;
 
         let (schema, names) = snapshot_schema_and_names(&plan);
         if view.columns.len() != schema.columns.len() {
@@ -1818,10 +1829,7 @@ fn ambiguous(column: &str) -> PlanError {
 
 /// Go `plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, name.O)`.
 fn view_invalid(db_name: &str, view_name: &str) -> PlanError {
-    PlanError::internal(format!(
-        "View '{db_name}.{view_name}' references invalid table(s) or column(s) or \
-         function(s) or definer/invoker of view lack rights to use them"
-    ))
+    PlanError::view_invalid(db_name, view_name)
 }
 
 /// A `MarkerKind`-keyed empty map, for a clause with no marker producer.
