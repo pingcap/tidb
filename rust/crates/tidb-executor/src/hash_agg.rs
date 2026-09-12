@@ -2210,6 +2210,8 @@ pub struct HashAggExec<C: HashAggContext> {
     /// workers (Go's final workers each `getFinalResult` into chunks),
     /// served whole by `next`.
     parallel_output: std::collections::VecDeque<Chunk>,
+    /// Rows of the front `parallel_output` chunk already served.
+    parallel_output_offset: usize,
     parallel_output_active: bool,
     /// The parallel partial/final worker pipeline is engaged for this Open
     /// (Go `parallelExecValid`). Decided once per Open; `execute` never
@@ -2312,6 +2314,7 @@ impl<C: HashAggContext> HashAggExec<C> {
             offset_of_spilled_chks: 0,
             is_child_drained: false,
             parallel_output: std::collections::VecDeque::new(),
+            parallel_output_offset: 0,
             parallel_output_active: false,
             pipeline_mode: false,
             pipeline_partial_concurrency: 1,
@@ -2621,7 +2624,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.offset_of_spilled_chks = 0;
         self.is_child_drained = false;
         self.parallel_output.clear();
-        self.parallel_output.clear();
+        self.parallel_output_offset = 0;
         self.parallel_output_active = false;
         self.pipeline_mode = false;
         #[cfg(test)]
@@ -2693,11 +2696,31 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         req.reset();
         loop {
             if self.parallel_output_active {
-                // Go `parallelExec`: `req.SwapColumns(result.chk)`, one final
-                // result chunk per call.
-                if let Some(mut chunk) = self.parallel_output.pop_front() {
-                    std::mem::swap(req, &mut chunk);
-                    return Ok(());
+                // Go `parallelExec`: `req.SwapColumns(result.chk)` when a
+                // whole result chunk fits the request; otherwise serve it
+                // range by range so the caller's `RequiredRows` holds.
+                while let Some(front) = self.parallel_output.front() {
+                    let remaining = front.num_rows() - self.parallel_output_offset;
+                    let wanted = req.required_rows() - req.num_rows();
+                    if req.num_rows() == 0
+                        && self.parallel_output_offset == 0
+                        && remaining == req.required_rows()
+                    {
+                        let mut chunk = self.parallel_output.pop_front().expect("front");
+                        req.swap_columns(&mut chunk);
+                        return Ok(());
+                    }
+                    let take = remaining.min(wanted);
+                    let begin = self.parallel_output_offset;
+                    req.append_range_from(front, begin, begin + take);
+                    self.parallel_output_offset += take;
+                    if self.parallel_output_offset == front.num_rows() {
+                        self.parallel_output.pop_front();
+                        self.parallel_output_offset = 0;
+                    }
+                    if req.is_full() {
+                        return Ok(());
+                    }
                 }
                 self.parallel_output_active = false;
                 continue;
@@ -2743,7 +2766,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.ordered.clear();
         self.group_count = 0;
         self.parallel_output.clear();
-        self.parallel_output.clear();
+        self.parallel_output_offset = 0;
         self.parallel_output_active = false;
         self.pipeline_mode = false;
         #[cfg(test)]
