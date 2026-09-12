@@ -121,6 +121,8 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.HashJoinConcurrency()`, stamped onto every hash-join
     /// candidate by `NewPhysicalHashJoin`.
     pub hash_join_concurrency: usize,
+    /// Go `SessionVars.UseHashJoinV2`; see `CostSessionOpts::use_hash_join_v2`.
+    pub use_hash_join_v2: bool,
     /// Go `SessionVars.MemQuotaApplyCache`, used by
     /// `exhaustPhysicalPlans4LogicalApply` after estimating the correlated
     /// value hit ratio.
@@ -180,6 +182,7 @@ impl<'a> DispatchContext<'a> {
             limit_push_down_threshold: 5_000,
             enable_paging: true,
             hash_join_concurrency: 5,
+            use_hash_join_v2: true,
             apply_cache_capacity: 0,
             index_join_probe_row_count_fix: false,
             enable_point_get_conversion: true,
@@ -279,6 +282,11 @@ impl<'a> DispatchContext<'a> {
 
     /// The same context with the resolved hash-join concurrency.
     #[must_use]
+    pub const fn with_use_hash_join_v2(mut self, enabled: bool) -> Self {
+        self.use_hash_join_v2 = enabled;
+        self
+    }
+
     pub const fn with_hash_join_concurrency(mut self, concurrency: usize) -> Self {
         self.hash_join_concurrency = concurrency;
         self
@@ -490,7 +498,9 @@ fn exhaust_physical_plans(
                     .cloned()
             };
             let mut joins = Vec::new();
-            for candidate in crate::find_best_task::exhaust_join(&reduced, prop) {
+            for candidate in
+                crate::find_best_task::exhaust_join(&reduced, prop, ctx.use_hash_join_v2)
+            {
                 let strategy = candidate.strategy.clone();
                 // Go's INL_JOIN/INL_HASH_JOIN/INL_MERGE_JOIN hints are
                 // family-and-side selectors.  An index candidate that points
@@ -2411,10 +2421,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             partition: (!ds.partition_definition_ids.is_empty()
                                 && ds.physical_table_id == ds.table_id
                                 && (ds.pk_is_handle || common_handle.is_some()))
-                                .then(|| crate::physical::PointGetPartition {
-                                    names: ds.partition_names.clone(),
-                                    physical_table_id: None,
-                                }),
+                            .then(|| crate::physical::PointGetPartition {
+                                names: ds.partition_names.clone(),
+                                physical_table_id: None,
+                            }),
                             index_id: None,
                             ranges,
                             range_rebuild: table_range_rebuild
@@ -2811,7 +2821,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 tidb_expr::simple_expr::extract_columns(condition)
                                     .into_iter()
                                     .filter_map(|column| {
-                                        index_cols.iter()
+                                        index_cols
+                                            .iter()
                                             .position(|index| index.unique_id == column.unique_id)
                                             .map(|index| (column.unique_id, index_lengths[index]))
                                     })
@@ -2858,7 +2869,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         .unwrap_or(ranges.len() as f64)
                         .min(ranges.len() as f64);
                     point_base.base.set_stats(
-                        ds.table_stats.as_ref()
+                        ds.table_stats
+                            .as_ref()
                             .or_else(|| ds.base.base.stats_info())
                             .map(|stats| stats.scale_by_expect_cnt(access_rows, ctx.skew_ratio)),
                     );
@@ -3337,7 +3349,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             .map(|candidate| candidate.4.clone())
             .collect::<Option<Vec<_>>>()
         {
-            if let Some(selected) = crate::find_best_task::candidate::choose_heuristic_path(&paths) {
+            if let Some(selected) = crate::find_best_task::candidate::choose_heuristic_path(&paths)
+            {
                 return Ok(ordinary_candidates.swap_remove(selected).0);
             }
         }

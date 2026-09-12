@@ -755,21 +755,22 @@ impl Decimal {
     /// Any wider value or scale mismatch keeps the complete arbitrary-precision
     /// implementation above.
     fn try_add_fast(&self, other: &Decimal) -> Option<Decimal> {
-        if self.storage_scale != other.storage_scale {
-            return None;
-        }
-        let left = self.digits.parse::<i128>().ok()?;
-        let right = other.digits.parse::<i128>().ok()?;
-        let left = if self.negative {
-            left.checked_neg()?
-        } else {
-            left
-        };
-        let right = if other.negative {
-            right.checked_neg()?
-        } else {
-            right
-        };
+        // Operands with different storage scales are aligned the way the
+        // general path pads them: an exact scale-up by a power of ten. Go's
+        // `doAdd`/`doSub` align fractional word counts the same way, so
+        // `1 - l_discount` (scale 0 against scale 2) stays on the integer
+        // path instead of the digit-string path.
+        let storage_scale = self.storage_scale.max(other.storage_scale);
+        let left = Self::fast_operand(
+            &self.digits,
+            self.negative,
+            storage_scale - self.storage_scale,
+        )?;
+        let right = Self::fast_operand(
+            &other.digits,
+            other.negative,
+            storage_scale - other.storage_scale,
+        )?;
         let sum = left.checked_add(right)?;
         let negative = sum < 0;
         let digits = DecimalDigits::from_unsigned(sum.unsigned_abs());
@@ -777,8 +778,24 @@ impl Decimal {
             negative,
             digits,
             self.scale.max(other.scale),
-            self.storage_scale,
+            storage_scale,
         ))
+    }
+
+    /// The signed `i128` a coefficient holds after an exact scale-up by
+    /// `shift` decimal places, or `None` when it does not fit.
+    fn fast_operand(digits: &DecimalDigits, negative: bool, shift: u32) -> Option<i128> {
+        let value = digits.parse::<i128>().ok()?;
+        let value = if shift == 0 {
+            value
+        } else {
+            value.checked_mul(10i128.checked_pow(shift)?)?
+        };
+        if negative {
+            value.checked_neg()
+        } else {
+            Some(value)
+        }
     }
 
     /// Source `DecimalAdd`, including MyDecimal's nine-word result bound.

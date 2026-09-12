@@ -297,6 +297,11 @@ pub struct CostSessionOpts {
     pub mem_quota: i64,
     /// `tidb_enable_paging`.
     pub enable_paging: bool,
+    /// Go `SessionVars.UseHashJoinV2`: `tidb_hash_join_version` selects the
+    /// optimized hash join and the build supports it. The planner then
+    /// enumerates Go's second shape for semi and anti-semi joins, the build
+    /// on the outer side (`getHashJoins` in `exhaust_physical_plans.go`).
+    pub use_hash_join_v2: bool,
     /// Whether `tidb_enforce_mpp` is on.
     pub mpp_enforced: bool,
 }
@@ -317,6 +322,7 @@ impl Default for CostSessionOpts {
             enable_tmp_storage_on_oom: true,
             mem_quota: 0,
             enable_paging: true,
+            use_hash_join_v2: true,
             mpp_enforced: false,
         }
     }

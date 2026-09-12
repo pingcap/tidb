@@ -210,6 +210,12 @@ impl Session {
         env.session.enable_tmp_storage_on_oom = tmp_storage_on_oom;
         env.session.mem_quota = mem_quota;
         env.session.enable_paging = enabled("tidb_enable_paging", true);
+        env.session.use_hash_join_v2 = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_HASH_JOIN_VERSION)
+            .ok()
+            .is_none_or(|value| tidb_exec::hash_join_version::is_optimized_version(&value))
+            && tidb_exec::hash_join_version::is_hash_join_v2_supported();
         env.session.mpp_enforced = enabled("tidb_enforce_mpp", false);
 
         env.cost_factors.index_scan = number("tidb_opt_index_scan_cost_factor", 1.0);

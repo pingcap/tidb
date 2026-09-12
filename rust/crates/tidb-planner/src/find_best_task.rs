@@ -183,6 +183,9 @@ pub struct LogicalJoin {
     /// form, which checks only `hasNullEQ`. That asymmetry is Go's, and it
     /// is reproduced, not repaired.
     pub keys_contain_enum_or_set: bool,
+    /// Whether the join carries null-aware equality keys (Go
+    /// `LogicalJoin.NAEQConditions`); `CanUseHashJoinV2` refuses them.
+    pub has_na_keys: bool,
 }
 
 /// Which parent an access path answers to.
@@ -329,13 +332,17 @@ pub(crate) fn hash_join_shapes(
 /// a strict `<`, so an exact tie is broken by whichever candidate Go reached
 /// first.
 #[must_use]
-pub fn exhaust_join(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<EnumeratedJoin> {
+pub fn exhaust_join(
+    join: &LogicalJoin,
+    prop: &PhysicalProperty,
+    use_hash_join_v2: bool,
+) -> Vec<EnumeratedJoin> {
     // Go `exhaustPhysicalPlans4LogicalJoin` enumerates only hash joins while
     // this join is itself inside an index-join probe. Each hash candidate
     // forwards `IndexJoinProp` through one child so the eventual data source
     // can return `IndexJoinInfo`; merge and nested index joins are excluded.
     if prop.index_join_prop.is_some() {
-        return hash_join_candidates(join, prop);
+        return hash_join_candidates(join, prop, use_hash_join_v2);
     }
     let mut out = Vec::new();
     out.extend(merge_join_candidates(join, prop));
@@ -346,7 +353,7 @@ pub fn exhaust_join(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enumerat
         }
     }
     out.extend(index_join_candidates(join, prop));
-    out.extend(hash_join_candidates(join, prop));
+    out.extend(hash_join_candidates(join, prop, use_hash_join_v2));
     out
 }
 
@@ -546,7 +553,11 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
 
 /// `getHashJoins`, whose first line is the whole rule: "hash join doesn't
 /// promise any orders".
-fn hash_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<EnumeratedJoin> {
+fn hash_join_candidates(
+    join: &LogicalJoin,
+    prop: &PhysicalProperty,
+    use_hash_join_v2: bool,
+) -> Vec<EnumeratedJoin> {
     if !prop.is_sort_item_empty() {
         return Vec::new();
     }
@@ -566,7 +577,15 @@ fn hash_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enum
         partial_order_info: None,
     };
     let mut candidates = Vec::new();
-    for shape in hash_join_shapes(join.join_type, false, false, false) {
+    // Go `getHashJoins`: with hash join v2 a semi or anti-semi join also
+    // enumerates the build on its outer side when `CanUseHashJoinV2` holds
+    // (equality keys present, none null-safe, no null-aware keys); the cost
+    // model then prefers the smaller build (TPC-H Q22 builds the 10,834
+    // filtered customers rather than the 1.5M orders). Go's non-GA gate is
+    // `UseHashJoinV2ForNonGAJoin`, flipped to true in its `init()`.
+    let semi_outer_build =
+        use_hash_join_v2 && !join.left_keys.is_empty() && !join.has_null_eq && !join.has_na_keys;
+    for shape in hash_join_shapes(join.join_type, false, false, semi_outer_build) {
         if let Some(runtime) = &prop.index_join_prop {
             // Go `getHashJoin`: for a parent index-join runtime property,
             // enumerate one candidate per child that may contain the target
@@ -609,6 +628,7 @@ pub(crate) fn project_one_join(
     node: &LogicalPlan,
 ) -> Result<LogicalJoin, PlanError> {
     let (left_key_cols, right_key_cols, _, has_null_eq) = join.get_join_keys();
+    let (left_na_keys, _) = join.get_na_join_keys();
     // `GetMergeJoin` reads `RetType.GetType()` on every key of BOTH sides
     // (`physical_merge_join.go:57-66`).
     let is_enum_or_set = |col: &tidb_expr::column::Column| {
@@ -644,6 +664,7 @@ pub(crate) fn project_one_join(
         force_merge: join.prefer_join_type & PREFER_MERGE_JOIN != 0,
         has_null_eq,
         keys_contain_enum_or_set,
+        has_na_keys: !left_na_keys.is_empty(),
     })
 }
 
@@ -669,13 +690,14 @@ mod tests {
             force_merge: false,
             has_null_eq: false,
             keys_contain_enum_or_set: false,
+            has_na_keys: false,
         };
         let prop = PhysicalProperty {
             cte_producer_status: CteProducerStatus::AllCteCanMpp,
             no_cop_push_down: true,
             ..PhysicalProperty::default()
         };
-        let candidates = exhaust_join(&join, &prop);
+        let candidates = exhaust_join(&join, &prop, true);
         assert!(!candidates.is_empty());
         for candidate in candidates {
             for child in candidate.child_props {

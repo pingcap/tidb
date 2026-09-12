@@ -301,7 +301,11 @@ pub enum PlanErrorKind {
     /// Go ErrWindowInvalidWindowFuncUse (3593).
     WindowInvalidWindowFuncUse(String),
     /// Go named-window lookup and inheritance errors (3579-3583).
-    WindowDefinition { code: u16, name: String, base: String },
+    WindowDefinition {
+        code: u16,
+        name: String,
+        base: String,
+    },
     /// Go window frame errors, retaining the original window name.
     WindowFrame { code: u16, window: String },
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
@@ -407,7 +411,11 @@ impl PlanError {
         };
         Self {
             message,
-            kind: PlanErrorKind::WindowDefinition { code, name: name.to_owned(), base: base.to_owned() },
+            kind: PlanErrorKind::WindowDefinition {
+                code,
+                name: name.to_owned(),
+                base: base.to_owned(),
+            },
         }
     }
     /// A window call without a resolved window output in this query block.

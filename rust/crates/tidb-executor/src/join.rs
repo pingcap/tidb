@@ -2334,7 +2334,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             {
                 self.drain_merge_pending(req)?;
                 self.memory.check()?;
-                if req.num_rows() > 0 {
+                // Go's `MergeJoinExec.Next` runs `for !req.IsFull()`: a
+                // finished group does not end the call, the next groups fill
+                // the same chunk. Returning on the first rows handed the
+                // parent one chunk per key group (Q12: 31,000 chunks of one
+                // or two rows into the aggregate pipeline).
+                if req.is_full() {
                     return Ok(());
                 }
                 continue;

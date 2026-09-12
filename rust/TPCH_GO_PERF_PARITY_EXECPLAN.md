@@ -20,11 +20,18 @@ TPC-H differs from the other workloads in what it stresses. Sysbench and TPC-C a
 
 - [x] (2026-09-12) Measured `r20` against Go on the full harness: warm 41.7 s vs 23.2 s (1.80x), cold 57.8 s (Go's cold column of that run is not comparable, see the findings document). Per query warm, Rust/Go: Q1 1.0, Q2 3.3, Q3 2.3, Q4 2.4, Q5 1.4, Q6 1.0, Q7 1.9, Q8 2.4, Q9 2.1, Q10 2.3, Q11 2.7, Q12 3.3, Q13 4.7, Q14 1.3, Q15 1.7, Q16 2.0, Q17 1.5, Q18 1.7, Q19 1.1, Q20 1.2, Q21 1.9, Q22 6.4.
 - [x] (2026-09-12) Profiled the session thread alone on Q9 (`perf record -t <tid>`): it is saturated for the whole query. Its time: hash-table build 9% self, kernel scheduling from per-chunk worker handoffs 20%, decimal projection evaluation 10%, coprocessor response decode 9%, join output assembly (memmove) 13%.
-- [ ] Milestone 1: per-query diagnosis. Warm `EXPLAIN ANALYZE` on both nodes for all 22 queries, per-operator comparison, one named root cause per query where Rust is above 1.5x Go.
-- [ ] Milestone 2: the join build phase on workers, as Go's `BuildWorkerV2` does.
-- [ ] Milestone 3: column-wise expression evaluation for projections and filters over chunk inputs, as Go's `VectorizedExecute` does, and Go's parallel `ProjectionExec` shape where Go uses it.
-- [ ] Milestone 4: the remaining per-query causes from Milestone 1 (each its own commit with an A/B).
-- [ ] Milestone 5: full harness run, all 22 queries faster than Go warm; findings document updated; `Ready` validation.
+- [x] (2026-09-12) Milestone 1, diagnosis. Warm `EXPLAIN ANALYZE` on both nodes for all 22 queries (`results/explain-r20`), plan-shape diff, and session-thread profiles of the worst queries (`results/prof-r20`). The Rust node's `EXPLAIN ANALYZE` carries no execution info at all (every operator N/A), so its per-operator picture comes from profiling; Go's does show its operator times. Causes, by the seconds they cost on the warm pass (Rust minus Go, mysql client, one run):
+  - Index joins (Q21 2.9 s, Q8 0.9, Q3 0.8, Q20 0.8, Q10 0.5, Q4 0.5, Q16 0.4, Q2 0.1; about 6.8 s in total): the Rust index join materialises the inner side into datum vectors row by row on the session thread (`JoinExec::materialize_index_inner`, 85% of Q8's session thread, 38% of Q21's); Go's `IndexHashJoin` runs `tidb_index_lookup_join_concurrency` inner workers that hash the task's outer rows and probe with chunk rows.
+  - Planner build side (Q22 0.6 s, Q7 1.2 s, Q15 0.3 s): the Rust node builds Q22's anti semi join from the 1.5M-row orders scan where Go builds from the 10,834 filtered customers (`index_chunk_selected` is 48% of Q22's session thread); Q7's orders join builds from 1.5M orders where Go builds from the 144,734-row supplier-lineitem result; Q15 uses a hash join where Go uses an index hash join.
+  - Session-thread structure (Q9 2.4 s, Q17 1.7 s, Q18 1.6 s, Q13 0.8 s, Q5 0.5 s, and part of every join query): serial hash-table build, row-at-a-time expression evaluation with a decimal subtract that allocates seven strings per row for `1 - l_discount`, per-chunk worker handoffs through futexes, the response decode and its extra copy.
+  - Q12 (1.1 s): the session thread is 37% in kernel spin-unlock from futex traffic around an aggregate pipeline over only 31,282 rows; call chains to be read.
+  - Q1, Q6, Q14, Q19 (1.0-1.3x): at or near parity.
+- [ ] Milestone 2: the index join's inner side on workers, as Go's `IndexHashJoin` inner workers do (largest yield, nine queries).
+- [ ] Milestone 3: the planner's hash-join build-side choice for semi/anti-semi and inner joins aligned with Go's enumeration and cost (Q22, Q7), and Q15's index hash join.
+- [ ] Milestone 4: the hash join build phase on workers, as Go's `BuildWorkerV2` does.
+- [ ] Milestone 5: column-wise expression evaluation for projections and filters over chunk inputs, as Go's `VectorizedExecute` does; the decimal fast path aligned to Go's scale handling (done in the working tree, tested, awaiting its A/B).
+- [ ] Milestone 6: Q12's synchronisation and the per-chunk handoff cost; the response decode copy.
+- [ ] Milestone 7: full harness run, all 22 queries faster than Go warm; findings document updated; `Ready` validation.
 
 
 ## Surprises & Discoveries

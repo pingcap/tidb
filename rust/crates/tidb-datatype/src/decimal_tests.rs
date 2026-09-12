@@ -1526,6 +1526,45 @@ fn add_overflow_uses_go_leading_word_heuristic() {
     assert_eq!(actual.to_string(), format!("-999999998{}", "9".repeat(72)));
 }
 
+/// Operands with different storage scales stay on the integer fast path.
+/// Go's `doAdd`/`doSub` align fractional word counts before adding; the
+/// Rust fast path aligns by an exact power-of-ten scale-up, the same
+/// zero-padding the digit-string path performs. Without it `1 - l_discount`
+/// (a scale-0 integer against a DECIMAL(15,2) column) went through the
+/// string path with several heap allocations per row.
+#[test]
+fn add_and_sub_align_storage_scales_on_the_fast_path() {
+    let cases = [
+        ("1", "0.05", "0.95", "1.05"),
+        ("0.05", "1", "-0.95", "1.05"),
+        ("12.5", "0.375", "12.125", "12.875"),
+        ("-1", "0.999", "-1.999", "-0.001"),
+        ("100", "0.001", "99.999", "100.001"),
+        ("0.5", "0.5", "0.0", "1.0"),
+        ("-0.25", "-1", "0.75", "-1.25"),
+    ];
+    for (left, right, difference, sum) in cases {
+        let left = Decimal::from_signed_literal(left);
+        let right = Decimal::from_signed_literal(right);
+        let (actual_sub, warning) = left.sub_mysql(&right);
+        assert_eq!(warning, None);
+        assert_eq!(actual_sub.to_string(), difference, "{left} - {right}");
+        let (actual_add, warning) = left.add_mysql(&right);
+        assert_eq!(warning, None);
+        assert_eq!(actual_add.to_string(), sum, "{left} + {right}");
+        assert!(
+            actual_sub.coefficient_is_inline() && actual_add.coefficient_is_inline(),
+            "short results must not carry a heap-spilled coefficient: {left} {right}"
+        );
+    }
+    // A coefficient that does not fit the integer path falls through to the
+    // digit-string path and still produces the exact result.
+    let wide = Decimal::from_literal(&format!("{}.5", "9".repeat(40)));
+    let (actual, warning) = wide.add_mysql(&Decimal::from_literal("0.25"));
+    assert_eq!(warning, None);
+    assert_eq!(actual.to_string(), format!("{}.75", "9".repeat(40)));
+}
+
 /// Complete source `TestSubMyDecimal` row set.
 #[test]
 fn test_sub_my_decimal() {
