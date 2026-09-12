@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
@@ -1630,4 +1631,97 @@ func testHandleBatchCopResponseFallbackCountersAfterRegionSplit(t *testing.T) {
 	// but counts as exactly one fallback.
 	require.Zero(t, storeBatchedNum.Load())
 	require.Equal(t, uint64(1), storeBatchedFallbackNum.Load())
+}
+
+// copTimeoutRecorder answers coprocessor RPCs itself, recording the timeout
+// each one was sent with and acknowledging every batched child task.
+type copTimeoutRecorder struct {
+	tikv.Client
+	copTimeouts []time.Duration
+	copTaskNums []int
+}
+
+func (c *copTimeoutRecorder) SendRequest(
+	ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration,
+) (*tikvrpc.Response, error) {
+	if req.Type != tikvrpc.CmdCop {
+		return c.Client.SendRequest(ctx, addr, req, timeout)
+	}
+	batchTasks := req.Cop().GetTasks()
+	c.copTimeouts = append(c.copTimeouts, timeout)
+	c.copTaskNums = append(c.copTaskNums, len(batchTasks))
+	resp := &coprocessor.Response{}
+	for _, task := range batchTasks {
+		resp.BatchResponses = append(resp.BatchResponses, &coprocessor.StoreBatchTaskResponse{TaskId: task.TaskId})
+	}
+	return &tikvrpc.Response{Resp: resp}, nil
+}
+
+func TestStoreBatchCopRPCTimeout(t *testing.T) {
+	// Four Regions on one store build one primary task carrying three batched
+	// children, so the RPC holds four tasks in total.
+	const batchedChildren = 3
+	sendStoreBatch := func(t *testing.T, tweak func(req *kv.Request)) time.Duration {
+		mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+		require.NoError(t, err)
+		testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+		recorder := &copTimeoutRecorder{Client: mockClient}
+		tikvStore, err := tikv.NewTestTiKVStore(recorder, pdClient, nil, nil, 0)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+		copStore, err := NewStore(tikvStore, nil)
+		require.NoError(t, err)
+		t.Cleanup(copStore.Close)
+
+		ctx := context.Background()
+		killed := uint32(0)
+		req := &kv.Request{
+			Tp:                      kv.ReqTypeAnalyze,
+			StoreType:               kv.TiKV,
+			KeyRanges:               kv.NewNonPartitionedKeyRanges(BuildKeyRanges("a", "z")),
+			Concurrency:             1,
+			StoreBatchSize:          batchedChildren,
+			AllowBatchTaskDataMerge: true,
+		}
+		req.RequestSource.RequestSourceInternal = true
+		tweak(req)
+		it, errRes := (&CopClient{store: copStore}).BuildCopIterator(ctx, req, kv.NewVariables(&killed), &kv.ClientSendOption{})
+		require.Nil(t, errRes)
+		require.Len(t, it.tasks, 1)
+		require.Len(t, it.tasks[0].batchTaskList, batchedChildren)
+
+		result, err := newCopIteratorWorker(it, nil).handleTaskOnce(backoff.NewBackofferWithVars(ctx, 3000, nil), it.tasks[0])
+		require.NoError(t, err)
+		require.Empty(t, result.remains)
+		require.Equal(t, []int{batchedChildren}, recorder.copTaskNums)
+		require.Len(t, recorder.copTimeouts, 1)
+		return recorder.copTimeouts[0]
+	}
+
+	coprReqTimeout := config.GetGlobalConfig().TiKVClient.CoprReqTimeout
+	require.Positive(t, coprReqTimeout)
+
+	t.Run("serial batch gets the per-task budget for every task", func(t *testing.T) {
+		// TiKV runs a serial store batch under the top task's deadline, which
+		// client-go derives from this RPC timeout.
+		timeout := sendStoreBatch(t, func(req *kv.Request) {
+			req.ExecuteBatchTasksSerially = true
+		})
+		require.Equal(t, coprReqTimeout*(batchedChildren+1), timeout)
+	})
+
+	t.Run("serial batch scales tikv_client_read_timeout", func(t *testing.T) {
+		timeout := sendStoreBatch(t, func(req *kv.Request) {
+			req.ExecuteBatchTasksSerially = true
+			req.TiKVClientReadTimeout = 500
+		})
+		require.Equal(t, 500*time.Millisecond*(batchedChildren+1), timeout)
+	})
+
+	t.Run("concurrent batch keeps the single-request timeout", func(t *testing.T) {
+		// Concurrently executed children each get their own deadline on TiKV,
+		// so the RPC budget must not grow with the batch.
+		timeout := sendStoreBatch(t, func(*kv.Request) {})
+		require.Equal(t, coprReqTimeout, timeout)
+	})
 }
