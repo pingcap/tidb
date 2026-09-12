@@ -4014,6 +4014,47 @@ pub(crate) struct IndexJoinProbes {
 /// produces. This source does not re-check it, because the encoding that
 /// makes two probes equal is the caller's (`constructDatumLookupKey`'s
 /// `ConvertTo` + `Compare`), and a second answer here could only disagree.
+/// A prefetched lookup task's remote cursor on its way to a pool worker; see
+/// [`IndexJoinLookupExec::take_prefetched_drain`].
+pub(crate) struct PrefetchedDrain {
+    cursor: RemoteRowCursor,
+    field_types: Vec<FieldType>,
+    output_columns: Vec<usize>,
+    output_types: Vec<FieldType>,
+    cap: usize,
+}
+
+impl PrefetchedDrain {
+    /// Drains whole clean batches into request-shaped chunks. Returns the
+    /// chunks and, when the cursor could not hand a batch over, the cursor
+    /// itself so the row path finishes it on the session thread.
+    pub(crate) fn run(mut self) -> (Result<Vec<Chunk>, ExecError>, Option<RemoteRowCursor>) {
+        let mut chunks = Vec::new();
+        loop {
+            let mut scratch = Chunk::new_with_capacity(&self.field_types, self.cap);
+            match self.cursor.append_clean_chunk(&mut scratch, self.cap, false) {
+                Ok(Some(0)) => return (Ok(chunks), None),
+                Ok(Some(rows)) => {
+                    let mut output = Chunk::new_with_capacity(&self.output_types, rows);
+                    for (target, source) in self.output_columns.iter().copied().enumerate() {
+                        output.append_column_range_from(target, &scratch, source, 0, rows);
+                    }
+                    chunks.push(output);
+                }
+                Ok(None) => return (Ok(chunks), Some(self.cursor)),
+                Err(error) => {
+                    return (
+                        Err(ExecError::unsupported(format!(
+                            "common-handle remote lookup failed: {error:?}"
+                        ))),
+                        None,
+                    )
+                }
+            }
+        }
+    }
+}
+
 pub struct IndexJoinLookupExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -4784,6 +4825,45 @@ impl IndexJoinLookupExec {
             );
         }
         Ok(true)
+    }
+
+    /// Go `indexHashJoinInnerWorker.fetchInnerResults` off the session
+    /// thread: takes the prefetched task's remote cursor, with the projection
+    /// its batches need, for a pool worker to drain while the session thread
+    /// probes earlier tasks. `None` when the batches would need local work
+    /// (a filter the coprocessor did not take, an output column outside the
+    /// decoded set, a staged cursor), in which case the task is read here.
+    pub(crate) fn take_prefetched_drain(&mut self) -> Option<PrefetchedDrain> {
+        if !self.common_handle_prefix_lookup() || !self.remote_filters_complete {
+            return None;
+        }
+        let output_columns = self.chunk_output_columns()?;
+        let ready = self.remote_cursor.as_ref().is_some_and(|cursor| {
+            cursor.supports_lookup_chunks()
+                && (self.filters.is_empty() || cursor.predicates_applied())
+        });
+        if !ready {
+            return None;
+        }
+        let cursor = self.remote_cursor.take()?;
+        Some(PrefetchedDrain {
+            field_types: cursor.field_types().to_vec(),
+            cursor,
+            output_columns,
+            output_types: self.meta.ret_field_types().to_vec(),
+            cap: self.meta.max_chunk_size(),
+        })
+    }
+
+    /// Puts back a cursor the worker could not finish; the row path reads
+    /// the rest of it here.
+    pub(crate) fn restore_cursor(&mut self, cursor: RemoteRowCursor) {
+        self.remote_cursor = Some(cursor);
+    }
+
+    /// Accounts rows a worker produced for this lookup.
+    pub(crate) fn add_produced(&self, rows: u64) {
+        self.produced.set(self.produced.get() + rows);
     }
 
     /// Whether the current lookup reads common-handle prefix ranges, the

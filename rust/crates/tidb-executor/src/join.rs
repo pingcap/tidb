@@ -680,6 +680,18 @@ struct PendingIndexLookupTask {
 
 enum PendingIndexLookupSource {
     Prefetched(IndexLookupSource),
+    /// Go `indexHashJoinInnerWorker.fetchInnerResults`: a pool worker is
+    /// draining the task's remote cursor into request-shaped chunks while
+    /// the session thread works on earlier tasks. The receiver yields the
+    /// chunks and, when the worker could not hand a batch over, the cursor
+    /// for the row path to finish.
+    Draining {
+        source: IndexLookupSource,
+        results: std::sync::mpsc::Receiver<(
+            Result<Vec<Chunk>, ExecError>,
+            Option<crate::kv_table::RemoteRowCursor>,
+        )>,
+    },
     Synchronous(Vec<IndexTaskProbe>),
 }
 
@@ -1529,6 +1541,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         match task.source {
             PendingIndexLookupSource::Prefetched(mut source) => Self::materialize_index_inner(
                 &mut source,
+                Vec::new(),
                 state,
                 keys,
                 outer_is_left,
@@ -1536,6 +1549,31 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 tracker,
                 memory,
             ),
+            PendingIndexLookupSource::Draining {
+                mut source,
+                results,
+            } => {
+                let (chunks, cursor) = results.recv().map_err(|_| {
+                    ExecError::internal("the index-join inner worker stopped without a result")
+                })?;
+                let chunks = chunks?;
+                if let (Some(cursor), IndexLookupSource::Leaf(leaf)) = (cursor, &mut source) {
+                    leaf.restore_cursor(cursor);
+                }
+                if let IndexLookupSource::Leaf(leaf) = &source {
+                    leaf.add_produced(chunks.iter().map(|chunk| chunk.num_rows() as u64).sum());
+                }
+                Self::materialize_index_inner(
+                    &mut source,
+                    chunks,
+                    state,
+                    keys,
+                    outer_is_left,
+                    &inner_not_null,
+                    tracker,
+                    memory,
+                )
+            }
             PendingIndexLookupSource::Synchronous(probes) => {
                 let (keys_seeded, bound_values) = probes
                     .into_iter()
@@ -1548,6 +1586,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     })?;
                 Self::materialize_index_inner(
                     &mut plan.source,
+                    Vec::new(),
                     state,
                     keys,
                     outer_is_left,
@@ -1595,10 +1634,30 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             )?;
             let source = if state.prefetch_disabled {
                 PendingIndexLookupSource::Synchronous(probes.clone())
-            } else if let Some(source) =
+            } else if let Some(mut source) =
                 plan.source.fork_prefetched_common_handle(probes.clone())?
             {
-                PendingIndexLookupSource::Prefetched(source)
+                // Go runs `fetchInnerResults` on `tidb_index_lookup_join_concurrency`
+                // inner workers; a cop worker sends a task's next page only
+                // once the previous one was taken, so a cursor drained by
+                // the session thread alone keeps at most one page in flight
+                // (TPC-H Q21: 0.6 coprocessor requests in flight against Go's
+                // 3.9 on the same lookups). A pool worker drains each
+                // prefetched task's cursor into chunks instead.
+                let drain = match &mut source {
+                    IndexLookupSource::Leaf(leaf) => leaf.take_prefetched_drain(),
+                    IndexLookupSource::Composite { .. } => None,
+                };
+                match drain {
+                    Some(drain) => {
+                        let (tx, results) = std::sync::mpsc::sync_channel(1);
+                        crate::worker_pool::enqueue_public(Box::new(move || {
+                            let _ = tx.send(drain.run());
+                        }));
+                        PendingIndexLookupSource::Draining { source, results }
+                    }
+                    None => PendingIndexLookupSource::Prefetched(source),
+                }
             } else {
                 state.prefetch_disabled = true;
                 PendingIndexLookupSource::Synchronous(probes.clone())
@@ -1801,6 +1860,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     #[allow(clippy::too_many_arguments)]
     fn materialize_index_inner(
         source: &mut IndexLookupSource,
+        prefetched: Vec<Chunk>,
         state: &mut IndexLookupState,
         keys: &[EquiKey],
         outer_is_left: bool,
@@ -1810,6 +1870,18 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     ) -> Result<(), ExecError> {
         let inner_offset = |key: &EquiKey| if outer_is_left { key.right } else { key.left };
         let inner_types = source.ret_field_types().to_vec();
+        // Chunks a pool worker drained come first; the source then yields
+        // whatever the worker could not hand over.
+        for chunk in prefetched {
+            if chunk.num_rows() == 0 {
+                continue;
+            }
+            let bytes = chunk.memory_usage();
+            state.inner_bytes += bytes;
+            state.inner.add(chunk);
+            tracker.consume(bytes);
+            memory.check()?;
+        }
         let mut chunk = source.new_chunk();
         loop {
             source.next(&mut chunk)?;

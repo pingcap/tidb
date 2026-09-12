@@ -579,7 +579,10 @@ const fn kv_priority(priority: tidb_ast::StatementPriority) -> tidb_distsql::Pri
 }
 
 /// A lazily pulled stream of snapshot rows a backend served remotely.
-pub trait PushdownRowStream {
+///
+/// `Send` so a prefetched index-join lookup can hand its remote cursor to a
+/// pool worker (Go's inner workers drain their readers off the caller).
+pub trait PushdownRowStream: Send {
     /// Go `RuntimeStatsColl.GetCopCountAndRows` for the scan executor.
     fn cop_count_and_rows(&self) -> (u64, u64) {
         (0, 0)
