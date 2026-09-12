@@ -692,9 +692,8 @@ fn narrowing_survives_aliases_ordering_limits_and_subqueries() {
         vec![vec!["150".to_owned()], vec!["199".to_owned()]]
     );
 
-    // A subquery bound is not a constant the ranger may fold. The DML source
-    // plan evaluates it as an Apply over the immutable statement snapshot,
-    // then updates exactly the selected maximum handle.
+    // Go evaluates the uncorrelated scalar child during planning, before
+    // updating any rows, then ranges over the resulting maximum handle.
     let mut session = sbtest1_with_rows();
     session
         .run("UPDATE sbtest1 SET pad = 'W' WHERE id = (SELECT MAX(id) FROM sbtest1)")
@@ -713,6 +712,89 @@ fn narrowing_survives_aliases_ordering_limits_and_subqueries() {
     assert_eq!(
         row_text(session.run("SELECT id FROM sbtest1 WHERE pad = 'W' ORDER BY id")),
         vec![vec!["200".to_owned()], vec!["201".to_owned()]]
+    );
+}
+
+#[test]
+fn dml_scalar_subqueries_share_select_evaluation_and_cardinality_checks() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE dml_sq (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO dml_sq VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    session
+        .run("UPDATE dml_sq SET v = (SELECT MAX(v) + 1 FROM dml_sq)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id,v FROM dml_sq ORDER BY id")),
+        vec![vec!["1", "31"], vec!["2", "31"], vec!["3", "31"]]
+    );
+    session
+        .run("DELETE FROM dml_sq WHERE id = (SELECT MAX(id) FROM dml_sq)")
+        .unwrap();
+    session
+        .run("UPDATE dml_sq SET v = (SELECT v FROM dml_sq WHERE id = 99) WHERE id = 1")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id,v FROM dml_sq ORDER BY id")),
+        vec![vec!["1", "NULL"], vec!["2", "31"]]
+    );
+    for sql in [
+        "UPDATE dml_sq SET v = (SELECT id FROM dml_sq)",
+        "DELETE FROM dml_sq WHERE id = (SELECT id FROM dml_sq)",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1242, "{sql}: {error:?}");
+        assert_eq!(error.message, "Subquery returns more than 1 row");
+        assert_eq!(
+            row_text(session.run("SELECT id,v FROM dml_sq ORDER BY id")),
+            vec![vec!["1", "NULL"], vec!["2", "31"]]
+        );
+    }
+}
+
+#[test]
+fn prepared_dml_scalar_subquery_rechecks_the_snapshot_on_every_execute() {
+    let mut session = Session::new();
+    session
+        .run("SET tidb_enable_plan_cache_for_subquery = ON")
+        .unwrap();
+    session
+        .run("CREATE TABLE dml_cache_sq (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO dml_cache_sq VALUES (1,10),(2,20)")
+        .unwrap();
+    session.run("PREPARE sq_update FROM 'UPDATE dml_cache_sq SET v = 99 WHERE id = (SELECT MAX(id) FROM dml_cache_sq)'").unwrap();
+    session.run("EXECUTE sq_update").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@last_plan_from_cache")),
+        vec![vec!["0"]]
+    );
+    session
+        .run("INSERT INTO dml_cache_sq VALUES (3,30)")
+        .unwrap();
+    session.run("EXECUTE sq_update").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@last_plan_from_cache")),
+        vec![vec!["0"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT id,v FROM dml_cache_sq ORDER BY id")),
+        vec![vec!["1", "10"], vec!["2", "99"], vec!["3", "99"]]
+    );
+    session.run("PREPARE sq_delete FROM 'DELETE FROM dml_cache_sq WHERE id = (SELECT MAX(id) FROM dml_cache_sq)'").unwrap();
+    session.run("EXECUTE sq_delete").unwrap();
+    session.run("EXECUTE sq_delete").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@last_plan_from_cache")),
+        vec![vec!["0"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT id,v FROM dml_cache_sq ORDER BY id")),
+        vec![vec!["1", "10"]]
     );
 }
 

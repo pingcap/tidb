@@ -1942,6 +1942,11 @@ fn subquery_evaluator<'a>(
 > + 'a {
     let registry = Rc::clone(registry);
     move |inner, _kind, opt_flag| {
+        // Go executor.EvalSubqueryFirstRow prevents evaluated constants from
+        // surviving into a later EXECUTE with a different snapshot.
+        if use_plan_cache {
+            ctx.set_skip_plan_cache("query has uncorrelated sub-queries is un-cacheable");
+        }
         // Go `DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag, np)`.
         let logical = optimize_built_logical(
             inner.clone(),
@@ -2070,7 +2075,18 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
 ) -> Result<(PhysicalPlan, Vec<Option<Expression>>), tidb_planner::plan_base::PlanError> {
     let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
-    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
+    let registry = ScalarSubqueryRegistry::default();
+    let evaluator = subquery_evaluator(
+        catalog,
+        ctx,
+        plan_ids,
+        column_ids,
+        use_plan_cache,
+        &session_zone,
+        &registry,
+    );
+    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
+        .with_subquery_evaluator(&evaluator);
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
