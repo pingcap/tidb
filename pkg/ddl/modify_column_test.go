@@ -563,11 +563,12 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 	`)
 	tk.MustExec("CREATE INDEX val0_idx ON t (val0)")
 	tk.MustExec("insert into t (val0, val1, padding) values ('1', 1, 'a'), ('2', 2, 'b'), ('3', 3, 'c')")
+	tblID := external.GetTableByName(t, tk, "test", "t").Meta().ID
 
 	conflictOnce := sync.Once{}
 	conflictCh := make(chan struct{})
 	tk1 := testkit.NewTestKit(t, store)
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/table/tables/duringTableCommonRemoveRecord", func(tblInfo *model.TableInfo) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/table/tables/duringTableCommonRemoveRecord", func(tblInfo *model.TableInfo) {
 		if tblInfo.Name.L == "t" {
 			conflictOnce.Do(func() {
 				tk1.MustExec("use test")
@@ -579,16 +580,23 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 	})
 	deleteOnce := sync.Once{}
 	insertOnce := sync.Once{}
+	deleteDone := make(chan struct{})
+	insertDone := make(chan struct{})
 	tk2 := testkit.NewTestKit(t, store)
 	tk3 := testkit.NewTestKit(t, store)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
 		deleteOnce.Do(func() {
 			go func() {
+				defer close(deleteDone)
 				tk2.MustExec("use test")
 				tk2.MustExec("delete from t where id = 1;")
 			}()
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/afterLoadSchemaDiffs", func(int64) {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+				if job.Type != model.ActionModifyColumn || job.TableID != tblID || job.SchemaState != model.StatePublic {
+					return
+				}
 				insertOnce.Do(func() {
+					defer close(insertDone)
 					tk3.MustExec("use test")
 					tk3.MustExec("insert into t (val0, val1, padding) values ('4', 4, 'd');")
 				})
@@ -597,6 +605,15 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 		})
 	})
 	tk.MustExec("alter table t modify column val0 varchar(8) not null;")
+	waitDone := func(name string, ch <-chan struct{}) {
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "timed out waiting for "+name)
+		}
+	}
+	waitDone("delete DML", deleteDone)
+	waitDone("insert DML", insertDone)
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
 		"2 2 2 b",
