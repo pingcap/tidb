@@ -99,9 +99,9 @@ use tidb_executor::predicate_pushdown::{
 use tidb_expr::pb_predicate::{
     decimal_comparison_to_pb, int_comparison_to_pb, int_field_type, int_in_to_pb,
     is_int_family_type, is_null_to_pb, is_string_family_type, is_unsigned, logical_and_to_pb,
-    logical_not_to_pb, logical_or_to_pb, string_comparison_to_pb, string_in_to_pb,
-    string_like_to_pb, time_comparison_to_pb, DecimalPbOperand, IntPbOperand, PbPredicateError,
-    StringPbOperand, TimePbOperand,
+    logical_not_to_pb, logical_or_to_pb, string_column_in_to_pb, string_comparison_to_pb,
+    string_in_to_pb, string_like_to_pb, time_comparison_to_pb, DecimalPbOperand, IntPbOperand,
+    PbPredicateError, StringPbOperand, TimePbOperand,
 };
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_proto::tipb::{Expr, ScalarFuncSig};
@@ -269,15 +269,44 @@ fn predicate_to_pb(
             column_offset,
             literals,
             negated,
+            collation,
             ..
         } => {
             let offset = *column_offset;
-            let flags = column_flags(offset, columns)?;
-            let list = literals
-                .iter()
-                .map(|literal| int_literal_operand(offset, flags, literal))
-                .collect::<Result<Vec<_>, _>>()?;
-            let membership = int_in_to_pb(int_column_operand(offset, columns)?, list)?;
+            let column = columns.get(offset as usize).ok_or(
+                WideScanSelectionError::ColumnOffsetOutOfRange {
+                    offset,
+                    width: columns.len(),
+                },
+            )?;
+            // Go `inFunctionClass.getFunction`: the signature follows the
+            // TESTED argument's evaluation type -- `InString` for the string
+            // family, `InInt` for integers. A list that is not described here
+            // stays a residual the root evaluates, so every family Go pushes
+            // and this lowering refuses is a scan the coprocessor filters
+            // less than Go's would.
+            let membership = if is_string_family_type(column.tp) {
+                let list = literals
+                    .iter()
+                    .map(|literal| match literal {
+                        Datum::String(value) => Ok(value.bytes().to_vec()),
+                        Datum::Bytes(value) => Ok(value.clone()),
+                        _ => Err(WideScanSelectionError::UnsupportedLiteral { offset }),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                string_column_in_to_pb(
+                    string_column_operand(offset, column)?,
+                    list,
+                    collation.name(),
+                )?
+            } else {
+                let flags = column_flags(offset, columns)?;
+                let list = literals
+                    .iter()
+                    .map(|literal| int_literal_operand(offset, flags, literal))
+                    .collect::<Result<Vec<_>, _>>()?;
+                int_in_to_pb(int_column_operand(offset, columns)?, list)?
+            };
             Ok(negate_if(membership, *negated))
         }
         ScanPredicate::ScalarIn {

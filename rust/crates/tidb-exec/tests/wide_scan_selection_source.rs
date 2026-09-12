@@ -977,22 +977,55 @@ fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive
             "tp {tp}: ENUM/SET are refused"
         );
     }
-    // `IN` over a string column still needs the richer string-list metadata,
-    // while `IS NULL` uses the evaluation-family-specific signature selected
-    // by Go (`StringIsNull` for this column).
-    assert_eq!(
+    // `IN` over a string column is Go's `InString` (`inFunctionClass`
+    // follows the tested argument's evaluation type), one child per distinct
+    // constant under the comparison's collation; `NOT IN` wraps it in
+    // `UnaryNotInt`. TPC-H Q19's `l_shipmode IN ('AIR', 'AIR REG')` stayed a
+    // root-side residual over every lineitem row while this was refused.
+    let string_in = |negated, literals: &[&[u8]], collation: tidb_datatype::Collation| {
         wide_scan_selection_conditions(
             &[ScanPredicate::In {
-                collation: tidb_datatype::Collation::Binary,
+                collation,
                 column_offset: 0,
                 column_type: FieldType::new(FieldTypeCode::Varchar),
-                literals: vec![Datum::Bytes(b"a".to_vec())],
-                negated: false,
+                literals: literals
+                    .iter()
+                    .map(|literal| Datum::Bytes(literal.to_vec()))
+                    .collect(),
+                negated,
             }],
-            &[string_column("utf8mb4_bin")]
-        ),
-        Err(WideScanSelectionError::UnsupportedColumnType { offset: 0 })
+            &[string_column("utf8mb4_bin")],
+        )
+        .unwrap()
+        .remove(0)
+    };
+    let two = string_in(
+        false,
+        &[b"AIR", b"AIR REG"],
+        tidb_datatype::Collation::Utf8Mb4Bin,
     );
+    assert_eq!(two.sig, Some(ScalarFuncSig::InString as i32));
+    assert_eq!(two.children.len(), 3, "the tested column plus one child per element");
+    assert_eq!(
+        two.field_type.as_ref().and_then(|tp| tp.collate),
+        Some(tidb_datatype::collation_to_proto("utf8mb4_bin")),
+        "the comparison's collation rides on the InString node, as Go stamps it"
+    );
+    let deduplicated = string_in(
+        false,
+        &[b"a", b"A"],
+        tidb_datatype::Collation::Utf8Mb4GeneralCi,
+    );
+    assert_eq!(
+        deduplicated.children.len(),
+        2,
+        "duplicates under the comparison's collation never reach the wire"
+    );
+    let not_in = string_in(true, &[b"AIR"], tidb_datatype::Collation::Utf8Mb4Bin);
+    assert_eq!(not_in.sig, Some(ScalarFuncSig::UnaryNotInt as i32));
+    assert_eq!(not_in.children[0].sig, Some(ScalarFuncSig::InString as i32));
+    // `IS NULL` uses the evaluation-family-specific signature selected by
+    // Go (`StringIsNull` for this column).
     let is_null = wide_scan_selection_conditions(
         &[ScanPredicate::IsNull {
             column_offset: 0,

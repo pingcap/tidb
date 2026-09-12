@@ -565,6 +565,18 @@ pub fn string_in_to_pb(
     ))
 }
 
+/// Lowers `string_column IN (constants)`: the column operand is the tested
+/// expression of [`string_in_to_pb`]. Go's `inFunctionClass.getFunction`
+/// chooses `InString` from the tested argument's evaluation type, so a plain
+/// string column takes the same shape as any other string scalar.
+pub fn string_column_in_to_pb(
+    tested: StringPbOperand,
+    list: impl IntoIterator<Item = Vec<u8>>,
+    collation_name: &str,
+) -> Result<Expr, PbPredicateError> {
+    string_in_to_pb(string_operand_to_pb(tested)?, list, collation_name)
+}
+
 /// Lowers `string_column LIKE constant_pattern ESCAPE constant` to Go's
 /// `LikeSig` shape. The accepted column/literal pair has the same single
 /// unambiguous collation derivation as [`string_comparison_to_pb`].
