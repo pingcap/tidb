@@ -975,6 +975,24 @@ func TestSharedLockLockView(t *testing.T) {
 	tk1.MustExec("select * from parent where id=1 for update") // lock parent row(exclusive)
 
 	insertDoneCh := make(chan error, 1)
+	insertDone := false
+	var exclusiveLockDoneCh chan error
+	exclusiveLockDone := false
+	t.Cleanup(func() {
+		_, _ = tk1.Exec("rollback")
+		if !insertDone {
+			select {
+			case <-insertDoneCh:
+			case <-time.After(time.Second):
+			}
+		}
+		if exclusiveLockDoneCh != nil && !exclusiveLockDone {
+			select {
+			case <-exclusiveLockDoneCh:
+			case <-time.After(time.Second):
+			}
+		}
+	})
 	tk2.MustExec("begin pessimistic")
 	conn2TxnID := tk2.Session().TxnInfo().StartTS
 	go func() {
@@ -985,20 +1003,34 @@ func TestSharedLockLockView(t *testing.T) {
 		insertDoneCh <- err
 	}()
 
-	select {
-	case <-time.After(500 * time.Millisecond):
-	case <-insertDoneCh:
-		require.FailNow(t, "insert should be blocked")
-		return
-	}
+	var (
+		insertErr           error
+		insertFinishedEarly bool
+		txnWaits            [][]any
+	)
+	require.Eventually(t, func() bool {
+		select {
+		case insertErr = <-insertDoneCh:
+			insertDone = true
+			insertFinishedEarly = true
+			return true
+		default:
+		}
 
+		txnWaits = testTk.MustQuery(fmt.Sprintf(
+			"select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.trx_id = %d and trx.session_id = %s",
+			conn2TxnID, conn2,
+		)).Rows()
+		return len(txnWaits) > 0
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Falsef(t, insertFinishedEarly, "insert should be blocked before DATA_LOCK_WAITS row is observed, err: %v", insertErr)
 	lockWaits := testTk.MustQuery("select `key`, count(*) as `count` from INFORMATION_SCHEMA.DATA_LOCK_WAITS group by `key` order by `count` desc;").Rows()
 	require.Len(t, lockWaits, 1)
 	key := lockWaits[0][0].(string)
 	count := lockWaits[0][1].(string)
-	require.Equal(t, count, "1")
+	require.Equal(t, "1", count)
 
-	txnWaits := testTk.MustQuery(fmt.Sprintf("select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.key = \"%s\"", key)).Rows()
+	txnWaits = testTk.MustQuery(fmt.Sprintf("select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.key = \"%s\"", key)).Rows()
 	require.Len(t, txnWaits, 1)
 	waitingTxnID := txnWaits[0][0].(string)
 	sessionID := txnWaits[0][1].(string)
@@ -1006,14 +1038,16 @@ func TestSharedLockLockView(t *testing.T) {
 	require.Equal(t, sessionID, conn2)
 
 	tk1.MustExec("commit")
-	require.NoError(t, <-insertDoneCh)
+	insertErr = <-insertDoneCh
+	insertDone = true
+	require.NoError(t, insertErr)
 	tk1.MustQuery("select * from child").Check(testkit.Rows("1 1"))
 
 	// Case2: exclusive lock waits for shared lock on parent row
 	tk1.MustExec("begin pessimistic")
 	tk1.MustExec("insert into child values (2, 1)") // lock parent row (shared)
 
-	exclusiveLockDoneCh := make(chan error, 1)
+	exclusiveLockDoneCh = make(chan error, 1)
 	tk2.MustExec("begin pessimistic")
 	conn2TxnID = tk2.Session().TxnInfo().StartTS
 	go func() {
@@ -1024,12 +1058,26 @@ func TestSharedLockLockView(t *testing.T) {
 		exclusiveLockDoneCh <- err
 	}()
 
-	select {
-	case <-time.After(500 * time.Millisecond):
-	case <-exclusiveLockDoneCh:
-		require.FailNow(t, "exclusive lock should be blocked")
-		return
-	}
+	var (
+		exclusiveLockErr           error
+		exclusiveLockFinishedEarly bool
+	)
+	require.Eventually(t, func() bool {
+		select {
+		case exclusiveLockErr = <-exclusiveLockDoneCh:
+			exclusiveLockDone = true
+			exclusiveLockFinishedEarly = true
+			return true
+		default:
+		}
+
+		txnWaits = testTk.MustQuery(fmt.Sprintf(
+			"select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.trx_id = %d and trx.session_id = %s",
+			conn2TxnID, conn2,
+		)).Rows()
+		return len(txnWaits) > 0
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Falsef(t, exclusiveLockFinishedEarly, "exclusive lock should be blocked before DATA_LOCK_WAITS row is observed, err: %v", exclusiveLockErr)
 
 	lockWaits = testTk.MustQuery("select `key`, count(*) as `count` from INFORMATION_SCHEMA.DATA_LOCK_WAITS group by `key` order by `count` desc;").Rows()
 	require.GreaterOrEqual(t, len(lockWaits), 1)
@@ -1043,7 +1091,9 @@ func TestSharedLockLockView(t *testing.T) {
 	require.Equal(t, sessionID, conn2)
 
 	tk1.MustExec("commit")
-	require.NoError(t, <-exclusiveLockDoneCh)
+	exclusiveLockErr = <-exclusiveLockDoneCh
+	exclusiveLockDone = true
+	require.NoError(t, exclusiveLockErr)
 }
 
 func TestSharedLockDataLockWaitsFromStorageWaitTable(t *testing.T) {
