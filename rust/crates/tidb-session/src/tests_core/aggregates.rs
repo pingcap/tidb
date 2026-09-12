@@ -498,10 +498,10 @@ fn group_by_resolves_against_the_select_list() {
 
     // Captured: a bare integer is a 1-based output position, grouping by
     // the first select field (`a`) -- three groups, not one.
-    assert_eq!(
-        row_text(session.run("SELECT a, COUNT(*) FROM t GROUP BY 1")),
-        [["1", "2"], ["2", "1"], ["3", "1"]]
-    );
+    let mut groups = row_text(session.run("SELECT a, COUNT(*) FROM t GROUP BY 1"));
+    // Go uses HashAgg without an ordering property for this query.
+    groups.sort();
+    assert_eq!(groups, [["1", "2"], ["2", "1"], ["3", "1"]]);
 
     // Captured: a position landing on an aggregate select field is
     // ErrWrongGroupField (1056), whether or not it carries an alias.
@@ -535,8 +535,7 @@ fn group_by_resolves_against_the_select_list() {
         [["3", "1"], ["2", "1"], ["1", "2"]]
     );
 
-    // Captured: an out-of-range position (including zero) is 1054 naming
-    // the group statement.
+    // Go gbyResolver uses errors.Errorf (1105) for an out-of-range position.
     for sql in [
         "SELECT a, COUNT(*) FROM t GROUP BY 0",
         "SELECT a, COUNT(*) FROM t GROUP BY 3",
@@ -544,14 +543,14 @@ fn group_by_resolves_against_the_select_list() {
         match session.run(sql) {
             Err(error) => {
                 let reported = error.to_mysql_error();
-                assert_eq!(reported.code, 1054, "{sql}");
+                assert_eq!(reported.code, 1105, "{sql}");
                 assert!(
                     reported.message.ends_with("in 'group statement'"),
                     "{sql}: {}",
                     reported.message
                 );
             }
-            Ok(other) => panic!("expected 1054 from {sql}, got {other:?}"),
+            Ok(other) => panic!("expected 1105 from {sql}, got {other:?}"),
         }
     }
 
