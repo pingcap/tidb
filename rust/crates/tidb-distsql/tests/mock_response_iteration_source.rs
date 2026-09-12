@@ -96,7 +96,7 @@ impl QueryResponse for MockSelectResponse {
             SelectResponse {
                 encode_type: Some(EncodeType::TypeChunk as i32),
                 chunks: vec![Chunk {
-                    rows_data: Some(ChunkCodec::new(field_types).encode(&chk)),
+                    rows_data: Some((ChunkCodec::new(field_types).encode(&chk)).into()),
                     ..Chunk::default()
                 }],
                 output_counts: vec![1],
@@ -113,7 +113,7 @@ impl QueryResponse for MockSelectResponse {
             SelectResponse {
                 encode_type: Some(EncodeType::TypeDefault as i32),
                 chunks: vec![Chunk {
-                    rows_data: Some(rows_data),
+                    rows_data: Some((rows_data).into()),
                     ..Chunk::default()
                 }],
                 output_counts: vec![1],
@@ -362,7 +362,7 @@ fn fixture_chunk(
                 );
             }
             Chunk {
-                rows_data: Some(rows_data),
+                rows_data: Some((rows_data).into()),
                 ..Chunk::default()
             }
         }
@@ -374,7 +374,7 @@ fn fixture_chunk(
                 chk.append_time(2, zone_time(when));
             }
             Chunk {
-                rows_data: Some(ChunkCodec::new(col_types.to_vec()).encode(&chk)),
+                rows_data: Some((ChunkCodec::new(col_types.to_vec()).encode(&chk)).into()),
                 ..Chunk::default()
             }
         }

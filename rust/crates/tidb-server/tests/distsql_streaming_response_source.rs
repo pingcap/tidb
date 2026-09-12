@@ -76,7 +76,7 @@ fn type_chunk(columns: &[Vec<Cell<'_>>]) -> Chunk {
         }
     }
     Chunk {
-        rows_data: Some(data),
+        rows_data: Some((data).into()),
         ..Default::default()
     }
 }

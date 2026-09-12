@@ -63,7 +63,7 @@ fn default_chunk(rows: &[Vec<Cell<'_>>]) -> Chunk {
         }
     }
     Chunk {
-        rows_data: Some(data),
+        rows_data: Some((data).into()),
         ..Default::default()
     }
 }
@@ -103,7 +103,7 @@ fn type_chunk(columns: &[Vec<Cell<'_>>]) -> Chunk {
         }
     }
     Chunk {
-        rows_data: Some(data),
+        rows_data: Some((data).into()),
         ..Default::default()
     }
 }
@@ -116,7 +116,7 @@ fn one_row_variable_type_chunk(cell: &[u8]) -> Chunk {
     data.extend_from_slice(&(cell.len() as i64).to_le_bytes());
     data.extend_from_slice(cell);
     Chunk {
-        rows_data: Some(data),
+        rows_data: Some((data).into()),
         ..Default::default()
     }
 }
@@ -127,7 +127,7 @@ fn one_row_fixed_type_chunk(cell: &[u8]) -> Chunk {
     data.extend_from_slice(&0_u32.to_le_bytes());
     data.extend_from_slice(cell);
     Chunk {
-        rows_data: Some(data),
+        rows_data: Some((data).into()),
         ..Default::default()
     }
 }
@@ -400,10 +400,9 @@ fn sel_resp_channel_iter_reads_default_and_type_chunk_rows_across_empty_chunks()
 #[test]
 fn type_chunk_decode_to_chunk_ignores_the_unconsumed_suffix() {
     let mut chunk = type_chunk(&[vec![Cell::Int(7)]]);
-    chunk
-        .rows_data
-        .get_or_insert_default()
-        .extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+    let mut rows_data = chunk.rows_data.take().unwrap_or_default().to_vec();
+    rows_data.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+    chunk.rows_data = Some(rows_data.into());
     let response = SelectResponse {
         encode_type: Some(EncodeType::TypeChunk as i32),
         chunks: vec![chunk],
@@ -439,7 +438,7 @@ fn type_chunk_rows_use_the_complete_chunk_datum_domain() {
     let response = SelectResponse {
         encode_type: Some(EncodeType::TypeChunk as i32),
         chunks: vec![Chunk {
-            rows_data: Some(ChunkCodec::new(fields.clone()).encode(&decoded)),
+            rows_data: Some((ChunkCodec::new(fields.clone()).encode(&decoded)).into()),
             ..Default::default()
         }],
         ..Default::default()
@@ -667,7 +666,7 @@ fn final_channel_rows_precede_a_lower_priority_decode_error() {
         intermediate_outputs: vec![intermediate(
             EncodeType::TypeChunk,
             vec![Chunk {
-                rows_data: Some(vec![1]),
+                rows_data: Some((vec![1]).into()),
                 ..Default::default()
             }],
         )],
@@ -695,7 +694,7 @@ fn earlier_chunk_rows_precede_a_later_chunk_decode_error() {
         chunks: vec![
             type_chunk(&[vec![Cell::Int(8)]]),
             Chunk {
-                rows_data: Some(vec![1]),
+                rows_data: Some((vec![1]).into()),
                 ..Default::default()
             },
         ],

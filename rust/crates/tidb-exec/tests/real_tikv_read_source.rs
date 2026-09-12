@@ -178,7 +178,7 @@ fn encoded_rows(rows: &[&[i64]]) -> Vec<u8> {
     }
     SelectResponse {
         chunks: vec![Chunk {
-            rows_data: Some(rows_data),
+            rows_data: Some((rows_data).into()),
             rows_meta: Vec::new(),
         }],
         ..SelectResponse::default()
@@ -338,7 +338,7 @@ fn chunk_response(columns: &[Vec<u8>]) -> Vec<u8> {
     SelectResponse {
         encode_type: Some(EncodeType::TypeChunk as i32),
         chunks: vec![Chunk {
-            rows_data: Some(rows_data),
+            rows_data: Some((rows_data).into()),
             rows_meta: Vec::new(),
         }],
         ..SelectResponse::default()

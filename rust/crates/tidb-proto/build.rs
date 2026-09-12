@@ -20,6 +20,11 @@ fn main() {
         .build_client(true)
         .build_server(true)
         .boxed(".encryptionpb.MasterKey.backend.kms")
+        // A coprocessor chunk's rows are sliced out of the response buffer
+        // the way Go's chunk decoder points columns at the gRPC message
+        // (`decodeColumn`: `col.data = buffer[:numDataBytes]`), so the
+        // payload is shared rather than copied on decode.
+        .bytes(".tipb.Chunk.rows_data")
         .compile_protos(
             &[
                 "proto/resourcetag.proto",

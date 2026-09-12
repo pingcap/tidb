@@ -26,7 +26,7 @@ use tidb_proto::{Chunk, EncodeType, RowMeta};
 #[test]
 fn chblock_envelope_preserves_payload_and_row_metadata() {
     let chunk = Chunk {
-        rows_data: Some(b"native-chblock".to_vec()),
+        rows_data: Some((b"native-chblock".to_vec()).into()),
         rows_meta: vec![
             RowMeta {
                 handle: Some(41),
@@ -50,7 +50,7 @@ fn chblock_envelope_preserves_payload_and_row_metadata() {
 #[test]
 fn chblock_empty_metadata_keeps_opaque_payload_and_rejects_native_guessing() {
     let chunk = Chunk {
-        rows_data: Some(vec![0xde, 0xad, 0xbe, 0xef]),
+        rows_data: Some((vec![0xde, 0xad, 0xbe, 0xef]).into()),
         rows_meta: Vec::new(),
     };
 
@@ -68,7 +68,7 @@ fn chblock_empty_metadata_keeps_opaque_payload_and_rejects_native_guessing() {
 #[test]
 fn chblock_envelope_reuses_row_length_validation_and_rejects_other_encodings() {
     let malformed = Chunk {
-        rows_data: Some(b"x".to_vec()),
+        rows_data: Some((b"x".to_vec()).into()),
         rows_meta: vec![RowMeta {
             handle: None,
             length: Some(2),

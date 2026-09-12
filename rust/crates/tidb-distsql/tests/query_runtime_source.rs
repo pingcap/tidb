@@ -198,7 +198,9 @@ fn select_result_context_carries_the_statement_zone_into_default_decode() {
         encode_type: Some(EncodeType::TypeDefault as i32),
         chunks: vec![Chunk {
             rows_data: Some(
-                encode_value_in_timezone(&zone, &[Datum::new_time(timestamp)]).unwrap(),
+                encode_value_in_timezone(&zone, &[Datum::new_time(timestamp)])
+                    .unwrap()
+                    .into(),
             ),
             rows_meta: Vec::new(),
         }],

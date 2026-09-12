@@ -1243,8 +1243,11 @@ fn decode_channel(
             let mut decoded =
                 reusable_chunk.unwrap_or_else(|| DecodedChunk::new_empty(field_types));
             decoded.reset();
+            // The columns share the response payload (Go `decodeColumn`).
+            let empty = prost::bytes::Bytes::new();
+            let rows_data = chunk.rows_data.as_ref().unwrap_or(&empty);
             let _unconsumed_suffix = codec
-                .try_decode_to_chunk(raw.rows_data, &mut decoded)
+                .try_decode_bytes_to_chunk(rows_data, &mut decoded)
                 .map_err(|error| ResponseChannelError::RowDecode(error.to_string()))?;
             Ok(DecodedChannel::TypeChunk {
                 chunk: decoded,

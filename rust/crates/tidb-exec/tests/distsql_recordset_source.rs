@@ -69,7 +69,7 @@ fn typed_recordset(field_type: FieldType, type_code: u8, cell: &[u8]) -> DistSql
     let response = SelectResponse {
         encode_type: Some(EncodeType::TypeChunk as i32),
         chunks: vec![Chunk {
-            rows_data: Some(rows_data),
+            rows_data: Some((rows_data).into()),
             ..Default::default()
         }],
         ..Default::default()

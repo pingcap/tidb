@@ -27,6 +27,11 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, TryLockError};
 enum Backing {
     Owned(Vec<u8>),
     Shared(Arc<RwLock<Vec<u8>>>),
+    /// An immutable slice of a buffer owned elsewhere -- a coprocessor
+    /// response payload the chunk decoder points a column at, as Go's
+    /// `decodeColumn` does (`col.data = buffer[:n]`, `avoidReusing`). Any
+    /// mutation or growth detaches into an owned copy first.
+    Frozen(bytes::Bytes),
 }
 
 pub(crate) struct SharedBytes {
@@ -89,6 +94,16 @@ impl SharedBytes {
         Self::from_vec(vec![0; len])
     }
 
+    /// Shares `bytes` without copying; see [`Backing::Frozen`].
+    pub(crate) fn from_bytes(bytes: bytes::Bytes) -> Self {
+        let len = bytes.len();
+        Self {
+            backing: Backing::Frozen(bytes),
+            start: 0,
+            len,
+        }
+    }
+
     pub(crate) const fn len(&self) -> usize {
         self.len
     }
@@ -99,6 +114,7 @@ impl SharedBytes {
             Backing::Shared(backing) => Self::read_shared(backing)
                 .capacity()
                 .saturating_sub(self.start),
+            Backing::Frozen(_) => self.len,
         }
     }
 
@@ -112,6 +128,9 @@ impl SharedBytes {
                 start: self.start,
                 len: self.len,
             },
+            Backing::Frozen(bytes) => {
+                SharedBytesRead::Owned(&bytes[self.start..self.start + self.len])
+            }
         }
     }
 
@@ -223,6 +242,15 @@ impl SharedBytes {
         let backing = match previous {
             Backing::Owned(bytes) => Arc::new(RwLock::new(bytes)),
             Backing::Shared(backing) => backing,
+            Backing::Frozen(bytes) => {
+                // Immutable on both sides: the slice header is enough.
+                self.backing = Backing::Frozen(bytes.clone());
+                return Self {
+                    backing: Backing::Frozen(bytes),
+                    start: self.start + start,
+                    len: end - start,
+                };
+            }
         };
         self.backing = Backing::Shared(Arc::clone(&backing));
         Self {
@@ -285,12 +313,13 @@ impl SharedBytes {
                 }
                 Err(TryLockError::WouldBlock) => {}
             },
+            Backing::Frozen(_) => {}
         }
 
         self.detach_with_capacity(minimum_capacity.max(self.len));
         match &mut self.backing {
             Backing::Owned(bytes) => update(bytes, 0),
-            Backing::Shared(_) => {
+            Backing::Shared(_) | Backing::Frozen(_) => {
                 unreachable!("contention detaches only the mutating header")
             }
         }
@@ -360,6 +389,27 @@ mod tests {
         assert_eq!(source.read().as_ref(), b"abc");
         assert_eq!(copy.read().as_ref(), b"Xbc");
         assert!(!source.is_shared());
+    }
+
+    #[test]
+    fn frozen_bytes_are_shared_until_mutated() {
+        let payload = bytes::Bytes::from(vec![1u8, 2, 3, 4, 5, 6]);
+        let mut column = SharedBytes::from_bytes(payload.slice(1..5));
+        assert_eq!(&*column.read(), &[2, 3, 4, 5]);
+        assert_eq!(column.capacity(), 4);
+        let view = column.share_range(1, 3);
+        assert_eq!(&*view.read(), &[3, 4]);
+        assert!(matches!(view.backing, Backing::Frozen(_)));
+        // A write detaches the writer into an owned copy; the view and the
+        // payload keep their bytes.
+        column.set(0, 9);
+        assert_eq!(&*column.read(), &[9, 3, 4, 5]);
+        assert!(matches!(column.backing, Backing::Owned(_)));
+        assert_eq!(&*view.read(), &[3, 4]);
+        assert_eq!(&payload[..], &[1, 2, 3, 4, 5, 6]);
+        let mut grown = SharedBytes::from_bytes(payload.clone());
+        grown.extend_from_slice(&[7]);
+        assert_eq!(&*grown.read(), &[1, 2, 3, 4, 5, 6, 7]);
     }
 
     #[test]

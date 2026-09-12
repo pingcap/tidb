@@ -266,22 +266,42 @@ impl Codec {
         let mut remained = buffer;
         for ordinal in 0..chunk.columns.len() {
             let mut column = chunk.columns[ordinal].write();
-            remained = self.try_decode_column(remained, &mut column, ordinal)?;
+            remained = self.try_decode_column(remained, &mut column, ordinal, None)?;
         }
         Ok(remained)
     }
 
+    /// [`Self::try_decode_to_chunk`] over a shared buffer: each column's
+    /// data is a slice of `buffer` rather than a copy, as Go's `decodeColumn`
+    /// points `col.data` at the gRPC response (`avoidReusing`). Returns the
+    /// unconsumed suffix.
+    pub fn try_decode_bytes_to_chunk(
+        &self,
+        buffer: &bytes::Bytes,
+        chunk: &mut Chunk,
+    ) -> Result<bytes::Bytes, CodecDecodeError> {
+        let mut remained: &[u8] = buffer;
+        for ordinal in 0..chunk.columns.len() {
+            let mut column = chunk.columns[ordinal].write();
+            remained = self.try_decode_column(remained, &mut column, ordinal, Some(buffer))?;
+        }
+        Ok(buffer.slice_ref(remained))
+    }
+
     /// Go `decodeColumn`.
     fn decode_column<'a>(&self, buffer: &'a [u8], column: &mut Column, ordinal: usize) -> &'a [u8] {
-        self.try_decode_column(buffer, column, ordinal)
+        self.try_decode_column(buffer, column, ordinal, None)
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
+    /// `shared` is the buffer `buffer` is a suffix of, when the column may
+    /// point at it instead of copying its data.
     fn try_decode_column<'a>(
         &self,
         buffer: &'a [u8],
         column: &mut Column,
         ordinal: usize,
+        shared: Option<&bytes::Bytes>,
     ) -> Result<&'a [u8], CodecDecodeError> {
         let field_type = self
             .col_types
@@ -359,13 +379,14 @@ impl Codec {
             }
         }
 
-        column.data = SharedBytes::from_vec(
-            take_prefix(&mut buffer, num_data_bytes, ordinal, "data")?.to_vec(),
-        );
+        let data = take_prefix(&mut buffer, num_data_bytes, ordinal, "data")?;
         // Go points the column at the gRPC response's own memory and sets
-        // `avoidReusing` so the allocator will not retain it. This port copies,
-        // but keeps the flag: it is part of the decoded column's state and Go's
-        // allocator reads it.
+        // `avoidReusing` so the allocator will not retain it; a shared buffer
+        // gets the same treatment here, the slice path copies.
+        column.data = match shared {
+            Some(shared) => SharedBytes::from_bytes(shared.slice_ref(data)),
+            None => SharedBytes::from_vec(data.to_vec()),
+        };
         column.avoid_reusing = true;
         Ok(buffer)
     }

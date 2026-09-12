@@ -178,7 +178,7 @@ fn response(rows: &[&[i64]]) -> (ScriptedResponse, ResponseProbe) {
             QueryResultSubset {
                 data: SelectResponse {
                     chunks: vec![Chunk {
-                        rows_data: Some(rows_data),
+                        rows_data: Some((rows_data).into()),
                         rows_meta: Vec::new(),
                     }],
                     ..SelectResponse::default()

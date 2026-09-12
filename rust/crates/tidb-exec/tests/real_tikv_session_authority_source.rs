@@ -182,7 +182,7 @@ fn encoded_row(value: i64) -> Vec<u8> {
     rows_data.push(unsigned as u8);
     SelectResponse {
         chunks: vec![Chunk {
-            rows_data: Some(rows_data),
+            rows_data: Some((rows_data).into()),
             rows_meta: Vec::new(),
         }],
         ..SelectResponse::default()

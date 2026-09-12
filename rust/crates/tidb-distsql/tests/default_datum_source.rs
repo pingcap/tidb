@@ -52,7 +52,7 @@ fn default_chunk_materializes_codec_decode_one_scalar_rows() {
     );
 
     let chunk = Chunk {
-        rows_data: Some(rows_data),
+        rows_data: Some((rows_data).into()),
         rows_meta: Vec::new(),
     };
     let raw = decode_chunk(&chunk, EncodeType::TypeDefault).unwrap();
@@ -72,7 +72,7 @@ fn default_chunk_materializes_codec_decode_one_scalar_rows() {
 fn default_chunk_materializes_duration_with_field_fsp() {
     let duration = Datum::new_duration(MySqlDuration::from_nanoseconds(1_230_000_000, 6).unwrap());
     let chunk = Chunk {
-        rows_data: Some(encode_value(std::slice::from_ref(&duration)).unwrap()),
+        rows_data: Some((encode_value(std::slice::from_ref(&duration)).unwrap()).into()),
         rows_meta: Vec::new(),
     };
     let raw = decode_chunk(&chunk, EncodeType::TypeDefault).unwrap();
@@ -100,7 +100,7 @@ fn select_iterator_uses_the_statement_zone_for_default_timestamps() {
     let response = SelectResponse {
         encode_type: Some(EncodeType::TypeDefault as i32),
         chunks: vec![Chunk {
-            rows_data: Some(rows_data),
+            rows_data: Some((rows_data).into()),
             rows_meta: Vec::new(),
         }],
         ..SelectResponse::default()

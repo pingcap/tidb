@@ -529,7 +529,7 @@ fn encode_default_rows(
         current_rows += 1;
         if current_rows == CHUNK_MAX_ROWS {
             chunks.push(tipb::Chunk {
-                rows_data: Some(std::mem::take(&mut current)),
+                rows_data: Some((std::mem::take(&mut current)).into()),
                 ..tipb::Chunk::default()
             });
             current_rows = 0;
@@ -537,7 +537,7 @@ fn encode_default_rows(
     }
     if !current.is_empty() {
         chunks.push(tipb::Chunk {
-            rows_data: Some(current),
+            rows_data: Some((current).into()),
             ..tipb::Chunk::default()
         });
     }
@@ -770,7 +770,7 @@ fn exec_table_scan(
             emitted += 1;
             if current_rows == CHUNK_MAX_ROWS {
                 chunks.push(tipb::Chunk {
-                    rows_data: Some(std::mem::take(&mut current)),
+                    rows_data: Some((std::mem::take(&mut current)).into()),
                     ..tipb::Chunk::default()
                 });
                 current_rows = 0;
@@ -798,7 +798,7 @@ fn exec_table_scan(
             emitted += 1;
             if current_rows == CHUNK_MAX_ROWS {
                 chunks.push(tipb::Chunk {
-                    rows_data: Some(std::mem::take(&mut current)),
+                    rows_data: Some((std::mem::take(&mut current)).into()),
                     ..tipb::Chunk::default()
                 });
                 current_rows = 0;
@@ -836,7 +836,7 @@ fn exec_table_scan(
             current_rows += 1;
             if current_rows == CHUNK_MAX_ROWS {
                 chunks.push(tipb::Chunk {
-                    rows_data: Some(std::mem::take(&mut current)),
+                    rows_data: Some((std::mem::take(&mut current)).into()),
                     ..tipb::Chunk::default()
                 });
                 current_rows = 0;
@@ -845,7 +845,7 @@ fn exec_table_scan(
     }
     if !current.is_empty() {
         chunks.push(tipb::Chunk {
-            rows_data: Some(current),
+            rows_data: Some((current).into()),
             ..tipb::Chunk::default()
         });
     }

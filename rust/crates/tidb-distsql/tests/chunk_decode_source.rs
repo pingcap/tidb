@@ -34,7 +34,7 @@ fn select_result_response_and_chunk_metadata_round_trip() {
             msg: Some("cop error".to_owned()),
         }),
         chunks: vec![Chunk {
-            rows_data: Some(b"abcdef".to_vec()),
+            rows_data: Some((b"abcdef".to_vec()).into()),
             rows_meta: vec![
                 RowMeta {
                     handle: Some(11),
@@ -68,7 +68,7 @@ fn row_metadata_rejects_missing_negative_overlong_and_trailing_lengths() {
     let cases = [
         (
             Chunk {
-                rows_data: Some(b"a".to_vec()),
+                rows_data: Some((b"a".to_vec()).into()),
                 rows_meta: vec![RowMeta {
                     handle: None,
                     length: None,
@@ -78,7 +78,7 @@ fn row_metadata_rejects_missing_negative_overlong_and_trailing_lengths() {
         ),
         (
             Chunk {
-                rows_data: Some(b"a".to_vec()),
+                rows_data: Some((b"a".to_vec()).into()),
                 rows_meta: vec![RowMeta {
                     handle: None,
                     length: Some(-1),
@@ -91,7 +91,7 @@ fn row_metadata_rejects_missing_negative_overlong_and_trailing_lengths() {
         ),
         (
             Chunk {
-                rows_data: Some(b"a".to_vec()),
+                rows_data: Some((b"a".to_vec()).into()),
                 rows_meta: vec![RowMeta {
                     handle: None,
                     length: Some(2),
@@ -105,7 +105,7 @@ fn row_metadata_rejects_missing_negative_overlong_and_trailing_lengths() {
         ),
         (
             Chunk {
-                rows_data: Some(b"ab".to_vec()),
+                rows_data: Some((b"ab".to_vec()).into()),
                 rows_meta: vec![RowMeta {
                     handle: None,
                     length: Some(1),
@@ -127,7 +127,7 @@ fn row_metadata_rejects_missing_negative_overlong_and_trailing_lengths() {
 fn opaque_encodings_are_inspectable_but_typed_decode_is_explicitly_unsupported() {
     for encode_type in [EncodeType::TypeDefault, EncodeType::TypeChunk] {
         let chunk = Chunk {
-            rows_data: Some(b"opaque".to_vec()),
+            rows_data: Some((b"opaque".to_vec()).into()),
             rows_meta: vec![],
         };
         let raw = decode_chunk(&chunk, encode_type).expect("metadata-free chunk is opaque");
@@ -164,7 +164,8 @@ fn default_chunk_uses_source_value_framing_without_datum_guessing() {
             b'a',
             b'b',
             b'c',
-        ]),
+        ]
+        .into()),
         ..Default::default()
     };
     let raw = decode_chunk(&chunk, EncodeType::TypeDefault).expect("raw default chunk");
@@ -186,7 +187,7 @@ fn default_chunk_frames_a_vector_before_the_following_value() {
     ])
     .unwrap();
     let chunk = Chunk {
-        rows_data: Some(rows_data),
+        rows_data: Some((rows_data).into()),
         ..Default::default()
     };
 
@@ -210,7 +211,7 @@ fn type_chunk_uses_explicit_column_layout_and_preserves_remainder() {
     rows_data.extend_from_slice(b"suffix");
 
     let chunk = Chunk {
-        rows_data: Some(rows_data),
+        rows_data: Some((rows_data).into()),
         ..Default::default()
     };
     let raw = decode_chunk(&chunk, EncodeType::TypeChunk).expect("raw type chunk");
@@ -235,7 +236,7 @@ fn type_chunk_typed_scalar_leaf_preserves_remainder_and_nulls() {
     rows_data.extend_from_slice(b"suffix");
 
     let chunk = Chunk {
-        rows_data: Some(rows_data),
+        rows_data: Some((rows_data).into()),
         ..Default::default()
     };
     let raw = decode_chunk(&chunk, EncodeType::TypeChunk).expect("raw type chunk");
@@ -258,7 +259,7 @@ fn type_chunk_typed_scalar_leaf_rejects_opaque_field_type_without_consuming_more
     rows_data.extend_from_slice(b"suffix");
 
     let chunk = Chunk {
-        rows_data: Some(rows_data),
+        rows_data: Some((rows_data).into()),
         ..Default::default()
     };
     let raw = decode_chunk(&chunk, EncodeType::TypeChunk).expect("raw type chunk");

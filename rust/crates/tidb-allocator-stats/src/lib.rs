@@ -119,7 +119,17 @@ mod profile_config {
             // (jemalloc unwinds through libgcc's DWARF unwinder, Go walks
             // frame pointers), but it leaves that first record empty, which
             // is not Go's behaviour; the rate stays Go's.
-            bytes: &b"prof:true,lg_prof_sample:19\0"[0],
+            //
+            // `oversize_threshold:0`: jemalloc returns an allocation above
+            // its oversize threshold (8 MiB) to the OS the moment it is
+            // freed, so every coprocessor response payload of that size was
+            // page-faulted in again on the next request (TPC-H Q9: 600k
+            // minor faults, about 0.7 s of node CPU). Go's page heap keeps a
+            // freed span for reuse and lets the background scavenger release
+            // memory on its own pace; the ordinary dirty-page decay
+            // (`dirty_decay_ms`, 10 s) is jemalloc's counterpart, and this
+            // setting routes huge allocations through it.
+            bytes: &b"prof:true,lg_prof_sample:19,oversize_threshold:0\0"[0],
         }
         .chars
     });
