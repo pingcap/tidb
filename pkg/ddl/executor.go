@@ -1275,12 +1275,14 @@ func (e *executor) createTableWithInfoPost(
 	schemaID int64,
 	scatterScope string,
 ) error {
-	preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
 	if e.startMode == BR {
+		// BR applies its own split strategy while restoring table data.
 		if err := handleAutoIncID(e.getAutoIDRequirement(), schemaID, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
+		return nil
 	}
+	preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
 	return nil
 }
 
@@ -1444,7 +1446,10 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 		return
 	}
 	sp, ok := store.(kv.SplittableStore)
-	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+	hasRegionSplitConfig := hasExplicitRegionSplitConfig(tbInfo)
+	// split-table controls only implicit table-boundary splitting. PRE_SPLIT_REGIONS,
+	// tidb_pre_split_regions, and Region split policies take precedence.
+	if !ok || (atomic.LoadUint32(&EnableSplitTableRegion) == 0 && !hasRegionSplitConfig) {
 		return
 	}
 	var preSplit func()

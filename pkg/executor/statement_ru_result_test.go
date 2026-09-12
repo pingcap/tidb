@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -28,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -145,7 +147,7 @@ func observeStatementRUCalibrationForTest(
 		}
 		observe(statementRUCalibrationSnapshot{
 			State: state,
-			Units: statementRURawUnits{
+			Units: ruv3.StmtUnits{
 				CPUWork:              cpuWork,
 				ScanBytes:            scanBytes,
 				NetBytes:             netBytes,
@@ -186,13 +188,14 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 
 	require.Equal(t, int64(1), calibrationCount.Load())
 	require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
-	require.Equal(t, statementRURawUnits{
+	require.Equal(t, ruv3.StmtUnits{
 		OperatorNum:          2,
 		ScanBytes:            10,
 		NetBytes:             20,
 		FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
 	}, snapshot.Units)
-	expectedResult := calculateStatementRUResultOnly(snapshot.Units)
+	expectedResult, valid := ruv3.Calculate(snapshot.Units, ruv3.DefaultWeights())
+	require.True(t, valid)
 	require.InDelta(t, expectedResult.TotalRU, totalAtCalibration, 1e-9)
 	require.InDelta(t, expectedResult.TotalRU, testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
 	require.InDelta(t, expectedResult.TotalRU,
@@ -214,12 +217,12 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 
 func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 	t.Run("frontend missing is zero only for ResultOnly", func(t *testing.T) {
-		finalized, ok := (statementRUCalculator{units: statementRURawUnits{
+		finalized, ok := (statementRUCalculator{units: ruv3.StmtUnits{
 			ScanBytes: 10,
 			NetBytes:  20,
 		}}).finalize()
 		require.True(t, ok)
-		require.Equal(t, statementRUResultOnly{TotalRU: 30}, finalized.result)
+		require.Equal(t, ruv3.StmtResult{TotalRU: 30}, finalized.result)
 		require.Equal(t, statementRUCalibrationIncomplete, finalized.calibrationState)
 		require.Zero(t, finalized.units.FrontendCompileBytes)
 	})
@@ -352,10 +355,76 @@ func TestStatementRUPublisherIsolation(t *testing.T) {
 	})
 }
 
+func TestStatementRUUsesConfig(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.StatementCPUWork = 2
+		cfg.RUV2.StatementScanBytes = 3
+	})
+
+	calculator := statementRUCalculator{units: ruv3.StmtUnits{CPUWork: 5, ScanBytes: 7}}
+	calculator.recordOperatorUnits(statementRUTiDB, calculator.units)
+	finalized, ok := calculator.finalize()
+	require.True(t, ok)
+	require.Equal(t, float64(31), finalized.result.TotalRU) // 2*5 + 3*7
+	require.Equal(t, statementRUEngineResult{TiDB: 10, TiKV: 21}, finalized.engineRU)
+
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.StatementCPUWork = 0
+	})
+	finalized, ok = calculator.finalize()
+	require.True(t, ok)
+	require.Equal(t, float64(21), finalized.result.TotalRU) // 0*5 + 3*7
+	require.Equal(t, statementRUEngineResult{TiKV: 21}, finalized.engineRU)
+
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.StatementCPUWork = 2
+		cfg.RUV2.StatementScanBytes = 3
+		cfg.RUV2.StatementNetBytes = 5
+		cfg.RUV2.StatementFrontendCompileBytes = 7
+		cfg.RUV2.StatementHashStateRows = 11
+		cfg.RUV2.StatementJoinOutputRows = 13
+		cfg.RUV2.StatementWriteStatement = 17
+		cfg.RUV2.StatementOperatorNum = 19
+		cfg.RUV2.StatementWriteKeys = 23
+		cfg.RUV2.StatementWriteBytes = 29
+	})
+	for _, full := range []bool{false, true} {
+		calculator := newStatementRUCalculator(statementRUCalculationSetup{frontendCompileBytes: 11, fullReport: full})
+		calculator.units.WriteStatement = 1
+		calculator.units.WriteKeys = 31
+		calculator.units.WriteBytes = 37
+		for engine, units := range []ruv3.StmtUnits{
+			{CPUWork: 2, HashStateRows: 3, JoinOutputRows: 5, OperatorNum: 7},
+			{CPUWork: 13, HashStateRows: 17, OperatorNum: 19, ScanBytes: 23, NetBytes: 29},
+		} {
+			calculator.units = calculator.units.Add(units)
+			calculator.recordOperatorUnits(statementRUEngine(engine), units)
+			if full {
+				calculator.report.addOperator(statementRUEngine(engine), statementRUHashAgg, units)
+			}
+		}
+		finalized, ok := calculator.finalize()
+		require.True(t, ok)
+		require.Equal(t, statementRUEngineResult{TiDB: 329, TiKV: 2574}, finalized.engineRU)
+		require.Equal(t, float64(2903), finalized.result.TotalRU)
+		if full {
+			requireStatementRUReportConservation(t, finalized)
+		}
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		tidbBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb"))
+		tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngineTiKV)
+		publishStatementRUMetricsSafely(finalized)
+		require.InDelta(t, 2903, testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
+		require.InDelta(t, 329, testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb"))-tidbBefore, 1e-9)
+		require.InDelta(t, 2574, testutil.ToFloat64(metrics.RUV3ByEngineTiKV)-tikvBefore, 1e-9)
+	}
+}
+
 func TestStatementRUResultValueContracts(t *testing.T) {
 	t.Run("calculator finalizes typed units without plan input", func(t *testing.T) {
 		calculator := statementRUCalculator{
-			units: statementRURawUnits{
+			units: ruv3.StmtUnits{
 				CPUWork:              5,
 				ScanBytes:            10,
 				NetBytes:             20,
@@ -366,18 +435,21 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		}
 		finalized, ok := calculator.finalize()
 		require.True(t, ok)
-		require.Equal(t, statementRUResultOnly{TotalRU: 65}, finalized.result)
+		require.Equal(t, ruv3.StmtResult{TotalRU: 65}, finalized.result)
 		require.Equal(t, statementRUCalibrationIncomplete, finalized.calibrationState)
 	})
 
 	t.Run("write units and reporting snapshot", func(t *testing.T) {
-		units := statementRURawUnits{WriteStatement: 1, OperatorNum: 3, WriteKeys: 2, WriteBytes: 100}
-		require.Equal(t, float64(106), calculateStatementRUResultOnly(units).TotalRU)
-		require.Equal(t, units, subtractStatementRURawUnits(addStatementRURawUnits(units, units), units))
+		units := ruv3.StmtUnits{WriteStatement: 1, OperatorNum: 3, WriteKeys: 2, WriteBytes: 100}
+		result, valid := ruv3.Calculate(units, ruv3.DefaultWeights())
+		require.True(t, valid)
+		require.Equal(t, float64(106), result.TotalRU)
+		doubledUnits := units.Add(units)
+		require.Equal(t, units, doubledUnits.Sub(units))
 		for _, field := range []string{"WriteStatement", "OperatorNum", "WriteKeys", "WriteBytes"} {
 			invalid := units
 			reflect.ValueOf(&invalid).Elem().FieldByName(field).SetFloat(-1)
-			require.False(t, validStatementRURawUnits(invalid), field)
+			require.False(t, invalid.Valid(), field)
 		}
 		m := execdetails.NewRUV2Metrics()
 		m.AddWriteKeys(2)
@@ -438,38 +510,40 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.finishStatementRUForTest(nil)
 		stmt.finishStatementRUForTest(nil)
-		require.Equal(t, statementRURawUnits{FrontendCompileBytes: 6}, snapshot.Units)
+		require.Equal(t, ruv3.StmtUnits{FrontendCompileBytes: 6}, snapshot.Units)
 		require.InDelta(t, float64(6), testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("commit"))-writeBefore, 1e-9)
 		require.Equal(t, readBefore, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select")))
 	})
 
 	t.Run("placeholder formula stays pinned", func(t *testing.T) {
-		units := statementRURawUnits{
+		units := ruv3.StmtUnits{
 			CPUWork: 5, ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15,
 			HashStateRows: 7, JoinOutputRows: 8,
 		}
-		require.Equal(t, statementRUResultOnly{TotalRU: 65}, calculateStatementRUResultOnly(units))
+		result, valid := ruv3.Calculate(units, ruv3.DefaultWeights())
+		require.True(t, valid)
+		require.Equal(t, ruv3.StmtResult{TotalRU: 65}, result)
 	})
 
 	t.Run("operator unit arithmetic preserves Join and Agg units", func(t *testing.T) {
-		baseUnits := statementRURawUnits{
+		baseUnits := ruv3.StmtUnits{
 			CPUWork: 1, ScanBytes: 2, NetBytes: 3, FrontendCompileBytes: 4,
 			HashStateRows: 5, JoinOutputRows: 6,
 		}
-		delta := statementRURawUnits{
+		delta := ruv3.StmtUnits{
 			CPUWork: 7, ScanBytes: 8, NetBytes: 9, FrontendCompileBytes: 10,
 			HashStateRows: 11, JoinOutputRows: 12,
 		}
-		combined := addStatementRURawUnits(baseUnits, delta)
-		require.Equal(t, statementRURawUnits{
+		combined := baseUnits.Add(delta)
+		require.Equal(t, ruv3.StmtUnits{
 			CPUWork: 8, ScanBytes: 10, NetBytes: 12, FrontendCompileBytes: 14,
 			HashStateRows: 16, JoinOutputRows: 18,
 		}, combined)
-		require.Equal(t, delta, subtractStatementRURawUnits(combined, baseUnits))
+		require.Equal(t, delta, combined.Sub(baseUnits))
 	})
 
 	t.Run("engine projection preserves the lower layer boundary", func(t *testing.T) {
-		units := statementRURawUnits{CPUWork: 5, ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
+		units := ruv3.StmtUnits{CPUWork: 5, ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
 		calculator := statementRUCalculator{units: units}
 		calculator.recordOperatorUnits(statementRUTiDB, units)
 		finalized, ok := calculator.finalize()
@@ -544,9 +618,9 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		for _, value := range []any{
 			statementRUCalculator{},
 			statementRUOperatorResult{},
-			statementRURawUnits{},
+			ruv3.StmtUnits{},
 			statementRUFinalizedSnapshot{},
-			statementRUResultOnly{},
+			ruv3.StmtResult{},
 			statementRUCalibrationSnapshot{},
 		} {
 			requireStatementRUValueOnlyType(t, reflect.TypeOf(value))
@@ -558,12 +632,12 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		require.Equal(t, []string{
 			"units", "compute", "report",
 		}, statementRUFieldNames(calculatorType))
-		unitsType := reflect.TypeOf(statementRURawUnits{})
+		unitsType := reflect.TypeOf(ruv3.StmtUnits{})
 		require.Equal(t, []string{
 			"WriteStatement", "OperatorNum", "WriteKeys", "WriteBytes",
 			"CPUWork", "ScanBytes", "NetBytes", "FrontendCompileBytes", "HashStateRows", "JoinOutputRows",
 		}, statementRUFieldNames(unitsType))
-		resultType := reflect.TypeOf(statementRUResultOnly{})
+		resultType := reflect.TypeOf(ruv3.StmtResult{})
 		require.Equal(t, []string{"TotalRU"}, statementRUFieldNames(resultType))
 		snapshotType := reflect.TypeOf(statementRUCalibrationSnapshot{})
 		require.Equal(t, []string{"State", "Units"}, statementRUFieldNames(snapshotType))
