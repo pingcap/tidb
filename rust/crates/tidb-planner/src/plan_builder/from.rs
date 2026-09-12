@@ -832,9 +832,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !column_names.is_empty() {
             let visible = names.iter().filter(|name| !name.hidden).count();
             if visible != column_names.len() {
-                return Err(PlanError::internal(
-                    "View's SELECT and view's field list have different column counts",
-                ));
+                return Err(PlanError::view_wrong_list());
             }
             let mut aliases = column_names.iter();
             for name in names.iter_mut().filter(|name| !name.hidden) {

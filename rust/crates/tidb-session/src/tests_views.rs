@@ -317,6 +317,13 @@ fn lateral_alias_column_list_renames_positionally() {
 
     // Captured: a width disagreement is [ddl:1353], the same error a
     // `CREATE VIEW` column list mismatch reports.
+    assert_eq!(
+        session
+            .run("SELECT * FROM t, LATERAL (SELECT 1, 2) x(c)")
+            .unwrap_err()
+            .to_mysql_error().code,
+        1353
+    );
     assert!(matches!(
         session.run("SELECT * FROM t, LATERAL (SELECT 1, 2) x(c)"),
         Err(DriverError::ViewWrongList)
