@@ -237,7 +237,8 @@ struct ResolvedGlobals {
     oom_action: tidb_executor::OomAction,
     /// Go's process-wide typed `vardef.EnableTmpStorageOnOOM` atomic.
     tmp_storage_on_oom: bool,
-    /// Go's process-wide typed `vardef.CheckMb4ValueInUTF8` atomic.
+    /// Go's `config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8` atomic
+    /// (`sysvar.go`, the `tidb_check_mb4_value_in_utf8` instance hook).
     check_mb4_value_in_utf8: bool,
     /// Go's process-wide typed `vardef.EnableCheckConstraint` atomic.
     enable_check_constraint: bool,
@@ -1098,9 +1099,6 @@ impl GlobalSysvars {
         Ok(validated.truncated)
     }
 
-    /// Publishes Go's `vardef.EnableTTLJob` process-wide switch from the
-    /// live GLOBAL table. Scratch registries deliberately skip this hook and
-    /// publish it only when their committed image replaces the live table.
     /// Go's `TiDBEnableMDL` `SetGlobal` hook (`sysvar.go`), which the sysvar
     /// cache rebuild runs for every global value it loads: `SwitchMDL` ->
     /// `vardef.SetEnableMDL`. A node that leaves the process flag at its
@@ -1125,6 +1123,9 @@ impl GlobalSysvars {
         tidb_vardef::set_enable_mdl(enabled);
     }
 
+    /// Publishes Go's `vardef.EnableTTLJob` process-wide switch from the
+    /// live GLOBAL table. Scratch registries deliberately skip this hook and
+    /// publish it only when their committed image replaces the live table.
     fn publish_ttl_job_enable(&self) {
         if !self.publishes_runtime_settings {
             return;
@@ -2468,6 +2469,13 @@ impl SessionVars {
     #[must_use]
     pub const fn bulk_dml_enabled(&self) -> bool {
         self.bulk_dml_enabled
+    }
+
+    /// Go `SessionVars.PessimisticTransactionFairLocking`, set by
+    /// `tidb_pessimistic_txn_fair_locking`.
+    #[must_use]
+    pub const fn pessimistic_transaction_fair_locking(&self) -> bool {
+        self.pessimistic_transaction_fair_locking
     }
 
     /// Go `SessionVars.GetReplicaRead`, the typed KV replica-read mode.

@@ -103,6 +103,10 @@ use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 use tidb_exec::pessimistic_lock_error::{ERR_REGION_UNAVAILABLE, ERR_WRITE_CONFLICT};
 
+/// The replay budget these tests run under: the default `@@tidb_retry_limit`
+/// (`DefTiDBRetryLimit = 10`), which `autocommit_retry_budget` reads.
+const AUTOCOMMIT_RETRY_LIMIT: u32 = tidb_vardef::defaults::DEF_TIDB_RETRY_LIMIT as u32;
+
 fn set(session: &mut ClusterServerSession, sql: &str) {
     session.execute_write(sql).expect("SET");
 }
@@ -427,6 +431,16 @@ fn txn_retryable_error_matrix_matches_the_reachable_go_allowlist() {
     assert!(session.may_retry_autocommit_statement(&conflict, 0));
     assert!(!session.may_retry_autocommit_statement(&conflict, AUTOCOMMIT_RETRY_LIMIT));
     assert!(!session.may_retry_autocommit_statement(&unavailable, 0));
+
+    // Go `isOptimisticTxnRetryable` (`optimistic.go:82-84`): a zero
+    // `@@tidb_retry_limit` disables the replay, and any other value is the
+    // budget `doCommitWithRetry` hands `s.retry`.
+    set(&mut session, "SET tidb_retry_limit = 0");
+    assert!(!session.may_retry_autocommit_statement(&conflict, 0));
+    set(&mut session, "SET tidb_retry_limit = 3");
+    assert!(session.may_retry_autocommit_statement(&conflict, 2));
+    assert!(!session.may_retry_autocommit_statement(&conflict, 3));
+    set(&mut session, "SET tidb_retry_limit = 10");
 
     session.control_transaction("BEGIN").expect("begin");
     assert!(!session.may_retry_autocommit_statement(&conflict, 0));

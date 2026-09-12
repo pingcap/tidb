@@ -624,6 +624,22 @@ where
         if second.num_rows() == 0 {
             let mut current = self.new_partition(&fields);
             current.add(first);
+            // The unparallel loop's step after `add`, in the same order: the
+            // memory action answers a quota breach with `need_spill` and
+            // returns without cancelling (Go's `SpillDiskAction` waits for
+            // the spill instead), so an over-quota run must be spilled here;
+            // only an action that fell through to the cancellation is what
+            // `check` reports.
+            if self.need_spill.swap(false, SeqCst) {
+                current.spill_to_disk_with_memory(
+                    &self.by_items,
+                    &self.compare_funcs,
+                    &self.ctx,
+                    &self.memory,
+                )?;
+                self.partitions.push(current);
+                return Ok(());
+            }
             self.memory.check()?;
             current.sort_with_memory(
                 &self.by_items,
@@ -1895,6 +1911,40 @@ mod tests {
     /// cover OVERLAPPING ranges. That is what makes the multi-way merge load
     /// bearing: a merge that drained run 0 and then run 1 would emit an
     /// unsorted sequence, and so would one that picked the wrong end.
+    /// The single-chunk parallel path sorts on the fetching thread through the
+    /// unparallel partition, so it must also honour the unparallel memory
+    /// action: one chunk the quota cannot hold spills, exactly as it does
+    /// through the unparallel loop, instead of being sorted in memory over
+    /// quota with the spill request dropped.
+    #[test]
+    fn a_single_chunk_parallel_input_over_quota_spills_like_the_unparallel_path() {
+        let dir = scratch_temp_dir("parallel-single-chunk-sortexec");
+        let n = 600i64;
+        let rows: Vec<Vec<Option<i64>>> = (0..n).map(|i| vec![Some((i * 7919) % n)]).collect();
+        let mut expected: Vec<i64> = rows.iter().map(|r| r[0].expect("no nulls")).collect();
+        expected.sort_unstable();
+
+        let memory = StatementMemory::new(1 << 12, OomAction::Cancel, 44)
+            .with_spill_storage(test_storage(&dir));
+        // One chunk holds every row, so the parallel path takes its
+        // single-chunk branch.
+        let mut exec = multi_chunk_sorter(&rows, asc(), 1024, memory).with_parallelism(4);
+        exec.open().unwrap();
+        assert_eq!(drain_first_col(&mut exec), expected);
+        assert!(
+            exec.bytes_in_disk() > 0,
+            "a single chunk over quota must spill through the same action as the unparallel path"
+        );
+        assert!(
+            exec.partitions.iter().all(SortPartition::is_spilled),
+            "the one run is the spilled one"
+        );
+        exec.close().unwrap();
+        assert!(spill_files_in(&dir).is_empty());
+        drop(exec);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn test_unparallel_sort_spill_disk() {
         let dir = scratch_temp_dir("sortexec");

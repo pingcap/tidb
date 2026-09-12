@@ -280,6 +280,19 @@ fn publish_row_id_watermark(
     Ok(())
 }
 
+/// The meta-key mutation Go's `SwitchMDL` writes for
+/// `SET GLOBAL tidb_enable_metadata_lock` (`pkg/ddl/ddl.go:1270-1280`,
+/// `Mutator.SetMetadataLock`): `"1"` or `"0"` at the `metadataLock` key, so a
+/// restarting peer re-initialises the flag from the value the cluster last
+/// set rather than a stale one.
+pub fn metadata_lock_mutation(enable: bool) -> Result<OptimisticMutation, SysvarWriteError> {
+    OptimisticMutation::meta_put(
+        key::metadata_lock_kv_key(),
+        if enable { b"1".to_vec() } else { b"0".to_vec() },
+    )
+    .map_err(|error| SysvarWriteError::Encode(RowEncodeError(error.to_string())))
+}
+
 fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, SysvarWriteError> {
     catalog
         .databases

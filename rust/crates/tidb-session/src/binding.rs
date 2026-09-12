@@ -188,6 +188,9 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
     }
 }
 
+/// One `TableRef` as written: its name path and its alias, if any.
+pub(crate) type TableRefName = (Vec<String>, Option<String>);
+
 /// Every `TableRef` in traversal order, keeping the name path and alias AS
 /// WRITTEN.
 ///
@@ -196,9 +199,6 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
 /// ([`crate::table_privilege`]) needs the written spelling for the error
 /// message and the alias to place a multi-table `UPDATE`/`DELETE` target, so
 /// it reads the same nodes through this.
-/// One `TableRef` as written: its name path and its alias, if any.
-pub(crate) type TableRefName = (Vec<String>, Option<String>);
-
 pub(crate) fn collect_table_refs(stmt: &Stmt) -> Vec<(Vec<String>, Option<String>)> {
     struct Collector {
         refs: Vec<(Vec<String>, Option<String>)>,
@@ -222,7 +222,7 @@ pub(crate) fn collect_table_refs(stmt: &Stmt) -> Vec<(Vec<String>, Option<String
     collector.refs
 }
 
-/// [`collect_table_refs`] and [`collect_cte_names`] in ONE traversal. The
+/// [`collect_table_refs`] and the CTE-name scan in ONE traversal. The
 /// visitor API walks a mutable tree, so a read-only collector has to copy
 /// the statement first; the privilege check needs both lists for every
 /// statement and must not pay that copy twice.

@@ -1551,7 +1551,7 @@ fn convert_points_to_sort_key_in_place(
 }
 
 /// Go `convertPointToSortKeyInPlace` (`points.go:128`).
-fn convert_point_to_sort_key_in_place(
+pub(crate) fn convert_point_to_sort_key_in_place(
     p: &mut Point,
     new_tp: &FieldType,
     trim_trailing_space: bool,

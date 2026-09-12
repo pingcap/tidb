@@ -1232,8 +1232,23 @@ fn a_repeated_parse_answers_the_same_tree_and_respects_the_sql_mode() {
     let sql = r"INSERT INTO sbtest1 (id, k, c) VALUES (1, 2, 'a\\b')";
 
     let first = parse(sql).expect("the statement parses");
+    let parses_after_first = crate::parses_so_far();
     let second = parse(sql).expect("the repeat parses");
     assert_eq!(first, second, "a repeat must answer the same tree");
+    assert_eq!(
+        crate::parses_so_far(),
+        parses_after_first,
+        "a repeat of the same text under the same configuration is a memo hit"
+    );
+    // Once the command is answered the retained statement goes, and the
+    // next identical text is parsed again.
+    crate::release_retained_statement();
+    assert_eq!(parse(sql).expect("parses after release"), first);
+    assert_eq!(
+        crate::parses_so_far(),
+        parses_after_first + 1,
+        "after release the same text is a real parse"
+    );
 
     // `NO_BACKSLASH_ESCAPES` changes how the literal is decoded, so the same
     // text under a different mode must not be answered from the entry above.

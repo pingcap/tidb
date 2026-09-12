@@ -257,6 +257,28 @@ thread_local! {
     /// reports, and a repeat re-parses.
     static LAST_PARSED_STATEMENT: std::cell::RefCell<Option<ParsedStatementMemo>> =
         const { std::cell::RefCell::new(None) };
+
+    /// How many statements this thread actually lexed and parsed, so a test
+    /// can tell a memo hit from a re-parse.
+    #[cfg(test)]
+    static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Drops the statement retained for repeats on this thread.
+///
+/// Go drops a command's `ast.StmtNode` with the command; the memo exists only
+/// so the questions one command asks share one parse, so the connection loop
+/// calls this once a command is answered. Beyond the repeat cost, the memo
+/// holds the statement TEXT, and `CREATE USER ... IDENTIFIED BY '...'` or
+/// `SET PASSWORD` must not stay resident in a thread after they ran.
+pub fn release_retained_statement() {
+    LAST_PARSED_STATEMENT.with(|slot| *slot.borrow_mut() = None);
+}
+
+/// The number of real parses this thread has run (test observation).
+#[cfg(test)]
+pub(crate) fn parses_so_far() -> usize {
+    PARSES.with(std::cell::Cell::get)
 }
 
 fn parse_with_configuration(sql: &str, enable_mariadb: bool, sql_mode: SqlMode) -> PResult<Stmt> {
@@ -269,6 +291,8 @@ fn parse_with_configuration(sql: &str, enable_mariadb: bool, sql_mode: SqlMode) 
     if let Some(statement) = repeated {
         return Ok(statement);
     }
+    #[cfg(test)]
+    PARSES.with(|count| count.set(count.get() + 1));
     let statement = parse_with_full_configuration(
         sql,
         enable_mariadb,

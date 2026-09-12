@@ -389,6 +389,7 @@ impl ClusterTransactions for MockTransactions {
         &self,
         resource_group: &str,
         pessimistic: bool,
+        _fair_locking: bool,
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);
         // The mock's timestamp is taken now, as the real opener dispatches
@@ -457,6 +458,7 @@ impl ClusterTransactions for MockTransactions {
     fn begin(
         &self,
         pessimistic: bool,
+        _fair_locking: bool,
         resource_group: &str,
     ) -> Result<Box<dyn OpenClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);

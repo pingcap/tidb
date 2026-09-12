@@ -144,10 +144,15 @@ pub trait ClusterTransactions: Send + Sync {
     /// this attempt: an autocommit DML runs optimistically unless it is the
     /// retry of a write conflict (or the non-default `pessimistic-auto-commit`
     /// config is on).
+    /// `fair_locking` is Go `OnPessimisticStmtStart`'s gate
+    /// (`pkg/sessiontxn/isolation/base.go:711`): the session's
+    /// `@@tidb_pessimistic_txn_fair_locking`, false for an internal
+    /// statement.
     fn prepare_autocommit_write(
         &self,
         resource_group: &str,
         pessimistic: bool,
+        fair_locking: bool,
     ) -> Result<Box<dyn PendingClusterTransaction>, String>;
 
     /// Publishes one autocommit statement's staged writes as its own
@@ -190,6 +195,7 @@ pub trait ClusterTransactions: Send + Sync {
     fn begin(
         &self,
         pessimistic: bool,
+        fair_locking: bool,
         resource_group: &str,
     ) -> Result<Box<dyn OpenClusterTransaction>, String>;
 
@@ -525,13 +531,14 @@ impl DeferredSnapshot {
         prelock_keys: Vec<Vec<u8>>,
         resource_group: Arc<str>,
         pessimistic: bool,
+        fair_locking: bool,
     ) -> Self {
         // The timestamp request goes out now and is waited for by the first
         // read; the transaction opens on that thread. Spawning a thread per
         // statement to open it eagerly cost a thread creation and join per
         // autocommit write.
         let prefetched_write =
-            Some(transactions.prepare_autocommit_write(&resource_group, pessimistic));
+            Some(transactions.prepare_autocommit_write(&resource_group, pessimistic, fair_locking));
         Self {
             transactions,
             resource_group,
@@ -734,6 +741,7 @@ pub(crate) fn prefetched_write_snapshot(
     prelock_keys: Vec<Vec<u8>>,
     resource_group: Arc<str>,
     pessimistic: bool,
+    fair_locking: bool,
 ) -> Box<dyn ClusterSnapshot> {
     Box::new(DeferredSnapshot::new_prefetched_write(
         transactions,
@@ -742,6 +750,7 @@ pub(crate) fn prefetched_write_snapshot(
         prelock_keys,
         resource_group,
         pessimistic,
+        fair_locking,
     ))
 }
 
@@ -964,6 +973,7 @@ where
     start_ts: P::TsFuture,
     timeout: Duration,
     pessimistic: bool,
+    fair_locking: bool,
 }
 
 impl<C, L, P> PendingClusterTransaction for PendingSessionTransaction<C, L, P>
@@ -975,8 +985,37 @@ where
 {
     fn wait(self: Box<Self>) -> Result<Box<dyn OpenClusterTransaction>, String> {
         use tidb_txnkv::pd_capability::TimestampFutureWait;
-        let start_ts = self.start_ts.wait()?;
         let commit_protocol = tidb_exec::session_commit_protocol::session_commit_protocol();
+        let start_ts = match self.start_ts.wait() {
+            Ok(start_ts) => start_ts,
+            Err(error) => {
+                // Go `txnFuture.wait` (`pkg/session/txn.go:702-713`): a
+                // failed timestamp future is logged and the transaction is
+                // opened on a fresh synchronous timestamp instead of failing
+                // the statement (only unistore propagates the error).
+                eprintln!(
+                    "{{\"event\":\"wait tso failed\",\"level\":\"warning\",\"error\":{}}}",
+                    serde_json::to_string(&error.to_string())
+                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                );
+                return if self.pessimistic {
+                    SessionTransaction::begin_pessimistic(
+                        self.opener,
+                        self.timeout,
+                        commit_protocol,
+                    )
+                    .map(|mut transaction| {
+                        transaction.set_fair_locking(self.fair_locking);
+                        Box::new(transaction) as Box<dyn OpenClusterTransaction>
+                    })
+                    .map_err(|error| error.to_string())
+                } else {
+                    SessionTransaction::begin(self.opener, self.timeout, commit_protocol)
+                        .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
+                        .map_err(|error| error.to_string())
+                };
+            }
+        };
         if self.pessimistic {
             // Go `decideTxnMode`: the retry of a conflicted autocommit DML is
             // pessimistic, so it waits on the row instead of failing again.
@@ -987,7 +1026,9 @@ where
                 commit_protocol,
             )
             .map(|mut transaction| {
-                transaction.set_fair_locking(crate::session_transaction::session_fair_locking());
+                // Go `OnPessimisticStmtStart` -> `StartFairLocking`, gated on
+                // the session's `@@tidb_pessimistic_txn_fair_locking`.
+                transaction.set_fair_locking(self.fair_locking);
                 Box::new(transaction) as Box<dyn OpenClusterTransaction>
             })
             .map_err(|error| error.to_string())
@@ -1077,6 +1118,7 @@ where
         &self,
         resource_group: &str,
         pessimistic: bool,
+        fair_locking: bool,
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         let opener = self.opener_for_resource_group(resource_group);
         let start_ts = opener
@@ -1087,6 +1129,7 @@ where
             start_ts,
             timeout: self.timeout,
             pessimistic,
+            fair_locking,
         }))
     }
 
@@ -1145,6 +1188,7 @@ where
     fn begin(
         &self,
         pessimistic: bool,
+        fair_locking: bool,
         resource_group: &str,
     ) -> Result<Box<dyn OpenClusterTransaction>, String> {
         let opener = self.opener_for_resource_group(resource_group);
@@ -1155,9 +1199,9 @@ where
                 tidb_exec::session_commit_protocol::session_commit_protocol(),
             )
             .map(|mut transaction| {
-                // `@@tidb_pessimistic_txn_fair_locking`: Go
-                // `OnPessimisticStmtStart` -> `KVTxn.StartFairLocking`.
-                transaction.set_fair_locking(crate::session_transaction::session_fair_locking());
+                // Go `OnPessimisticStmtStart` -> `KVTxn.StartFairLocking`,
+                // gated on the session's `@@tidb_pessimistic_txn_fair_locking`.
+                transaction.set_fair_locking(fair_locking);
                 transaction
             })
         } else {
@@ -1351,6 +1395,7 @@ mod tests {
         fn begin(
             &self,
             _pessimistic: bool,
+            _fair_locking: bool,
             _resource_group: &str,
         ) -> Result<Box<dyn OpenClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")
@@ -1360,6 +1405,7 @@ mod tests {
             &self,
             _resource_group: &str,
             _pessimistic: bool,
+            _fair_locking: bool,
         ) -> Result<Box<dyn PendingClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")
         }

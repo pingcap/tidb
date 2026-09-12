@@ -383,12 +383,12 @@ pub fn allocator_live_heap_sample() -> Option<(i64, i64, i64)> {
     None
 }
 
-/// Returns the process memory counters consumed by TiDB's memory controllers.
-/// The process RSS behind [`read_mem_stats`], refreshed at most every 500 ms:
-/// Go's `memory.MemUsed` serves its 100 ms callers (`servermemorylimit`,
-/// the arbitrator runtime) from `memUsage`'s 500 ms window instead of
-/// re-reading the kernel each tick, and `/proc/self/status` is not free for
-/// a process with a hundred threads.
+/// The process RSS behind [`read_mem_stats`], refreshed at most every
+/// 300 ms: Go's `memory.ReadMemStats` answers its 100 ms callers
+/// (`servermemorylimit`, the usage alarm) from a picture it re-reads only
+/// every `ReadMemInterval` (300 ms, `pkg/util/memory/memstats.go:28`) instead
+/// of the runtime each tick, and `/proc/self/status` is not free for a
+/// process with a hundred threads.
 fn cached_process_memory_usage() -> Option<u64> {
     static CACHE: OnceLock<Mutex<MemInfoCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(MemInfoCache::default()));
@@ -397,7 +397,7 @@ fn cached_process_memory_usage() -> Option<u64> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if cache
         .updated_at
-        .is_some_and(|updated_at| updated_at.elapsed() < Duration::from_millis(500))
+        .is_some_and(|updated_at| updated_at.elapsed() < Duration::from_millis(300))
     {
         return Some(cache.value);
     }

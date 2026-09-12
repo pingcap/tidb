@@ -27,7 +27,7 @@ pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass, TransportShutdownError,
 };
-pub use execution::execution_runtime;
+pub use execution::{execution_runtime, go_max_procs, query_worker_runtime};
 pub use liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 pub use tonic_coprocessor::TonicCoprocessorClient;
 pub use transaction::{

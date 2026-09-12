@@ -488,6 +488,83 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
     }
 }
 
+/// The plan-cache detacher builds a string key's point as its collation sort
+/// key under a binary-collated type (`convert_to_sort_key`; Go
+/// `convertPointToSortKeyInPlace`, `points.go:128`). The equality shortcut
+/// must emit that same shape, so a range built either way for the same
+/// statement is identical -- not merely encoding to the same key.
+#[test]
+fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
+    use crate::physical_plan_cache::{
+        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild,
+    };
+
+    let mut string_type = FieldType::new(FieldTypeCode::Varchar);
+    string_type.set_flen(32);
+    string_type.set_charset_name("utf8mb4");
+    string_type.set_collation_name("utf8mb4_general_ci");
+    let general_ci =
+        tidb_datatype::Collation::from_name("utf8mb4_general_ci").expect("a registered collation");
+    let column = Column::new(3, string_type.clone());
+    let mut parameter = Constant::new(
+        Datum::String(tidb_datatype::StringDatum::new(Vec::new(), general_ci)),
+        string_type.clone(),
+    );
+    parameter.param_marker = Some(ParamMarker { order: 0 });
+    let mut eq = ScalarFunction::new(
+        tidb_ast::CiString::new("eq"),
+        FieldType::new(FieldTypeCode::Tiny),
+        vec![
+            Expression::Column(column.clone()),
+            Expression::Constant(parameter),
+        ],
+    );
+    eq.collation
+        .set_charset_and_collation("utf8mb4", "utf8mb4_general_ci");
+    let template_range = crate::ranger::types::Range {
+        low_val: vec![Datum::Bytes(Vec::new())],
+        high_val: vec![Datum::Bytes(Vec::new())],
+        collators: vec![tidb_datatype::Collation::Binary],
+        low_exclude: false,
+        high_exclude: false,
+    };
+    let point = PhysicalPlan::PointGet(PhysicalPointGet {
+        base: BasePhysicalPlan::with_id(34, "PointGet", 0),
+        table_id: 1,
+        index_id: Some(5),
+        ranges: vec![template_range],
+        range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
+            vec![Expression::ScalarFunction(eq)],
+            vec![column],
+            vec![tidb_datatype::UNSPECIFIED_LENGTH],
+        ))),
+    });
+
+    let value = Datum::String(tidb_datatype::StringDatum::new(
+        b"Abc ".to_vec(),
+        general_ci,
+    ));
+    let rebuilt = point
+        .rebuild_plan_for_cache(&CachedPlanRebuildContext::new(&[value]))
+        .expect("one equality on a collated string key rebuilds one point");
+    let PhysicalPlan::PointGet(point) = rebuilt else {
+        panic!("point get");
+    };
+    let sort_key = tidb_datatype::get_collator("utf8mb4_general_ci").key(b"Abc ");
+    assert_eq!(point.ranges.len(), 1);
+    assert_eq!(
+        point.ranges[0].low_val,
+        vec![Datum::Bytes(sort_key.clone())],
+        "the detacher's shape: the collation sort key, not the raw string"
+    );
+    assert_eq!(point.ranges[0].high_val, vec![Datum::Bytes(sort_key)]);
+    assert_eq!(
+        point.ranges[0].collators,
+        vec![tidb_datatype::Collation::Binary],
+        "a sort-key point compares under the binary-collated key type"
+    );
+}
+
 /// Go `buildRangesForBatchGet` on a fast batch plan (`IndexValueParams`):
 /// the DNF the planner expands `(a, b) IN ((?, ?), (?, ?))` into rebuilds one
 /// point per item, unioned in encoded key order like the detacher's DNF path.

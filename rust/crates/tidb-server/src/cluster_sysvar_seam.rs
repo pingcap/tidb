@@ -437,11 +437,45 @@ where
         // turns that absence into a delete of its stored row.
         let desired: std::collections::BTreeMap<String, String> =
             self.scratch.overrides().into_iter().collect();
-        let plan = {
+        let mut plan = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             plan_sysvar_write(&mut snapshot, &self.catalog, &desired, utc_now_timestamp())
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?
         };
+        // Go `TiDBEnableMDL`'s `SetGlobal` hook runs `SwitchMDL`
+        // (`pkg/ddl/ddl.go:1245`): it REFUSES while any DDL job is running and,
+        // when it proceeds, persists the switch to the `metadataLock` meta key
+        // in the same transaction. `SET GLOBAL tidb_enable_metadata_lock` must
+        // do both here; without the meta write a restarting peer would
+        // re-initialise the flag from the stale meta value, and without the
+        // guard a node could split the cluster's DDL-ack keys mid-job.
+        if plan
+            .changed
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL))
+        {
+            let enable = desired
+                .get(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL)
+                .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MDL, |value| {
+                    value.eq_ignore_ascii_case("ON") || value == "1"
+                });
+            let running = {
+                let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
+                tidb_exec::ddl_job_table::DdlJobTable::locate(&self.catalog)
+                    .and_then(|table| table.load(&mut snapshot))
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+            };
+            if !running.is_empty() {
+                // Go's exact refusal (`ddl.go:1267`).
+                return Err(SqlQueryError::unknown(
+                    "please wait for all jobs done".to_owned(),
+                ));
+            }
+            plan.mutations.push(
+                tidb_exec::cluster_sysvar_write::metadata_lock_mutation(enable)
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
+            );
+        }
         let plan_is_empty = plan.is_empty();
         let changed = plan.changed;
         let commit_ts = if plan_is_empty {

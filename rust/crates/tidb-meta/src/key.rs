@@ -348,6 +348,13 @@ pub fn bootstrap_kv_key() -> Vec<u8> {
     encode_string_data_key(BOOTSTRAP)
 }
 
+/// The raw KV key holding the metadata-lock switch. Go `Mutator.GetMetadataLock`
+/// / `SetMetadataLock` read and write `"1"`/`"0"` at this key.
+#[must_use]
+pub fn metadata_lock_kv_key() -> Vec<u8> {
+    encode_string_data_key(METADATA_LOCK)
+}
+
 /// The raw KV key holding the starter bootstrap version. Go
 /// `Mutator.GetStarterBootstrapVersion`.
 #[must_use]

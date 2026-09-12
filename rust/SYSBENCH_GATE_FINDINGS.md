@@ -890,3 +890,105 @@ parallel HashAgg pipeline hands 100-row DISTINCT inputs to the OS worker
 pool (Go runs the same parallel plan on goroutines); jemalloc heap-profile
 sampling at 512KB (Go's default `MemProfileRate`); index-usage reporting
 wakes the collector thread once per statement (Go sends on a channel).
+
+## REVIEW CORRECTIONS (2026-09-12): the campaign numbers above are partly invalid
+
+A full review of the thirteen campaign commits (five independent reviewers
+against the Go source, every high and medium finding re-verified by hand)
+found one measurement bug that invalidates the headline write rows, several
+methodology problems in how the tables above were produced, and nine code
+defects or Go divergences in the commits themselves. This section records
+what was wrong, what was fixed, and what remains. A re-measured matrix with
+the corrected harness follows in the next section.
+
+### Measurement: what was wrong in the GOAL v2 matrices above
+
+1. **Drained tables (invalidates update_index, update_non_index, delete and
+   the two select_random rows).** `matrix.sh` refreshed the sysbench tables
+   only before `oltp_insert` and `oltp_delete`. The workloads that follow
+   delete ran on whatever the delete runs left. The last 16-thread delete run
+   issued 77,500 `DELETE ... WHERE id=?` against 40,000 rows with uniform
+   ids, so the update and select_random rows ran on a table with ~14% of its
+   ids present (~52% at 4 threads). Most "updates" matched no row. An
+   optimistic-first autocommit DML (round 6) makes a no-op update one read
+   and no write, while the baseline still takes a lock RPC for the missing
+   key, so this state maximally favoured the new binary. The +161%, +157%
+   and +104% figures are not update-workload numbers. Independent evidence:
+   the same r9 binary measured select_random_points at 1,669/1,641 tps on
+   fresh tables (`matrix-r9.out`) versus 2,957/3,081/2,809 in `matrix-f16`.
+2. **Delete is self-accelerating.** A faster binary drains the table sooner
+   and spends more of its 20 s on no-op deletes. Corrected for rows actually
+   deleted (uniform sampling hit rate), the 16-thread delete gain is ~+39%,
+   not +104%; at 4 threads ~+37%, not +57.6%.
+3. **Tails were measured and omitted.** p95/p99 are in every raw file. At
+   p95/p99 several "passing" rows fail 25%: 16t NEW_ORDER p99 -21.3%,
+   DELIVERY p99 -22.2%; 4t point_select p95 -24.5%, delete p95 -17.2%,
+   update_non_index p95 -19.6%.
+4. **TPC-C secondary types were noise.** ORDER_STATUS, DELIVERY and
+   STOCK_LEVEL are ~4% of the mix each: 123-261 transactions per 20 s run,
+   a p99 of one to three events. The "every row obeys Little's law" claim is
+   false for them (4t ORDER_STATUS +37.5% tps with +20.4% latency; 4t
+   STOCK_LEVEL's -27.7% rests on one base outlier round).
+5. **Run-to-run spread exceeded the claimed delta** on 4t insert (+11.2% vs
+   12-18% spread), 4t/16t bulk_insert, 4t write_only (base r2 outlier), 4t
+   STOCK_LEVEL, 4t DELIVERY; three 20 s rounds cannot separate +-20% effects
+   on the write and TPC-C rows on this box.
+6. **Ordering was never counter-balanced**: base always ran first after each
+   table refresh, so any post-load auto-analyze and TiKV apply backlog landed
+   in base's window.
+7. **An omitted regression.** The round-6 A/B that the doc cites for its
+   update/delete gains also measured `oltp_insert` -12.4% and write_only
+   -1.3% (`matrix-r6-4t.out`); the doc reported only the gains. `matrix-r9`
+   likewise showed write_only -1.6% and PAYMENT -3.5% next to the cited gains.
+8. bulk_insert's latency column is a quantisation artefact (sysbench's event
+   there is one row of a multi-row buffer; avg prints to two decimals, p95 is
+   0.00) and means nothing.
+
+Against the user's actual goal (>=25% on BOTH throughput and latency, every
+workload, both thread counts), the raw data behind the tables above supports
+7 of 16 at 16 threads and 3 of 16 at 4 threads -- and all three 4-thread
+passes plus three of the seven 16-thread passes are the drained-table rows.
+No read-dominated or insert workload met the goal at either thread count.
+
+### Harness fixes (scratchpad `matrix.sh`)
+
+- Every sysbench workload (`oltp_*`, `select_random_*`) starts from freshly
+  prepared 4x10k tables, not only insert and delete.
+- Side order alternates per round (ABBA), so neither binary always follows a
+  table refresh.
+- The summary prints p95 (sysbench) / p99 (TPC-C) deltas and the per-side
+  round spread next to the means.
+- TPC-C runs three times the sysbench window (`TPCC_T`), for usable counts
+  on the ~4% transaction types.
+
+### Code defects and Go divergences found in the campaign commits, and the fixes
+
+| Commit | Finding | Fix (Go reference) |
+| --- | --- | --- |
+| cce0e99e | Transport runtime pinned to ONE worker; the coprocessor small-task cap was derived from that count (20 instead of Go's 20 x numcpu) and every session's cop response workers were spawned on that single thread. | `small_concurrency` takes `available_parallelism` (Go `runtime.GOMAXPROCS(0)`, `copr/store.go:109`); cop workers run on a core-sized `query_worker_runtime` (Go's `copIteratorWorker` goroutines over every P) while the transport stays one loop per store (client-go `batchSendLoop`/`batchRecvLoop`). |
+| 77212546 | `SET GLOBAL tidb_enable_metadata_lock` flipped the process flag without Go's guard or meta write. | The sysvar commit runs `SwitchMDL`'s checks (`pkg/ddl/ddl.go:1245`): refused with "please wait for all jobs done" while `mysql.tidb_ddl_job` is non-empty, and the `metadataLock` meta key is written in the same transaction. |
+| b82b2c69 | Fair locking armed from the bootstrap default, not the session's `@@tidb_pessimistic_txn_fair_locking`. | The cluster session node reads the session variable (`isolation/base.go:711`); internal statements pass `false` (`InRestrictedSQL`). |
+| b82b2c69 | No `DoneFairLocking`: locks earlier rounds of a retried statement took stayed held to COMMIT. | On statement success the locks the final round did not ask for are released (`base.go:728-731`). |
+| d4c95c62 | `pessimistic_auto_commit` hardcoded false; bulk DML not excluded. | Read from `[pessimistic-txn] pessimistic-auto-commit`; `tidb_dml_type='bulk'` declines (`session.go:4947-4956`). |
+| d4c95c62 | Retry budget a constant 10 ignoring `@@tidb_retry_limit`. | Budget is the session's `tidb_retry_limit`, 0 disables, scaled by transaction size (`session.go:881`, `optimistic.go:82`). |
+| d4c95c62 | A failed timestamp future failed the statement. | Logged and opened on a fresh synchronous timestamp (`txn.go:702-713`). |
+| cbffe791 | Single-chunk sort path dropped a spill request and sorted over quota silently. | The unparallel loop's `need_spill` step runs after `add`; a test proves one over-quota chunk spills. |
+| cbffe791 | `prof_active:false` left the memory-usage alarm's first heap record empty. | Restored Go's always-on sampling at `MemProfileRate` (512 KiB). The measured cost of the DWARF unwinder (up to ~9% of connection CPU on select_random_points) is accepted for parity. |
+| 5587605d | Held-chunk charge leaked on a cancellation. | The check breaks with the error so the release path runs; a test asserts the operator tracker is balanced. |
+| e055996e | Plan-cache equality shortcut emitted a different datum shape than the detacher for non-binary collations. | Emits the collation sort key under the binary-collated type (Go `convertPointToSortKeyInPlace`); a test with a `utf8mb4_general_ci` key fails on the old shortcut. |
+| ccc458c2 | Parse memo kept statement text (password literals included) resident past the command; its test passed without the memo. | Released at the end of every command (Go drops the `ast.StmtNode` with the command); the test counts real parses. |
+| ead32cf4 | RSS cache window cited `memory.MemUsed` (500 ms); Go's `servermemorylimit` reads `ReadMemStats` cached at `ReadMemInterval` = 300 ms. | 300 ms, citation corrected. |
+| several | Five doc comments attached to the wrong item; one citation named a `vardef` atomic for a config field; two process-switch tests raced. | Fixed; the tests serialise on one lock. |
+
+Confirmed NOT a problem (reviewer findings withdrawn on verification): the
+sysvar-cache etcd notify (`cluster_sysvar_seam.rs`) and watch
+(`schema_following.rs::spawn_sysvar_watch`) both exist, so a Go peer's
+`SET GLOBAL` reaches this node within a round trip, not 30 s.
+
+Known residual divergences, by decision:
+- The legacy `real_tikv_node` session still arms fair locking from the
+  bootstrap value: that node has no session-variable store to read.
+- Unistore answers a `ForceLock` conflict with `WriteConflict` rather than
+  `LockedWithConflict` (pre-existing, `mvcc_store.rs` header), so embedded
+  tests cannot exercise the fair-locking retry path; the real-TiKV tests for
+  it stay `#[ignore]` behind `FAIR_LOCKING_PD_ADDR`.

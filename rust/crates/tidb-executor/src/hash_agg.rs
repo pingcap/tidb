@@ -3255,6 +3255,11 @@ mod tests {
         // `threads == 1`). The pipeline -- not the worker count -- is what
         // this test proves.
         assert!(workers >= 1);
+        assert_eq!(
+            exec.pipeline_inline_folds(),
+            Some(1),
+            "a single-chunk input is folded on the fetching thread, not a lane"
+        );
         let mut rows = Vec::new();
         loop {
             rows.extend((0..output.num_rows()).map(|index| {
@@ -3717,6 +3722,97 @@ mod tests {
         let (_, _, dispatched, workers) = exec.pipeline_run_info().expect("pipeline ran");
         assert!(dispatched > 0);
         assert!(workers > 1);
+        assert_eq!(
+            exec.pipeline_inline_folds(),
+            Some(0),
+            "a multi-chunk input keeps every chunk on the lanes"
+        );
+        exec.close().unwrap();
+    }
+
+    /// A source that delivers one chunk and, while doing so, raises the
+    /// query's memory kill signal: the fetcher's next `check` then fails with
+    /// that chunk held back, and the chunk's tracker charge must go with it.
+    struct KillAfterFirstChunkSource {
+        meta: ExecutorMeta,
+        data: Option<Chunk>,
+        killer: Arc<tidb_util::sqlkiller::SqlKiller>,
+    }
+    impl Executor for KillAfterFirstChunkSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            if let Some(data) = self.data.take() {
+                for r in 0..data.num_rows() {
+                    req.append_row(data.get_row(r));
+                }
+                self.killer
+                    .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryMemoryExceeded);
+            }
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    #[test]
+    fn a_cancellation_with_a_held_chunk_releases_its_charge() {
+        let field_type = binary_varchar();
+        let values: [&[u8]; 3] = [b"alpha", b"beta", b"alpha"];
+        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
+        for value in values {
+            data.append_bytes(0, value);
+        }
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        let memory = StatementMemory::new(1 << 20, crate::mem_quota::OomAction::Cancel, 45);
+        let killer = Arc::clone(memory.sql_killer());
+        let mut first_row = AggFunc::new(AggKind::FirstRow, Some(typed_col(0, field_type.clone())));
+        first_row.distinct = true;
+        let output_types = [field_type.clone(), long()];
+        let mut exec = HashAggExec::new(
+            out_meta_typed(&output_types),
+            vec![typed_col(0, field_type)],
+            vec![first_row, AggFunc::new(AggKind::Count, None)],
+            Box::new(KillAfterFirstChunkSource {
+                meta: ExecutorMeta::new(Schema::new(vec![column]), 0, values.len(), 1024),
+                data: Some(data),
+                killer,
+            }),
+            NoColumns,
+            memory,
+        );
+        let mut output = exec.new_chunk();
+        let outcome = exec.open().and_then(|()| exec.next(&mut output));
+        assert!(
+            matches!(outcome, Err(ExecError::MemoryExceedForQuery { .. })),
+            "the kill signal raised while the first chunk was held must surface: {outcome:?}"
+        );
+        // The operator's own tracker, before `close` detaches it: the held
+        // chunk's charge must already be gone.
+        assert_eq!(
+            exec.tracker.bytes_consumed(),
+            0,
+            "the held chunk's charge must be released with the chunk"
+        );
         exec.close().unwrap();
     }
 

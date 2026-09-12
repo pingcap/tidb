@@ -24,20 +24,22 @@ use tokio::task::{AbortHandle, JoinSet};
 /// Workers driving the transport runtime; see [`execution_runtime`].
 const TRANSPORT_WORKER_THREADS: usize = 1;
 
-/// Shared scheduler for SQL work, transport owners and connection I/O tasks.
-/// Like Go goroutines, independent send/receive loops can run concurrently;
-/// connection scopes and transport joins own their lifetime, not this runtime.
+/// The transport runtime: tonic/h2 framing, the batch stream loops, PD and
+/// TTL keep-alive. Connection scopes and transport joins own their lifetime,
+/// not this runtime.
 ///
-/// The runtime hosts transport I/O only: tonic/h2 framing, the batch stream
-/// loops, PD and TTL keep-alive. client-go serializes that work per store
-/// connection as well (`batchSendLoop` and `batchRecvLoop` are one goroutine
-/// each), and it costs a few microseconds per request, so one worker keeps
-/// up. Sizing the pool to the core count instead made every TiKV response
-/// wake a second, idle worker that stole nothing and parked again (Tokio's
-/// `notify_parked_local`): measured under sysbench on a 4-core node, that
-/// was ~2.5 extra context switches per statement and 11% of the node's CPU.
-/// `block_in_place` callers still hand their core to a fresh thread, so a
-/// blocking section never stalls the transport.
+/// client-go serializes that work per store connection (`batchSendLoop` and
+/// `batchRecvLoop` are one goroutine each), and it costs a few microseconds
+/// per request, so one worker keeps up. Sizing this pool to the core count
+/// instead made every TiKV response wake a second, idle worker that stole
+/// nothing and parked again (Tokio's `notify_parked_local`): measured under
+/// sysbench on a 4-core node, that was ~2.5 extra context switches per
+/// statement and 11% of the node's CPU. Work that scales with the query --
+/// the coprocessor response workers -- runs on [`query_worker_runtime`], the
+/// way Go's `copIteratorWorker` goroutines run across every P while the
+/// transport stays one loop per store. `block_in_place` callers still hand
+/// their core to a fresh thread, so a blocking section never stalls the
+/// transport.
 pub fn execution_runtime() -> Result<&'static Runtime, String> {
     static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
     RUNTIME
@@ -45,6 +47,35 @@ pub fn execution_runtime() -> Result<&'static Runtime, String> {
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(TRANSPORT_WORKER_THREADS)
                 .thread_name("tikv-execution")
+                .enable_all()
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+/// Go `runtime.GOMAXPROCS(0)`: the parallelism the process may use, which
+/// `copr.Store.numcpu` and the query worker pool below are sized by.
+#[must_use]
+pub fn go_max_procs() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+}
+
+/// The runtime for query-scaled work: one worker per available core, the
+/// way Go's `copIteratorWorker` goroutines spread over `GOMAXPROCS`. It is
+/// distinct from [`execution_runtime`] so a TiKV response completing on the
+/// transport worker hands the coprocessor task over once (a remote wake of
+/// one parked worker) instead of racing an idle sibling for it, while the
+/// response decoding of every session no longer serialises on the single
+/// transport thread.
+pub fn query_worker_runtime() -> Result<&'static Runtime, String> {
+    static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(go_max_procs())
+                .thread_name("tikv-query-worker")
                 .enable_all()
                 .build()
                 .map_err(|error| error.to_string())

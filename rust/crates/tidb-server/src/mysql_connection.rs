@@ -1358,6 +1358,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // and its response share an envelope sequence, but the next command
         // starts a new exchange, not a continuation of the previous response.
         reader.set_compressed_sequence(0);
+        // The previous command's statement is dropped with the command, as
+        // Go drops its `ast.StmtNode`; the parse memo only serves the
+        // questions one command asks.
+        tidb_parser::release_retained_statement();
         let wait_timeout = engine.wait_timeout();
         let read_timeout = (!wait_timeout.is_zero()).then_some(wait_timeout);
         if applied_read_timeout != Some(read_timeout) {

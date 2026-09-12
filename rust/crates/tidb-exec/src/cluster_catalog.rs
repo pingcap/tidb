@@ -176,11 +176,6 @@ impl ClusterCatalog {
     }
 }
 
-/// Reads the whole catalog from one snapshot.
-///
-/// Go `ListDatabases` then `ListTables` per database. Go filters a database's
-/// hash by field prefix because the same hash also holds the per-table ID
-/// allocators; so does this.
 /// Reads the cluster schema version alone (Go `m.GetSchemaVersion`).
 pub fn read_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, ClusterCatalogError> {
     match snapshot.get(&key::schema_version_kv_key())? {
@@ -191,8 +186,12 @@ pub fn read_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, Clu
     }
 }
 
-/// Loads the whole cluster catalog (every database and table) at the
-/// snapshot's schema version.
+/// Reads the whole catalog (every database and table) from one snapshot, at
+/// its schema version.
+///
+/// Go `ListDatabases` then `ListTables` per database. Go filters a database's
+/// hash by field prefix because the same hash also holds the per-table ID
+/// allocators; so does this.
 pub fn load_cluster_catalog<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {

@@ -740,7 +740,9 @@ fn equality_point_range(
     context: &CachedPlanRebuildContext<'_>,
 ) -> Option<crate::ranger::types::Range> {
     use crate::ranger::checker::UNSPECIFIED_LENGTH;
-    use crate::ranger::points::{convert_point_in_place, Point};
+    use crate::ranger::points::{
+        convert_point_in_place, convert_point_to_sort_key_in_place, Point,
+    };
     use crate::ranger::types::Range;
 
     if conditions.is_empty()
@@ -798,7 +800,16 @@ fn equality_point_range(
         {
             return None;
         }
-        collators[offset] = range_type.collation();
+        // The plan-cache detacher runs with `convert_to_sort_key` on
+        // (`detacher.rs`, `build_ranges_for_plan_cache`), so a string key's
+        // point is its collation sort key under a binary-collated type (Go
+        // `convertPointToSortKeyInPlace`, `points.go:128`, trimming as the
+        // EQ path does). Emitting the same shape here keeps a range built by
+        // this shortcut identical to one the detacher builds for the same
+        // statement, not merely key-equivalent.
+        convert_point_to_sort_key_in_place(&mut point, &range_type, true).ok()?;
+        let key_type = crate::ranger::ranger::convert_string_ft_to_binary_collate(&range_type);
+        collators[offset] = key_type.collation();
         values[offset] = Some(point.value);
     }
     let low_val = values.into_iter().collect::<Option<Vec<Datum>>>()?;

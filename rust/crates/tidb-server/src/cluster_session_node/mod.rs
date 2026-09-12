@@ -246,21 +246,6 @@ const ER_TABLEACCESS_DENIED_ERROR: u16 = 1142;
 /// for.
 const ERR_WRITE_CONFLICT: u16 = tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 
-/// How many times an autocommit statement that lost the race is run again
-/// before the conflict reaches the client.
-///
-/// This is `@@tidb_retry_limit`'s default, `DefTiDBRetryLimit = 10`
-/// (`pkg/sessionctx/vardef/tidb_vars.go:1527`). Go scales it DOWN by
-/// transaction size --
-/// `maxRetryCount = limit - (limit-1) * txnSize/TxnTotalSizeLimit`
-/// (`pkg/session/session.go:881-882`), with `TxnTotalSizeLimit` 100 MiB
-/// (`pkg/config/config.go:65`) -- so a statement anywhere near this seam's
-/// size gets the full 10. The bound is the contract: Go does NOT retry
-/// forever, and after the last attempt it returns the last commit error
-/// (`pkg/session/session.go:1272-1278`), so the client still sees 9007. A
-/// conflict that outlives the budget is still reported, exactly as before.
-const AUTOCOMMIT_RETRY_LIMIT: u32 = 10;
-
 /// Go `kv.retryBackOffBase`, in milliseconds (`pkg/kv/txn.go:182-183`; the
 /// comment there says microsecond and the code multiplies by
 /// `time.Millisecond` -- the code is the contract).
@@ -1625,7 +1610,9 @@ impl ClusterSessionFactory {
             if original_updates.is_empty() {
                 continue;
             }
-            let transaction = transactions.begin(true, resource_group)?;
+            // An internal statement: Go's `InRestrictedSQL` sessions never
+            // start fair locking (`isolation/base.go:711-714`).
+            let transaction = transactions.begin(true, false, resource_group)?;
             let read_ts = transaction.start_ts();
             let staged = MutationBuffer::new();
             let prepared = (|| {
@@ -1710,7 +1697,8 @@ impl ClusterSessionFactory {
                         continue;
                     }
                     let result = (|| {
-                        let transaction = transactions.begin(true, resource_group)?;
+                        // Internal statement: no fair locking (Go `InRestrictedSQL`).
+                        let transaction = transactions.begin(true, false, resource_group)?;
                         let staged = MutationBuffer::new();
                         let ((modify_count, count), lock_mutations) =
                             tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
@@ -2778,7 +2766,8 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
             );
             return Ok(0);
         };
-        let transaction = self.transactions.begin(true, "default")?;
+        // Internal statement: no fair locking (Go `InRestrictedSQL`).
+        let transaction = self.transactions.begin(true, false, "default")?;
         let staged = MutationBuffer::new();
         let (version, blocks) = tidb_exec::cluster_stats_write::historical_stats_data_blocks(&json)
             .map_err(|error| error.to_string())?;
@@ -4595,6 +4584,11 @@ impl ClusterServerSession {
         // The keys THIS statement's rounds fair-locked and retained; released
         // if the statement ultimately fails (Go `OnPessimisticStmtEnd`).
         let mut statement_locked = std::collections::BTreeSet::new();
+        // The keys the CURRENT round asked to lock, whether or not an earlier
+        // round already held them. On success, what earlier rounds locked
+        // beyond this set is Go `DoneFairLocking`'s "unnecessary" locks.
+        let mut round_wanted: std::collections::BTreeSet<Vec<u8>> =
+            std::collections::BTreeSet::new();
         // Go `PessimisticTxn.MaxRetryCount` (`pkg/config/config.go`, default
         // 256): the safety valve on the statement retry, with Go's own error.
         let mut retries: u32 = 0;
@@ -4603,6 +4597,7 @@ impl ClusterServerSession {
             // Selected rows belong to this execution attempt, not an earlier
             // plan or a partially executed failed read.
             self.session.take_selected_lock_keys();
+            round_wanted.clear();
             // Go's pessimistic point write takes its row lock DURING execution
             // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:549`),
             // asking TiKV to answer the row WITH the lock (`InitReturnValues`,
@@ -4616,6 +4611,7 @@ impl ClusterServerSession {
             // back conflict genuinely needs the fresh acquisition at the new
             // `for_update_ts`.
             if !prelock_keys.is_empty() {
+                round_wanted.extend(prelock_keys.iter().cloned());
                 self.session.notify_before_executor_first_run();
                 let outcome = match self.explicit.as_ref() {
                     Some(transaction) => {
@@ -4719,20 +4715,28 @@ impl ClusterServerSession {
                     // commit = false` an autocommit DML runs optimistically --
                     // a read at its start timestamp and a one-phase prewrite
                     // -- and only the retry of a write conflict locks first.
+                    // `shouldUsePessimisticAutoCommit` (`session.go:4947`)
+                    // reads the config and declines under bulk DML
+                    // (`tidb_dml_type = 'bulk'`); this arm only serves DML.
+                    let vars = self.session.vars();
                     let pessimistic = tidb_planner::txn_mode::txn_mode_for_statement(
                         tidb_planner::txn_mode::StatementTxnModeInputs {
-                            txn_mode_var: &self
-                                .session
-                                .vars()
-                                .get_system("tidb_txn_mode")
-                                .unwrap_or_default(),
+                            txn_mode_var: &vars.get_system("tidb_txn_mode").unwrap_or_default(),
                             retrying,
                             autocommit: true,
-                            pessimistic_auto_commit: false,
-                            is_dml: true,
+                            pessimistic_auto_commit:
+                                tidb_config::config_tree::config::get_global_config()
+                                    .pessimistic_txn
+                                    .pessimistic_auto_commit
+                                    .load(),
+                            is_dml: !vars.bulk_dml_enabled(),
                         },
                     )
                     .is_pessimistic();
+                    // Go `OnPessimisticStmtStart` (`isolation/base.go:711`):
+                    // fair locking follows the session variable; a client
+                    // connection is neither internal nor restricted SQL.
+                    let fair_locking = vars.pessimistic_transaction_fair_locking();
                     transactions::prefetched_write_snapshot(
                         Arc::clone(&self.transactions),
                         read_ts.clone(),
@@ -4744,6 +4748,7 @@ impl ClusterServerSession {
                         prelock_keys.to_vec(),
                         Arc::<str>::from(resource_group),
                         pessimistic,
+                        fair_locking,
                     )
                 }
                 // Binding is still timestamp-free. After the statement's
@@ -4775,8 +4780,38 @@ impl ClusterServerSession {
                         Self::rollback_prefetched_write(write_transaction.clone());
                         break Err(error);
                     }
-                    match self.lock_pessimistic_statement_keys(savepoint, &mut statement_locked) {
-                        Ok(PessimisticStep::Done) => {}
+                    match self.lock_pessimistic_statement_keys(
+                        savepoint,
+                        &mut statement_locked,
+                        &mut round_wanted,
+                    ) {
+                        Ok(PessimisticStep::Done) => {
+                            // Go `OnPessimisticStmtEnd(isSuccessful=true)` ->
+                            // `KVTxn.DoneFairLocking`
+                            // (`pkg/sessiontxn/isolation/base.go:728-731`):
+                            // the locks earlier rounds of this statement
+                            // took that its final round did not need are
+                            // released now, not held to COMMIT.
+                            if retries > 0 {
+                                let stale: Vec<Vec<u8>> = statement_locked
+                                    .iter()
+                                    .filter(|key| !round_wanted.contains(*key))
+                                    .cloned()
+                                    .collect();
+                                if !stale.is_empty() {
+                                    if let Some(transaction) = self.explicit.as_ref() {
+                                        if let Err(error) =
+                                            transaction.release_statement_locks(stale.clone())
+                                        {
+                                            break Err(SqlQueryError::unknown(error));
+                                        }
+                                    }
+                                    for key in &stale {
+                                        statement_locked.remove(key);
+                                    }
+                                }
+                            }
+                        }
                         Ok(PessimisticStep::Retry { for_update_ts }) => {
                             if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
                                 // Go `handlePessimisticLockError`
@@ -4841,6 +4876,7 @@ impl ClusterServerSession {
         &mut self,
         savepoint: &BufferCheckpoint,
         statement_locked: &mut std::collections::BTreeSet<Vec<u8>>,
+        round_wanted: &mut std::collections::BTreeSet<Vec<u8>>,
     ) -> Result<PessimisticStep, SqlQueryError> {
         let Some(transaction) = self.explicit.as_ref() else {
             return Ok(PessimisticStep::Done);
@@ -4858,6 +4894,7 @@ impl ClusterServerSession {
             ));
         }
         for (wait, keys) in requests {
+            round_wanted.extend(keys.iter().cloned());
             match self.lock_pessimistic_keys(savepoint, statement_locked, keys, wait)? {
                 PessimisticStep::Done => {}
                 retry => return Ok(retry),
@@ -5008,9 +5045,44 @@ impl ClusterServerSession {
     /// seam exists to prevent.
     fn may_retry_autocommit_statement(&self, error: &SqlQueryError, retried: u32) -> bool {
         error.code == ERR_WRITE_CONFLICT
-            && retried < AUTOCOMMIT_RETRY_LIMIT
+            && retried < self.autocommit_retry_budget()
             && self.explicit.is_none()
             && !self.session.in_transaction()
+    }
+
+    /// Go's autocommit retry budget: `@@tidb_retry_limit` (default 10),
+    /// scaled DOWN by transaction size the way `doCommitWithRetry` does
+    /// (`pkg/session/session.go:881-882`). A limit of 0 disables the retry
+    /// entirely (`isOptimisticTxnRetryable`, `optimistic.go:82-84`); this
+    /// autocommit seam has no explicit transaction, so `CouldRetry` and the
+    /// `for_update`/pipelined gates that only apply inside one are always in
+    /// the retryable state here.
+    fn autocommit_retry_budget(&self) -> u32 {
+        let limit = self
+            .session
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_RETRY_LIMIT)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_RETRY_LIMIT);
+        if limit <= 0 {
+            return 0;
+        }
+        let limit = u32::try_from(limit).unwrap_or(u32::MAX);
+        // Go: `maxRetryCount = limit - (limit-1) * txnSize/TxnTotalSizeLimit`.
+        // This seam's autocommit writes are single statements far below the
+        // 100 MiB `TxnTotalSizeLimit`, so the ratio is ~0 and the budget is
+        // the full limit; the scaling is kept so a large statement retries
+        // less, as Go's does.
+        let txn_bytes = self.buffer.staged_bytes() as u64;
+        let size_limit = tidb_config::config_tree::config::get_global_config()
+            .performance
+            .txn_total_size_limit
+            .max(1);
+        let reduction = u64::from(limit.saturating_sub(1)).saturating_mul(txn_bytes) / size_limit;
+        limit
+            .saturating_sub(u32::try_from(reduction).unwrap_or(u32::MAX))
+            .max(1)
     }
 
     /// Tells the just-bound snapshot what shape the statement's whole read is,
@@ -5103,9 +5175,12 @@ impl ClusterServerSession {
             )
             .is_pessimistic(),
         };
+        // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair locking
+        // follows the session's `@@tidb_pessimistic_txn_fair_locking`.
+        let fair_locking = self.session.vars().pessimistic_transaction_fair_locking();
         let transaction = self
             .transactions
-            .begin(pessimistic, resource_group)
+            .begin(pessimistic, fair_locking, resource_group)
             .map_err(SqlQueryError::unknown)?;
         self.session.current_tso().publish(transaction.start_ts());
         self.explicit = Some(transaction);

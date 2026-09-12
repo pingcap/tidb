@@ -482,6 +482,16 @@ impl MutationBuffer {
         self.lock().len()
     }
 
+    /// Go `MemDB.Size()`, the transaction size `KVTxn.Size()` reports: the
+    /// staged key and value bytes, a tombstone counting its key only.
+    #[must_use]
+    pub fn staged_bytes(&self) -> usize {
+        self.lock()
+            .iter()
+            .map(|(key, value)| key.as_ref().len() + value.as_ref().map_or(0, Vec::len))
+            .sum()
+    }
+
     /// Bytes retained by the transaction's staged key/value map.
     ///
     /// Go publishes the backing MemDB's allocation footprint rather than the

@@ -535,6 +535,12 @@ impl<C, L> DirectUnaryQueryTransport<C, L> {
         tidb_txnkv::rpc::execution_runtime().map_err(|message| {
             DirectUnaryTransportError::Client(DirectUnaryClientError::Runtime(message))
         })?;
+        // The cop workers run on the core-sized query runtime; build it here
+        // too, so a runtime that cannot start is an error at install time
+        // rather than a panic on the first concurrent query.
+        tidb_txnkv::rpc::query_worker_runtime().map_err(|message| {
+            DirectUnaryTransportError::Client(DirectUnaryClientError::Runtime(message))
+        })?;
         self.concurrent_start =
             Some(super::cop_iterator::start_concurrent::<DirectUnaryQueryResponse<C, L>>);
         Ok(self)

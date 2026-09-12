@@ -20,7 +20,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Wake, Waker};
 
-use tidb_txnkv::rpc::{execution_runtime, CompletionError, CompletionNotifier, UnaryCallContext};
+use tidb_txnkv::rpc::{
+    go_max_procs, query_worker_runtime, CompletionError, CompletionNotifier, UnaryCallContext,
+};
 
 use crate::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 
@@ -520,8 +522,10 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
     let requested_concurrency = source.concurrency();
     let use_row_hints = source.use_row_hints() && !lite_fallback;
     let tasks = source.into_tasks();
-    let runtime =
-        execution_runtime().expect("runtime was initialized before installing the worker factory");
+    // Go `copIteratorWorker`s are goroutines over every P; these workers run
+    // on the core-sized query runtime, not the transport loop.
+    let runtime = query_worker_runtime()
+        .expect("runtime was initialized before installing the worker factory");
     let small_count = if use_row_hints {
         tasks
             .iter()
@@ -530,8 +534,10 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
     } else {
         0
     };
+    // Go `smallTaskConcurrency(tasks, c.store.numcpu)` with `numcpu =
+    // runtime.GOMAXPROCS(0)` (`pkg/store/copr/store.go:109`).
     let mut small_workers =
-        crate::RegionTaskEnvelope::small_concurrency(small_count, runtime.metrics().num_workers());
+        crate::RegionTaskEnvelope::small_concurrency(small_count, go_max_procs());
     if ordered {
         small_workers = small_workers.min(20);
     }

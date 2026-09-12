@@ -181,6 +181,8 @@ pub(super) struct PipelineStats {
     pub(super) final_concurrency: usize,
     /// Chunks successfully dispatched by the fetcher.
     pub(super) dispatched_chunks: AtomicUsize,
+    /// Single-chunk inputs folded on the fetching thread instead of a lane.
+    pub(super) inline_folds: AtomicUsize,
     /// Ids of the partial-worker threads that actually ran.
     pub(super) partial_worker_threads: Mutex<Vec<std::thread::ThreadId>>,
 }
@@ -192,6 +194,7 @@ impl PipelineStats {
             partial_concurrency,
             final_concurrency,
             dispatched_chunks: AtomicUsize::new(0),
+            inline_folds: AtomicUsize::new(0),
             partial_worker_threads: Mutex::new(Vec::new()),
         }
     }
@@ -1038,6 +1041,16 @@ impl<C: HashAggContext> HashAggExec<C> {
         self
     }
 
+    /// Single-chunk inputs the last Open's pipeline folded on the fetching
+    /// thread; `None` when the aggregation ran serially.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn pipeline_inline_folds(&self) -> Option<usize> {
+        self.pipeline_stats
+            .as_ref()
+            .map(|stats| stats.inline_folds.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
     /// `(partial, final, dispatched_chunks, partial_worker_threads)` for the
     /// last Open's pipeline run; `None` when the aggregation ran serially.
     #[cfg(test)]
@@ -1218,7 +1231,13 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         if abort.raised() || spill_requested.load(std::sync::atomic::Ordering::SeqCst) {
             break;
         }
-        memory.check()?;
+        // A cancellation here ends the fetch like a child error does: the
+        // held chunk's charge below is released on that path, where an early
+        // return would leave it on the tracker until the executor closes.
+        if let Err(error) = memory.check() {
+            fetch_error = Some(error);
+            break;
+        }
         let before = child_chunk.memory_usage();
         if let Err(error) = child.next(child_chunk) {
             fetch_error = Some(error);
@@ -1284,7 +1303,12 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         // The one partial worker's whole job, on the fetching thread.
         if first_error.is_none() {
             #[cfg(test)]
-            stats.record_partial_worker();
+            {
+                stats.record_partial_worker();
+                stats
+                    .inline_folds
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             let mut maps: Vec<PipelineMap> = (0..final_concurrency)
                 .map(|_| PipelineMap::default())
                 .collect();
