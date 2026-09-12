@@ -3969,8 +3969,9 @@ fn writes_restricted_by_an_unsigned_handle_range_touch_exactly_those_rows() {
 /// `INT UNSIGNED` tops out at `4294967295`, so no range of it crosses the
 /// point where the key encoding flips sign -- Go's `sort.Search` finds no
 /// bound past `MaxInt64` and returns the ranges untouched. The open high end
-/// is still the DOMAIN's `MaxUint64`, which is why it prints `+inf` rather
-/// than the column's own maximum.
+/// is still the DOMAIN's `MaxUint64`. Go's IsFullRange checks the boundary
+/// values without the exclusion flags, so EXPLAIN calls (0,MaxUint64] a
+/// TableFullScan even though execution must exclude the stored zero row.
 #[test]
 fn a_narrow_unsigned_row_handle_is_ranged_over_without_a_split() {
     let mut session = Session::new();
@@ -3990,12 +3991,14 @@ fn a_narrow_unsigned_row_handle_is_ranged_over_without_a_split() {
         tests_support::row_text(session.run("SELECT count(*) FROM ui WHERE id < 4294967295")),
         vec![vec!["2".to_owned()]]
     );
-    assert!(
-        tests_support::row_text(session.run("EXPLAIN SELECT id FROM ui WHERE id > 0"))
-            .into_iter()
-            .any(|row| row.join(" ").contains("range:(0,+inf]")),
-        "the open high end is the unsigned DOMAIN's maximum, not the column's"
+    let plan = tests_support::row_text(session.run("EXPLAIN SELECT id FROM ui WHERE id > 0"));
+    let scan = plan.last().expect("table scan");
+    assert!(scan[0].contains("TableFullScan"), "Go's boundary-based name: {plan:?}");
+    assert_eq!(scan[4], "keep order:false, stats:pseudo");
+    let executed = tests_support::row_text(
+        session.run("EXPLAIN ANALYZE SELECT id FROM ui WHERE id > 0"),
     );
+    assert_eq!(executed.last().expect("table scan")[2], "2", "the open low bound excludes zero");
 }
 
 /// A whole-table scan of an unsigned handle KEEPS ORDER, because the scan is
