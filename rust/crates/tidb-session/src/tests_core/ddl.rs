@@ -623,8 +623,7 @@ fn modify_column() {
         .run("ALTER TABLE t CHANGE COLUMN d d BIGINT")
         .unwrap();
 
-    // Captured from Go's `TestModifyColumnNullToNotNull`: a stored NULL is
-    // rejected by a new NOT NULL with 1138 `Invalid use of NULL value`; a
+    // Go MODIFY admission rejects stored NULL with 1265 at row 1; a
     // convertible string becomes the new type.
     let mut session = Session::new();
     session
@@ -633,7 +632,7 @@ fn modify_column() {
     session.run("INSERT INTO u VALUES (1, '12', NULL)").unwrap();
     assert!(matches!(
         session.run("ALTER TABLE u MODIFY COLUMN c BIGINT NOT NULL"),
-        Err(DriverError::DdlCoded { errno: 1138, .. })
+        Err(DriverError::DataTruncatedAtRow { column, row: 1 }) if column == "c"
     ));
     session.run("ALTER TABLE u MODIFY COLUMN b BIGINT").unwrap();
     assert_eq!(

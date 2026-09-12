@@ -2476,7 +2476,10 @@ impl KvTable {
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
-        let substitute = null_timestamp_substitute(&new_column.field_type, ctx);
+        let substitute = (self.columns[offset].field_type.code()
+            != tidb_datatype::FieldTypeCode::Timestamp)
+            .then(|| null_timestamp_substitute(&new_column.field_type, ctx))
+            .flatten();
         self.modify_column_in(
             offset,
             new_column,

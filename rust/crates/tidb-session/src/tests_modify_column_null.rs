@@ -52,3 +52,25 @@ fn a_null_becomes_the_current_timestamp_when_the_column_turns_not_null() {
     // And the refusal left the column alone.
     assert_eq!(row_text(session.run("SELECT b FROM t")), vec![vec!["NULL"]]);
 }
+
+#[test]
+fn modify_not_null_preserves_go_precheck_error_and_timestamp_boundary() {
+    let mut session = Session::new();
+    for (name, old_type, new_type) in [
+        ("same_int", "INT", "INT"),
+        ("same_timestamp", "TIMESTAMP NULL", "TIMESTAMP"),
+    ] {
+        session.run(&format!("CREATE TABLE {name} (id INT, B {old_type})")).unwrap();
+        session.run(&format!("INSERT INTO {name} VALUES (1, NULL), (2, NULL)")).unwrap();
+        let error = session
+            .run(&format!("ALTER TABLE {name} MODIFY B {new_type} NOT NULL"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1265);
+        assert_eq!(error.message, "Data truncated for column 'b' at row 1");
+        assert_eq!(
+            row_text(session.run(&format!("SELECT B FROM {name} ORDER BY id"))),
+            [["NULL"], ["NULL"]]
+        );
+    }
+}

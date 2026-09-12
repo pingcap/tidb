@@ -3678,11 +3678,10 @@ fn modify_column_action(
             crate::kv_table::KvTableError::DataTruncatedValue { column, value } => {
                 DriverError::DataTruncatedValue { column, value }
             }
-            crate::kv_table::KvTableError::InvalidUseOfNull => DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrInvalidUseOfNull,
-                message: tidb_error::tidb::errname::ErrInvalidUseOfNull
-                    .raw
-                    .to_owned(),
+            crate::kv_table::KvTableError::InvalidUseOfNull => DriverError::DataTruncatedAtRow {
+                column: tidb_mysql::to_lowercase(&def.name),
+                // Go's MODIFY admission check selects at most one NULL row.
+                row: 1,
             },
             crate::kv_table::KvTableError::Vector(message) => DriverError::unsupported(message),
             crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
