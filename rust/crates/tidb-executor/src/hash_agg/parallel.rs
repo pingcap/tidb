@@ -230,6 +230,10 @@ struct PipelinePlan<C: Columns + Send + Sync + Clone + 'static> {
     group_by: Vec<Expression>,
     integer_columns: Option<Vec<usize>>,
     agg_funcs: Vec<AggFunc>,
+    /// Each aggregate's argument collation, derived once for the plan as Go
+    /// builds each `AggFunc`'s collator once (`aggfuncs/builder.go`), not
+    /// once per group.
+    collations: Vec<tidb_datatype::Collation>,
 }
 
 /// A pipeline group-map key. A single integer group item keys by its chunk
@@ -267,11 +271,19 @@ impl PipelineGroup {
     /// Creates the group; the CALLER batches the tracker consume (one
     /// round-trip per chunk, not per group — 1.5M-group shapes showed the
     /// lock in profiles).
-    fn new(funcs: &[AggFunc], key_len: usize) -> (Self, i64) {
+    fn new(
+        funcs: &[AggFunc],
+        collations: &[tidb_datatype::Collation],
+        key_len: usize,
+    ) -> (Self, i64) {
         let bytes = parallel_new_group_bytes(key_len, funcs);
         (
             PipelineGroup {
-                states: funcs.iter().map(AggState::new_parallel).collect(),
+                states: funcs
+                    .iter()
+                    .zip(collations)
+                    .map(|(func, collation)| AggState::new_parallel_with(func, *collation))
+                    .collect(),
             },
             bytes,
         )
@@ -967,18 +979,42 @@ fn key_bucket(key: &[u8], bucket_count: usize) -> usize {
 fn map_key_bucket(key: &PipelineMapKey, bucket_count: usize) -> usize {
     match key {
         PipelineMapKey::Int(value) => {
-            let mut encoded = Vec::with_capacity(10);
-            match value {
+            // Go hashes the group key bytes it already holds; the integer
+            // lane re-encodes them on the stack (a NULL flag, or the varint
+            // flag and at most ten varint bytes) rather than in a heap
+            // vector per row.
+            let mut encoded = [0u8; 11];
+            let len = match value {
                 Some(value) => {
-                    encoded.push(VARINT_FLAG);
-                    encode_varint(&mut encoded, *value);
+                    encoded[0] = VARINT_FLAG;
+                    1 + encode_varint_into(&mut encoded[1..], *value)
                 }
-                None => encoded.push(NIL_FLAG),
-            }
-            key_bucket(&encoded, bucket_count)
+                None => {
+                    encoded[0] = NIL_FLAG;
+                    1
+                }
+            };
+            key_bucket(&encoded[..len], bucket_count)
         }
         PipelineMapKey::Bytes(bytes) => key_bucket(bytes, bucket_count),
     }
+}
+
+/// `tidb_codec::encode_varint` (Go `binary.PutVarint`) into a stack buffer;
+/// returns the bytes written (at most ten).
+fn encode_varint_into(buffer: &mut [u8], value: i64) -> usize {
+    let mut unsigned = (value as u64) << 1;
+    if value < 0 {
+        unsigned = !unsigned;
+    }
+    let mut written = 0;
+    while unsigned >= 0x80 {
+        buffer[written] = (unsigned as u8) | 0x80;
+        unsigned >>= 7;
+        written += 1;
+    }
+    buffer[written] = unsigned as u8;
+    written + 1
 }
 
 /// Reads one concurrency system variable with Go's resolution order: the
@@ -1171,6 +1207,7 @@ fn spawn_partial_lane<C: Columns + Send + Sync + Clone + 'static>(
                         group_by: &plan.group_by,
                         integer_columns: plan.integer_columns.as_deref(),
                         agg_funcs: &plan.agg_funcs,
+                        collations: &plan.collations,
                     },
                     &mut maps,
                     final_concurrency,
@@ -1318,6 +1355,7 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
                     group_by: &plan.group_by,
                     integer_columns: plan.integer_columns.as_deref(),
                     agg_funcs: &plan.agg_funcs,
+                    collations: &plan.collations,
                 },
                 &mut maps,
                 final_concurrency,
@@ -1410,6 +1448,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             group_by: self.group_by.clone(),
             integer_columns: self.integer_group_columns.clone(),
             agg_funcs: self.agg_funcs.clone(),
+            collations: self.state_collations.clone(),
         });
         let spill_requested = Arc::clone(&self.parallel_spill_requested);
         let mut spilled = self
@@ -1589,6 +1628,7 @@ struct FoldInputs<'a, C> {
     group_by: &'a [Expression],
     integer_columns: Option<&'a [usize]>,
     agg_funcs: &'a [AggFunc],
+    collations: &'a [tidb_datatype::Collation],
 }
 
 /// Go `HashAggPartialWorker.updatePartialResult`: encode every row's group
@@ -1606,6 +1646,7 @@ fn fold_chunk<C: Columns>(
         group_by,
         integer_columns,
         agg_funcs,
+        collations,
     } = inputs;
     let mut new_group_bytes_total = 0i64;
     let mut state_memory_delta = 0i64;
@@ -1646,7 +1687,7 @@ fn fold_chunk<C: Columns>(
         let entry = match maps[bucket].entry(key) {
             Entry::Occupied(occupied) => occupied.into_mut(),
             Entry::Vacant(vacant) => {
-                let (group, bytes) = PipelineGroup::new(agg_funcs, key_len);
+                let (group, bytes) = PipelineGroup::new(agg_funcs, collations, key_len);
                 new_group_bytes_total += bytes;
                 vacant.insert(group)
             }
@@ -2016,6 +2057,20 @@ fn merge_state(dst: &mut AggState, mut src: AggState) -> Result<(), ExecError> {
 
 #[cfg(test)]
 mod tests {
+    /// The stack varint the bucket hash reads is byte-for-byte the codec's
+    /// (Go `binary.PutVarint`), so an integer group lands in the same final
+    /// bucket as its encoded key would.
+    #[test]
+    fn stack_varint_matches_the_codec() {
+        for value in [0i64, 1, -1, 63, 64, -64, -65, 127, 128, 1 << 20, -(1 << 40), i64::MAX, i64::MIN] {
+            let mut expected = Vec::new();
+            encode_varint(&mut expected, value);
+            let mut buffer = [0u8; 10];
+            let len = super::encode_varint_into(&mut buffer, value);
+            assert_eq!(&buffer[..len], expected.as_slice(), "{value}");
+        }
+    }
+
     use super::*;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;

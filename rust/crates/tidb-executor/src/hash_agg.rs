@@ -476,12 +476,23 @@ struct DistinctInput {
     sort_key: Vec<Datum>,
 }
 
+/// The collation an aggregate's state works under: its argument's derived
+/// collation (Go `aggfuncs/builder.go` reads it off `AggFuncDesc.RetTp`
+/// once when the function is built).
+fn state_collation(func: &AggFunc) -> tidb_datatype::Collation {
+    func.arg
+        .as_ref()
+        .map_or(tidb_datatype::Collation::DEFAULT, expr_collation)
+}
+
 impl AggState {
     fn new(func: &AggFunc) -> AggState {
-        let collation = func
-            .arg
-            .as_ref()
-            .map_or(tidb_datatype::Collation::DEFAULT, expr_collation);
+        Self::with_collation(func, state_collation(func))
+    }
+
+    /// `new` with the collation already derived, for the executors that
+    /// open a state per group and derive each function's collation once.
+    fn with_collation(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
         AggState {
             partial: Partial::new(&func.kind),
             seen: func.distinct.then(|| StringSetWithMemoryUsage::new([]).0),
@@ -505,7 +516,11 @@ impl AggState {
     /// Go's parallel partial aggregate retains each DISTINCT input so final
     /// workers can merge sets rather than adding already-folded scalars.
     fn new_parallel(func: &AggFunc) -> AggState {
-        let mut state = Self::new(func);
+        Self::new_parallel_with(func, state_collation(func))
+    }
+
+    fn new_parallel_with(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
+        let mut state = Self::with_collation(func, collation);
         state.distinct_inputs = func.distinct.then(Vec::new);
         state
     }
@@ -2404,6 +2419,9 @@ pub struct HashAggExec<C: HashAggContext> {
     /// `g` occupies `g * agg_funcs.len()..(g + 1) * agg_funcs.len()` so the
     /// hot path does not allocate one inner `Vec` per group.
     ordered: Vec<AggState>,
+    /// Each aggregate's argument collation, derived once here rather than
+    /// for every new group's states.
+    state_collations: Vec<tidb_datatype::Collation>,
     group_count: usize,
     /// Go `cursor4GroupKey`: how many of `ordered` this round has emitted.
     cursor: usize,
@@ -2497,6 +2515,7 @@ impl<C: HashAggContext> HashAggExec<C> {
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let truncated = vec![false; agg_funcs.len()];
+        let state_collations = agg_funcs.iter().map(state_collation).collect();
         // A cop partial aggregation's schema appends the group-by columns after
         // the aggregate columns; a root aggregation reaches the same width
         // through its `firstrow()` aggregates and has no trailing columns.
@@ -2537,6 +2556,7 @@ impl<C: HashAggContext> HashAggExec<C> {
             group_key_values: Vec::new(),
             output_group_keys,
             ordered: Vec::new(),
+            state_collations,
             group_count: 0,
             cursor: 0,
             prepared: false,
@@ -2611,8 +2631,12 @@ impl<C: HashAggContext> HashAggExec<C> {
                         std::mem::replace(&mut self.group_key_buffer, Vec::with_capacity(capacity));
                     let key_len = key.len();
                     self.groups.insert(key, idx);
-                    self.ordered
-                        .extend(self.agg_funcs.iter().map(AggState::new));
+                    self.ordered.extend(
+                        self.agg_funcs
+                            .iter()
+                            .zip(&self.state_collations)
+                            .map(|(func, collation)| AggState::with_collation(func, *collation)),
+                    );
                     self.group_count += 1;
                     if self.output_group_keys {
                         self.group_key_values.extend(group_datums);

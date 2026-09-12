@@ -3398,8 +3398,15 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 // Bulk appends index physical row ranges and intentionally do
                 // not consult a source selection vector. Compact only this
                 // pure-equality arm; the residual arm above emits logical
-                // rows individually and needs no copy.
-                let probe = input.copy_construct_sel();
+                // rows individually and needs no copy. A probe chunk with no
+                // selection (every coprocessor batch) is appended from
+                // directly: Go's `appendProbeRowToChunkInternal` copies the
+                // probe row once, into the result.
+                let probe: std::borrow::Cow<'_, Chunk> = if input.sel().is_some() {
+                    std::borrow::Cow::Owned(input.copy_construct_sel())
+                } else {
+                    std::borrow::Cow::Borrowed(&input)
+                };
                 output_layout.side_range(&mut output, probe_is_left, &probe);
                 let build_key_from_probe = build_types.len() == 1
                     && build_types[0].eval_type() == tidb_datatype::EvalType::Int
