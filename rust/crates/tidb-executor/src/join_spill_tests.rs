@@ -89,10 +89,14 @@ const CHUNK_ROWS: usize = 1024;
 /// exactly the last one. Without the reset this grows by one row per
 /// matched pair, which on a large spilled join is the whole build side
 /// pulled back into memory -- the precise thing the spill exists to
-/// prevent.
+/// prevent. The serial probe is pinned here (one worker) because its
+/// scratch is the observable one; each parallel probe worker owns a scratch
+/// of its own that the row container resets the same way, and
+/// `a_spilled_build_side_answers_exactly_the_unspilled_rows` covers them.
 #[test]
 fn the_read_back_buffer_does_not_accumulate_across_a_spilled_probe() {
     let mut join = inner_join(tight_quota());
+    join.set_parallelism(1);
     join.open().unwrap();
     let mut req = join.new_chunk();
     let mut seen = 0;

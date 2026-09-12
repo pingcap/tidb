@@ -250,6 +250,12 @@ struct ParallelProbeShared<C> {
     build_types: Vec<FieldType>,
     probe_types: Vec<FieldType>,
     output_types: Vec<FieldType>,
+    init_cap: usize,
+    max_chunk_size: usize,
+    keys: Vec<EquiKey>,
+    /// One ordinary integer key over a unique exact build bucket: the
+    /// specialised worker applies; every other shape takes the general one.
+    unique_exact_int: bool,
     key_offset: usize,
     probe_is_left: bool,
     kind: JoinKind,
@@ -287,6 +293,11 @@ struct ParallelProbePipeline<C> {
 struct ParallelProbeResult {
     input: Chunk,
     output: Chunk,
+    /// Result chunks filled after `output` became full. A non-unique build
+    /// can join one probe chunk into several result chunks; Go's worker
+    /// sends each full `joinResult` on and continues with the same probe
+    /// chunk (`probeAndSendResult`).
+    extra_outputs: Vec<Chunk>,
     matched_build_rows: Vec<RowPtr>,
     condition_evals: u64,
 }
@@ -2625,9 +2636,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         if !self.outer_filter.is_empty() && self.filter_is_left != self.hash_build_is_left() {
             return false;
         }
-        let [key] = self.keys.as_slice() else {
+        if self.keys.is_empty() {
             return false;
-        };
+        }
         let residual_supported =
             self.residual_conditions.is_empty() || self.kind == JoinKind::Inner;
         matches!(
@@ -2639,12 +2650,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 | JoinKind::AntiSemi
         ) && residual_supported
             && self.concurrency > 1
-            && key.class == KeyClass::Int
-            && !key.null_safe
-            && self
-                .hash
-                .as_ref()
-                .is_some_and(|hash| hash.parallel_exact_int_enabled && hash.table.has_exact_int())
+            && self.hash.is_some()
     }
 
     /// Parallel counterpart of [`Self::next_hashed`] for the proven exact
@@ -2749,12 +2755,21 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             .hash
             .as_ref()
             .expect("parallel probe requires hash state");
+        let unique_exact_int = self.keys.len() == 1
+            && key.class == KeyClass::Int
+            && !key.null_safe
+            && hash.parallel_exact_int_enabled
+            && hash.table.has_exact_int();
         let shared = ParallelProbeShared {
             output_layout: self.output.clone(),
             table: Arc::clone(&hash.table),
             build_types: hash.build_types.clone(),
             probe_types,
             output_types: self.meta.ret_field_types().to_vec(),
+            init_cap: self.meta.init_cap(),
+            max_chunk_size: self.meta.max_chunk_size(),
+            keys: self.keys.clone(),
+            unique_exact_int,
             key_offset,
             probe_is_left,
             kind: self.kind,
@@ -2877,21 +2892,25 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let shared = Arc::clone(&pipeline.shared);
         let result_tx = pipeline.result_tx.clone();
         crate::worker_pool::enqueue_public(Box::new(move || {
-            let result = Self::probe_unique_exact_int_chunk(
-                &shared.output_layout,
-                &shared.table,
-                &shared.build_types,
-                &shared.probe_types,
-                input,
-                output,
-                shared.key_offset,
-                shared.probe_is_left,
-                shared.kind,
-                shared.builds_preserved,
-                &shared.ctx,
-                shared.residual_conditions.as_slice(),
-                shared.condition_types.as_slice(),
-            );
+            let result = if shared.unique_exact_int {
+                Self::probe_unique_exact_int_chunk(
+                    &shared.output_layout,
+                    &shared.table,
+                    &shared.build_types,
+                    &shared.probe_types,
+                    input,
+                    output,
+                    shared.key_offset,
+                    shared.probe_is_left,
+                    shared.kind,
+                    shared.builds_preserved,
+                    &shared.ctx,
+                    shared.residual_conditions.as_slice(),
+                    shared.condition_types.as_slice(),
+                )
+            } else {
+                Self::probe_hashed_chunk(&shared, input, output)
+            };
             // A dropped receiver means the join is already closed or failed.
             let _ = result_tx.send((seq, result));
         }));
@@ -2939,6 +2958,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             for ptr in result.matched_build_rows {
                 hash.table.mark_matched(ptr);
             }
+            // The set-aside chunks were filled before the one the worker
+            // still held, so they are released first.
+            hash.parallel_probe_pending.extend(result.extra_outputs);
             if result.output.num_rows() == 0 {
                 result.output.reset();
                 hash.parallel_probe_output_reuse.push(result.output);
@@ -2947,6 +2969,170 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             }
         }
         Ok(())
+    }
+
+    /// Go `processOneProbeChunk` for every hash-join shape the serial
+    /// chunk-backed probe handles: the same per-row decisions as
+    /// [`Self::drain_chunk_backed_probe`] and
+    /// [`Self::drain_chunk_backed_residual_probe`], on a worker that owns its
+    /// input and output chunks and reports matched build rows instead of
+    /// marking them. A full result chunk is set aside and a fresh one filled,
+    /// as Go's worker sends each full `joinResult` on and keeps probing.
+    fn probe_hashed_chunk(
+        shared: &ParallelProbeShared<C>,
+        input: Chunk,
+        mut output: Chunk,
+    ) -> Result<ParallelProbeResult, ExecError> {
+        output.reset();
+        let output_layout = &shared.output_layout;
+        let table = &shared.table;
+        let build_types = shared.build_types.as_slice();
+        let probe_types = shared.probe_types.as_slice();
+        let keys = shared.keys.as_slice();
+        let kind = shared.kind;
+        let builds_preserved = shared.builds_preserved;
+        let probe_is_left = shared.probe_is_left;
+        let residual_conditions = shared.residual_conditions.as_slice();
+        if output.num_cols() != output_layout.width() {
+            return Err(ExecError::internal(
+                "parallel hash join output schema mismatch",
+            ));
+        }
+        if input.num_cols() < probe_types.len() {
+            return Err(ExecError::internal(format!(
+                "parallel hash join probe has {} columns, needs {}",
+                input.num_cols(),
+                probe_types.len()
+            )));
+        }
+        let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
+        let exact_int = keys.first().filter(|key| {
+            keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe && table.has_exact_int()
+        });
+        let mut build_buf = Chunk::new_with_capacity(build_types, 1);
+        let mut condition_chunk = Chunk::new_with_capacity(&shared.condition_types, 1);
+        let condition_evals = Cell::new(0u64);
+        let mut matched_build_rows = Vec::new();
+        let mut extra_outputs = Vec::new();
+        let mut candidates: Vec<RowPtr> = Vec::new();
+        for probe_index in 0..input.num_rows() {
+            let probe_row = input.get_row(probe_index);
+            candidates.clear();
+            if let Some(key) = exact_int {
+                if let Some(key) =
+                    exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
+                {
+                    candidates.extend_from_slice(table.probe_exact_int(key));
+                }
+            } else if let Some(key) =
+                row_hash_chunk(keys, probe_row, probe_types, offset).map_err(key_error)?
+            {
+                candidates.extend_from_slice(table.probe(key));
+            }
+            let mut matched = false;
+            for &ptr in &candidates {
+                let accepted = table
+                    .with_row(ptr, &mut build_buf, |build_row| {
+                        let (left, left_types, right, right_types) = if probe_is_left {
+                            (probe_row, probe_types, build_row, build_types)
+                        } else {
+                            (build_row, build_types, probe_row, probe_types)
+                        };
+                        if exact_int.is_none()
+                            && !equi_keys_equal_chunk_rows(
+                                keys,
+                                left,
+                                left_types,
+                                right,
+                                right_types,
+                            )
+                            .map_err(key_error)?
+                        {
+                            return Ok::<bool, ExecError>(false);
+                        }
+                        if !residual_conditions.is_empty()
+                            && !Self::matches_chunk_rows(
+                                &shared.ctx,
+                                residual_conditions,
+                                &condition_evals,
+                                &mut condition_chunk,
+                                left,
+                                right,
+                                left_types.len(),
+                                right_types.len(),
+                            )?
+                        {
+                            return Ok(false);
+                        }
+                        match kind {
+                            JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                                output_layout.chunks(
+                                    &mut output,
+                                    probe_is_left,
+                                    probe_row,
+                                    build_row,
+                                );
+                            }
+                            JoinKind::Semi if !builds_preserved => {
+                                output_layout.preserved(&mut output, probe_row);
+                            }
+                            JoinKind::LeftOuterSemi if !builds_preserved => {
+                                output_layout.preserved(&mut output, probe_row);
+                                output.append_datum(output_layout.width(), &Datum::Int(1));
+                            }
+                            JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
+                        }
+                        Ok(true)
+                    })
+                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+                if builds_preserved && accepted {
+                    matched_build_rows.push(ptr);
+                }
+                matched |= accepted;
+                if output.is_full() {
+                    let fresh =
+                        Chunk::new(&shared.output_types, shared.init_cap, shared.max_chunk_size);
+                    extra_outputs.push(std::mem::replace(&mut output, fresh));
+                }
+                if accepted
+                    && !builds_preserved
+                    && matches!(
+                        kind,
+                        JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
+                    )
+                {
+                    break;
+                }
+            }
+            if !matched && !builds_preserved {
+                match kind {
+                    JoinKind::Left | JoinKind::Right => output_layout.unmatched(
+                        &mut output,
+                        probe_is_left,
+                        probe_row,
+                        build_types.len(),
+                    ),
+                    JoinKind::AntiSemi => output_layout.preserved(&mut output, probe_row),
+                    JoinKind::LeftOuterSemi => {
+                        output_layout.preserved(&mut output, probe_row);
+                        output.append_datum(output_layout.width(), &Datum::Int(0));
+                    }
+                    JoinKind::Inner | JoinKind::Semi => {}
+                }
+                if output.is_full() {
+                    let fresh =
+                        Chunk::new(&shared.output_types, shared.init_cap, shared.max_chunk_size);
+                    extra_outputs.push(std::mem::replace(&mut output, fresh));
+                }
+            }
+        }
+        Ok(ParallelProbeResult {
+            input,
+            output,
+            extra_outputs,
+            matched_build_rows,
+            condition_evals: condition_evals.get(),
+        })
     }
 
     /// Evaluates one probe chunk against a unique exact-integer build table.
@@ -3055,6 +3241,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     return Ok(ParallelProbeResult {
                         input,
                         output,
+                        extra_outputs: Vec::new(),
                         matched_build_rows,
                         condition_evals: condition_evals.get(),
                     });
@@ -3095,6 +3282,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     return Ok(ParallelProbeResult {
                         input,
                         output,
+                        extra_outputs: Vec::new(),
                         matched_build_rows,
                         condition_evals: condition_evals.get(),
                     });
@@ -3126,6 +3314,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 return Ok(ParallelProbeResult {
                     input,
                     output,
+                    extra_outputs: Vec::new(),
                     matched_build_rows,
                     condition_evals: condition_evals.get(),
                 });
@@ -3194,6 +3383,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         Ok(ParallelProbeResult {
             input,
             output,
+            extra_outputs: Vec::new(),
             matched_build_rows,
             condition_evals: condition_evals.get(),
         })

@@ -437,10 +437,9 @@ fn hash_path_matches_the_nested_loop_row_for_row() {
             !hashed.parallel_exact_int_enabled(),
             "duplicate build keys must not be classified as unique for {kind:?}"
         );
-        assert_eq!(
-            hashed.parallel_probe_windows(),
-            0,
-            "duplicate build keys must keep the bounded unique-key path disabled for {kind:?}"
+        assert!(
+            hashed.parallel_probe_windows() > 0,
+            "duplicate build keys probe on workers too, as Go's hash_join_v2 does, for {kind:?}"
         );
         assert_eq!(hashed_rows, run(&mut looped), "{kind:?}");
     }
