@@ -41,6 +41,34 @@ fn plan(session: &mut Session, sql: &str) -> Vec<String> {
         .collect()
 }
 
+fn plan_shape(rows: Vec<String>) -> Vec<String> {
+    rows.into_iter()
+        .map(|row| {
+            let mut out = String::new();
+            let mut replacing = false;
+            for ch in row.chars() {
+                if replacing && ch.is_ascii_digit() {
+                    continue;
+                }
+                if ch == '_' {
+                    replacing = true;
+                    out.push(ch);
+                    continue;
+                }
+                if replacing {
+                    out.push('#');
+                    replacing = false;
+                }
+                out.push(ch);
+            }
+            if replacing {
+                out.push('#');
+            }
+            out
+        })
+        .collect()
+}
+
 fn derived_session() -> Session {
     let mut session = Session::new();
     session
@@ -184,18 +212,18 @@ fn a_derived_table_over_no_table_reaches_table_dual() {
 fn two_derived_tables_join_without_a_base_table() {
     let mut session = derived_session();
     assert_eq!(
-        plan(
+        plan_shape(plan(
             &mut session,
             "explain select * from (select * from t) x, (select * from t) y where x.a = y.b"
-        ),
+        )),
         vec![
-            "HashJoin_7|12487.50|root||inner join, equal:[eq(test.t.a, test.t.b)]",
-            "├─TableReader_3(Build)|9990.00|root||data:Selection",
-            "│ └─Selection_2|9990.00|cop[tikv]||not(isnull(test.t.b))",
-            "│   └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
-            "└─TableReader_6(Probe)|9990.00|root||data:Selection",
-            "  └─Selection_5|9990.00|cop[tikv]||not(isnull(test.t.a))",
-            "    └─TableFullScan_4|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "HashJoin_#|12487.50|root||inner join, equal:[eq(test.t.a, test.t.b)]",
+            "├─TableReader_#(Build)|9990.00|root||data:Selection_#",
+            "│ └─Selection_#|9990.00|cop[tikv]||not(isnull(test.t.b))",
+            "│   └─TableFullScan_#|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "└─TableReader_#(Probe)|9990.00|root||data:Selection_#",
+            "  └─Selection_#|9990.00|cop[tikv]||not(isnull(test.t.a))",
+            "    └─TableFullScan_#|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // Go's captured rows for the same join, verbatim: 1|1|1|1|1|1 and so on.
