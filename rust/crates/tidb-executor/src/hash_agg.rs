@@ -2638,44 +2638,19 @@ impl<C: HashAggContext> HashAggExec<C> {
                     }
                 }
             }
-            // A fixed-scale DECIMAL AVG can accumulate the raw MyDecimal
-            // coefficient directly. The normal expression path remains the
-            // fallback for computed, mixed-scale, or non-decimal arguments.
-            if matches!(f.kind, AggKind::Avg) {
-                let column = f.arg.as_ref().and_then(Expression::as_column);
-                let decimal_column = column.filter(|column| {
-                    column
-                        .get_static_type()
-                        .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::NewDecimal)
-                });
-                if let Some(column) = decimal_column {
-                    let count = if f.extra_args.is_empty() {
-                        Some(1)
-                    } else if f.extra_args.len() == 1 {
-                        match f.extra_args[0].eval(&self.ctx, row)? {
-                            Datum::Int(value) if value >= 0 => Some(value),
-                            Datum::UInt(value) => i64::try_from(value).ok(),
-                            Datum::Null => Some(0),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    };
-                    if let Some(count) = count {
-                        if count == 0 {
+            // A fixed-scale DECIMAL AVG accumulates the raw MyDecimal
+            // coefficient directly, in partial and in final mode (Go
+            // `avgOriginal4Decimal` / `avgPartial4Decimal`). The expression
+            // path remains the fallback for computed, mixed-scale, or
+            // non-decimal arguments.
+            if let Some(cells) = read_avg_decimal_cells(f, row) {
+                match cells {
+                    None => continue,
+                    Some((coefficient, scale, count)) => {
+                        if state.update_avg_decimal_fast(coefficient, scale, count) {
                             continue;
                         }
-                        if row.is_null(column.index as usize) {
-                            continue;
-                        }
-                        if let Some((coefficient, scale)) =
-                            row.get_my_decimal(column.index as usize).to_i128_scaled()
-                        {
-                            if state.update_avg_decimal_fast(coefficient, scale, count) {
-                                continue;
-                            }
-                            state.partial.materialize_avg_fast();
-                        }
+                        state.partial.materialize_avg_fast();
                     }
                 }
             }
@@ -2996,6 +2971,67 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
 /// values it keeps separate. Go evaluates these inside
 /// `UpdatePartialResult`, per function; this port evaluates them once at the
 /// call site and hands the result to [`AggState::update`].
+/// The cells a fixed-scale DECIMAL AVG folds without a Datum, as Go's
+/// `avgOriginal4Decimal` (partial mode: `EvalDecimal` on the argument) and
+/// `avgPartial4Decimal` (final mode: `EvalInt` on the partial count,
+/// `EvalDecimal` on the partial sum) read them. `None` when the function's
+/// shape is not the bare-column one; `Some(None)` when Go skips the row (a
+/// NULL count or sum); `Some(Some((coefficient, scale, count)))` otherwise.
+fn read_avg_decimal_cells(
+    f: &AggFunc,
+    row: tidb_chunk::row::Row<'_>,
+) -> Option<Option<(i128, u32, i64)>> {
+    if !matches!(f.kind, AggKind::Avg) || f.distinct || !f.order_by.is_empty() {
+        return None;
+    }
+    let (count_column, sum_column) = match f.extra_args.as_slice() {
+        [] => (None, f.arg.as_ref().and_then(Expression::as_column)?),
+        [sum] => (
+            Some(f.arg.as_ref().and_then(Expression::as_column)?),
+            sum.as_column()?,
+        ),
+        _ => return None,
+    };
+    let sum_type = sum_column.get_static_type()?;
+    if sum_type.code() != tidb_datatype::FieldTypeCode::NewDecimal {
+        return None;
+    }
+    let sum_index = usize::try_from(sum_column.index).ok()?;
+    let count = match count_column {
+        None => 1,
+        Some(column) => {
+            let count_type = column.get_static_type()?;
+            if !matches!(
+                count_type.code(),
+                tidb_datatype::FieldTypeCode::Tiny
+                    | tidb_datatype::FieldTypeCode::Short
+                    | tidb_datatype::FieldTypeCode::Int24
+                    | tidb_datatype::FieldTypeCode::Long
+                    | tidb_datatype::FieldTypeCode::LongLong
+            ) {
+                return None;
+            }
+            let index = usize::try_from(column.index).ok()?;
+            if row.is_null(index) {
+                return Some(None);
+            }
+            let bits = row.get_int64(index);
+            if count_type.is_unsigned() {
+                i64::try_from(bits as u64).ok()?
+            } else if bits < 0 {
+                return None;
+            } else {
+                bits
+            }
+        }
+    };
+    if row.is_null(sum_index) {
+        return Some(None);
+    }
+    let (coefficient, scale) = row.get_my_decimal(sum_index).to_i128_scaled()?;
+    Some(Some((coefficient, scale, count)))
+}
+
 fn eval_agg_input<C: Columns>(
     f: &AggFunc,
     ctx: &C,

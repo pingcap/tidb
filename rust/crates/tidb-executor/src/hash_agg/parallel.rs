@@ -1692,6 +1692,21 @@ fn update_group<C: Columns>(
         if matches!(func.kind, AggKind::FirstRow) && state.has_first_row() {
             continue;
         }
+        // A fixed-scale DECIMAL AVG folds the raw cells (Go
+        // `avgOriginal4Decimal` / `avgPartial4Decimal.UpdatePartialResult`:
+        // `DecimalAdd` on the MyDecimal, `p.count += inputCount`), as the
+        // serial executor does; the expression path remains the fallback.
+        if let Some(cells) = read_avg_decimal_cells(func, row) {
+            match cells {
+                None => continue,
+                Some((coefficient, scale, count)) => {
+                    if state.update_avg_decimal_fast(coefficient, scale, count) {
+                        continue;
+                    }
+                    state.partial.materialize_avg_fast();
+                }
+            }
+        }
         let mut extra_values = Vec::new();
         let input = eval_agg_input(func, ctx, row, &mut extra_values)?;
         if let Some((coefficient, scale)) = input.decimal_coefficient {

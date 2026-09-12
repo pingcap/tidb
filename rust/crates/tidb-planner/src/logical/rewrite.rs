@@ -160,6 +160,56 @@ fn all_join_leaf_schemas(node: &LogicalPlan) -> Vec<Schema> {
 /// column NDV. Returning `None` keeps genuinely pseudo tables on
 /// `pseudoSelectivity`; it must not overwrite loaded NDVs with the pseudo
 /// 1/1000 equality rate.
+/// The selectivity of `conditions`, all on `column`, as the ranger's ranges
+/// against the column's histogram (Go `Selectivity` through
+/// `BuildColumnRange` and `GetRowCountByColumnRanges`). `None` when the
+/// ranger cannot turn every condition into an access range or the table has
+/// no histogram collection.
+fn column_ranges_selectivity(
+    table_stats: &StatsInfo,
+    column: &tidb_expr::column::Column,
+    conditions: &[Expression],
+) -> Option<f64> {
+    let field_type = column.ret_type.as_ref()?;
+    let hist = table_stats.hist_coll()?;
+    let built = crate::ranger::ranger::build_column_range(
+        conditions,
+        field_type,
+        crate::ranger::checker::UNSPECIFIED_LENGTH,
+        0,
+    )
+    .ok()?;
+    if !built.remained_conds.is_empty() || built.access_conds.is_empty() {
+        return None;
+    }
+    let ranges = built
+        .ranges
+        .iter()
+        .map(|range| {
+            crate::cardinality::row_count_estimator::ColumnRange::new(
+                range.low_val[0].clone(),
+                range.high_val[0].clone(),
+                range.low_exclude,
+                range.high_exclude,
+            )
+        })
+        .collect::<Vec<_>>();
+    let is_handle = hist.pk_is_handle()
+        && hist
+            .column(column.unique_id)
+            .is_some_and(|stats| stats.is_handle);
+    let estimate = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+        hist.histogram(column.unique_id).map(|stats| stats.as_ref()),
+        &ranges,
+        field_type.collation(),
+        hist.realtime_count(),
+        hist.modify_count(),
+        is_handle,
+        crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+    );
+    Some((estimate.est / table_stats.row_count()).min(1.0))
+}
+
 pub(crate) fn analyzed_filter_selectivity(
     table_stats: &StatsInfo,
     conditions: &[Expression],
@@ -173,7 +223,50 @@ pub(crate) fn analyzed_filter_selectivity(
 
     let mut selectivity_total = 1.0_f64;
     let mut recognized = false;
-    for condition in conditions {
+    // Go `Selectivity` runs every condition on one column through the
+    // ranger together (`ExtractAccessConditionsForColumn` and
+    // `BuildColumnRange` over the whole list), so `l_shipdate >= a AND
+    // l_shipdate < b` is one range against the histogram rather than two
+    // estimates multiplied as if independent; the product put TPC-H Q15's
+    // three-month window at 27% of lineitem instead of 3.8%, and the row
+    // count chose a hash join over Go's index hash join.
+    let mut handled = vec![false; conditions.len()];
+    let mut per_column: Vec<(i64, Vec<usize>)> = Vec::new();
+    for (index, condition) in conditions.iter().enumerate() {
+        let Expression::ScalarFunction(function) = condition else {
+            continue;
+        };
+        if !matches!(function.func_name.lowercase(), "lt" | "le" | "gt" | "ge") {
+            continue;
+        }
+        let columns = tidb_expr::simple_expr::extract_columns(condition);
+        if columns.len() != 1 {
+            continue;
+        }
+        let unique_id = columns[0].unique_id;
+        match per_column.iter_mut().find(|(column, _)| *column == unique_id) {
+            Some((_, indices)) => indices.push(index),
+            None => per_column.push((unique_id, vec![index])),
+        }
+    }
+    for (_, indices) in per_column
+        .into_iter()
+        .filter(|(_, indices)| indices.len() >= 2)
+    {
+        let column = tidb_expr::simple_expr::extract_columns(&conditions[indices[0]]).remove(0);
+        let group: Vec<Expression> = indices.iter().map(|&index| conditions[index].clone()).collect();
+        if let Some(selectivity) = column_ranges_selectivity(table_stats, &column, &group) {
+            selectivity_total *= selectivity;
+            recognized = true;
+            for &index in &indices {
+                handled[index] = true;
+            }
+        }
+    }
+    for (index, condition) in conditions.iter().enumerate() {
+        if handled[index] {
+            continue;
+        }
         let Expression::ScalarFunction(function) = condition else {
             selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
             continue;
@@ -190,43 +283,14 @@ pub(crate) fn analyzed_filter_selectivity(
         ) {
             let columns = tidb_expr::simple_expr::extract_columns(condition);
             if columns.len() == 1 {
-                let column = &columns[0];
-                if let (Some(field_type), Some(hist)) =
-                    (column.ret_type.as_ref(), table_stats.hist_coll())
-                {
-                    if let Ok(built) = crate::ranger::ranger::build_column_range(
-                        std::slice::from_ref(condition),
-                        field_type,
-                        crate::ranger::checker::UNSPECIFIED_LENGTH,
-                        0,
-                    ) {
-                        if built.remained_conds.is_empty() && !built.access_conds.is_empty() {
-                            let ranges = built
-                                .ranges
-                                .iter()
-                                .map(|range| {
-                                    crate::cardinality::row_count_estimator::ColumnRange::new(
-                                        range.low_val[0].clone(),
-                                        range.high_val[0].clone(),
-                                        range.low_exclude,
-                                        range.high_exclude,
-                                    )
-                                })
-                                .collect::<Vec<_>>();
-                            let is_handle = hist.pk_is_handle()
-                                && hist
-                                    .column(column.unique_id)
-                                    .is_some_and(|stats| stats.is_handle);
-                            let estimate = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
-                                hist.histogram(column.unique_id).map(|stats| stats.as_ref()), &ranges,
-                                field_type.collation(), hist.realtime_count(), hist.modify_count(),
-                                is_handle, crate::cardinality::row_count_estimator::EstimatorOptions::default(),
-                            );
-                            selectivity_total *= (estimate.est / table_stats.row_count()).min(1.0);
-                            recognized = true;
-                            continue;
-                        }
-                    }
+                if let Some(selectivity) = column_ranges_selectivity(
+                    table_stats,
+                    &columns[0],
+                    std::slice::from_ref(condition),
+                ) {
+                    selectivity_total *= selectivity;
+                    recognized = true;
+                    continue;
                 }
             }
         }
@@ -2786,6 +2850,98 @@ mod analyzed_filter_selectivity_tests {
         assert!(
             (selectivity - 0.1).abs() > 1e-9,
             "the NDV fallback must not answer a loaded histogram"
+        );
+    }
+
+    /// Go `Selectivity` builds one range set per column from every
+    /// condition on it: `a >= 2 AND a < 3` is estimated as the single range
+    /// `[2, 3)` against the histogram, not as the two conditions' estimates
+    /// multiplied as if they were independent.
+    #[test]
+    fn two_range_conditions_on_one_column_estimate_as_one_range() {
+        let unique_id = 7;
+        let histogram = Histogram {
+            id: 1,
+            ndv: 10,
+            last_update_version: 1,
+            buckets: vec![
+                Bucket {
+                    count: 30,
+                    repeat: 30,
+                    ndv: 1,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(1),
+                },
+                Bucket {
+                    count: 100,
+                    repeat: 70,
+                    ndv: 1,
+                    lower_bound: Datum::Int(2),
+                    upper_bound: Datum::Int(2),
+                },
+                Bucket {
+                    count: 1_000,
+                    repeat: 100,
+                    ndv: 8,
+                    lower_bound: Datum::Int(3),
+                    upper_bound: Datum::Int(10),
+                },
+            ],
+            ..Histogram::default()
+        };
+        let hist_coll = HistColl::new(false, 1_000, [])
+            .with_histograms([(
+                unique_id,
+                std::sync::Arc::new(ColumnStats {
+                    histogram,
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )])
+            .with_modify_count(0);
+        let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
+        let long = || FieldType::new(FieldTypeCode::LongLong);
+        let compare = |name: &str, value: i64| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                long(),
+                vec![
+                    Expression::Column(Column::new(unique_id, long())),
+                    Expression::Constant(Constant::new(Datum::Int(value), long())),
+                ],
+            ))
+        };
+        let joint = analyzed_filter_selectivity(&table_stats, &[compare("ge", 2), compare("lt", 3)])
+            .expect("an analyzed profile keeps the ranges");
+        let ge_alone = analyzed_filter_selectivity(&table_stats, &[compare("ge", 2)]).unwrap();
+        let lt_alone = analyzed_filter_selectivity(&table_stats, &[compare("lt", 3)]).unwrap();
+        // The estimator's own answer for the one range the ranger builds.
+        let hist = table_stats.hist_coll().unwrap();
+        let one_range = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+            hist.histogram(unique_id).map(|stats| stats.as_ref()),
+            &[crate::cardinality::row_count_estimator::ColumnRange::new(
+                Datum::Int(2),
+                Datum::Int(3),
+                false,
+                true,
+            )],
+            long().collation(),
+            hist.realtime_count(),
+            hist.modify_count(),
+            false,
+            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        )
+        .est
+            / 1_000.0;
+        assert!(
+            (joint - one_range).abs() < 1e-12,
+            "{joint} != {one_range} (the [2, 3) range)"
+        );
+        assert!(
+            (joint - ge_alone * lt_alone).abs() > 1e-6,
+            "{joint} is the independent product {ge_alone} * {lt_alone}"
         );
     }
 
