@@ -16,7 +16,6 @@ package executor
 
 import (
 	"errors"
-	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
