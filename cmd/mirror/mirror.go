@@ -233,6 +233,35 @@ func dumpBuildNamingConventionArgsForRepo(repoName string) {
 	}
 }
 
+// dumpBuildFileGenerationArgsForRepo forces gazelle to refresh build files for
+// modules that ship their own. See dumpPatchCmdsForRepo for why jwx/v3 needs it.
+func dumpBuildFileGenerationArgsForRepo(repoName string) {
+	if repoName == "com_github_lestrrat_go_jwx_v3" {
+		fmt.Printf("        build_file_generation = \"on\",\n")
+	}
+}
+
+// dumpPatchCmdsForRepo rewrites bzlmod-style load labels for modules that ship
+// their own build files. jwx/v3 checks in build files that load "@rules_go" and
+// "@gazelle", the bzlmod repository names, while this WORKSPACE-mode build
+// defines "@io_bazel_rules_go" and "@bazel_gazelle". Gazelle keeps the existing
+// load label when it updates a build file in place, and go_repository applies
+// patch commands after build file generation, so the labels have to be fixed
+// here rather than by regeneration.
+//
+// The rewrite passes a backup suffix to `sed -i` because BSD sed, which macOS
+// ships, requires that operand and would otherwise consume the following `-e`.
+// The backups are deleted by a second command.
+func dumpPatchCmdsForRepo(repoName string) {
+	if repoName == "com_github_lestrrat_go_jwx_v3" {
+		fmt.Printf(`        patch_cmds = [
+            "find . -name 'BUILD*' -exec sed -i.bak -e 's|@rules_go//|@io_bazel_rules_go//|g' -e 's|@gazelle//|@bazel_gazelle//|g' {} +",
+            "find . -name 'BUILD*.bak' -delete",
+        ],
+`)
+	}
+}
+
 func dumpNewDepsBzl(
 	listed map[string]listedModule,
 	downloaded map[string]downloadedModule,
@@ -272,10 +301,12 @@ def go_deps():
 			fmt.Printf(`        build_tags = ["nextgen", "intest"],
 `)
 		}
+		dumpBuildFileGenerationArgsForRepo(repoName)
 		fmt.Printf(`        build_file_proto_mode = "%s",
 `, buildFileProtoModeForRepo(repoName))
 		dumpBuildNamingConventionArgsForRepo(repoName)
 		fmt.Printf("        importpath = \"%s\",\n", mod.Path)
+		dumpPatchCmdsForRepo(repoName)
 		if err := dumpPatchArgsForRepo(repoName); err != nil {
 			return err
 		}

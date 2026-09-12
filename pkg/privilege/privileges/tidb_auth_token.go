@@ -23,9 +23,10 @@ import (
 	"time"
 	"unsafe"
 
-	jwkRepo "github.com/lestrrat-go/jwx/v2/jwk"
-	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
-	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
+	jwkRepo "github.com/lestrrat-go/jwx/v3/jwk"
+	jwsRepo "github.com/lestrrat-go/jwx/v3/jws"
+	jwtRepo "github.com/lestrrat-go/jwx/v3/jwt"
+	"github.com/lestrrat-go/jwx/v3/transform"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -106,8 +107,8 @@ func (jwks *JWKSImpl) checkSigWithRetry(tokenString string, retryTime int) (map[
 		if err = jwt.(json.Unmarshaler).UnmarshalJSON(verifiedPayload); err != nil {
 			continue
 		}
-		claims, err := jwt.AsMap(context.Background())
-		if err != nil {
+		claims := make(map[string]any, len(jwt.Keys()))
+		if err = transform.AsMap(jwt, claims); err != nil {
 			continue
 		}
 		return claims, nil
