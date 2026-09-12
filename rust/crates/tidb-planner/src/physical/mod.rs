@@ -2131,6 +2131,8 @@ pub struct PhysicalBatchPointGet {
     pub unsigned_handle: bool,
     /// One range per retained point key.
     pub ranges: crate::ranger::types::Ranges,
+    /// Physical partition ID per retained range, for a routed fast batch.
+    pub partition_ids: Option<Vec<i64>>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
     /// Go `KeepOrder`.
@@ -3508,6 +3510,7 @@ impl PhysicalPlan {
                 table_id: op.table_id,
                 index_id: op.index_id,
                 ranges: op.ranges.clone(),
+                partition_ids: op.partition_ids.clone(),
                 unsigned_handle: op.unsigned_handle,
                 range_rebuild: op.range_rebuild.clone(),
                 keep_order: op.keep_order,

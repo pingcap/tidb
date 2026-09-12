@@ -831,6 +831,8 @@ pub struct HandleSourceExec {
     /// batch executor uses `BatchGet` even when its retained list happens to
     /// contain one handle.
     single_point_get: bool,
+    /// One physical partition per handle, retained by the fast batch plan.
+    partition_ids: Option<Vec<i64>>,
     /// Where `_tidb_rowid` sits in the source row, when the schema carries
     /// it. Go's extra handle column reports the record HANDLE rather than any
     /// stored value, so nothing in the decoded row fills this slot and the
@@ -859,6 +861,7 @@ impl HandleSourceExec {
             output_columns: None,
             extra_handle_slot: None,
             single_point_get: false,
+            partition_ids: None,
         }
     }
 
@@ -905,6 +908,7 @@ impl HandleSourceExec {
             extra_handle_slot: None,
             preloaded: None,
             single_point_get: false,
+            partition_ids: None,
         }
     }
 
@@ -929,6 +933,7 @@ impl HandleSourceExec {
             extra_handle_slot: None,
             preloaded: None,
             single_point_get: false,
+            partition_ids: None,
         }
     }
 
@@ -953,7 +958,13 @@ impl HandleSourceExec {
             extra_handle_slot: None,
             preloaded: None,
             single_point_get: true,
+            partition_ids: None,
         }
+    }
+
+    pub(crate) fn with_partition_ids(mut self, ids: Option<Vec<i64>>) -> Self {
+        self.partition_ids = ids;
+        self
     }
 
     /// The live count of rows this source produced.
@@ -992,8 +1003,21 @@ impl Executor for HandleSourceExec {
                 .get_row_by_handle_with_context(handle, &self.decode_context)
                 .map_err(ExecError::from)?]
         } else {
+            if self
+                .partition_ids
+                .as_ref()
+                .is_some_and(|ids| ids.len() != self.handles.len())
+            {
+                return Err(ExecError::unsupported(
+                    "batch point partition routes lost alignment",
+                ));
+            }
             self.table
-                .stored_records_batched(&self.handles, None, &self.decode_context)
+                .stored_records_batched(
+                    &self.handles,
+                    self.partition_ids.as_deref(),
+                    &self.decode_context,
+                )
                 .map_err(ExecError::from)?
         };
         self.preloaded = Some(rows);
@@ -5338,6 +5362,53 @@ mod tests {
             comment: String::new(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn partition_batch_reads_only_the_partitions_its_keys_reach() {
+        let storage = CountingStorage::default();
+        let gets = Arc::clone(&storage.gets);
+        let mut table = KvTable::with_storage(77, vec![column("id", 1)], Box::new(storage));
+        table.set_pk_handle_offset(0);
+        table.set_partition(crate::partition_routing::PartitionSpec {
+            kind: crate::partition_routing::PartitionKind::Hash,
+            expr_text: "id".to_owned(),
+            expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
+            dependencies: vec!["id".to_owned()],
+            definitions: (0..3)
+                .map(|ordinal| crate::partition_routing::PartitionDef {
+                    id: 101 + ordinal,
+                    name: format!("p{ordinal}"),
+                    ..Default::default()
+                })
+                .collect(),
+            overlapping_dropping_partition_indices: Vec::new(),
+            is_empty_columns: false,
+        });
+        for value in 1..=3 {
+            table
+                .insert_row(&[Datum::Int(value)], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("routed_batch", table);
+        gets.store(0, Ordering::Relaxed);
+        let mut rows = run_select_on(
+            "SELECT id FROM routed_batch WHERE id IN (1,2,1)",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        rows.sort_by_key(|row| match row[0] {
+            Datum::Int(value) => value,
+            _ => -1,
+        });
+        assert_eq!(rows, vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]);
+        assert_eq!(
+            gets.load(Ordering::Relaxed),
+            2,
+            "one batch per reached partition, none for p0"
+        );
     }
 
     #[test]

@@ -372,6 +372,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         index_id: Some(2),
         unsigned_handle: false,
         ranges: vec![point_range(0), point_range(1)],
+        partition_ids: None,
         range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
             vec![parameter_in_condition(index_column.clone(), &[1, 2])],
             vec![index_column],
@@ -605,6 +606,7 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
         index_id: Some(5),
         unsigned_handle: false,
         ranges: vec![template_range.clone(), template_range],
+        partition_ids: None,
         range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
             vec![dnf],
             vec![first, second],

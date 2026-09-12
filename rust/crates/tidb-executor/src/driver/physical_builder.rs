@@ -2860,6 +2860,22 @@ fn build_batch_point_get(
         ));
     }
     let mut handles = point_handles(&table, &batch.ranges, ctx)?;
+    let routes = if let Some(ids) = &batch.partition_ids {
+        if ids.len() != handles.len() {
+            return Err(DriverError::unsupported(
+                "batch point partition routes lost alignment",
+            ));
+        }
+        Some(
+            handles
+                .iter()
+                .cloned()
+                .zip(ids.iter().copied())
+                .collect::<std::collections::HashMap<_, _>>(),
+        )
+    } else {
+        None
+    };
     let mut seen = std::collections::HashSet::with_capacity(handles.len());
     handles.retain(|handle| seen.insert(handle.clone()));
     if batch.keep_order {
@@ -2869,13 +2885,17 @@ fn build_batch_point_get(
             .is_some_and(|column| column.field_type.is_unsigned());
         sort_handles_for_keep_order(&mut handles, batch.desc, unsigned_pk_is_handle);
     }
-    let child = Box::new(HandleSourceExec::new_mapped_with_context(
-        meta(plan, schema),
-        table.clone(),
-        handles,
-        output_columns,
-        RowDecodeContext::for_query(ctx),
-    ));
+    let partition_ids = routes.map(|routes| handles.iter().map(|handle| routes[handle]).collect());
+    let child = Box::new(
+        HandleSourceExec::new_mapped_with_context(
+            meta(plan, schema),
+            table.clone(),
+            handles,
+            output_columns,
+            RowDecodeContext::for_query(ctx),
+        )
+        .with_partition_ids(partition_ids),
+    );
     Ok(wrap_point_index_usage(
         child,
         table,
@@ -4447,6 +4467,7 @@ mod tests {
             index_id: None,
             unsigned_handle: true,
             ranges: [3, 1, 3, 9].into_iter().map(point_range).collect(),
+            partition_ids: None,
             range_rebuild: None,
             keep_order: true,
             desc: false,
@@ -4512,6 +4533,7 @@ mod tests {
             index_id: Some(8),
             unsigned_handle: false,
             ranges: [30, 10, 30, 90].into_iter().map(point_range).collect(),
+            partition_ids: None,
             range_rebuild: None,
             keep_order: true,
             desc: false,

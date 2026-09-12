@@ -2317,6 +2317,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 if prop.index_join_prop.is_none()
                     && ctx.enable_point_get_conversion
                     && point_handle_ok
+                    // Go disallows ordinary partitioned batches in dynamic
+                    // prune mode, including an explicit PARTITION(p).
+                    && (ranges.len() == 1 || ds.dynamic_partition_access.is_none())
                     && !ranges.is_empty()
                     && ranges.iter().all(|range| {
                         !range.low_exclude
@@ -2370,6 +2373,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             index_id: None,
                             ranges,
                             unsigned_handle: handle_type.is_unsigned(),
+                            partition_ids: None,
                             range_rebuild: table_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Table),
@@ -2773,6 +2777,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             index_id: Some(source_index.id),
                             ranges: ranges.clone(),
                             unsigned_handle: false,
+                            partition_ids: None,
                             range_rebuild: index_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Index),

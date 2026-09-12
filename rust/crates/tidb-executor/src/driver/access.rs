@@ -1786,9 +1786,6 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     let Some(entry @ TableEntry::Kv(table)) = catalog.get_in(database, name) else {
         return Ok(None);
     };
-    if table.partition().is_some() {
-        return Ok(None);
-    }
     let columns = entry.column_list();
     let visible = table_ref.alias.as_deref().unwrap_or(name);
     let mut scope = single_table_scope(
@@ -1831,7 +1828,52 @@ fn try_fast_point_physical_plan_with_allocator_mode(
             )
         });
     }
-    if let Some(batch) = batch {
+    if let Some(mut batch) = batch {
+        let partition_ids = if let Some(partition) = table.partition() {
+            // Go newBatchPointGetPlan requires a bare partition column.
+            // Secondary and common keys need their own index-value routing.
+            if !matches!(
+                partition.kind,
+                crate::partition_routing::PartitionKind::Hash
+            ) || !matches!(partition.expr, Expression::Column(_))
+                || batch.index.is_some()
+                || batch.common_handle
+                || table.pk_handle_offset().is_none()
+            {
+                return Ok(None);
+            }
+            let handles = batch
+                .key_values
+                .iter()
+                .map(|values| match values.as_slice() {
+                    [Datum::Int(value)] => Ok(TableHandle::Int(*value)),
+                    [Datum::UInt(value)] => Ok(TableHandle::Int(*value as i64)),
+                    _ => Err(DriverError::unsupported("invalid partition batch handle")),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let routes = table.handle_partition_routes(&handles, &scope.zone, ctx);
+            let mut ids = Vec::with_capacity(routes.len());
+            let mut keys = Vec::with_capacity(routes.len());
+            for (key, route) in batch.key_values.into_iter().zip(routes) {
+                if let Some((_, id)) = route {
+                    keys.push(key);
+                    ids.push(id);
+                }
+            }
+            batch.key_values = keys;
+            Some(ids)
+        } else {
+            None
+        };
+        if batch.key_values.is_empty() {
+            let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
+            base.base
+                .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(0.0, [])));
+            base.base.set_schema(Some(schema));
+            return Ok(Some(tidb_planner::physical::PhysicalPlan::TableDual(
+                tidb_planner::physical::PhysicalTableDual::new(base, 0),
+            )));
+        }
         let mut base =
             tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "Batch_Point_Get", 0);
         base.base
@@ -1848,6 +1890,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
                 index_id: batch.index.as_ref().map(|(id, _)| *id),
                 unsigned_handle: table.unsigned_pk_handle(),
                 ranges,
+                partition_ids,
                 range_rebuild: None,
                 keep_order: false,
                 desc: false,
@@ -1855,6 +1898,9 @@ fn try_fast_point_physical_plan_with_allocator_mode(
         )));
     }
 
+    if table.partition().is_some() {
+        return Ok(None);
+    }
     let Some(point) = try_point_get(
         &PointPlanStmt::of_select(select),
         table,

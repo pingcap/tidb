@@ -1940,9 +1940,26 @@ fn a_batch_point_get_names_the_partitions_its_handles_reach() {
         session.run("EXPLAIN SELECT * FROM t PARTITION (P0) WHERE a IN (1,2)"),
     );
     assert!(
-        excluded.iter().any(|row| row[0].contains("TableDual")),
-        "Go prunes an all-excluded handle list to TableDual: {excluded:?}"
+        excluded
+            .iter()
+            .any(|row| row[0].contains("TableReader") && row[3] == "partition:dual"),
+        "Go's default dynamic pruning retains a reader over no partitions: {excluded:?}"
     );
+    session
+        .run("SET tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    let excluded_static = crate::tests_support::row_text(
+        session.run("EXPLAIN SELECT * FROM t PARTITION (P0) WHERE a IN (1,2)"),
+    );
+    assert!(
+        excluded_static
+            .iter()
+            .any(|row| row[0].contains("TableDual")),
+        "Go's static pruning replaces an excluded partition with TableDual: {excluded_static:?}"
+    );
+    session
+        .run("SET tidb_partition_prune_mode = 'dynamic'")
+        .unwrap();
     // Control: an UNPARTITIONED table prints no partition clause at all.
     session
         .run("CREATE TABLE u (a INT PRIMARY KEY, b INT)")

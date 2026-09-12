@@ -716,11 +716,22 @@ fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObjec
             point.table_id,
             point.index_id,
         ))),
-        PhysicalPlan::BatchPointGet(point) => Some(AccessObject::Scan(point_access(
-            catalog,
-            point.table_id,
-            point.index_id,
-        ))),
+        PhysicalPlan::BatchPointGet(point) => {
+            let mut access = point_access(catalog, point.table_id, point.index_id);
+            if let Some(ids) = &point.partition_ids {
+                if let Some(table) = catalog.physical_kv_table_by_id(point.table_id) {
+                    if let Some(partition) = table.partition() {
+                        access.partitions = partition
+                            .definitions
+                            .iter()
+                            .filter(|definition| ids.contains(&definition.id))
+                            .map(|definition| definition.name.clone())
+                            .collect();
+                    }
+                }
+            }
+            Some(AccessObject::Scan(access))
+        }
         PhysicalPlan::CTE(cte) => {
             if cte.cte_name.eq_ignore_ascii_case(&cte.cte_as_name) {
                 Some(AccessObject::Other(OtherAccessObject(format!(
