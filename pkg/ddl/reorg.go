@@ -496,19 +496,51 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
 		return nil
 	}
-	start, pid, err := getImportedKeyFromCheckpoint(sess, job)
+	checkpoint, err := getReorgCheckpoint(sess, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if pid != reorgInfo.PhysicalTableID {
+	if len(checkpoint.StartKey) > 0 && len(checkpoint.EndKey) > 0 {
+		if !overwriteLegacyReorgInfoFromCheckpoint(job, reorgInfo, checkpoint) {
+			return nil
+		}
+		err = updateDDLReorgHandle(
+			sess,
+			job.ID,
+			reorgInfo.StartKey,
+			reorgInfo.EndKey,
+			reorgInfo.PhysicalTableID,
+			reorgInfo.currElement,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
+	if checkpoint.PhysicalID != reorgInfo.PhysicalTableID {
 		// Current physical ID does not match checkpoint physical ID.
 		// Don't overwrite reorgInfo.StartKey.
 		return nil
 	}
-	if len(start) > 0 {
-		reorgInfo.StartKey = start
+	if len(checkpoint.GlobalSyncKey) > 0 {
+		reorgInfo.StartKey = checkpoint.GlobalSyncKey
 	}
 	return nil
+}
+
+func overwriteLegacyReorgInfoFromCheckpoint(job *model.Job, reorgInfo *reorgInfo, checkpoint *ingest.ReorgCheckpoint) bool {
+	// A non-positive physical ID is the zero-value result for a missing checkpoint.
+	if checkpoint.PhysicalID <= 0 {
+		return false
+	}
+	reorgInfo.StartKey = checkpoint.StartKey
+	reorgInfo.EndKey = checkpoint.EndKey
+	if len(reorgInfo.EndKey) > 0 {
+		reorgInfo.EndKey = adjustEndKeyAcrossVersion(job, reorgInfo.EndKey)
+	}
+	reorgInfo.PhysicalTableID = checkpoint.PhysicalID
+	return true
 }
 
 func extractElemIDs(r *reorgInfo) []int64 {
