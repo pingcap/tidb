@@ -344,6 +344,12 @@ func TestValidator(t *testing.T) {
 		// LATERAL derived tables pass preprocessing; validation happens in the planner.
 		{"SELECT * FROM t, LATERAL (SELECT t.a) AS dt", false, nil},
 		{"SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true", false, nil},
+
+		// SELECT can resolve _tidb_commit_ts. Unsupported access paths are rejected
+		// later while choosing a physical plan.
+		{"SELECT _tidb_commit_ts FROM t WHERE a = 1", false, nil},
+		{"SELECT a FROM t WHERE _tidb_commit_ts > 0", false, nil},
+		{"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t", false, nil},
 	}
 
 	store := testkit.CreateMockStore(t)
