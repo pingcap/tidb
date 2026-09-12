@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -161,6 +162,12 @@ func (observation *StatementRUOwnerObservationForTest) RecordedSuccessForTest() 
 }
 
 func TestStatementRUCalculationTraversal(t *testing.T) {
+	// A large total from earlier tests can lose precision when measuring increments.
+	oldTotal := metrics.RUV3Total
+	metrics.RUV3Total = prometheus.NewCounter(prometheus.CounterOpts{Name: "test_statement_ru_total"})
+	t.Cleanup(func() {
+		metrics.RUV3Total = oldTotal
+	})
 	t.Run("MemTable and Lock preserve child work", func(t *testing.T) {
 		ctx := mock.NewContext()
 		memTable := physicalop.PhysicalMemTable{}.Init(ctx, &property.StatsInfo{}, 0)
