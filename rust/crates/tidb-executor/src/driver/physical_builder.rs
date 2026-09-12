@@ -471,7 +471,7 @@ fn build_table_scan(
     // remove) rows living OUTSIDE the named partitions, which Go never
     // does.
     if let Some(access) = &scan.dynamic_partition_access {
-        if !access.all_partitions && !access.partitions.is_empty() {
+        if !access.all_partitions {
             let ids = access
                 .partitions
                 .iter()
