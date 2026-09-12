@@ -271,6 +271,20 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustUseIndexForConnection(strconv.FormatUint(tkProcess.ID, 10), "ib(b)")
+
+	// issue 57992: global binding should match the prepared statement after
+	// resolving the SELECT alias used in GROUP BY.
+	tk.MustExec("drop table if exists t_issue57992")
+	tk.MustExec("create table t_issue57992(d datetime)")
+	query := "select hour(`d`) as `hour` from t_issue57992 group by `hour`"
+	tk.MustExec("create global binding for " + query + " using " + query)
+
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustExec(fmt.Sprintf("prepare stmt_issue57992 from %q", query))
+	tk.MustExec("execute stmt_issue57992")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
 
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
