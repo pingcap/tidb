@@ -2471,6 +2471,15 @@ impl SessionVars {
         self.bulk_dml_enabled
     }
 
+    /// Go `SessionVars.BatchInsert`, set by `tidb_batch_insert`. Read from
+    /// the table rather than cached: only a failed autocommit commit asks.
+    #[must_use]
+    pub fn batch_insert(&self) -> bool {
+        self.get_system(tidb_vardef::tidb_vars::TIDB_BATCH_INSERT)
+            .map(|value| value.eq_ignore_ascii_case("ON") || value == "1")
+            .unwrap_or(tidb_vardef::defaults::DEF_BATCH_INSERT)
+    }
+
     /// Go `SessionVars.PessimisticTransactionFairLocking`, set by
     /// `tidb_pessimistic_txn_fair_locking`.
     #[must_use]
@@ -3962,6 +3971,9 @@ mod tests {
 
     #[test]
     fn global_analyze_defaults_update_the_vardef_backing_values() {
+        // `ANALYZE_DEFAULT_NUM_*` are process-wide too; the session-tier test
+        // that asserts on them runs apart from this one.
+        let _serialised = crate::tests_support::process_switch_tests();
         let _restore = RestoreAnalyzeDefaults {
             buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
                 .load(std::sync::atomic::Ordering::SeqCst),
@@ -4509,6 +4521,9 @@ mod tests {
 
     #[test]
     fn a_loaded_row_overrides_and_an_absent_one_still_falls_back_to_default() {
+        // Loading or replacing a whole GLOBAL table republishes the process
+        // switches; the tests that assert on them run apart from this one.
+        let _serialised = crate::tests_support::process_switch_tests();
         let globals = GlobalSysvars::new();
         globals.load_from_cluster([("AUTOCOMMIT".to_owned(), "OFF".to_owned())]);
         // The seeded row overrides, case-insensitively, exactly like `set`.
@@ -4521,6 +4536,9 @@ mod tests {
 
     #[test]
     fn a_loaded_row_naming_an_unknown_variable_is_skipped_not_refused() {
+        // Loading or replacing a whole GLOBAL table republishes the process
+        // switches; the tests that assert on them run apart from this one.
+        let _serialised = crate::tests_support::process_switch_tests();
         let globals = GlobalSysvars::new();
         // Bypasses `set`'s validation on purpose (a stored row already passed
         // it once), but an unrecognized name from an older/newer cluster must
@@ -4662,6 +4680,9 @@ mod tests {
 
     #[test]
     fn set_global_redact_log_updates_the_process_redaction_authority() {
+        // Loading or replacing a whole GLOBAL table republishes the process
+        // switches; the tests that assert on them run apart from this one.
+        let _serialised = crate::tests_support::process_switch_tests();
         let mut vars = SessionVars::new();
         vars.set_global("tidb_redact_log", "MARKER".to_owned())
             .unwrap();
@@ -4692,6 +4713,9 @@ mod tests {
     /// not publish until commit replacement.
     #[test]
     fn plan_replayer_retention_global_hook_updates_process_authority() {
+        // Loading or replacing a whole GLOBAL table republishes the process
+        // switches; the tests that assert on them run apart from this one.
+        let _serialised = crate::tests_support::process_switch_tests();
         let original = tidb_vardef::plan_replayer_file_retention_time();
         let mut vars = SessionVars::new();
         vars.set_global(
@@ -4850,6 +4874,9 @@ mod tests {
 
     #[test]
     fn replacing_a_cluster_global_image_preserves_instance_only_values() {
+        // Loading or replacing a whole GLOBAL table republishes the process
+        // switches; the tests that assert on them run apart from this one.
+        let _serialised = crate::tests_support::process_switch_tests();
         let globals = GlobalSysvars::new();
         globals
             .set_instance("tidb_general_log", "ON".to_owned())

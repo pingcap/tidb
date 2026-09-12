@@ -459,22 +459,27 @@ where
                 .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MDL, |value| {
                     value.eq_ignore_ascii_case("ON") || value == "1"
                 });
-            let running = {
-                let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-                tidb_exec::ddl_job_table::DdlJobTable::locate(&self.catalog)
-                    .and_then(|table| table.load(&mut snapshot))
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-            };
-            if !running.is_empty() {
-                // Go's exact refusal (`ddl.go:1267`).
-                return Err(SqlQueryError::unknown(
-                    "please wait for all jobs done".to_owned(),
-                ));
+            // `SwitchMDL`'s first line: a value the process already runs
+            // with is not a switch, so neither the job probe nor the meta
+            // write happens.
+            if enable != tidb_vardef::is_mdl_enabled(false) {
+                let running = {
+                    let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
+                    tidb_exec::ddl_job_table::DdlJobTable::locate(&self.catalog)
+                        .and_then(|table| table.has_jobs(&mut snapshot))
+                        .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+                };
+                if running {
+                    // Go's exact refusal (`ddl.go:1267`).
+                    return Err(SqlQueryError::unknown(
+                        "please wait for all jobs done".to_owned(),
+                    ));
+                }
+                plan.mutations.push(
+                    tidb_exec::cluster_sysvar_write::metadata_lock_mutation(enable)
+                        .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
+                );
             }
-            plan.mutations.push(
-                tidb_exec::cluster_sysvar_write::metadata_lock_mutation(enable)
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
-            );
         }
         let plan_is_empty = plan.is_empty();
         let changed = plan.changed;

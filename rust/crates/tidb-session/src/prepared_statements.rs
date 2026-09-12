@@ -160,6 +160,10 @@ impl Session {
         if is_unpreparable(&statement) {
             return Err(DriverError::UnsupportedPreparedStatement);
         }
+        // Go `Preprocess` at PREPARE (`handleTableName`): the retained
+        // statement names its tables by the database current NOW, so its
+        // requests below and every EXECUTE after a `USE` agree.
+        crate::binding::pin_current_database(&mut statement, self.current_database())?;
         let param_count = tidb_executor::parameter_count(&text, self.scanner_sql_mode())?;
         let limit_markers = limit_marker_orders(&statement);
         // Build statement-local planner state before locking the catalog: the

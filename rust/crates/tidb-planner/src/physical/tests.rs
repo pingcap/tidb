@@ -490,9 +490,9 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
 
 /// The plan-cache detacher builds a string key's point as its collation sort
 /// key under a binary-collated type (`convert_to_sort_key`; Go
-/// `convertPointToSortKeyInPlace`, `points.go:128`). The equality shortcut
-/// must emit that same shape, so a range built either way for the same
-/// statement is identical -- not merely encoding to the same key.
+/// `convertPointToSortKeyInPlace`, `points.go:128`). A rebuilt point range
+/// carries exactly that shape -- the detacher is the one path that builds
+/// it, as in Go's `buildRangeForIndexInfo`.
 #[test]
 fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
     use crate::physical_plan_cache::{

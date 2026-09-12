@@ -638,6 +638,9 @@ where
                     &self.memory,
                 )?;
                 self.partitions.push(current);
+                // The loop's trailing check, in the same place: a breach the
+                // spill did not clear stops the statement here too.
+                self.memory.check()?;
                 return Ok(());
             }
             self.memory.check()?;

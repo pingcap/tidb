@@ -238,11 +238,14 @@ impl Session {
     pub fn prepare_ast_parsed(
         &self,
         sql: &str,
-        statement: Stmt,
+        mut statement: Stmt,
     ) -> Result<PreparedAst, DriverError> {
+        // Go `GeneratePlanCacheStmtWithAST` preprocesses the node first
+        // (`handleTableName` pins every unqualified name to the current
+        // database), then collects the `VisitInfos` from it -- so the retained
+        // statement, its requests and every EXECUTE name the same tables.
+        crate::binding::pin_current_database(&mut statement, self.current_database())?;
         let parameter_count = tidb_executor::parsed_parameter_count(&statement);
-        // Go `GeneratePlanCacheStmtWithAST` collects the `VisitInfos` here,
-        // against the database current at PREPARE.
         let privilege_requests =
             crate::table_privilege::required_table_privileges(&statement, self.current_database());
         let planner_context = self.statement_context_for_stmt(&statement, false);

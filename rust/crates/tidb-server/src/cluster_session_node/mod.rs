@@ -174,6 +174,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::resultset_source::ResultSetSource;
 use chrono::{Datelike, Timelike, Utc};
+use tidb_ast::Stmt;
 use tidb_domain::historical_stats::{
     HistoricalStatsMetrics, HistoricalStatsWorker, InfoSchemaView, SessionInfoSchema,
     StatsHandle as HistoricalStatsHandle, TableMeta,
@@ -3166,6 +3167,7 @@ impl ClusterSessionFactory {
             stats_usage: Arc::clone(&self.stats_usage),
             global_vars: self.global_vars.clone(),
             buffer,
+            autocommit_txn_bytes: 0,
             slot,
             storage,
             transactions: Arc::clone(&self.transactions),
@@ -4220,6 +4222,10 @@ pub struct ClusterServerSession {
     /// This connection's staged writes, published by `COMMIT` (or by the end
     /// of an autocommit statement).
     buffer: MutationBuffer,
+    /// Go `doCommitWithRetry`'s `txnSize`, read from the buffer just before
+    /// the autocommit commit that may fail: the commit resets the buffer, and
+    /// the retry budget is decided after it.
+    autocommit_txn_bytes: usize,
     /// The slot every table of `session` reads through; rebound per statement.
     slot: Arc<Mutex<SwappableSnapshot>>,
     /// The handles every table of `session` was built over, kept so the
@@ -4593,6 +4599,11 @@ impl ClusterServerSession {
         // beyond this set is Go `DoneFairLocking`'s "unnecessary" locks.
         let mut round_wanted: std::collections::BTreeSet<Vec<u8>> =
             std::collections::BTreeSet::new();
+        // Go `OnPessimisticStmtStart` (`isolation/base.go:711`) starts fair
+        // locking for the statement when the session variable is ON, and
+        // `OnPessimisticStmtEnd` releases stale locks only in that mode
+        // (`IsInFairLockingMode`, `base.go:728`).
+        let fair_locking = self.session.vars().pessimistic_transaction_fair_locking();
         // Go `PessimisticTxn.MaxRetryCount` (`pkg/config/config.go`, default
         // 256): the safety valve on the statement retry, with Go's own error.
         let mut retries: u32 = 0;
@@ -4796,7 +4807,7 @@ impl ClusterServerSession {
                             // the locks earlier rounds of this statement
                             // took that its final round did not need are
                             // released now, not held to COMMIT.
-                            if retries > 0 {
+                            if retries > 0 && fair_locking {
                                 let stale: Vec<Vec<u8>> = statement_locked
                                     .iter()
                                     .filter(|key| !round_wanted.contains(*key))
@@ -4807,6 +4818,9 @@ impl ClusterServerSession {
                                         if let Err(error) =
                                             transaction.release_statement_locks(stale.clone())
                                         {
+                                            // The statement ran; its writes
+                                            // leave with its error.
+                                            self.buffer.restore(savepoint.clone());
                                             break Err(SqlQueryError::unknown(error));
                                         }
                                     }
@@ -4840,7 +4854,10 @@ impl ClusterServerSession {
                             );
                             continue;
                         }
-                        Err(error) => break Err(error),
+                        Err(error) => {
+                            self.buffer.restore(savepoint.clone());
+                            break Err(error);
+                        }
                     }
                     match self.commit_if_session_left_transaction().and_then(|()| {
                         self.flush_if_autocommit(
@@ -5048,7 +5065,10 @@ impl ClusterServerSession {
     /// computed from a stale read would introduce exactly the lost update this
     /// seam exists to prevent.
     fn may_retry_autocommit_statement(&self, error: &SqlQueryError, retried: u32) -> bool {
+        // Go `doCommitWithRetry` (`session.go:879`): never under
+        // `@@tidb_batch_insert`, whose earlier batches are already committed.
         error.code == ERR_WRITE_CONFLICT
+            && !self.session.vars().batch_insert()
             && retried < self.autocommit_retry_budget()
             && self.explicit.is_none()
             && !self.session.in_transaction()
@@ -5078,7 +5098,7 @@ impl ClusterServerSession {
         // 100 MiB `TxnTotalSizeLimit`, so the ratio is ~0 and the budget is
         // the full limit; the scaling is kept so a large statement retries
         // less, as Go's does.
-        let txn_bytes = self.buffer.staged_bytes() as u64;
+        let txn_bytes = self.autocommit_txn_bytes as u64;
         let size_limit = tidb_config::config_tree::config::get_global_config()
             .performance
             .txn_total_size_limit
@@ -5233,6 +5253,7 @@ impl ClusterServerSession {
             return Ok(());
         }
         let write_details = self.buffer_write_details();
+        self.autocommit_txn_bytes = self.buffer.staged_bytes();
         if let Some(write_transaction) = write_transaction {
             let transaction = write_transaction
                 .lock()
@@ -6397,8 +6418,26 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    /// Go `handleQuery`'s one `ParseSQL`: the connection parses each
+    /// statement of the command here and every door below reads that node.
+    fn parse_statement(&mut self, sql: &str) -> Result<Option<Stmt>, SqlQueryError> {
+        self.session
+            .parse_statement(sql)
+            .map(Some)
+            .map_err(map_error)
+    }
+
     fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
-        let Some(statement) = prepare_cluster_load_stats(sql) else {
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        self.local_infile_path_parsed(sql, &stmt)
+    }
+
+    fn local_infile_path_parsed(
+        &mut self,
+        _sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<String>, SqlQueryError> {
+        let Some(statement) = prepare_cluster_load_stats_parsed(stmt) else {
             return Ok(None);
         };
         if statement.path.is_empty() {
@@ -6412,8 +6451,18 @@ impl QuerySession for ClusterServerSession {
         sql: &str,
         data: &[u8],
     ) -> Result<WriteOutcome, SqlQueryError> {
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        self.execute_local_infile_parsed(sql, &stmt, data)
+    }
+
+    fn execute_local_infile_parsed(
+        &mut self,
+        _sql: &str,
+        stmt: &Stmt,
+        data: &[u8],
+    ) -> Result<WriteOutcome, SqlQueryError> {
         self.session.clear_statement_message();
-        if prepare_cluster_load_stats(sql).is_none() {
+        if prepare_cluster_load_stats_parsed(stmt).is_none() {
             return Err(SqlQueryError::unknown(
                 "statement did not request a client-local file",
             ));
@@ -6506,7 +6555,16 @@ impl QuerySession for ClusterServerSession {
     /// statement's OK-packet status flag agree with the in-process tier); this
     /// adds what the state means for cluster storage.
     fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
-        let control = classify_transaction_control(sql);
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        self.control_transaction_parsed(sql, &stmt)
+    }
+
+    fn control_transaction_parsed(
+        &mut self,
+        _sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<bool>, SqlQueryError> {
+        let control = classify_transaction_control_stmt(stmt);
         // Refused BEFORE the driver session is touched, which is the whole
         // point: `Session::control_transaction` sets `in_transaction` for any
         // BEGIN spelling, so honoring the refusal afterwards would leave the
@@ -6545,7 +6603,10 @@ impl QuerySession for ClusterServerSession {
         if matches!(control, Some(TransactionControl::Begin { .. })) {
             self.rebuild_catalog_now();
         }
-        let state = self.session.control_transaction(sql).map_err(map_error)?;
+        let state = self
+            .session
+            .control_transaction_stmt(stmt)
+            .map_err(map_error)?;
         let Some(in_transaction) = state else {
             return Ok(None);
         };
@@ -6587,18 +6648,27 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        self.execute_write_parsed(sql, &stmt)
+    }
+
+    /// One parse per command (Go `session.ParseSQL`, done by the connection
+    /// through [`QuerySession::parse_statement`]); routing, the SET door, the
+    /// kind, the resource group, the prelock keys and the run all read that
+    /// node.
+    fn execute_write_parsed(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<WriteOutcome>, SqlQueryError> {
         self.session.clear_statement_message();
         // Go resolves and plans against the current infoschema before it
         // chooses a statement snapshot. Keep schema refresh ahead of routing,
         // access-shape classification, and the statement lifecycle.
         self.rebuild_catalog_if_stale();
-        // One parse per command (Go `session.ParseSQL`); routing, the SET
-        // door, the kind, the resource group, the prelock keys and the run
-        // all read this node.
-        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
         // Routed before anything else: what happens to a stored-state change
         // must not depend on which answer shape it would otherwise have taken.
-        match self.schema_route(&stmt)? {
+        match self.schema_route(stmt)? {
             StatementRoute::Ddl(statement) => return self.run_ddl(sql, &statement).map(Some),
             StatementRoute::LocalTemporaryDdl => {
                 return self.run_local_temporary_ddl(sql).map(Some);
@@ -6621,7 +6691,7 @@ impl QuerySession for ClusterServerSession {
         }
         if self
             .session
-            .apply_set_stmt(&stmt)
+            .apply_set_stmt(stmt)
             .map_err(map_error)?
             .is_some()
         {
@@ -6635,12 +6705,12 @@ impl QuerySession for ClusterServerSession {
                 last_insert_id: 0,
             }));
         }
-        if self.session.statement_kind_parsed(&stmt) != StmtKind::Write {
+        if self.session.statement_kind_parsed(stmt) != StmtKind::Write {
             return Ok(None);
         }
         let owned = sql.to_owned();
-        let resource_group = self.session.statement_resource_group(&stmt).into_owned();
-        let prelock_keys = self.session.statement_prelock_keys(&stmt, &[]);
+        let resource_group = self.session.statement_resource_group(stmt).into_owned();
+        let prelock_keys = self.session.statement_prelock_keys(stmt, &[]);
         // A write declares nothing. Its read-before-write reaches the snapshot
         // as the same `get` a point-get SELECT issues, which is exactly why the
         // declaration is made from the statement rather than from the read.
@@ -7121,17 +7191,26 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        self.execute_parsed(sql, &stmt)
+    }
+
+    /// One parse per command (Go `session.ParseSQL`, done by the connection
+    /// through [`QuerySession::parse_statement`]).
+    fn execute_parsed<'a>(
+        &'a mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<QueryResult<'a>, SqlQueryError> {
         self.session.clear_statement_message();
         // Refresh before access-shape classification. Waiting until the
         // statement lifecycle would allow a stale point shape to select MaxTS
         // before the executor sees the current schema.
         self.rebuild_catalog_if_stale();
-        // One parse per command (Go `session.ParseSQL`).
-        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
         // The text protocol reaches DDL through `execute_write`; this covers a
         // front end that goes straight to the result-set path, so a routed
         // statement runs exactly once either way.
-        match self.schema_route(&stmt)? {
+        match self.schema_route(stmt)? {
             StatementRoute::Ddl(statement) => {
                 self.run_ddl(sql, &statement)?;
                 return Ok(QueryResult::new(Box::new(
@@ -7183,9 +7262,9 @@ impl QuerySession for ClusterServerSession {
         }
         let process_statement = self.session.retain_process_statement(sql);
         let owned = sql.to_owned();
-        let resource_group = self.session.statement_resource_group(&stmt).into_owned();
-        let prelock_keys = self.session.statement_prelock_keys(&stmt, &[]);
-        let shape = self.session.statement_read_shape_bound(&stmt);
+        let resource_group = self.session.statement_resource_group(stmt).into_owned();
+        let prelock_keys = self.session.statement_prelock_keys(stmt, &[]);
+        let shape = self.session.statement_read_shape_bound(stmt);
         // Go's `SELECT ... FOR UPDATE` on a clustered handle-pinned row folds
         // its lock INTO its one row read (`TryFastPlan` -> `PointGetPlan` with
         // `Lock=true`, executed by `getAndLock`). The text protocol reaches

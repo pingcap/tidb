@@ -1747,7 +1747,10 @@ impl Session {
         // checked here too so both early schema arms and later executor arms
         // have one pre-commit privilege boundary.
         if matches!(stmt, Stmt::Ddl(_)) {
-            self.require_statement_table_privileges(&stmt)?;
+            match prepared {
+                Some(requests) => self.check_table_privilege_requests(requests)?,
+                None => self.require_statement_table_privileges(&stmt)?,
+            }
         }
         // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
         if let Some(output) = self.apply_schema_stmt(&stmt)? {

@@ -175,6 +175,13 @@ impl DdlJobTable {
         Ok(())
     }
 
+    /// Whether any job row exists -- Go `SwitchMDL`'s `select 1 from
+    /// mysql.tidb_ddl_job` (`pkg/ddl/ddl.go:1262`), which reads no job body.
+    pub fn has_jobs<S: MetaSnapshot>(&self, snapshot: &mut S) -> Result<bool, DdlJobTableError> {
+        let pairs = scan_system_table_from_int_handle(snapshot, &self.view, i64::MIN)?;
+        Ok(!pairs.is_empty())
+    }
+
     /// Scans active jobs in the table's clustered `job_id` order, exactly as
     /// Go's scheduler query does.
     pub fn load<S: MetaSnapshot>(

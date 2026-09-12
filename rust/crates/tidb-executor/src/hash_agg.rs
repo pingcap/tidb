@@ -3776,10 +3776,26 @@ mod tests {
     #[test]
     fn a_cancellation_with_a_held_chunk_releases_its_charge() {
         let field_type = binary_varchar();
-        let values: [&[u8]; 3] = [b"alpha", b"beta", b"alpha"];
+        // Values well past the variable-length column's per-element estimate,
+        // so filling the source's chunk GROWS it: the charge the fetcher
+        // takes for that chunk is its growth, and a chunk that fits its
+        // preallocation would charge nothing and prove nothing.
+        let values: Vec<Vec<u8>> = (0..64u8).map(|i| vec![b'a' + i % 2; 40]).collect();
         let mut data = Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
-        for value in values {
+        for value in &values {
             data.append_bytes(0, value);
+        }
+        {
+            let mut probe =
+                Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
+            let before = probe.memory_usage();
+            for r in 0..data.num_rows() {
+                probe.append_row(data.get_row(r));
+            }
+            assert!(
+                probe.memory_usage() > before,
+                "the held chunk must carry a nonzero charge for the release to be observable"
+            );
         }
         let mut column = Column::new(1, field_type.clone());
         column.index = 0;

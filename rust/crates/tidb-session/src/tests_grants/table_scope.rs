@@ -321,3 +321,37 @@ fn a_prepared_execute_keeps_its_requests_and_checks_live_grants() {
         "the kept requests are checked against the grants as they stand now"
     );
 }
+
+/// Go pins the database current at PREPARE into the retained statement
+/// (`Preprocess` -> `handleTableName`, kept as `PlanCacheStmt.StmtDB`), so a
+/// `USE` between PREPARE and EXECUTE changes neither the table the statement
+/// reads nor the one its privilege check names: both are `test.t`, the
+/// granted one, and never `other.t`.
+#[test]
+fn a_prepared_statement_keeps_the_database_current_at_prepare() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("CREATE DATABASE other").unwrap();
+    boot.run("CREATE TABLE other.t (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    boot.run("GRANT SELECT ON test.t TO 'bob'@'%'").unwrap();
+    boot.run("GRANT CREATE TEMPORARY TABLES ON other.* TO 'bob'@'%'")
+        .unwrap();
+    bob.run("PREPARE s FROM 'SELECT b FROM t WHERE a = ?'")
+        .unwrap();
+    bob.run("SET @a = 1").unwrap();
+    bob.run("USE other").unwrap();
+
+    assert_eq!(
+        row_text(bob.run("EXECUTE s USING @a")),
+        vec![vec!["10".to_owned()]],
+        "EXECUTE reads test.t, the table current at PREPARE"
+    );
+
+    bob.run("PREPARE u FROM 'SELECT b FROM t WHERE a = ?'")
+        .unwrap();
+    assert_eq!(
+        denied(&mut bob, "EXECUTE u USING @a"),
+        table_denied("SELECT", "t"),
+        "a statement prepared under `other` names other.t, which bob may not read"
+    );
+}

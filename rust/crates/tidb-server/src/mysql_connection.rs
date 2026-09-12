@@ -53,6 +53,8 @@ use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
 use crate::resultset_writer::ResultSetSink;
 use crate::secure_transport::TransportKind;
+use tidb_ast::Stmt;
+
 use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
     PreparedStatement, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
@@ -665,6 +667,19 @@ impl<O: ConnectionPacketOutput> ConnectionPacketOutput for ClientErrorRecordingO
 
     fn set_compressed_sequence(&mut self, sequence: u8) {
         self.inner.set_compressed_sequence(sequence);
+    }
+}
+
+/// Go `handleStmt` for a result-set statement: the node `parse_statement`
+/// produced goes to the session that parsed it, the text to one that did not.
+fn execute_statement<'a, S: QuerySession>(
+    engine: &'a mut S,
+    sql: &str,
+    parsed: Option<&Stmt>,
+) -> Result<QueryResult<'a>, SqlQueryError> {
+    match parsed {
+        Some(stmt) => engine.execute_parsed(sql, stmt),
+        None => engine.execute(sql),
     }
 }
 
@@ -1584,11 +1599,26 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             status
                         }
                     };
+                    // Go `handleQuery` parses the command ONCE and hands each
+                    // node to `handleStmt`; every door below takes that node
+                    // and none parses the text again.
+                    let parsed = match engine.parse_statement(sql) {
+                        Ok(parsed) => parsed,
+                        Err(error) => {
+                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            aborted = true;
+                            break;
+                        }
+                    };
                     // Go executes LOAD STATS far enough to park its file
                     // request, then the connection asks the CLIENT for that
                     // path with a 0xfb local-infile packet and feeds the
                     // returned packet stream back into the same statement.
-                    let local_infile_path = match engine.local_infile_path(sql) {
+                    let local_infile_path = match &parsed {
+                        Some(stmt) => engine.local_infile_path_parsed(sql, stmt),
+                        None => engine.local_infile_path(sql),
+                    };
+                    let local_infile_path = match local_infile_path {
                         Ok(path) => path,
                         Err(error) => {
                             write_query_error_at(&mut output, sequence, &error, protocol_41)?;
@@ -1627,7 +1657,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             output.set_compressed_sequence(compressed_sequence);
                         }
                         sequence = reader.sequence();
-                        match engine.execute_local_infile(sql, &data) {
+                        let outcome = match &parsed {
+                            Some(stmt) => engine.execute_local_infile_parsed(sql, stmt, &data),
+                            None => engine.execute_local_infile(sql, &data),
+                        };
+                        match outcome {
                             Ok(outcome) => {
                                 write_affected_rows_ok_with_info(
                                     &mut output,
@@ -1655,7 +1689,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
                     // answer with an OK packet carrying the transaction status, not a
                     // result set; every other statement runs as an ordinary query.
-                    match engine.control_transaction(sql) {
+                    let control = match &parsed {
+                        Some(stmt) => engine.control_transaction_parsed(sql, stmt),
+                        None => engine.control_transaction(sql),
+                    };
+                    match control {
                         Ok(Some(_)) => {
                             // The session has already applied the statement, so its
                             // own status is the answer -- there is no separate
@@ -1682,7 +1720,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // A DML write or DDL answers with an OK packet carrying its
                     // affected-row count, as MySQL does on the text protocol;
                     // everything else runs as an ordinary result-set query.
-                    match engine.execute_write(sql) {
+                    let written = match &parsed {
+                        Some(stmt) => engine.execute_write_parsed(sql, stmt),
+                        None => engine.execute_write(sql),
+                    };
+                    match written {
                         Ok(Some(outcome)) => {
                             let info = engine.statement_info();
                             write_affected_rows_ok_with_info(
@@ -1708,7 +1750,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             break;
                         }
                     }
-                    let mut result = match engine.execute(sql) {
+                    let mut result = match execute_statement(&mut engine, sql, parsed.as_ref()) {
                         Ok(result) => result,
                         Err(error) => {
                             write_query_error_at(&mut output, sequence, &error, protocol_41)?;

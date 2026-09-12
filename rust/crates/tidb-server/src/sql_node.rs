@@ -1050,9 +1050,30 @@ pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
 
+    /// Parses one COM_QUERY statement ONCE, ahead of every door below -- Go
+    /// `handleQuery` runs `session.ParseSQL` once and hands each node to
+    /// `handleStmt` (`pkg/server/conn.go:1861`), and no later step parses the
+    /// text again. A session that answers `Some(stmt)` is then asked through
+    /// the `*_parsed` doors; the text doors remain for the direct callers and
+    /// for sessions that keep the default `None`, which take the text as
+    /// before.
+    fn parse_statement(&mut self, _sql: &str) -> Result<Option<Stmt>, SqlQueryError> {
+        Ok(None)
+    }
+
     /// Returns the client-local path a statement asks the connection to read.
     fn local_infile_path(&mut self, _sql: &str) -> Result<Option<String>, SqlQueryError> {
         Ok(None)
+    }
+
+    /// [`QuerySession::local_infile_path`] over the node
+    /// [`QuerySession::parse_statement`] produced.
+    fn local_infile_path_parsed(
+        &mut self,
+        sql: &str,
+        _stmt: &Stmt,
+    ) -> Result<Option<String>, SqlQueryError> {
+        self.local_infile_path(sql)
     }
 
     /// Finishes a statement after the connection transferred its local file.
@@ -1064,6 +1085,27 @@ pub trait QuerySession {
         Err(SqlQueryError::unknown(
             "this session does not accept client-local files",
         ))
+    }
+
+    /// [`QuerySession::execute_local_infile`] over the node
+    /// [`QuerySession::parse_statement`] produced.
+    fn execute_local_infile_parsed(
+        &mut self,
+        sql: &str,
+        _stmt: &Stmt,
+        data: &[u8],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        self.execute_local_infile(sql, data)
+    }
+
+    /// [`QuerySession::execute`] over the node
+    /// [`QuerySession::parse_statement`] produced.
+    fn execute_parsed<'a>(
+        &'a mut self,
+        sql: &str,
+        _stmt: &Stmt,
+    ) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.execute(sql)
     }
 
     /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
@@ -1221,6 +1263,16 @@ pub trait QuerySession {
         Ok(None)
     }
 
+    /// [`QuerySession::control_transaction`] over the node
+    /// [`QuerySession::parse_statement`] produced.
+    fn control_transaction_parsed(
+        &mut self,
+        sql: &str,
+        _stmt: &Stmt,
+    ) -> Result<Option<bool>, SqlQueryError> {
+        self.control_transaction(sql)
+    }
+
     /// Runs one statement that answers with an OK packet rather than a result
     /// set — a DML write or DDL, as MySQL answers them on the text protocol.
     ///
@@ -1232,6 +1284,16 @@ pub trait QuerySession {
     /// result set.
     fn execute_write(&mut self, _sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
         Ok(None)
+    }
+
+    /// [`QuerySession::execute_write`] over the node
+    /// [`QuerySession::parse_statement`] produced.
+    fn execute_write_parsed(
+        &mut self,
+        sql: &str,
+        _stmt: &Stmt,
+    ) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        self.execute_write(sql)
     }
 
     /// The warning count the OK/EOF packet carries for the statement that just

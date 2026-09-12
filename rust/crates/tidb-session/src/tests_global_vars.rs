@@ -31,15 +31,6 @@ fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
     (first, second, globals)
 }
 
-/// The two hook tests below flip process-wide switches (`ENABLE_TTL_JOB`,
-/// the MDL flag) that every session in this test binary shares; they run one
-/// at a time so a parallel run cannot observe the other's flip.
-fn process_switch_tests() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 #[test]
 fn ttl_job_enable_global_hook_updates_the_process_switch() {
     let _serialised = process_switch_tests();
@@ -1514,6 +1505,7 @@ fn opt_selectivity_factor_uses_go_typed_session_hook() {
 /// boundary instead of refusing the assignment.
 #[test]
 fn analyze_default_bucket_and_topn_global_hooks_match_go() {
+    let _serialised = process_switch_tests();
     struct Restore {
         buckets: u64,
         top_n: u64,

@@ -191,6 +191,12 @@ impl Session {
         }
 
         let bind_sql = binding::restore_with_default_db(hinted, &current_db);
+        // Go's `Preprocess` ran `handleTableName` over the nested statements
+        // before this plan was built, so the names a binding is matched by
+        // (`Binding.TableNames`) carry the database current at CREATE -- the
+        // same names a statement PREPAREd under that database carries.
+        let mut pinned_origin = origin.clone();
+        binding::pin_current_database(&mut pinned_origin, &current_db)?;
         let now = self.binding_timestamp();
         let binding = Binding {
             original_sql,
@@ -204,7 +210,7 @@ impl Session {
             create_time: now.clone(),
             update_time: now,
             no_db_digest: binding::no_db_digest(hinted),
-            table_names: binding::collect_table_names(origin),
+            table_names: binding::collect_table_names(&pinned_origin),
             hints: binding::collect_hints(hinted),
         };
         if create.scope == BindingScope::Global {

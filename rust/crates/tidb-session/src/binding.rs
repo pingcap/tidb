@@ -255,6 +255,87 @@ pub(crate) fn collect_table_refs_and_cte_names(stmt: &Stmt) -> (Vec<TableRefName
     (collector.refs, collector.ctes)
 }
 
+/// Go `preprocessor.handleTableName` (`pkg/planner/core/preprocess.go:1758`):
+/// every unqualified table name that does not name a CTE takes the current
+/// database. PREPARE runs it on the statement it retains, so the stored
+/// `VisitInfos` and every later EXECUTE -- after any `USE` -- resolve against
+/// the database current at PREPARE (`PlanCacheStmt.StmtDB`); an unqualified
+/// name with no current database is Go's `ErrNoDB`.
+pub(crate) fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<(), DriverError> {
+    struct Pinner<'a> {
+        current_db: &'a str,
+        ctes: Vec<String>,
+        unresolved: bool,
+    }
+    impl Pinner<'_> {
+        fn pin(&mut self, path: &mut Vec<String>) {
+            if path.len() != 1 {
+                return;
+            }
+            if self.current_db.is_empty() {
+                self.unresolved = true;
+                return;
+            }
+            path.insert(0, self.current_db.to_owned());
+        }
+    }
+    impl Visitor for Pinner<'_> {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
+                let names_cte = matches!(table_ref.name.as_slice(), [name]
+                    if self.ctes.iter().any(|cte| cte.eq_ignore_ascii_case(name)));
+                if !names_cte {
+                    self.pin(&mut table_ref.name);
+                }
+            } else if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
+                self.pin(&mut insert.table);
+            } else if let Some(import) = node.downcast_mut::<tidb_ast::ImportIntoStmt>() {
+                self.pin(&mut import.table);
+            } else if let Some(distribute) = node.downcast_mut::<tidb_ast::DistributeTableStmt>() {
+                self.pin(&mut distribute.table);
+            } else if let Some(create) = node.downcast_mut::<tidb_ast::CreateTableStmt>() {
+                self.pin(&mut create.name);
+            } else if let Some(create) = node.downcast_mut::<tidb_ast::CreateViewStmt>() {
+                self.pin(&mut create.name);
+            } else if let Some(create) = node.downcast_mut::<tidb_ast::CreateSequenceStmt>() {
+                self.pin(&mut create.name);
+            } else if let Some(drop) = node.downcast_mut::<tidb_ast::DropTableStmt>() {
+                for name in &mut drop.names {
+                    self.pin(name);
+                }
+            } else if let Some(alter) = node.downcast_mut::<tidb_ast::AlterTableStmt>() {
+                self.pin(&mut alter.name);
+            } else if let Some(create) = node.downcast_mut::<tidb_ast::CreateIndexStmt>() {
+                self.pin(&mut create.table);
+            } else if let Some(drop) = node.downcast_mut::<tidb_ast::DropIndexStmt>() {
+                self.pin(&mut drop.table);
+            } else if let Some(split) = node.downcast_mut::<tidb_ast::SplitRegionStmt>() {
+                self.pin(&mut split.table);
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
+        }
+    }
+    // The CTE names come from their own pass: a `WITH` body may reference a
+    // CTE the traversal has not entered yet.
+    let (_, ctes) = collect_table_refs_and_cte_names(stmt);
+    let mut pinner = Pinner {
+        current_db,
+        ctes,
+        unresolved: false,
+    };
+    stmt.accept(&mut pinner);
+    if pinner.unresolved {
+        return Err(DriverError::Schema(
+            tidb_executor::SchemaErrorKind::NoDatabaseSelected,
+        ));
+    }
+    Ok(())
+}
+
 /// Go's `bindinfo.Binding`, minus the fields only a stored global binding
 /// has (`PlanDigest` from a captured plan, `SourceHistory`, the usage
 /// counters `mysql.bind_info` carries).

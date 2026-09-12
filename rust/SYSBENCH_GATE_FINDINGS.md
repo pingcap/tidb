@@ -604,10 +604,12 @@ same fix round 2 made for the parallel HashAgg, in the operator above it).
 And jemalloc's allocation sampling was ACTIVE from process start: recording
 a sampled allocation unwinds the stack through libgcc's DWARF unwinder
 (Go walks frame pointers), which was 9.4% of connection-thread CPU on the
-allocation-heavy index lookup. TiKV ships the same allocator with
-`prof_active:false` and activates on demand; the node now does the same.
-A/B at 16 threads: read_only +5.9%, select_random_points +5.4%,
-select_random_ranges +5.5%, read_write +3.7%.
+allocation-heavy index lookup. This round switched the sampling off at
+start; the review below REVERSED that (Go's `MemProfileRate` is always on,
+so is the node's `prof:true` now -- see "REVIEW CORRECTIONS"), and the
+A/B here (read_only +5.9%, select_random_points +5.4%, select_random_ranges
++5.5%, read_write +3.7%) is the cost of Go-parity sampling, not a gain the
+node keeps.
 
 Round 8/9 -- the front end parsed one statement about EIGHT times.
 Go parses a command once (`session.ParseSQL` -> `ExecuteStmt(stmtNode)`)
@@ -617,10 +619,14 @@ transaction control, `LOAD STATS`, stored-state change) and parsed it
 again, from six call sites through `Session::parse` plus two more in other
 crates. Measured on oltp_insert at 16 threads: 7.5% of connection-thread
 CPU in parser construction alone, 14% in the whole parse chain.
-`parse_with_configuration` is a pure function of `(sql, enable_mariadb,
-sql_mode)`, so the repeats now share one parse through a thread-local
-record of the last statement parsed; a statement over 16 KiB is not
-retained, and a failed parse is never retained. The range detacher also
+This round first hid the repeats behind a thread-local memo of the last
+statement parsed; the review below REMOVED that memo (Go has no such
+mechanism) and did what Go does instead: the connection parses each
+statement of a command once (`QuerySession::parse_statement`) and every
+door -- `LOAD STATS`, transaction control, the write path, the query path
+-- takes that node (`*_parsed`), as does every question the node asks of
+it (kind, resource group, prelock keys, read shape, stored-state route,
+`SET`). The range detacher also
 cloned each access condition up to three times per column and then cloned
 every survivor of `remove_conditions`; the chain now moves out of
 `accesses` and an owning caller retains survivors in place. A/B at 16

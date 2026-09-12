@@ -307,3 +307,14 @@ mod tests {
         );
     }
 }
+
+/// Serialises the tests that publish or assert on a PROCESS-wide switch
+/// (Go's `vardef.EnableMDL`, `vardef.EnableTTLJob`): a `SET GLOBAL` of the
+/// switch, and a load or replacement of a whole GLOBAL table (which
+/// republishes every switch from it), must not interleave with a test that
+/// reads the switch back.
+pub(crate) fn process_switch_tests() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
