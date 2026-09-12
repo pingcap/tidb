@@ -8,6 +8,10 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 7,
+>>>>>>> fc7788ff517 (planner: fix countAfterAccess for IndexJoin in Skyline Pruning Comparison (#70791))
     deps = [
         "//pkg/config",
         "//pkg/testkit",
