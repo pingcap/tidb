@@ -785,18 +785,30 @@ fn physical_operator_info(
         PhysicalPlan::Projection(projection) => {
             projection_text(&projection.exprs, projection.base.base.schema())
         }
-        PhysicalPlan::HashJoin(join) => join_info(
-            join.join_type,
-            join.base.children().first(),
-            ignore_explain_id_suffix,
-            false,
-            &join.left_join_keys,
-            &join.right_join_keys,
-            &join.is_null_eq,
-            &join.left_conditions,
-            &join.right_conditions,
-            &join.other_conditions,
-        ),
+        PhysicalPlan::HashJoin(join) => {
+            let prefix = if join.left_join_keys.is_empty() && join.equal_conditions.is_empty() {
+                if join.na_equal_conditions.is_empty() {
+                    "CARTESIAN "
+                } else {
+                    "Null-aware "
+                }
+            } else {
+                ""
+            };
+            let info = join_info(
+                join.join_type,
+                join.base.children().first(),
+                ignore_explain_id_suffix,
+                false,
+                &join.left_join_keys,
+                &join.right_join_keys,
+                &join.is_null_eq,
+                &join.left_conditions,
+                &join.right_conditions,
+                &join.other_conditions,
+            );
+            format!("{prefix}{info}")
+        }
         PhysicalPlan::MergeJoin(join) => join_info(
             join.join_type,
             join.base.children().first(),
@@ -2268,6 +2280,16 @@ mod tests {
         assert!(
             info.starts_with("inner join, equal:[eq(Column#1, Column#2)]"),
             "{info}"
+        );
+    }
+
+    #[test]
+    fn hash_join_without_equality_explains_as_cartesian() {
+        let mut join = tidb_planner::physical::PhysicalHashJoin::default();
+        join.join_type = tidb_planner::find_best_task::LogicalJoinType::Inner;
+        assert_eq!(
+            physical_operator_info(&PhysicalPlan::HashJoin(join), &Catalog::default(), true, None),
+            "CARTESIAN inner join"
         );
     }
 
