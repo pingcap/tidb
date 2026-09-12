@@ -79,9 +79,18 @@ fn write_unpoisoned<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn wait_unpoisoned<'a, T>(cond: &Condvar, guard: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
-    cond.wait(guard)
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+/// Waits for a phase change, counting itself so
+/// [`RowContainerShared::notify_phase_changed`] knows whether anyone waits.
+fn wait_unpoisoned<'a>(
+    cond: &Condvar,
+    mut guard: MutexGuard<'a, Coordinator>,
+) -> MutexGuard<'a, Coordinator> {
+    guard.waiters += 1;
+    let mut guard = cond
+        .wait(guard)
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard.waiters -= 1;
+    guard
 }
 
 /// Public compatibility view of Go `spillStatus`.
@@ -117,6 +126,8 @@ struct Coordinator {
     active_mutator: Option<ThreadId>,
     generation: u64,
     fallback_active: bool,
+    /// Threads blocked in [`wait_unpoisoned`] on `phase_changed`.
+    waiters: usize,
 }
 
 impl Coordinator {
@@ -128,6 +139,7 @@ impl Coordinator {
             active_mutator: None,
             generation: 0,
             fallback_active: false,
+            waiters: 0,
         }
     }
 }
@@ -184,7 +196,7 @@ impl Drop for PhaseLease<'_> {
             coordinator.active_mutator = None;
         }
         drop(coordinator);
-        self.shared.phase_changed.notify_all();
+        self.shared.notify_phase_changed();
     }
 }
 
@@ -197,7 +209,7 @@ impl Drop for FallbackLease<'_> {
         let mut coordinator = lock_unpoisoned(&self.shared.coordinator);
         coordinator.fallback_active = false;
         drop(coordinator);
-        self.shared.phase_changed.notify_all();
+        self.shared.notify_phase_changed();
     }
 }
 
@@ -709,7 +721,20 @@ impl RowContainerShared {
         };
         lease.disarm();
         drop(coordinator);
-        self.phase_changed.notify_all();
+        self.notify_phase_changed();
+    }
+
+    /// Wakes phase waiters only when there are any. `std`'s condition
+    /// variable issues the futex syscall on every notify, waiter or not, and
+    /// the merge join resets its inner-group container once per key group:
+    /// on TPC-H Q12 that was 127,000 syscalls on the session thread of a
+    /// 1.5 s query. Go's merge join keeps its inner group as row indexes over
+    /// the child chunk and has no spill coordinator to notify.
+    fn notify_phase_changed(&self) {
+        let waiters = lock_unpoisoned(&self.coordinator).waiters;
+        if waiters > 0 {
+            self.phase_changed.notify_all();
+        }
     }
 
     fn finish_add(&self, mode: AddMode, lease: &mut PhaseLease<'_>) -> bool {
@@ -742,7 +767,7 @@ impl RowContainerShared {
         }
         drop(coordinator);
         if !spill {
-            self.phase_changed.notify_all();
+            self.notify_phase_changed();
         }
         spill
     }
@@ -1319,7 +1344,7 @@ impl RowContainer {
         if spill {
             self.shared.perform_spill(&mut lease);
         } else {
-            self.shared.phase_changed.notify_all();
+            self.shared.notify_phase_changed();
         }
     }
 
@@ -1402,7 +1427,7 @@ impl RowContainer {
         coordinator.active_mutator = None;
         lease.disarm();
         drop(coordinator);
-        self.shared.phase_changed.notify_all();
+        self.shared.notify_phase_changed();
     }
 
     fn begin_close(&self) -> Option<PhaseLease<'_>> {
