@@ -34,7 +34,30 @@ func TestLoadData1(t *testing.T) {
 	ts.RunTestLoadDataWithColumnList(t, ts.Server)
 	ts.RunTestLoadData(t, ts.Server)
 	ts.RunTestLoadDataWithSelectIntoOutfile(t)
+	restoreStmtSummary := resetStmtSummaryForLoadDataSlowLog(t, ts)
+	defer restoreStmtSummary()
 	ts.RunTestLoadDataForSlowLog(t)
+}
+
+func resetStmtSummaryForLoadDataSlowLog(t *testing.T, ts *servertestkit.TidbTestSuite) func() {
+	var stmtSummaryEnabled int
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select @@global.tidb_enable_stmt_summary")
+		require.True(t, rows.Next())
+		require.NoError(t, rows.Scan(&stmtSummaryEnabled))
+		require.NoError(t, rows.Close())
+		dbt.MustExec("set @@global.tidb_enable_stmt_summary=0")
+	})
+
+	return func() {
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			if stmtSummaryEnabled == 0 {
+				dbt.MustExec("set @@global.tidb_enable_stmt_summary=0")
+			} else {
+				dbt.MustExec("set @@global.tidb_enable_stmt_summary=1")
+			}
+		})
+	}
 }
 
 func TestLoadDataInTransaction(t *testing.T) {
