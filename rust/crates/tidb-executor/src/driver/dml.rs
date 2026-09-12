@@ -486,16 +486,10 @@ fn run_insert_with_physical(
         None
     } else {
         let TableEntry::Kv(kv) = &*table else {
-            return Err(DriverError::UnknownPartition {
-                partition: insert.partitions[0].clone(),
-                table: table_name.clone(),
-            });
+            return Err(DriverError::PartitionClauseOnNonpartitioned);
         };
         let Some(spec) = kv.partition() else {
-            return Err(DriverError::UnknownPartition {
-                partition: insert.partitions[0].clone(),
-                table: table_name.clone(),
-            });
+            return Err(DriverError::PartitionClauseOnNonpartitioned);
         };
         Some(
             crate::partition_pruning::ids_for_selected_partitions(spec, &insert.partitions)

@@ -1446,14 +1446,16 @@ fn updates_and_deletes_restricted_to_partitions_do_not_escape_the_named_set() {
         .run("UPDATE q PARTITION (p0) SET a = 1")
         .expect_err("an unpartitioned target has no named partition")
         .to_mysql_error();
-    assert_eq!(error.code, 1735);
-    assert_eq!(error.message, "Unknown partition 'p0' in table 'q'");
+    assert_eq!(error.code, 1747);
+    assert_eq!(error.state, *b"HY000");
+    assert_eq!(error.message, "PARTITION () clause on non partitioned table");
     let error = session
         .run("INSERT INTO q PARTITION (p0) VALUES (1)")
         .expect_err("an unpartitioned INSERT target has no named partition")
         .to_mysql_error();
-    assert_eq!(error.code, 1735);
-    assert_eq!(error.message, "Unknown partition 'p0' in table 'q'");
+    assert_eq!(error.code, 1747);
+    assert_eq!(error.state, *b"HY000");
+    assert_eq!(error.message, "PARTITION () clause on non partitioned table");
 }
 
 /// A selected UPDATE is not just a restricted scan: the destination of an
