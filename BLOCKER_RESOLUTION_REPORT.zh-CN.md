@@ -1,5 +1,20 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-12 首次本地 ANALYZE 的采样上下文
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的依据为 `pkg/executor/builder.go:getAdjustedSampleRate` 与 `pkg/statistics/handle/handle.go:GetPhysicalTableStats`：缓存缺失时后者返回 pseudo table，默认行数为 10000，采样率为 1。本地调用方直接将缓存缺失作为 None 传给采样器，误走无统计且无 PD 的 0.001 分支。十行表通常没有样本，生成 NDV=4 但 buckets/TopN 均为空的载荷，导致 `a > 2` 估算 3.33 而非 7。
+
+修复仅在本地 ANALYZE 行数读取处恢复 Go pseudo-table 行数，保留底层不可用统计的 fallback。新增 `first_analyze_without_cached_statistics_collects_small_table_distribution` 检查三行表的实际统计载荷；移除修复时 0.0 != 3.0（`/tmp/analyze-sampling-red.log`），恢复后通过。临时 DEBUG-STATS 日志已删除。
+
+验证环境为 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+- `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_analyze::`：19 passed / 1 failed，剩余共享统计加载测试缺少指定列，日志 `/tmp/analyze-sampling-green.log`。
+- `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib`：1614 passed / 91 failed / 209 ignored，日志 `/tmp/analyze-sampling-full.log`；之前为1604/100/209，未出现新增失败名称。index-usage 测试可能受并发影响，不将所有减少项都归因于本修复。
+- `cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all`：310 passed，日志 `/tmp/analyze-sampling-integration.log`。
+- Ready 检查 `make lint` 退出0，日志 `/tmp/analyze-sampling-lint.log`；`git diff --check` 通过。纠正上一轮描述：rustfmt 全量检查失败并不证明 make lint 失败，本轮实际独立执行 lint 已通过。
+
+本轮 Go 依据是固定源码，未重跑 Go binary、RealTiKV 或 Bazel。91 项 session 失败和完整质量目标仍未完成。
+
 ## 2026-09-11 统计重建不重复发布比较常量警告
 
 在 `8dc459050f` 上原 `invalid_duration_constant_is_not_null_safe_equal_to_a_null_time_column` 单独运行稳定失败：预期2条1292，实际6条，红测 `/tmp/duration-warning-red.log`。原 `time_compared_with_strings_and_numbers` 同类失败为预期1条、实际2条。Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的实际 SQL 输出确认 TIME 两条，且空表仍两条；同时投影 CAST('bad-int' AS SIGNED) 时增加独立第三条 INTEGER 警告。证据 `/tmp/duration-warning-go.out`、`/tmp/duration-warning-boundary-go.out`，对照进程已停止。

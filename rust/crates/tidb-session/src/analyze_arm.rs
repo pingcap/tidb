@@ -630,6 +630,9 @@ impl Session {
                 catalog
                     .table_statistics(physical_id)
                     .map(|statistics| statistics.row_count)
+                    // Go GetPhysicalTableStats supplies a PseudoTable on a
+                    // cache miss; it is not the unavailable-stats branch.
+                    .or(Some(tidb_stats::PSEUDO_ROW_COUNT))
             };
             let partition_counts = partition_ids
                 .iter()
