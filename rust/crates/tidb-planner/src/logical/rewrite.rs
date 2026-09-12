@@ -178,7 +178,16 @@ pub(crate) fn analyzed_filter_selectivity(
             selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
             continue;
         };
-        if matches!(function.func_name.lowercase(), "lt" | "le" | "gt" | "ge") {
+        // Go `Selectivity` estimates every single-column condition through
+        // the ranger, so a DNF over one column (`n_name = 'INDIA' OR n_name =
+        // 'JAPAN'`, which join predicate push-down derives from TPC-H Q7's
+        // two-table DNF) becomes point ranges against the histogram instead
+        // of the 0.8 default; that default made the planner build Q7's
+        // orders join from 1.5M orders rather than the 144,734-row side.
+        if matches!(
+            function.func_name.lowercase(),
+            "lt" | "le" | "gt" | "ge" | "or"
+        ) {
             let columns = tidb_expr::simple_expr::extract_columns(condition);
             if columns.len() == 1 {
                 let column = &columns[0];
@@ -2777,6 +2786,87 @@ mod analyzed_filter_selectivity_tests {
         assert!(
             (selectivity - 0.1).abs() > 1e-9,
             "the NDV fallback must not answer a loaded histogram"
+        );
+    }
+
+    /// Go `Selectivity` runs a single-column DNF through the ranger: two
+    /// equalities under `OR` become two point ranges against the histogram.
+    /// The rule used to answer any `OR` with the 0.8 default, which is what
+    /// flipped TPC-H Q7's build side (see the ExecPlan).
+    #[test]
+    fn a_single_column_dnf_estimates_from_point_ranges() {
+        let unique_id = 7;
+        let histogram = Histogram {
+            id: 1,
+            ndv: 10,
+            last_update_version: 1,
+            // Bucket counts are cumulative: 30 rows of 1, 70 of 2, 900 of
+            // the rest, 1,000 in all.
+            buckets: vec![
+                Bucket {
+                    count: 30,
+                    repeat: 30,
+                    ndv: 1,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(1),
+                },
+                Bucket {
+                    count: 100,
+                    repeat: 70,
+                    ndv: 1,
+                    lower_bound: Datum::Int(2),
+                    upper_bound: Datum::Int(2),
+                },
+                Bucket {
+                    count: 1_000,
+                    repeat: 100,
+                    ndv: 8,
+                    lower_bound: Datum::Int(3),
+                    upper_bound: Datum::Int(10),
+                },
+            ],
+            ..Histogram::default()
+        };
+        let hist_coll = HistColl::new(false, 1_000, [])
+            .with_histograms([(
+                unique_id,
+                std::sync::Arc::new(ColumnStats {
+                    histogram,
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )])
+            .with_modify_count(0);
+        let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
+        let long = || FieldType::new(FieldTypeCode::LongLong);
+        let eq = |value: i64| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new("eq"),
+                long(),
+                vec![
+                    Expression::Column(Column::new(unique_id, long())),
+                    Expression::Constant(Constant::new(Datum::Int(value), long())),
+                ],
+            ))
+        };
+        let dnf = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("or"),
+            FieldType::new(FieldTypeCode::Tiny),
+            vec![eq(1), eq(2)],
+        ));
+        let selectivity =
+            analyzed_filter_selectivity(&table_stats, &[dnf]).expect("an analyzed profile");
+        assert!(
+            (selectivity - crate::cost_factors::SELECTION_FACTOR).abs() > 1e-9,
+            "a single-column OR must not take the default: {selectivity}"
+        );
+        // Both values are bucket bounds, so the estimate is their repeats:
+        // (30 + 70) / 1000.
+        assert!(
+            (selectivity - 0.1).abs() < 1e-9,
+            "{selectivity} != 0.1"
         );
     }
 
