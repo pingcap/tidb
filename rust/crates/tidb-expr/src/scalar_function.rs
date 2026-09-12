@@ -2812,6 +2812,66 @@ impl ScalarFunction {
         }
         Ok(true)
     }
+
+    /// Go `VecEvalBool`'s column-wise leg over one filter node: the numeric
+    /// comparisons of [`Self::vec_eval_numeric_compare`], `NOT` over a node
+    /// this kernel covers (`builtinUnaryNotIntSig.vecEvalInt`: NULL stays
+    /// NULL, zero becomes one, anything else zero) and `IS NULL` over a
+    /// chunk column (`builtin*IsNullSig.vecEvalInt`: the column's null
+    /// bitmap, never NULL itself). `is_zero` and the `Ok(false)` contract are
+    /// those of the comparison kernel; the covered shapes produce what
+    /// [`Self::eval`] produces row by row (`ops::eval_unary`'s three-valued
+    /// NOT and the `ISNULL` value dispatch).
+    pub(crate) fn vec_eval_bool(
+        &self,
+        input: &Chunk,
+        sel: &[usize],
+        is_zero: &mut Vec<i8>,
+    ) -> Result<bool, EvalError> {
+        let name = self.func_name.lowercase();
+        if name != "not" && name != "isnull" {
+            return self.vec_eval_numeric_compare(input, sel, is_zero);
+        }
+        // `coerce_to_ret_type` leaves an integer alone only for an integer
+        // result type that is not BIT.
+        let Some(ret_type) = self.get_static_type() else {
+            return Ok(false);
+        };
+        if ret_type.eval_type() != EvalType::Int
+            || ret_type.code() == tidb_datatype::FieldTypeCode::Bit
+        {
+            return Ok(false);
+        }
+        match (name, self.args.as_slice()) {
+            ("not", [Expression::ScalarFunction(argument)]) => {
+                if !argument.vec_eval_bool(input, sel, is_zero)? {
+                    return Ok(false);
+                }
+                for code in is_zero.iter_mut() {
+                    if *code >= 0 {
+                        *code = i8::from(*code == 0);
+                    }
+                }
+                Ok(true)
+            }
+            ("isnull", [Expression::Column(column)]) => {
+                let Some(index) = usize::try_from(column.index)
+                    .ok()
+                    .filter(|&index| index < input.num_cols())
+                else {
+                    return Ok(false);
+                };
+                let column = input.column(index);
+                is_zero.clear();
+                is_zero.extend(
+                    sel.iter()
+                        .map(|&physical| i8::from(column.is_null(physical))),
+                );
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
 }
 
 /// One decimal value of a column-wise arithmetic evaluation, in the shape
@@ -3007,6 +3067,9 @@ fn vec_eval_decimal_function(
     physical: &[usize],
 ) -> Option<Vec<Option<DecimalValue>>> {
     use tidb_datatype::FieldTypeCode;
+    if function.func_name.lowercase() == "cast_decimal" {
+        return vec_eval_cast_int_as_decimal(function, input, physical);
+    }
     {
         {
             if function.args.len() != 2 {
@@ -3042,6 +3105,76 @@ fn vec_eval_decimal_function(
                 .collect()
         }
     }
+}
+
+/// Go `builtinCastIntAsDecimalSig.vecEvalDecimal`, restricted to the shape
+/// whose row evaluation (`cast::eval_cast`'s DECIMAL arm over an integer,
+/// `Decimal::from_int` then `cast_to_precision`) is the integer itself: an
+/// integer column cast to a `DECIMAL(flen, scale)` whose integer digits hold
+/// every value the column's signedness can take (19 signed, 20 unsigned), so
+/// `ProduceDecWithSpecifiedTp` neither clamps nor warns and the cell is the
+/// integer padded to `scale` fraction digits. An unspecified target shape
+/// keeps the row path (it returns the source unchanged), as does a value
+/// whose padding leaves `i128`.
+fn vec_eval_cast_int_as_decimal(
+    function: &ScalarFunction,
+    input: &Chunk,
+    physical: &[usize],
+) -> Option<Vec<Option<DecimalValue>>> {
+    use tidb_datatype::FieldTypeCode;
+    let [Expression::Column(column)] = function.args.as_slice() else {
+        return None;
+    };
+    let source = column.get_static_type()?;
+    if !matches!(
+        source.code(),
+        FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Year
+    ) {
+        return None;
+    }
+    let signed = !source.is_unsigned();
+    let target = function.get_static_type()?;
+    if target.decimal() == UNSPECIFIED_LENGTH {
+        return None;
+    }
+    let flen = u32::try_from(target.flen()).ok()?;
+    let scale = u32::try_from(target.decimal()).ok()?;
+    if flen == 0 || flen < scale.checked_add(if signed { 19 } else { 20 })? {
+        return None;
+    }
+    let factor = 10i128.checked_pow(scale)?;
+    let index = usize::try_from(column.index).ok()?;
+    if index >= input.num_cols() {
+        return None;
+    }
+    let column = input.column(index);
+    if column.type_size() != 8 {
+        return None;
+    }
+    physical
+        .iter()
+        .map(|&row| {
+            if column.is_null(row) {
+                return Some(None);
+            }
+            let bits = column.get_int64(row);
+            let value = if signed {
+                i128::from(bits)
+            } else {
+                i128::from(bits as u64)
+            };
+            Some(Some(DecimalValue {
+                coefficient: value.checked_mul(factor)?,
+                storage_scale: scale,
+                scale,
+            }))
+        })
+        .collect()
 }
 
 impl ScalarFunction {

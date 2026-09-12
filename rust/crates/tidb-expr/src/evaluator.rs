@@ -79,7 +79,8 @@ pub fn vectorizable(expressions: &[Expression]) -> bool {
 /// itself never remains selected.
 ///
 /// The expression model exposes Go's typed `VecEval*` only for the numeric
-/// comparisons (`ScalarFunction::vec_eval_numeric_compare`). The vector evaluator
+/// comparisons, `NOT` over them and `IS NULL` over a column
+/// (`ScalarFunction::vec_eval_bool`). The vector evaluator
 /// nevertheless preserves the important vectorized contract: filters run
 /// filter-major, rejected rows are removed before the next filter, and direct
 /// column/constant expressions are materialized column-wise. Any other
@@ -192,7 +193,7 @@ pub fn vectorized_filter_consider_null<C: Columns>(
                 true
             }
             Expression::ScalarFunction(function) => {
-                function.vec_eval_numeric_compare(input, &sel, &mut is_zero)?
+                function.vec_eval_bool(input, &sel, &mut is_zero)?
             }
             Expression::Column(_) | Expression::Constant(_) => false,
         };
@@ -889,12 +890,18 @@ mod tests {
 
         // The same bits read through a signed type are -1, through an
         // unsigned type 18446744073709551615.
-        let unsigned = vec![scalar("gt", vec![typed_input_column(1, unsigned_long()), int_const(-1)])];
+        let unsigned = vec![scalar(
+            "gt",
+            vec![typed_input_column(1, unsigned_long()), int_const(-1)],
+        )];
         let (selected, _) =
             vectorized_filter_consider_null(&ctx, true, &unsigned, &input, Vec::new(), Vec::new())
                 .unwrap();
         assert_eq!(selected, vec![true, true, true, false]);
-        let signed = vec![scalar("gt", vec![typed_input_column(1, long()), int_const(-1)])];
+        let signed = vec![scalar(
+            "gt",
+            vec![typed_input_column(1, long()), int_const(-1)],
+        )];
         let (selected, _) =
             vectorized_filter_consider_null(&ctx, true, &signed, &input, Vec::new(), Vec::new())
                 .unwrap();
@@ -930,7 +937,8 @@ mod tests {
         let mut result_type = FieldType::new(FieldTypeCode::NewDecimal);
         result_type.set_flen(21);
         result_type.set_decimal(4);
-        let mut input = Chunk::new_with_capacity(&[price_type.clone(), price_type.clone(), long()], 8);
+        let mut input =
+            Chunk::new_with_capacity(&[price_type.clone(), price_type.clone(), long()], 8);
         let rows: [(Option<&str>, Option<&str>, Option<i64>); 8] = [
             (Some("36901.00"), Some("0.04"), Some(17)),
             (Some("-9999999.99"), Some("1.00"), Some(-3)),
@@ -943,11 +951,13 @@ mod tests {
         ];
         for (price, discount, quantity) in rows {
             match price {
-                Some(text) => input.append_my_decimal(0, &Decimal::from_literal(text).to_my_decimal().unwrap()),
+                Some(text) => input
+                    .append_my_decimal(0, &Decimal::from_literal(text).to_my_decimal().unwrap()),
                 None => input.append_null(0),
             }
             match discount {
-                Some(text) => input.append_my_decimal(1, &Decimal::from_literal(text).to_my_decimal().unwrap()),
+                Some(text) => input
+                    .append_my_decimal(1, &Decimal::from_literal(text).to_my_decimal().unwrap()),
                 None => input.append_null(1),
             }
             match quantity {
@@ -962,41 +972,145 @@ mod tests {
             "mul",
             vec![
                 decimal_column(0, &price_type),
-                typed("minus", vec![int_const(1), decimal_column(1, &price_type)], &price_type),
+                typed(
+                    "minus",
+                    vec![int_const(1), decimal_column(1, &price_type)],
+                    &price_type,
+                ),
             ],
             &result_type,
         );
         let expressions = vec![
             revenue.clone(),
-            typed("minus", vec![revenue, typed("mul", vec![decimal_column(1, &price_type), input_column(2)], &price_type)], &result_type),
-            typed("plus", vec![decimal_column(0, &price_type), int_const(-5)], &price_type),
-            typed("mul", vec![input_column(2), decimal_column(0, &price_type)], &result_type),
+            typed(
+                "minus",
+                vec![
+                    revenue,
+                    typed(
+                        "mul",
+                        vec![decimal_column(1, &price_type), input_column(2)],
+                        &price_type,
+                    ),
+                ],
+                &result_type,
+            ),
+            typed(
+                "plus",
+                vec![decimal_column(0, &price_type), int_const(-5)],
+                &price_type,
+            ),
+            typed(
+                "mul",
+                vec![input_column(2), decimal_column(0, &price_type)],
+                &result_type,
+            ),
         ];
         let ctx = NoColumns;
         for expression in &expressions {
-            let Expression::ScalarFunction(function) = expression else { unreachable!() };
-            let mut expected = Chunk::new_with_capacity(std::slice::from_ref(function.get_static_type().unwrap()), 8);
+            let Expression::ScalarFunction(function) = expression else {
+                unreachable!()
+            };
+            let mut expected = Chunk::new_with_capacity(
+                std::slice::from_ref(function.get_static_type().unwrap()),
+                8,
+            );
             for row in 0..input.num_rows() {
                 expected.append_datum(0, &expression.eval(&ctx, input.get_row(row)).unwrap());
             }
-            let mut output = Chunk::new_with_capacity(std::slice::from_ref(function.get_static_type().unwrap()), 8);
-            assert!(function.vec_eval_decimal_arithmetic(&input, &mut output, 0).unwrap());
+            let mut output = Chunk::new_with_capacity(
+                std::slice::from_ref(function.get_static_type().unwrap()),
+                8,
+            );
+            assert!(function
+                .vec_eval_decimal_arithmetic(&input, &mut output, 0)
+                .unwrap());
             assert_eq!(output, expected);
             // A selection on the input is honored.
             input.set_sel(Some(vec![1, 3, 6]));
-            let mut expected = Chunk::new_with_capacity(std::slice::from_ref(function.get_static_type().unwrap()), 3);
+            let mut expected = Chunk::new_with_capacity(
+                std::slice::from_ref(function.get_static_type().unwrap()),
+                3,
+            );
             for row in 0..input.num_rows() {
                 expected.append_datum(0, &expression.eval(&ctx, input.get_row(row)).unwrap());
             }
-            let mut output = Chunk::new_with_capacity(std::slice::from_ref(function.get_static_type().unwrap()), 3);
-            assert!(function.vec_eval_decimal_arithmetic(&input, &mut output, 0).unwrap());
+            let mut output = Chunk::new_with_capacity(
+                std::slice::from_ref(function.get_static_type().unwrap()),
+                3,
+            );
+            assert!(function
+                .vec_eval_decimal_arithmetic(&input, &mut output, 0)
+                .unwrap());
             assert_eq!(output, expected);
             input.set_sel(None);
         }
-        // Two integers stay integer arithmetic: not covered.
-        let Expression::ScalarFunction(ints) = typed("plus", vec![input_column(2), int_const(1)], &result_type) else { unreachable!() };
+        // Go `builtinCastIntAsDecimalSig.vecEvalDecimal`: an integer column
+        // cast to a DECIMAL wide enough for every integer is the padded
+        // integer, at scale 0 and at a positive scale.
+        let mut wide = FieldType::new(FieldTypeCode::NewDecimal);
+        wide.set_flen(20);
+        wide.set_decimal(0);
+        let mut wide_scaled = FieldType::new(FieldTypeCode::NewDecimal);
+        wide_scaled.set_flen(22);
+        wide_scaled.set_decimal(2);
+        for target in [&wide, &wide_scaled] {
+            let product = typed(
+                "mul",
+                vec![
+                    decimal_column(0, &price_type),
+                    typed("cast_decimal", vec![input_column(2)], target),
+                ],
+                &result_type,
+            );
+            let Expression::ScalarFunction(function) = &product else {
+                unreachable!()
+            };
+            let mut expected = Chunk::new_with_capacity(
+                std::slice::from_ref(function.get_static_type().unwrap()),
+                8,
+            );
+            for row in 0..input.num_rows() {
+                expected.append_datum(0, &product.eval(&ctx, input.get_row(row)).unwrap());
+            }
+            let mut output = Chunk::new_with_capacity(
+                std::slice::from_ref(function.get_static_type().unwrap()),
+                8,
+            );
+            assert!(function
+                .vec_eval_decimal_arithmetic(&input, &mut output, 0)
+                .unwrap());
+            assert_eq!(output, expected);
+        }
+        // A target that can clamp (`ProduceDecWithSpecifiedTp`) keeps the
+        // row path.
+        let mut narrow = FieldType::new(FieldTypeCode::NewDecimal);
+        narrow.set_flen(10);
+        narrow.set_decimal(0);
+        let Expression::ScalarFunction(clamping) = typed(
+            "mul",
+            vec![
+                decimal_column(0, &price_type),
+                typed("cast_decimal", vec![input_column(2)], &narrow),
+            ],
+            &result_type,
+        ) else {
+            unreachable!()
+        };
         let mut output = Chunk::new_with_capacity(&[result_type.clone()], 8);
-        assert!(!ints.vec_eval_decimal_arithmetic(&input, &mut output, 0).unwrap());
+        assert!(!clamping
+            .vec_eval_decimal_arithmetic(&input, &mut output, 0)
+            .unwrap());
+        assert_eq!(output.num_rows(), 0);
+        // Two integers stay integer arithmetic: not covered.
+        let Expression::ScalarFunction(ints) =
+            typed("plus", vec![input_column(2), int_const(1)], &result_type)
+        else {
+            unreachable!()
+        };
+        let mut output = Chunk::new_with_capacity(&[result_type.clone()], 8);
+        assert!(!ints
+            .vec_eval_decimal_arithmetic(&input, &mut output, 0)
+            .unwrap());
         assert_eq!(output.num_rows(), 0);
     }
 
@@ -1024,19 +1138,137 @@ mod tests {
         };
 
         let cases: [(&str, Expression, Expression, [bool; 4]); 5] = [
-            ("gt", decimal_column(0, &decimal_type), int_const(314), [false, false, true, false]),
-            ("ge", decimal_column(0, &decimal_type), int_const(314), [false, true, true, false]),
-            ("lt", decimal_column(0, &decimal_type), decimal_const("314.005"), [true, true, false, false]),
-            ("eq", input_column(1), decimal_const("314.00"), [false, true, false, false]),
-            ("ne", decimal_const("314.00"), decimal_column(0, &decimal_type), [true, false, true, false]),
+            (
+                "gt",
+                decimal_column(0, &decimal_type),
+                int_const(314),
+                [false, false, true, false],
+            ),
+            (
+                "ge",
+                decimal_column(0, &decimal_type),
+                int_const(314),
+                [false, true, true, false],
+            ),
+            (
+                "lt",
+                decimal_column(0, &decimal_type),
+                decimal_const("314.005"),
+                [true, true, false, false],
+            ),
+            (
+                "eq",
+                input_column(1),
+                decimal_const("314.00"),
+                [false, true, false, false],
+            ),
+            (
+                "ne",
+                decimal_const("314.00"),
+                decimal_column(0, &decimal_type),
+                [true, false, true, false],
+            ),
         ];
         for (name, lhs, rhs, expected) in cases {
             let filters = vec![scalar(name, vec![lhs, rhs])];
-            let (selected, nulls) =
-                vectorized_filter_consider_null(&ctx, true, &filters, &input, Vec::new(), Vec::new())
-                    .unwrap();
+            let (selected, nulls) = vectorized_filter_consider_null(
+                &ctx,
+                true,
+                &filters,
+                &input,
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap();
             assert_eq!(selected, expected, "{name}");
             assert_eq!(nulls, vec![false, false, false, true], "{name}");
+        }
+    }
+
+    /// Go `builtinUnaryNotIntSig.vecEvalInt` and `builtin*IsNullSig.vecEvalInt`:
+    /// `NOT` over a covered node and `IS NULL` over a column run column-wise
+    /// and select exactly the rows the row evaluator selects, NULL rows
+    /// included; a `NOT` over an uncovered node keeps the row evaluator.
+    #[test]
+    fn vector_filter_evaluates_not_and_isnull_column_wise() {
+        let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
+        decimal_type.set_flen(15);
+        decimal_type.set_decimal(2);
+        let mut input = Chunk::new_with_capacity(&[decimal_type.clone(), long()], 5);
+        for (value, int_value) in [
+            (Some("0.00"), Some(0)),
+            (None, Some(5)),
+            (Some("2.50"), None),
+            (None, None),
+            (Some("7.00"), Some(7)),
+        ] {
+            match value {
+                Some(text) => input
+                    .append_my_decimal(0, &Decimal::from_literal(text).to_my_decimal().unwrap()),
+                None => input.append_null(0),
+            }
+            match int_value {
+                Some(int_value) => input.append_int64(1, int_value),
+                None => input.append_null(1),
+            }
+        }
+        let ctx = NoColumns;
+        let cases: [(&str, Expression, [bool; 5], [bool; 5]); 4] = [
+            (
+                "isnull",
+                scalar("isnull", vec![decimal_column(0, &decimal_type)]),
+                [false, true, false, true, false],
+                [false; 5],
+            ),
+            (
+                "not isnull",
+                scalar(
+                    "not",
+                    vec![scalar("isnull", vec![decimal_column(0, &decimal_type)])],
+                ),
+                [true, false, true, false, true],
+                [false; 5],
+            ),
+            (
+                "not gt",
+                scalar(
+                    "not",
+                    vec![scalar("gt", vec![input_column(1), int_const(4)])],
+                ),
+                [true, false, false, false, false],
+                [false, false, true, true, false],
+            ),
+            (
+                "not column",
+                scalar("not", vec![input_column(1)]),
+                [true, false, false, false, false],
+                [false, false, true, true, false],
+            ),
+        ];
+        for (name, filter, expected_selected, expected_nulls) in cases {
+            let filters = vec![filter];
+            let (selected, nulls) = vectorized_filter_consider_null(
+                &ctx,
+                true,
+                &filters,
+                &input,
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap();
+            assert_eq!(selected, expected_selected, "{name}");
+            assert_eq!(nulls, expected_nulls, "{name}");
+            let (row_selected, row_nulls) = vectorized_filter_consider_null(
+                &ctx,
+                false,
+                &filters,
+                &input,
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap();
+            assert_eq!(selected, row_selected, "{name} against the row evaluator");
+            assert_eq!(nulls, row_nulls, "{name} against the row evaluator");
         }
     }
 }
