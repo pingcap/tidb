@@ -1957,6 +1957,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         outer: LogicalPlan,
         expression: &Expr,
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
+        conditions: &mut Vec<Expression>,
     ) -> Result<(LogicalPlan, bool), PlanError> {
         let (schema, names) = snapshot_schema_and_names(&outer);
         match expression {
@@ -1993,6 +1994,14 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     *all,
                     self.sub_query_hint_flags,
                 )?;
+                // Go's = ANY / != ALL handlers force scalar mode and publish
+                // an auxiliary boolean. buildSelection must still filter it.
+                if rewriter.as_scalar {
+                    let condition = rewriter.ctx_stack.pop().ok_or_else(|| {
+                        PlanError::internal("quantified subquery did not publish its predicate")
+                    })?;
+                    conditions.push(condition);
+                }
                 Ok((plan, true))
             }
             Expr::InSubquery {
@@ -2783,12 +2792,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // scalar child's.
         for conjunct in conjuncts {
             let len_before = plan.schema().map_or(0, Schema::len);
-            let (next, lowered_filter) = self.lower_filter_subquery(plan, conjunct, markers)?;
+            let (next, lowered_filter) =
+                self.lower_filter_subquery(plan, conjunct, markers, &mut conditions)?;
             plan = next;
             if lowered_filter {
-                // The conjunct became an apply/semi-join; Go's rewrite
-                // returns nil for it and the remaining conditions stay in the
-                // one Selection built below.
+                // A semi-join filters directly. A scalar semi-apply publishes
+                // its predicate into conditions for the Selection below.
                 hide_rewrite_columns(&mut plan, len_before);
                 continue;
             }

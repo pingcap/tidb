@@ -649,6 +649,30 @@ fn having_hoists_an_aggregate_out_of_any_enclosing_form() {
             "SELECT id FROM ha GROUP BY id HAVING COUNT(*) = ANY (SELECT 2) ORDER BY id",
             &[&["1"], &["2"]],
         ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING COUNT(*) != ALL (SELECT 2) ORDER BY id",
+            &[&["3"]],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING COUNT(*) = ANY (SELECT NULL) ORDER BY id",
+            &[],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING COUNT(*) != ALL (SELECT 2 WHERE 0) ORDER BY id",
+            &[&["1"], &["2"], &["3"]],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING COUNT(*) = ANY (SELECT 2) AND id > 1 ORDER BY id",
+            &[&["2"]],
+        ),
+        (
+            "SELECT DISTINCT id FROM ha WHERE id = ANY (SELECT 2) ORDER BY id",
+            &[&["2"]],
+        ),
+        (
+            "SELECT DISTINCT id FROM ha WHERE id != ALL (SELECT 2) ORDER BY id",
+            &[&["1"], &["3"]],
+        ),
     ];
     for (sql, want) in cases {
         let got = row_text(session.run(sql));

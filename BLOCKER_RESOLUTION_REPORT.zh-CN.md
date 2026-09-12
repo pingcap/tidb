@@ -3812,6 +3812,28 @@ parser 734 单元测试、100 集成测试通过，原有 1 ignored 保留（`/t
 
 该窗口回归修正后独立通过（`cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_errors_and_refusals`，`/tmp/approx-grammar-window-green.log`），最终 lint 再次退出 0（`/tmp/approx-grammar-final-lint.log`）。未据此改写上面的全量运行计数。
 
+## 2026-09-12 quantified subquery 过滤遗漏
+
+基线 `ce2c55329d`。原失败 `having_hoists_an_aggregate_out_of_any_enclosing_form` 在 `HAVING COUNT(*) = ANY (SELECT 2)` 多返回 id=3，其组只有一行。原红测 `/tmp/having-any-red.log` 和扩展红测 `/tmp/having-any-expanded-red.log` 均退出 101。
+
+固定 Go master 的 `pkg/planner/core/expression_rewriter.go:884` 将 = ANY 与 != ALL 强制改写为 scalar semi apply，生成布尔辅助列；`logical_plan_builder.go:1381` 的 buildSelection 继续把该表达式加入过滤条件。Rust 的重写本身相同，但 lower_filter_subquery 返回“已过滤”后直接跳过 Selection，丢失布尔结果。Go 实机 `/tmp/having-any-go.out` 的计划明确包含 semi join 上方的 Selection(Column#7)，结果为 id 1、2；!= ALL 返回 id 3。
+
+修复仅让 lower_filter_subquery 将 scalar 重写结果传入调用方的 conditions，再由同一个 Selection 过滤。未改变 Go 重写策略。原回归扩展为 WHERE、HAVING、NULL、空子查询、!= ALL 及 AND 条件组合；Go 边界输出保存在 `/tmp/having-any-boundary-go.out`。
+
+Ready 验证（目录 `/tmp/tidb-hparser-current`，cargo 环境 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib having_hoists_an_aggregate_out_of_any_enclosing_form
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib expression_rewriter
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+```
+
+结果为原扩展回归通过、planner 47 passed、session 集成 310 passed、lint 退出 0。日志分别为 `/tmp/having-any-green.log`、`/tmp/having-any-planner.log`、`/tmp/having-any-integration.log`、`/tmp/having-any-lint.log`。Go 对照实例已停止。未重新运行全量 session 或全部原始质量门禁，整体目标仍未完成。
+
+推送时远端新增 8 个提交，已无冲突 rebase 到 `24084c91de`。合并后 `make lint` 再次退出 0（`/tmp/having-any-rebased-lint.log`）。原回归及集成补验分别启动于 `/tmp/having-any-rebased.log`、`/tmp/having-any-rebased-integration.log`，但编译 tidb-txnkv/tidb-util 的 rustc 等待超过 8/6 分钟、累计 CPU 约 2 秒，停在动态库加载附近；未能证明原因。辅助采样停在符号解析，已停止。主动终止本轮构建和排队集成进程，不将其记录为测试通过或源码失败。上述 47/310 通过证据对应 rebase 前，合并后 Rust 验证仍待完成，不能宣称当前远端全部通过。
+
 ## 2026-09-11 新 ONLY_FULL_GROUP_BY 检查器接入与 readiness 复核
 
 readiness 不再是当前 blocker。本轮直接核验 `/tmp/readiness-sept11-confirm-evidence/rust-node.log:8` 的 ready 事件，并重新运行四入口 readiness 回归，全部通过；修复 `1f89c30b65`、`9839a744e0` 已在远端。此前真实 access-path 回放的结论仍为 1 failure / 0 divergent choices，剩余 pseudo estRows 1.25 对 2.50 未在本轮解决。
