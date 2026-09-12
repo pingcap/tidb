@@ -3834,6 +3834,27 @@ git diff --check
 
 推送时远端新增 8 个提交，已无冲突 rebase 到 `24084c91de`。合并后 `make lint` 再次退出 0（`/tmp/having-any-rebased-lint.log`）。原回归及集成补验分别启动于 `/tmp/having-any-rebased.log`、`/tmp/having-any-rebased-integration.log`，但编译 tidb-txnkv/tidb-util 的 rustc 等待超过 8/6 分钟、累计 CPU 约 2 秒，停在动态库加载附近；未能证明原因。辅助采样停在符号解析，已停止。主动终止本轮构建和排队集成进程，不将其记录为测试通过或源码失败。上述 47/310 通过证据对应 rebase 前，合并后 Rust 验证仍待完成，不能宣称当前远端全部通过。
 
+## 2026-09-12 CTE 子树统计初始化时序
+
+基线 `23a8c0ae68`。编译已恢复完成，上一节 HAVING 当前基线补验通过（`/tmp/having-any-current-confirm.log`）。CTE 原失败在当前代码仍可复现：`union_dedups_a_cycle_where_union_all_diverges` 报 DataSource.table_stats is absent，红测 `/tmp/cte-stats-red.log` 退出 101。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/stats.go:111` 在 DataSource 统计推导时先调用 initStats；`operator/logicalop/logical_cte.go:194,225` 分别优化 seed 和 recursive 子树。Rust 主查询已在 logical_optimize 前初始化统计，optimize_cte_tree 却在 logical_optimize 后才初始化；内部 join reorder 提前推导数据源统计时因而失败。
+
+修复将 CTE 子树原有 InitStats fold 提前到逻辑优化之前，使用相同 catalog 和 context，不造默认统计、不跳过规则。原回归继续要求环图 UNION 返回 1、2、3，UNION ALL 超深报 3636，并增加 ANALYZE 后同一 UNION 查询结果断言。Go 实机证据 `/tmp/cte-stats-go.out`、`/tmp/cte-stats-analyzed-go.out` 均与预期一致。
+
+Ready 验证命令（目录 `/tmp/tidb-hparser-current`，cargo 环境 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib union_dedups_a_cycle_where_union_all_diverges
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib having_hoists_an_aggregate_out_of_any_enclosing_form
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_recursive_cte
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+```
+
+首轮 CTE 13 项通过（`/tmp/cte-stats-green.log`），集成 310 项通过（`/tmp/cte-stats-integration.log`），lint 退出 0（`/tmp/cte-stats-lint.log`）。包含 ANALYZE 扩展断言的最终 CTE 运行同样 13 passed / 0 failed（`/tmp/cte-stats-final.log`）。Go 对照实例已停止。未重新运行全部 session、RealTiKV、Go/Bazel 门禁，整体目标仍未完成。
+
 ## 2026-09-11 新 ONLY_FULL_GROUP_BY 检查器接入与 readiness 复核
 
 readiness 不再是当前 blocker。本轮直接核验 `/tmp/readiness-sept11-confirm-evidence/rust-node.log:8` 的 ready 事件，并重新运行四入口 readiness 回归，全部通过；修复 `1f89c30b65`、`9839a744e0` 已在远端。此前真实 access-path 回放的结论仍为 1 failure / 0 divergent choices，剩余 pseudo estRows 1.25 对 2.50 未在本轮解决。

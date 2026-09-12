@@ -1652,11 +1652,10 @@ fn optimize_cte_tree(
     rule_context: &RuleContext<'_>,
     visiting: &mut HashSet<usize>,
 ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
-    let optimized = logical_optimize(rule_context, opt_flag, plan)
-        .map_err(|(_, error)| error)?
-        .plan;
-    let optimized = check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
-    let (mut optimized, ()) = fold_owned(
+    // Go DataSource.DeriveStats initializes base statistics even when called
+    // from a logical rule. CTE roots need the same preinitialization as the
+    // outer query before join reorder can inspect their sources.
+    let (plan, ()) = fold_owned(
         &mut InitStats {
             range_context: crate::index_range::RangeContext {
                 max_size: ctx.range_max_size(),
@@ -1669,9 +1668,13 @@ fn optimize_cte_tree(
             enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
             context: ctx,
         },
-        optimized,
+        plan,
         (),
     );
+    let optimized = logical_optimize(rule_context, opt_flag, plan)
+        .map_err(|(_, error)| error)?
+        .plan;
+    let mut optimized = check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
     optimize_cte_classes(
         &optimized,
         catalog,

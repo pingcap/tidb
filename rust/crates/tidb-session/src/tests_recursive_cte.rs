@@ -111,6 +111,15 @@ fn union_dedups_a_cycle_where_union_all_diverges() {
          SELECT * FROM r",
     );
     assert_eq!(code, 3636);
+
+    session.run("ANALYZE TABLE g").unwrap();
+    assert_eq!(
+        column(session.run(
+            "WITH RECURSIVE r(x) AS (SELECT 1 UNION SELECT g.b FROM g, r WHERE g.a = r.x) \
+             SELECT * FROM r ORDER BY x"
+        )),
+        vec!["1", "2", "3"]
+    );
 }
 
 /// The depth bound is `@@cte_max_recursion_depth` ROUNDS, and the round it
