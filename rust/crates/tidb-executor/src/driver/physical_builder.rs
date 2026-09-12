@@ -1430,6 +1430,13 @@ fn build_index_reader(
         source.read_extra_handle(slot);
     }
     source.read_table_columns(keep);
+    // Go's UnionScan merges the snapshot and transaction streams in index
+    // order. A dirty table must therefore retain the index walk before its
+    // staged overlay is merged; handle-batch reordering would destroy that
+    // ordering.
+    if table.has_dirty_content() {
+        source.answer_in_index_order();
+    }
     source.set_lookup_concurrency(ctx.executor_concurrency());
     if lookup_pushdown {
         source.enable_lookup_pushdown();
