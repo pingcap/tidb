@@ -1640,3 +1640,78 @@ prefetched task's cursor to a pool worker that drains it into chunks.
 | Q2 | 0.33 s | 0.33 s | 0.45 s |
 
 Q3, Q4 and Q2 are now faster than Go warm; Q8 and Q16 are at parity.
+
+## TPC-H SF 1, round 4 full run (2026-09-12): Go vs r28
+
+`r28` is head a8292f09 (the five executor and planner changes of round 4:
+Q22's build side, the merge-join chunk fill and the notify fix, the decimal
+fast path, Q7's selectivity, the index-join chunk path and the inner tasks
+on workers, the arbitrator budget). Same harness as before; no answer
+mismatch on any of the 176 runs. Go's cold column is again the warm-TiKV
+number (the Rust side ran first in round 1), so read the Rust cold column
+against the r20 run above and the warm columns against each other.
+
+### Cold (first pass after a restart)
+
+| query | go s | r28 s | r28 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 0.98 | 3.02 | +210% | 2/2 |
+| Q2 | 0.14 | 1.00 | +644% | 2/2 |
+| Q3 | 0.91 | 1.61 | +78% | 2/2 |
+| Q4 | 0.37 | 1.17 | +216% | 2/2 |
+| Q5 | 1.71 | 3.19 | +87% | 2/2 |
+| Q6 | 0.54 | 1.31 | +145% | 2/2 |
+| Q7 | 1.41 | 2.58 | +83% | 2/2 |
+| Q8 | 0.67 | 1.58 | +136% | 2/2 |
+| Q9 | 2.45 | 4.73 | +93% | 2/2 |
+| Q10 | 0.50 | 1.78 | +256% | 2/2 |
+| Q11 | 0.10 | 1.31 | +1210% | 2/2 |
+| Q12 | 0.80 | 2.01 | +150% | 2/2 |
+| Q13 | 1.10 | 2.25 | +104% | 2/2 |
+| Q14 | 0.77 | 1.31 | +70% | 2/2 |
+| Q15 | 1.81 | 3.22 | +77% | 2/2 |
+| Q16 | 0.43 | 0.67 | +54% | 2/2 |
+| Q17 | 3.79 | 5.44 | +43% | 2/2 |
+| Q18 | 2.62 | 5.17 | +98% | 2/2 |
+| Q19 | 1.45 | 1.98 | +37% | 2/2 |
+| Q20 | 1.21 | 1.48 | +22% | 2/2 |
+| Q21 | 2.48 | 3.35 | +35% | 2/2 |
+| Q22 | 0.17 | 1.11 | +573% | 2/2 |
+| sum (answered) | 26.4 (22 q) | 51.3 (22 q) | | |
+
+### Warm (second pass on the same process)
+
+| query | go s | r28 s | r28 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 0.30 | 0.10 | -67% | 2/2 |
+| Q2 | 0.10 | 0.30 | +200% | 2/2 |
+| Q3 | 0.88 | 0.97 | +11% | 2/2 |
+| Q4 | 0.41 | 0.44 | +9% | 2/2 |
+| Q5 | 1.71 | 2.31 | +35% | 2/2 |
+| Q6 | 0.17 | 0.10 | -39% | 2/2 |
+| Q7 | 1.27 | 1.75 | +37% | 2/2 |
+| Q8 | 0.64 | 0.84 | +31% | 2/2 |
+| Q9 | 2.32 | 4.50 | +94% | 2/2 |
+| Q10 | 0.50 | 0.84 | +68% | 2/2 |
+| Q11 | 0.10 | 0.30 | +200% | 2/2 |
+| Q12 | 0.20 | 0.44 | +120% | 2/2 |
+| Q13 | 0.27 | 0.94 | +255% | 2/2 |
+| Q14 | 0.51 | 0.84 | +66% | 2/2 |
+| Q15 | 1.44 | 2.85 | +98% | 2/2 |
+| Q16 | 0.33 | 0.60 | +81% | 2/2 |
+| Q17 | 3.66 | 5.30 | +45% | 2/2 |
+| Q18 | 2.55 | 4.46 | +75% | 2/2 |
+| Q19 | 1.04 | 1.27 | +23% | 2/2 |
+| Q20 | 1.21 | 1.34 | +11% | 2/2 |
+| Q21 | 2.11 | 2.72 | +29% | 2/2 |
+| Q22 | 0.10 | 0.10 | +0% | 2/2 |
+| sum (answered) | 21.8 (22 q) | 33.3 (22 q) | | |
+
+### Reading the tables
+
+- Warm against Go: 33.3 vs 21.8 s, 1.53x (r20: 1.80x). Q1 and Q6 faster
+  than Go, Q22 at parity, Q4, Q20 and Q3 within 11%, Q19, Q21, Q8 within a
+  third. The remaining large ratios are the hash-aggregate and hash-join
+  queries (Q13, Q9, Q18, Q15, Q12) and the small-result queries where a
+  fixed per-statement cost shows (Q2, Q11).
+- Rust cold against the r20 run: 51.3 vs 57.8 s.
