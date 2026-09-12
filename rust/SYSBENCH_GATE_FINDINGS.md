@@ -1615,3 +1615,28 @@ why. During Q21 the Go node keeps about nine coprocessor requests in flight
 Go node holds 3.9 in flight and the Rust node 0.6, so the lookups run nearly
 one request at a time and TiKV idles 40% of the time. The ExecPlan carries
 the investigation.
+
+### Round 4, the index joins: inner tasks drained on workers
+
+The cause named above was confirmed with a traced build: the prefetch queue
+held four to five tasks with their cursors opened early, but a coprocessor
+worker sends a task's next page only after the consumer has taken the
+previous one, and the session thread was the only consumer, so every other
+cursor stalled after its first page. Go's cop iterator is demand-driven too;
+its concurrency comes from `tidb_index_lookup_join_concurrency` inner
+workers each draining their own reader. Commit a8292f09 hands each
+prefetched task's cursor to a pool worker that drains it into chunks.
+
+| query | before | after | Go |
+|---|---|---|---|
+| pure index join (orders x lineitem, INL_JOIN) | 5.2 s, 0.6 requests in flight | 2.3 s, 3.0 in flight | 2.0 s, 3.9 in flight |
+| Q21 | 3.8 s | 2.71 s | 2.4 s |
+| Q8 | 1.50 s | 0.91 s | 0.89 s |
+| Q3 | 2.05 s | 1.00 s | 1.53 s |
+| Q4 | 0.80 s | 0.48 s | 0.50 s |
+| Q16 | 0.85 s | 0.58 s | 0.59 s |
+| Q10 | 0.98 s | 0.91 s | 0.64 s |
+| Q20 | 1.34 s | 1.38 s | 1.31 s |
+| Q2 | 0.33 s | 0.33 s | 0.45 s |
+
+Q3, Q4 and Q2 are now faster than Go warm; Q8 and Q16 are at parity.
