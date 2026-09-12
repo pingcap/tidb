@@ -120,8 +120,8 @@ fn a_nested_derived_table_nests_the_subtree() {
             "explain select * from (select * from (select * from t) y) x"
         ),
         vec![
-            "TableReader_2|10000.00|root||data:TableFullScan",
-            "└─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "TableReader_7|10000.00|root||data:TableFullScan_6",
+            "└─TableFullScan_6|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
 }
