@@ -204,6 +204,7 @@ func TestJobClone(t *testing.T) {
 func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
 	parentJob := &Job{
 		ID:           100,
+		RU:           12.5,
 		ResumeReason: &JobResumeReason{Type: JobResumeReasonKVDiskFull},
 	}
 	subJob := &SubJob{
@@ -212,6 +213,7 @@ func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
 	}
 	proxyJob := subJob.ToProxyJob(parentJob, 0)
 	require.True(t, proxyJob.HasResumeReason(JobResumeReasonKVDiskFull))
+	require.Equal(t, parentJob.RU, proxyJob.RU)
 }
 
 func TestJobSize(t *testing.T) {
