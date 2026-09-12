@@ -3395,6 +3395,7 @@ dependencies = [
 name = "tidb-chunk"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "tidb-datatype",
  "tidb-util",
  "tracing",
