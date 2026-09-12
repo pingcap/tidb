@@ -263,11 +263,10 @@ fn a_derived_table_keeps_its_own_order_by_limit() {
             "explain select x.a from (select a from t order by a desc limit 2) x"
         ),
         vec![
-            "Projection_5|2.00|root||test.t.a",
-            "└─Limit_4|2.00|root||offset:0, count:2",
-            "  └─IndexReader_3|2.00|root||index:Limit",
-            "    └─Limit_2|2.00|cop[tikv]||offset:0, count:2",
-            "      └─IndexFullScan_1|2.00|cop[tikv]|table:t, index:ia(a)|keep order:true, desc, stats:pseudo",
+            "Limit_13|2.00|root||offset:0, count:2",
+            "└─IndexReader_30|2.00|root||index:Limit_29",
+            "  └─Limit_29|2.00|cop[tikv]||offset:0, count:2",
+            "    └─IndexFullScan_27|2.00|cop[tikv]|table:t, index:ia(a)|keep order:true, desc, stats:pseudo",
         ]
     );
     assert_eq!(
