@@ -431,12 +431,14 @@ enum Partial {
     },
     /// `JSON_ARRAYAGG`: the converted values in arrival order, plus the
     /// value argument's field type for `Opaque` type-code tagging.
-    JsonArrayAgg(Vec<BinaryJSON>, FieldType),
+    /// The field type is boxed: it carries strings, and this state is one of
+    /// many per group.
+    JsonArrayAgg(Vec<BinaryJSON>, Box<FieldType>),
     /// `JSON_OBJECTAGG`: the object built so far, the value argument's field
     /// type, and whether the key argument is BINARY-charset. A `BTreeMap`
     /// both keeps the last write per key (Go's map overwrite) and hands the
     /// encoder the bytewise-sorted key order it needs.
-    JsonObjectAgg(BTreeMap<String, BinaryJSON>, FieldType, bool),
+    JsonObjectAgg(BTreeMap<String, BinaryJSON>, Box<FieldType>, bool),
     /// `APPROX_COUNT_DISTINCT`: the BJKST sketch folding the group's encoded
     /// argument tuples.
     ApproxCountDistinct(ApproxCountDistinctSketch),
@@ -459,7 +461,10 @@ enum Partial {
 /// is why the aggregate cannot re-read the datum and has to be told.
 struct AggState {
     partial: Partial,
-    seen: Option<StringSetWithMemoryUsage>,
+    /// Boxed: only a DISTINCT aggregate owns a set, and every other state
+    /// stays small enough that a group's states share cache lines (Go's
+    /// partial results are exactly as large as their value).
+    seen: Option<Box<StringSetWithMemoryUsage>>,
     /// Original inputs retained only by the parallel partial phase for a
     /// DISTINCT aggregate. Go's distinct partial results retain the values
     /// themselves (not merely the folded scalar) so final workers can union
@@ -495,7 +500,9 @@ impl AggState {
     fn with_collation(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
         AggState {
             partial: Partial::new(&func.kind),
-            seen: func.distinct.then(|| StringSetWithMemoryUsage::new([]).0),
+            seen: func
+                .distinct
+                .then(|| Box::new(StringSetWithMemoryUsage::new([]).0)),
             distinct_inputs: None,
             collation,
         }
@@ -506,7 +513,7 @@ impl AggState {
     fn reset(&mut self, func: &AggFunc) {
         self.partial = Partial::new(&func.kind);
         if self.seen.is_some() {
-            self.seen = Some(StringSetWithMemoryUsage::new([]).0);
+            self.seen = Some(Box::new(StringSetWithMemoryUsage::new([]).0));
         }
         if let Some(inputs) = &mut self.distinct_inputs {
             inputs.clear();
@@ -993,12 +1000,16 @@ impl Partial {
                 sqrt: *sqrt,
             },
             AggKind::JsonArrayAgg { value_type } => {
-                Partial::JsonArrayAgg(Vec::new(), value_type.clone())
+                Partial::JsonArrayAgg(Vec::new(), Box::new(value_type.clone()))
             }
             AggKind::JsonObjectAgg {
                 value_type,
                 key_is_binary,
-            } => Partial::JsonObjectAgg(BTreeMap::new(), value_type.clone(), *key_is_binary),
+            } => Partial::JsonObjectAgg(
+                BTreeMap::new(),
+                Box::new(value_type.clone()),
+                *key_is_binary,
+            ),
             AggKind::ApproxCountDistinct => {
                 Partial::ApproxCountDistinct(ApproxCountDistinctSketch::new())
             }
@@ -4696,7 +4707,7 @@ mod tests {
         /// `"ab"` = `["base64:type15:YWI="]`.
         #[test]
         fn json_arrayagg_wraps_binary_charset_value_as_opaque() {
-            let mut partial = Partial::JsonArrayAgg(Vec::new(), varbinary());
+            let mut partial = Partial::JsonArrayAgg(Vec::new(), Box::new(varbinary()));
             partial
                 .update(
                     Some(Datum::new_bytes(*b"ab")),
@@ -4716,7 +4727,7 @@ mod tests {
         /// holding `"ab"` = `{"k": "base64:type15:YWI="}`.
         #[test]
         fn json_objectagg_wraps_binary_charset_value_as_opaque() {
-            let mut partial = Partial::JsonObjectAgg(BTreeMap::new(), varbinary(), false);
+            let mut partial = Partial::JsonObjectAgg(BTreeMap::new(), Box::new(varbinary()), false);
             partial
                 .update(
                     Some(Datum::new_string("k")),
@@ -4737,7 +4748,7 @@ mod tests {
         /// from a string with CHARACTER SET 'binary'.`.
         #[test]
         fn json_objectagg_binary_charset_key_is_error_3144() {
-            let mut partial = Partial::JsonObjectAgg(BTreeMap::new(), long(), true);
+            let mut partial = Partial::JsonObjectAgg(BTreeMap::new(), Box::new(long()), true);
             let err = partial
                 .update(
                     Some(Datum::new_bytes(*b"ab")),

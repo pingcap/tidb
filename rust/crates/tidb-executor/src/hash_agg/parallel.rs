@@ -687,7 +687,7 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
             for _ in 0..values.capacity() {
                 values.push(expect_json(reader.datum()?)?);
             }
-            Partial::JsonArrayAgg(values, value_type.clone())
+            Partial::JsonArrayAgg(values, Box::new(value_type.clone()))
         }
         (
             AggKind::JsonObjectAgg {
@@ -704,7 +704,7 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
                 })?;
                 values.insert(key, expect_json(reader.datum()?)?);
             }
-            Partial::JsonObjectAgg(values, value_type.clone(), *key_is_binary)
+            Partial::JsonObjectAgg(values, Box::new(value_type.clone()), *key_is_binary)
         }
         (AggKind::ApproxCountDistinct, 15) => {
             let skip_degree = reader.u8()?;
@@ -809,7 +809,7 @@ fn read_state(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<AggState, 
             seen.insert(GoString::from_bytes(input.key.clone()));
             inputs.push(input);
         }
-        state.seen = Some(seen);
+        state.seen = Some(Box::new(seen));
         state.distinct_inputs = Some(inputs);
     }
     state.partial = read_partial(reader, func)?;
