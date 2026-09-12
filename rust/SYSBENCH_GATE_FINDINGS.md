@@ -1571,3 +1571,28 @@ because the session thread was busy for all of it.
   nested-loop row-for-row equivalence test now runs on the workers for
   every join kind over duplicate and NULL keys and passes unchanged, since
   results are released in source-chunk order.
+
+## TPC-H round 4 (2026-09-12): per-query diagnosis and the first fixes
+
+The campaign to make every TPC-H query faster than Go is tracked in
+`TPCH_GO_PERF_PARITY_EXECPLAN.md`. The diagnosis (warm `EXPLAIN ANALYZE` on
+both nodes, plan-shape diff, session-thread profiles) found that the Rust
+node's `EXPLAIN ANALYZE` carries no execution info at all, so its
+per-operator picture had to come from profiling; the causes it named, by
+the seconds they cost, are in the plan's Milestone 1 entry. Three fixes
+landed so far, each measured with the same two-run A/B (warm, node CPU,
+wall, minor faults):
+
+| query | before | after | Go | change |
+|---|---|---|---|---|
+| Q22 | 0.68 s | 0.15 s | 0.10 s | planner enumerates Go's outer-side build for semi/anti-semi joins (be617db1) |
+| Q12 | 1.5 s (1.4 s CPU) | 0.85-0.96 s (0.5 s CPU) | 0.49 s | merge join fills its chunk (be617db1, 498633c9); spill coordinator notifies only with waiters (61d7b211) |
+| Q9 | 4.9 s | 4.7 s | 2.3 s | decimal add fast path aligns scales (be617db1) |
+
+Two of these were found by counting syscalls on the session thread
+(`strace -c -p <tid>`, then `perf record -e syscalls:sys_enter_futex` for
+the call chains): Q12 made 127,093 futex calls in a 1.5 s query, 97% under
+`RowContainer::reset_shared` (a condition-variable notify per inner group,
+issued by `std` even with no waiter) and the rest under the aggregate
+pipeline's `send` (one chunk per key group from the merge join, 37,000
+chunks for 31,282 rows). After the fixes the same query makes 48.

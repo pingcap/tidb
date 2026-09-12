@@ -27,10 +27,13 @@ TPC-H differs from the other workloads in what it stresses. Sysbench and TPC-C a
   - Q12 (1.1 s): the session thread is 37% in kernel spin-unlock from futex traffic around an aggregate pipeline over only 31,282 rows; call chains to be read.
   - Q1, Q6, Q14, Q19 (1.0-1.3x): at or near parity.
 - [ ] Milestone 2: the index join's inner side on workers, as Go's `IndexHashJoin` inner workers do (largest yield, nine queries).
-- [ ] Milestone 3: the planner's hash-join build-side choice for semi/anti-semi and inner joins aligned with Go's enumeration and cost (Q22, Q7), and Q15's index hash join.
+- [x] (2026-09-12) Milestone 3, part 1 (Q22): commit be617db1. The Rust enumeration already modelled Go's two hash-join shapes for semi and anti-semi joins but was called with the outer-side build disabled because the dispatch context carried no hash-join version; the session now derives it from `tidb_hash_join_version` as Go's `SessionVars.UseHashJoinV2`, and the task-level join records null-aware keys for `CanUseHashJoinV2`. Q22 warm 0.68 s -> 0.15 s (Go 0.10 s). Q7 (inner-join build side) and Q15 (index hash join) remain.
+- [x] (2026-09-12) Milestone 6, part 1 (Q12): three commits. The merge join returned as soon as its chunk held any rows, after a drained group (be617db1) and at the loop tail after every compare arm (498633c9), so its parent received one chunk per key group (37,000 chunks for 31,282 rows); Go's `MergeJoinExec.Next` loops `for !req.IsFull()`. Separately, the row container's spill coordinator notified a condition variable at every phase change and `std` issues the futex syscall even with no waiter; the merge join resets its inner-group container per key group, which cost 127,093 syscalls on Q12's session thread (61d7b211: notify only with waiters). Q12 warm 1.5 s -> 0.85-0.96 s, node CPU 1.4 s -> 0.5 s, session-thread futex calls 127,093 -> 48.
+- [x] (2026-09-12) Milestone 5, part 1: the decimal add fast path aligns storage scales as Go's `doAdd`/`doSub` align word counts (be617db1); `1 - l_discount` no longer takes the digit-string path (about seven heap allocations per row). Q9 warm 4.9 s -> 4.7 s.
+- [ ] Milestone 3, remainder: Q7's inner-join build side and Q15's index hash join.
 - [ ] Milestone 4: the hash join build phase on workers, as Go's `BuildWorkerV2` does.
 - [ ] Milestone 5: column-wise expression evaluation for projections and filters over chunk inputs, as Go's `VectorizedExecute` does; the decimal fast path aligned to Go's scale handling (done in the working tree, tested, awaiting its A/B).
-- [ ] Milestone 6: Q12's synchronisation and the per-chunk handoff cost; the response decode copy.
+- [ ] Milestone 6, remainder: the per-chunk handoff cost on the hash aggregate and join pipelines; the response decode copy.
 - [ ] Milestone 7: full harness run, all 22 queries faster than Go warm; findings document updated; `Ready` validation.
 
 
