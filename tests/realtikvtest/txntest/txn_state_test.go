@@ -45,6 +45,16 @@ func TestBasicTxnState(t *testing.T) {
 	startTS, err := strconv.ParseUint(startTSStr, 10, 64)
 	require.NoError(t, err)
 
+	waitForTxnInfo := func(match func(*txninfo.TxnInfo) bool) *txninfo.TxnInfo {
+		t.Helper()
+		var info *txninfo.TxnInfo
+		require.Eventually(t, func() bool {
+			info = tk.Session().TxnInfo()
+			return info != nil && match(info)
+		}, 5*time.Second, 10*time.Millisecond)
+		return info
+	}
+
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
 	defer func() { require.NoError(t, failpoint.Disable("tikvclient/beforePessimisticLock")) }()
 	ch := make(chan any)
@@ -52,10 +62,11 @@ func TestBasicTxnState(t *testing.T) {
 		tk.MustExec("select * from t for update;")
 		ch <- nil
 	}()
-	time.Sleep(100 * time.Millisecond)
-
-	info = tk.Session().TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
+
+	info = waitForTxnInfo(func(info *txninfo.TxnInfo) bool {
+		return info.CurrentSQLDigest == expectedDigest.String() && info.State == txninfo.TxnLockAcquiring
+	})
 	require.Equal(t, expectedDigest.String(), info.CurrentSQLDigest)
 	require.Equal(t, txninfo.TxnLockAcquiring, info.State)
 	require.True(t, info.BlockStartTime.Valid)
@@ -84,9 +95,10 @@ func TestBasicTxnState(t *testing.T) {
 		tk.MustExec("commit;")
 		ch <- nil
 	}()
-	time.Sleep(100 * time.Millisecond)
 	_, commitDigest := parser.NormalizeDigest("commit;")
-	info = tk.Session().TxnInfo()
+	info = waitForTxnInfo(func(info *txninfo.TxnInfo) bool {
+		return info.CurrentSQLDigest == commitDigest.String() && info.State == txninfo.TxnCommitting
+	})
 	require.Equal(t, commitDigest.String(), info.CurrentSQLDigest)
 	require.Equal(t, txninfo.TxnCommitting, info.State)
 	require.Equal(t, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String(), commitDigest.String()}, info.AllSQLDigests)
@@ -102,9 +114,10 @@ func TestBasicTxnState(t *testing.T) {
 		tk.MustExec("insert into t values (2)")
 		ch <- nil
 	}()
-	time.Sleep(100 * time.Millisecond)
-	info = tk.Session().TxnInfo()
 	_, expectedDigest = parser.NormalizeDigest("insert into t values (2)")
+	info = waitForTxnInfo(func(info *txninfo.TxnInfo) bool {
+		return info.CurrentSQLDigest == expectedDigest.String() && info.State == txninfo.TxnCommitting
+	})
 	require.Equal(t, expectedDigest.String(), info.CurrentSQLDigest)
 	require.Equal(t, txninfo.TxnCommitting, info.State)
 	require.False(t, info.BlockStartTime.Valid)
