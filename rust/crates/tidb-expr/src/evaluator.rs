@@ -78,8 +78,8 @@ pub fn vectorizable(expressions: &[Expression]) -> bool {
 /// records which surviving filter evaluations were SQL NULL, while NULL
 /// itself never remains selected.
 ///
-/// The expression model exposes Go's typed `VecEval*` only for the integer
-/// comparisons (`ScalarFunction::vec_eval_int_compare`). The vector evaluator
+/// The expression model exposes Go's typed `VecEval*` only for the numeric
+/// comparisons (`ScalarFunction::vec_eval_numeric_compare`). The vector evaluator
 /// nevertheless preserves the important vectorized contract: filters run
 /// filter-major, rejected rows are removed before the next filter, and direct
 /// column/constant expressions are materialized column-wise. Any other
@@ -192,7 +192,7 @@ pub fn vectorized_filter_consider_null<C: Columns>(
                 true
             }
             Expression::ScalarFunction(function) => {
-                function.vec_eval_int_compare(input, &sel, &mut is_zero)?
+                function.vec_eval_numeric_compare(input, &sel, &mut is_zero)?
             }
             Expression::Column(_) | Expression::Constant(_) => false,
         };
@@ -910,5 +910,45 @@ mod tests {
             vectorized_filter_consider_null(&ctx, true, &both, &input, Vec::new(), Vec::new())
                 .unwrap();
         assert_eq!(selected, vec![false, true, false, false]);
+    }
+
+    /// Go `builtinGTDecimalSig.vecEvalInt`: a decimal column against an
+    /// integer or decimal constant, and an integer column against a decimal
+    /// constant, compare exactly in the decimal domain.
+    #[test]
+    fn vector_filter_compares_decimals_column_wise() {
+        let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
+        decimal_type.set_flen(15);
+        decimal_type.set_decimal(2);
+        let mut input = Chunk::new_with_capacity(&[decimal_type.clone(), long()], 4);
+        for (value, int_value) in [("313.99", 313), ("314.00", 314), ("314.01", 315)] {
+            input.append_my_decimal(0, &Decimal::from_literal(value).to_my_decimal().unwrap());
+            input.append_int64(1, int_value);
+        }
+        input.append_null(0);
+        input.append_null(1);
+        let ctx = NoColumns;
+        let decimal_const = |text: &str| {
+            Expression::Constant(Constant::new(
+                Datum::Decimal(Decimal::from_literal(text)),
+                decimal_type.clone(),
+            ))
+        };
+
+        let cases: [(&str, Expression, Expression, [bool; 4]); 5] = [
+            ("gt", decimal_column(0, &decimal_type), int_const(314), [false, false, true, false]),
+            ("ge", decimal_column(0, &decimal_type), int_const(314), [false, true, true, false]),
+            ("lt", decimal_column(0, &decimal_type), decimal_const("314.005"), [true, true, false, false]),
+            ("eq", input_column(1), decimal_const("314.00"), [false, true, false, false]),
+            ("ne", decimal_const("314.00"), decimal_column(0, &decimal_type), [true, false, true, false]),
+        ];
+        for (name, lhs, rhs, expected) in cases {
+            let filters = vec![scalar(name, vec![lhs, rhs])];
+            let (selected, nulls) =
+                vectorized_filter_consider_null(&ctx, true, &filters, &input, Vec::new(), Vec::new())
+                    .unwrap();
+            assert_eq!(selected, expected, "{name}");
+            assert_eq!(nulls, vec![false, false, false, true], "{name}");
+        }
     }
 }

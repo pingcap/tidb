@@ -2612,21 +2612,67 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
     })
 }
 
-/// One argument of an integer comparison as Go's `VecEvalInt` reads it: a
-/// chunk column's 8-byte cells, or one strict constant.
-enum IntCompareOperand<'a> {
-    Column {
+/// One numeric value of a column-wise comparison, in the comparison's
+/// evaluation family (Go `getBaseCmpType`: `ETInt` when both sides are
+/// integers, `ETDecimal` when a decimal meets an integer or a decimal).
+#[derive(Clone, Copy)]
+enum CompareValue {
+    Int(crate::coerce::Integer),
+    Decimal(tidb_datatype::MyDecimal),
+}
+
+impl CompareValue {
+    fn cmp(self, other: Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Self::Int(a), Self::Int(b)) => crate::coerce::integer_cmp(a, b),
+            (a, b) => a.to_my_decimal().compare(&b.to_my_decimal()),
+        }
+    }
+
+    fn to_my_decimal(self) -> tidb_datatype::MyDecimal {
+        match self {
+            Self::Int(crate::coerce::Integer::Signed(value)) => {
+                tidb_datatype::MyDecimal::from_int(value)
+            }
+            Self::Int(crate::coerce::Integer::Unsigned(value)) => {
+                tidb_datatype::MyDecimal::from_uint(value)
+            }
+            Self::Decimal(value) => value,
+        }
+    }
+}
+
+/// One argument of a numeric comparison as Go's `VecEvalInt`/`VecEvalDecimal`
+/// reads it: a chunk column's 8-byte integer or 40-byte decimal cells, or
+/// one strict constant.
+enum CompareOperand<'a> {
+    IntColumn {
         column: tidb_chunk::ColumnRead<'a>,
         signed: bool,
     },
-    Constant(Option<crate::coerce::Integer>),
+    DecimalColumn(tidb_chunk::ColumnRead<'a>),
+    Constant(Option<CompareValue>),
 }
 
-impl<'a> IntCompareOperand<'a> {
-    fn of(expression: &Expression, input: &'a Chunk) -> Option<Self> {
+impl<'a> CompareOperand<'a> {
+    /// Returns the operand and whether it is in the decimal family.
+    fn of(expression: &Expression, input: &'a Chunk) -> Option<(Self, bool)> {
         use tidb_datatype::FieldTypeCode;
         let field_type = expression.static_type()?;
-        if field_type.eval_type() != EvalType::Int {
+        // Only the integer codes store the value as the 8-byte cell
+        // `GetInt64` reads; BIT and the ENUM/SET-as-int forms (Go's hybrid
+        // types) keep the row path.
+        let is_int = matches!(
+            field_type.code(),
+            FieldTypeCode::Tiny
+                | FieldTypeCode::Short
+                | FieldTypeCode::Int24
+                | FieldTypeCode::Long
+                | FieldTypeCode::LongLong
+                | FieldTypeCode::Year
+        );
+        let is_decimal = field_type.code() == FieldTypeCode::NewDecimal;
+        if !is_int && !is_decimal {
             return None;
         }
         // Go `mysql.HasUnsignedFlag(args[i].GetType(ctx).GetFlag())`: the
@@ -2634,58 +2680,61 @@ impl<'a> IntCompareOperand<'a> {
         let signed = !field_type.is_unsigned();
         match expression {
             Expression::Column(column) => {
-                // Only the integer codes store the value as the 8-byte cell
-                // `GetInt64` reads; BIT and the ENUM/SET-as-int forms keep the
-                // row path.
-                if !matches!(
-                    field_type.code(),
-                    FieldTypeCode::Tiny
-                        | FieldTypeCode::Short
-                        | FieldTypeCode::Int24
-                        | FieldTypeCode::Long
-                        | FieldTypeCode::LongLong
-                        | FieldTypeCode::Year
-                ) {
-                    return None;
-                }
                 let index = usize::try_from(column.index).ok()?;
                 if index >= input.num_cols() {
                     return None;
                 }
                 let column = input.column(index);
-                if column.type_size() != 8 {
-                    return None;
-                }
-                Some(Self::Column { column, signed })
-            }
-            Expression::Constant(constant) => match constant.literal_value()? {
-                Datum::Null => Some(Self::Constant(None)),
-                Datum::Int(value) => Some(Self::Constant(Some(if signed {
-                    crate::coerce::Integer::Signed(*value)
+                if is_int && column.type_size() == 8 {
+                    Some((Self::IntColumn { column, signed }, false))
+                } else if is_decimal
+                    && column.type_size() == tidb_chunk::column::MY_DECIMAL_STRUCT_SIZE
+                {
+                    Some((Self::DecimalColumn(column), true))
                 } else {
-                    crate::coerce::Integer::Unsigned(*value as u64)
-                }))),
-                Datum::UInt(value) => Some(Self::Constant(Some(
-                    crate::coerce::Integer::Unsigned(*value),
-                ))),
-                _ => None,
-            },
+                    None
+                }
+            }
+            Expression::Constant(constant) => {
+                let value = match constant.literal_value()? {
+                    Datum::Null => None,
+                    Datum::Int(value) if is_int => Some(CompareValue::Int(if signed {
+                        crate::coerce::Integer::Signed(*value)
+                    } else {
+                        crate::coerce::Integer::Unsigned(*value as u64)
+                    })),
+                    Datum::UInt(value) if is_int => {
+                        Some(CompareValue::Int(crate::coerce::Integer::Unsigned(*value)))
+                    }
+                    Datum::Decimal(value) if is_decimal => {
+                        Some(CompareValue::Decimal(value.to_my_decimal().ok()?))
+                    }
+                    _ => return None,
+                };
+                Some((Self::Constant(value), is_decimal))
+            }
             _ => None,
         }
     }
 
-    fn get(&self, physical: usize) -> Option<crate::coerce::Integer> {
+    fn get(&self, physical: usize) -> Option<CompareValue> {
         match self {
-            Self::Column { column, signed } => {
+            Self::IntColumn { column, signed } => {
                 if column.is_null(physical) {
                     return None;
                 }
                 let bits = column.get_int64(physical);
-                Some(if *signed {
+                Some(CompareValue::Int(if *signed {
                     crate::coerce::Integer::Signed(bits)
                 } else {
                     crate::coerce::Integer::Unsigned(bits as u64)
-                })
+                }))
+            }
+            Self::DecimalColumn(column) => {
+                if column.is_null(physical) {
+                    return None;
+                }
+                Some(CompareValue::Decimal(column.get_my_decimal(physical)))
             }
             Self::Constant(value) => *value,
         }
@@ -2693,19 +2742,21 @@ impl<'a> IntCompareOperand<'a> {
 }
 
 impl ScalarFunction {
-    /// Go `builtin{EQ,NE,LT,LE,GT,GE}IntSig.vecEvalInt`: an integer comparison
-    /// over the live physical rows `sel` of `input`, column-wise.
+    /// Go `builtin{EQ,NE,LT,LE,GT,GE}{Int,Decimal}Sig.vecEvalInt`: a numeric
+    /// comparison over the live physical rows `sel` of `input`, column-wise.
     ///
     /// `is_zero` receives one entry per row of `sel` in Go's `VecEvalBool`
     /// encoding (`-1` NULL, `0` false, `1` true). Returns `Ok(false)`, with
     /// `is_zero` untouched, for every shape this kernel does not cover -- an
-    /// argument that is neither an integer column nor a strict integer
-    /// constant, or a result type the row evaluator would still convert --
-    /// so the caller keeps the row evaluator as the behavior contract there.
-    /// The covered shapes produce exactly what [`Self::eval`] produces row by
-    /// row: NULL when either side is NULL, and the signedness of each side
-    /// read from its argument's field type (`ops::integer_binary_typed`).
-    pub(crate) fn vec_eval_int_compare(
+    /// argument that is neither an integer/decimal column nor a strict
+    /// integer/decimal constant, or a result type the row evaluator would
+    /// still convert -- so the caller keeps the row evaluator as the
+    /// behavior contract there. The covered shapes produce exactly what
+    /// [`Self::eval`] produces row by row: NULL when either side is NULL,
+    /// the signedness of each integer side read from its argument's field
+    /// type (`ops::integer_binary_typed`), and an integer meeting a decimal
+    /// compared exactly in the decimal domain (`ops::decimal_binary`).
+    pub(crate) fn vec_eval_numeric_compare(
         &self,
         input: &Chunk,
         sel: &[usize],
@@ -2735,9 +2786,9 @@ impl ScalarFunction {
         {
             return Ok(false);
         }
-        let (Some(lhs), Some(rhs)) = (
-            IntCompareOperand::of(&self.args[0], input),
-            IntCompareOperand::of(&self.args[1], input),
+        let (Some((lhs, _)), Some((rhs, _))) = (
+            CompareOperand::of(&self.args[0], input),
+            CompareOperand::of(&self.args[1], input),
         ) else {
             return Ok(false);
         };
@@ -2748,7 +2799,7 @@ impl ScalarFunction {
                 is_zero.push(-1);
                 continue;
             };
-            let ordering = crate::coerce::integer_cmp(a, b);
+            let ordering = a.cmp(b);
             let truth = match op {
                 BinaryOp::Eq => ordering.is_eq(),
                 BinaryOp::Ne => !ordering.is_eq(),
