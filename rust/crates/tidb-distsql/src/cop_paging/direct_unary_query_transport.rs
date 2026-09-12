@@ -1402,7 +1402,29 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 "direct unary request selected a non-TiKV endpoint",
             ));
         }
-        let request_attempt_permit = self.acquire_request_attempt_limiter(&selected)?;
+        let request_attempt_permit = match self.acquire_request_attempt_limiter(&selected) {
+            Ok(permit) => permit,
+            Err(DirectUnaryTransportError::LimiterBackpressure) => {
+                // The route was selected but nothing reached the wire: give
+                // the selector its slot back (no peer-attempt budget spent)
+                // so the same attempt is selected again once a token frees.
+                if !self
+                    .request_selectors
+                    .get_mut(&logical_task_id)
+                    .ok_or(DirectUnaryTransportError::ResponseState(
+                        "request selector disappeared during limiter backpressure",
+                    ))?
+                    .abort_unsent_attempt(&selected.attempt, selected.proxy())
+                {
+                    return Err(DirectUnaryTransportError::RegionRecovery(
+                        "limiter backpressure did not match the selector's pending attempt"
+                            .to_owned(),
+                    ));
+                }
+                return Err(DirectUnaryTransportError::LimiterBackpressure);
+            }
+            Err(error) => return Err(error),
+        };
         let client_request = DirectUnaryRequest {
             endpoint: request.endpoint,
             replica_read_type: request.replica_read_type,
