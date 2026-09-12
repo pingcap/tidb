@@ -461,46 +461,6 @@ fn run_alter_table_in_inner(
                     *if_not_exists,
                     ctx,
                 )?;
-                // Go's `AddColumn` DOES install the column's inline CHECK
-                // (the constraint `buildColumnAndConstraint` returns runs the
-                // same build/validate flow as a table-level ADD CONSTRAINT
-                // CHECK), so a default that violates the check is refused at
-                // ALTER time with 3819.
-                if let Some(check) = column.options.iter().find_map(|option| match option {
-                    tidb_ast::ColumnOption::Check(check) => Some(check),
-                    _ => None,
-                }) {
-                    if ctx.enable_check_constraint() {
-                        if let Err(error) = add_check_constraint_action(
-                            catalog,
-                            &database,
-                            &name,
-                            super::check_constraint::CheckConstraintInput {
-                                definition: check.clone(),
-                                in_column: Some(column.name.clone()),
-                            },
-                            ctx,
-                        ) {
-                            // Go's AddColumn validates the new column's
-                            // default against its inline CHECK before
-                            // committing the job, so a violation refuses the
-                            // whole ALTER and the column is NOT added. Roll
-                            // the column add back to match.
-                            if let Some(crate::TableEntry::Kv(table)) =
-                                catalog.table_mut_in(&database, &name)
-                            {
-                                if let Some(offset) = table
-                                    .columns
-                                    .iter()
-                                    .position(|c| c.name.eq_ignore_ascii_case(&column.name))
-                                {
-                                    table.drop_column(offset);
-                                }
-                            }
-                            return Err(error);
-                        }
-                    }
-                }
             }
             tidb_ast::AlterTableAction::AddColumns {
                 if_not_exists,

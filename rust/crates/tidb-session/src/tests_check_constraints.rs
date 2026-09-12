@@ -301,6 +301,14 @@ fn an_inline_add_column_check_is_discarded_even_while_enabled() {
     session
         .run("insert into add_inline values (1, -1)")
         .expect("the discarded inline CHECK cannot guard writes");
+    session
+        .run("alter table add_inline add column c int default -2 check (c > 0)")
+        .expect("Go discards the inline CHECK before validating existing rows");
+    assert_eq!(
+        row_text(session.run("select a,b,c from add_inline")),
+        [["1", "-1", "-2"]]
+    );
+    assert!(!show_create(&mut session, "add_inline").contains("CONSTRAINT"));
 }
 
 /// A system variable whose assignment Go CLAMPS rather than refuses reports
