@@ -1392,9 +1392,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let Some(filter) = filter.as_deref() {
             if !filter.is_empty() && filter.len() != common_len {
                 if let Some((column, _)) = filter.iter().find(|(_, not_exist)| **not_exist) {
-                    return Err(PlanError::internal(format!(
-                        "Unknown column '{column}' in 'from clause'"
-                    )));
+                    return Err(PlanError::unknown_column_in_clause(column, "from clause"));
                 }
             }
         }

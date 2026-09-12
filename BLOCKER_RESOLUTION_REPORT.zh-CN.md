@@ -3885,3 +3885,16 @@ git diff --check
 Rust 已正确识别聚合别名，但 `resolve_gby_exprs` 使用 `PlanError::internal` 丢失错误类别。修复新增 `PlanErrorKind::IllegalReference` 并在 executor 恢复 DriverError，回归检查 code=1247、state=42S22、完整消息。红测 `/tmp/group-alias-red.log`，修复后 `/tmp/group-alias-final.log` 通过。
 
 验证：planner 聚合 80 passed（`/tmp/group-alias-planner.log`），session 集成 310 passed（`/tmp/group-alias-integration.log`），`make lint` 退出 0（`/tmp/group-alias-lint.log`），`git diff --check` 通过。该类别已独立提交并推送；全量目标仍未完成。
+## 2026-09-12 coalesced JOIN 列身份修复
+
+Go master oracle 要求 `USING`/`NATURAL JOIN` 的 FullSchema 仍可解析被合并的限定列；投影输出则按原始限定列名生成。Rust 原先用可见 schema 的索引重新查名，`n2.a` 的索引在去掉冗余列后落到 `c`，造成 `n2.*` 输出 `c,c`。本次在 `plan_builder.rs` 的投影列名生成中优先按 `Expr::Column` 的 database/table/column 路径恢复 FullNames；对可见 schema 中不存在的冗余限定列保留其原始限定名。同时将未知 `USING` 列从通用 1105 改为 Go 对齐的 1054 `UnknownColumnInClause`。
+
+验证：
+
+```text
+tests_coalesced_joins::a_coalesced_column_is_still_reachable_through_either_qualifier ... ok
+tests_coalesced_joins::a_qualified_star_loses_the_coalesced_copy_under_an_inner_join_with_on ... ok
+tests_coalesced_joins::an_unknown_using_column_is_rejected ... ok
+```
+
+命令：`RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_coalesced_joins::<case> -- --exact`。本次仅解除 coalesced JOIN 失败类别；readiness 已由前序提交解除，整体 Rust failed cases 和其余质量门禁仍未完成。

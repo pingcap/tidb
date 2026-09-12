@@ -2918,6 +2918,50 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // an aggregate field's rewritten `expr` is an `Expr::Column` marker
         // too, but Go names it from the field text.
         if let (true, Some(index)) = (field.column_reference, resolved_index) {
+            if let Expr::Column(path) = &field.expr {
+                let matches_path = |name: &FieldName| {
+                    let column = name.names.column.original.eq_ignore_ascii_case(
+                        path.last().map(String::as_str).unwrap_or_default(),
+                    );
+                    let table = path.len() < 2
+                        || name.names.table.original.eq_ignore_ascii_case(&path[path.len() - 2]);
+                    let database = path.len() < 3
+                        || name.names.database.original.eq_ignore_ascii_case(&path[path.len() - 3]);
+                    column && table && database
+                };
+                if let Some(origin) = names.iter().find(|name| matches_path(name)) {
+                    let mut name = origin.clone();
+                    if let Some(alias) = &field.alias {
+                        name.names.column = IdentifierMetadata::new(alias);
+                    }
+                    name.redundant = false;
+                    name.hidden = field.hidden;
+                    return name;
+                }
+                if path.len() >= 2 {
+                    let table = &path[path.len() - 2];
+                    let column = path.last().expect("column path is non-empty");
+                    let mut metadata = FieldNameMetadata {
+                        column: IdentifierMetadata::new(column),
+                        table: IdentifierMetadata::new(table),
+                        original_table: IdentifierMetadata::new(table),
+                        original_column: IdentifierMetadata::new(column),
+                        ..FieldNameMetadata::default()
+                    };
+                    if path.len() >= 3 {
+                        metadata.database = IdentifierMetadata::new(&path[path.len() - 3]);
+                    }
+                    let mut name = FieldName {
+                        names: metadata,
+                        ..FieldName::default()
+                    };
+                    if let Some(alias) = &field.alias {
+                        name.names.column = IdentifierMetadata::new(alias);
+                    }
+                    name.hidden = field.hidden;
+                    return name;
+                }
+            }
             if let Some(origin) = names.get(index) {
                 let mut name = origin.clone();
                 if let Some(alias) = &field.alias {
