@@ -176,7 +176,9 @@ func TestSleep(t *testing.T) {
 	sessVars.SQLKiller.Reset()
 	sessVars.StmtCtx.InInsertStmt = true
 	sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	d[0].SetFloat64(0.01)
+	// Keep this above doSleep's 10ms polling interval so the test verifies kill preservation,
+	// not timer/ticker tie-breaking at the same deadline.
+	d[0].SetFloat64(0.1)
 	f, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
 	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
