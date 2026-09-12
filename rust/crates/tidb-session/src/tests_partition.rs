@@ -2147,7 +2147,7 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
 /// Go's `rule_partition_processor` under `@@tidb_partition_prune_mode =
 /// 'static'`: one scan per SURVIVING partition, under a `PartitionUnion`,
 /// each naming its own partition. Under `dynamic` -- the shipped default --
-/// there is one scan and no partition clause on it.
+/// there is one scan, with the selected partitions on its reader.
 ///
 /// MUTATION: ignore `StmtContext::static_partition_prune` and the dynamic
 /// control below gains three scans it must not have; drop the pruning filter
@@ -2164,10 +2164,10 @@ fn static_prune_mode_fans_a_partitioned_scan_out_per_partition() {
         )
         .unwrap();
 
-    // Control: the shipped `dynamic` mode leaves the one scan alone.
+    // Go's dynamic reader names the surviving partitions above the scan.
     assert_eq!(
         plan_access_objects(&mut session, "EXPLAIN SELECT * FROM t2 WHERE a >= 5"),
-        vec!["table:t2".to_owned()]
+        vec!["partition:p1,p2".to_owned(), "table:t2".to_owned()]
     );
 
     session
