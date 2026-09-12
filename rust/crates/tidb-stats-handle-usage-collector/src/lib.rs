@@ -195,14 +195,32 @@ impl<T: Send + 'static> SessionCollector<T> {
 
     /// Go `SessionCollector.SendDeltaSync`.
     pub fn send_delta_sync(&self, data: T) -> bool {
-        // Pinned Go `SpawnSession` leaves `sessionCollector.closeCh` nil, so
-        // this synchronous path cannot observe `GlobalCollector.Close` and
-        // still enqueues while the high-priority channel has capacity.
-        self.shared
-            .high_priority
-            .0
-            .send(data)
-            .expect("retained receiver");
+        if let Some(inline_merge) = self.shared.inline_merge.as_deref() {
+            let data = match inline_merge(data) {
+                Ok(()) => {
+                    *self
+                        .last_update
+                        .lock()
+                        .expect("session timestamp lock poisoned") = Instant::now();
+                    return true;
+                }
+                Err(data) => data,
+            };
+            self.shared
+                .high_priority
+                .0
+                .send(data)
+                .expect("retained receiver");
+        } else {
+            // Pinned Go `SpawnSession` leaves `sessionCollector.closeCh` nil, so
+            // this synchronous path cannot observe `GlobalCollector.Close` and
+            // still enqueues while the high-priority channel has capacity.
+            self.shared
+                .high_priority
+                .0
+                .send(data)
+                .expect("retained receiver");
+        }
         *self
             .last_update
             .lock()
