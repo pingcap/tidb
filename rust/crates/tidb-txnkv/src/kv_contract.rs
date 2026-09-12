@@ -390,6 +390,9 @@ pub struct CoprRequestLimiter {
     available: Notify,
     blocking_wait: Condvar,
     blocking_guard: Mutex<()>,
+    /// Drivers that found the limiter full and yielded instead of blocking
+    /// (see `register_waker`); every release wakes them all.
+    waiters: Mutex<Vec<std::task::Waker>>,
 }
 
 impl fmt::Debug for CoprRequestLimiter {
@@ -410,6 +413,21 @@ impl CoprRequestLimiter {
             available: Notify::new(),
             blocking_wait: Condvar::new(),
             blocking_guard: Mutex::new(()),
+            waiters: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Registers a driver to wake on the next release. A driver that keeps
+    /// attempts of its own in flight must not wait here while holding their
+    /// tokens (Go's worker holds none while it waits: one synchronous request
+    /// per worker, released before the next acquire), so it yields, settles
+    /// what is pending, and comes back when woken. Re-check `try_acquire`
+    /// after registering: a release between the failed acquire and the
+    /// registration wakes nobody.
+    pub fn register_waker(&self, waker: std::task::Waker) {
+        let mut waiters = self.waiters.lock().unwrap_or_else(|p| p.into_inner());
+        if !waiters.iter().any(|known| known.will_wake(&waker)) {
+            waiters.push(waker);
         }
     }
 
@@ -476,6 +494,12 @@ impl CoprRequestLimiter {
                 Ok(_) => {
                     self.available.notify_one();
                     self.blocking_wait.notify_one();
+                    let waiters = std::mem::take(
+                        &mut *self.waiters.lock().unwrap_or_else(|p| p.into_inner()),
+                    );
+                    for waiter in waiters {
+                        waiter.wake();
+                    }
                     return;
                 }
                 Err(observed) => current = observed,
@@ -770,5 +794,40 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("release wakes the waiting request"));
         thread.join().expect("waiting thread joins");
+    }
+
+    /// A registered driver is woken by the release that frees a token, and a
+    /// release before registration is not lost to a driver that re-checks.
+    #[test]
+    fn registered_waker_is_woken_by_release() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::{Wake, Waker};
+        struct Count(AtomicUsize);
+        impl Wake for Count {
+            fn wake(self: std::sync::Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let count = std::sync::Arc::new(Count(AtomicUsize::new(0)));
+        let waker = Waker::from(std::sync::Arc::clone(&count));
+        let limiter = new_copr_request_limiter(1).expect("positive capacity");
+        assert!(limiter.try_acquire());
+        assert!(!limiter.try_acquire());
+        limiter.register_waker(waker.clone());
+        limiter.register_waker(waker.clone());
+        assert_eq!(count.0.load(Ordering::SeqCst), 0);
+        limiter.release();
+        assert_eq!(
+            count.0.load(Ordering::SeqCst),
+            1,
+            "one wake per registration"
+        );
+        assert!(limiter.try_acquire());
+        limiter.release();
+        assert_eq!(
+            count.0.load(Ordering::SeqCst),
+            1,
+            "a consumed registration stays consumed"
+        );
     }
 }

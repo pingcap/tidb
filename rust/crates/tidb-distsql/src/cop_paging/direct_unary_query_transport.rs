@@ -262,6 +262,12 @@ pub enum DirectUnaryTransportError {
     RegionTerminal(String),
     /// Caller cancellation won before any further query mutation.
     CallerCancelled,
+    /// The store's request-attempt limiter is full and this response either
+    /// runs on the shared worker runtime or already holds tokens for attempts
+    /// in flight, so it yielded instead of blocking: the driver settles its
+    /// pending attempts (each settlement releases a token) and retries when
+    /// the limiter wakes it. Never a failure of the read.
+    LimiterBackpressure,
     /// The bind-anchored query deadline cannot admit another retry wait.
     DeadlineExceeded,
     /// A locked response could not be handled by the bounded lock delegate.
@@ -288,6 +294,7 @@ impl DirectUnaryTransportError {
             Self::CallerCancelled => "caller_cancelled",
             Self::DeadlineExceeded => "deadline_exceeded",
             Self::LockRecovery(_) => "lock_recovery",
+            Self::LimiterBackpressure => "limiter_backpressure",
         }
     }
 }
@@ -319,6 +326,9 @@ impl std::fmt::Display for DirectUnaryTransportError {
             Self::RegionRecovery(message) => write!(formatter, "region recovery failed: {message}"),
             Self::RegionTerminal(message) => write!(formatter, "terminal region error: {message}"),
             Self::CallerCancelled => formatter.write_str("query cancelled by caller"),
+            Self::LimiterBackpressure => {
+                formatter.write_str("store request limiter is full; attempt deferred")
+            }
             Self::DeadlineExceeded => formatter.write_str("query deadline exceeded"),
             Self::LockRecovery(message) => write!(formatter, "lock recovery failed: {message}"),
         }
@@ -966,7 +976,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .map_err(Self::completion_error)?
             .is_some()
         {}
-        self.prefetch_attempts()
+        // Backpressure on the window is handled where the current task is
+        // dispatched below.
+        let _ = self
+            .prefetch_attempts()
             .map_err(|error| QueryResponseError::Source(error.to_string()))?;
         loop {
             let Some(&logical_task_id) = self.logical_order.get(self.logical_index) else {
@@ -1022,8 +1035,24 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             } else {
                 self.dispatch_attempt(logical_task_id, attempt_id)
             };
-            if let Err(error) = dispatch_result {
-                return self.fail(error);
+            match dispatch_result {
+                Ok(()) => {}
+                Err(DirectUnaryTransportError::LimiterBackpressure) if blocking => {
+                    // Tokens come back as this response's own in-flight
+                    // attempts settle; wait for one, settle it, retry.
+                    let completed = self
+                        .completion_notifier
+                        .wait(&self.call)
+                        .map_err(Self::completion_error)?;
+                    if self.pending_batches.contains_key(&completed) {
+                        self.try_complete_batch_attempt(completed)
+                            .map_err(|error| QueryResponseError::Source(error.to_string()))?;
+                    }
+                }
+                Err(DirectUnaryTransportError::LimiterBackpressure) => {
+                    return Err(QueryResponseError::Pending);
+                }
+                Err(error) => return self.fail(error),
             }
         }
     }
@@ -1082,7 +1111,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             // reach the caller. This keeps the worker window bounded from the
             // consumer's perspective instead of dispatching a replacement
             // region before returning the completed page.
-            self.prefetch_attempts()
+            let backpressured = self
+                .prefetch_attempts()
                 .map_err(|error| QueryResponseError::Source(error.to_string()))?;
 
             let completion = self
@@ -1107,6 +1137,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 {
                     self.closed = true;
                     return Ok(None);
+                }
+                // Nothing in flight and the limiter refused the next attempt:
+                // an async driver yields to the limiter's wake rather than
+                // spinning on the runtime thread.
+                if backpressured && !blocking {
+                    return Err(QueryResponseError::Pending);
                 }
                 continue;
             }
@@ -1145,14 +1181,17 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
     /// for the first logical task. Go's distsql worker pool does the same: the
     /// result stream remains ordered when requested by the reader, while
     /// independent regions execute concurrently in TiKV.
-    fn prefetch_attempts(&mut self) -> Result<(), DirectUnaryTransportError> {
+    /// Dispatches attempts up to the request's concurrency window. `Ok(true)`
+    /// means the store limiter stopped it early (`LimiterBackpressure`): the
+    /// limiter wakes the driver when a token is released.
+    fn prefetch_attempts(&mut self) -> Result<bool, DirectUnaryTransportError> {
         // A zero/one request concurrency is the source's lazy single-worker
         // shape. Keep the first RPC owned by the response pull loop; this is
         // also important for callers that intentionally leave concurrency at
         // the request zero value. Explicitly larger windows are the only
         // cases where ordered reads can gain useful overlap.
         if self.task_worker || (self.metadata.keep_order && self.metadata.concurrency <= 1) {
-            return Ok(());
+            return Ok(false);
         }
         let concurrency = usize::try_from(self.metadata.concurrency)
             .ok()
@@ -1181,12 +1220,23 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 }
                 self.unordered_inflight.insert(logical_task_id);
             }
-            self.dispatch_attempt(logical_task_id, attempt_id)?;
+            match self.dispatch_attempt(logical_task_id, attempt_id) {
+                Ok(()) => {}
+                Err(DirectUnaryTransportError::LimiterBackpressure) => {
+                    // Prefetch is optional: leave the task where it was and
+                    // let the limiter wake the driver for another try.
+                    if !self.metadata.keep_order {
+                        self.unordered_inflight.remove(&logical_task_id);
+                    }
+                    return Ok(true);
+                }
+                Err(error) => return Err(error),
+            }
             if !self.metadata.keep_order && !self.pending_batches.contains_key(&logical_task_id) {
                 self.mark_unordered_ready(logical_task_id);
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     fn acquire_request_attempt_limiter(
@@ -1210,6 +1260,26 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         // two exits while retaining the token through response settlement.
         if limiter.try_acquire() {
             return Ok(RequestAttemptPermit(Some(limiter)));
+        }
+        // Go's worker (`coprocessor.go:1918` `setRequestAttemptLimiter`)
+        // blocks in `AcquireWithContext` holding NOTHING: one synchronous
+        // request per worker, its token released before the next acquire.
+        // This response keeps a window of attempts in flight, each holding a
+        // token, and the async worker driving it shares a small runtime with
+        // every other worker. Blocking here would keep this response's own
+        // tokens (its pending attempts settle only in this driver) and, on
+        // the runtime, the thread the other drivers need to settle theirs --
+        // with every runtime thread waiting, no token is ever released.
+        // Yield instead: register for the next release, close the race, and
+        // let the driver settle what is pending before it asks again.
+        if self.independent_driver || !self.pending_batches.is_empty() {
+            if let Some(waker) = self.completion_notifier.waker() {
+                limiter.register_waker(waker);
+            }
+            if limiter.try_acquire() {
+                return Ok(RequestAttemptPermit(Some(limiter)));
+            }
+            return Err(DirectUnaryTransportError::LimiterBackpressure);
         }
         let wait_start = Instant::now();
         let cancelled = limiter.acquire_blocking_with_context(|| {

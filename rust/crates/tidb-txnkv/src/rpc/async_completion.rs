@@ -397,6 +397,17 @@ impl CompletionNotifier {
         }
     }
 
+    /// The independent driver registered by `set_waker`, if any.
+    #[must_use]
+    pub fn waker(&self) -> Option<Waker> {
+        self.queue
+            .ready
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .waker
+            .clone()
+    }
+
     /// Returns the oldest already-published completion without waiting.
     pub fn try_take(&self) -> Result<Option<u64>, CompletionError> {
         Ok(self
