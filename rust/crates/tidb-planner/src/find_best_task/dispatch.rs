@@ -2338,15 +2338,16 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         ds.base.base.query_block_offset(),
                     );
                     point_base.base.set_schema(ds.base.base.schema().cloned());
-                    // Go `convertToPointGet`: the point plan's stats are the
-                    // DataSource's scaled by `min(CountAfterAccess, 1)`, not
-                    // the range path's full access estimate.
+                    // Go caps PointGet at one row and BatchPointGet at the
+                    // number of point ranges (convertToBatchPointGet).
                     point_base.base.set_stats(
                         table_stats
                             .as_ref()
                             .map(|table_stats| {
                                 table_stats.scale_by_expect_cnt(
-                                    count_after_access.unwrap_or(1.0).min(1.0),
+                                    count_after_access
+                                        .unwrap_or(ranges.len() as f64)
+                                        .min(ranges.len() as f64),
                                     ctx.skew_ratio,
                                 )
                             })

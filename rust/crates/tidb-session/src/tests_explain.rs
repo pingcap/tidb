@@ -206,12 +206,23 @@ fn explain_select() {
         "EXPLAIN SELECT v FROM common_point USE INDEX () \
          WHERE (b, a) IN (('y', 20), ('x', 10))",
     ));
-    assert!(
-        no_common_primary
-            .iter()
-            .all(|row| !row[0].contains("Batch_Point_Get")),
-        "USE INDEX() must remove the clustered primary path: {no_common_primary:?}"
-    );
+    // Go's ordinary table path can recover clustered BatchPointGet even
+    // after USE INDEX() makes the fast common-index path unavailable.
+    let batch = no_common_primary
+        .iter()
+        .find(|row| row[0].contains("Batch_Point_Get"))
+        .expect("Go retains clustered table point ranges");
+    assert_eq!(batch[1], "2.00");
+    for (values, operator, estimate) in [
+        ("(10, 'x'), (20, 'y'), (10, 'x')", "Batch_Point_Get", "2.00"),
+        ("(10, 'x')", "Point_Get", "1.00"),
+    ] {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN SELECT v FROM common_point USE INDEX () WHERE (a,b) IN ({values})"
+        )));
+        let point = rows.iter().find(|row| row[0].contains(operator)).unwrap();
+        assert_eq!(point[1], estimate, "{rows:?}");
+    }
 
     // `tryWhereIn2BatchPointGet` itself declines any generated column, but
     // Go's ordinary optimizer recovers the exact query as BatchPointGet. Its
