@@ -1284,3 +1284,137 @@ time is coprocessor scans and root-side joins.
 - Two rounds per side agree to within a few percent on every query, so the
   per-query deltas are outside noise.
 
+
+## TPC-H SF 1, round 2 (2026-09-12): Go vs r18 after the two planner fixes
+
+Same setup, harness and answer check as the r16 run above; `r18` is head
+a5527590. go-tpc's `--check` reported no mismatch on any of the 176 query
+runs. The machine rebooted between the two rounds of work, so the playground
+was restarted on its data directory; the Go node was started by hand with
+the playground's own config (its bootstrap died while TiKV replayed regions).
+Go's Q3 cold in round 1 took 11.04 s (round 2: 1.58 s, the r16 run: 1.65 s);
+the first cold query of the first pass after that restart is a TiKV
+warm-up outlier, and the Q3 cold mean below (6.31 s) carries it.
+
+### Root causes found by profiling the join queries, two fixed
+
+Each query was run with the node's and TiKV's CPU time sampled around it
+(scratchpad `qcpu.sh`), the biggest node-side gaps were profiled with
+`perf record -g` on the Rust node, and the plans were compared with Go's
+`EXPLAIN` output operator by operator.
+
+1. Fixed (47c9d3c8): a string column's `IN` list stayed on the root. Go's
+   `InString` lowers `p_container IN (...)` and `l_shipmode IN (...)` to the
+   coprocessor; the Rust pushdown check refused them, so Q19 pulled every
+   `part` and `lineitem` row through the node and evaluated the `IN`
+   there. Q19 went from +85% cold / +159% warm against Go to +7% / +8%.
+2. Fixed (a5527590): an index join's outer child was given the join's own
+   row expectation. Go's `constructIndexJoin` computes it with
+   `physicalop.CalcChildExpectedCnt(prop, outerRows, joinRows)`: unbounded
+   unless the parent wants fewer rows than the join estimates, scaled in
+   proportion when it does. The Rust enumerator passed `prop.expected_cnt`
+   straight through. On a nested join subquery with a filter (Q11's `HAVING
+   ... > (SELECT SUM(...) ...)`), the subquery's `MaxOneRow` asks for 2
+   rows, the stream aggregate grows that to `2 * inputCount / 1` (Go's
+   formula, matched), the join received an expectation above its own
+   estimate, and its outer scan was clipped to it: `partsupp` 800,000 rows
+   planned as 64,000, which underpriced an `IndexJoin` driving 800,000
+   lookups against the hash join Go picks. The same subquery run standalone
+   planned like Go's, which is what made it look like a statistics problem
+   first (the nested plan's `InitStats` sees the same row counts; the
+   difference is entirely in the physical enumeration). The repository's own
+   Q11 (`tests/integrationtest/t/tpch.test` parameters) went from 25 s to
+   1.35 s cold on the node with an identical 838-row answer; go-tpc's Q11
+   from +73% cold / +1310% warm against Go to +13% / +200%. The formula was
+   already present in `find_best_task/index_join.rs` and
+   `physical/merge_join.rs`, but neither file is declared as a module, so
+   neither has ever compiled; the live code is the dispatcher's. A regression
+   test plans the nested subquery in-process and asserts the tables' own row
+   counts and the hash join shape.
+3. Characterized, not fixed: root-side execution of the remaining join
+   queries (Q3, Q8, Q9, Q16, Q21, +50% to +108% cold). The Q9 profile puts
+   24% of node CPU in `memcpy` self time and 11% in page faults under the
+   hash join's output assembly, the Q16 profile shows the node doing 1.7x
+   Go's CPU for the same rows. The join output is already pruned to the used
+   columns (Go's `markChildrenUsedCols`), and the cell-by-cell append mirrors
+   Go's `appendCellByCell`; the excess is the row-at-a-time evaluation model
+   around it: `Datum` materialization per cell for every projection and
+   filter (`Row::datum_with_buffer`), a read lock taken per cell on shared
+   column backings (`SharedBytes::read_shared`), and decimals re-parsed on
+   each comparison, where Go evaluates expressions vectorized
+   (`Expression.VecEval*`) over whole columns. That is an evaluation-model
+   difference across the executor, not a single divergence, and is left as
+   the open item. Warm, the same gap plus the coprocessor cache: Go answers
+   Q2, Q11, Q12, Q13 and Q22 from its cache in 0.10-0.23 s; the Rust cache
+   hits Q1 and Q6 only (as in the r16 run), and Q11 now at 0.30 s.
+
+### Cold (first pass after a restart, both caches empty)
+
+| query | go s | r18 s | r18 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 2.79 | 2.72 | -2% | 2/2 |
+| Q2 | 0.83 | 1.08 | +29% | 2/2 |
+| Q3 | 6.31 | 3.22 | -49% | 2/2 |
+| Q4 | 1.27 | 1.65 | +29% | 2/2 |
+| Q5 | 2.99 | 3.16 | +6% | 2/2 |
+| Q6 | 1.27 | 1.34 | +5% | 2/2 |
+| Q7 | 2.25 | 3.02 | +34% | 2/2 |
+| Q8 | 1.34 | 2.38 | +77% | 2/2 |
+| Q9 | 3.46 | 5.60 | +62% | 2/2 |
+| Q10 | 1.54 | 2.15 | +39% | 2/2 |
+| Q11 | 1.31 | 1.48 | +13% | 2/2 |
+| Q12 | 1.91 | 2.49 | +30% | 2/2 |
+| Q13 | 2.05 | 2.31 | +13% | 2/2 |
+| Q14 | 1.27 | 1.38 | +8% | 2/2 |
+| Q15 | 2.32 | 3.39 | +46% | 2/2 |
+| Q16 | 0.50 | 1.04 | +108% | 2/2 |
+| Q17 | 4.16 | 5.63 | +35% | 2/2 |
+| Q18 | 4.06 | 5.10 | +26% | 2/2 |
+| Q19 | 1.84 | 1.98 | +7% | 2/2 |
+| Q20 | 1.51 | 1.51 | +0% | 2/2 |
+| Q21 | 3.08 | 4.70 | +52% | 2/2 |
+| Q22 | 1.08 | 1.11 | +3% | 2/2 |
+| sum (answered) | 49.2 (22 q) | 58.4 (22 q) | | |
+
+### Warm (second pass on the same process)
+
+| query | go s | r18 s | r18 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 0.10 | 0.10 | +0% | 2/2 |
+| Q2 | 0.10 | 0.41 | +305% | 2/2 |
+| Q3 | 0.91 | 2.21 | +145% | 2/2 |
+| Q4 | 0.37 | 0.88 | +136% | 2/2 |
+| Q5 | 1.71 | 2.32 | +36% | 2/2 |
+| Q6 | 0.10 | 0.10 | +0% | 2/2 |
+| Q7 | 1.34 | 2.52 | +87% | 2/2 |
+| Q8 | 0.70 | 1.78 | +154% | 2/2 |
+| Q9 | 2.58 | 5.33 | +106% | 2/2 |
+| Q10 | 0.57 | 1.14 | +100% | 2/2 |
+| Q11 | 0.10 | 0.30 | +200% | 2/2 |
+| Q12 | 0.17 | 1.34 | +691% | 2/2 |
+| Q13 | 0.23 | 1.11 | +383% | 2/2 |
+| Q14 | 0.73 | 0.91 | +24% | 2/2 |
+| Q15 | 1.91 | 2.98 | +56% | 2/2 |
+| Q16 | 0.37 | 0.88 | +136% | 2/2 |
+| Q17 | 3.52 | 5.43 | +54% | 2/2 |
+| Q18 | 2.52 | 4.33 | +72% | 2/2 |
+| Q19 | 1.24 | 1.34 | +8% | 2/2 |
+| Q20 | 1.21 | 1.31 | +9% | 2/2 |
+| Q21 | 2.25 | 4.09 | +82% | 2/2 |
+| Q22 | 0.10 | 0.64 | +540% | 2/2 |
+| sum (answered) | 22.8 (22 q) | 41.5 (22 q) | | |
+
+### Reading the tables
+
+- Cold, r18 answers the 22 queries in 58.4 s against Go's 49.2 s, 1.19x
+  (r16: 1.45x). Excluding Go's Q3 outlier (1.58 s in round 2) the ratio is
+  58.4 / 44.5 = 1.31x. Ten queries are now within 15% of Go (Q1, Q5, Q6,
+  Q11, Q13, Q14, Q19, Q20, Q22 and, on round 2's number, Q2 at 1.08 vs
+  0.83 s is not; Q11 +13%). The remaining gap is root cause 3 above: Q8
+  +77%, Q9 +62%, Q16 +108%, Q21 +52%, Q15 +46%.
+- Warm, 41.5 s against 22.8 s, 1.82x (r16: 1.90x). Q19 +8% and Q11 +200%
+  (0.30 vs 0.10 s) were +159% and +1310%. The Rust node still misses its
+  coprocessor cache on every join shape, so warm numbers other than Q1, Q6,
+  Q11, Q19 and Q20 are the cold ones minus TiKV's block cache effect.
+- Two rounds per side agree to within a few percent on every query except
+  Go's Q3 cold.
