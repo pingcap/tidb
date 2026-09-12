@@ -20,8 +20,8 @@ use tidb_datatype::{
     parse_datetime, Datum, FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone, TimeType,
 };
 use tidb_distsql::{decode_chunk, ResponseChannel, WarningCollector};
-use tidb_proto::{Chunk, EncodeType};
 use tidb_proto::tipb::SelectResponse;
+use tidb_proto::{Chunk, EncodeType};
 
 #[test]
 fn default_chunk_materializes_codec_decode_one_scalar_rows() {
@@ -95,8 +95,7 @@ fn select_iterator_uses_the_statement_zone_for_default_timestamps() {
         .unwrap()
         .time;
     timestamp.set_kind(TimeType::Timestamp);
-    let rows_data =
-        encode_value_in_timezone(&session_zone, &[Datum::new_time(timestamp)]).unwrap();
+    let rows_data = encode_value_in_timezone(&session_zone, &[Datum::new_time(timestamp)]).unwrap();
     let response = SelectResponse {
         encode_type: Some(EncodeType::TypeDefault as i32),
         chunks: vec![Chunk {
@@ -106,7 +105,7 @@ fn select_iterator_uses_the_statement_zone_for_default_timestamps() {
         ..SelectResponse::default()
     };
     let mut source = ResponseChannel::new();
-    source.push_result(response.encode_to_vec()).unwrap();
+    source.push_result(response.encode_to_vec().into()).unwrap();
     source.finish().unwrap();
     let mut iter = source.into_select_iter_in_timezone(
         vec![FieldType::new(FieldTypeCode::Timestamp)],
@@ -115,6 +114,9 @@ fn select_iterator_uses_the_statement_zone_for_default_timestamps() {
         WarningCollector::new(),
     );
 
-    assert_eq!(iter.next_row().unwrap().unwrap().row, vec![Datum::new_time(timestamp)]);
+    assert_eq!(
+        iter.next_row().unwrap().unwrap().row,
+        vec![Datum::new_time(timestamp)]
+    );
     assert!(iter.next_row().unwrap().is_none());
 }

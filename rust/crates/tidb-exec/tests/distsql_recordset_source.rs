@@ -51,7 +51,7 @@ fn recordset(values: &[u8]) -> DistSqlRecordSet {
     let mut response = vec![0x1a, chunk.len() as u8];
     response.extend_from_slice(&chunk);
     let mut source = ResponseChannel::new();
-    source.push_result(response).unwrap();
+    source.push_result(response.into()).unwrap();
     source.finish().unwrap();
     let iter = source.into_select_iter(
         vec![FieldType::new(FieldTypeCode::Long)],
@@ -75,7 +75,7 @@ fn typed_recordset(field_type: FieldType, type_code: u8, cell: &[u8]) -> DistSql
         ..Default::default()
     };
     let mut source = ResponseChannel::new();
-    source.push_result(response.encode_to_vec()).unwrap();
+    source.push_result(response.encode_to_vec().into()).unwrap();
     source.finish().unwrap();
     let iter = source.into_select_iter(vec![field_type], Vec::new(), WarningCollector::new());
     let mut result_column = column();

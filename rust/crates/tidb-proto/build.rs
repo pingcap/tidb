@@ -25,6 +25,10 @@ fn main() {
         // (`decodeColumn`: `col.data = buffer[:numDataBytes]`), so the
         // payload is shared rather than copied on decode.
         .bytes(".tipb.Chunk.rows_data")
+        // The coprocessor response body is likewise sliced out of the gRPC
+        // message rather than copied out of it, so the chunk decoder above
+        // shares the bytes the transport received.
+        .bytes(".coprocessor.Response.data")
         .compile_protos(
             &[
                 "proto/resourcetag.proto",

@@ -15,8 +15,8 @@
 #![allow(missing_docs)]
 
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use prost::Message;
@@ -58,7 +58,10 @@ impl RegionRecoveryLoader for ReaderLoader {
         &mut self,
         metadata: &RegionMetadata,
         leader_store_id: u64,
-        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        _resolved_stores: &mut std::collections::BTreeMap<
+            u64,
+            Option<tidb_txnkv::region::StoreMetadata>,
+        >,
     ) -> Result<RegionLocation, RegionLoadError> {
         if metadata.region != self.region.region {
             return Err(RegionLoadError::new(
@@ -201,7 +204,9 @@ fn request(cancel: std::sync::Arc<tidb_distsql::CancelHandle>) -> TransportReque
     TransportRequest::new(metadata, cancel)
 }
 
-fn transport(sends: Arc<AtomicUsize>) -> DirectUnaryQueryTransport<ReaderUnaryClient, ReaderLoader> {
+fn transport(
+    sends: Arc<AtomicUsize>,
+) -> DirectUnaryQueryTransport<ReaderUnaryClient, ReaderLoader> {
     transport_with_rows(sends, &[&[1, 2, 3]])
 }
 
@@ -213,7 +218,7 @@ fn transport_with_rows(
         .iter()
         .map(|values| {
             CoprocessorResponse {
-                data: encoded_rows(values),
+                data: encoded_rows(values).into(),
                 ..CoprocessorResponse::default()
             }
             .encode_to_vec()
@@ -312,7 +317,11 @@ fn table_and_index_readers_lazily_cross_the_unary_boundary_and_keep_row_budgets(
         let mut reader = TableIndexReader::new(plan, transport(Arc::clone(&sends)));
 
         reader.open().unwrap();
-        assert_eq!(sends.load(Ordering::SeqCst), 0, "open only transfers the lazy owner");
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            0,
+            "open only transfers the lazy owner"
+        );
         assert_eq!(ints(reader.next(1).unwrap()), [1]);
         assert_eq!(sends.load(Ordering::SeqCst), 1);
         // The decoder buffers the unused rows from the one raw TiKV response;
@@ -360,7 +369,11 @@ fn table_index_reader_preserves_typed_execution_cancellation_without_dispatch() 
         reader.next(1),
         Err(tidb_exec::storage_reader::StorageReaderError::Cancelled)
     );
-    assert_eq!(sends.load(Ordering::SeqCst), 0, "cancellation must win before TiKV dispatch");
+    assert_eq!(
+        sends.load(Ordering::SeqCst),
+        0,
+        "cancellation must win before TiKV dispatch"
+    );
     reader.close();
     assert_eq!(reader.state(), ReaderState::Closed);
 }

@@ -23,7 +23,7 @@ use tidb_txnkv::{
 #[test]
 fn successful_and_failed_attempts_expose_the_same_physical_identity_shape() {
     let response = DirectUnaryResponse::new(b"response".to_vec(), "proxy:20160", 17);
-    assert_eq!(response.encoded_response, b"response");
+    assert_eq!(response.encoded_response.as_ref(), b"response");
     assert_eq!(response.physical_address(), "proxy:20160");
     assert_eq!(response.physical_channel_version(), 17);
 

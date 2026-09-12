@@ -117,7 +117,7 @@ pub fn handle_cop_request(
         // optional uint64 fields at wire numbers 1-3, each carrying `1`
         // (`0x08 0x01`, `0x10 0x01`, `0x18 0x01`).
         REQ_TYPE_CHECKSUM => coprocessor::Response {
-            data: vec![0x08, 0x01, 0x10, 0x01, 0x18, 0x01],
+            data: vec![0x08, 0x01, 0x10, 0x01, 0x18, 0x01].into(),
             ..coprocessor::Response::default()
         },
         other => other_error(&format!("unsupported request type {other}")),
@@ -552,7 +552,7 @@ fn encode_default_rows(
     let mut data = Vec::new();
     select.encode(&mut data).expect("a select response encodes");
     coprocessor::Response {
-        data,
+        data: data.into(),
         ..coprocessor::Response::default()
     }
 }
@@ -857,7 +857,7 @@ fn exec_table_scan(
     let mut data = Vec::new();
     select.encode(&mut data).expect("a select response encodes");
     coprocessor::Response {
-        data,
+        data: data.into(),
         ..coprocessor::Response::default()
     }
 }
@@ -5212,7 +5212,7 @@ mod tests {
         );
         assert!(resp.other_error.is_empty(), "{}", resp.other_error);
         assert!(resp.locked.is_none());
-        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("a select response");
         assert_eq!(
             select.encode_type,
             Some(tipb::EncodeType::TypeDefault as i32)
@@ -5300,7 +5300,7 @@ mod tests {
             },
         );
         assert!(resp.other_error.is_empty(), "{}", resp.other_error);
-        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("a select response");
         let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
         let decoded = tidb_codec::decode(rows_data, 6).expect("six datums");
         assert_eq!(
@@ -5486,7 +5486,7 @@ mod tests {
             },
         );
         assert!(resp.other_error.is_empty(), "{}", resp.other_error);
-        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("decodes");
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("decodes");
         let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
         let decoded = tidb_codec::decode(rows_data, 2).expect("two datums");
         assert_eq!(
@@ -5598,7 +5598,7 @@ mod tests {
             },
         );
         assert!(resp.other_error.is_empty(), "{}", resp.other_error);
-        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("decodes");
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("decodes");
         let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
         let decoded = tidb_codec::decode(rows_data, 2).expect("one row");
         assert_eq!(decoded, vec![Datum::Int(2), Datum::Int(88)]);
@@ -5759,7 +5759,7 @@ mod tests {
             },
         );
         assert!(resp.other_error.is_empty(), "{}", resp.other_error);
-        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("a select response");
         assert_eq!(select.chunks.len(), 1);
         let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
         // 2 groups x 3 columns: [sum, count, g] each.
@@ -5883,7 +5883,7 @@ mod tests {
             },
         );
         assert!(resp.other_error.is_empty(), "{}", resp.other_error);
-        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("a select response");
         let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
         // [count, g] per group, group 5 first: the NULL row still counts.
         let decoded = tidb_codec::decode(rows_data, 4).expect("four datums");
@@ -5993,7 +5993,7 @@ mod tests {
         seed_three_rows(&mut store, 71);
         let resp = handle_cop_request(&mut store, &top_n_request(71, 1, true, 2));
         assert!(resp.other_error.is_empty(), "{}", resp.other_error);
-        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("decodes");
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("decodes");
         let mut decoded = Vec::new();
         for chunk in &select.chunks {
             decoded.extend(
@@ -6014,7 +6014,7 @@ mod tests {
         seed_three_rows(&mut store, 72);
         let resp = handle_cop_request(&mut store, &top_n_request(72, 1, false, 2));
         assert!(resp.other_error.is_empty(), "{}", resp.other_error);
-        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("decodes");
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("decodes");
         let mut decoded = Vec::new();
         for chunk in &select.chunks {
             decoded.extend(
@@ -7477,7 +7477,7 @@ mod tests {
         ];
         let resp = encode_default_rows(rows, &zone(), warnings);
         assert!(resp.other_error.is_empty());
-        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("a select response");
         assert_eq!(select.warning_count, Some(2));
         assert_eq!(select.warnings.len(), 2);
         assert_eq!(select.warnings[0].code, Some(1265));

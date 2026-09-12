@@ -887,7 +887,10 @@ impl CopReadTaskRuntime {
     }
 
     /// Drains the next bounded response event for one logical task.
-    pub fn next_response(&mut self, logical_task_id: u64) -> Option<ResponseChannelEvent<Vec<u8>>> {
+    pub fn next_response(
+        &mut self,
+        logical_task_id: u64,
+    ) -> Option<ResponseChannelEvent<prost::bytes::Bytes>> {
         self.tasks
             .iter_mut()
             .find(|task| task.task.task_id == logical_task_id)

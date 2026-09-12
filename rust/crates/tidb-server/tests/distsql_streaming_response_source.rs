@@ -90,10 +90,10 @@ fn intermediate(encode_type: EncodeType, chunks: Vec<Chunk>) -> IntermediateOutp
 
 fn response_source(
     responses: impl IntoIterator<Item = SelectResponse>,
-) -> ResponseChannel<Vec<u8>> {
+) -> ResponseChannel<prost::bytes::Bytes> {
     let mut source = ResponseChannel::new();
     for response in responses {
-        source.push_result(response.encode_to_vec()).unwrap();
+        source.push_result(response.encode_to_vec().into()).unwrap();
     }
     source.finish().unwrap();
     source
@@ -132,7 +132,7 @@ fn recordset() -> DistSqlRecordSet {
     let mut source = ResponseChannel::new();
     source
         .push_result_with_runtime(
-            response,
+            response.into(),
             ResponseRuntimeStats {
                 callee_address: "tikv-1".to_owned(),
                 request_rpc_stats_present: false,

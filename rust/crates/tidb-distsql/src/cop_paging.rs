@@ -208,7 +208,7 @@ pub struct CopPagingState {
     max_paging_size: u64,
     generation: ReadEngineGeneration,
     ema: Arc<ReadBytesEma>,
-    responses: ResponseChannel<Vec<u8>>,
+    responses: ResponseChannel<prost::bytes::Bytes>,
     response_capacity: usize,
     queued_responses: usize,
 }
@@ -398,7 +398,7 @@ impl CopPagingState {
     }
 
     /// Drains the next accepted response or terminal lifecycle event.
-    pub fn next_response(&mut self) -> Option<ResponseChannelEvent<Vec<u8>>> {
+    pub fn next_response(&mut self) -> Option<ResponseChannelEvent<prost::bytes::Bytes>> {
         let event = self.responses.next_event();
         if matches!(
             event.as_ref(),

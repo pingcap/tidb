@@ -213,7 +213,7 @@ fn response_with_failure(
     let subsets = rows
         .iter()
         .map(|row| QueryResultSubset {
-            data: encoded_row(&row.iter().copied().map(Some).collect::<Vec<_>>()),
+            data: encoded_row(&row.iter().copied().map(Some).collect::<Vec<_>>()).into(),
             runtime: None,
         })
         .collect();
@@ -232,7 +232,7 @@ fn null_key_response(row: &[Option<i64>]) -> (ScriptedResponse, ResponseProbe) {
     (
         ScriptedResponse {
             subsets: VecDeque::from([QueryResultSubset {
-                data: encoded_row(row),
+                data: encoded_row(row).into(),
                 runtime: None,
             }]),
             fail_on_call: None,
@@ -580,7 +580,11 @@ fn null_join_key_matches_nothing_including_another_null() {
         null_key_response(&[None, Some(1), Some(1000)]),
     );
 
-    assert!(fixture.result.next_batch(1).expect("empty join stream").is_empty());
+    assert!(fixture
+        .result
+        .next_batch(1)
+        .expect("empty join stream")
+        .is_empty());
     fixture.result.finish().expect("stream finishes cleanly");
     assert!(!fixture.cancellation.is_cancelled());
 }
@@ -606,7 +610,7 @@ fn datum_response(rows: &[&[Datum]]) -> (ScriptedResponse, ResponseProbe) {
     let subsets = rows
         .iter()
         .map(|row| QueryResultSubset {
-            data: encoded_datum_row(row),
+            data: encoded_datum_row(row).into(),
             runtime: None,
         })
         .collect();
@@ -720,11 +724,23 @@ fn joined_output_columns_report_each_source_columns_own_wire_type() {
             .collect::<Vec<_>>(),
         [
             // `uid`: BIGINT UNSIGNED -> LONGLONG, UnsignedFlag set.
-            (tidb_datatype::FieldTypeCode::LongLong.mysql_type(), 0x0020, tidb_protocol::BINARY_DEFAULT_COLLATION_ID),
+            (
+                tidb_datatype::FieldTypeCode::LongLong.mysql_type(),
+                0x0020,
+                tidb_protocol::BINARY_DEFAULT_COLLATION_ID
+            ),
             // `sid`: signed BIGINT -> LONGLONG, no unsigned flag.
-            (tidb_datatype::FieldTypeCode::LongLong.mysql_type(), 0, tidb_protocol::BINARY_DEFAULT_COLLATION_ID),
+            (
+                tidb_datatype::FieldTypeCode::LongLong.mysql_type(),
+                0,
+                tidb_protocol::BINARY_DEFAULT_COLLATION_ID
+            ),
             // `score`: DOUBLE.
-            (tidb_datatype::FieldTypeCode::Double.mysql_type(), 0, tidb_protocol::BINARY_DEFAULT_COLLATION_ID),
+            (
+                tidb_datatype::FieldTypeCode::Double.mysql_type(),
+                0,
+                tidb_protocol::BINARY_DEFAULT_COLLATION_ID
+            ),
             // `tag`: CHAR at utf8mb4_bin, positive result-column collation id.
             (tidb_datatype::FieldTypeCode::String.mysql_type(), 0, 46),
         ]

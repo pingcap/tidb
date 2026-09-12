@@ -219,8 +219,10 @@ fn build_tikv_unary_request_inner(
 /// task/cache/paging state. Error precedence matches Go's unary response path:
 /// region, lock, other error, then batch or ordinary success.
 pub fn decode_tikv_unary_response(
-    raw_response: &[u8],
+    raw_response: impl prost::bytes::Buf,
 ) -> Result<CopReadTaskResponse, prost::DecodeError> {
+    // Decoded from the transport's own buffer: the response `data` is a
+    // slice of it (`bytes` field), not a copy.
     let response = CoprocessorResponse::decode(raw_response)?;
     if response.region_error.is_some() {
         return Ok(CopReadTaskResponse::region_error(response));

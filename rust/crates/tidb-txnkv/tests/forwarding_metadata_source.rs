@@ -52,7 +52,7 @@ impl Tikv for MetadataTikv {
             .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
         self.forwarded_hosts.lock().unwrap().push(values);
         Ok(tonic::Response::new(CoprocessorResponse {
-            data: request.into_inner().data,
+            data: request.into_inner().data.into(),
             ..CoprocessorResponse::default()
         }))
     }

@@ -125,7 +125,7 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
     // first time.Now observation has unit alpha and replaces the byte seed.
     let calls = Rc::new(RefCell::new(Vec::new()));
     let first = CoprocessorResponse {
-        data: b"page-one".to_vec(),
+        data: b"page-one".to_vec().into(),
         range: Some(CoprocessorKeyRange {
             start: b"a".to_vec(),
             end: b"m".to_vec(),
@@ -163,7 +163,7 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
 fn process_time_admits_a_response_for_the_next_query_on_the_shared_cache() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let miss = CoprocessorResponse {
-        data: b"cached-result".to_vec(),
+        data: b"cached-result".to_vec().into(),
         cache_last_version: 9,
         can_be_cached: true,
         exec_details_v2: Some(CoprocessorExecDetailsV2 {

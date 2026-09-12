@@ -69,7 +69,7 @@ impl LockWaitInfoClient for TonicCoprocessorClient {
             },
             &UnaryCallContext::with_timeout(timeout),
         )?;
-        GetLockWaitInfoResponse::decode(response.encoded_response.as_slice())
+        GetLockWaitInfoResponse::decode(response.encoded_response.as_ref())
             .map(|response| {
                 response
                     .entries
@@ -240,7 +240,7 @@ impl TonicCoprocessorClient {
             },
             call,
         )?;
-        KvrpcCheckTxnStatusResponse::decode(response.encoded_response.as_slice()).map_err(|error| {
+        KvrpcCheckTxnStatusResponse::decode(response.encoded_response.as_ref()).map_err(|error| {
             DirectUnaryClientError::InvalidRequest(format!(
                 "invalid CheckTxnStatus response: {error}"
             ))
@@ -271,7 +271,7 @@ impl TonicCoprocessorClient {
             },
             call,
         )?;
-        KvrpcCheckSecondaryLocksResponse::decode(response.encoded_response.as_slice()).map_err(
+        KvrpcCheckSecondaryLocksResponse::decode(response.encoded_response.as_ref()).map_err(
             |error| {
                 DirectUnaryClientError::InvalidRequest(format!(
                     "invalid CheckSecondaryLocks response: {error}"
@@ -299,7 +299,7 @@ impl TonicCoprocessorClient {
             },
             call,
         )?;
-        KvrpcResolveLockResponse::decode(response.encoded_response.as_slice()).map_err(|error| {
+        KvrpcResolveLockResponse::decode(response.encoded_response.as_ref()).map_err(|error| {
             DirectUnaryClientError::InvalidRequest(format!("invalid ResolveLock response: {error}"))
         })
     }

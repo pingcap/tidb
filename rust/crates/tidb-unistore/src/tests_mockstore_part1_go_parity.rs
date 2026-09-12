@@ -193,7 +193,7 @@ fn run_dag(
     );
     assert!(resp.other_error.is_empty(), "{}", resp.other_error);
     assert!(resp.locked.is_none(), "no lock was standing");
-    tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response")
+    tipb::SelectResponse::decode(resp.data.as_ref()).expect("a select response")
 }
 
 /// Go's `dagBuilder` chain (`cop_handler_test.go:216+`) narrowed to the

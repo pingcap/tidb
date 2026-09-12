@@ -260,7 +260,7 @@ impl QueryTransport for FakeTransport {
         };
         Ok(Some(FakeResponse {
             subsets: vec![QueryResultSubset {
-                data: response.encode_to_vec(),
+                data: response.encode_to_vec().into(),
                 runtime: None,
             }],
             region: Arc::clone(&self.region),

@@ -61,8 +61,7 @@ fn metadata() -> KvRequestMetadata {
     metadata.not_fill_cache = true;
     metadata.task_id = 42;
     metadata.resource_group_name = "rg1".to_owned();
-    metadata.store_busy_threshold_ns =
-        (i64::from(u32::MAX) + 2).saturating_mul(1_000_000);
+    metadata.store_busy_threshold_ns = (i64::from(u32::MAX) + 2).saturating_mul(1_000_000);
     metadata.tikv_client_read_timeout_ms = 777;
     metadata.request_source = RequestSource {
         internal: true,
@@ -232,7 +231,7 @@ fn raw_response_decode_classifies_errors_before_coordinator_mutation() {
 
     let metadata = metadata();
     let runtime = runtime(&metadata);
-    assert!(decode_tikv_unary_response(&[0x0a, 0x02, 0x01]).is_err());
+    assert!(decode_tikv_unary_response(&[0x0a, 0x02, 0x01][..]).is_err());
     assert_eq!(runtime.in_flight_attempt_ids(), [1]);
 }
 
@@ -242,7 +241,7 @@ fn decoded_success_is_accepted_only_after_the_full_message_exists() {
     let mut runtime = runtime(&metadata);
     let decoded = decode_tikv_unary_response(
         CoprocessorResponse {
-            data: b"rows".to_vec(),
+            data: b"rows".to_vec().into(),
             ..CoprocessorResponse::default()
         }
         .encode_to_vec()

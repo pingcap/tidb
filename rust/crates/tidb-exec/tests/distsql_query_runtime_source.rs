@@ -21,10 +21,10 @@ use tidb_distsql::{
 };
 use tidb_exec::distsql_recordset::DistSqlRecordSet;
 
-struct OneResponse(Option<ResponseChannel<Vec<u8>>>);
+struct OneResponse(Option<ResponseChannel<prost::bytes::Bytes>>);
 
 impl QueryTransport for OneResponse {
-    type Response = ResponseChannel<Vec<u8>>;
+    type Response = ResponseChannel<prost::bytes::Bytes>;
 
     fn send(
         &mut self,
@@ -43,7 +43,7 @@ fn injected_query_runtime_feeds_the_existing_recordset_consumer() {
     let mut response = vec![0x1a, chunk.len() as u8];
     response.extend_from_slice(&chunk);
     let mut source = ResponseChannel::new();
-    source.push_result(response).unwrap();
+    source.push_result(response.into()).unwrap();
     source.finish().unwrap();
 
     let mut builder = KvRequestBuilder::new();

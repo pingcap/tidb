@@ -42,14 +42,14 @@ fn transport_request(metadata: tidb_distsql::KvRequestMetadata) -> TransportRequ
 
 #[derive(Default)]
 struct ScriptedTransport {
-    responses: VecDeque<Result<Option<ResponseChannel<Vec<u8>>>, String>>,
+    responses: VecDeque<Result<Option<ResponseChannel<prost::bytes::Bytes>>, String>>,
     dispatches: Vec<QueryDispatch>,
     request_was_bound: bool,
     request_sources: Vec<tidb_distsql::RequestSource>,
 }
 
 impl ScriptedTransport {
-    fn returning(response: ResponseChannel<Vec<u8>>) -> Self {
+    fn returning(response: ResponseChannel<prost::bytes::Bytes>) -> Self {
         Self {
             responses: VecDeque::from([Ok(Some(response))]),
             dispatches: Vec::new(),
@@ -60,7 +60,7 @@ impl ScriptedTransport {
 }
 
 impl QueryTransport for ScriptedTransport {
-    type Response = ResponseChannel<Vec<u8>>;
+    type Response = ResponseChannel<prost::bytes::Bytes>;
 
     fn send(
         &mut self,
@@ -112,16 +112,16 @@ impl QueryTransport for TrackingTransport {
     }
 }
 
-fn response_with(data: impl IntoIterator<Item = Vec<u8>>) -> ResponseChannel<Vec<u8>> {
+fn response_with(data: impl IntoIterator<Item = Vec<u8>>) -> ResponseChannel<prost::bytes::Bytes> {
     let mut source = ResponseChannel::new();
     for subset in data {
-        source.push_result(subset).unwrap();
+        source.push_result(subset.into()).unwrap();
     }
     source.finish().unwrap();
     source
 }
 
-fn empty_response() -> ResponseChannel<Vec<u8>> {
+fn empty_response() -> ResponseChannel<prost::bytes::Bytes> {
     response_with(std::iter::empty())
 }
 
@@ -237,7 +237,7 @@ fn select_with_runtime_stats_keeps_plan_identity_on_the_live_iterator() {
     let mut source = ResponseChannel::new();
     source
         .push_result_with_runtime(
-            Vec::new(),
+            prost::bytes::Bytes::new(),
             ResponseRuntimeStats {
                 callee_address: "tikv-1".to_owned(),
                 request_rpc_stats_present: false,
@@ -319,7 +319,7 @@ fn query_result_has_one_close_owner() {
     let closed = Arc::new(AtomicBool::new(false));
     let response = TrackingResponse {
         subsets: VecDeque::from([QueryResultSubset {
-            data: vec![1, 2, 3],
+            data: vec![1, 2, 3].into(),
             runtime: None,
         }]),
         closed: Arc::clone(&closed),
@@ -341,11 +341,11 @@ fn query_result_has_one_close_owner() {
 fn select_client_options_deliver_typed_transaction_events() {
     struct EventTransport {
         callback: Option<EventCallback>,
-        response: Option<ResponseChannel<Vec<u8>>>,
+        response: Option<ResponseChannel<prost::bytes::Bytes>>,
     }
 
     impl QueryTransport for EventTransport {
-        type Response = ResponseChannel<Vec<u8>>;
+        type Response = ResponseChannel<prost::bytes::Bytes>;
 
         fn set_event_callback(&mut self, callback: Option<EventCallback>) {
             self.callback = callback;
@@ -416,11 +416,11 @@ fn raw_then_select_conversion_consumes_each_subset_once() {
     let response = TrackingResponse {
         subsets: VecDeque::from([
             QueryResultSubset {
-                data: vec![0xff, 0x00],
+                data: vec![0xff, 0x00].into(),
                 runtime: None,
             },
             QueryResultSubset {
-                data: Vec::new(),
+                data: Vec::new().into(),
                 runtime: None,
             },
         ]),
@@ -446,7 +446,7 @@ fn raw_then_select_conversion_consumes_each_subset_once() {
 fn select_conversion_transfers_limiter_wait_stats_to_the_result_iterator() {
     let response = TrackingResponse {
         subsets: VecDeque::from([QueryResultSubset {
-            data: Vec::new(),
+            data: Vec::new().into(),
             runtime: None,
         }]),
         closed: Arc::new(AtomicBool::new(false)),

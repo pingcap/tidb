@@ -56,7 +56,7 @@ impl Tikv for HeldBatchService {
                 .map_err(|_| tonic::Status::cancelled("unary release authority was dropped"))?;
         }
         Ok(tonic::Response::new(CoprocessorResponse {
-            data: request.data,
+            data: request.data.into(),
             ..CoprocessorResponse::default()
         }))
     }
@@ -83,7 +83,7 @@ impl Tikv for HeldBatchService {
                         }
                     }
                     let response = CoprocessorResponse {
-                        data: request.data,
+                        data: request.data.into(),
                         ..CoprocessorResponse::default()
                     }
                     .encode_to_vec();
@@ -224,10 +224,9 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
 
     let (first_server, first_seen, _) = TestServer::start();
     let (second_server, second_seen, _) = TestServer::start();
-    let mut authority = TonicCoprocessorClient::with_connection_count(
-        std::num::NonZeroUsize::new(4).unwrap(),
-    )
-    .unwrap();
+    let mut authority =
+        TonicCoprocessorClient::with_connection_count(std::num::NonZeroUsize::new(4).unwrap())
+            .unwrap();
     let mut first = authority.clone();
     let mut second = authority.clone();
     assert!(authority.is_transport_owner());
@@ -262,15 +261,17 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
     assert_eq!(second_response.physical_address(), second_server.address);
     assert_eq!(second_response.physical_channel_version(), 1);
     assert_eq!(
-        CoprocessorResponse::decode(first_response.encoded_response.as_slice())
+        CoprocessorResponse::decode(first_response.encoded_response.as_ref())
             .unwrap()
-            .data,
+            .data
+            .as_ref(),
         b"first"
     );
     assert_eq!(
-        CoprocessorResponse::decode(second_response.encoded_response.as_slice())
+        CoprocessorResponse::decode(second_response.encoded_response.as_ref())
             .unwrap()
-            .data,
+            .data
+            .as_ref(),
         b"second"
     );
 
@@ -287,9 +288,10 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
     assert_eq!(follow_up.physical_address(), second_server.address);
     assert_eq!(follow_up.physical_channel_version(), 2);
     assert_eq!(
-        CoprocessorResponse::decode(follow_up.encoded_response.as_slice())
+        CoprocessorResponse::decode(follow_up.encoded_response.as_ref())
             .unwrap()
-            .data,
+            .data
+            .as_ref(),
         b"still-live"
     );
 
@@ -302,10 +304,9 @@ fn stalled_unary_does_not_block_batch_commands_admission_or_completion() {
     let (server, batch_seen, unary_seen) = TestServer::start();
     server.release();
 
-    let mut authority = TonicCoprocessorClient::with_connection_count(
-        std::num::NonZeroUsize::new(4).unwrap(),
-    )
-    .unwrap();
+    let mut authority =
+        TonicCoprocessorClient::with_connection_count(std::num::NonZeroUsize::new(4).unwrap())
+            .unwrap();
     let mut unary_client = authority.clone();
     let unary_address = server.address.clone();
     let unary = std::thread::spawn(move || {
@@ -355,15 +356,17 @@ fn stalled_unary_does_not_block_batch_commands_admission_or_completion() {
     assert_eq!(batch_response.physical_address(), server.address);
     assert_eq!(batch_response.physical_channel_version(), 2);
     assert_eq!(
-        CoprocessorResponse::decode(unary_response.encoded_response.as_slice())
+        CoprocessorResponse::decode(unary_response.encoded_response.as_ref())
             .unwrap()
-            .data,
+            .data
+            .as_ref(),
         b"stalled-unary"
     );
     assert_eq!(
-        CoprocessorResponse::decode(batch_response.encoded_response.as_slice())
+        CoprocessorResponse::decode(batch_response.encoded_response.as_ref())
             .unwrap()
-            .data,
+            .data
+            .as_ref(),
         b"independent-batch"
     );
 

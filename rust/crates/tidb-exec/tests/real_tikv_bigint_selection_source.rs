@@ -174,7 +174,7 @@ fn response_rows(rows: &[&[i64]]) -> ScriptedResponse {
     };
     ScriptedResponse {
         subsets: VecDeque::from([QueryResultSubset {
-            data: response.encode_to_vec(),
+            data: response.encode_to_vec().into(),
             runtime: None,
         }]),
     }

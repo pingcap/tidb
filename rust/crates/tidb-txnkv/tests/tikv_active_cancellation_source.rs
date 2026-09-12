@@ -63,7 +63,7 @@ impl Tikv for CancellationTestTikv {
                 Ok(tonic::Response::new(CoprocessorResponse::default()))
             }
             _ => Ok(tonic::Response::new(CoprocessorResponse {
-                data: request.into_inner().data,
+                data: request.into_inner().data.into(),
                 ..CoprocessorResponse::default()
             })),
         }
@@ -160,10 +160,9 @@ fn caller_cancellation_interrupts_hanging_tonic_call_without_closing_generation(
         attempts: Arc::clone(&attempts),
         first_started: Arc::new(Mutex::new(Some(first_started))),
     });
-    let mut client = TonicCoprocessorClient::with_connection_count(
-        std::num::NonZeroUsize::new(1).unwrap(),
-    )
-    .unwrap();
+    let mut client =
+        TonicCoprocessorClient::with_connection_count(std::num::NonZeroUsize::new(1).unwrap())
+            .unwrap();
     let pre_cancelled = UnaryCancellation::new();
     pre_cancelled.cancel();
     let error = client
@@ -240,9 +239,10 @@ fn caller_cancellation_interrupts_hanging_tonic_call_without_closing_generation(
         )
         .unwrap();
     assert_eq!(
-        CoprocessorResponse::decode(response.encoded_response.as_slice())
+        CoprocessorResponse::decode(response.encoded_response.as_ref())
             .unwrap()
-            .data,
+            .data
+            .as_ref(),
         b"same-generation"
     );
     assert_eq!(client.connection_version(&server.address), Some(1));

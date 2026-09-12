@@ -59,7 +59,7 @@ fn topology(region_id: u64, start: &str, end: &str) -> RegionTaskTopology {
 
 fn response(data: &str, start: &str, end: &str, read_bytes: u64) -> CoprocessorResponse {
     CoprocessorResponse {
-        data: data.as_bytes().to_vec(),
+        data: data.as_bytes().to_vec().into(),
         range: Some(CoprocessorKeyRange {
             start: start.as_bytes().to_vec(),
             end: end.as_bytes().to_vec(),
@@ -123,7 +123,7 @@ fn checked_tasks_share_ema_and_publish_only_to_their_ordered_channels() {
     assert_eq!(runtime.task_predicted_read_bytes(2), Some(4096));
     assert_eq!(
         runtime.next_response(1),
-        Some(ResponseChannelEvent::Result(b"region-1".to_vec()))
+        Some(ResponseChannelEvent::Result(b"region-1".to_vec().into()))
     );
     assert_eq!(runtime.next_response(2), None);
 }
@@ -182,7 +182,7 @@ fn cache_is_prepared_per_attempt_restored_before_paging_and_rebuilt_for_continua
     assert_ne!(continued.cache_key().unwrap(), initial_key);
     assert_eq!(
         runtime.next_response(1),
-        Some(ResponseChannelEvent::Result(b"cached-page".to_vec()))
+        Some(ResponseChannelEvent::Result(b"cached-page".to_vec().into()))
     );
 
     runtime
@@ -224,7 +224,7 @@ fn cache_is_prepared_per_attempt_restored_before_paging_and_rebuilt_for_continua
     assert_ne!(replay_continued.cache_key().unwrap(), replay_initial_key);
     assert_eq!(
         replay.next_response(1),
-        Some(ResponseChannelEvent::Result(b"cached-page".to_vec()))
+        Some(ResponseChannelEvent::Result(b"cached-page".to_vec().into()))
     );
 }
 
@@ -569,7 +569,7 @@ fn rebuild_splits_only_failed_task_and_preserves_prior_page_and_future_attempt()
     assert_eq!(runtime.predicted_read_bytes(), 4096);
     assert_eq!(
         runtime.next_response(1),
-        Some(ResponseChannelEvent::Result(b"prior-page".to_vec()))
+        Some(ResponseChannelEvent::Result(b"prior-page".to_vec().into()))
     );
     runtime
         .accept_response(
@@ -581,7 +581,7 @@ fn rebuild_splits_only_failed_task_and_preserves_prior_page_and_future_attempt()
         .unwrap();
     assert_eq!(
         runtime.next_response(2),
-        Some(ResponseChannelEvent::Result(b"future-task".to_vec()))
+        Some(ResponseChannelEvent::Result(b"future-task".to_vec().into()))
     );
 }
 

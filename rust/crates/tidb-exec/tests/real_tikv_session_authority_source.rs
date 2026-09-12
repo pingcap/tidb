@@ -94,7 +94,7 @@ impl QueryTransport for IsolatedTransport {
         self.evidence.sends.fetch_add(1, Ordering::Relaxed);
         Ok(Some(IsolatedResponse {
             subsets: VecDeque::from([QueryResultSubset {
-                data: encoded_row(self.session as i64),
+                data: encoded_row(self.session as i64).into(),
                 runtime: None,
             }]),
             evidence: Arc::clone(&self.evidence),

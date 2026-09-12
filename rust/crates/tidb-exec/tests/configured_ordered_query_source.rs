@@ -24,8 +24,7 @@ use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResult
 use tidb_distsql::{QueryDispatch, QueryTransport, TimestampSource, TransportRequest};
 use tidb_exec::{
     configured_ordered_query::{
-        ConfiguredOrderedQueryRecordSet,
-        PreparedConfiguredOrderedQueryTail,
+        ConfiguredOrderedQueryRecordSet, PreparedConfiguredOrderedQueryTail,
     },
     real_tikv_read::{RealTiKvReadSessionOpener, RealTiKvSessionTransportFactory},
 };
@@ -183,7 +182,8 @@ fn response(rows: &[&[i64]]) -> (ScriptedResponse, ResponseProbe) {
                     }],
                     ..SelectResponse::default()
                 }
-                .encode_to_vec(),
+                .encode_to_vec()
+                .into(),
                 runtime: None,
             }
         })

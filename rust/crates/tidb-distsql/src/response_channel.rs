@@ -98,7 +98,7 @@ impl fmt::Display for ResponseChannelState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResponseChannelUnsupported {
     /// Legacy marker for a caller that requests decoding without using the
-    /// typed `ResponseChannel<Vec<u8>>::into_select_iter` entry point.
+    /// typed `ResponseChannel<prost::bytes::Bytes>::into_select_iter` entry point.
     RawTipbResponse,
     /// Receiving from TiKV's transport-backed response channel is outside
     /// this leaf.
@@ -372,7 +372,7 @@ impl<T> ResponseChannel<T> {
     }
 }
 
-impl QueryResponse for ResponseChannel<Vec<u8>> {
+impl QueryResponse for ResponseChannel<prost::bytes::Bytes> {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         match self.next_event() {
             Some(ResponseChannelEvent::Result(data)) => Ok(Some(QueryResultSubset {
@@ -402,7 +402,7 @@ impl QueryResponse for ResponseChannel<Vec<u8>> {
 }
 
 enum SelectResponseSource {
-    Channel(ResponseChannel<Vec<u8>>),
+    Channel(ResponseChannel<prost::bytes::Bytes>),
     Query(Box<dyn QueryResponse + Send>),
 }
 
@@ -410,7 +410,7 @@ impl SelectResponseSource {
     fn next_event(
         &mut self,
         required_rows: usize,
-    ) -> Result<Option<ResponseChannelEvent<Vec<u8>>>, ResponseChannelError> {
+    ) -> Result<Option<ResponseChannelEvent<prost::bytes::Bytes>>, ResponseChannelError> {
         match self {
             Self::Channel(source) => Ok(source.next_event()),
             Self::Query(source) => match source.next_with_required_rows(required_rows) {
@@ -441,7 +441,7 @@ impl SelectResponseSource {
         }
     }
 
-    fn push_result(&mut self, bytes: Vec<u8>) -> Result<(), ResponseChannelError> {
+    fn push_result(&mut self, bytes: prost::bytes::Bytes) -> Result<(), ResponseChannelError> {
         match self {
             Self::Channel(source) => source.push_result(bytes),
             Self::Query(_) => Err(ResponseChannelError::Unsupported(
@@ -452,7 +452,7 @@ impl SelectResponseSource {
 
     fn push_result_with_runtime(
         &mut self,
-        bytes: Vec<u8>,
+        bytes: prost::bytes::Bytes,
         runtime_stats: ResponseRuntimeStats,
     ) -> Result<(), ResponseChannelError> {
         match self {
@@ -473,7 +473,7 @@ impl SelectResponseSource {
     }
 }
 
-impl ResponseChannel<Vec<u8>> {
+impl ResponseChannel<prost::bytes::Bytes> {
     /// Converts this raw response source into the sole decoded row iterator.
     ///
     /// Consuming `self` makes the Go `selectResult` invalidation rule a Rust
@@ -1106,17 +1106,21 @@ impl SelectResponseIter {
     ///
     /// This is the synchronous producer seam until the concrete blocking TiKV
     /// transport owns this iterator. A pending read never closes this seam.
-    pub fn push_response(&mut self, bytes: Vec<u8>) -> Result<(), ResponseChannelError> {
-        self.source.push_result(bytes)
+    pub fn push_response(
+        &mut self,
+        bytes: impl Into<prost::bytes::Bytes>,
+    ) -> Result<(), ResponseChannelError> {
+        self.source.push_result(bytes.into())
     }
 
     /// Appends a response with CopRuntimeStats from the same producer call.
     pub fn push_response_with_runtime(
         &mut self,
-        bytes: Vec<u8>,
+        bytes: impl Into<prost::bytes::Bytes>,
         runtime_stats: ResponseRuntimeStats,
     ) -> Result<(), ResponseChannelError> {
-        self.source.push_result_with_runtime(bytes, runtime_stats)
+        self.source
+            .push_result_with_runtime(bytes.into(), runtime_stats)
     }
 
     /// Marks the owned producer seam complete.
@@ -1126,7 +1130,7 @@ impl SelectResponseIter {
 
     fn install_encoded_response(
         &mut self,
-        bytes: Vec<u8>,
+        bytes: prost::bytes::Bytes,
         runtime_stats: Option<&ResponseRuntimeStats>,
     ) -> Result<(), ResponseChannelError> {
         let response = decode_select_response(bytes)

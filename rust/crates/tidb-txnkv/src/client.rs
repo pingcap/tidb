@@ -148,15 +148,20 @@ pub struct DirectUnaryRequest {
 /// Raw successful result and exact physical channel which carried it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectUnaryResponse {
-    /// Exact encoded `coprocessor.Response` body.
-    pub encoded_response: Vec<u8>,
+    /// Exact encoded `coprocessor.Response` body, shared with the transport
+    /// buffer it arrived in.
+    pub encoded_response: bytes::Bytes,
     physical_channel: PhysicalChannelIdentity,
 }
 
 impl DirectUnaryResponse {
     /// Constructs a successful response after a physical channel was selected.
     #[must_use]
-    pub fn new(encoded_response: Vec<u8>, physical_address: &str, channel_version: u64) -> Self {
+    pub fn new(
+        encoded_response: impl Into<bytes::Bytes>,
+        physical_address: &str,
+        channel_version: u64,
+    ) -> Self {
         assert!(
             channel_version > 0,
             "successful TiKV responses require a nonzero physical channel version"
@@ -168,12 +173,12 @@ impl DirectUnaryResponse {
     }
 
     pub(crate) fn from_physical_channel(
-        encoded_response: Vec<u8>,
+        encoded_response: impl Into<bytes::Bytes>,
         physical_channel: PhysicalChannelIdentity,
     ) -> Self {
         debug_assert!(physical_channel.version() > 0);
         Self {
-            encoded_response,
+            encoded_response: encoded_response.into(),
             physical_channel,
         }
     }

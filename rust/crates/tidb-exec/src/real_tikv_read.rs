@@ -1276,7 +1276,7 @@ where
 
         if plan.is_contradiction() {
             debug_assert!(snapshot_ts.is_none());
-            let mut response = ResponseChannel::<Vec<u8>>::new();
+            let mut response = ResponseChannel::<prost::bytes::Bytes>::new();
             response
                 .finish()
                 .map_err(|error| RealTiKvReadError::Query(error.to_string()))?;

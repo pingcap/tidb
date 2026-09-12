@@ -71,7 +71,7 @@ pub use cop_paging::{
 pub use copr_cache::{
     build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,
     CoprCacheLookup, CoprCacheRequestContext, CoprCacheResponseContext, CoprCacheResponseOutcome,
-    CoprCacheValue,
+    CoprCacheValue, GO_COPR_CACHE_VALUE_SIZE,
 };
 pub use copr_cache_metrics::{copr_cache_metric_snapshot, CoprCacheMetricSnapshot};
 pub use coprocessor_request::CoprocessorRequestEnvelope;

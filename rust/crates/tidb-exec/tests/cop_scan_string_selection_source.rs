@@ -47,7 +47,9 @@ use tidb_executor::kv_table::{KvColumn, KvTable};
 use tidb_executor::remote_scan::PushdownScanner;
 use tidb_executor::storage::StorageError;
 use tidb_executor::StmtContext;
-use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, ExprType, ScalarFuncSig, SelectResponse};
+use tidb_proto::tipb::{
+    Chunk, DagRequest, ExecType, Expr, ExprType, ScalarFuncSig, SelectResponse,
+};
 use tidb_txnkv::Key;
 
 /// The region's rows, as `(id, s)`. `'A'` and `'a'` differ only in case, so a
@@ -91,7 +93,6 @@ fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
     }
     output.push(unsigned as u8);
 }
-
 
 /// What the fake did with one request.
 #[derive(Clone, Debug, Default)]
@@ -220,10 +221,7 @@ impl QueryTransport for FakeTransport {
         let mut rows_data = Vec::new();
         let mut sent = 0usize;
         for (id, value) in region_rows() {
-            if !conditions
-                .iter()
-                .all(|condition| admits(condition, value))
-            {
+            if !conditions.iter().all(|condition| admits(condition, value)) {
                 continue;
             }
             for column_id in &column_ids {
@@ -269,7 +267,7 @@ impl QueryTransport for FakeTransport {
         };
         Ok(Some(FakeResponse {
             subsets: vec![QueryResultSubset {
-                data: response.encode_to_vec(),
+                data: response.encode_to_vec().into(),
                 runtime: None,
             }],
         }))
@@ -342,8 +340,7 @@ fn expected(collation: &str, ids: &[i64]) -> Vec<Vec<Datum>> {
                 Datum::Int(*id),
                 Datum::String(tidb_datatype::StringDatum::new(
                     value.as_bytes().to_vec(),
-                    tidb_datatype::Collation::from_name(collation)
-                        .expect("a known collation"),
+                    tidb_datatype::Collation::from_name(collation).expect("a known collation"),
                 )),
             ]
         })
@@ -527,12 +524,8 @@ fn each_request_carries_the_issuing_statements_time_zone() {
 fn the_request_carries_the_statement_concurrency_and_resource_group() {
     let (catalog, region) = fixture("utf8mb4_bin");
     let context = StmtContext::for_query().with_resource_group_name("analytics");
-    run_select_on(
-        "SELECT id, s FROM t WHERE s = 'a'",
-        &catalog,
-        &context,
-    )
-    .expect("the scan is served by the coprocessor");
+    run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
+        .expect("the scan is served by the coprocessor");
     let observation = sole_observation(&region);
     assert_eq!(observation.concurrency, 15);
     assert_eq!(observation.resource_group_name, "analytics");

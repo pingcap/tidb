@@ -94,7 +94,7 @@ pub(super) async fn check_liveness(
     let Ok(Ok(response)) = result else {
         return StoreLiveness::Unreachable;
     };
-    let Ok(response) = HealthCheckResponse::decode(response.into_inner().as_slice()) else {
+    let Ok(response) = HealthCheckResponse::decode(response.into_inner().as_ref()) else {
         return StoreLiveness::Unreachable;
     };
     match response.status {

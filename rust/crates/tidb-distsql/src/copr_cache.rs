@@ -24,7 +24,6 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::mem;
 use std::sync::{Arc, Mutex};
 
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
@@ -114,8 +113,9 @@ pub fn build_copr_cache_key(
 pub struct CoprCacheValue {
     /// Cache key retained to detect hash collisions.
     pub key: Vec<u8>,
-    /// Encoded coprocessor response data.
-    pub data: Vec<u8>,
+    /// Encoded coprocessor response data, shared with the response it came
+    /// from and with every hit that restores it.
+    pub data: prost::bytes::Bytes,
     /// Transaction timestamp used to validate the result.
     pub timestamp: u64,
     /// Region identifier used to validate the result.
@@ -128,12 +128,19 @@ pub struct CoprCacheValue {
     pub page_end: Option<Vec<u8>>,
 }
 
+/// Go `coprCacheValueSize = unsafe.Sizeof(coprCacheValue{})` on the source's
+/// 64-bit target: four 24-byte slice headers and three 8-byte integers. The
+/// Rust value shares its data as `Bytes` (a 32-byte handle), so the Go
+/// constant, not `size_of::<Self>()`, keeps the cache's byte accounting
+/// identical to the source's.
+pub const GO_COPR_CACHE_VALUE_SIZE: usize = 120;
+
 #[allow(clippy::len_without_is_empty)]
 impl CoprCacheValue {
     /// Returns the source `unsafe.Sizeof` base plus all owned byte lengths.
     #[must_use]
     pub fn len(&self) -> usize {
-        mem::size_of::<Self>()
+        GO_COPR_CACHE_VALUE_SIZE
             + self.key.len()
             + self.data.len()
             + self.page_start.as_ref().map_or(0, Vec::len)

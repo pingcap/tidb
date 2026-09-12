@@ -620,11 +620,11 @@ mod tests {
         let response = client
             .send_request(IN_PROCESS_ADDRESS, &request, Duration::from_secs(1))
             .expect("the in-process store answers");
-        let decoded = coprocessor::Response::decode(response.encoded_response.as_slice())
+        let decoded = coprocessor::Response::decode(response.encoded_response.as_ref())
             .expect("a coprocessor response");
         assert!(decoded.other_error.is_empty(), "{}", decoded.other_error);
         let select =
-            tipb::SelectResponse::decode(decoded.data.as_slice()).expect("a select response");
+            tipb::SelectResponse::decode(decoded.data.as_ref()).expect("a select response");
         let rows = select.chunks[0].rows_data.as_deref().expect("rows");
         let datums = tidb_codec::decode(rows, 1).expect("one datum");
         assert_eq!(datums, vec![Datum::Int(7)]);

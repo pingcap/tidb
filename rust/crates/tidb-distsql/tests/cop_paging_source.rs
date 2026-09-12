@@ -253,7 +253,7 @@ fn decoded_response_reuses_go_lock_and_process_time_fields() {
         }),
         ..Default::default()
     };
-    let decoded = decode_tikv_unary_response(&response.encode_to_vec()).unwrap();
+    let decoded = decode_tikv_unary_response(response.encode_to_vec().as_slice()).unwrap();
     assert_eq!(decoded.locked_ref().unwrap().key, b"lock-key");
     assert_eq!(decoded.process_time_nanos(), Some(123_456));
 }
@@ -278,7 +278,7 @@ fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
     let mut state =
         CopPagingState::new(&task, false, 1024, ReadEngineGeneration::Classic, 4_194_304);
     let response = CoprocessorResponse {
-        data: b"select-response".to_vec(),
+        data: b"select-response".to_vec().into(),
         range: Some(split("a", "b")),
         exec_details_v2: Some(CoprocessorExecDetailsV2 {
             scan_detail_v2: Some(CoprocessorScanDetailV2 {
@@ -298,7 +298,9 @@ fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
     assert_eq!(state.predicted_read_bytes(), 1_000_000);
     assert_eq!(
         state.next_response(),
-        Some(ResponseChannelEvent::Result(b"select-response".to_vec()))
+        Some(ResponseChannelEvent::Result(
+            b"select-response".to_vec().into()
+        ))
     );
 
     let retry = state.retry_after_error(Some(&split("b", "c")));
@@ -322,7 +324,7 @@ fn terminal_nil_range_cannot_resurrect_completed_paging_state() {
     let terminal = state
         .accept_response(
             &CoprocessorResponse {
-                data: b"final-page".to_vec(),
+                data: b"final-page".to_vec().into(),
                 range: None,
                 ..Default::default()
             },
@@ -339,7 +341,7 @@ fn terminal_nil_range_cannot_resurrect_completed_paging_state() {
     let duplicate = state
         .accept_response(
             &CoprocessorResponse {
-                data: b"must-not-reopen".to_vec(),
+                data: b"must-not-reopen".to_vec().into(),
                 range: Some(split("a", "m")),
                 ..Default::default()
             },
@@ -367,7 +369,7 @@ fn bounded_multi_page_channel_drains_then_emits_terminal_closed() {
     state
         .accept_response(
             &CoprocessorResponse {
-                data: b"page-1".to_vec(),
+                data: b"page-1".to_vec().into(),
                 range: Some(split("a", "m")),
                 ..Default::default()
             },
@@ -377,7 +379,7 @@ fn bounded_multi_page_channel_drains_then_emits_terminal_closed() {
     state
         .accept_response(
             &CoprocessorResponse {
-                data: b"page-2".to_vec(),
+                data: b"page-2".to_vec().into(),
                 range: None,
                 ..Default::default()
             },
@@ -387,11 +389,11 @@ fn bounded_multi_page_channel_drains_then_emits_terminal_closed() {
 
     assert_eq!(
         state.next_response(),
-        Some(ResponseChannelEvent::Result(b"page-1".to_vec()))
+        Some(ResponseChannelEvent::Result(b"page-1".to_vec().into()))
     );
     assert_eq!(
         state.next_response(),
-        Some(ResponseChannelEvent::Result(b"page-2".to_vec()))
+        Some(ResponseChannelEvent::Result(b"page-2".to_vec().into()))
     );
     assert_eq!(state.next_response(), Some(ResponseChannelEvent::Closed));
     assert_eq!(state.next_response(), None);
@@ -411,7 +413,7 @@ fn bounded_channel_applies_backpressure_before_continuation_mutation() {
     };
     let mut state = CopPagingState::new(&task, false, 1024, ReadEngineGeneration::Classic, 0);
     let first = CoprocessorResponse {
-        data: b"page-1".to_vec(),
+        data: b"page-1".to_vec().into(),
         range: Some(split("a", "m")),
         ..Default::default()
     };
@@ -420,7 +422,7 @@ fn bounded_channel_applies_backpressure_before_continuation_mutation() {
         .unwrap();
 
     let second = CoprocessorResponse {
-        data: b"page-2".to_vec(),
+        data: b"page-2".to_vec().into(),
         range: Some(split("m", "t")),
         ..Default::default()
     };
@@ -430,7 +432,7 @@ fn bounded_channel_applies_backpressure_before_continuation_mutation() {
     );
     assert_eq!(
         state.next_response(),
-        Some(ResponseChannelEvent::Result(b"page-1".to_vec()))
+        Some(ResponseChannelEvent::Result(b"page-1".to_vec().into()))
     );
     let accepted = state
         .accept_response(&second, Duration::from_secs(1_000_001))
@@ -438,7 +440,7 @@ fn bounded_channel_applies_backpressure_before_continuation_mutation() {
     assert_eq!(accepted.remaining_ranges[0].start_key, b"t");
     assert_eq!(
         state.next_response(),
-        Some(ResponseChannelEvent::Result(b"page-2".to_vec()))
+        Some(ResponseChannelEvent::Result(b"page-2".to_vec().into()))
     );
 }
 

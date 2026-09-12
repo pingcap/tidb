@@ -62,8 +62,8 @@ pub use tidb_txnkv::region::{
     RegionRecoveryLoader, RegionRouteError, RegionVerId, Store, StoreLiveness,
 };
 pub use tidb_txnkv::rpc::{
-    completion_pair, AsyncRequestDispatcher, CompletionError, CompletionNotifier, CompletionPull, CompletionRequest,
-    CompletionRunLoop, PendingRequest,
+    completion_pair, AsyncRequestDispatcher, CompletionError, CompletionNotifier, CompletionPull,
+    CompletionRequest, CompletionRunLoop, PendingRequest,
 };
 pub use tidb_txnkv::UnaryCallContext;
 pub use tidb_txnkv::{
@@ -664,7 +664,7 @@ pub fn unknown_region_error(message: &str) -> Vec<u8> {
 
 pub fn response(data: &[u8]) -> Vec<u8> {
     CoprocessorResponse {
-        data: data.to_vec(),
+        data: data.to_vec().into(),
         ..CoprocessorResponse::default()
     }
     .encode_to_vec()

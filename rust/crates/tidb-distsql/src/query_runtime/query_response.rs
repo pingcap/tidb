@@ -24,8 +24,9 @@ use crate::warning::WarningCollector;
 /// One response subset returned by a single pull from the transport response.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct QueryResultSubset {
-    /// Raw protobuf response bytes. Decoding belongs to the select consumer.
-    pub data: Vec<u8>,
+    /// Raw protobuf response bytes, shared with the transport buffer they
+    /// arrived in. Decoding belongs to the select consumer.
+    pub data: prost::bytes::Bytes,
     /// Runtime data returned by the same response pull, when present.
     pub runtime: Option<ResponseRuntimeStats>,
 }
@@ -138,7 +139,9 @@ impl<R: QueryResponse> QuerySelectResult<R> {
             .as_mut()
             .expect("an open query result owns its response");
         match response.next() {
-            Ok(Some(subset)) => Ok(Some(subset.data)),
+            // Raw consumers own their copy; the shared buffer stays with
+            // the select path, which decodes from it without copying.
+            Ok(Some(subset)) => Ok(Some(subset.data.to_vec())),
             Ok(None) => {
                 self.close();
                 Ok(None)

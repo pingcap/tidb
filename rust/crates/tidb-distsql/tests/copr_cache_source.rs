@@ -14,8 +14,6 @@
 
 //! Direct coprocessor cache key and admission obligations from TiDB's Go tests.
 
-use std::mem;
-
 use prost::Message;
 use tidb_distsql::{
     build_copr_cache_key, copr_cache_metric_snapshot, CoprCache, CoprCacheAdmission,
@@ -50,12 +48,12 @@ fn cloned_cache_handles_share_process_owned_entries() {
     assert!(writer.set(
         b"shared".to_vec(),
         CoprCacheValue {
-            data: b"across-statements".to_vec(),
+            data: b"across-statements".to_vec().into(),
             ..CoprCacheValue::default()
         },
     ));
     assert_eq!(
-        reader.get(b"shared").map(|value| value.data),
+        reader.get(b"shared").map(|value| value.data.to_vec()),
         Some(b"across-statements".to_vec())
     );
 }
@@ -237,8 +235,9 @@ fn test_disable() {
 #[test]
 fn test_cache_value_len() {
     // On the source's 64-bit target this is four 24-byte slice headers and
-    // three 8-byte integers, exactly the asserted Go unsafe.Sizeof value.
-    assert_eq!(mem::size_of::<CoprCacheValue>(), 120);
+    // three 8-byte integers, the Go unsafe.Sizeof value the accounting keeps
+    // whatever the Rust value's own layout is.
+    assert_eq!(tidb_distsql::GO_COPR_CACHE_VALUE_SIZE, 120);
 
     let value = CoprCacheValue {
         timestamp: 0x123,
@@ -250,7 +249,7 @@ fn test_cache_value_len() {
 
     let value = CoprCacheValue {
         key: b"foobar".to_vec(),
-        data: b"12345678".to_vec(),
+        data: b"12345678".to_vec().into(),
         timestamp: 0x123,
         region_id: 0x1,
         region_data_version: 0x3,
@@ -260,7 +259,7 @@ fn test_cache_value_len() {
 
     let value = CoprCacheValue {
         key: b"foobar".to_vec(),
-        data: b"12345678".to_vec(),
+        data: b"12345678".to_vec().into(),
         timestamp: 0x123,
         region_id: 0x1,
         region_data_version: 0x3,
@@ -282,14 +281,14 @@ fn test_get_set_and_live_request_response_lifecycle() {
         b"foo".to_vec(),
         CoprCacheValue {
             key: b"caller value is replaced".to_vec(),
-            data: b"bar".to_vec(),
+            data: b"bar".to_vec().into(),
             timestamp: 0x123,
             region_id: 0x1,
             region_data_version: 0x3,
             ..CoprCacheValue::default()
         }
     ));
-    assert_eq!(cache.get(b"foo").unwrap().data, b"bar");
+    assert_eq!(cache.get(b"foo").unwrap().data.as_ref(), b"bar");
     assert_eq!(cache.get(b"foo").unwrap().key, b"foo");
     assert!(cache.get(b"foO").is_none());
 
@@ -299,12 +298,15 @@ fn test_get_set_and_live_request_response_lifecycle() {
     assert!(cache.set(
         caller_key.clone(),
         CoprCacheValue {
-            data: b"stable-value".to_vec(),
+            data: b"stable-value".to_vec().into(),
             ..CoprCacheValue::default()
         },
     ));
     caller_key.fill(b'x');
-    assert_eq!(cache.get(b"stable-key").unwrap().data, b"stable-value");
+    assert_eq!(
+        cache.get(b"stable-key").unwrap().data.as_ref(),
+        b"stable-value"
+    );
     assert!(cache.get(&caller_key).is_none());
 
     let mut request = CoprocessorRequestEnvelope {
@@ -325,7 +327,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
     assert!(lookup.value().is_none());
 
     let mut miss = CoprocessorResponse {
-        data: b"cached".to_vec(),
+        data: b"cached".to_vec().into(),
         range: Some(CoprocessorKeyRange {
             start: b"m".to_vec(),
             end: b"z".to_vec(),
@@ -360,7 +362,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
             .unwrap(),
         CoprCacheResponseOutcome::Hit
     );
-    assert_eq!(hit.data, b"cached");
+    assert_eq!(hit.data.as_ref(), b"cached");
     assert_eq!(hit.range.unwrap().start, b"m");
     let metrics_after = copr_cache_metric_snapshot();
     // The counters are process-global like Go's Prometheus vectors. Other
@@ -415,7 +417,7 @@ fn request_eligibility_and_bounded_storage_stay_inside_the_owner() {
     assert!(!request.is_cache_enabled);
 
     let small_value = CoprCacheValue {
-        data: vec![1; 100],
+        data: vec![1; 100].into(),
         ..CoprCacheValue::default()
     };
     assert!(cache.set(b"first".to_vec(), small_value.clone()));
@@ -426,7 +428,7 @@ fn request_eligibility_and_bounded_storage_stay_inside_the_owner() {
     assert!(!cache.set(
         b"oversize".to_vec(),
         CoprCacheValue {
-            data: vec![2; 400],
+            data: vec![2; 400].into(),
             ..CoprCacheValue::default()
         },
     ));
@@ -451,7 +453,7 @@ fn response_cache_fields_keep_exact_wire_numbers() {
 fn hit_without_a_valid_local_value_is_rejected() {
     let cache = cache();
     let mut response = CoprocessorResponse {
-        data: b"tikv must remain untouched".to_vec(),
+        data: b"tikv must remain untouched".to_vec().into(),
         range: Some(CoprocessorKeyRange {
             start: b"a".to_vec(),
             end: b"z".to_vec(),
@@ -463,7 +465,7 @@ fn hit_without_a_valid_local_value_is_rejected() {
         cache.handle_response(&mut response, None, response_context(7, 100, false)),
         Err(CoprCacheError::IllegalCacheHit)
     );
-    assert_eq!(response.data, b"tikv must remain untouched");
+    assert_eq!(response.data.as_ref(), b"tikv must remain untouched");
     assert_eq!(response.range.unwrap().start, b"a");
 }
 
@@ -484,7 +486,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
         .prepare_request(&mut request, request_context(7, 100))
         .unwrap();
     let mut empty_range_miss = CoprocessorResponse {
-        data: b"empty-range".to_vec(),
+        data: b"empty-range".to_vec().into(),
         range: Some(CoprocessorKeyRange::default()),
         cache_last_version: 1,
         can_be_cached: true,
@@ -528,7 +530,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
     assert!(cache.set(
         absent_key,
         CoprCacheValue {
-            data: b"absent-range".to_vec(),
+            data: b"absent-range".to_vec().into(),
             timestamp: 100,
             region_id: 7,
             region_data_version: 2,

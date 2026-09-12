@@ -1715,7 +1715,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             selected.stale_read,
             traffic_location,
         );
-        let response = decode_tikv_unary_response(&raw_response.encoded_response)
+        let response = decode_tikv_unary_response(raw_response.encoded_response.clone())
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
         let locked = response.locked_ref().cloned();
         let process_time_nanos = response.process_time_nanos();

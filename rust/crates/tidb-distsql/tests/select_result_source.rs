@@ -134,10 +134,10 @@ fn one_row_fixed_type_chunk(cell: &[u8]) -> Chunk {
 
 fn response_source(
     responses: impl IntoIterator<Item = SelectResponse>,
-) -> ResponseChannel<Vec<u8>> {
+) -> ResponseChannel<prost::bytes::Bytes> {
     let mut source = ResponseChannel::new();
     for response in responses {
-        source.push_result(response.encode_to_vec()).unwrap();
+        source.push_result(response.encode_to_vec().into()).unwrap();
     }
     source.finish().unwrap();
     source
@@ -262,27 +262,18 @@ fn type_chunk_response_transfers_decoded_batches_in_channel_order() {
         WarningCollector::new(),
     );
 
-    let final_chunk = iter
-        .next_chunk_with_required_rows(1024)
-        .unwrap()
-        .unwrap();
+    let final_chunk = iter.next_chunk_with_required_rows(1024).unwrap().unwrap();
     assert_eq!(final_chunk.channel_index, 1);
     assert_eq!(final_chunk.row.num_rows(), 2);
     assert_eq!(final_chunk.row.get_row(0).get_int64(0), 7);
     assert_eq!(final_chunk.row.get_row(1).get_int64(0), 8);
 
-    let intermediate = iter
-        .next_chunk_with_required_rows(1024)
-        .unwrap()
-        .unwrap();
+    let intermediate = iter.next_chunk_with_required_rows(1024).unwrap().unwrap();
     assert_eq!(intermediate.channel_index, 0);
     assert_eq!(intermediate.row.num_rows(), 2);
     assert_eq!(intermediate.row.get_row(0).get_int64(0), 1);
     assert_eq!(intermediate.row.get_row(1).get_int64(0), 2);
-    assert!(iter
-        .next_chunk_with_required_rows(1024)
-        .unwrap()
-        .is_none());
+    assert!(iter.next_chunk_with_required_rows(1024).unwrap().is_none());
 }
 
 #[test]
@@ -302,10 +293,7 @@ fn type_chunk_response_coalesces_small_chunks_to_required_rows() {
         WarningCollector::new(),
     );
 
-    let chunk = iter
-        .next_chunk_with_required_rows(4)
-        .unwrap()
-        .unwrap();
+    let chunk = iter.next_chunk_with_required_rows(4).unwrap().unwrap();
     assert_eq!(chunk.row.num_rows(), 4);
     assert_eq!(chunk.row.get_row(0).get_int64(0), 1);
     assert_eq!(chunk.row.get_row(1).get_int64(0), 2);
@@ -443,11 +431,8 @@ fn type_chunk_rows_use_the_complete_chunk_datum_domain() {
         }],
         ..Default::default()
     };
-    let mut iter = response_source([response]).into_select_iter(
-        fields,
-        Vec::new(),
-        WarningCollector::new(),
-    );
+    let mut iter =
+        response_source([response]).into_select_iter(fields, Vec::new(), WarningCollector::new());
 
     assert_eq!(
         iter.next_row().unwrap().unwrap().row,
@@ -492,10 +477,7 @@ fn malformed_typed_chunk_cells_are_query_errors_instead_of_panics() {
             FieldType::new(FieldTypeCode::Duration).with_decimal(-2),
             0_i64.to_ne_bytes().to_vec(),
         ),
-        (
-            FieldType::new(FieldTypeCode::NewDecimal),
-            invalid_decimal,
-        ),
+        (FieldType::new(FieldTypeCode::NewDecimal), invalid_decimal),
     ] {
         let response = SelectResponse {
             encode_type: Some(EncodeType::TypeChunk as i32),
@@ -765,7 +747,8 @@ fn consumed_responses_only_record_present_runtime_samples_losslessly() {
                 execution_summaries: vec![complete_summary(100)],
                 ..Default::default()
             }
-            .encode_to_vec(),
+            .encode_to_vec()
+            .into(),
         )
         .unwrap();
     source
@@ -774,7 +757,8 @@ fn consumed_responses_only_record_present_runtime_samples_losslessly() {
                 execution_summaries: vec![complete_summary(200)],
                 ..Default::default()
             }
-            .encode_to_vec(),
+            .encode_to_vec()
+            .into(),
             ResponseRuntimeStats {
                 callee_address: String::new(),
                 request_rpc_stats_present: false,
@@ -788,7 +772,8 @@ fn consumed_responses_only_record_present_runtime_samples_losslessly() {
                 execution_summaries: vec![first_summary.clone()],
                 ..Default::default()
             }
-            .encode_to_vec(),
+            .encode_to_vec()
+            .into(),
             ResponseRuntimeStats {
                 callee_address: String::new(),
                 request_rpc_stats_present: true,
@@ -802,7 +787,8 @@ fn consumed_responses_only_record_present_runtime_samples_losslessly() {
                 execution_summaries: vec![second_summary.clone()],
                 ..Default::default()
             }
-            .encode_to_vec(),
+            .encode_to_vec()
+            .into(),
             ResponseRuntimeStats {
                 callee_address: "callee".to_owned(),
                 request_rpc_stats_present: false,

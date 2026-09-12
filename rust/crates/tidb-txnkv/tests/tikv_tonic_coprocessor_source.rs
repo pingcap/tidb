@@ -72,7 +72,7 @@ impl Tikv for RecordingTikv {
             .response_size
             .map_or(request.data, |size| vec![0x5a; size]);
         Ok(tonic::Response::new(CoprocessorResponse {
-            data,
+            data: data.into(),
             ..CoprocessorResponse::default()
         }))
     }
@@ -247,7 +247,7 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
             .unwrap();
         assert_eq!(raw.physical_address(), server.address);
         assert_eq!(raw.physical_channel_version(), 1);
-        let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
+        let response = CoprocessorResponse::decode(raw.encoded_response.as_ref()).unwrap();
         assert_eq!(response.data, data);
     }
     assert_eq!(client.connection_version(&server.address), Some(1));
@@ -498,7 +498,7 @@ fn response_larger_than_tonic_default_limit_is_returned() {
             Duration::from_secs(2),
         )
         .unwrap();
-    let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
+    let response = CoprocessorResponse::decode(raw.encoded_response.as_ref()).unwrap();
     assert_eq!(response.data.len(), response_size);
     assert!(response.data.iter().all(|byte| *byte == 0x5a));
 }

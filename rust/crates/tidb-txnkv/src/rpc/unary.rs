@@ -271,7 +271,7 @@ pub(super) struct RawUnaryRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RawUnaryResponse {
-    pub(super) encoded_response: Vec<u8>,
+    pub(super) encoded_response: bytes::Bytes,
     pub(super) physical_channel: PhysicalChannelIdentity,
 }
 
@@ -283,7 +283,10 @@ enum UnaryAttemptError {
 enum UnaryCallOutcome {
     CallerCancelled,
     Completed(
-        Result<Result<tonic::Response<Vec<u8>>, UnaryAttemptError>, tokio::time::error::Elapsed>,
+        Result<
+            Result<tonic::Response<bytes::Bytes>, UnaryAttemptError>,
+            tokio::time::error::Elapsed,
+        >,
     ),
 }
 
@@ -586,7 +589,7 @@ pub(super) struct RawProtobufDecoder;
 
 impl Codec for RawProtobufCodec {
     type Encode = Vec<u8>;
-    type Decode = Vec<u8>;
+    type Decode = bytes::Bytes;
     type Encoder = RawProtobufEncoder;
     type Decoder = RawProtobufDecoder;
 
@@ -614,7 +617,7 @@ impl Encoder for RawProtobufEncoder {
 }
 
 impl Decoder for RawProtobufDecoder {
-    type Item = Vec<u8>;
+    type Item = bytes::Bytes;
     type Error = tonic::Status;
 
     fn decode(&mut self, source: &mut DecodeBuf<'_>) -> Result<Option<Self::Item>, Self::Error> {
@@ -622,8 +625,12 @@ impl Decoder for RawProtobufDecoder {
     }
 }
 
-fn copy_remaining(source: &mut impl Buf) -> Vec<u8> {
-    source.copy_to_bytes(source.remaining()).to_vec()
+/// The message body as tonic assembled it, shared rather than copied: the
+/// coprocessor response's `data` is decoded as a slice of these bytes, so
+/// the payload TiKV sent is copied exactly zero times on the way to the chunk
+/// decoder (Go's `Response.Data` is one copy out of the gRPC frame).
+fn copy_remaining(source: &mut impl Buf) -> bytes::Bytes {
+    source.copy_to_bytes(source.remaining())
 }
 
 fn connection_error(

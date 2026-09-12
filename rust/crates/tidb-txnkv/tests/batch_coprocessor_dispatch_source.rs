@@ -145,7 +145,7 @@ impl Tikv for BatchFixture {
                         return;
                     }
                     let response = CoprocessorResponse {
-                        data: request.data,
+                        data: request.data.into(),
                         ..CoprocessorResponse::default()
                     }
                     .encode_to_vec();
@@ -298,8 +298,8 @@ fn concrete_dispatch_attaches_context_forwards_and_maps_coprocessor_response() {
     );
     assert_eq!(publication.forwarded_host(), Some("logical-tikv:20160"));
     assert_eq!(publication.physical_address(), server.address);
-    let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
-    assert_eq!(response.data, b"dag");
+    let response = CoprocessorResponse::decode(raw.encoded_response.as_ref()).unwrap();
+    assert_eq!(response.data.as_ref(), b"dag");
     let received = received.lock().unwrap();
     assert_eq!(received.len(), 1);
     assert_eq!(received[0].0.as_deref(), Some("logical-tikv:20160"));
@@ -531,7 +531,10 @@ fn canonical_cancellation_cancels_cold_request_without_blocking_the_worker() {
     assert!(cancelled_at.elapsed() < Duration::from_secs(1));
     assert!(blocked_elapsed < Duration::from_secs(1));
     assert_eq!(
-        CoprocessorResponse::decode(echo.as_slice()).unwrap().data,
+        CoprocessorResponse::decode(echo.as_ref())
+            .unwrap()
+            .data
+            .as_ref(),
         b"worker-released"
     );
 }

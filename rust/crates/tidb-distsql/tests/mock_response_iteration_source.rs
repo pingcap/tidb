@@ -25,9 +25,7 @@ use prost::Message;
 use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_codec::{encode_value, encode_value_in_timezone};
-use tidb_datatype::{
-    parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType,
-};
+use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
 use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 use tidb_distsql::{
     InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext,
@@ -121,7 +119,7 @@ impl QueryResponse for MockSelectResponse {
             }
         };
         Ok(Some(QueryResultSubset {
-            data: response.encode_to_vec(),
+            data: response.encode_to_vec().into(),
             runtime: None,
         }))
     }
@@ -158,10 +156,7 @@ fn mock_runtime(
     chunk_rpc: bool,
     batch: usize,
     total: usize,
-) -> (
-    InjectedQueryRuntime<MockSelectTransport>,
-    Arc<AtomicBool>,
-) {
+) -> (InjectedQueryRuntime<MockSelectTransport>, Arc<AtomicBool>) {
     let closed = Arc::new(AtomicBool::new(false));
     let runtime = InjectedQueryRuntime::new(MockSelectTransport(Some(MockSelectResponse {
         chunk_rpc,
@@ -435,9 +430,10 @@ fn sel_resp_channel_iter_reads_three_typed_channels_across_empty_chunks() {
             ..SelectResponse::default()
         };
 
-        let mut source =
-            ResponseChannel::<Vec<u8>>::new();
-        source.push_result(source_response.encode_to_vec()).unwrap();
+        let mut source = ResponseChannel::<prost::bytes::Bytes>::new();
+        source
+            .push_result(source_response.encode_to_vec().into())
+            .unwrap();
         source.finish().unwrap();
 
         let mut iter = source.into_select_iter_in_timezone(
@@ -451,12 +447,11 @@ fn sel_resp_channel_iter_reads_three_typed_channels_across_empty_chunks() {
             WarningCollector::new(),
         );
 
-        for (row_index, (expected_text, expected_value, expected_when)) in
-            rows.iter().enumerate()
-        {
-            let row = iter.next_row().unwrap().unwrap_or_else(|| {
-                panic!("{encode_type:?}: row {row_index} missing before drain")
-            });
+        for (row_index, (expected_text, expected_value, expected_when)) in rows.iter().enumerate() {
+            let row = iter
+                .next_row()
+                .unwrap()
+                .unwrap_or_else(|| panic!("{encode_type:?}: row {row_index} missing before drain"));
             assert_eq!(
                 row.channel_index, 1,
                 "{encode_type:?}: every payload row belongs to intermediate 1"

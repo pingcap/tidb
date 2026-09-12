@@ -202,7 +202,7 @@ fn response_rows(
 ) -> ScriptedResponse {
     ScriptedResponse {
         subsets: VecDeque::from([QueryResultSubset {
-            data: encoded_rows(rows),
+            data: encoded_rows(rows).into(),
             runtime: None,
         }]),
         next_count,
@@ -353,7 +353,7 @@ fn chunk_response_result(
 ) -> ScriptedResponse {
     ScriptedResponse {
         subsets: VecDeque::from([QueryResultSubset {
-            data: chunk_response(columns),
+            data: chunk_response(columns).into(),
             runtime: None,
         }]),
         next_count,
@@ -538,8 +538,16 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     assert_eq!(engine.last_snapshot_ts(), Some(4_242));
     assert_eq!(timestamps.calls(), 1);
     assert_eq!(state.sends.get(), 1);
-    assert_eq!(next_count.load(Ordering::SeqCst), 0, "execute must not pull the response");
-    assert_eq!(close_count.load(Ordering::SeqCst), 0, "the returned query owns the response");
+    assert_eq!(
+        next_count.load(Ordering::SeqCst),
+        0,
+        "execute must not pull the response"
+    );
+    assert_eq!(
+        close_count.load(Ordering::SeqCst),
+        0,
+        "the returned query owns the response"
+    );
 
     let requests = state.requests.borrow();
     let [request] = requests.as_slice() else {
@@ -560,10 +568,8 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     assert_eq!(
         request.ranges,
         [RequestKeyRange {
-            start_key: vec![
-                b't', 0x80, 0, 0, 0, 0, 0, 0, 42, b'_', b'r', 0, 0, 0, 0, 0, 0, 0, 0,
-            ]
-            .into(),
+            start_key: vec![b't', 0x80, 0, 0, 0, 0, 0, 0, 42, b'_', b'r', 0, 0, 0, 0, 0, 0, 0, 0,]
+                .into(),
             end_key: vec![
                 b't', 0x80, 0, 0, 0, 0, 0, 0, 42, b'_', b'r', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                 0xff, 0xff, 0,
@@ -580,7 +586,11 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     let mut record_set = query.into_record_set();
     assert_eq!(record_set.columns().len(), 1);
     assert_eq!(record_set.columns()[0].name, "id");
-    assert_eq!(next_count.load(Ordering::SeqCst), 0, "ownership transfer remains lazy");
+    assert_eq!(
+        next_count.load(Ordering::SeqCst),
+        0,
+        "ownership transfer remains lazy"
+    );
     assert_eq!(
         record_set.next_batch(1).unwrap(),
         vec![vec![Datum::Int(21)]]
@@ -612,8 +622,16 @@ fn set_time_zone_threads_into_every_subsequent_dag_request() {
     let stamp = |zone: &tidb_datatype::SessionTimeZone| {
         let state = Rc::new(SharedTransportState::default());
         let responses = [
-            response(&[1], Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))),
-            response(&[1], Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))),
+            response(
+                &[1],
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicUsize::new(0)),
+            ),
+            response(
+                &[1],
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicUsize::new(0)),
+            ),
         ];
         let mut engine = RealTiKvReadSession::new(
             configured_table(),
@@ -736,8 +754,16 @@ fn one_transport_is_retained_across_two_queries() {
         configured_table(),
         transport(
             [
-                response(&[1], Arc::new(AtomicUsize::new(0)), Arc::clone(&first_close)),
-                response(&[2], Arc::new(AtomicUsize::new(0)), Arc::clone(&second_close)),
+                response(
+                    &[1],
+                    Arc::new(AtomicUsize::new(0)),
+                    Arc::clone(&first_close),
+                ),
+                response(
+                    &[2],
+                    Arc::new(AtomicUsize::new(0)),
+                    Arc::clone(&second_close),
+                ),
             ],
             Rc::clone(&state),
         ),

@@ -278,7 +278,7 @@ mod concurrent {
                 answer(
                     started(&incoming),
                     CoprocessorResponse {
-                        data: b"one".to_vec(),
+                        data: b"one".to_vec().into(),
                         range: Some(CoprocessorKeyRange {
                             start: b"a".to_vec(),
                             end: b"m".to_vec(),
@@ -363,7 +363,7 @@ mod concurrent {
             answer(
                 right,
                 CoprocessorResponse {
-                    data: vec![page],
+                    data: vec![page].into(),
                     range: Some(CoprocessorKeyRange {
                         start: b"m".to_vec(),
                         end: vec![b'm', page],
@@ -431,7 +431,7 @@ mod concurrent {
             answer(
                 later,
                 CoprocessorResponse {
-                    data: vec![page],
+                    data: vec![page].into(),
                     range: Some(CoprocessorKeyRange {
                         start: b"m".to_vec(),
                         end: vec![b'm', page],
@@ -565,7 +565,7 @@ mod concurrent {
                 answer(
                     later,
                     CoprocessorResponse {
-                        data: b"later".to_vec(),
+                        data: b"later".to_vec().into(),
                         range: Some(CoprocessorKeyRange {
                             start: b"m".to_vec(),
                             end: vec![b'm', index + 1],
@@ -597,7 +597,7 @@ mod concurrent {
 fn only_successful_paging_creates_a_continuation_attempt() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let first = CoprocessorResponse {
-        data: b"page-one".to_vec(),
+        data: b"page-one".to_vec().into(),
         range: Some(CoprocessorKeyRange {
             start: b"a".to_vec(),
             end: b"m".to_vec(),
@@ -636,7 +636,7 @@ fn unordered_paging_with_synchronous_continuation_delivers_each_page_once() {
 fn unordered_paging_with_completion_modes(completion_modes: Option<[bool; 2]>) {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let first = CoprocessorResponse {
-        data: b"page-one".to_vec(),
+        data: b"page-one".to_vec().into(),
         range: Some(CoprocessorKeyRange {
             start: b"a".to_vec(),
             end: b"m".to_vec(),
@@ -669,7 +669,7 @@ fn unordered_paging_with_completion_modes(completion_modes: Option<[bool; 2]>) {
 fn synchronous_unordered_paging_keeps_one_ready_token_per_task() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let first = CoprocessorResponse {
-        data: b"page-one".to_vec(),
+        data: b"page-one".to_vec().into(),
         range: Some(CoprocessorKeyRange {
             start: b"a".to_vec(),
             end: b"m".to_vec(),

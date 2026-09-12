@@ -20,8 +20,8 @@ mod direct_unary_table_index_reader_source;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -64,7 +64,7 @@ impl QueryResponse for TrackingResponse {
         let take = required_rows.min(self.rows.len());
         let rows = self.rows.drain(..take).collect::<Vec<_>>();
         Ok(Some(QueryResultSubset {
-            data: encoded_rows(&rows),
+            data: encoded_rows(&rows).into(),
             runtime: None,
         }))
     }
