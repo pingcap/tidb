@@ -2543,6 +2543,7 @@ mod tests {
             deadlock_history_capacity: 10,
             deadlock_history_collect_retryable: false,
             schema_lease: Duration::from_millis(45_000),
+            run_ddl: true,
             stats_lease: crate::node_config::StatsLease::Positive(Duration::from_secs(3)),
             cluster_security: tidb_pd_client::ClusterSecurity::plaintext(),
             spill_storage: tidb_util::spill_storage::SpillStorageSpec {

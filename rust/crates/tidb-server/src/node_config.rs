@@ -264,6 +264,12 @@ pub struct NodeConfig {
     /// re-reads the catalog every `schema_lease / 2`, so it is never more than
     /// one lease behind the cluster's schema version.
     pub schema_lease: Duration,
+    /// Go `ddl.Start`'s `campaignOwner`: `Instance.TiDBEnableDDL`, the config
+    /// file's `[instance] tidb_enable_ddl` overridden by `--run-ddl`
+    /// (`main.go:751`). A node with it off never campaigns for DDL ownership
+    /// and runs no DDL worker; its own DDL statements still queue for the
+    /// cluster's owner.
+    pub run_ddl: bool,
     /// Go `Performance.StatsLease`, retaining the negative/zero distinction
     /// that controls whether and how `loadStatsWorker` starts.
     pub stats_lease: StatsLease,
@@ -981,6 +987,12 @@ impl NodeConfig {
         global_config.tidb_edition = tidb_edition.unwrap_or_default();
         global_config.tidb_release_version = tidb_release_version.unwrap_or_default();
         global_config.server_version = server_version.unwrap_or_default();
+        // main.go:751 `overrideConfig`: the flag wins over the file.
+        if let Some(run_ddl) = main_flags.run_ddl {
+            global_config.instance.tidb_enable_ddl =
+                tidb_config::config_tree::marshal::AtomicBool::new(run_ddl);
+        }
+        let run_ddl = global_config.instance.tidb_enable_ddl.load();
         validate_version_config(&global_config)?;
         let stats_lease = parse_stats_lease(&global_config.performance.stats_lease)?;
         global_config.update_temp_storage_path();
@@ -1020,6 +1032,7 @@ impl NodeConfig {
             deadlock_history_capacity,
             deadlock_history_collect_retryable,
             schema_lease,
+            run_ddl,
             stats_lease,
             load_privileges,
             cluster_session,
@@ -1994,6 +2007,30 @@ mod tests {
             Some(Duration::from_secs(3))
         );
         assert_eq!(parse_stats_lease("-1s").unwrap().reload_interval(), None);
+    }
+
+    /// Go `ddl.Start`: `Instance.TiDBEnableDDL` defaults on and `--run-ddl`
+    /// (main.go:751) overrides it, so a node can be kept out of the DDL
+    /// owner election.
+    #[test]
+    fn run_ddl_defaults_on_and_follows_the_main_go_flag() {
+        let base = [
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+        ];
+        assert!(NodeConfig::parse(base).unwrap().run_ddl);
+        let with_flag = |flag: &'static str| {
+            NodeConfig::parse(base.iter().copied().chain([flag]).collect::<Vec<_>>())
+                .unwrap()
+                .run_ddl
+        };
+        assert!(!with_flag("--run-ddl=false"));
+        assert!(with_flag("--run-ddl=true"));
     }
 
     #[test]

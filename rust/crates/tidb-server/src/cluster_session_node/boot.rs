@@ -247,6 +247,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             crate::real_tikv_node::connect_schema_notifier(&config),
             Arc::clone(&server_info),
             schema_version_syncer,
+            config.run_ddl,
         )
         .map_err(|error| {
             RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(

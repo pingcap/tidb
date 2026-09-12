@@ -414,6 +414,7 @@ where
         notifier: Option<Arc<EtcdClient>>,
         server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
         schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
+        campaign_owner: bool,
     ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
         let server_state_context = ServerStateContext::background();
@@ -478,7 +479,15 @@ where
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&owner));
         owner.set_listener(Arc::clone(&scheduler) as Arc<dyn tidb_owner::Listener>);
-        owner.campaign_owner(&[])?;
+        // Go `ddl.Start` (`ddl.go:871`, `:926`): only `Instance.TiDBEnableDDL`
+        // (`--run-ddl`) campaigns and runs the worker; a node with it off
+        // submits its DDL to whichever node owns the cluster's queue. This
+        // tier's owner loop runs the CHECK CONSTRAINT job types only, so the
+        // switch is how a mixed cluster keeps every other job type on a
+        // node that executes it.
+        if campaign_owner {
+            owner.campaign_owner(&[])?;
+        }
         Ok(Self {
             opener,
             catalog,

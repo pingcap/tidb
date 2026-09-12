@@ -49,6 +49,9 @@ pub struct MainFlags {
     pub cors: Option<String>,
     pub socket: Option<String>,
     pub ddl_lease: Option<String>,
+    /// `--run-ddl`: main.go's `nmRunDDL`, which `overrideConfig` writes into
+    /// `Instance.TiDBEnableDDL` (`main.go:751`).
+    pub run_ddl: Option<bool>,
     pub token_limit: Option<i64>,
     pub repair_mode: Option<bool>,
     pub repair_list: Option<String>,
@@ -156,6 +159,7 @@ impl MainFlags {
                     })?);
                 }
                 "repair-mode" => flags.repair_mode = Some(boolean(&inline)?),
+                "run-ddl" => flags.run_ddl = Some(boolean(&inline)?),
                 "repair-list" => flags.repair_list = Some(take()?),
                 "temp-dir" => flags.temp_dir = Some(take()?),
                 "cluster-ca" => flags.cluster_ca = Some(take()?),
@@ -279,6 +283,10 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
     }
     if let Some(repair) = flags.repair_mode {
         cfg.repair_mode = repair;
+    }
+    // main.go:751: `run-ddl` is the flag spelling of `instance.tidb_enable_ddl`.
+    if let Some(run_ddl) = flags.run_ddl {
+        cfg.instance.tidb_enable_ddl = tidb_config::config_tree::marshal::AtomicBool::new(run_ddl);
     }
     if let Some(list) = &flags.repair_list {
         if cfg.repair_mode {
@@ -458,10 +466,12 @@ mod tests {
             "--auth-file".to_owned(),
             "/tmp/u.tsv".to_owned(),
             "--keyspace-activate=true".to_owned(),
+            "--run-ddl=false".to_owned(),
         ])
         .expect("the mixed line parses");
         assert_eq!(flags.ddl_lease.as_deref(), Some("45s"));
         assert_eq!(flags.repair_mode, Some(true));
+        assert_eq!(flags.run_ddl, Some(false));
         assert_eq!(flags.token_limit, Some(1000));
         assert_eq!(flags.keyspace_activate, Some(true));
         assert_eq!(
