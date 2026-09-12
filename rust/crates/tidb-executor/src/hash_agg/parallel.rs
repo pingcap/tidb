@@ -1459,6 +1459,15 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
         let ret_types = self.meta.ret_field_types().to_vec();
         let max_chunk_size = self.meta.max_chunk_size();
         self.parallel_output.clear();
+        // Go `groupConcat.truncated`: one sentinel per function, shared by
+        // every final worker, so two groups truncating on two workers still
+        // warn once.
+        let truncated: Arc<Vec<AtomicBool>> = Arc::new(
+            self.truncated
+                .iter()
+                .map(|flag| AtomicBool::new(*flag))
+                .collect(),
+        );
         if self
             .parallel_spilled
             .as_ref()
@@ -1470,9 +1479,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                 .expect("spilled data owns its partitions");
             for partition in (0..SPILLED_PARTITION_NUM).rev() {
                 let restored = spilled.restore_partition(partition, &plan.agg_funcs)?;
-                let (chunks, truncated) =
-                    finalize_map(restored, &plan, &ret_types, max_chunk_size)?;
-                merge_truncated(&mut self.truncated, &truncated);
+                let chunks = finalize_map(restored, &plan, &ret_types, max_chunk_size, &truncated)?;
                 self.parallel_output.extend(chunks);
             }
         } else {
@@ -1484,13 +1491,15 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             let tasks = maps.into_iter().map(|map| {
                 let plan = Arc::clone(&plan);
                 let ret_types = ret_types.clone();
-                move || finalize_map(map, &plan, &ret_types, max_chunk_size)
+                let truncated = Arc::clone(&truncated);
+                move || finalize_map(map, &plan, &ret_types, max_chunk_size, &truncated)
             });
             for result in crate::worker_pool::map(tasks, concurrency) {
-                let (chunks, truncated) = result?;
-                merge_truncated(&mut self.truncated, &truncated);
-                self.parallel_output.extend(chunks);
+                self.parallel_output.extend(result?);
             }
+        }
+        for (flag, shared) in self.truncated.iter_mut().zip(truncated.iter()) {
+            *flag |= shared.load(std::sync::atomic::Ordering::Acquire);
         }
         if self.parallel_output.is_empty() && self.emit_default_row && plan.group_by.is_empty() {
             let mut states: Vec<AggState> = plan.agg_funcs.iter().map(AggState::new).collect();
@@ -1522,26 +1531,36 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
 /// The plan pieces a partial worker folds rows with.
 /// Go `HashAggFinalWorker.getFinalResult`: one final map finalised into
 /// result chunks of at most `max_chunk_size` rows, on whichever thread owns
-/// the map. Returns the per-column truncation flags `finish_agg_value` set.
+/// the map. `truncated` holds the per-function GROUP_CONCAT sentinels shared
+/// with the other final workers.
 fn finalize_map<C: Columns + Send + Sync + Clone + 'static>(
     map: PipelineMap,
     plan: &PipelinePlan<C>,
     ret_types: &[FieldType],
     max_chunk_size: usize,
-) -> Result<(Vec<Chunk>, Vec<bool>), ExecError> {
+    truncated: &[AtomicBool],
+) -> Result<Vec<Chunk>, ExecError> {
     let width = plan.agg_funcs.len();
-    let mut truncated = vec![false; width];
     let mut chunks = Vec::new();
     let capacity = max_chunk_size.min(map.len()).max(1);
     let mut current = Chunk::new_with_capacity(ret_types, capacity);
     for mut group in map.into_values() {
         for (column, state) in group.states.iter_mut().enumerate() {
-            let value = finish_agg_value(
+            let value = finish_agg_value_claiming(
                 state,
                 &plan.agg_funcs[column],
                 &ret_types[column],
                 &plan.ctx,
-                &mut truncated[column],
+                &mut || {
+                    truncated[column]
+                        .compare_exchange(
+                            false,
+                            true,
+                            std::sync::atomic::Ordering::AcqRel,
+                            std::sync::atomic::Ordering::Acquire,
+                        )
+                        .is_ok()
+                },
             )?;
             current.append_datum(column, &value);
         }
@@ -1560,13 +1579,7 @@ fn finalize_map<C: Columns + Send + Sync + Clone + 'static>(
     if current.num_rows() > 0 {
         chunks.push(current);
     }
-    Ok((chunks, truncated))
-}
-
-fn merge_truncated(into: &mut [bool], from: &[bool]) {
-    for (target, flag) in into.iter_mut().zip(from) {
-        *target |= *flag;
-    }
+    Ok(chunks)
 }
 
 struct FoldInputs<'a, C> {

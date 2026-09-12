@@ -37,6 +37,7 @@ use crate::expression::{ConstLevel, Expression, SCALAR_FUNCTION_FLAG};
 use crate::grouping::{GroupingMetadata, GroupingMetadataError, GroupingMode};
 use crate::schema::Schema;
 use tidb_ast::{BinaryOp, CiString, UnaryOp};
+use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row::Row;
 use tidb_codec::{encode_compact_bytes, encode_int};
 use tidb_datatype::{Datum, EvalType, FieldType, UNSPECIFIED_LENGTH};
@@ -2609,6 +2610,157 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
         "vector" => CastType::Vector { dimensions: len() },
         _ => return Err(EvalError::Unsupported("this cast target is not ported")),
     })
+}
+
+/// One argument of an integer comparison as Go's `VecEvalInt` reads it: a
+/// chunk column's 8-byte cells, or one strict constant.
+enum IntCompareOperand<'a> {
+    Column {
+        column: tidb_chunk::ColumnRead<'a>,
+        signed: bool,
+    },
+    Constant(Option<crate::coerce::Integer>),
+}
+
+impl<'a> IntCompareOperand<'a> {
+    fn of(expression: &Expression, input: &'a Chunk) -> Option<Self> {
+        use tidb_datatype::FieldTypeCode;
+        let field_type = expression.static_type()?;
+        if field_type.eval_type() != EvalType::Int {
+            return None;
+        }
+        // Go `mysql.HasUnsignedFlag(args[i].GetType(ctx).GetFlag())`: the
+        // argument's field type decides how its int64 bits are read.
+        let signed = !field_type.is_unsigned();
+        match expression {
+            Expression::Column(column) => {
+                // Only the integer codes store the value as the 8-byte cell
+                // `GetInt64` reads; BIT and the ENUM/SET-as-int forms keep the
+                // row path.
+                if !matches!(
+                    field_type.code(),
+                    FieldTypeCode::Tiny
+                        | FieldTypeCode::Short
+                        | FieldTypeCode::Int24
+                        | FieldTypeCode::Long
+                        | FieldTypeCode::LongLong
+                        | FieldTypeCode::Year
+                ) {
+                    return None;
+                }
+                let index = usize::try_from(column.index).ok()?;
+                if index >= input.num_cols() {
+                    return None;
+                }
+                let column = input.column(index);
+                if column.type_size() != 8 {
+                    return None;
+                }
+                Some(Self::Column { column, signed })
+            }
+            Expression::Constant(constant) => match constant.literal_value()? {
+                Datum::Null => Some(Self::Constant(None)),
+                Datum::Int(value) => Some(Self::Constant(Some(if signed {
+                    crate::coerce::Integer::Signed(*value)
+                } else {
+                    crate::coerce::Integer::Unsigned(*value as u64)
+                }))),
+                Datum::UInt(value) => Some(Self::Constant(Some(
+                    crate::coerce::Integer::Unsigned(*value),
+                ))),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn get(&self, physical: usize) -> Option<crate::coerce::Integer> {
+        match self {
+            Self::Column { column, signed } => {
+                if column.is_null(physical) {
+                    return None;
+                }
+                let bits = column.get_int64(physical);
+                Some(if *signed {
+                    crate::coerce::Integer::Signed(bits)
+                } else {
+                    crate::coerce::Integer::Unsigned(bits as u64)
+                })
+            }
+            Self::Constant(value) => *value,
+        }
+    }
+}
+
+impl ScalarFunction {
+    /// Go `builtin{EQ,NE,LT,LE,GT,GE}IntSig.vecEvalInt`: an integer comparison
+    /// over the live physical rows `sel` of `input`, column-wise.
+    ///
+    /// `is_zero` receives one entry per row of `sel` in Go's `VecEvalBool`
+    /// encoding (`-1` NULL, `0` false, `1` true). Returns `Ok(false)`, with
+    /// `is_zero` untouched, for every shape this kernel does not cover -- an
+    /// argument that is neither an integer column nor a strict integer
+    /// constant, or a result type the row evaluator would still convert --
+    /// so the caller keeps the row evaluator as the behavior contract there.
+    /// The covered shapes produce exactly what [`Self::eval`] produces row by
+    /// row: NULL when either side is NULL, and the signedness of each side
+    /// read from its argument's field type (`ops::integer_binary_typed`).
+    pub(crate) fn vec_eval_int_compare(
+        &self,
+        input: &Chunk,
+        sel: &[usize],
+        is_zero: &mut Vec<i8>,
+    ) -> Result<bool, EvalError> {
+        if self.args.len() != 2 {
+            return Ok(false);
+        }
+        let op = match binary_op_for_name(self.func_name.lowercase()) {
+            Some(
+                op @ (BinaryOp::Eq
+                | BinaryOp::Ne
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge),
+            ) => op,
+            _ => return Ok(false),
+        };
+        // `coerce_to_ret_type` leaves an integer alone only for an integer
+        // result type that is not BIT.
+        let Some(ret_type) = self.get_static_type() else {
+            return Ok(false);
+        };
+        if ret_type.eval_type() != EvalType::Int
+            || ret_type.code() == tidb_datatype::FieldTypeCode::Bit
+        {
+            return Ok(false);
+        }
+        let (Some(lhs), Some(rhs)) = (
+            IntCompareOperand::of(&self.args[0], input),
+            IntCompareOperand::of(&self.args[1], input),
+        ) else {
+            return Ok(false);
+        };
+        is_zero.clear();
+        is_zero.reserve(sel.len());
+        for &physical in sel {
+            let (Some(a), Some(b)) = (lhs.get(physical), rhs.get(physical)) else {
+                is_zero.push(-1);
+                continue;
+            };
+            let ordering = crate::coerce::integer_cmp(a, b);
+            let truth = match op {
+                BinaryOp::Eq => ordering.is_eq(),
+                BinaryOp::Ne => !ordering.is_eq(),
+                BinaryOp::Lt => ordering.is_lt(),
+                BinaryOp::Le => ordering.is_le(),
+                BinaryOp::Gt => ordering.is_gt(),
+                _ => ordering.is_ge(),
+            };
+            is_zero.push(i8::from(truth));
+        }
+        Ok(true)
+    }
 }
 
 #[cfg(test)]

@@ -490,6 +490,18 @@ impl AggState {
         }
     }
 
+    /// Go `ResetPartialResult`: the state is reused for the next group
+    /// instead of being reallocated (the collation is derived once).
+    fn reset(&mut self, func: &AggFunc) {
+        self.partial = Partial::new(&func.kind);
+        if self.seen.is_some() {
+            self.seen = Some(StringSetWithMemoryUsage::new([]).0);
+        }
+        if let Some(inputs) = &mut self.distinct_inputs {
+            inputs.clear();
+        }
+    }
+
     /// Go's parallel partial aggregate retains each DISTINCT input so final
     /// workers can merge sets rather than adding already-folded scalars.
     fn new_parallel(func: &AggFunc) -> AggState {
@@ -1720,6 +1732,25 @@ fn finish_agg_value<C: Columns>(
     ctx: &C,
     truncated: &mut bool,
 ) -> Result<Datum, ExecError> {
+    finish_agg_value_claiming(state, func, output_type, ctx, &mut || {
+        let first = !*truncated;
+        *truncated = true;
+        first
+    })
+}
+
+/// [`finish_agg_value`] with the GROUP_CONCAT "warn once" sentinel behind
+/// `claim_truncation`, which returns whether this call is the first to
+/// truncate. Go's `groupConcat` shares one `truncated *int32` across every
+/// final worker and claims it with a compare-and-swap; the parallel
+/// pipeline passes that atomic claim, the serial executors a plain flag.
+fn finish_agg_value_claiming<C: Columns>(
+    state: &mut AggState,
+    func: &AggFunc,
+    output_type: &FieldType,
+    ctx: &C,
+    claim_truncation: &mut dyn FnMut() -> bool,
+) -> Result<Datum, ExecError> {
     let mut value = state
         .partial
         .finish(&func.order_by, ctx.div_precision_increment())?;
@@ -1729,8 +1760,7 @@ fn finish_agg_value<C: Columns>(
             let max_len = group_concat_max_len(ctx);
             if max_len > 0 && joined.len() as u64 > max_len {
                 joined.truncate(max_len as usize);
-                if !*truncated {
-                    *truncated = true;
+                if claim_truncation() {
                     let text = group_concat_arg_text(func);
                     ctx.handle_group_concat_cut(&format!(
                         "Some rows were cut by GROUPCONCAT({text})"
@@ -1928,7 +1958,17 @@ pub struct GroupedStreamAggExec<C: Columns> {
     child_at: usize,
     states: Vec<AggState>,
     truncated: Vec<bool>,
-    current_key: Option<Vec<u8>>,
+    /// Go `VecGroupChecker.groupOffset`: the end row of each group of the
+    /// current child chunk, and the group `child_at` is in.
+    group_ends: Vec<usize>,
+    group_index: usize,
+    /// A group's rows have been folded and its result is still owed.
+    group_open: bool,
+    /// Go `VecGroupChecker.lastGroupKeyOfPrevChk`.
+    last_key_of_prev_chunk: Option<Vec<u8>>,
+    /// Go `VecGroupChecker.sameGroup` and the key scratch buffers.
+    same_group: Vec<bool>,
+    key_scratch: [Vec<u8>; 3],
     /// The current group's key datums, kept only when the output schema
     /// carries trailing group-by columns (a cop partial aggregation; see
     /// [`HashAggExec::output_group_keys`]).
@@ -1971,7 +2011,12 @@ impl<C: Columns> GroupedStreamAggExec<C> {
             child_at: 0,
             states,
             truncated,
-            current_key: None,
+            group_ends: Vec::new(),
+            group_index: 0,
+            group_open: false,
+            last_key_of_prev_chunk: None,
+            same_group: Vec::new(),
+            key_scratch: [Vec::new(), Vec::new(), Vec::new()],
             current_group_values: Vec::new(),
             output_group_keys,
             child_done: false,
@@ -1979,17 +2024,146 @@ impl<C: Columns> GroupedStreamAggExec<C> {
         }
     }
 
-    fn group_key(&self, row: tidb_chunk::row::Row<'_>) -> Result<(Vec<u8>, Vec<Datum>), ExecError> {
-        let mut key = Vec::new();
-        let mut values = Vec::new();
+    /// Go `getFirstAndLastRowDatum` + `codec.EncodeKey`: one row's encoded
+    /// group key, under the group-by collations the hash aggregate uses.
+    fn encode_group_key(
+        &self,
+        row: tidb_chunk::row::Row<'_>,
+        key: &mut Vec<u8>,
+    ) -> Result<(), ExecError> {
+        key.clear();
         for expr in &self.group_by {
             let datum = expr.eval(&self.ctx, row)?;
-            append_hash_agg_group_key_part(&self.ctx, expr, &datum, &mut key)?;
-            if self.output_group_keys {
-                values.push(datum);
+            append_hash_agg_group_key_part(&self.ctx, expr, &datum, key)?;
+        }
+        Ok(())
+    }
+
+    fn group_values(&self, row: tidb_chunk::row::Row<'_>) -> Result<Vec<Datum>, ExecError> {
+        if !self.output_group_keys {
+            return Ok(Vec::new());
+        }
+        self.group_by
+            .iter()
+            .map(|expr| expr.eval(&self.ctx, row).map_err(ExecError::from))
+            .collect()
+    }
+
+    /// Go `VecGroupChecker.SplitIntoGroups`: resolves the group boundaries of
+    /// the freshly fetched child chunk and reports whether its first group
+    /// continues the previous chunk's last group.
+    fn split_into_groups(&mut self) -> Result<bool, ExecError> {
+        let rows = self.child_chunk.num_rows();
+        debug_assert!(rows > 0);
+        self.group_ends.clear();
+        self.group_index = 0;
+        let [mut first_key, mut last_key, _] = std::mem::take(&mut self.key_scratch);
+        self.encode_group_key(self.child_chunk.get_row(0), &mut first_key)?;
+        let same_as_prev = self
+            .last_key_of_prev_chunk
+            .as_ref()
+            .is_some_and(|last| *last == first_key);
+        self.encode_group_key(self.child_chunk.get_row(rows - 1), &mut last_key)?;
+        let one_group = first_key == last_key;
+        let previous = self.last_key_of_prev_chunk.replace(last_key);
+        self.key_scratch = [first_key, previous.unwrap_or_default(), Vec::new()];
+        if one_group {
+            self.group_ends.push(rows);
+            return Ok(same_as_prev);
+        }
+        let mut same_group = std::mem::take(&mut self.same_group);
+        same_group.clear();
+        same_group.resize(rows, true);
+        same_group[0] = false;
+        let mut scratch = std::mem::take(&mut self.key_scratch);
+        for item in 0..self.group_by.len() {
+            self.resolve_groups(item, &mut same_group, &mut scratch)?;
+        }
+        self.key_scratch = scratch;
+        for (row, same) in same_group.iter().enumerate().skip(1) {
+            if !same {
+                self.group_ends.push(row);
             }
         }
-        Ok((key, values))
+        self.group_ends.push(rows);
+        self.same_group = same_group;
+        Ok(same_as_prev)
+    }
+
+    /// Go `evalGroupItemsAndResolveGroups`: adjacent rows stay in one group
+    /// while every item compares equal. An integer column compares its cells
+    /// directly (Go's `ETInt` arm); any other item compares the encoded key
+    /// parts the hash aggregate groups by.
+    fn resolve_groups(
+        &self,
+        item: usize,
+        same_group: &mut [bool],
+        scratch: &mut [Vec<u8>; 3],
+    ) -> Result<(), ExecError> {
+        let rows = self.child_chunk.num_rows();
+        let expr = &self.group_by[item];
+        if let Expression::Column(column) = expr {
+            let is_int = column.get_static_type().is_some_and(|field_type| {
+                matches!(
+                    field_type.code(),
+                    tidb_datatype::FieldTypeCode::Tiny
+                        | tidb_datatype::FieldTypeCode::Short
+                        | tidb_datatype::FieldTypeCode::Int24
+                        | tidb_datatype::FieldTypeCode::Long
+                        | tidb_datatype::FieldTypeCode::LongLong
+                        | tidb_datatype::FieldTypeCode::Year
+                )
+            });
+            if let Some(index) = is_int
+                .then(|| usize::try_from(column.index).ok())
+                .flatten()
+                .filter(|index| *index < self.child_chunk.num_cols())
+            {
+                let cells = self.child_chunk.column(index);
+                if cells.type_size() == 8 {
+                    let mut previous = self.child_chunk.get_row(0).idx();
+                    for (row, same) in same_group.iter_mut().enumerate().skip(1) {
+                        let physical = self.child_chunk.get_row(row).idx();
+                        if *same {
+                            let (previous_null, null) =
+                                (cells.is_null(previous), cells.is_null(physical));
+                            if previous_null != null
+                                || (!null && cells.get_int64(previous) != cells.get_int64(physical))
+                            {
+                                *same = false;
+                            }
+                        }
+                        previous = physical;
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        let [_, previous, current] = scratch;
+        previous.clear();
+        let datum = expr.eval(&self.ctx, self.child_chunk.get_row(0))?;
+        append_hash_agg_group_key_part(&self.ctx, expr, &datum, previous)?;
+        for (row, same) in same_group.iter_mut().enumerate().skip(1) {
+            current.clear();
+            let datum = expr.eval(&self.ctx, self.child_chunk.get_row(row))?;
+            append_hash_agg_group_key_part(&self.ctx, expr, &datum, current)?;
+            if *same && current != previous {
+                *same = false;
+            }
+            std::mem::swap(previous, current);
+        }
+        Ok(())
+    }
+
+    /// Go `appendResult2Chunk`: the open group's result row, then every
+    /// state reset for the next group.
+    fn finish_group(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        self.emit_current(req)?;
+        for (state, func) in self.states.iter_mut().zip(&self.agg_funcs) {
+            state.reset(func);
+        }
+        self.group_open = false;
+        Ok(())
     }
 
     fn emit_current(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
@@ -2025,57 +2199,65 @@ impl<C: Columns> Executor for GroupedStreamAggExec<C> {
         self.child_at = 0;
         self.states = self.agg_funcs.iter().map(AggState::new).collect();
         self.truncated.fill(false);
-        self.current_key = None;
+        self.group_ends.clear();
+        self.group_index = 0;
+        self.group_open = false;
+        self.last_key_of_prev_chunk = None;
         self.current_group_values.clear();
         self.child_done = false;
         self.child_returned_empty = true;
         Ok(())
     }
 
+    /// Go `StreamAggExec.Next`: `for !e.executed && !req.IsFull()`, one
+    /// group (or the rest of one) per `consumeOneGroup`.
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        let cap = self.meta.max_chunk_size();
-        while req.num_rows() < cap {
-            if self.child_done {
-                if self.current_key.take().is_some() {
-                    self.emit_current(req)?;
-                }
-                break;
-            }
+        while !self.child_done && !req.is_full() {
             if self.child_at >= self.child_chunk.num_rows() {
+                // Go `consumeCurGroupRowsAndFetchChild`.
                 self.child_chunk.reset();
                 self.child.next(&mut self.child_chunk)?;
                 self.child_at = 0;
                 if self.child_chunk.num_rows() == 0 {
                     self.child_done = true;
-                    continue;
+                    if self.group_open {
+                        self.finish_group(req)?;
+                    }
+                    return Ok(());
+                }
+                self.child_returned_empty = false;
+                let same_as_prev = self.split_into_groups()?;
+                if self.group_open && !same_as_prev {
+                    self.finish_group(req)?;
+                }
+                if !self.group_open {
+                    self.current_group_values = self.group_values(self.child_chunk.get_row(0))?;
+                    self.group_open = true;
                 }
             }
-
-            let (key, group_values) = self.group_key(self.child_chunk.get_row(self.child_at))?;
-            if self
-                .current_key
-                .as_ref()
-                .is_some_and(|current| current != &key)
-            {
-                self.emit_current(req)?;
-                self.states = self.agg_funcs.iter().map(AggState::new).collect();
-                self.current_group_values = group_values;
-            } else if self.current_key.is_none() {
-                self.current_group_values = group_values;
+            let end = self.group_ends[self.group_index];
+            for row_index in self.child_at..end {
+                let row = self.child_chunk.get_row(row_index);
+                StreamAggExec::<C>::update_row(&self.agg_funcs, &self.ctx, &mut self.states, row)?;
             }
-            self.current_key = Some(key);
-            let row = self.child_chunk.get_row(self.child_at);
-            StreamAggExec::<C>::update_row(&self.agg_funcs, &self.ctx, &mut self.states, row)?;
-            self.child_at += 1;
-            self.child_returned_empty = false;
+            self.child_at = end;
+            if end < self.child_chunk.num_rows() {
+                // The group ends inside this chunk; the next starts at `end`.
+                self.finish_group(req)?;
+                self.group_index += 1;
+                self.current_group_values = self.group_values(self.child_chunk.get_row(end))?;
+                self.group_open = true;
+            }
         }
         Ok(())
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.states.clear();
-        self.current_key = None;
+        self.group_ends.clear();
+        self.group_open = false;
+        self.last_key_of_prev_chunk = None;
         self.current_group_values.clear();
         self.child.close()
     }
@@ -3662,6 +3844,136 @@ mod tests {
         output.sort_unstable();
         assert_eq!(output, (0..10).collect::<Vec<_>>());
         exec.close().unwrap();
+    }
+
+    fn grouped(
+        group_by: Expression,
+        funcs: Vec<AggFunc>,
+        rows: &[(i64, Option<i64>)],
+    ) -> GroupedStreamAggExec<NoColumns> {
+        let positions = (0..funcs.len()).collect();
+        GroupedStreamAggExec::new(
+            out_meta(funcs.len()),
+            vec![group_by],
+            funcs,
+            positions,
+            source(rows),
+            NoColumns,
+        )
+    }
+
+    fn drain_grouped(
+        exec: &mut GroupedStreamAggExec<NoColumns>,
+        required_rows: usize,
+    ) -> Vec<Vec<Option<i64>>> {
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        let mut output = Vec::new();
+        loop {
+            req.set_required_rows(required_rows as isize, exec.max_chunk_size());
+            exec.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            assert!(req.num_rows() <= required_rows);
+            for row in 0..req.num_rows() {
+                let row = req.get_row(row);
+                output.push(
+                    (0..req.num_cols())
+                        .map(|col| (!row.is_null(col)).then(|| row.get_int64(col)))
+                        .collect(),
+                );
+            }
+        }
+        exec.close().unwrap();
+        output
+    }
+
+    /// Go `StreamAggExec`: a group whose rows straddle chunk boundaries is
+    /// one group (`isFirstGroupSameAsPrev`), the last group emits at end of
+    /// input, and `Next` fills only the requested rows.
+    #[test]
+    fn grouped_stream_agg_carries_groups_across_chunk_boundaries() {
+        let rows: Vec<(i64, Option<i64>)> = (0..3000).map(|i| (i / 700, Some(i))).collect();
+        let mut exec = grouped(
+            col(0),
+            vec![
+                AggFunc::new(AggKind::FirstRow, Some(col(0))),
+                AggFunc::new(AggKind::Count, Some(col(1))),
+                AggFunc::new(AggKind::Max, Some(col(1))),
+            ],
+            &rows,
+        );
+        let expected: Vec<Vec<Option<i64>>> = (0..5)
+            .map(|g| {
+                let count = if g == 4 { 200 } else { 700 };
+                vec![Some(g), Some(count), Some(g * 700 + count - 1)]
+            })
+            .collect();
+        assert_eq!(drain_grouped(&mut exec, 2), expected);
+        let mut exec = grouped(
+            col(0),
+            vec![
+                AggFunc::new(AggKind::FirstRow, Some(col(0))),
+                AggFunc::new(AggKind::Count, Some(col(1))),
+                AggFunc::new(AggKind::Max, Some(col(1))),
+            ],
+            &rows,
+        );
+        assert_eq!(drain_grouped(&mut exec, 1024), expected);
+    }
+
+    /// NULL keys form one group (Go's `ETInt` arm: two NULLs are the same
+    /// group, a NULL and a value are not), across a chunk boundary too.
+    #[test]
+    fn grouped_stream_agg_groups_null_keys_together() {
+        let mut rows: Vec<(i64, Option<i64>)> = (0..1500).map(|i| (i, None)).collect();
+        rows.extend((1500..3000).map(|i| (i, Some(7))));
+        rows.extend((3000..3002).map(|i| (i, Some(8))));
+        let mut exec = grouped(
+            col(1),
+            vec![
+                AggFunc::new(AggKind::FirstRow, Some(col(1))),
+                AggFunc::new(AggKind::Count, Some(col(0))),
+            ],
+            &rows,
+        );
+        assert_eq!(
+            drain_grouped(&mut exec, 3),
+            vec![
+                vec![None, Some(1500)],
+                vec![Some(7), Some(1500)],
+                vec![Some(8), Some(2)]
+            ]
+        );
+    }
+
+    /// A group-by item that is not a bare integer column resolves groups
+    /// through the encoded key parts.
+    #[test]
+    fn grouped_stream_agg_resolves_expression_keys() {
+        let rows: Vec<(i64, Option<i64>)> = (0..2500).map(|i| (i / 1000, Some(1))).collect();
+        let key = Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
+            tidb_ast::CiString::new("plus"),
+            long(),
+            vec![col(0), Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(10), long()))],
+        ));
+        let mut exec = grouped(
+            key,
+            vec![
+                AggFunc::new(AggKind::Count, Some(col(1))),
+                AggFunc::new(AggKind::Min, Some(col(0))),
+            ],
+            &rows,
+        );
+        assert_eq!(
+            drain_grouped(&mut exec, 4),
+            vec![
+                vec![Some(1000), Some(0)],
+                vec![Some(1000), Some(1)],
+                vec![Some(500), Some(2)]
+            ]
+        );
     }
 
     #[test]

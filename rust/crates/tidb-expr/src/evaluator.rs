@@ -78,10 +78,11 @@ pub fn vectorizable(expressions: &[Expression]) -> bool {
 /// records which surviving filter evaluations were SQL NULL, while NULL
 /// itself never remains selected.
 ///
-/// The expression model does not yet expose Go's typed `VecEval*` trait. The
-/// vector evaluator nevertheless preserves the important vectorized contract:
-/// filters run filter-major, rejected rows are removed before the next filter,
-/// and direct column/constant expressions are materialized column-wise. A
+/// The expression model exposes Go's typed `VecEval*` only for the integer
+/// comparisons (`ScalarFunction::vec_eval_int_compare`). The vector evaluator
+/// nevertheless preserves the important vectorized contract: filters run
+/// filter-major, rejected rows are removed before the next filter, and direct
+/// column/constant expressions are materialized column-wise. Any other
 /// scalar-function node uses its row evaluator as the explicit fallback,
 /// without evaluating rows that an earlier filter already rejected.
 pub fn vectorized_filter_consider_null<C: Columns>(
@@ -145,30 +146,84 @@ pub fn vectorized_filter_consider_null<C: Columns>(
         return Ok((selected, nulls));
     }
 
-    // Preserve the physical row mapping while shrinking the working chunk's
-    // selection before each filter. This is the same operation Go performs by
-    // installing `input.Sel()` and letting each VecEval method inspect only
-    // the currently live rows.
+    // Go `VecEvalBool`: `sel` is the live physical row set. Each filter runs
+    // over it and removes the rows it rejects, so a later filter never
+    // evaluates a row an earlier one dropped.
+    let mut sel: Vec<usize> = (0..physical_rows)
+        .filter(|&physical| selected[physical])
+        .collect();
+    // `Chunk::get_row` maps through the input selection; the row evaluator
+    // is handed the logical index of each live physical row.
+    let logical_of_physical: Option<Vec<usize>> = original_sel.as_ref().map(|original| {
+        let mut logical = vec![usize::MAX; physical_rows];
+        for (index, &physical) in original.iter().enumerate() {
+            if physical < physical_rows {
+                logical[physical] = index;
+            }
+        }
+        logical
+    });
+    // Go's `isZero`: -1 NULL, 0 false, 1 true, one entry per row of `sel`.
+    let mut is_zero: Vec<i8> = Vec::new();
+    let truth_code = |value: &Datum| -> Result<i8, EvalError> {
+        Ok(match crate::truthy_of(value)? {
+            None => -1,
+            Some(false) => 0,
+            Some(true) => 1,
+        })
+    };
     for filter in filters {
-        let active: Vec<(usize, usize)> = selected
-            .iter()
-            .enumerate()
-            .filter_map(|(physical, is_selected)| (*is_selected).then_some((physical, physical)))
-            .collect();
-        if active.is_empty() {
+        if sel.is_empty() {
             break;
         }
-        let mut working = input.clone();
-        working.set_sel(Some(active.iter().map(|(_, physical)| *physical).collect()));
-        let values = eval_vectorized_expression(ctx, filter, &working)?;
-        debug_assert_eq!(values.len(), active.len());
-        for ((physical, _), value) in active.into_iter().zip(values) {
-            let truth = crate::truthy_of(&value)?;
-            if truth.is_none() {
-                nulls[physical] = true;
+        let column_wise = match filter {
+            // Go `Constant.VecEval*` reads parameters once per nonempty
+            // batch; a deferred expression keeps row evaluation.
+            Expression::Constant(constant) if constant.deferred_expr.is_none() => {
+                let code = truth_code(&constant.eval_in(ctx)?)?;
+                is_zero.clear();
+                is_zero.resize(sel.len(), code);
+                true
             }
-            selected[physical] = truth == Some(true);
+            Expression::CorrelatedColumn(column) => {
+                let code = truth_code(&column.eval())?;
+                is_zero.clear();
+                is_zero.resize(sel.len(), code);
+                true
+            }
+            Expression::ScalarFunction(function) => {
+                function.vec_eval_int_compare(input, &sel, &mut is_zero)?
+            }
+            Expression::Column(_) | Expression::Constant(_) => false,
+        };
+        if !column_wise {
+            // The scalar evaluator is the documented fallback for every
+            // other shape, over the live rows only.
+            is_zero.clear();
+            for &physical in &sel {
+                let logical = logical_of_physical
+                    .as_ref()
+                    .map_or(physical, |map| map[physical]);
+                is_zero.push(truth_code(&filter.eval(ctx, input.get_row(logical))?)?);
+            }
         }
+        let mut kept = 0;
+        for index in 0..sel.len() {
+            let physical = sel[index];
+            match is_zero[index] {
+                -1 => nulls[physical] = true,
+                0 => {}
+                _ => {
+                    sel[kept] = physical;
+                    kept += 1;
+                }
+            }
+        }
+        sel.truncate(kept);
+    }
+    selected.fill(false);
+    for &physical in &sel {
+        selected[physical] = true;
     }
     Ok((selected, nulls))
 }
@@ -184,49 +239,6 @@ pub fn vectorized_filter<C: Columns>(
 ) -> Result<Vec<bool>, EvalError> {
     vectorized_filter_consider_null(ctx, vec_enabled, filters, input, selected, Vec::new())
         .map(|(selected, _)| selected)
-}
-
-/// Evaluates one expression over the working selection. Bare columns and
-/// constants avoid rebuilding a scalar-function argument tree; functions keep
-/// the scalar evaluator as the documented fallback until typed VecEval kernels
-/// are added to `tidb-expr`.
-fn eval_vectorized_expression<C: Columns>(
-    ctx: &C,
-    expression: &Expression,
-    input: &Chunk,
-) -> Result<Vec<Datum>, EvalError> {
-    match expression {
-        Expression::Column(column) => {
-            let field_type = column
-                .get_static_type()
-                .ok_or(EvalError::Unsupported("column has no field type"))?;
-            let column_index = usize::try_from(column.index)
-                .map_err(|_| EvalError::Unsupported("column has no resolved index"))?;
-            Ok((0..input.num_rows())
-                .map(|row| input.get_row(row).get_datum(column_index, field_type))
-                .collect())
-        }
-        // Go Constant.VecEval* reads parameters from this execution once per
-        // nonempty batch. Deferred expressions retain row evaluation.
-        Expression::Constant(constant) => {
-            if constant.deferred_expr.is_none() {
-                if input.num_rows() == 0 {
-                    return Ok(Vec::new());
-                }
-                Ok(vec![constant.eval_in(ctx)?; input.num_rows()])
-            } else {
-                (0..input.num_rows())
-                    .map(|row| expression.eval(ctx, input.get_row(row)))
-                    .collect()
-            }
-        }
-        Expression::CorrelatedColumn(column) => Ok(std::iter::repeat_with(|| Ok(column.eval()))
-            .take(input.num_rows())
-            .collect::<Result<Vec<_>, EvalError>>()?),
-        Expression::ScalarFunction(_) => (0..input.num_rows())
-            .map(|row| expression.eval(ctx, input.get_row(row)))
-            .collect(),
-    }
 }
 
 /// A failure from [`EvaluatorSuite::run`].
@@ -833,5 +845,70 @@ mod tests {
             Datum::Decimal(Decimal::from_literal("10.00"))
         );
         assert!(output.get_row(2).is_null(0));
+    }
+
+    fn unsigned_long() -> FieldType {
+        let mut field_type = long();
+        field_type.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        field_type
+    }
+
+    fn typed_input_column(index: i64, field_type: FieldType) -> Expression {
+        let mut column = Column::new(index + 1, field_type);
+        column.index = index;
+        Expression::Column(column)
+    }
+
+    /// Go `builtinGTIntSig.vecEvalInt`: the integer comparison runs over the
+    /// column cells, NULL when either side is NULL, and reads each side's
+    /// signedness from its argument type (`VecCompareUI`: an unsigned value
+    /// above `MaxInt64` is greater than any signed one).
+    #[test]
+    fn vector_filter_compares_integer_columns_column_wise() {
+        let mut input = Chunk::new_with_capacity(&[long(), unsigned_long()], 4);
+        for value in [1, 5, 7] {
+            input.append_int64(0, value);
+            input.append_uint64(1, u64::MAX);
+        }
+        input.append_null(0);
+        input.append_null(1);
+        let ctx = NoColumns;
+
+        let filters = vec![scalar("gt", vec![input_column(0), int_const(4)])];
+        let (selected, nulls) =
+            vectorized_filter_consider_null(&ctx, true, &filters, &input, Vec::new(), Vec::new())
+                .unwrap();
+        assert_eq!(selected, vec![false, true, true, false]);
+        assert_eq!(nulls, vec![false, false, false, true]);
+
+        // The same bits read through a signed type are -1, through an
+        // unsigned type 18446744073709551615.
+        let unsigned = vec![scalar("gt", vec![typed_input_column(1, unsigned_long()), int_const(-1)])];
+        let (selected, _) =
+            vectorized_filter_consider_null(&ctx, true, &unsigned, &input, Vec::new(), Vec::new())
+                .unwrap();
+        assert_eq!(selected, vec![true, true, true, false]);
+        let signed = vec![scalar("gt", vec![typed_input_column(1, long()), int_const(-1)])];
+        let (selected, _) =
+            vectorized_filter_consider_null(&ctx, true, &signed, &input, Vec::new(), Vec::new())
+                .unwrap();
+        assert_eq!(selected, vec![false, false, false, false]);
+
+        // A second filter sees only the rows the first kept, and an input
+        // selection is honored.
+        let both = vec![
+            scalar("gt", vec![input_column(0), int_const(4)]),
+            scalar("lt", vec![input_column(0), int_const(7)]),
+        ];
+        input.set_sel(Some(vec![0, 2, 3]));
+        let (selected, _) =
+            vectorized_filter_consider_null(&ctx, true, &both, &input, Vec::new(), Vec::new())
+                .unwrap();
+        assert_eq!(selected, vec![false, false, false, false]);
+        input.set_sel(Some(vec![1, 3]));
+        let (selected, _) =
+            vectorized_filter_consider_null(&ctx, true, &both, &input, Vec::new(), Vec::new())
+                .unwrap();
+        assert_eq!(selected, vec![false, true, false, false]);
     }
 }
