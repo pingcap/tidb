@@ -46,8 +46,7 @@ func TestHandle(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 
-	ctx, cancel := context.WithTimeout(util.WithInternalSourceType(context.Background(), "handle_test"), 10*time.Second)
-	defer cancel()
+	baseCtx := util.WithInternalSourceType(context.Background(), "handle_test")
 
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
@@ -58,8 +57,11 @@ func TestHandle(t *testing.T) {
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 
+	require.NoError(t, mgr.InitMeta(baseCtx, ":4000", handle.GetTargetScope()))
+	ctx, cancel := context.WithTimeout(baseCtx, 10*time.Second)
+	defer cancel()
+
 	func() {
-		require.NoError(t, mgr.InitMeta(ctx, ":4000", handle.GetTargetScope()))
 		sch := scheduler.NewManager(ctx, store, mgr, ":4000", proto.NodeResourceForTest)
 		sch.Start()
 		defer sch.Stop()
