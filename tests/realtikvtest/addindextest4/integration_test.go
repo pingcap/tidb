@@ -15,7 +15,6 @@
 package addindextest_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -55,33 +54,31 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test;")
 
-		var hexKey string
 		ddl.MockDMLExecutionBeforeScan = func() {
-			rows := tk1.MustQuery("select tidb_encode_index_key('test', 't', 'b', 1, null);").Rows()
-			hexKey = rows[0][0].(string)
 			_, err := tk1.Exec("delete from t where id = 1;")
 			assert.NoError(t, err)
 			_, err = tk1.Exec("insert into t values (2,1,1);")
 			assert.NoError(t, err)
-			rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
-			t.Log("after first insertion", rs[0][0].(string))
 			_, err = tk1.Exec("delete from t where id = 2;")
 			assert.NoError(t, err)
-			rs = tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
-			t.Log("after second insertion", rs[0][0].(string))
 		}
 		err := failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionBeforeScan", "1*return")
 		require.NoError(t, err)
 		ddl.MockDMLExecutionStateBeforeMerge = func() {
 			_, err := tk1.Exec("insert into t values (3, 1, 1);")
 			assert.NoError(t, err)
-			rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
-			t.Log("after third insertion", rs[0][0].(string))
 		}
 		err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "1*return")
 		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionBeforeScan"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
+			ddl.MockDMLExecutionBeforeScan = nil
+			ddl.MockDMLExecutionStateBeforeMerge = nil
+		})
 
 		tk.MustExec(createIndexes[i])
 		tk.MustExec("admin check table t;")
+		tk.MustQuery("select * from t").Check(testkit.Rows("3 1 1"))
 	}
 }
