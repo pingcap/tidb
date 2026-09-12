@@ -126,30 +126,27 @@ impl DecorrelateSolver {
                     apply.base_mut().set_children(restored);
                 }
             }
-            if apply.cor_cols.is_empty() {
+            let marker_needs_null_aware_join = matches!(
+                apply.join.join_type,
+                LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+            ) && apply
+                .join
+                .other_conditions
+                .iter()
+                .any(super::join::is_eq_cond_from_in);
+            if apply.cor_cols.is_empty()
+                && apply.join.join_type != LogicalJoinType::AntiLeftOuterSemi
+                && !marker_needs_null_aware_join
+            {
                 // Go: "If the inner plan is non-correlated, the apply will be
                 // simplified to join."
-                //
-                // Narrowing: the left-outer-semi family carries a 0/1 marker
-                // column that `JoinExec` emits after the OUTER child's columns.
-                // The Rust pruner leaves the outer child's unused columns in
-                // place, so the converted join's schema and the executor's
-                // emission disagree (Go inserts the pruning projection during
-                // `LogicalJoin.PruneColumns`). Keep those as Apply until that
-                // projection alignment is ported; the `Semi`/`AntiSemi` family
-                // has no marker and converts.
-                if !matches!(
-                    apply.join.join_type,
-                    LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
-                ) {
-                    // Go assigns `p = join` and falls through to `NoOptimize`,
-                    // so the CONVERTED join's children are still visited.
-                    return Self::optimize_children(
-                        ctx,
-                        LogicalPlan::Join(apply.join),
-                        group_by_column,
-                    );
-                }
+                // The wired JoinExec still lacks anti marker joins and NULL
+                // markers for IN. EXISTS uses the supported boolean marker.
+                return Self::optimize_children(
+                    ctx,
+                    LogicalPlan::Join(apply.join),
+                    group_by_column,
+                );
             }
             if apply.no_decorrelate {
                 return Self::optimize_children(ctx, LogicalPlan::Apply(apply), group_by_column);

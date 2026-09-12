@@ -622,15 +622,43 @@ fn a_correlated_subquery_in_an_aggregate_argument_matches_go() {
     );
 }
 
-/// The aggregation's DEFAULT row is deselected by the Apply above it, so a
-/// correlated SCALAR subquery beside an aggregate over an EMPTY outer answers
-/// NULL -- not what its inner would compute from that all-NULL row.
-///
-/// Go `NestedLoopApplyExec.fetchSelectedOuterRow` names this case in its own
-/// comment: the outer `count(1)` produces one row `<0, null>` over the empty
-/// input, and that row is "specially mark[ed] ... as not selected, to trigger
-/// the mismatch join procedure". Every assertion below is a capture of real
-/// TiDB on `t1(a)`/`t2(a)` holding `1,2` and `1,2,3`.
+/// Go decorrelates EXISTS into a join, including above an empty aggregation.
+#[test]
+fn exists_marker_on_an_empty_aggregate_uses_join_semantics() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE ex_outer (a INT, b INT)").unwrap();
+    session.run("CREATE TABLE ex_inner (a INT)").unwrap();
+    session
+        .run("INSERT INTO ex_outer VALUES (1, 10), (2, 20)")
+        .unwrap();
+    session.run("INSERT INTO ex_inner VALUES (1)").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT(*), EXISTS(SELECT 1 FROM ex_inner WHERE ex_outer.a IS NULL) \
+             FROM ex_outer WHERE a = 100"
+        )),
+        [["0", "1"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT b, EXISTS(SELECT 1 FROM ex_inner WHERE ex_inner.a = ex_outer.a) \
+             FROM ex_outer ORDER BY b"
+        )),
+        [["10", "1"], ["20", "0"]]
+    );
+    session.run("DELETE FROM ex_inner").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT(*), EXISTS(SELECT 1 FROM ex_inner WHERE ex_outer.a IS NULL) \
+             FROM ex_outer WHERE a = 100"
+        )),
+        [["0", "0"]]
+    );
+}
+
+/// Go NestedLoopApplyExec deselects an aggregation's default row when its
+/// input is empty. Scalar Apply emits NULL; a decorrelated EXISTS join still
+/// evaluates the row. These results were captured from real Go TiDB.
 #[test]
 fn a_scalar_subquery_beside_an_aggregate_over_an_empty_outer_is_null() {
     let mut session = Session::new();

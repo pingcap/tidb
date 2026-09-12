@@ -1573,9 +1573,8 @@ fn join_output_offsets(
 /// The output offsets of a physical join. A `LeftOuterSemi` join appends its
 /// 0/1 marker column AFTER the outer child's columns (`JoinExec`'s semi paths
 /// call `append_datum(outer_row.len(), ...)`), so the marker is in neither
-/// child schema and `join_output_offsets` cannot place it. The executor's
-/// identity mapping already lands it at `outer_row.len()`, which is exactly
-/// where the marker is emitted.
+/// child schema and `join_output_offsets` cannot place it. Resolve retained
+/// outer columns by identity; pruning may remove a prefix of the outer schema.
 fn physical_join_output_offsets(
     plan: &PhysicalPlan,
     join_type: LogicalJoinType,
@@ -1584,7 +1583,24 @@ fn physical_join_output_offsets(
 ) -> Result<Vec<usize>, DriverError> {
     let schema = plan_schema(plan)?;
     match join_type {
-        LogicalJoinType::LeftOuterSemi => Ok((0..schema.len()).collect()),
+        LogicalJoinType::LeftOuterSemi => {
+            let mut offsets = schema.columns[..schema.len().saturating_sub(1)]
+                .iter()
+                .map(|output| {
+                    left_schema
+                        .columns
+                        .iter()
+                        .position(|column| column.unique_id == output.unique_id)
+                        .ok_or_else(|| {
+                            DriverError::unsupported(
+                                "semi join output is absent from its outer schema",
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            offsets.push(left_schema.len());
+            Ok(offsets)
+        }
         _ => join_output_offsets(&schema, left_schema, right_schema),
     }
 }
