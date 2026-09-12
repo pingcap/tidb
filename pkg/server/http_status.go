@@ -251,6 +251,11 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for get server info.
 	router.Handle("/info", tikvhandler.NewServerInfoHandler(tikvHandlerTool)).Name("Info")
 	router.Handle("/info/all", tikvhandler.NewAllServerInfoHandler(tikvHandlerTool)).Name("InfoALL")
+	// Internal admin APIs (mTLS only).
+	router.Handle("/internal/v1/users/{username}/reset-password", handler.NewUserResetPasswordHandler(tikvHandlerTool.Store.(kv.Storage), s.cfg)).Name("InternalUserResetPassword")
+	router.Handle("/internal/v1/users/{username}/roles", handler.NewUserRolesHandler(tikvHandlerTool.Store.(kv.Storage), s.cfg)).Name("InternalUserBindRoles")
+	router.Handle("/internal/v1/users/{username}", handler.NewUserDeleteHandler(tikvHandlerTool.Store.(kv.Storage), s.cfg)).Name("InternalUserDelete")
+	router.Handle("/internal/v1/users", handler.NewUserCreateHandler(tikvHandlerTool.Store.(kv.Storage), s.cfg)).Name("InternalUserCreate")
 	// HTTP path for get db and table info that is related to the tableID.
 	router.Handle("/db-table/{tableID}", tikvhandler.NewDBTableHandler(tikvHandlerTool))
 	// HTTP path for get table tiflash replica info.

@@ -15,6 +15,8 @@
 package server_test
 
 import (
+	"os"
+	"os/exec"
 	"runtime"
 	"testing"
 
@@ -26,6 +28,17 @@ import (
 )
 
 func TestMemoryLeak(t *testing.T) {
+	if os.Getenv("TIDB_MEMORY_LEAK_SUBPROCESS") != "1" {
+		// Run in a subprocess to avoid interference from other tests in this package.
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestMemoryLeak$", "-test.v", "-test.count=1")
+		cmd.Env = append(os.Environ(), "TIDB_MEMORY_LEAK_SUBPROCESS=1")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("TestMemoryLeak subprocess failed: %v\n%s", err, output)
+		}
+		return
+	}
+
 	initAndCloseTiDB := func() {
 		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 		require.NoError(t, err)
