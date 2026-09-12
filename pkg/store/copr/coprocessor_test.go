@@ -1701,19 +1701,21 @@ func TestStoreBatchCopRPCTimeout(t *testing.T) {
 	coprReqTimeout := config.GetGlobalConfig().TiKVClient.CoprReqTimeout
 	require.Positive(t, coprReqTimeout)
 
-	t.Run("serial batch keeps the single-request timeout", func(t *testing.T) {
+	t.Run("serial batch gets the per-task budget for every task", func(t *testing.T) {
+		// TiKV runs a serial store batch under the top task's deadline, which
+		// client-go derives from this RPC timeout.
 		timeout := sendStoreBatch(t, func(req *kv.Request) {
 			req.ExecuteBatchTasksSerially = true
 		})
-		require.Equal(t, coprReqTimeout, timeout)
+		require.Equal(t, coprReqTimeout*(batchedChildren+1), timeout)
 	})
 
-	t.Run("serial batch keeps tikv_client_read_timeout", func(t *testing.T) {
+	t.Run("serial batch scales tikv_client_read_timeout", func(t *testing.T) {
 		timeout := sendStoreBatch(t, func(req *kv.Request) {
 			req.ExecuteBatchTasksSerially = true
 			req.TiKVClientReadTimeout = 500
 		})
-		require.Equal(t, 500*time.Millisecond, timeout)
+		require.Equal(t, 500*time.Millisecond*(batchedChildren+1), timeout)
 	})
 
 	t.Run("concurrent batch keeps the single-request timeout", func(t *testing.T) {
