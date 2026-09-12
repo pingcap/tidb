@@ -2544,8 +2544,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             self.memory.check()?;
             // An empty `req` is the caller's EOF signal, so a call that
             // dropped only unmatched groups must keep going rather than
-            // report exhaustion.
-            if req.num_rows() > 0 {
+            // report exhaustion; and Go's `MergeJoinExec.Next` keeps going
+            // until the chunk is full (`for !req.IsFull()`), so a matched
+            // group does not end the call either. Returning on the first
+            // rows handed the parent one chunk per key group: TPC-H Q12's
+            // aggregate pipeline received 37,000 chunks for 31,282 rows.
+            if req.is_full() {
                 return Ok(());
             }
         }
