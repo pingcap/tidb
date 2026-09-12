@@ -4838,7 +4838,8 @@ impl IndexJoinLookupExec {
             }
             let chunk_ready = self.remote_filters_complete
                 && self.remote_cursor.as_ref().is_some_and(|cursor| {
-                    cursor.supports_lookup_chunks() && cursor.predicates_applied()
+                    cursor.supports_lookup_chunks()
+                        && (self.filters.is_empty() || cursor.predicates_applied())
                 });
             if chunk_ready {
                 let cursor = self.remote_cursor.as_mut().expect("checked above");
@@ -4916,6 +4917,7 @@ impl IndexJoinLookupExec {
             .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
         let remote_predicates =
             scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
+        self.remote_filters_complete = remote_predicates.len() == self.filters.len();
         let remote_cursor = self
             .table
             .pushdown_row_cursor_with_context(
