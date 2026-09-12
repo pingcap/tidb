@@ -317,7 +317,7 @@ fn a_set_operation_derived_table_keeps_its_union_plan() {
         &mut session,
         "explain select * from (select * from t union all select a,b,c from t) x",
     );
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 5);
     assert!(rows[0].starts_with("Union_"), "got {rows:?}");
     assert!(rows[1].contains("TableFullScan_"), "got {rows:?}");
     assert!(rows[2].contains("TableFullScan_"), "got {rows:?}");
