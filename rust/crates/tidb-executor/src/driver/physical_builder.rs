@@ -1366,11 +1366,31 @@ fn build_index_reader(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let scan = embedded_index_scan(index_plan)
         .ok_or_else(|| DriverError::unsupported("a physical index reader has no index scan"))?;
-    let table = catalog
+    let mut table = catalog
         .physical_kv_table_by_id(scan.table_id)
         .ok_or_else(|| {
             DriverError::unsupported("physical index table ID is absent from the catalog")
         })?;
+    // Global index keys share the logical table prefix; the cursor filters
+    // their encoded partition IDs using this same read restriction.
+    if let Some(access) = &scan.dynamic_partition_access {
+        if !access.all_partitions {
+            let ids = table.partition().map_or_else(Vec::new, |partition| {
+                partition
+                    .definitions
+                    .iter()
+                    .filter(|definition| {
+                        access
+                            .partitions
+                            .iter()
+                            .any(|name| definition.name.eq_ignore_ascii_case(name))
+                    })
+                    .map(|definition| definition.id)
+                    .collect()
+            });
+            table.restrict_read_to_partitions(&ids);
+        }
+    }
     if !table
         .indexes()
         .iter()

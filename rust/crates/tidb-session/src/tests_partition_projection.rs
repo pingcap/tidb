@@ -84,5 +84,12 @@ fn a_pruned_index_reader_decodes_the_column_the_scope_names() {
             ),
             vec![vec!["1"]]
         );
+        for sql in [
+            "SELECT b FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 0",
+            "SELECT * FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 0",
+            "SELECT b FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 2 AND a = 1",
+        ] {
+            assert!(row_text(session.run(sql)).is_empty(), "{index}: {sql}");
+        }
     }
 }
