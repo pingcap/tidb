@@ -2329,7 +2329,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     })
                     && (ds.partition_definition_ids.is_empty()
                         || ds.physical_table_id != ds.table_id
-                        || explicit_physical_id.is_some())
+                        || explicit_physical_id.is_some()
+                        || (ranges.len() == 1 && (ds.pk_is_handle || common_handle.is_some())))
                 {
                     let mut point_base = crate::physical::BasePhysicalPlan::new(
                         ctx.allocator,
@@ -2359,7 +2360,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     let mut point = if ranges.len() == 1 {
                         PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
                             base: point_base,
-                            table_id: explicit_physical_id.unwrap_or(ds.physical_table_id),
+                            table_id: if ds.pk_is_handle || common_handle.is_some() {
+                                ds.physical_table_id
+                            } else {
+                                explicit_physical_id.unwrap_or(ds.physical_table_id)
+                            },
+                            partition: (!ds.partition_definition_ids.is_empty()
+                                && ds.physical_table_id == ds.table_id
+                                && (ds.pk_is_handle || common_handle.is_some()))
+                                .then(|| crate::physical::PointGetPartition {
+                                    names: ds.partition_names.clone(),
+                                    physical_table_id: None,
+                                }),
                             index_id: None,
                             ranges,
                             range_rebuild: table_range_rebuild
@@ -2764,6 +2776,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
                             base: point_base,
                             table_id: ds.physical_table_id,
+                            partition: None,
                             index_id: Some(source_index.id),
                             ranges: ranges.clone(),
                             range_rebuild: index_range_rebuild

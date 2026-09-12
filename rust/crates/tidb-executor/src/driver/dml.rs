@@ -134,8 +134,9 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
             )
         })
         .transpose()?;
-    let physical_plan = physical_plan.or(fresh.as_mut());
-    if let Some(plan) = physical_plan.as_deref() {
+    let mut physical_plan = physical_plan.or(fresh.as_mut());
+    if let Some(plan) = physical_plan.as_deref_mut() {
+        super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
     let physical_source = match physical_plan {
@@ -160,7 +161,7 @@ pub(crate) fn physical_dml_plan(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
-    physical_dml_plan_with_cache_mode(
+    let mut plan = physical_dml_plan_with_cache_mode(
         operator,
         source,
         root_before_source,
@@ -169,7 +170,9 @@ pub(crate) fn physical_dml_plan(
         current_db,
         ctx,
         false,
-    )
+    )?;
+    super::physical_builder::prepare_execution_plan(&mut plan, catalog, ctx)?;
+    Ok(plan)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2136,8 +2139,9 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
             )
         })
         .transpose()?;
-    let physical_plan = physical_plan.or(fresh.as_mut());
-    if let Some(plan) = physical_plan.as_deref() {
+    let mut physical_plan = physical_plan.or(fresh.as_mut());
+    if let Some(plan) = physical_plan.as_deref_mut() {
+        super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
     let (physical_source, update_expressions) = match physical_plan {
@@ -2684,6 +2688,7 @@ fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPl
         *plan = PhysicalPlan::PointGet(PhysicalPointGet {
             base: scan.base.clone(),
             table_id: scan.table_id,
+            partition: None,
             index_id: None,
             ranges: scan.ranges.clone(),
             range_rebuild: Some(PointRangeRebuild::Table(rebuild)),
@@ -3582,8 +3587,9 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
             )
         })
         .transpose()?;
-    let physical_plan = physical_plan.or(fresh.as_mut());
-    if let Some(plan) = physical_plan.as_deref() {
+    let mut physical_plan = physical_plan.or(fresh.as_mut());
+    if let Some(plan) = physical_plan.as_deref_mut() {
+        super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
     let physical_source = match physical_plan {

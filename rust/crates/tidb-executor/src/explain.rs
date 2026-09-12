@@ -711,11 +711,14 @@ fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObjec
             scan.index_id,
             Some(&scan.index_name),
         ))),
-        PhysicalPlan::PointGet(point) => Some(AccessObject::Scan(point_access(
-            catalog,
-            point.table_id,
-            point.index_id,
-        ))),
+        PhysicalPlan::PointGet(point) => {
+            let id = point.partition.as_ref().and_then(|p| p.physical_table_id);
+            let mut access = point_access(catalog, id.unwrap_or(point.table_id), point.index_id);
+            if point.partition.is_some() && id.is_none() {
+                access.partitions = vec!["dual".to_owned()];
+            }
+            Some(AccessObject::Scan(access))
+        }
         PhysicalPlan::BatchPointGet(point) => {
             let mut access = point_access(catalog, point.table_id, point.index_id);
             if let Some(ids) = &point.partition_ids {
@@ -1810,6 +1813,7 @@ fn render_physical_query(
     crate::driver::set_opr::validate_query_usage(query, ctx)?;
     let (mut physical, scalar_subqueries) =
         crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
+    crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
     let runtime = analyze
         .then(|| crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx))
         .transpose()?;

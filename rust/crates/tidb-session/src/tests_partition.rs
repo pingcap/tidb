@@ -920,6 +920,126 @@ fn range_columns_pruning_reads_the_matching_tuple_partition() {
     );
 }
 
+#[test]
+fn dynamic_partition_points_follow_each_bound_key() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE point_route (id INT PRIMARY KEY, v INT) PARTITION BY RANGE(id) \
+             (PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN(20))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO point_route VALUES (1,11),(11,111)")
+        .unwrap();
+    session
+        .run("PREPARE route_stmt FROM 'SELECT v FROM point_route WHERE id = ? AND v > 0'")
+        .unwrap();
+    for (key, expected) in [
+        (1, vec![vec!["11"]]),
+        (11, vec![vec!["111"]]),
+        (19, vec![]),
+        (21, vec![]),
+        (1, vec![vec!["11"]]),
+    ] {
+        session.run(&format!("SET @route_key = {key}")).unwrap();
+        assert_eq!(
+            tests_support::row_text(session.run("EXECUTE route_stmt USING @route_key")),
+            expected,
+            "bound key {key}"
+        );
+        if key == 11 {
+            assert_eq!(
+                tests_support::row_text(session.run("SELECT @@last_plan_from_cache")),
+                vec![vec!["1"]]
+            );
+        }
+    }
+    session.run("DEALLOCATE PREPARE route_stmt").unwrap();
+    for (key, partition) in [(1, "p0"), (11, "p1")] {
+        for statement in [
+            "SELECT v FROM point_route",
+            "UPDATE point_route SET v = v + 1",
+            "DELETE FROM point_route",
+        ] {
+            let plan = tests_support::row_text(session.run(&format!(
+                "EXPLAIN {statement} WHERE id = {key} AND v > 0"
+            )));
+            assert!(
+                plan.iter().any(|row| row[0].contains("Point_Get")
+                    && row[3] == format!("table:point_route, partition:{partition}")),
+                "the ordinary point conversion must follow the current key: {plan:?}"
+            );
+        }
+    }
+    session
+        .run("PREPARE restricted_stmt FROM \
+              'SELECT v FROM point_route PARTITION(p0) WHERE id = ? AND v > 0'")
+        .unwrap();
+    for (key, expected) in [(1, vec![vec!["11"]]), (11, vec![]), (1, vec![vec!["11"]])] {
+        session.run(&format!("SET @route_key = {key}")).unwrap();
+        assert_eq!(
+            tests_support::row_text(session.run("EXECUTE restricted_stmt USING @route_key")),
+            expected,
+            "explicit partition with bound key {key}"
+        );
+        if key == 11 {
+            assert_eq!(
+                tests_support::row_text(session.run("SELECT @@last_plan_from_cache")),
+                vec![vec!["1"]]
+            );
+        }
+    }
+}
+
+#[test]
+fn dynamic_partition_common_points_route_original_values() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE point_string (id VARCHAR(20) COLLATE utf8mb4_general_ci PRIMARY KEY, v INT) \
+             PARTITION BY RANGE COLUMNS(id) (PARTITION p0 VALUES LESS THAN('m'), \
+             PARTITION p1 VALUES LESS THAN(MAXVALUE))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO point_string VALUES ('Alpha',11),('Zulu',111)")
+        .unwrap();
+    for (key, partition) in [("ALPHA", "p0"), ("zULu", "p1")] {
+        let plan = tests_support::row_text(session.run(&format!(
+            "EXPLAIN SELECT v FROM point_string WHERE id = '{key}' AND v > 0"
+        )));
+        assert!(
+            plan.iter().any(|row| row[0].contains("Point_Get")
+                && row[3] == format!("table:point_string, partition:{partition}, clustered index:PRIMARY(id)")),
+            "common point must route the SQL value, not its sort key: {plan:?}"
+        );
+    }
+    session
+        .run("PREPARE string_stmt FROM 'SELECT v FROM point_string WHERE id = ? AND v > 0'")
+        .unwrap();
+    for (key, expected) in [
+        ("'ALPHA'", vec![vec!["11"]]),
+        ("'zULu'", vec![vec!["111"]]),
+        ("'missing'", vec![]),
+        ("'alpha'", vec![vec!["11"]]),
+        ("NULL", vec![]),
+    ] {
+        session.run(&format!("SET @route_key = {key}")).unwrap();
+        assert_eq!(
+            tests_support::row_text(session.run("EXECUTE string_stmt USING @route_key")),
+            expected,
+            "common key {key}"
+        );
+        if key == "'zULu'" {
+            assert_eq!(
+                tests_support::row_text(session.run("SELECT @@last_plan_from_cache")),
+                vec![vec!["1"]]
+            );
+        }
+    }
+}
+
 /// TiDB pushes a HAVING conjunct over the grouping key below the aggregation
 /// (Go `LogicalAggregation.PredicatePushDown`,
 /// `pkg/planner/core/operator/logicalop/logical_aggregation.go:106`), so the

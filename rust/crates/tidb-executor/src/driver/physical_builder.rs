@@ -2779,14 +2779,75 @@ fn unique_index_point_values(
         .collect())
 }
 
+fn point_partition_id(
+    point: &PhysicalPointGet,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Option<i64>, DriverError> {
+    let Some(routing) = &point.partition else {
+        return Ok(Some(point.table_id));
+    };
+    let table = catalog
+        .physical_kv_table_by_id(point.table_id)
+        .ok_or_else(|| DriverError::unsupported("point partition logical table is absent"))?;
+    let partition = table
+        .partition()
+        .ok_or_else(|| DriverError::unsupported("point partition metadata is absent"))?;
+    let route = if table.common_handle_offsets().is_empty() {
+        let handles = point_handles(&table, &point.ranges, ctx)?;
+        if handles.len() != 1 {
+            return Err(DriverError::unsupported("partition point must retain one handle"));
+        }
+        table.handle_partition_routes(&handles, &ctx.session_zone(), ctx)[0]
+    } else {
+        // Go PointGetPlan.PrunePartitions rebuilds original values: a common
+        // handle's collation sort keys are not SQL partition expression inputs.
+        let Some(tidb_planner::physical_plan_cache::PointRangeRebuild::Table(rebuild)) =
+            &point.range_rebuild
+        else {
+            return Err(DriverError::unsupported("partition point lost its access conditions"));
+        };
+        let result = tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition_in(
+            &rebuild.access_conditions,
+            &rebuild.common_handle_columns,
+            &rebuild.common_handle_lengths,
+            0,
+            &|expr| expr.eval(ctx, tidb_chunk::row::Row::empty()),
+        )
+        .map_err(|error| DriverError::unsupported(format!("point partition range: {error:?}")))?;
+        let [range] = result.ranges.as_slice() else {
+            return Err(DriverError::unsupported("partition point must rebuild one key"));
+        };
+        let values = point_range_values(range)?;
+        if values.len() != table.common_handle_offsets().len() {
+            return Err(DriverError::unsupported("partition point key width is invalid"));
+        }
+        let mut row = vec![tidb_datatype::Datum::Null; table.columns.len()];
+        for (&offset, value) in table.common_handle_offsets().iter().zip(values) {
+            row[offset] = value.clone();
+        }
+        table.row_partition_route(&row, ctx)
+    };
+    Ok(route.and_then(|(ordinal, id)| {
+        (routing.names.is_empty()
+            || routing.names.iter().any(|name| {
+                partition.definitions[ordinal].name.eq_ignore_ascii_case(name)
+            }))
+        .then_some(id)
+    }))
+}
+
 fn build_point_get(
     plan: &PhysicalPlan,
     point: &PhysicalPointGet,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    let Some(physical_id) = point_partition_id(point, catalog, ctx)? else {
+        return Ok(Box::new(TableDualExec::new(meta(plan, plan_schema(plan)?), 0)));
+    };
     let table = catalog
-        .physical_kv_table_by_id(point.table_id)
+        .physical_kv_table_by_id(physical_id)
         .ok_or_else(|| DriverError::unsupported("physical point-get table ID is absent"))?;
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
@@ -3108,7 +3169,18 @@ fn build_index_merge_reader(
     Ok(Box::new(executor))
 }
 
-fn prepare_apply_bindings(plan: &mut PhysicalPlan) -> Result<(), DriverError> {
+/// Refresh statement-dependent routing before execution and plan publication.
+pub(crate) fn prepare_execution_plan(
+    plan: &mut PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    if let PhysicalPlan::PointGet(point) = plan {
+        let physical_id = point_partition_id(point, catalog, ctx)?;
+        if let Some(partition) = &mut point.partition {
+            partition.physical_table_id = physical_id;
+        }
+    }
     if let PhysicalPlan::Apply(apply) = plan {
         let inner_index = apply.hash_join.inner_child_idx;
         if inner_index > 1 {
@@ -3139,39 +3211,45 @@ fn prepare_apply_bindings(plan: &mut PhysicalPlan) -> Result<(), DriverError> {
     match plan {
         PhysicalPlan::TableReader(reader) => {
             if let Some(plan) = reader.table_plan.as_deref_mut() {
-                prepare_apply_bindings(plan)?;
+                prepare_execution_plan(plan, catalog, ctx)?;
             }
         }
         PhysicalPlan::IndexReader(reader) => {
             if let Some(plan) = reader.index_plan.as_deref_mut() {
-                prepare_apply_bindings(plan)?;
+                prepare_execution_plan(plan, catalog, ctx)?;
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             if let Some(plan) = reader.index_plan.as_deref_mut() {
-                prepare_apply_bindings(plan)?;
+                prepare_execution_plan(plan, catalog, ctx)?;
             }
             if let Some(plan) = reader.table_plan.as_deref_mut() {
-                prepare_apply_bindings(plan)?;
+                prepare_execution_plan(plan, catalog, ctx)?;
             }
         }
         PhysicalPlan::IndexMergeReader(reader) => {
             for partial in &mut reader.partial_plans_raw {
-                prepare_apply_bindings(partial)?;
+                prepare_execution_plan(partial, catalog, ctx)?;
             }
             if let Some(plan) = reader.table_plan.as_deref_mut() {
-                prepare_apply_bindings(plan)?;
+                prepare_execution_plan(plan, catalog, ctx)?;
             }
         }
         PhysicalPlan::Dml(root) => {
             if let Some(plan) = root.select_plan.as_deref_mut() {
-                prepare_apply_bindings(plan)?;
+                prepare_execution_plan(plan, catalog, ctx)?;
+            }
+        }
+        PhysicalPlan::CTE(cte) => {
+            prepare_execution_plan(&mut cte.seed_plan, catalog, ctx)?;
+            if let Some(plan) = cte.recursive_plan.as_deref_mut() {
+                prepare_execution_plan(plan, catalog, ctx)?;
             }
         }
         _ => {}
     }
     for child in plan.base_mut().children_mut() {
-        prepare_apply_bindings(child)?;
+        prepare_execution_plan(child, catalog, ctx)?;
     }
     Ok(())
 }
@@ -3930,7 +4008,7 @@ pub(super) fn execute_query(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
-    prepare_apply_bindings(physical)?;
+    prepare_execution_plan(physical, catalog, ctx)?;
     ctx.publish_physical_process_info(physical, catalog);
     let root = build(physical, catalog, ctx)?;
     let columns = match query {
@@ -3952,7 +4030,7 @@ pub(crate) fn execute_for_explain(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<PhysicalRuntimeStats, DriverError> {
-    prepare_apply_bindings(physical)?;
+    prepare_execution_plan(physical, catalog, ctx)?;
     let mut state = BuildState {
         runtime_counters: Some(HashMap::new()),
         ..BuildState::default()
@@ -3989,7 +4067,7 @@ pub(crate) fn execute_first_row(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<(Vec<tidb_datatype::Datum>, bool), DriverError> {
-    prepare_apply_bindings(physical)?;
+    prepare_execution_plan(physical, catalog, ctx)?;
     let mut root = build(physical, catalog, ctx)?;
     let types = root.ret_field_types().to_vec();
     let result: Result<(Vec<tidb_datatype::Datum>, bool), DriverError> = (|| {
@@ -4018,7 +4096,7 @@ pub(crate) fn execute_dml_source(
     ctx: &crate::StmtContext,
     analyze: bool,
 ) -> Result<(Vec<Vec<tidb_datatype::Datum>>, PhysicalRuntimeStats), DriverError> {
-    prepare_apply_bindings(physical)?;
+    prepare_execution_plan(physical, catalog, ctx)?;
     let mut state = BuildState {
         runtime_counters: analyze.then(HashMap::new),
         ..BuildState::default()
@@ -4370,6 +4448,7 @@ mod tests {
         let plan = PhysicalPlan::PointGet(PhysicalPointGet {
             base,
             table_id: 43,
+            partition: None,
             index_id: None,
             ranges: vec![tidb_planner::ranger::types::Range {
                 low_val: vec![Datum::Int(2)],
@@ -4433,6 +4512,7 @@ mod tests {
         let plan = PhysicalPlan::PointGet(PhysicalPointGet {
             base,
             table_id: 46,
+            partition: None,
             index_id: Some(8),
             ranges: vec![tidb_planner::ranger::types::Range {
                 low_val: vec![Datum::Int(20)],

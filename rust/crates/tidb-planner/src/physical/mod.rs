@@ -2108,12 +2108,23 @@ pub struct PhysicalPointGet {
     pub base: BasePhysicalPlan,
     /// The selected table.
     pub table_id: i64,
+    /// Dynamic partition routing; `table_id` remains the logical table ID.
+    pub partition: Option<PointGetPartition>,
     /// The selected index, or `None` for a table handle.
     pub index_id: Option<i64>,
     /// The single point range represented by this plan.
     pub ranges: crate::ranger::types::Ranges,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+}
+
+/// Go `PointGetPlan.PartitionNames` and its execution-time `PartitionIdx`.
+#[derive(Clone, Debug, Default)]
+pub struct PointGetPartition {
+    /// Explicit PARTITION restrictions, independent of the current key.
+    pub names: Vec<String>,
+    /// Current readable partition; `None` means the bound key has no match.
+    pub physical_table_id: Option<i64>,
 }
 
 /// Go `physicalop.BatchPointGetPlan`: a fixed-shape set of point keys.
@@ -3501,6 +3512,7 @@ impl PhysicalPlan {
             Self::PointGet(op) => Self::PointGet(PhysicalPointGet {
                 base: base_of(&op.base),
                 table_id: op.table_id,
+                partition: op.partition.clone(),
                 index_id: op.index_id,
                 ranges: op.ranges.clone(),
                 range_rebuild: op.range_rebuild.clone(),

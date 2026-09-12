@@ -356,6 +356,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     let point = PhysicalPlan::PointGet(PhysicalPointGet {
         base: BasePhysicalPlan::with_id(11, "PointGet", 0),
         table_id: 1,
+        partition: None,
         index_id: None,
         ranges: vec![point_range(0)],
         range_rebuild: Some(PointRangeRebuild::Table(TableRangeRebuild::int_handle(
@@ -449,6 +450,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
     let common_handle = PhysicalPlan::PointGet(PhysicalPointGet {
         base: BasePhysicalPlan::with_id(31, "PointGet", 0),
         table_id: 1,
+        partition: None,
         index_id: None,
         ranges: vec![template_range.clone()],
         range_rebuild: Some(PointRangeRebuild::Table(TableRangeRebuild::common_handle(
@@ -460,6 +462,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
     let unique_index = PhysicalPlan::PointGet(PhysicalPointGet {
         base: BasePhysicalPlan::with_id(32, "PointGet", 0),
         table_id: 1,
+        partition: None,
         index_id: Some(5),
         ranges: vec![template_range],
         range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
@@ -532,6 +535,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
     let point = PhysicalPlan::PointGet(PhysicalPointGet {
         base: BasePhysicalPlan::with_id(34, "PointGet", 0),
         table_id: 1,
+        partition: None,
         index_id: Some(5),
         ranges: vec![template_range],
         range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(

@@ -1951,6 +1951,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
         tidb_planner::physical::PhysicalPointGet {
             base,
             table_id: table.table_id,
+            partition: None,
             index_id: point.index_id,
             ranges: closed_point_ranges(&[point.key_values]),
             range_rebuild: None,
