@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package materializedviewlog_test
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,14 +24,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,44 +50,6 @@ func mustExecMViewMaintenance(t *testing.T, tk *testkit.TestKit, sql string) {
 	require.Nil(t, rs)
 }
 
-func TestMaterializedViewPartitionDDLConstraints(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t_partition_mlog (id bigint not null, v int not null)")
-	tk.MustExec("create materialized view log on t_partition_mlog (id, v)")
-	err := tk.ExecToErr(`alter table t_partition_mlog
-partition by range (id) (
-  partition p0 values less than (100),
-  partition p1 values less than maxvalue
-)`)
-	require.ErrorContains(t, err, "ALTER TABLE ... PARTITION BY with materialized view log")
-
-	tk.MustExec(`create table t_partitioned (
-  id bigint not null primary key,
-  v int not null
-)
-partition by range (id) (
-  partition p0 values less than (100),
-  partition p1 values less than maxvalue
-)`)
-	tk.MustExec("create table t_exchange_base (id bigint not null, v int not null)")
-	tk.MustExec("create materialized view log on t_exchange_base (id, v)")
-	tk.MustExec("create materialized view mv_exchange (v, cnt) as select v, count(*) from t_exchange_base group by v")
-	tk.MustExec("set @@tidb_enable_exchange_partition = 1")
-	defer tk.MustExec("set @@tidb_enable_exchange_partition = 0")
-
-	err = tk.ExecToErr("alter table t_partitioned exchange partition p0 with table t_exchange_base")
-	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view dependencies")
-
-	err = tk.ExecToErr("alter table t_partitioned exchange partition p0 with table `$mlog$t_exchange_base`")
-	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view log")
-
-	err = tk.ExecToErr("alter table t_partitioned exchange partition p0 with table mv_exchange")
-	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table materialized view table")
-}
-
 func TestCreateVectorIndexOnMaterializedViewLogTableRejected(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
 	tk := newMViewTestKit(t, store)
@@ -101,80 +60,6 @@ func TestCreateVectorIndexOnMaterializedViewLogTableRejected(t *testing.T) {
 
 	err := tk.ExecToErr("create vector index idx_mlog_vec on `$mlog$t_mlog_vec`((vec_cosine_distance(v))) USING HNSW")
 	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")
-}
-
-func TestAlterMaterializedViewRefreshDisableScheduleIgnoresAlertDeleteFailure(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_mv_alert_fail (a int not null, b int not null)")
-	tk.MustExec("create materialized view log on t_mv_alert_fail (a, b)")
-	tk.MustExec("create materialized view mv_alert_fail (a, s, cnt) refresh fast next date_add(now(), interval 2 hour) as select a, sum(b), count(1) from t_mv_alert_fail group by a")
-
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_alert_fail"))
-	require.NoError(t, err)
-	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv_alert_fail', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
-		tbl.Meta().ID,
-	))
-
-	const fp = "github.com/pingcap/tidb/pkg/ddl/mockDeleteMaterializedViewRefreshAlertTableNotExists"
-	require.NoError(t, failpoint.Enable(fp, "return(true)"))
-	defer func() { require.NoError(t, failpoint.Disable(fp)) }()
-
-	tk.MustExec("alter materialized view mv_alert_fail refresh")
-	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", tbl.Meta().ID)).Check(testkit.Rows("1"))
-}
-
-func TestAlterMaterializedViewRefreshBestEffortInfoUpdateWarning(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := newMViewTestKit(t, store)
-	tkLock := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tkLock.MustExec("use test")
-	tk.MustExec("create table t_mv_info_lock (a int not null, b int not null)")
-	tk.MustExec("create materialized view log on t_mv_info_lock (a, b)")
-	tk.MustExec("create materialized view mv_info_lock (a, s, cnt) refresh fast next date_add(now(), interval 2 hour) as select a, sum(b), count(1) from t_mv_info_lock group by a")
-
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_info_lock"))
-	require.NoError(t, err)
-	const expectedNextUnixSeconds int64 = 1_925_089_445
-	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = %d where MVIEW_ID = %d", expectedNextUnixSeconds, tbl.Meta().ID))
-	tkLock.MustExec("begin pessimistic")
-	defer tkLock.MustExec("rollback")
-	tkLock.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = NEXT_REFRESH_UNIX_SECONDS where MVIEW_ID = %d", tbl.Meta().ID))
-
-	tk.MustExec("alter materialized view mv_info_lock refresh next date_add(now(), interval 25 minute)")
-	tk.MustQuery("show warnings").CheckContain("alter materialized view refresh: metadata updated but failed to update mysql.tidb_mview_refresh_info.NEXT_REFRESH_UNIX_SECONDS within 10s due to row lock contention")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_info_lock"))
-	require.NoError(t, err)
-	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", tbl.Meta().MaterializedView.RefreshNext)
-	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", expectedNextUnixSeconds, tbl.Meta().ID)).Check(testkit.Rows("1"))
-}
-
-func TestAlterMaterializedViewRefreshUpdatesNextUnixSecondsWithAlterPrivilegeOnly(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int not null)")
-	tk.MustExec("create materialized view log on t (a, b)")
-	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 2 hour) as select a, sum(b), count(1) from t group by a")
-	tk.MustExec("create user 'mv_alter_refresh_u'@'%'")
-	defer tk.MustExec("drop user 'mv_alter_refresh_u'@'%'")
-	tk.MustExec("grant alter on test.mv to 'mv_alter_refresh_u'@'%'")
-
-	tkUser := newMViewTestKit(t, store)
-	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_alter_refresh_u", Hostname: "%"}, nil, nil, nil))
-	tkUser.MustExec("alter materialized view test.mv refresh next date_add(now(), interval 25 minute)")
-
-	is := dom.InfoSchema()
-	mvTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv"))
-	require.NoError(t, err)
-	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", mvTable.Meta().MaterializedView.RefreshNext)
-	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_REFRESH_UNIX_SECONDS is not null, NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 15 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 1 hour) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
-		mvTable.Meta().ID,
-	)).Check(testkit.Rows("1 1 1"))
 }
 
 func TestAlterMaterializedViewLogPurgeUpdatesNextUnixSecondsWithMLogAlterPrivilege(t *testing.T) {
@@ -337,142 +222,18 @@ func TestAlterMaterializedViewLogAddColumnPrivilege(t *testing.T) {
 	tkOK.MustExec("alter materialized view log on test.t_add_mlog_priv add column (b)")
 }
 
-func TestMaterializedViewBaseModifyColumnMultiSchemaInvolvingSchemaInfo(t *testing.T) {
+func TestAlterMaterializedViewLogAddColumnSupportsNewMaterializedView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("create table t_add_mlog_mv (a int not null, b int not null, c int not null)")
+	tk.MustExec("insert into t_add_mlog_mv values (1, 10, 100), (1, 20, 200), (2, 30, 300)")
+	tk.MustExec("create materialized view log on t_add_mlog_mv (a, b)")
 
-	tk.MustExec("create table t_multi_schema (a int not null, b int not null)")
-	tk.MustExec("create materialized view log on t_multi_schema (a, b)")
-	tk.MustExec("create materialized view mv_multi_schema (a, b, cnt) as select a, b, count(1) from t_multi_schema group by a, b")
-	tk.MustExec("alter table t_multi_schema modify column a bigint not null, modify column b bigint not null")
+	err := tk.ExecToErr("create materialized view mv_add_mlog_col_before (a, s, cnt) refresh fast as select a, sum(c), count(1) from t_add_mlog_mv group by a")
+	require.ErrorContains(t, err, "materialized view log does not contain column c")
 
-	var historyJob *model.Job
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		jobs, err := ddl.GetLastNHistoryDDLJobs(m, 16)
-		if err != nil {
-			return err
-		}
-		for _, job := range jobs {
-			if job.Type == model.ActionMultiSchemaChange && job.TableName == "t_multi_schema" {
-				historyJob = job
-				return nil
-			}
-		}
-		return nil
-	}))
-	require.NotNil(t, historyJob)
-	involving := make(map[string]struct{}, len(historyJob.GetInvolvingSchemaInfo()))
-	for _, info := range historyJob.GetInvolvingSchemaInfo() {
-		involving[info.Database+"\x00"+info.Table] = struct{}{}
-	}
-	require.Equal(t, map[string]struct{}{
-		"test\x00t_multi_schema":       {},
-		"test\x00$mlog$t_multi_schema": {},
-		"test\x00mv_multi_schema":      {},
-	}, involving)
-
-	showCreate := tk.MustQuery("show create table t_multi_schema").Rows()[0][1].(string)
-	require.Contains(t, showCreate, "`a` bigint")
-	require.Contains(t, showCreate, "`b` bigint")
-	showCreate = tk.MustQuery("show create table `$mlog$t_multi_schema`").Rows()[0][1].(string)
-	require.Contains(t, showCreate, "`a` bigint")
-	require.Contains(t, showCreate, "`b` bigint")
-	showCreate = tk.MustQuery("show create table mv_multi_schema").Rows()[0][1].(string)
-	require.Contains(t, showCreate, "`a` bigint")
-	require.Contains(t, showCreate, "`b` bigint")
-}
-
-func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexes(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-
-	createMinMaxMV := func(baseTable, mvName, indexDDL string) {
-		tk.MustExec(fmt.Sprintf("create table %s (a int not null, b int not null, c int not null%s)", baseTable, indexDDL))
-		tk.MustExec(fmt.Sprintf("create materialized view log on %s (a, b, c)", baseTable))
-		tk.MustExec(fmt.Sprintf("create materialized view %s (a, b, minc, cnt) refresh fast next now() as select a, b, min(c), count(1) from %s group by a, b", mvName, baseTable))
-	}
-
-	createMinMaxMV("t_drop_idx", "mv_drop_idx", ", index idx_ab(a, b)")
-	err := tk.ExecToErr("drop index idx_ab on t_drop_idx")
-	require.ErrorContains(t, err, "required by materialized view mv_drop_idx")
-	require.ErrorContains(t, err, "MIN/MAX fast refresh")
-
-	createMinMaxMV("t_invisible_idx", "mv_invisible_idx", ", index idx_ab(a, b)")
-	err = tk.ExecToErr("alter table t_invisible_idx alter index idx_ab invisible")
-	require.ErrorContains(t, err, "required by materialized view mv_invisible_idx")
-
-	createMinMaxMV("t_multi_schema_replace_idx", "mv_multi_schema_replace_idx", ", index idx_ab(a, b)")
-	tk.MustExec("alter table t_multi_schema_replace_idx drop index idx_ab, add index idx_ba(b, a)")
-
-	createMinMaxMV("t_multi_schema_bad_idx", "mv_multi_schema_bad_idx", ", index idx_ab(a, b)")
-	err = tk.ExecToErr("alter table t_multi_schema_bad_idx drop index idx_ab, add index idx_c(c)")
-	require.ErrorContains(t, err, "required by materialized view mv_multi_schema_bad_idx")
-}
-
-func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexesAgainstConcurrentDrop(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_concurrent_drop_idx (a int not null, b int not null, c int not null, index idx_ab(a, b), index idx_ba(b, a))")
-	tk.MustExec("create materialized view log on t_concurrent_drop_idx (a, b, c)")
-	tk.MustExec("create materialized view mv_concurrent_drop_idx (a, b, minc, cnt) refresh fast next now() as select a, b, min(c), count(1) from t_concurrent_drop_idx group by a, b")
-
-	var pausedJobID atomic.Int64
-	pauseCh := make(chan struct{})
-	blockedCh := make(chan struct{}, 1)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if job.Type != model.ActionDropIndex || job.TableName != "t_concurrent_drop_idx" || job.SchemaState != model.StatePublic {
-			return
-		}
-		if !pausedJobID.CompareAndSwap(0, job.ID) {
-			return
-		}
-		select {
-		case blockedCh <- struct{}{}:
-		default:
-		}
-		<-pauseCh
-	})
-
-	tk1 := newMViewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2 := newMViewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	var (
-		err1 error
-		err2 error
-		wg   sync.WaitGroup
-	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err1 = tk1.ExecToErr("drop index idx_ab on t_concurrent_drop_idx")
-	}()
-
-	select {
-	case <-blockedCh:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for first drop index job to pause")
-	}
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err2 = tk2.ExecToErr("drop index idx_ba on t_concurrent_drop_idx")
-	}()
-
-	require.Eventually(t, func() bool {
-		return fmt.Sprint(tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Rows()[0][0]) == "2"
-	}, 5*time.Second, 50*time.Millisecond)
-
-	close(pauseCh)
-	wg.Wait()
-
-	require.NoError(t, err1)
-	require.ErrorContains(t, err2, "required by materialized view mv_concurrent_drop_idx")
-	require.ErrorContains(t, err2, "MIN/MAX fast refresh")
+	tk.MustExec("alter materialized view log on t_add_mlog_mv add column (c)")
+	tk.MustExec("create materialized view mv_add_mlog_col_after (a, s, cnt) refresh fast as select a, sum(c), count(1) from t_add_mlog_mv group by a")
+	tk.MustQuery("select a, s, cnt from mv_add_mlog_col_after order by a").Check(testkit.Rows("1 300 2", "2 300 1"))
 }
