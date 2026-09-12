@@ -4042,6 +4042,12 @@ pub struct IndexJoinLookupExec {
     /// Go sends the task's complete range set through one table reader and
     /// leaves region concurrency to DistSQL.
     remote_cursor: Option<RemoteRowCursor>,
+    /// Whether every local filter reached the current remote cursor as a
+    /// coprocessor predicate, so its clean batches need no local re-check.
+    remote_filters_complete: bool,
+    /// Scratch for whole coprocessor batches in the decoded column layout
+    /// (Go's inner worker appends the TableReader's chunks as they come).
+    lookup_chunk: Option<Chunk>,
     /// The open coprocessor stream over one outer batch's secondary-index
     /// probe ranges, yielding table handles only. Go's index-join inner
     /// reader feeds every probe range of one task to a SINGLE distsql request
@@ -4125,6 +4131,8 @@ impl IndexJoinLookupExec {
             cursor: None,
             record_cursor: None,
             remote_cursor: None,
+            remote_filters_complete: false,
+            lookup_chunk: None,
             remote_handles: None,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
@@ -4284,6 +4292,8 @@ impl IndexJoinLookupExec {
             cursor: None,
             record_cursor: None,
             remote_cursor: None,
+            remote_filters_complete: false,
+            lookup_chunk: None,
             remote_handles: None,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
@@ -4713,57 +4723,177 @@ impl IndexJoinLookupExec {
                 }
                 self.record_cursor = None;
             }
-            let mut ranges = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
-            while ranges.len() < INDEX_LOOKUP_BATCH_SIZE {
-                let Some((probe, bounds)) = self.next_probe_with_bounds() else {
-                    break;
-                };
-                ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
-            }
-            if ranges.is_empty() {
+            if !self.advance_common_handle_cursor()? {
                 return Ok(None);
             }
-            let keep = self
-                .decode_offsets
-                .clone()
-                .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
-            let remote_predicates =
-                scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
-            let remote_cursor = self
-                .table
-                .pushdown_row_cursor_with_context(
-                    &keep,
-                    &remote_predicates,
-                    None,
-                    None,
-                    None,
-                    Some(&ranges),
-                    None,
-                    false,
-                    false,
-                    &self.decode_context,
-                    &self.statement,
-                )
-                .map_err(|error| {
-                    ExecError::unsupported(format!(
-                        "common-handle remote lookup is not scannable: {error:?}"
-                    ))
-                })?;
-            if let Some(cursor) = remote_cursor {
-                self.remote_cursor = Some(cursor);
-            } else {
-                self.record_cursor = Some(
-                    self.table
-                        .row_cursor_projected_with_context(
-                            Some(&keep),
-                            Some(&ranges),
-                            &self.decode_context,
-                        )
-                        .map_err(|_| {
-                            ExecError::unsupported("common handle range is not scannable")
-                        })?,
-                );
+        }
+    }
+
+    /// Installs the cursor for the next batch of common-handle prefix
+    /// ranges (Go's inner worker builds one reader per task over the task's
+    /// lookup ranges). `false` when the probes are exhausted.
+    fn advance_common_handle_cursor(&mut self) -> Result<bool, ExecError> {
+        let mut ranges = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
+        while ranges.len() < INDEX_LOOKUP_BATCH_SIZE {
+            let Some((probe, bounds)) = self.next_probe_with_bounds() else {
+                break;
+            };
+            ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
+        }
+        if ranges.is_empty() {
+            return Ok(false);
+        }
+        let keep = self
+            .decode_offsets
+            .clone()
+            .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
+        let remote_predicates =
+            scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
+        self.remote_filters_complete = remote_predicates.len() == self.filters.len();
+        let remote_cursor = self
+            .table
+            .pushdown_row_cursor_with_context(
+                &keep,
+                &remote_predicates,
+                None,
+                None,
+                None,
+                Some(&ranges),
+                None,
+                false,
+                false,
+                &self.decode_context,
+                &self.statement,
+            )
+            .map_err(|error| {
+                ExecError::unsupported(format!(
+                    "common-handle remote lookup is not scannable: {error:?}"
+                ))
+            })?;
+        if let Some(cursor) = remote_cursor {
+            self.remote_cursor = Some(cursor);
+        } else {
+            self.record_cursor = Some(
+                self.table
+                    .row_cursor_projected_with_context(
+                        Some(&keep),
+                        Some(&ranges),
+                        &self.decode_context,
+                    )
+                    .map_err(|_| ExecError::unsupported("common handle range is not scannable"))?,
+            );
+        }
+        Ok(true)
+    }
+
+    /// Whether the current lookup reads common-handle prefix ranges, the
+    /// shape whose remote cursor can hand back whole coprocessor batches.
+    fn common_handle_prefix_lookup(&self) -> bool {
+        if self.covering && self.remote_handles.is_some() {
+            return false;
+        }
+        matches!(self.object, LookupObject::CommonHandle)
+            && !self.probe_parts.is_empty()
+            && self.probe_parts.len() != self.table.common_handle_offsets().len()
+    }
+
+    /// The decoded column each output column reads, or `None` when an
+    /// output column is not among the decoded ones.
+    fn chunk_output_columns(&self) -> Option<Vec<usize>> {
+        let visible = self.table.visible_column_count();
+        let sources: Vec<usize> = match &self.output_offsets {
+            Some(offsets) => offsets.clone(),
+            None => (0..visible).collect(),
+        };
+        match &self.decode_offsets {
+            None => Some(sources),
+            Some(decoded) => sources
+                .iter()
+                .map(|source| decoded.iter().position(|offset| offset == source))
+                .collect(),
+        }
+    }
+
+    /// Go `indexHashJoinInnerWorker.fetchInnerResults`: the inner reader's
+    /// chunks are appended as they come, never re-materialised row by row.
+    /// Whole clean batches from the remote cursor land in `req` through a
+    /// column projection; a staged cursor, a filter the coprocessor did not
+    /// take, or a batch the cursor cannot hand over falls back to the row
+    /// path for that cursor.
+    fn next_common_handle_chunks(
+        &mut self,
+        req: &mut Chunk,
+        output_columns: &[usize],
+    ) -> Result<(), ExecError> {
+        let cap = self.meta.max_chunk_size();
+        loop {
+            if req.num_rows() >= cap {
+                return Ok(());
             }
+            if self.remote_cursor.is_none()
+                && self.record_cursor.is_none()
+                && !self.advance_common_handle_cursor()?
+            {
+                return Ok(());
+            }
+            let chunk_ready = self.remote_filters_complete
+                && self.remote_cursor.as_ref().is_some_and(|cursor| {
+                    cursor.supports_lookup_chunks() && cursor.predicates_applied()
+                });
+            if chunk_ready {
+                let cursor = self.remote_cursor.as_mut().expect("checked above");
+                let mut scratch = match self.lookup_chunk.take() {
+                    Some(chunk) if chunk.num_cols() == cursor.field_types().len() => chunk,
+                    _ => Chunk::new_with_capacity(cursor.field_types(), cap),
+                };
+                scratch.reset();
+                let want = cap - req.num_rows();
+                let appended = cursor
+                    .append_clean_chunk(&mut scratch, want, false)
+                    .map_err(|error| {
+                        ExecError::unsupported(format!(
+                            "common-handle remote lookup failed: {error:?}"
+                        ))
+                    })?;
+                match appended {
+                    Some(0) => {
+                        self.lookup_chunk = Some(scratch);
+                        self.remote_cursor = None;
+                        continue;
+                    }
+                    Some(rows) => {
+                        for (output, source) in output_columns.iter().copied().enumerate() {
+                            req.append_column_range_from(output, &scratch, source, 0, rows);
+                        }
+                        self.produced.set(self.produced.get() + rows as u64);
+                        self.lookup_chunk = Some(scratch);
+                        continue;
+                    }
+                    None => {
+                        self.lookup_chunk = Some(scratch);
+                    }
+                }
+            }
+            let Some(row) = self.next_common_handle_row()? else {
+                return Ok(());
+            };
+            let physical = self.physical_row(&row)?;
+            if !self.row_passes_filters(&physical)? {
+                continue;
+            }
+            if let Some(offsets) = &self.output_offsets {
+                for (output, source) in offsets.iter().copied().enumerate() {
+                    let value = physical.get(source).ok_or_else(|| {
+                        ExecError::unsupported("index-join output column is outside the table")
+                    })?;
+                    req.append_datum(output, value);
+                }
+            } else {
+                for (output, value) in physical.iter().enumerate() {
+                    req.append_datum(output, value);
+                }
+            }
+            self.produced.set(self.produced.get() + 1);
         }
     }
 
@@ -5089,6 +5219,11 @@ impl Executor for IndexJoinLookupExec {
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         self.refresh_shared_probes();
         req.reset();
+        if self.common_handle_prefix_lookup() {
+            if let Some(output_columns) = self.chunk_output_columns() {
+                return self.next_common_handle_chunks(req, &output_columns);
+            }
+        }
         let cap = self.meta.max_chunk_size();
         while req.num_rows() < cap {
             let Some(row) = self.next_lookup_row()? else {

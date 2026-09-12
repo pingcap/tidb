@@ -2838,14 +2838,18 @@ impl RemoteRowCursor {
     /// Whether this cursor can preserve Go's chunk.Row handoff through a
     /// table-lookup worker. A staged merge must stay on the row path because
     /// its snapshot/staged ordering is resolved one row at a time.
-    fn supports_lookup_chunks(&self) -> bool {
+    pub(crate) fn supports_lookup_chunks(&self) -> bool {
         !self.merge_staged && self.stream.supports_chunks() && !self.field_types.is_empty()
+    }
+    /// Field types of the decoded wire columns (empty for row-only backends).
+    pub(crate) fn field_types(&self) -> &[FieldType] {
+        &self.field_types
     }
 
     /// Appends clean remote rows without materializing an owned datum vector
     /// for every row. `None` means this cursor must use the row path;
     /// `Some(0)` means the chunk-capable stream is exhausted.
-    fn append_clean_chunk(
+    pub(crate) fn append_clean_chunk(
         &mut self,
         output: &mut Chunk,
         target_rows: usize,
