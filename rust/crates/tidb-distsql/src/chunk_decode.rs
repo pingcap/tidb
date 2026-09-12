@@ -305,8 +305,16 @@ impl RawChunk<'_> {
 ///
 /// The returned message owns its protobuf buffers. Chunk payload bytes remain
 /// opaque until the caller passes a borrowed chunk to [`decode_chunk`].
-pub fn decode_select_response(bytes: &[u8]) -> Result<SelectResponse, prost::DecodeError> {
-    SelectResponse::decode(bytes)
+///
+/// The buffer is taken by value: an owned payload decodes through
+/// `prost::bytes::Bytes`, so the response's `rows_data` chunks are sliced
+/// out of it instead of being copied twice (`copy_to_bytes` on a byte slice
+/// allocates, then the field's `Vec<u8>` copies again). One copy into the
+/// field is what Go's generated `Unmarshal` does too.
+pub fn decode_select_response(
+    bytes: impl Into<prost::bytes::Bytes>,
+) -> Result<SelectResponse, prost::DecodeError> {
+    SelectResponse::decode(bytes.into())
 }
 
 /// Decodes and validates the main-output chunks from an already-decoded

@@ -50,7 +50,7 @@ fn select_result_response_and_chunk_metadata_round_trip() {
         ..Default::default()
     };
 
-    let decoded = decode_select_response(&response.encode_to_vec()).expect("valid tipb response");
+    let decoded = decode_select_response(response.encode_to_vec()).expect("valid tipb response");
     assert_eq!(
         decoded.error.as_ref().and_then(|error| error.code),
         Some(1105)

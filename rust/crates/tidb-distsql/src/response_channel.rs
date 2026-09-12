@@ -886,7 +886,7 @@ impl SelectResponseIter {
             };
             match event {
                 Some(ResponseChannelEvent::Result(bytes)) => {
-                    if let Err(error) = self.install_encoded_response(&bytes, None) {
+                    if let Err(error) = self.install_encoded_response(bytes, None) {
                         self.close();
                         return Err(error);
                     }
@@ -895,7 +895,7 @@ impl SelectResponseIter {
                     result,
                     runtime_stats,
                 }) => {
-                    if let Err(error) = self.install_encoded_response(&result, Some(&runtime_stats))
+                    if let Err(error) = self.install_encoded_response(result, Some(&runtime_stats))
                     {
                         self.close();
                         return Err(error);
@@ -982,7 +982,7 @@ impl SelectResponseIter {
             };
             match event {
                 Some(ResponseChannelEvent::Result(bytes)) => {
-                    if let Err(error) = self.install_encoded_response(&bytes, None) {
+                    if let Err(error) = self.install_encoded_response(bytes, None) {
                         self.close();
                         return Err(error);
                     }
@@ -991,7 +991,7 @@ impl SelectResponseIter {
                     result,
                     runtime_stats,
                 }) => {
-                    if let Err(error) = self.install_encoded_response(&result, Some(&runtime_stats))
+                    if let Err(error) = self.install_encoded_response(result, Some(&runtime_stats))
                     {
                         self.close();
                         return Err(error);
@@ -1126,7 +1126,7 @@ impl SelectResponseIter {
 
     fn install_encoded_response(
         &mut self,
-        bytes: &[u8],
+        bytes: Vec<u8>,
         runtime_stats: Option<&ResponseRuntimeStats>,
     ) -> Result<(), ResponseChannelError> {
         let response = decode_select_response(bytes)

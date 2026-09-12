@@ -3292,7 +3292,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         // container's records read lock across the whole window instead of
         // reacquiring it for every joined row. Residual expressions still run
         // for every pair through the same general evaluator as the serial path.
-        if !builds_preserved && input.num_rows() > 0 {
+        // A preserved build side (Go `leftOuterJoinProbe` with the left side
+        // built) takes the same bulk path and records every emitted match
+        // for the post-probe scan.
+        if input.num_rows() > 0 {
             let mut batch_ptrs = Vec::with_capacity(input.num_rows());
             let mut all_matched = true;
             for probe_index in 0..input.num_rows() {
@@ -3355,6 +3358,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                     probe_row,
                                     build_row,
                                 );
+                                if builds_preserved {
+                                    matched_build_rows.push(batch_ptrs[current_probe_index]);
+                                }
                             }
                             Ok::<(), ExecError>(())
                         })
@@ -3391,6 +3397,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
                 }
                 output_layout.finish_range(&mut output, probe.num_rows());
+                if builds_preserved {
+                    matched_build_rows.extend(batch_ptrs.iter().copied());
+                }
                 drop(probe_key_values);
                 return Ok(ParallelProbeResult {
                     input,
