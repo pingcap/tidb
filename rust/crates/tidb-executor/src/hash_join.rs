@@ -159,6 +159,17 @@ impl Hasher for ExactIntHasher {
 
 type ExactIntBuckets<V> = HashMap<i128, V, BuildHasherDefault<ExactIntHasher>>;
 
+/// The exact-integer map's value: the key's chain, plus its first row's
+/// pointer inline so a unique key (the dimension-join case, where
+/// `first == last`) is answered from the map slot alone. Go's v2 table probes
+/// one tagged row pointer per key; the chain entry here is a second
+/// dependent cache miss the unique probe no longer pays.
+#[derive(Clone, Copy, Debug)]
+struct ExactHead {
+    first_ptr: RowPtr,
+    head: ChainHead,
+}
+
 /// Go v1 `entry`: one build-row pointer and the next entry under the same
 /// key (`CHAIN_END` closes the chain).
 #[derive(Clone, Copy, Debug)]
@@ -987,7 +998,7 @@ pub(crate) fn equi_keys_equal_chunk_rows(
 pub(crate) struct BuildTable {
     rows: RowContainer,
     buckets: HashBuckets<ChainHead>,
-    exact_int_buckets: Option<ExactIntBuckets<ChainHead>>,
+    exact_int_buckets: Option<ExactIntBuckets<ExactHead>>,
     /// The chain entries both maps point into (Go v1 `entryStore`).
     chains: ChainStore,
     /// Go v1's `outerMatchedStatus` / v2's row-table used flag. Present only
@@ -1106,10 +1117,14 @@ impl BuildTable {
                         .expect("exact integer buckets initialized");
                     match pointers.entry(key) {
                         Entry::Occupied(mut entry) => {
-                            *entry.get_mut() = chains.push(Some(*entry.get()), pointer)?;
+                            let exact = entry.get_mut();
+                            exact.head = chains.push(Some(exact.head), pointer)?;
                         }
                         Entry::Vacant(entry) => {
-                            entry.insert(chains.push(None, pointer)?);
+                            entry.insert(ExactHead {
+                                first_ptr: pointer,
+                                head: chains.push(None, pointer)?,
+                            });
                         }
                     }
                 }
@@ -1147,8 +1162,20 @@ impl BuildTable {
         self.chains.chain(
             self.exact_int_buckets
                 .as_ref()
-                .and_then(|buckets| buckets.get(&key)),
+                .and_then(|buckets| buckets.get(&key))
+                .map(|exact| &exact.head),
         )
+    }
+
+    /// The one build row under `key`, from the map slot alone: `None` when
+    /// the key is absent or chains more than one row (`Chain::single`
+    /// without the chain-entry read).
+    pub(crate) fn probe_exact_int_single(&self, key: i128) -> Option<RowPtr> {
+        self.exact_int_buckets
+            .as_ref()
+            .and_then(|buckets| buckets.get(&key))
+            .filter(|exact| exact.head.first == exact.head.last)
+            .map(|exact| exact.first_ptr)
     }
 
     pub(crate) fn has_exact_int(&self) -> bool {
@@ -1162,9 +1189,11 @@ impl BuildTable {
     /// keeps each worker's output bounded by its input chunk while covering
     /// primary/unique-key dimension joins such as TPC-H q13.
     pub(crate) fn exact_int_is_unique(&self) -> bool {
-        self.exact_int_buckets
-            .as_ref()
-            .is_some_and(|buckets| buckets.values().all(|head| head.first == head.last))
+        self.exact_int_buckets.as_ref().is_some_and(|buckets| {
+            buckets
+                .values()
+                .all(|exact| exact.head.first == exact.head.last)
+        })
     }
 
     /// Marks one preserved build row as matched after every ON conjunct has
@@ -1296,16 +1325,17 @@ impl BuildTable {
     }
 
     fn refresh_bucket_memory(&mut self) {
-        let map_slots = self.buckets.capacity().saturating_mul(
-            std::mem::size_of::<(u64, ChainHead)>() + std::mem::size_of::<usize>(),
-        );
+        let map_slots = self
+            .buckets
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(u64, ChainHead)>() + std::mem::size_of::<usize>());
         let retained = GO_V1_HASH_TABLE_FIXED_BYTES
             .saturating_add(map_slots)
             .saturating_add(std::mem::size_of::<HashBuckets<ChainHead>>())
             .saturating_add(go_entry_store_bytes(self.chains.entries.len()))
             .saturating_add(self.exact_int_buckets.as_ref().map_or(0, |buckets| {
                 buckets.capacity()
-                    * (std::mem::size_of::<(i128, ChainHead)>() + std::mem::size_of::<usize>())
+                    * (std::mem::size_of::<(i128, ExactHead)>() + std::mem::size_of::<usize>())
             }))
             .saturating_add(self.matched.as_ref().map_or(0, |chunks| {
                 chunks

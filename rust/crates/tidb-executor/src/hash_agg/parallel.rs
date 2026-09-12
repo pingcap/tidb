@@ -239,10 +239,24 @@ struct PipelinePlan<C: Columns + Send + Sync + Clone + 'static> {
 /// A pipeline group-map key. A single integer group item keys by its chunk
 /// lane directly so the native map does not allocate one byte vector per
 /// group; every other shape keeps Go's encoded group key.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq)]
 enum PipelineMapKey {
     Int(Option<i64>),
     Bytes(Vec<u8>),
+}
+
+/// The integer lane hashes its eight value bytes (a NULL its flag byte)
+/// and the encoded lane its key bytes, as Go hashes the encoded group key
+/// itself; the derived form would also feed both discriminants through the
+/// byte hash for every row.
+impl std::hash::Hash for PipelineMapKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            PipelineMapKey::Int(Some(value)) => state.write_u64(*value as u64),
+            PipelineMapKey::Int(None) => state.write_u8(NIL_FLAG),
+            PipelineMapKey::Bytes(bytes) => state.write(bytes),
+        }
+    }
 }
 
 impl PipelineMapKey {
@@ -2062,7 +2076,21 @@ mod tests {
     /// bucket as its encoded key would.
     #[test]
     fn stack_varint_matches_the_codec() {
-        for value in [0i64, 1, -1, 63, 64, -64, -65, 127, 128, 1 << 20, -(1 << 40), i64::MAX, i64::MIN] {
+        for value in [
+            0i64,
+            1,
+            -1,
+            63,
+            64,
+            -64,
+            -65,
+            127,
+            128,
+            1 << 20,
+            -(1 << 40),
+            i64::MAX,
+            i64::MIN,
+        ] {
             let mut expected = Vec::new();
             encode_varint(&mut expected, value);
             let mut buffer = [0u8; 10];

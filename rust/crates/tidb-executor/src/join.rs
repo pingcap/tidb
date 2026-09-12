@@ -3321,8 +3321,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let mut all_matched = true;
             for probe_index in 0..input.num_rows() {
                 let exact_key = exact_key_at(probe_index);
-                let Some(ptr) = exact_key.and_then(|key| table.probe_exact_int(key).single())
-                else {
+                let Some(ptr) = exact_key.and_then(|key| table.probe_exact_int_single(key)) else {
                     all_matched = false;
                     break;
                 };
