@@ -1969,6 +1969,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         let mut cur_preferred_range = false;
         let mut cur_is_full_range = true;
         let mut candidate_metrics = None;
+        let mut heuristic = None;
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
                 if (!ordered && ds.force_keep_order_table_path)
@@ -2164,6 +2165,27 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         runtime,
                         ctx.index_join_probe_row_count_fix,
                     )
+                });
+                heuristic = Some(crate::find_best_task::candidate::HeuristicPath {
+                    range_count: ranges.len(),
+                    only_points: ranges.iter().all(|range| {
+                        if let Some(index) = common_handle {
+                            range.is_point_non_nullable()
+                                && range.low_val.len() == index.columns.len()
+                        } else {
+                            range.is_point_nullable()
+                        }
+                    }),
+                    unique: true,
+                    single_scan: true,
+                    table_filter_count: residual_table_filters.len(),
+                    access_columns: crate::column_length::Col2Len::from_pairs(
+                        table_access_conds.iter().flat_map(|condition| {
+                            tidb_expr::simple_expr::extract_columns(condition)
+                                .into_iter()
+                                .map(|column| (column.unique_id, -1))
+                        }),
+                    ),
                 });
                 let mut count_after_access = table_stats.as_ref().map(|stats| stats.row_count());
                 if !table_access_conds.is_empty() {
@@ -2758,6 +2780,45 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             index_lengths.clone(),
                         )
                     });
+                let covered = source_index
+                    .columns
+                    .iter()
+                    .filter(|column| column.length < 0)
+                    .filter_map(|column| ds.schema_column_for_index_column(column))
+                    .map(|column| column.unique_id)
+                    .collect::<std::collections::BTreeSet<_>>();
+                heuristic = detach.as_ref().map(|detached| {
+                    crate::find_best_task::candidate::HeuristicPath {
+                        range_count: ranges.len(),
+                        only_points: declared_index_prefix_complete
+                            && !declared_index_has_prefix
+                            && ranges.iter().all(|range| {
+                                range.is_point_non_nullable()
+                                    && range.low_val.len() == source_index.columns.len()
+                            }),
+                        unique: source_index.unique,
+                        single_scan,
+                        table_filter_count: remained_conds
+                            .iter()
+                            .filter(|condition| {
+                                tidb_expr::simple_expr::extract_columns(condition)
+                                    .iter()
+                                    .any(|column| !covered.contains(&column.unique_id))
+                            })
+                            .count(),
+                        access_columns: crate::column_length::Col2Len::from_pairs(
+                            detached.access_conds.iter().flat_map(|condition| {
+                                tidb_expr::simple_expr::extract_columns(condition)
+                                    .into_iter()
+                                    .filter_map(|column| {
+                                        index_cols.iter()
+                                            .position(|index| index.unique_id == column.unique_id)
+                                            .map(|index| (column.unique_id, index_lengths[index]))
+                                    })
+                            }),
+                        ),
+                    }
+                });
                 // Go `tryConvertToPointGet`: a complete non-NULL point range
                 // on a unique index is a complete root point plan, not an
                 // IndexReader/IndexLookUp candidate. Residual conditions stay
@@ -2790,9 +2851,17 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .set_noncacheable_reason("IndexScan of partial index is uncacheable");
                     }
                     point_base.base.set_schema(ds.base.base.schema().cloned());
-                    point_base
-                        .base
-                        .set_stats(ds.base.base.stats_info().cloned());
+                    let access_rows = ds
+                        .index_path_count_after_access
+                        .get(&source_index.id)
+                        .copied()
+                        .unwrap_or(ranges.len() as f64)
+                        .min(ranges.len() as f64);
+                    point_base.base.set_stats(
+                        ds.table_stats.as_ref()
+                            .or_else(|| ds.base.base.stats_info())
+                            .map(|stats| stats.scale_by_expect_cnt(access_rows, ctx.skew_ratio)),
+                    );
                     let mut point = if ranges.len() == 1 {
                         PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
                             base: point_base,
@@ -3221,20 +3290,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             cop.convert_to_root_task(ctx.allocator)?
         };
         if prop.index_join_prop.is_none() {
-            crate::find_best_task::candidate::insert_skyline_candidate(
-                &mut ordinary_candidates,
-                (
-                    cur,
-                    candidate_metrics,
-                    cur_preferred_range,
-                    cur_is_full_range,
-                ),
-                |candidate| candidate.1.as_ref(),
-                ds.table_scan_penalty.pseudo_stats,
-                prop.expected_cnt,
-                ctx.prefer_range_scan,
-                ctx.index_join_skyline_threshold,
-            );
+            ordinary_candidates.push((
+                cur,
+                candidate_metrics,
+                cur_preferred_range,
+                cur_is_full_range,
+                heuristic,
+            ));
             continue;
         }
         let skyline_choice = if prop.index_join_prop.is_some() {
@@ -3267,7 +3329,32 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             best_preferred_range = Some(cur);
         }
     }
-    for (cur, _, preferred, full_range) in ordinary_candidates {
+    // The unordered root enumeration contains all candidates. Ordered and
+    // runtime join enumerations may omit paths, so cannot apply this rule here.
+    if !ordered && prop.task_tp == TaskType::Root && prop.index_join_prop.is_none() {
+        if let Some(paths) = ordinary_candidates
+            .iter()
+            .map(|candidate| candidate.4.clone())
+            .collect::<Option<Vec<_>>>()
+        {
+            if let Some(selected) = crate::find_best_task::candidate::choose_heuristic_path(&paths) {
+                return Ok(ordinary_candidates.swap_remove(selected).0);
+            }
+        }
+    }
+    let mut skyline_candidates = Vec::new();
+    for candidate in ordinary_candidates {
+        crate::find_best_task::candidate::insert_skyline_candidate(
+            &mut skyline_candidates,
+            candidate,
+            |candidate| candidate.1.as_ref(),
+            ds.table_scan_penalty.pseudo_stats,
+            prop.expected_cnt,
+            ctx.prefer_range_scan,
+            ctx.index_join_skyline_threshold,
+        );
+    }
+    for (cur, _, preferred, full_range, _) in skyline_candidates {
         let better_range = if preferred {
             match best_preferred_range.as_ref() {
                 Some(best_range) => compare_task_cost(ctx.coster, &cur, best_range)?,

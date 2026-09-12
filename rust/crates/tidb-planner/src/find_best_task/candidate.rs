@@ -13,6 +13,54 @@
 
 use crate::column_length::{compare_col2_len, Col2Len};
 
+/// Facts used by Go `derivePathStatsAndTryHeuristics`, before cost comparison.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HeuristicPath {
+    pub range_count: usize,
+    pub only_points: bool,
+    pub unique: bool,
+    pub single_scan: bool,
+    pub table_filter_count: usize,
+    pub access_columns: Col2Len,
+}
+
+/// Select the unique point path, unless a covering range strictly refines it
+/// and needs fewer than twice as many ranges (Go `stats.go:663`).
+pub(crate) fn choose_heuristic_path(paths: &[HeuristicPath]) -> Option<usize> {
+    let mut unique = Vec::new();
+    let mut single = Vec::new();
+    for (index, path) in paths.iter().enumerate() {
+        if path.range_count == 0 || (path.only_points && path.unique && path.single_scan) {
+            return Some(index);
+        }
+        if path.only_points {
+            if path.unique {
+                unique.push(index);
+            }
+        } else if path.single_scan {
+            single.push(index);
+        }
+    }
+    let best = unique
+        .iter()
+        .copied()
+        .min_by_key(|&index| (paths[index].range_count, paths[index].table_filter_count))?;
+    let refined = single
+        .into_iter()
+        .filter(|&index| {
+            unique.iter().any(|&unique| {
+                compare_col2_len(&paths[index].access_columns, &paths[unique].access_columns)
+                    == (1, true)
+            })
+        })
+        .min_by_key(|&index| paths[index].range_count);
+    Some(
+        refined
+            .filter(|&index| paths[index].range_count < 2 * paths[best].range_count)
+            .unwrap_or(best),
+    )
+}
+
 /// Go candidatePath and AccessPath fields read by skyline comparison.
 #[derive(Clone, Debug, Default)]
 pub struct CandidateMetrics {
@@ -251,6 +299,40 @@ pub fn insert_skyline_candidate<T>(
 #[cfg(test)]
 mod skyline_tests {
     use super::*;
+
+    #[test]
+    fn point_heuristics_refine_unique_reads_only_below_double_range_count() {
+        let full = HeuristicPath {
+            range_count: 1,
+            single_scan: true,
+            ..Default::default()
+        };
+        let unique = HeuristicPath {
+            range_count: 2,
+            only_points: true,
+            unique: true,
+            table_filter_count: 1,
+            access_columns: Col2Len::from_pairs([(1, -1)]),
+            ..Default::default()
+        };
+        // Go chooses unique points before costing, even for a tiny table.
+        assert_eq!(
+            choose_heuristic_path(&[full.clone(), unique.clone()]),
+            Some(1)
+        );
+        let mut refined = HeuristicPath {
+            range_count: 3,
+            single_scan: true,
+            access_columns: Col2Len::from_pairs([(1, -1), (2, -1)]),
+            ..Default::default()
+        };
+        assert_eq!(
+            choose_heuristic_path(&[full.clone(), unique.clone(), refined.clone()]),
+            Some(2)
+        );
+        refined.range_count = 4;
+        assert_eq!(choose_heuristic_path(&[full, unique, refined]), Some(1));
+    }
 
     fn path(columns: &[i64]) -> CandidateMetrics {
         CandidateMetrics {

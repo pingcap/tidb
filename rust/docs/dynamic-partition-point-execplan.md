@@ -18,7 +18,7 @@ A WHERE/HAVING intersection that identifies one clustered key must use Point_Get
 - [x] 42 prepared-cache tests, 46 planner physical tests, 12 executor builder tests and final 310 session integrations pass. Final DML publication coverage passes its two targeted regressions.
 - [x] Ready lint passes. Real access-path first exposed Go master / PD v8.5.6 QueryRegion incompatibility; retained evidence and selected the previously validated nightly dependency version.
 - [x] Complete final integration/RealTiKV checks and write DYNAMIC_PARTITION_POINT_FIX.zh-CN.md. Real access-path exits 0 and reports ready with schema_version=73 and stats_loaded=4. Final partition suite: 97 passed / 1 unrelated failed / 0 ignored.
-- [ ] Commit/push this category independently.
+- [x] Commit/push this category independently as d260cb5cd8 to origin/hparser-integration.
 
 ## Surprises & Discoveries
 

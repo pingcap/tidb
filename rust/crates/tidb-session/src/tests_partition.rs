@@ -2201,14 +2201,13 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
 
     // The residual LIKE refuses the fast plan; the normal per-partition
     // planner still chooses the batch point get, with the residual as a
-    // ROOT Selection inside every branch. (The leading Projection is this
-    // tier's always-present wrapper, an established printer divergence.)
+    // ROOT Selection inside every branch. Go starts at PartitionUnion;
+    // redundant projection elimination leaves the same root here.
     let residual = crate::tests_support::row_text(
         session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2) AND a LIKE '%a%'"),
     );
     let shape: Vec<(String, String, String, String)> = residual
         .iter()
-        .skip(1)
         .map(|row| {
             (
                 without_plan_id(&row[0].trim_start_matches([' ', '│', '├', '└', '─'])),
@@ -2246,7 +2245,7 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
                 "like(test.t.a, \"%a%\", 92)".to_owned()
             ),
             (
-                "Batch_Point_Get_3".to_owned(),
+                "Batch_Point_Get".to_owned(),
                 "1.00".to_owned(),
                 "table:t, partition:p2, index:PRIMARY(b)".to_owned(),
                 "keep order:false, desc:false".to_owned()
