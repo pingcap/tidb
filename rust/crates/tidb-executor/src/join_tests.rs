@@ -746,6 +746,48 @@ fn exact_integer_hash_join_uses_parallel_probe_window() {
     );
 }
 
+/// Go's probe worker fills one result chunk across the probe chunks it
+/// processes and sends it on only when full, so a selective probe (few
+/// matches per probe chunk) hands the parent full chunks rather than one
+/// small chunk per probe chunk. The parallel path here must do the same from
+/// the session thread.
+#[test]
+fn parallel_exact_integer_probe_fills_the_caller_chunk_across_probe_chunks() {
+    let build = (0..10i64)
+        .map(|key| vec![Datum::Int(key), Datum::Int(key * 10)])
+        .collect::<Vec<_>>();
+    let probe = (0..20_000i64)
+        .map(|value| vec![Datum::Int(value % 1_000), Datum::Int(value)])
+        .collect::<Vec<_>>();
+    let mut join = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], probe, build, 2);
+    join.set_hash_build_is_left(false);
+
+    join.open().unwrap();
+    let mut req = join.new_chunk();
+    let mut rows = 0;
+    let mut chunks = Vec::new();
+    loop {
+        join.next(&mut req).unwrap();
+        if req.num_rows() == 0 {
+            break;
+        }
+        rows += req.num_rows();
+        chunks.push(req.num_rows());
+    }
+    join.close().unwrap();
+    assert!(
+        join.parallel_probe_windows() > 1,
+        "the probe must span several worker chunks"
+    );
+    // 20 probe rows match each of the 10 build keys.
+    assert_eq!(rows, 200);
+    // Every chunk but the last is full.
+    assert!(
+        chunks[..chunks.len() - 1].iter().all(|&rows| rows == CHUNK),
+        "chunks: {chunks:?}"
+    );
+}
+
 /// TPC-H q13 builds the preserved customer side and probes orders. Parallel
 /// workers must report matches back to the session thread so the post-probe
 /// scan emits only truly unmatched build rows.

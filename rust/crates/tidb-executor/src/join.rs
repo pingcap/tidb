@@ -2740,6 +2740,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// build table and own their scratch/input/output chunks.
     fn next_parallel_exact_int_hashed(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         loop {
+            // A pending result that does not fit whole is handed over on the
+            // next call; the caller chunk goes out as filled as it got.
             if self.take_parallel_probe_output(req) {
                 return Ok(());
             }
@@ -2757,30 +2759,49 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         }
     }
 
-    /// Moves the next worker result into the caller chunk without copying its
-    /// cells, then returns the caller's emptied column allocation to the
-    /// worker pool -- Go's `req.SwapColumns(result.chk); result.src <- chk`.
+    /// Fills the caller chunk from the finished worker results, in source
+    /// order, until it is full or none is pending. Go's probe worker keeps
+    /// filling one `joinResult` chunk across the probe chunks it processes
+    /// and sends it on only when full (`runJoinWorker`), so a selective probe
+    /// (Q11: 800k partsupp rows against 400 suppliers) still hands its parent
+    /// full chunks; the pool worker here owns its output for one probe chunk
+    /// only, so the session thread does that filling. The first result moves
+    /// into an empty caller chunk without copying its cells and the caller's
+    /// emptied column allocation returns to the worker pool -- Go's
+    /// `req.SwapColumns(result.chk); result.src <- chk`; a later result
+    /// appends column-wise when it fits whole, so the caller chunk never
+    /// exceeds its required rows and a result that would is handed over
+    /// next, still without a copy. Returns whether the caller chunk is done:
+    /// full, or holding rows while a result that does not fit waits.
     fn take_parallel_probe_output(&mut self, req: &mut Chunk) -> bool {
-        let output = self
-            .hash
-            .as_mut()
-            .and_then(|hash| hash.parallel_probe_pending.pop_front());
-        let Some(mut output) = output else {
-            return false;
-        };
-        req.swap_columns(&mut output);
-        output.reset();
-        // A parent may hand a zero-column scratch chunk to an executor whose
-        // runtime join output is wider. It is valid as the receiving buffer,
-        // but cannot be reused as a worker output.
-        if output.num_cols() == req.num_cols() {
-            self.hash
-                .as_mut()
-                .expect("parallel output requires hash state")
-                .parallel_probe_output_reuse
-                .push(output);
-        } else if let Some(pipeline) = self.parallel_probe.as_mut() {
-            pipeline.outputs_allocated = pipeline.outputs_allocated.saturating_sub(1);
+        while !req.is_full() {
+            let Some(hash) = self.hash.as_mut() else {
+                return false;
+            };
+            let Some(mut output) = hash.parallel_probe_pending.pop_front() else {
+                return false;
+            };
+            if req.num_rows() == 0 {
+                req.swap_columns(&mut output);
+            } else if req.num_rows() + output.num_rows() <= req.required_rows() {
+                req.append_range_from(&output, 0, output.num_rows());
+            } else {
+                hash.parallel_probe_pending.push_front(output);
+                return true;
+            }
+            output.reset();
+            // A parent may hand a zero-column scratch chunk to an executor
+            // whose runtime join output is wider. It is valid as the receiving
+            // buffer, but cannot be reused as a worker output.
+            if output.num_cols() == req.num_cols() {
+                self.hash
+                    .as_mut()
+                    .expect("parallel output requires hash state")
+                    .parallel_probe_output_reuse
+                    .push(output);
+            } else if let Some(pipeline) = self.parallel_probe.as_mut() {
+                pipeline.outputs_allocated = pipeline.outputs_allocated.saturating_sub(1);
+            }
         }
         true
     }
@@ -3413,8 +3434,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         for probe_index in 0..input.num_rows() {
             let probe_row = input.get_row(probe_index);
             let exact_key = exact_key_at(probe_index);
-            let candidates =
-                exact_key.map_or_else(Chain::empty, |key| table.probe_exact_int(key));
+            let candidates = exact_key.map_or_else(Chain::empty, |key| table.probe_exact_int(key));
             debug_assert!(candidates.single().is_some() || candidates.is_empty());
             // Semi/anti emit the preserved LEFT row once per match decision;
             // with the preserved side built they only collect matches for the
