@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -350,6 +351,26 @@ func TestStatementRUPublisherIsolation(t *testing.T) {
 			publishStatementRUCalibrationSafely(fixture.stmt, statementRUCalibrationSnapshot{State: statementRUCalibrationComplete})
 		})
 	})
+}
+
+func TestStatementRUUsesConfig(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.StatementCPUWork = 2
+		cfg.RUV2.StatementScanBytes = 3
+	})
+
+	calculator := statementRUCalculator{units: ruv3.StmtUnits{CPUWork: 5, ScanBytes: 7}}
+	finalized, ok := calculator.finalize()
+	require.True(t, ok)
+	require.Equal(t, float64(31), finalized.result.TotalRU) // 2*5 + 3*7
+
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.StatementCPUWork = 0
+	})
+	finalized, ok = calculator.finalize()
+	require.True(t, ok)
+	require.Equal(t, float64(21), finalized.result.TotalRU) // 0*5 + 3*7
 }
 
 func TestStatementRUResultValueContracts(t *testing.T) {

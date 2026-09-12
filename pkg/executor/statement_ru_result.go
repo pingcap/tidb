@@ -18,6 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -26,6 +27,28 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 )
+
+// currentStatementRUWeights reads the loaded config rather than capturing
+// package-initialization defaults. RU v3 shares the ru-v2 config section while
+// replacing the legacy model; its statement weights are not dynamically reloadable.
+func currentStatementRUWeights() ruv3.StmtWeights {
+	weights := config.DefaultRUV2Config()
+	if cfg := config.GetGlobalConfig(); cfg != nil {
+		weights = cfg.RUV2
+	}
+	return ruv3.StmtWeights{
+		CPUWork:             weights.StatementCPUWork,
+		ScanByte:            weights.StatementScanBytes,
+		NetByte:             weights.StatementNetBytes,
+		FrontendCompileByte: weights.StatementFrontendCompileBytes,
+		HashStateRow:        weights.StatementHashStateRows,
+		JoinOutputRow:       weights.StatementJoinOutputRows,
+		WriteStatement:      weights.StatementWriteStatement,
+		OperatorNum:         weights.StatementOperatorNum,
+		WriteKey:            weights.StatementWriteKeys,
+		WriteByte:           weights.StatementWriteBytes,
+	}
+}
 
 // The current producers cannot prove that all successful or canceled remote
 // work contributed execution details. ResultOnly therefore publishes a
@@ -224,7 +247,7 @@ func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes in
 }
 
 func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot, bool) {
-	result, ok := ruv3.Calculate(calculator.units, ruv3.DefaultWeights())
+	result, ok := ruv3.Calculate(calculator.units, currentStatementRUWeights())
 	if !ok {
 		return statementRUFinalizedSnapshot{}, false
 	}
@@ -279,7 +302,7 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 		sqlType = metrics.LblSQLTypeWrite
 	}
 	metrics.RUV3BySQLType.WithLabelValues(sqlType).Add(totalRU)
-	weights := ruv3.DefaultWeights()
+	weights := currentStatementRUWeights()
 	metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV).Add(
 		weights.ScanByte*finalized.units.ScanBytes +
 			weights.NetByte*finalized.units.NetBytes +
