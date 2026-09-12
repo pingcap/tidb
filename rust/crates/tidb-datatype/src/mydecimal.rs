@@ -484,6 +484,59 @@ impl MyDecimal {
         Ok(value)
     }
 
+    /// Builds the same layout as [`Self::from_decimal_parts`] with
+    /// `minimum_integer_digit` from a signed `i128` coefficient whose last
+    /// `storage_scale` digits are fractional, without rendering the digit
+    /// string. `None` when the words do not fit the nine-word buffer or the
+    /// scales are inconsistent.
+    #[must_use]
+    pub fn from_scaled_i128(
+        value: i128,
+        storage_scale: u32,
+        result_frac: u32,
+    ) -> Option<MyDecimal> {
+        if result_frac > storage_scale || storage_scale > 38 {
+            return None;
+        }
+        let magnitude = value.unsigned_abs();
+        let scale_pow = 10u128.checked_pow(storage_scale)?;
+        let mut integer_part = magnitude / scale_pow;
+        let fraction_part = magnitude % scale_pow;
+        let mut digits_int = 1usize;
+        let mut probe = integer_part;
+        while probe >= 10 {
+            probe /= 10;
+            digits_int += 1;
+        }
+        let words_int = digits_to_words(digits_int as i32) as usize;
+        let words_frac = digits_to_words(storage_scale as i32) as usize;
+        if words_int + words_frac > MAX_WORD_BUF_LEN {
+            return None;
+        }
+        let mut result = MyDecimal {
+            digits_int: digits_int as i8,
+            digits_frac: storage_scale as i8,
+            result_frac: result_frac as i8,
+            negative: value < 0,
+            word_buf: [0; MAX_WORD_BUF_LEN],
+        };
+        // Integer words are big-endian: the least significant word lands
+        // last.
+        for word_idx in (0..words_int).rev() {
+            result.word_buf[word_idx] = (integer_part % u128::from(WORD_BASE)) as i32;
+            integer_part /= u128::from(WORD_BASE);
+        }
+        // Fraction words are left-aligned within each base-1e9 group; the
+        // final partial group is padded with zeroes on the right.
+        let padding = words_frac * DIGITS_PER_WORD as usize - storage_scale as usize;
+        let mut fraction_padded = fraction_part.checked_mul(10u128.checked_pow(padding as u32)?)?;
+        for word_idx in (words_int..words_int + words_frac).rev() {
+            result.word_buf[word_idx] = (fraction_padded % u128::from(WORD_BASE)) as i32;
+            fraction_padded /= u128::from(WORD_BASE);
+        }
+        Some(result)
+    }
+
     /// Go `digitBounds`: `(start, end)` indexes of the first non-zero decimal
     /// digit and of the position just after the last one.
     fn digit_bounds(&self) -> (i32, i32) {
@@ -1760,6 +1813,62 @@ fn parse_decimal_group(group: &[u8]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn from_scaled_i128_matches_from_decimal_parts() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut cases: Vec<(i128, u32, u32)> = vec![
+            (0, 0, 0),
+            (0, 2, 2),
+            (5, 2, 2),
+            (-5, 2, 0),
+            (123_456_789_012_345_678, 2, 2),
+            (999_999_999_999_999_999, 4, 2),
+            (-1_000_000_000, 0, 0),
+            (1_000_000_000_000_000_000_000_000, 9, 9),
+            (i128::MAX, 30, 4),
+            (i128::MIN + 1, 0, 0),
+        ];
+        for _ in 0..2000 {
+            let bits = next();
+            let magnitude = i128::from_ne_bytes(
+                [next().to_ne_bytes(), next().to_ne_bytes()].concat().try_into().unwrap(),
+            )
+            .unsigned_abs()
+                >> (bits % 120);
+            let value = if bits & 1 == 0 { magnitude as i128 } else { -(magnitude as i128) };
+            let storage_scale = (bits >> 8) as u32 % 31;
+            let result_frac = ((bits >> 16) as u32 % 31).min(storage_scale);
+            cases.push((value, storage_scale, result_frac));
+        }
+        for (value, storage_scale, result_frac) in cases {
+            let coefficient = value.unsigned_abs().to_string();
+            let coefficient = format!(
+                "{:0>width$}",
+                coefficient,
+                width = storage_scale as usize + 1
+            );
+            let expected = super::MyDecimal::from_decimal_parts(
+                value < 0,
+                &coefficient,
+                storage_scale,
+                result_frac,
+                true,
+            )
+            .ok();
+            assert_eq!(
+                super::MyDecimal::from_scaled_i128(value, storage_scale, result_frac),
+                expected,
+                "{value} / {storage_scale} / {result_frac}"
+            );
+        }
+    }
+
     use super::*;
 
     /// `coefficient_i128` agrees with the Decimal round-trip on common

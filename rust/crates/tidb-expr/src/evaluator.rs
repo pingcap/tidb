@@ -373,6 +373,12 @@ impl EvaluatorSuite {
                         continue;
                     }
                 }
+                if let Expression::ScalarFunction(function) = expression {
+                    // Go's typed `VecEvalDecimal` for decimal arithmetic.
+                    if function.vec_eval_decimal_arithmetic(input, output, *output_index)? {
+                        continue;
+                    }
+                }
                 for row_index in 0..rows {
                     let value = expression.eval(ctx, input.get_row(row_index))?;
                     output.append_datum(*output_index, &value);
@@ -910,6 +916,88 @@ mod tests {
             vectorized_filter_consider_null(&ctx, true, &both, &input, Vec::new(), Vec::new())
                 .unwrap();
         assert_eq!(selected, vec![false, true, false, false]);
+    }
+
+    /// Go `builtinArithmetic*DecimalSig.vecEvalDecimal`: the projection's
+    /// column-wise decimal arithmetic appends exactly the cells the row
+    /// evaluator appends, for nested `+`/`-`/`*` over decimal and integer
+    /// columns and constants, NULLs included.
+    #[test]
+    fn projection_decimal_arithmetic_matches_the_row_evaluator_cell_for_cell() {
+        let mut price_type = FieldType::new(FieldTypeCode::NewDecimal);
+        price_type.set_flen(15);
+        price_type.set_decimal(2);
+        let mut result_type = FieldType::new(FieldTypeCode::NewDecimal);
+        result_type.set_flen(21);
+        result_type.set_decimal(4);
+        let mut input = Chunk::new_with_capacity(&[price_type.clone(), price_type.clone(), long()], 8);
+        let rows: [(Option<&str>, Option<&str>, Option<i64>); 8] = [
+            (Some("36901.00"), Some("0.04"), Some(17)),
+            (Some("-9999999.99"), Some("1.00"), Some(-3)),
+            (Some("0.01"), Some("0.99"), Some(0)),
+            (Some("999999999.99"), Some("-0.10"), Some(1_000_000_000)),
+            (None, Some("0.05"), Some(1)),
+            (Some("12.34"), None, Some(2)),
+            (Some("0.00"), Some("0.00"), None),
+            (Some("123456789012.34"), Some("0.30"), Some(7)),
+        ];
+        for (price, discount, quantity) in rows {
+            match price {
+                Some(text) => input.append_my_decimal(0, &Decimal::from_literal(text).to_my_decimal().unwrap()),
+                None => input.append_null(0),
+            }
+            match discount {
+                Some(text) => input.append_my_decimal(1, &Decimal::from_literal(text).to_my_decimal().unwrap()),
+                None => input.append_null(1),
+            }
+            match quantity {
+                Some(value) => input.append_int64(2, value),
+                None => input.append_null(2),
+            }
+        }
+        let typed = |name: &str, args: Vec<Expression>, ty: &FieldType| {
+            Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), ty.clone(), args))
+        };
+        let revenue = typed(
+            "mul",
+            vec![
+                decimal_column(0, &price_type),
+                typed("minus", vec![int_const(1), decimal_column(1, &price_type)], &price_type),
+            ],
+            &result_type,
+        );
+        let expressions = vec![
+            revenue.clone(),
+            typed("minus", vec![revenue, typed("mul", vec![decimal_column(1, &price_type), input_column(2)], &price_type)], &result_type),
+            typed("plus", vec![decimal_column(0, &price_type), int_const(-5)], &price_type),
+            typed("mul", vec![input_column(2), decimal_column(0, &price_type)], &result_type),
+        ];
+        let ctx = NoColumns;
+        for expression in &expressions {
+            let Expression::ScalarFunction(function) = expression else { unreachable!() };
+            let mut expected = Chunk::new_with_capacity(std::slice::from_ref(function.get_static_type().unwrap()), 8);
+            for row in 0..input.num_rows() {
+                expected.append_datum(0, &expression.eval(&ctx, input.get_row(row)).unwrap());
+            }
+            let mut output = Chunk::new_with_capacity(std::slice::from_ref(function.get_static_type().unwrap()), 8);
+            assert!(function.vec_eval_decimal_arithmetic(&input, &mut output, 0).unwrap());
+            assert_eq!(output, expected);
+            // A selection on the input is honored.
+            input.set_sel(Some(vec![1, 3, 6]));
+            let mut expected = Chunk::new_with_capacity(std::slice::from_ref(function.get_static_type().unwrap()), 3);
+            for row in 0..input.num_rows() {
+                expected.append_datum(0, &expression.eval(&ctx, input.get_row(row)).unwrap());
+            }
+            let mut output = Chunk::new_with_capacity(std::slice::from_ref(function.get_static_type().unwrap()), 3);
+            assert!(function.vec_eval_decimal_arithmetic(&input, &mut output, 0).unwrap());
+            assert_eq!(output, expected);
+            input.set_sel(None);
+        }
+        // Two integers stay integer arithmetic: not covered.
+        let Expression::ScalarFunction(ints) = typed("plus", vec![input_column(2), int_const(1)], &result_type) else { unreachable!() };
+        let mut output = Chunk::new_with_capacity(&[result_type.clone()], 8);
+        assert!(!ints.vec_eval_decimal_arithmetic(&input, &mut output, 0).unwrap());
+        assert_eq!(output.num_rows(), 0);
     }
 
     /// Go `builtinGTDecimalSig.vecEvalInt`: a decimal column against an

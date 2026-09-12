@@ -2814,6 +2814,280 @@ impl ScalarFunction {
     }
 }
 
+/// One decimal value of a column-wise arithmetic evaluation, in the shape
+/// the value-layer `Decimal` fast paths compute in: a signed `i128`
+/// coefficient at `storage_scale` fraction digits, of which `scale` are the
+/// SQL-visible result scale.
+#[derive(Clone, Copy)]
+struct DecimalValue {
+    coefficient: i128,
+    storage_scale: u32,
+    scale: u32,
+}
+
+impl DecimalValue {
+    fn from_my_decimal(value: &tidb_datatype::MyDecimal) -> Option<Self> {
+        // `Decimal::from_my_decimal`: the stored fraction digits are padded
+        // up to the result scale when the cell declares more of them.
+        let (coefficient, digits_frac) = value.to_i128_scaled()?;
+        let result_frac = u32::try_from(value.result_frac()).ok()?;
+        let storage_scale = digits_frac.max(result_frac);
+        let coefficient = if storage_scale > digits_frac {
+            coefficient.checked_mul(10i128.checked_pow(storage_scale - digits_frac)?)?
+        } else {
+            coefficient
+        };
+        Some(Self {
+            coefficient,
+            storage_scale,
+            scale: result_frac,
+        })
+    }
+
+    fn from_integer(value: crate::coerce::Integer) -> Self {
+        let coefficient = match value {
+            crate::coerce::Integer::Signed(value) => i128::from(value),
+            crate::coerce::Integer::Unsigned(value) => i128::from(value),
+        };
+        Self {
+            coefficient,
+            storage_scale: 0,
+            scale: 0,
+        }
+    }
+
+    /// `Decimal::add` (`try_add_fast`): operands aligned to the wider storage
+    /// scale, the visible scale the wider of the two.
+    fn add(self, other: Self) -> Option<Self> {
+        let storage_scale = self.storage_scale.max(other.storage_scale);
+        let left = self.aligned(storage_scale)?;
+        let right = other.aligned(storage_scale)?;
+        Some(Self {
+            coefficient: left.checked_add(right)?,
+            storage_scale,
+            scale: self.scale.max(other.scale),
+        })
+    }
+
+    fn sub(self, other: Self) -> Option<Self> {
+        self.add(Self {
+            coefficient: other.coefficient.checked_neg()?,
+            ..other
+        })
+    }
+
+    /// `Decimal::mul_mysql` (`try_mul_mysql_fast`): scales add; a result
+    /// scale past MySQL's 30 takes the general path.
+    fn mul(self, other: Self) -> Option<Self> {
+        let scale = self.scale.checked_add(other.scale)?;
+        if scale > 30 {
+            return None;
+        }
+        Some(Self {
+            coefficient: self.coefficient.checked_mul(other.coefficient)?,
+            storage_scale: self.storage_scale.checked_add(other.storage_scale)?,
+            scale,
+        })
+    }
+
+    fn aligned(self, storage_scale: u32) -> Option<i128> {
+        if storage_scale == self.storage_scale {
+            Some(self.coefficient)
+        } else {
+            self.coefficient
+                .checked_mul(10i128.checked_pow(storage_scale - self.storage_scale)?)
+        }
+    }
+
+    /// `Decimal::to_chunk_my_decimal`: the cell the row path appends.
+    fn to_my_decimal(self) -> Option<tidb_datatype::MyDecimal> {
+        tidb_datatype::MyDecimal::from_scaled_i128(self.coefficient, self.storage_scale, self.scale)
+    }
+}
+
+/// Go `VecEvalDecimal` over one expression node, restricted to the shapes
+/// whose row evaluation is `ops::decimal_binary`'s exact fast arithmetic:
+/// integer and decimal columns, strict integer and decimal constants, and
+/// `+`/`-`/`*` nodes with a decimal result type over them where at least
+/// one argument is a decimal (an integer-only node is integer arithmetic).
+/// `None` means the shape is not covered or a value left the `i128` fast
+/// path; the caller then evaluates the whole column row by row.
+fn vec_eval_decimal(
+    expression: &Expression,
+    input: &Chunk,
+    physical: &[usize],
+) -> Option<Vec<Option<DecimalValue>>> {
+    use tidb_datatype::FieldTypeCode;
+    let field_type = expression.static_type()?;
+    let is_int = matches!(
+        field_type.code(),
+        FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Year
+    );
+    let is_decimal = field_type.code() == FieldTypeCode::NewDecimal;
+    if !is_int && !is_decimal {
+        return None;
+    }
+    let signed = !field_type.is_unsigned();
+    match expression {
+        Expression::Column(column) => {
+            let index = usize::try_from(column.index).ok()?;
+            if index >= input.num_cols() {
+                return None;
+            }
+            let column = input.column(index);
+            if is_int && column.type_size() == 8 {
+                Some(
+                    physical
+                        .iter()
+                        .map(|&row| {
+                            (!column.is_null(row)).then(|| {
+                                let bits = column.get_int64(row);
+                                DecimalValue::from_integer(if signed {
+                                    crate::coerce::Integer::Signed(bits)
+                                } else {
+                                    crate::coerce::Integer::Unsigned(bits as u64)
+                                })
+                            })
+                        })
+                        .collect(),
+                )
+            } else if is_decimal && column.type_size() == tidb_chunk::column::MY_DECIMAL_STRUCT_SIZE
+            {
+                physical
+                    .iter()
+                    .map(|&row| {
+                        if column.is_null(row) {
+                            Some(None)
+                        } else {
+                            DecimalValue::from_my_decimal(&column.get_my_decimal(row)).map(Some)
+                        }
+                    })
+                    .collect()
+            } else {
+                None
+            }
+        }
+        Expression::Constant(constant) => {
+            let value = match constant.literal_value()? {
+                Datum::Null => None,
+                Datum::Int(value) if is_int => Some(DecimalValue::from_integer(if signed {
+                    crate::coerce::Integer::Signed(*value)
+                } else {
+                    crate::coerce::Integer::Unsigned(*value as u64)
+                })),
+                Datum::UInt(value) if is_int => Some(DecimalValue::from_integer(
+                    crate::coerce::Integer::Unsigned(*value),
+                )),
+                Datum::Decimal(value) if is_decimal => {
+                    Some(DecimalValue::from_my_decimal(&value.to_my_decimal().ok()?)?)
+                }
+                _ => return None,
+            };
+            Some(vec![value; physical.len()])
+        }
+        Expression::ScalarFunction(function) => {
+            if !is_decimal {
+                return None;
+            }
+            vec_eval_decimal_function(function, input, physical)
+        }
+        Expression::CorrelatedColumn(_) => None,
+    }
+}
+
+/// The `+`/`-`/`*` node of [`vec_eval_decimal`].
+fn vec_eval_decimal_function(
+    function: &ScalarFunction,
+    input: &Chunk,
+    physical: &[usize],
+) -> Option<Vec<Option<DecimalValue>>> {
+    use tidb_datatype::FieldTypeCode;
+    {
+        {
+            if function.args.len() != 2 {
+                return None;
+            }
+            let op = match binary_op_for_name(function.func_name.lowercase()) {
+                Some(op @ (BinaryOp::Plus | BinaryOp::Minus | BinaryOp::Mul)) => op,
+                _ => return None,
+            };
+            // `eval_binary_full` reaches `decimal_binary` only when an
+            // operand is a decimal; two integers are integer arithmetic.
+            let decimal_argument = function.args.iter().any(|argument| {
+                argument
+                    .static_type()
+                    .is_some_and(|ty| ty.code() == FieldTypeCode::NewDecimal)
+            });
+            if !decimal_argument {
+                return None;
+            }
+            let lhs = vec_eval_decimal(&function.args[0], input, physical)?;
+            let rhs = vec_eval_decimal(&function.args[1], input, physical)?;
+            lhs.into_iter()
+                .zip(rhs)
+                .map(|(left, right)| match (left, right) {
+                    (Some(left), Some(right)) => match op {
+                        BinaryOp::Plus => left.add(right),
+                        BinaryOp::Minus => left.sub(right),
+                        _ => left.mul(right),
+                    }
+                    .map(Some),
+                    _ => Some(None),
+                })
+                .collect()
+        }
+    }
+}
+
+impl ScalarFunction {
+    /// Go `builtinArithmetic{Plus,Minus,Multiply}DecimalSig.vecEvalDecimal`:
+    /// appends this expression's value for every row of `input` to column
+    /// `output_index` of `output`, column-wise. Returns `Ok(false)` with
+    /// nothing appended when the shape is not covered (see
+    /// [`vec_eval_decimal`]); the appended cells are the ones the row
+    /// evaluator would append through `Chunk::append_datum`.
+    pub(crate) fn vec_eval_decimal_arithmetic(
+        &self,
+        input: &Chunk,
+        output: &mut Chunk,
+        output_index: usize,
+    ) -> Result<bool, EvalError> {
+        if !self
+            .get_static_type()
+            .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::NewDecimal)
+        {
+            return Ok(false);
+        }
+        let rows = input.num_rows();
+        let physical: Vec<usize> = (0..rows).map(|row| input.get_row(row).idx()).collect();
+        let Some(values) = vec_eval_decimal_function(self, input, &physical) else {
+            return Ok(false);
+        };
+        let mut cells = Vec::with_capacity(rows);
+        for value in values {
+            match value {
+                Some(value) => match value.to_my_decimal() {
+                    Some(cell) => cells.push(Some(cell)),
+                    None => return Ok(false),
+                },
+                None => cells.push(None),
+            }
+        }
+        for cell in &cells {
+            match cell {
+                Some(cell) => output.append_my_decimal(output_index, cell),
+                None => output.append_null(output_index),
+            }
+        }
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
