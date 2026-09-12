@@ -70,8 +70,8 @@ fn a_predicate_reaches_every_union_all_term() {
     );
 }
 
-/// A term whose projection defines the column as a constant folds to Go's
-/// zero-row `TableDual`, and the other term still filters normally.
+/// A term whose projection defines the column as a constant is eliminated by
+/// Go's `EliminateUnionAllDualItem`; the surviving term still filters normally.
 #[test]
 fn a_constant_term_folds_to_a_table_dual() {
     let mut session = fixture();
@@ -80,10 +80,7 @@ fn a_constant_term_folds_to_a_table_dual() {
         "explain select * from (select a, 0 c from u union all select a, b from u) x where c > 0",
     );
     let text = rows.join("\n");
-    assert!(
-        text.contains("TableDual"),
-        "`0 > 0` is const-false, so that term is a zero-row dual:\n{text}"
-    );
+    assert!(!text.contains("TableDual"), "Go removes the zero-row UNION term:\n{text}");
     assert!(
         text.contains("gt(test.u.b, 0)"),
         "the other term still filters on its own column:\n{text}"

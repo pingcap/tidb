@@ -338,7 +338,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .clone()
                     .expect("a union column is built with a type");
                 let src_type = ret_type_of(src_col);
-                if src_type.equal(&dst_type) {
+                // Go's BuildCastFunctionWithCheck folds casts whose source
+                // and target have the same EvalType (for example INT -> the
+                // UNION's BIGINT-shaped integer type). Comparing complete
+                // FieldType metadata here retained a redundant cast_signed,
+                // changing predicate pushdown and estRows.
+                if src_type.equal(&dst_type) || src_type.eval_type() == dst_type.eval_type() {
                     exprs.push(Expression::Column(src_col.clone()));
                 } else {
                     // `BuildCastFunction4Union` carries Go's `inUnion` flag
