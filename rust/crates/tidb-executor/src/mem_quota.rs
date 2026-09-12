@@ -429,17 +429,26 @@ impl SessionMemory {
     /// retaining the connection's accumulated cursor bytes.
     #[must_use]
     pub fn statement(&self) -> StatementMemory {
-        self.statement_with_arbitration(Some(false), 0)
+        self.statement_with_arbitration(Some(false), 0, "")
     }
 
     /// Starts one statement with its session-local global-memory-arbitration
     /// policy. `None` is Go's `tidb_mem_arbitrator_wait_averse=nolimit`: the
     /// statement deliberately bypasses the process arbitrator.
+    /// Whether statements register with the process memory arbitrator
+    /// (Go: `GlobalMemArbitrator() != nil && mode != disable`).
+    pub fn arbitrator_enabled(&self) -> bool {
+        self.config.lock().unwrap().arbitrator.as_ref().is_some_and(|arbitrator| {
+            arbitrator.work_mode() != tidb_util::memory::ArbitratorWorkMode::Disable
+        })
+    }
+
     #[must_use]
     pub fn statement_with_arbitration(
         &self,
         wait_averse: Option<bool>,
         reserve_size: i64,
+        digest_key: &str,
     ) -> StatementMemory {
         let connection_id = self.session.session_id.load(SeqCst);
         let config = self.config.lock().unwrap().clone();
@@ -469,6 +478,7 @@ impl SessionMemory {
                     tidb_util::memory::ArbitrationPriority::Medium,
                     wait_averse,
                     reserve_size.max(0),
+                    digest_key,
                 );
             }
         }
@@ -902,12 +912,12 @@ mod tests {
         let session = SessionMemory::new(4096, OomAction::Cancel, 98)
             .with_mem_arbitrator(Arc::clone(&arbitrator));
 
-        let bypass = session.statement_with_arbitration(None, 0);
+        let bypass = session.statement_with_arbitration(None, 0, "");
         bypass.operator_tracker(3).consume(8);
         assert!(arbitrator.find_root_pool(98).entry.is_none());
         bypass.finish_statement();
 
-        let reserved = session.statement_with_arbitration(Some(true), 64);
+        let reserved = session.statement_with_arbitration(Some(true), 64, "");
         let pool = arbitrator
             .find_root_pool(98)
             .entry

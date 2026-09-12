@@ -987,6 +987,23 @@ impl ConcurrentBudget {
         self.capacity.store(cap + extra, SeqCst);
         Ok(())
     }
+    /// Pulls `delta` more bytes from the pool and records them as capacity,
+    /// so [`Self::stop`] releases them (Go `growBigBudget` /
+    /// `reserveBigBudget`, which allocate on `upper.Pool` and then
+    /// `doSetBigBudgetCap`).
+    pub fn grow(&self, delta: i64) -> Result<(), PoolError> {
+        if delta <= 0 {
+            return Ok(());
+        }
+        let _g = self.mu.lock().unwrap();
+        self.pool.allocate(delta)?;
+        self.capacity.fetch_add(delta, SeqCst);
+        Ok(())
+    }
+    /// The pool this budget draws from.
+    pub fn pool(&self) -> &Arc<ResourcePool> {
+        &self.pool
+    }
 
     /// Go `PullFromUpstream`: non-blocking pull when out of capacity.
     pub fn pull_from_upstream(&self) -> Result<(), PoolError> {

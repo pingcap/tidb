@@ -186,7 +186,23 @@ impl ArbitrateHelper for TrackerArbitrationHelper {
 
 enum TrackerArbitrationBudget {
     Small { used: i64 },
-    Big { budget: Arc<ConcurrentBudget> },
+    Big(BigBudget),
+}
+
+/// Go `memArbitrator.budget.mu`: the statement's big budget. `used` is the
+/// bytes the statement holds (Go `bigUsed`), `capacity` what its root pool
+/// has been granted, and `grow_threshold` (95% of the capacity, Go's
+/// `bigB.Used`) the point past which the next grant is requested, so a
+/// statement asks the arbitrator a handful of times rather than once per
+/// chunk: each request is a round trip to the arbitrator thread, and on a
+/// saturated box each round trip costs a scheduler quantum (TPC-H Q21 spent
+/// 1.7 s of a 3.9 s query in 1,300 such waits when every shortfall was
+/// pulled exactly).
+struct BigBudget {
+    budget: Arc<ConcurrentBudget>,
+    used: i64,
+    capacity: i64,
+    grow_threshold: i64,
 }
 
 /// One statement's registration in the process memory arbitrator.
@@ -202,6 +218,11 @@ struct TrackerArbitration {
     helper: Arc<TrackerArbitrationHelper>,
     context: Arc<ArbitrationContext>,
     reserve_size: i64,
+    /// Go `digestID`: identifies the statement's digest profile, whose
+    /// recorded peak seeds the next run's reservation.
+    digest_id: u64,
+    /// Go `prevMaxMem`: the digest profile's recorded peak, when known.
+    prev_max_mem: i64,
     budget: Mutex<TrackerArbitrationBudget>,
 }
 
@@ -241,16 +262,73 @@ impl TrackerArbitration {
             return false;
         };
         let budget = Arc::new(ConcurrentBudget::new(Arc::clone(entry.pool())));
-        if self.reserve_size > 0 && budget.reserve(self.reserve_size).is_err() {
+        let mut big = BigBudget {
+            budget,
+            used,
+            capacity: 0,
+            grow_threshold: 0,
+        };
+        // Go `intoBigBudget`: the explicit reservation, else the digest
+        // profile's previous peak, else the arbitrator's suggested initial
+        // capacity once the statement is past the small-pool limit.
+        let reserved = if self.reserve_size > 0 {
+            self.reserve_big_budget(&mut big, self.reserve_size)
+        } else if self.prev_max_mem > 0 {
+            self.reserve_big_budget(&mut big, self.prev_max_mem)
+        } else if used > self.arbitrator.pool_alloc_profile().small_pool_limit {
+            match self.arbitrator.suggest_pool_init_cap() {
+                0 => true,
+                init_cap => self.reserve_big_budget(&mut big, init_cap),
+            }
+        } else {
+            true
+        };
+        if !reserved {
             self.helper.stop(ArbitratorStopReason::StandardCancel);
             return false;
         }
-        if used > 0 && budget.consume_quota(Self::now_unix_sec(), used).is_err() {
+        if big.used > big.grow_threshold && !self.grow_big_budget(&mut big) {
             self.helper.stop(ArbitratorStopReason::StandardCancel);
             return false;
         }
         self.helper.heap_inuse.store(used, SeqCst);
-        *state = TrackerArbitrationBudget::Big { budget };
+        *state = TrackerArbitrationBudget::Big(big);
+        true
+    }
+
+    /// Go `reserveBigBudget`: grants `new_cap` with 5.3% headroom and sets
+    /// the grow threshold to 95% of the new capacity.
+    fn reserve_big_budget(&self, big: &mut BigBudget, new_cap: i64) -> bool {
+        let extra = (new_cap * 1053 / 1000)
+            .max(big.grow_threshold)
+            .max(big.capacity)
+            .max(big.used * 1053 / 1000)
+            - big.capacity;
+        if big.budget.grow(extra).is_err() {
+            return false;
+        }
+        big.capacity += extra;
+        big.grow_threshold = big.capacity * 95 / 100;
+        true
+    }
+
+    /// Go `growBigBudget`: when `used` passes the threshold, request enough
+    /// for `used * 2.718` (at least the pool's alignment, at most the
+    /// profile's maximum unit, never less than the shortfall).
+    fn grow_big_budget(&self, big: &mut BigBudget) -> bool {
+        if big.used <= big.grow_threshold {
+            return true;
+        }
+        let profile = self.arbitrator.pool_alloc_profile();
+        let align = big.budget.pool().alloc_align_size();
+        let mut extra = (((big.used * 2783) >> 10) - big.capacity).max(align);
+        extra = extra.min(profile.max_pool_alloc_unit);
+        extra = extra.max(big.used - big.capacity);
+        if big.budget.grow(extra).is_err() {
+            return false;
+        }
+        big.capacity += extra;
+        big.grow_threshold = (big.capacity * 95 / 100).max(big.used);
         true
     }
 
@@ -272,13 +350,14 @@ impl TrackerArbitration {
                     let _ = self.transition_to_big(&mut state);
                 }
             }
-            TrackerArbitrationBudget::Big { budget } => {
-                if budget.consume_quota(Self::now_unix_sec(), delta).is_err() {
+            TrackerArbitrationBudget::Big(big) => {
+                // Go `Tracker.Consume`: `addBigBudgetUsed(bs)`, and a grow
+                // only when a positive delta crosses the threshold.
+                big.used += delta;
+                if delta > 0 && big.used > big.grow_threshold && !self.grow_big_budget(big) {
                     self.helper.stop(ArbitratorStopReason::StandardCancel);
                 }
-                self.helper
-                    .heap_inuse
-                    .store(budget.used.load(SeqCst), SeqCst);
+                self.helper.heap_inuse.store(big.used, SeqCst);
             }
         }
     }
@@ -293,8 +372,17 @@ impl TrackerArbitration {
                     let _ = small.budget.consume_quota(Self::now_unix_sec(), -used);
                 });
             }
-            TrackerArbitrationBudget::Big { budget } => {
-                budget.stop();
+            TrackerArbitrationBudget::Big(big) => {
+                // Go `reset`: a clean finish records the statement's peak in
+                // its digest profile, which seeds the next run's reservation.
+                if !exception && self.digest_id != 0 {
+                    self.arbitrator.update_digest_profile_cache(
+                        self.digest_id,
+                        max_consumed,
+                        Self::now_unix_sec(),
+                    );
+                }
+                big.budget.stop();
                 self.arbitrator
                     .reset_root_pool_by_id(self.uid, max_consumed, !exception);
             }
@@ -391,11 +479,26 @@ impl Tracker {
         priority: ArbitrationPriority,
         wait_averse: bool,
         reserve_size: i64,
+        digest_key: &str,
     ) -> bool {
         let uid = self.session_id();
         if uid == 0 {
             return false;
         }
+        // Go `InitMemArbitrator`: the digest profile's recorded peak seeds
+        // the reservation unless an explicit reservation was requested.
+        let digest_id = if digest_key.is_empty() {
+            0
+        } else {
+            super::arbitrator_utils::hash_str(digest_key)
+        };
+        let prev_max_mem = if reserve_size == 0 && digest_id != 0 {
+            arbitrator
+                .get_digest_profile_cache(digest_id, TrackerArbitration::now_unix_sec())
+                .unwrap_or(0)
+        } else {
+            0
+        };
         let helper = Arc::new(TrackerArbitrationHelper {
             killer: Arc::clone(&killer),
             heap_inuse: AtomicI64::new(0),
@@ -413,6 +516,8 @@ impl Tracker {
             helper,
             context,
             reserve_size: reserve_size.max(0),
+            digest_id,
+            prev_max_mem,
             budget: Mutex::new(TrackerArbitrationBudget::Small { used: 0 }),
         });
 
@@ -420,7 +525,9 @@ impl Tracker {
         if let Some(previous) = previous {
             previous.finish(true, 0);
         }
-        if reserve_size > 0 {
+        if reserve_size > 0
+            || prev_max_mem > registration.arbitrator.pool_alloc_profile().small_pool_limit
+        {
             let mut state = lock_unpoison(&registration.budget);
             let _ = registration.transition_to_big(&mut state);
         }

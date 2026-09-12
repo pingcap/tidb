@@ -294,6 +294,7 @@ impl Session {
         let memory = self.session_memory.statement_with_arbitration(
             snapshot.arbitrator_wait_averse,
             snapshot.arbitrator_reserved,
+            &self.current_sql_digest_key,
         );
         crate::ResultMaterializationAuthority::new(
             memory,

@@ -462,6 +462,13 @@ pub struct Session {
     /// statement tracker after execution; this slot lets the result keep the
     /// same tracker the executor used.
     statement_result_authority: std::cell::RefCell<Option<ResultMaterializationAuthority>>,
+    /// Go `digestKey := normalizedSQL` (`session.go`, the arbitrator
+    /// registration): the current statement's normalized text, which keys
+    /// the memory arbitrator's digest profile so a repeat of the same
+    /// statement reserves its previous peak up front. Go normalizes every
+    /// statement for the statement summary; this node has no other consumer
+    /// yet, so it is computed only while the arbitrator is enabled.
+    current_sql_digest_key: String,
     /// The open transaction, if any.
     txn: Option<Transaction>,
     /// Go `LazyTxn.writeSLI`: transaction write-throughput state shared by
@@ -809,6 +816,7 @@ impl Session {
                 0,
             ),
             statement_result_authority: std::cell::RefCell::new(None),
+            current_sql_digest_key: String::new(),
             txn: None,
             write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),

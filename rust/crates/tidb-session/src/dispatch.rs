@@ -1663,6 +1663,11 @@ impl Session {
         mut select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
+        self.current_sql_digest_key = if self.session_memory.arbitrator_enabled() {
+            crate::binding::normalize_with_db(&stmt, self.current_database()).0
+        } else {
+            String::new()
+        };
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
         // its one row lands in the named user variables. Intercepted at this
         // one door so text and prepared spellings share the rules: more than
