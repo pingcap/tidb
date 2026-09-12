@@ -41,6 +41,14 @@ pub struct ClusterLoadStatsStatement {
 /// Parses a statement only when it is LOAD STATS.
 pub fn prepare_cluster_load_stats(sql: &str) -> Option<ClusterLoadStatsStatement> {
     let statement = tidb_parser::parse(sql).ok()?;
+    prepare_cluster_load_stats_parsed(&statement)
+}
+
+/// [`prepare_cluster_load_stats`] over a statement the caller already parsed.
+#[must_use]
+pub fn prepare_cluster_load_stats_parsed(
+    statement: &tidb_ast::Stmt,
+) -> Option<ClusterLoadStatsStatement> {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         return None;
     };

@@ -33,17 +33,6 @@ use tidb_ast::{DdlStmt, DmlStmt, Stmt};
 
 use crate::privilege::GlobalPriv;
 
-/// What a prepared statement's privilege requests were derived under: the
-/// text, the database its unqualified names resolve against and the
-/// `sql_mode` it was parsed with. Go keeps the derived list on the
-/// `PlanCacheStmt` itself; this key stands in for that identity.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct PreparedPrivilegeKey {
-    pub(crate) sql: String,
-    pub(crate) current_db: String,
-    pub(crate) sql_mode: tidb_mysql::SqlMode,
-}
-
 /// One `visitInfo` entry: a privilege demanded on one table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TablePrivilegeRequest {

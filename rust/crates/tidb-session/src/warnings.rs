@@ -250,6 +250,15 @@ impl Session {
         Ok(stmt)
     }
 
+    /// [`Self::parse_at_statement_boundary`]'s boundary for a text statement
+    /// the front end already parsed: Go parses a command once
+    /// (`session.ParseSQL`) and every later step reads that node.
+    pub(crate) fn begin_text_statement_boundary(&mut self, stmt: &Stmt) {
+        self.prepared_params = None;
+        let previous = std::mem::take(&mut self.warnings);
+        self.install_statement_warning_state(stmt, previous);
+    }
+
     /// Starts a statement boundary for an AST retained by PREPARE.
     pub(crate) fn begin_prepared_statement_boundary(
         &mut self,

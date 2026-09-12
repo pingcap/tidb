@@ -107,12 +107,21 @@ fn window_partitions_follow_the_partition_key_collation() {
 fn window_frame_shape_is_refused_with_gos_own_code() {
     let mut session = ci_session();
     for (bounds, code, reason) in [
-        ("UNBOUNDED FOLLOWING AND CURRENT ROW", 3584,
-         "frame start cannot be UNBOUNDED FOLLOWING."),
-        ("CURRENT ROW AND UNBOUNDED PRECEDING", 3585,
-         "frame end cannot be UNBOUNDED PRECEDING."),
-        ("1 FOLLOWING AND CURRENT ROW", 3586,
-         "frame start or end is negative, NULL or of non-integral type"),
+        (
+            "UNBOUNDED FOLLOWING AND CURRENT ROW",
+            3584,
+            "frame start cannot be UNBOUNDED FOLLOWING.",
+        ),
+        (
+            "CURRENT ROW AND UNBOUNDED PRECEDING",
+            3585,
+            "frame end cannot be UNBOUNDED PRECEDING.",
+        ),
+        (
+            "1 FOLLOWING AND CURRENT ROW",
+            3586,
+            "frame start or end is negative, NULL or of non-integral type",
+        ),
     ] {
         let error = session.run(&format!(
             "SELECT SUM(v) OVER named_frame FROM w1 WINDOW named_frame AS (ORDER BY id ROWS BETWEEN {bounds})"

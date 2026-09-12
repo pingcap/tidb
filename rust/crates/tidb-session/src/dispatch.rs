@@ -1117,7 +1117,19 @@ impl Session {
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
         let stmt = self.parse_at_statement_boundary(sql)?;
-        self.execute_parsed_statement(sql, stmt, false)
+        self.execute_parsed_statement(sql, stmt, None)
+    }
+
+    /// [`Self::execute_statement`] over the statement a front end already
+    /// parsed from `sql` (Go `ExecuteStmt` takes the `ast.StmtNode`
+    /// `ParseSQL` produced; nothing parses the text again).
+    pub(crate) fn execute_statement_owned(
+        &mut self,
+        stmt: Stmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        self.begin_text_statement_boundary(&stmt);
+        self.execute_parsed_statement(sql, stmt, None)
     }
 
     /// Executes a statement tree already parsed and bound by the prepared
@@ -1127,18 +1139,22 @@ impl Session {
         &mut self,
         stmt: Stmt,
         sql: &str,
+        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
-        self.execute_prepared_ast(sql, stmt)
+        self.execute_prepared_ast(sql, stmt, privilege_requests)
     }
 
+    /// `privilege_requests` are the ones PREPARE derived for this statement
+    /// (Go `PlanCacheStmt.VisitInfos`, checked by `checkPreparedPriv`).
     pub(crate) fn execute_prepared_ast(
         &mut self,
         sql: &str,
         mut stmt: Stmt,
+        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
         let parameters = tidb_executor::bound_parameter_values(&mut stmt)?;
         self.begin_prepared_statement_boundary(&stmt, parameters);
-        self.execute_parsed_statement(sql, stmt, true)
+        self.execute_parsed_statement(sql, stmt, Some(privilege_requests))
     }
 
     /// Executes the subset Go serves through a prepared `PointGetPlan`. The
@@ -1186,12 +1202,24 @@ impl Session {
     /// Executes a prepared SELECT through the ordinary statement and
     /// executor funnel, offering the retained physical tree at the same seam
     /// where a fresh plan is handed to the executor builder.
-    pub fn execute_prepared_select(
+    /// Runs a cached prepared SELECT for the definition PREPARE retained;
+    /// its privilege requests are the ones derived then (Go
+    /// `checkPreparedPriv` on `PlanCacheStmt.VisitInfos`).
+    pub fn execute_prepared_select_for(
+        &mut self,
+        execution: &tidb_executor::PreparedSelectExecution,
+        prepared: &crate::PreparedAst,
+    ) -> Result<StmtOutput, DriverError> {
+        self.execute_prepared_select(execution, prepared.sql(), prepared.privilege_requests())
+    }
+
+    pub(crate) fn execute_prepared_select(
         &mut self,
         execution: &tidb_executor::PreparedSelectExecution,
         sql: &str,
+        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
-        self.execute_prepared_select_internal(execution, sql, false)
+        self.execute_prepared_select_internal(execution, sql, privilege_requests, false)
             .map(|(output, _)| output)
     }
 
@@ -1199,6 +1227,7 @@ impl Session {
         &mut self,
         execution: &tidb_executor::PreparedSelectExecution,
         sql: &str,
+        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
         capture_authority: bool,
     ) -> Result<(StmtOutput, Option<crate::ResultMaterializationAuthority>), DriverError> {
         let mut used = false;
@@ -1217,7 +1246,7 @@ impl Session {
                     session.execute_parsed_statement_with_select_plan(
                         sql,
                         statement.clone(),
-                        true,
+                        Some(privilege_requests),
                         physical,
                         execution.schema_version(),
                         &mut used,
@@ -1237,10 +1266,21 @@ impl Session {
     /// funnel, then publishes whether Go's complete cache key was reused.
     /// Cache hits and misses therefore share privilege checks, metadata locks,
     /// resource-group selection, statement context, and the DML executor.
-    pub fn execute_cached_prepared_dml(
+    /// Runs a cached prepared DML for the definition PREPARE retained (see
+    /// [`Self::execute_prepared_select_for`]).
+    pub fn execute_cached_prepared_dml_for(
+        &mut self,
+        execution: &tidb_executor::PreparedDmlExecution,
+        prepared: &crate::PreparedAst,
+    ) -> Result<StmtOutput, DriverError> {
+        self.execute_cached_prepared_dml(execution, prepared.sql(), prepared.privilege_requests())
+    }
+
+    pub(crate) fn execute_cached_prepared_dml(
         &mut self,
         execution: &tidb_executor::PreparedDmlExecution,
         sql: &str,
+        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
         let output = execution
             .with_plan(|statement, physical| {
@@ -1257,7 +1297,7 @@ impl Session {
                     session.execute_parsed_statement_with_dml_plan(
                         sql,
                         statement.clone(),
-                        true,
+                        Some(privilege_requests),
                         physical,
                     )
                 })
@@ -1438,14 +1478,14 @@ impl Session {
     /// the stale execution itself (its statement is already stripped and its
     /// transaction already open).
     fn execute_parsed_statement_no_as_of(&mut self, stmt: Stmt) -> Result<StmtOutput, DriverError> {
-        self.execute_parsed_statement_inner("", stmt, false, None, None)
+        self.execute_parsed_statement_inner("", stmt, None, None, None)
     }
 
     fn execute_parsed_statement(
         &mut self,
         sql: &str,
         stmt: Stmt,
-        prepared: bool,
+        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
     ) -> Result<StmtOutput, DriverError> {
         self.execute_parsed_statement_with_optional_physical_plan(sql, stmt, prepared, None, None)
     }
@@ -1454,7 +1494,7 @@ impl Session {
         &mut self,
         sql: &str,
         stmt: Stmt,
-        prepared: bool,
+        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
         physical: &mut tidb_planner::physical::PhysicalPlan,
         schema_version: u64,
         used: &mut bool,
@@ -1476,7 +1516,7 @@ impl Session {
         &mut self,
         sql: &str,
         stmt: Stmt,
-        prepared: bool,
+        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
         physical: &mut tidb_planner::physical::PhysicalPlan,
     ) -> Result<StmtOutput, DriverError> {
         self.execute_parsed_statement_with_optional_physical_plan(
@@ -1492,7 +1532,7 @@ impl Session {
         &mut self,
         sql: &str,
         mut stmt: Stmt,
-        prepared: bool,
+        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
         select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
@@ -1619,7 +1659,7 @@ impl Session {
         &mut self,
         sql: &str,
         mut stmt: Stmt,
-        prepared: bool,
+        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
         mut select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
@@ -1688,7 +1728,8 @@ impl Session {
         // `parameterize_non_prepared_select` (Go's
         // `GetNonPrepPlanCacheUnsupportedCounter`), which distinguishes
         // counted checker-walk refusals from clause-level fast-check ones.
-        let non_prepared = (!prepared)
+        let non_prepared = prepared
+            .is_none()
             .then(|| self.parameterize_non_prepared_select(&stmt))
             .flatten();
         // `apply_schema_stmt` dispatches administrative statements early.
@@ -1763,7 +1804,7 @@ impl Session {
         // optimizing the replacement tree. Prepared execution has already
         // performed this match in order to construct its binding-aware cache
         // key, so only an ordinary statement matches here.
-        let binding_sql = if !prepared && matches!(stmt, Stmt::Query(_) | Stmt::Dml(_)) {
+        let binding_sql = if prepared.is_none() && matches!(stmt, Stmt::Query(_) | Stmt::Dml(_)) {
             if let Some((bound, bind_sql)) = self.bind_statement_hints_with_sql(&stmt) {
                 self.apply_set_var_hints(&bound)?;
                 stmt = bound;
@@ -1826,8 +1867,8 @@ impl Session {
         // specific privileges instead. A prepared EXECUTE checks the
         // requests derived once for its text (Go `checkPreparedPriv` on the
         // stored `VisitInfos`).
-        if prepared {
-            self.require_prepared_statement_table_privileges(sql, &stmt)?;
+        if let Some(requests) = prepared {
+            self.check_table_privilege_requests(requests)?;
         } else {
             self.require_statement_table_privileges(&stmt)?;
         }
@@ -1942,7 +1983,8 @@ impl Session {
                 // `tidb_enable_non_prepared_plan_cache_for_dml` switch, true
                 // by default) and sends the retained marker-bearing statement
                 // through the same plan cache as PREPARE.
-                let non_prepared_dml = (!prepared)
+                let non_prepared_dml = prepared
+                    .is_none()
                     .then(|| self.parameterize_non_prepared_dml(&stmt))
                     .flatten();
                 if let Some(parameterized) = non_prepared_dml.as_ref() {
@@ -1956,7 +1998,15 @@ impl Session {
                         &effective_parameterized,
                         binding_sql.as_deref(),
                     ) {
-                        return self.execute_cached_prepared_dml(&execution, sql);
+                        // A non-prepared statement's plan-cache hit carries
+                        // the requests its own walk derived, as Go's
+                        // non-prepared cache path hands `checkPreparedPriv`
+                        // the statement's `VisitInfos`.
+                        let requests = crate::table_privilege::required_table_privileges(
+                            &stmt,
+                            &self.current_db,
+                        );
+                        return self.execute_cached_prepared_dml(&execution, sql, &requests);
                     }
                 }
                 match &**dml {

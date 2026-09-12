@@ -175,7 +175,11 @@ fn cluster_create_default_errors_cross_the_schema_route_unchanged() {
             "Invalid default value for 'ts'",
         ),
     ] {
-        let Err(error) = session.schema_route(sql) else {
+        let parsed = session
+            .session
+            .parse_statement(sql)
+            .expect("the CREATE TABLE text parses");
+        let Err(error) = session.schema_route(&parsed) else {
             panic!("the invalid default must be refused before catalog publication: {sql}");
         };
         assert_eq!((error.code, error.state), (code, state), "{sql}");

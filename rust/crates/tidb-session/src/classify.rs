@@ -349,14 +349,20 @@ impl Session {
     /// into this route merely because one resolved name is temporary.
     pub fn is_local_temporary_create(&mut self, sql: &str) -> Result<bool, DriverError> {
         let stmt = self.parse(sql)?;
-        let Stmt::Ddl(ddl) = &stmt else {
-            return Ok(false);
+        Ok(Self::is_local_temporary_create_parsed(&stmt))
+    }
+
+    /// [`Self::is_local_temporary_create`] over an already-parsed statement.
+    #[must_use]
+    pub fn is_local_temporary_create_parsed(stmt: &Stmt) -> bool {
+        let Stmt::Ddl(ddl) = stmt else {
+            return false;
         };
-        Ok(matches!(
+        matches!(
             ddl.as_ref(),
             tidb_ast::DdlStmt::CreateTable(create)
                 if create.temporary == tidb_ast::CreateTableTemporary::Local
-        ))
+        )
     }
 
     /// Which persistent state `sql` would change: the stored schema (Go's

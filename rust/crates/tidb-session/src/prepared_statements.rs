@@ -81,6 +81,9 @@ pub(crate) struct PreparedStatement {
     /// Go `PlanCacheStmt.PreparedAst`: the one PREPARE-time parse cloned and
     /// bound on every EXECUTE. No execute reparses restored SQL.
     statement: Stmt,
+    /// Go `PlanCacheStmt.VisitInfos`: derived once at PREPARE against the
+    /// database current then, checked by every EXECUTE.
+    privilege_requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
     /// Go `PlanCacheStmt.ParamCount`: the number of `?` markers the statement
     /// carries, which fixes exactly how many values an `EXECUTE` must supply.
     param_count: usize,
@@ -201,11 +204,14 @@ impl Session {
         } else {
             text
         };
+        let privilege_requests =
+            crate::table_privilege::required_table_privileges(&statement, self.current_database());
         self.prepared_statements.insert(
             name.to_owned(),
             PreparedStatement {
                 sql,
                 statement,
+                privilege_requests,
                 param_count,
                 limit_markers,
                 cacheable,
@@ -300,7 +306,11 @@ impl Session {
                     binding_sql.as_deref(),
                 )
             }) {
-                let result = self.execute_prepared_select(&cached, &prepared.sql);
+                let result = self.execute_prepared_select(
+                    &cached,
+                    &prepared.sql,
+                    &prepared.privilege_requests,
+                );
                 if binding_matched {
                     self.found_in_binding = true;
                 }
@@ -314,7 +324,11 @@ impl Session {
                     binding_sql.as_deref(),
                 )
             }) {
-                let result = self.execute_cached_prepared_dml(&cached, &prepared.sql);
+                let result = self.execute_cached_prepared_dml(
+                    &cached,
+                    &prepared.sql,
+                    &prepared.privilege_requests,
+                );
                 if binding_matched {
                     self.found_in_binding = true;
                 }
@@ -327,7 +341,11 @@ impl Session {
         // dispatch every other statement does -- including DDL's implicit
         // commit, which is why `EXECUTE` of a prepared `CREATE TABLE` works
         // (captured).
-        let result = self.run_parsed_bound_owned_with_sql(bound, &prepared.sql);
+        let result = self.run_parsed_bound_owned_with_requests(
+            bound,
+            &prepared.sql,
+            &prepared.privilege_requests,
+        );
         if binding_matched {
             self.found_in_binding = true;
         }

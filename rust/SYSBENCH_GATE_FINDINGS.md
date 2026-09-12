@@ -992,3 +992,28 @@ Known residual divergences, by decision:
   `LockedWithConflict` (pre-existing, `mvcc_store.rs` header), so embedded
   tests cannot exercise the fair-locking retry path; the real-TiKV tests for
   it stay `#[ignore]` behind `FAIR_LOCKING_PD_ADDR`.
+
+### Removed: logic this port had that Go does not (2026-09-12)
+
+The rule for the campaign was Go parity. Three of its constructs were
+Rust-only mechanisms with no Go counterpart -- caches and shortcuts that
+compensated for a structural difference instead of removing it. They are
+gone, and the structure now matches Go's:
+
+| Removed | What Go does instead | What replaced it |
+| --- | --- | --- |
+| The plan-cache equality shortcut (`try_rebuild_equality_point`, `try_rebuild_equality_batch`, `equality_point_range`): a second range builder that picked its path by condition SHAPE. | `buildRangesForPointGet` (`plan_cache_rebuild.go:263`) picks by plan ORIGIN: a point get carrying access conditions -- the only kind this port builds, it has no `TryFastPlan` -- always runs the detacher. | The detacher is the one range builder. The three rebuild tests (composite equalities, batch DNF, collated string key) now prove the detacher's results. The cheap path Go has for fast-plan point gets (`IndexConstants` / `convertConstant2Datum`) is a fast-plan port, not a shortcut on the CBO shape. |
+| The per-thread parse memo (`ParsedStatementMemo`, `LAST_PARSED_STATEMENT`, the 16 KiB retention cap, the per-command release). | `session.ParseSQL` parses a command once and `ExecuteStmt` and every classifier read that one `ast.StmtNode`. | The node door (`execute_write`, `execute`, `prepare_general`) parses once and hands the node to routing (`schema_route(&stmt)`), the `SET` door, the kind and resource-group questions, the prelock keys and the session run (`Session::run_parsed` / `run_with_columns_parsed`, `prepare_ast_parsed`). The five text-taking admission helpers in `tidb-exec` and the transaction-control classifier gained `_parsed` forms; their text forms parse and delegate, for callers outside the door. One command is now lexed and parsed once, where the memo had hidden up to eight parses (`statement_stored_state_change`, the routed admissions, `apply_set`, `statement_kind`, `statement_resource_group_sql`, the prelock keys, the run). |
+| The text-keyed prepared-privilege cache (`PreparedPrivilegeKey`, `PREPARED_PRIVILEGE_CACHE_LIMIT = 256`, wholesale clear on overflow). | `GeneratePlanCacheStmtWithAST` derives `VisitInfos` at PREPARE and stores them on the `PlanCacheStmt`; `checkPreparedPriv` checks that stored list on every EXECUTE against the live grants. | Both prepared objects carry their requests: `PreparedAst` (binary protocol) and `PreparedStatement` (text `PREPARE`), derived at PREPARE against the database current then. The execute seams take the requests from the object (`run_parsed_bound_owned_for`, `execute_prepared_select_for`, `execute_cached_prepared_dml_for`); a non-prepared plan-cache hit hands over the list its own walk derived, as Go's non-prepared cache path does. No cap, no eviction, no text key. |
+
+Kept, because they are the placement of the same work rather than a second
+path: the single-chunk sort and HashAgg folds (the same partition and fold
+functions, run on the fetching thread instead of a pool lane, with the spill
+and tracker steps the review restored) and `StaticSysVarIndex` (the typed
+read Go does through a field, with the registry index resolved once).
+
+Noted for a later pass, pre-existing and outside this change: the text
+`EXECUTE` path clones the whole `PreparedStatement` (AST and plans) on every
+execute where Go holds a pointer; the legacy `real_tikv_node` session arms
+fair locking from the bootstrap value because that node has no
+session-variable store.

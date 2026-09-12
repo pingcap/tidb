@@ -431,11 +431,9 @@ fn modifying_virtual_generated_expression_recomputes_existing_rows() {
 #[test]
 fn modifying_a_generated_column_with_dependents_is_refused() {
     let mut session = chain();
-    assert!(
-        session
-            .run("ALTER TABLE t1 MODIFY COLUMN b BIGINT AS (a+1) VIRTUAL")
-            .is_err()
-    );
+    assert!(session
+        .run("ALTER TABLE t1 MODIFY COLUMN b BIGINT AS (a+1) VIRTUAL")
+        .is_err());
 }
 
 // A generated column's expression is evaluated under the SQL MODE of the

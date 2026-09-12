@@ -105,7 +105,9 @@ fn prepared_server_result_retains_the_executing_statement_authority() {
                SET_VAR(tidb_max_chunk_size=64) */ 1";
     let prepared = session.prepare_ast(sql).unwrap();
     let bound = prepared.bind(&[]).unwrap();
-    let output = session.run_parsed_bound_owned_with_sql(bound, sql).unwrap();
+    let output = session
+        .run_parsed_bound_owned_for(bound, &prepared)
+        .unwrap();
     assert!(matches!(output, StmtOutput::Rows { .. }));
 
     // The cluster server asks for the authority after the session call has

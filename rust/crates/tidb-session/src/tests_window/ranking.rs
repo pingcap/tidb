@@ -442,7 +442,9 @@ fn window_ntile_argument_domain() {
         ("LAG(id, NULL)", "lag"),
     ] {
         let error = session
-            .run(&format!("SELECT {call} OVER (ORDER BY id) FROM ranking_live"))
+            .run(&format!(
+                "SELECT {call} OVER (ORDER BY id) FROM ranking_live"
+            ))
             .unwrap_err()
             .to_mysql_error();
         assert_eq!(error.code, 1210, "{call}");

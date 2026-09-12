@@ -503,10 +503,18 @@ impl Session {
         sql: &str,
     ) -> Result<Option<(String, String, bool, tidb_executor::ViewDef)>, DriverError> {
         let stmt = self.parse(sql)?;
+        self.resolve_cluster_view_parsed(&stmt)
+    }
+
+    /// [`Self::resolve_cluster_view`] over an already-parsed statement.
+    pub fn resolve_cluster_view_parsed(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<(String, String, bool, tidb_executor::ViewDef)>, DriverError> {
         let tidb_ast::Stmt::Ddl(ddl) = stmt else {
             return Ok(None);
         };
-        let tidb_ast::DdlStmt::CreateView(create) = &*ddl else {
+        let tidb_ast::DdlStmt::CreateView(create) = &**ddl else {
             return Ok(None);
         };
         let create = create.clone();

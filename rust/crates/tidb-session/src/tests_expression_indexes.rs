@@ -336,9 +336,15 @@ fn an_inline_expression_index_is_maintained_too() {
     session.run("INSERT INTO t2 VALUES (1),(2)").unwrap();
     session.run("UPDATE t2 SET a = 8 WHERE a = 1").unwrap();
     admin_check(&mut session, "t2", "UPDATE");
-    assert_eq!(rows(&mut session, "SELECT a FROM t2 ORDER BY a"), [["2"], ["8"]]);
     assert_eq!(
-        rows(&mut session, "SELECT a FROM t2 FORCE INDEX(idx) WHERE a+1=9"),
+        rows(&mut session, "SELECT a FROM t2 ORDER BY a"),
+        [["2"], ["8"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT a FROM t2 FORCE INDEX(idx) WHERE a+1=9"
+        ),
         [["8"]]
     );
     assert_eq!(
@@ -532,7 +538,10 @@ fn a_column_an_expression_index_reads_cannot_be_renamed() {
         .run("ALTER TABLE fr RENAME COLUMN a TO A, ADD COLUMN c INT")
         .unwrap();
     assert_eq!(
-        code(&mut session, "ALTER TABLE fr RENAME COLUMN missing TO missing"),
+        code(
+            &mut session,
+            "ALTER TABLE fr RENAME COLUMN missing TO missing"
+        ),
         Some(1054)
     );
     // The duplicate-name and `_tidb_rowid` checks are captured as running
@@ -1280,9 +1289,14 @@ fn grouped_add_columns_validates_its_index_against_the_original_table() {
         assert_eq!(error.code, 1072, "{sql}");
         assert_eq!(error.message, "column does not exist: b", "{sql}");
         assert_eq!(show_create(&mut session, "grouped"), original);
-        assert_eq!(rows(&mut session, "SELECT * FROM grouped ORDER BY a"), [["1"], ["2"]]);
+        assert_eq!(
+            rows(&mut session, "SELECT * FROM grouped ORDER BY a"),
+            [["1"], ["2"]]
+        );
     }
-    session.run("ALTER TABLE grouped ADD (b INT DEFAULT 7, KEY ka(a))").unwrap();
+    session
+        .run("ALTER TABLE grouped ADD (b INT DEFAULT 7, KEY ka(a))")
+        .unwrap();
 
     assert_eq!(
         rows(&mut session, "SELECT a, b FROM grouped ORDER BY a"),

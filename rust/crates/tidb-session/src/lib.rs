@@ -705,8 +705,6 @@ pub struct Session {
     /// Privilege requests derived once per prepared text -- Go's
     /// `PlanCacheStmt.VisitInfos`, checked on every EXECUTE without
     /// re-walking the statement.
-    prepared_table_privileges:
-        HashMap<table_privilege::PreparedPrivilegeKey, Vec<table_privilege::TablePrivilegeRequest>>,
     /// This connection's registration in the server's process list, which the
     /// front end installs. `None` for a session with no server front; such a
     /// session still answers `SHOW PROCESSLIST` -- with the single row it can
@@ -871,7 +869,6 @@ impl Session {
             user_vars: Arc::default(),
             sequence_last_values: Arc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
-            prepared_table_privileges: HashMap::new(),
             process: None,
             has_process_priv: false,
             privileges: None,
@@ -1663,7 +1660,12 @@ impl Session {
                     binding_sql.as_deref(),
                 )
             }) {
-                let result = self.execute_prepared_select_internal(&cached, prepared.sql(), true);
+                let result = self.execute_prepared_select_internal(
+                    &cached,
+                    prepared.sql(),
+                    prepared.privilege_requests(),
+                    true,
+                );
                 // The nested statement boundary consumes the binding flag.
                 if binding_sql.is_some() {
                     self.found_in_binding = true;
@@ -1672,7 +1674,7 @@ impl Session {
             }
         }
         self.run_with_columns_using(prepared.sql(), true, |session| {
-            session.execute_prepared_ast(prepared.sql(), statement)
+            session.execute_prepared_ast(prepared.sql(), statement, prepared.privilege_requests())
         })
     }
 
@@ -1716,7 +1718,7 @@ impl Session {
         let values = vec![Datum::Null; prepared.parameter_count()];
         let statement = tidb_executor::bind_prepared_statement(prepared.statement(), &values)?;
         self.run_with_columns_using(prepared.sql(), false, |session| {
-            session.execute_prepared_ast(prepared.sql(), statement)
+            session.execute_prepared_ast(prepared.sql(), statement, prepared.privilege_requests())
         })
         .map(|(output, _)| output)
     }
@@ -1724,13 +1726,51 @@ impl Session {
     /// Runs an owned bound statement while reusing the prepared SQL text.
     /// Binary-protocol callers already have both values, so restoring the AST
     /// merely to obtain text would add work to every execute.
-    pub fn run_parsed_bound_owned_with_sql(
+    pub fn run_parsed_bound_owned_for(
+        &mut self,
+        bound: tidb_ast::Stmt,
+        prepared: &PreparedAst,
+    ) -> Result<StmtOutput, DriverError> {
+        self.run_parsed_bound_owned_with_requests(
+            bound,
+            prepared.sql(),
+            prepared.privilege_requests(),
+        )
+    }
+
+    /// [`Self::run_parsed_bound_owned_for`] with the retained definition's
+    /// pieces already in hand (the text `EXECUTE` path keeps its own).
+    pub(crate) fn run_parsed_bound_owned_with_requests(
         &mut self,
         bound: tidb_ast::Stmt,
         sql: &str,
+        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
         self.run_with_columns_using(sql, false, move |session| {
-            session.execute_statement_parsed(bound, sql)
+            session.execute_statement_parsed(bound, sql, privilege_requests)
+        })
+        .map(|(output, _)| output)
+    }
+
+    /// [`Session::run`] over the statement a front end already parsed from
+    /// `sql`: Go's `ExecuteStmt` takes the one `ast.StmtNode` `ParseSQL`
+    /// produced, so a command's text is lexed and parsed exactly once.
+    pub fn run_parsed(&mut self, stmt: Stmt, sql: &str) -> Result<StmtResult, DriverError> {
+        Ok(match self.run_with_columns_parsed(stmt, sql)? {
+            StmtOutput::Rows { rows, .. } => StmtResult::Rows(rows),
+            StmtOutput::Affected(count) => StmtResult::Affected(count),
+            StmtOutput::Done(created) => StmtResult::Done(created),
+        })
+    }
+
+    /// [`Session::run_with_columns`] over an already-parsed statement.
+    pub fn run_with_columns_parsed(
+        &mut self,
+        stmt: Stmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        self.run_with_columns_using(sql, false, move |session| {
+            session.execute_statement_owned(stmt, sql)
         })
         .map(|(output, _)| output)
     }

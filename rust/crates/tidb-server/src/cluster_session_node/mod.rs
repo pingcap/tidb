@@ -182,15 +182,17 @@ use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::ClusterCatalog;
 use tidb_exec::cluster_ddl::DdlStatement;
-use tidb_exec::cluster_load_stats::prepare_cluster_load_stats;
+use tidb_exec::cluster_load_stats::{
+    prepare_cluster_load_stats, prepare_cluster_load_stats_parsed,
+};
 use tidb_exec::cluster_stats_load::{
     ClusterStatsLoader, ColumnLength, TableRowCount, TableSizeStats,
 };
-use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock;
+use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock_parsed;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
-use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
+use tidb_exec::real_tikv_analyze::prepare_cluster_analyze_parsed;
 use tidb_exec::real_tikv_catalog::SnapshotMetaSnapshot;
-use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_with_context;
+use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_parsed;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
@@ -198,7 +200,9 @@ use tidb_executor::cluster_storage::{
     BufferCheckpoint, ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
 use tidb_executor::remote_scan::PushdownScanner;
-use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
+use tidb_planner::transaction_control::{
+    classify_transaction_control, classify_transaction_control_stmt, TransactionControl,
+};
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
 use tidb_session::{
@@ -5483,20 +5487,20 @@ impl ClusterServerSession {
     /// a `CREATE TABLE` with a foreign key is a clause it refuses by name, and
     /// a table-scoped `GRANT` is a `mysql.*` row shape the account writer does
     /// not encode (which it reports at persist time, where it knows).
-    fn schema_route(&mut self, sql: &str) -> Result<StatementRoute, SqlQueryError> {
-        let change = self
-            .session
-            .statement_stored_state_change(sql)
-            .map_err(map_error)?;
-        self.schema_route_for_change(sql, change)
+    /// Routes one parsed statement. Go parses a command once
+    /// (`session.ParseSQL`) and every question after that -- what stored
+    /// state it changes, which admission it needs -- reads that one node;
+    /// this takes the node the door parsed, never the text again.
+    fn schema_route(&mut self, stmt: &tidb_ast::Stmt) -> Result<StatementRoute, SqlQueryError> {
+        let change = Session::stored_state_change_parsed(stmt);
+        self.schema_route_for_change(stmt, change)
     }
 
     fn flush_stats_delta_targets(
         &mut self,
-        sql: &str,
+        stmt: &tidb_ast::Stmt,
     ) -> Result<Option<FlushStatsDeltaTargets>, SqlQueryError> {
-        let prepared = self.session.prepare_ast(sql).map_err(map_error)?;
-        let tidb_ast::Stmt::Admin(admin) = prepared.statement() else {
+        let tidb_ast::Stmt::Admin(admin) = stmt else {
             return Ok(None);
         };
         let tidb_ast::AdminStmt::Flush(flush) = admin.as_ref() else {
@@ -5560,7 +5564,7 @@ impl ClusterServerSession {
 
     fn schema_route_for_change(
         &mut self,
-        sql: &str,
+        stmt: &tidb_ast::Stmt,
         change: StoredStateChange,
     ) -> Result<StatementRoute, SqlQueryError> {
         match change {
@@ -5568,13 +5572,13 @@ impl ClusterServerSession {
             StoredStateChange::Accounts => Ok(StatementRoute::Accounts),
             StoredStateChange::GlobalVars => Ok(StatementRoute::GlobalVars),
             StoredStateChange::Statistics => {
-                if let Some(targets) = self.flush_stats_delta_targets(sql)? {
+                if let Some(targets) = self.flush_stats_delta_targets(stmt)? {
                     return Ok(StatementRoute::FlushStatsDelta(targets));
                 }
-                if prepare_cluster_load_stats(sql).is_some() {
+                if prepare_cluster_load_stats_parsed(stmt).is_some() {
                     return Ok(StatementRoute::LoadStats);
                 }
-                match prepare_cluster_analyze(sql, self.session.current_database()) {
+                match prepare_cluster_analyze_parsed(stmt, self.session.current_database()) {
                     Ok(Some(tables)) if !tables.is_empty() => Ok(StatementRoute::Analyze(tables)),
                     Ok(_) => Err(SqlQueryError::unknown(
                         "this node runs ANALYZE TABLE for a named table only",
@@ -5583,7 +5587,7 @@ impl ClusterServerSession {
                 }
             }
             StoredStateChange::StatsLock => {
-                match prepare_cluster_stats_lock(sql, self.session.current_database()) {
+                match prepare_cluster_stats_lock_parsed(stmt, self.session.current_database()) {
                     Ok(Some(statement)) => Ok(StatementRoute::StatsLock(statement)),
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node could not lower the statistics lock statement",
@@ -5594,11 +5598,7 @@ impl ClusterServerSession {
                 }
             }
             StoredStateChange::Schema => {
-                if self
-                    .session
-                    .is_local_temporary_create(sql)
-                    .map_err(map_error)?
-                {
+                if Session::is_local_temporary_create_parsed(stmt) {
                     return Ok(StatementRoute::LocalTemporaryDdl);
                 }
                 // A CREATE VIEW resolves its body against this node's own
@@ -5614,7 +5614,7 @@ impl ClusterServerSession {
                 let resolved = self.probe_statement(
                     StatementReadShape::Unknown,
                     &resource_group,
-                    |session| session.resolve_cluster_view(sql).map_err(map_error),
+                    |session| session.resolve_cluster_view_parsed(stmt).map_err(map_error),
                 )?;
                 if let Some((database, name, or_replace, view)) = resolved {
                     let info = tidb_exec::cluster_ddl::build_view_table_info(&name, &view);
@@ -5626,11 +5626,7 @@ impl ClusterServerSession {
                     }));
                 }
                 let context = self.session.ddl_statement_context();
-                match prepare_cluster_ddl_with_context(
-                    sql,
-                    self.session.current_database(),
-                    &context,
-                ) {
+                match prepare_cluster_ddl_parsed(stmt, self.session.current_database(), &context) {
                     Ok(Some(statement)) => {
                         // Warnings the LOWERING produced (an ignored CHECK
                         // constraint, Go ddl/create_table.go:1470) belong to
@@ -6596,9 +6592,13 @@ impl QuerySession for ClusterServerSession {
         // chooses a statement snapshot. Keep schema refresh ahead of routing,
         // access-shape classification, and the statement lifecycle.
         self.rebuild_catalog_if_stale();
+        // One parse per command (Go `session.ParseSQL`); routing, the SET
+        // door, the kind, the resource group, the prelock keys and the run
+        // all read this node.
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
         // Routed before anything else: what happens to a stored-state change
         // must not depend on which answer shape it would otherwise have taken.
-        match self.schema_route(sql)? {
+        match self.schema_route(&stmt)? {
             StatementRoute::Ddl(statement) => return self.run_ddl(sql, &statement).map(Some),
             StatementRoute::LocalTemporaryDdl => {
                 return self.run_local_temporary_ddl(sql).map(Some);
@@ -6619,7 +6619,12 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::Ordinary => {}
         }
-        if self.session.apply_set(sql).map_err(map_error)?.is_some() {
+        if self
+            .session
+            .apply_set_stmt(&stmt)
+            .map_err(map_error)?
+            .is_some()
+        {
             // A `SET` takes no snapshot, so it does not go through
             // `with_statement` -- but `SET autocommit = 1` ends the open
             // transaction from the inside, and that has to be published here
@@ -6630,14 +6635,12 @@ impl QuerySession for ClusterServerSession {
                 last_insert_id: 0,
             }));
         }
-        if self.session.statement_kind(sql).map_err(map_error)? != StmtKind::Write {
+        if self.session.statement_kind_parsed(&stmt) != StmtKind::Write {
             return Ok(None);
         }
         let owned = sql.to_owned();
-        let resource_group = self
-            .session
-            .statement_resource_group_sql(sql)
-            .map_err(map_error)?;
+        let resource_group = self.session.statement_resource_group(&stmt).into_owned();
+        let prelock_keys = self.session.statement_prelock_keys(&stmt, &[]);
         // A write declares nothing. Its read-before-write reaches the snapshot
         // as the same `get` a point-get SELECT issues, which is exactly why the
         // declaration is made from the statement rather than from the read.
@@ -6654,11 +6657,14 @@ impl QuerySession for ClusterServerSession {
         let attempt_read_keys = read_keys.clone();
         let affected_rows = match self.with_prelocked_statement(
             StatementReadShape::Unknown,
-            |session| session.text_statement_prelock_keys(sql),
+            |_session| prelock_keys.clone(),
             &resource_group,
             move |session| {
                 attempt_read_keys.begin();
-                match session.run(&owned).map_err(map_error)? {
+                match session
+                    .run_parsed(stmt.clone(), &owned)
+                    .map_err(map_error)?
+                {
                     StmtResult::Affected(count) => Ok(count),
                     StmtResult::Done(_) => Ok(0),
                     StmtResult::Rows(_) => Err(SqlQueryError::unknown(
@@ -6705,17 +6711,21 @@ impl QuerySession for ClusterServerSession {
         // for `ROLLBACK` means publishing the buffer this connection is about
         // to discard. It is applied at EXECUTE, through
         // [`Self::control_transaction`].
-        if classify_transaction_control(sql).is_some() {
+        let parsed = self.session.parse_statement(sql).map_err(map_error)?;
+        if classify_transaction_control_stmt(&parsed).is_some() {
             return Ok(PreparedGeneral::new(sql.to_owned(), 0, Vec::new()));
         }
-        let prepared_ast = self.session.prepare_ast(sql).map_err(map_error)?;
+        let prepared_ast = self
+            .session
+            .prepare_ast_parsed(sql, parsed)
+            .map_err(map_error)?;
         let parameter_count = prepared_ast.parameter_count();
         let kind = self.session.statement_kind_parsed(prepared_ast.statement());
         if kind == StmtKind::Write {
             // A prepared DDL is admitted here and executed at EXECUTE, so a
             // refusal -- an unsupported shape, an unsupported column type --
             // is reported at PREPARE, where Go reports it too.
-            self.schema_route(sql)?;
+            self.schema_route(prepared_ast.statement())?;
             // Keep ordinary DML's parsed tree as well.  The MySQL binary
             // protocol prepares YCSB's INSERT/UPDATE/DELETE once and then
             // executes that handle thousands of times; throwing this tree
@@ -6791,7 +6801,13 @@ impl QuerySession for ClusterServerSession {
         let route = if statement.template().is_some() {
             StatementRoute::Ordinary
         } else {
-            self.schema_route(statement.sql())?
+            // A routed command retained only its text (no template), so it
+            // is parsed here, once, for its route.
+            let parsed = self
+                .session
+                .parse_statement(statement.sql())
+                .map_err(map_error)?;
+            self.schema_route(&parsed)?
         };
         match route {
             StatementRoute::Ddl(ddl) => {
@@ -6838,6 +6854,7 @@ impl QuerySession for ClusterServerSession {
         // execution will use, not the state preceding the statement refresh.
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
+        let prepared_ast = statement.prepared_ast().cloned();
         let retained = statement.template();
         let (effective_template, binding_sql) = retained.map_or((None, None), |template| {
             let (effective, binding_sql) = self.session.prepared_statement_with_binding(template);
@@ -6975,7 +6992,12 @@ impl QuerySession for ClusterServerSession {
                         .as_ref()
                         .expect("cached prepared SELECT carries its execution");
                     return session
-                        .execute_prepared_select(cached, &sql)
+                        .execute_prepared_select_for(
+                            cached,
+                            prepared_ast
+                                .as_ref()
+                                .expect("a cached prepared SELECT has its retained definition"),
+                        )
                         .map_err(map_error);
                 }
                 if fast {
@@ -7003,7 +7025,12 @@ impl QuerySession for ClusterServerSession {
                     )
                     .map_err(map_error)?;
                     return session
-                        .run_parsed_bound_owned_with_sql(bound, &sql)
+                        .run_parsed_bound_owned_for(
+                            bound,
+                            prepared_ast
+                                .as_ref()
+                                .expect("a retained template has its prepared definition"),
+                        )
                         .map_err(map_error);
                 }
                 if direct_dml {
@@ -7011,13 +7038,23 @@ impl QuerySession for ClusterServerSession {
                         .as_ref()
                         .expect("direct prepared DML carries its bound statement");
                     let output = session
-                        .execute_cached_prepared_dml(cached, &sql)
+                        .execute_cached_prepared_dml_for(
+                            cached,
+                            prepared_ast
+                                .as_ref()
+                                .expect("direct prepared DML has its retained definition"),
+                        )
                         .map_err(map_error)?;
                     return Ok(output);
                 }
                 if let Some(bound) = bound_template.as_ref().cloned() {
                     session
-                        .run_parsed_bound_owned_with_sql(bound, &sql)
+                        .run_parsed_bound_owned_for(
+                            bound,
+                            prepared_ast
+                                .as_ref()
+                                .expect("a retained template has its prepared definition"),
+                        )
                         .map_err(map_error)
                 } else {
                     session.run_with_params(&sql, &params).map_err(map_error)
@@ -7089,10 +7126,12 @@ impl QuerySession for ClusterServerSession {
         // statement lifecycle would allow a stale point shape to select MaxTS
         // before the executor sees the current schema.
         self.rebuild_catalog_if_stale();
+        // One parse per command (Go `session.ParseSQL`).
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
         // The text protocol reaches DDL through `execute_write`; this covers a
         // front end that goes straight to the result-set path, so a routed
         // statement runs exactly once either way.
-        match self.schema_route(sql)? {
+        match self.schema_route(&stmt)? {
             StatementRoute::Ddl(statement) => {
                 self.run_ddl(sql, &statement)?;
                 return Ok(QueryResult::new(Box::new(
@@ -7144,11 +7183,9 @@ impl QuerySession for ClusterServerSession {
         }
         let process_statement = self.session.retain_process_statement(sql);
         let owned = sql.to_owned();
-        let resource_group = self
-            .session
-            .statement_resource_group_sql(sql)
-            .map_err(map_error)?;
-        let shape = self.session.statement_read_shape(sql, &[]);
+        let resource_group = self.session.statement_resource_group(&stmt).into_owned();
+        let prelock_keys = self.session.statement_prelock_keys(&stmt, &[]);
+        let shape = self.session.statement_read_shape_bound(&stmt);
         // Go's `SELECT ... FOR UPDATE` on a clustered handle-pinned row folds
         // its lock INTO its one row read (`TryFastPlan` -> `PointGetPlan` with
         // `Lock=true`, executed by `getAndLock`). The text protocol reaches
@@ -7157,16 +7194,18 @@ impl QuerySession for ClusterServerSession {
         // statement's read answer from the lock response. Empty output (a
         // scan-shaped WHERE, FOR SHARE, NOWAIT, or no pessimistic transaction)
         // keeps today's read-then-lock order untouched.
-        let bind_prelock_keys = |session: &Session| session.text_statement_prelock_keys(sql);
+        let bind_prelock_keys = |_session: &Session| prelock_keys.clone();
         // The rows are materialized inside the statement's snapshot, because
         // the snapshot's read transaction ends when the statement does; a lazy
         // source would be reading through a finished transaction.
         let source = self.with_prelocked_statement(
             shape,
-            |session| session.text_statement_prelock_keys(sql),
+            |_session| prelock_keys.clone(),
             &resource_group,
             move |session| {
-                let output = session.run_with_columns(&owned).map_err(map_error)?;
+                let output = session
+                    .run_with_columns_parsed(stmt.clone(), &owned)
+                    .map_err(map_error)?;
                 Ok(match output {
                     StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(
                         crate::pipeline_session::select_columns(&columns),

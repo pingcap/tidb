@@ -381,12 +381,21 @@ fn window_result_types() {
 fn window_use_errors_preserve_query_block_scope() {
     let mut session = window_session();
     for (sql, name) in [
-        ("SELECT g FROM t WHERE ROW_NUMBER() OVER (ORDER BY v) > 1", "row_number"),
-        ("SELECT g FROM t GROUP BY g HAVING RANK() OVER (ORDER BY g) > 1", "rank"),
+        (
+            "SELECT g FROM t WHERE ROW_NUMBER() OVER (ORDER BY v) > 1",
+            "row_number",
+        ),
+        (
+            "SELECT g FROM t GROUP BY g HAVING RANK() OVER (ORDER BY g) > 1",
+            "rank",
+        ),
     ] {
         let error = session.run(sql).unwrap_err().to_mysql_error();
         assert_eq!(error.code, 3593);
-        assert_eq!(error.message, format!("You cannot use the window function '{name}' in this context.'"));
+        assert_eq!(
+            error.message,
+            format!("You cannot use the window function '{name}' in this context.'")
+        );
     }
     assert_eq!(
         row_text(session.run("SELECT 1 WHERE 1 = (SELECT ROW_NUMBER() OVER ())")),
@@ -414,14 +423,29 @@ fn named_window_errors_preserve_codes_and_names() {
 fn unsupported_window_features_return_go_1235() {
     let mut session = window_session();
     for (sql, feature) in [
-        ("SELECT GROUP_CONCAT(v) OVER (ORDER BY v) FROM t", "group_concat as window function"),
-        ("SELECT COUNT(DISTINCT v) OVER (PARTITION BY g) FROM t", "<window function>(DISTINCT ..)"),
-        ("SELECT FIRST_VALUE(v) IGNORE NULLS OVER (ORDER BY v) FROM t", "IGNORE NULLS"),
-        ("SELECT NTH_VALUE(v, 1) FROM LAST OVER (ORDER BY v) FROM t", "FROM LAST"),
+        (
+            "SELECT GROUP_CONCAT(v) OVER (ORDER BY v) FROM t",
+            "group_concat as window function",
+        ),
+        (
+            "SELECT COUNT(DISTINCT v) OVER (PARTITION BY g) FROM t",
+            "<window function>(DISTINCT ..)",
+        ),
+        (
+            "SELECT FIRST_VALUE(v) IGNORE NULLS OVER (ORDER BY v) FROM t",
+            "IGNORE NULLS",
+        ),
+        (
+            "SELECT NTH_VALUE(v, 1) FROM LAST OVER (ORDER BY v) FROM t",
+            "FROM LAST",
+        ),
     ] {
         let error = session.run(sql).unwrap_err().to_mysql_error();
         assert_eq!(error.code, 1235, "{sql}");
-        assert_eq!(error.message, format!("This version of TiDB doesn't yet support '{feature}'"));
+        assert_eq!(
+            error.message,
+            format!("This version of TiDB doesn't yet support '{feature}'")
+        );
     }
 }
 

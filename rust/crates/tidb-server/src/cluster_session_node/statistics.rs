@@ -152,7 +152,11 @@ impl ClusterServerSession {
         partition_prune_mode: &str,
     ) -> Result<WriteOutcome, SqlQueryError> {
         self.rebuild_catalog_if_stale();
-        let super::StatementRoute::Analyze(mut tables) = self.schema_route(sql)? else {
+        let parsed = self
+            .session
+            .parse_statement(sql)
+            .map_err(super::map_error)?;
+        let super::StatementRoute::Analyze(mut tables) = self.schema_route(&parsed)? else {
             return Err(SqlQueryError::unknown(
                 "auto analyze generated a non-ANALYZE statement",
             ));

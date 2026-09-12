@@ -59,6 +59,14 @@ pub fn prepare_cluster_stats_lock(
     let Ok(statement) = tidb_parser::parse(sql) else {
         return Ok(None);
     };
+    prepare_cluster_stats_lock_parsed(&statement, default_schema)
+}
+
+/// [`prepare_cluster_stats_lock`] over a statement the caller already parsed.
+pub fn prepare_cluster_stats_lock_parsed(
+    statement: &tidb_ast::Stmt,
+    default_schema: &str,
+) -> Result<Option<ClusterStatsLockStatement>, ClusterStatsLockError> {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         return Ok(None);
     };

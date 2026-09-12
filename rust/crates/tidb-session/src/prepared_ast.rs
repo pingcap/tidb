@@ -35,6 +35,10 @@ pub struct PreparedAst {
     sql: String,
     statement: Arc<Stmt>,
     parameter_count: usize,
+    /// Go `PlanCacheStmt.VisitInfos`: the table privileges this statement
+    /// demands, derived once at PREPARE against the database current then
+    /// and checked by every EXECUTE (`checkPreparedPriv`).
+    privilege_requests: Arc<[crate::table_privilege::TablePrivilegeRequest]>,
     point_get_plan: Option<Arc<PreparedPointGetPlan>>,
     dml_plan: Option<Arc<PreparedDmlPlan>>,
     select_plan: Option<Arc<PreparedSelectPlan>>,
@@ -53,6 +57,7 @@ impl PreparedAst {
         sql: String,
         statement: Stmt,
         parameter_count: usize,
+        privilege_requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
         point_get_plan: Option<PreparedPointGetPlan>,
         dml_plan: Option<PreparedDmlPlan>,
         select_plan: Option<PreparedSelectPlan>,
@@ -61,10 +66,16 @@ impl PreparedAst {
             sql,
             statement: Arc::new(statement),
             parameter_count,
+            privilege_requests: privilege_requests.into(),
             point_get_plan: point_get_plan.map(Arc::new),
             dml_plan: dml_plan.map(Arc::new),
             select_plan: select_plan.map(Arc::new),
         }
+    }
+
+    /// The privilege requests PREPARE derived (Go `PlanCacheStmt.VisitInfos`).
+    pub(crate) fn privilege_requests(&self) -> &[crate::table_privilege::TablePrivilegeRequest] {
+        &self.privilege_requests
     }
 
     /// The original statement text retained for process metadata and routing.
@@ -219,7 +230,21 @@ impl Session {
     /// Parses and retains the statement under this session's current SQL mode.
     pub fn prepare_ast(&self, sql: &str) -> Result<PreparedAst, DriverError> {
         let statement = self.parse_statement(sql)?;
+        self.prepare_ast_parsed(sql, statement)
+    }
+
+    /// [`Self::prepare_ast`] over the statement the front end already parsed
+    /// from `sql` (Go `PrepareExec` works on the node `ParseSQL` produced).
+    pub fn prepare_ast_parsed(
+        &self,
+        sql: &str,
+        statement: Stmt,
+    ) -> Result<PreparedAst, DriverError> {
         let parameter_count = tidb_executor::parsed_parameter_count(&statement);
+        // Go `GeneratePlanCacheStmtWithAST` collects the `VisitInfos` here,
+        // against the database current at PREPARE.
+        let privilege_requests =
+            crate::table_privilege::required_table_privileges(&statement, self.current_database());
         let planner_context = self.statement_context_for_stmt(&statement, false);
         let (point_get_plan, dml_plan, select_plan) = {
             let catalog = self.lock_catalog()?;
@@ -267,6 +292,7 @@ impl Session {
             sql.to_owned(),
             statement,
             parameter_count,
+            privilege_requests,
             point_get_plan,
             dml_plan,
             select_plan,

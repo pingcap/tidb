@@ -63,10 +63,19 @@ pub fn classify_transaction_control(sql: &str) -> Option<TransactionControl> {
     let Ok(statement) = tidb_parser::parse(sql) else {
         return None;
     };
+    classify_transaction_control_stmt(&statement)
+}
+
+/// [`classify_transaction_control`] over a statement the caller already
+/// parsed -- Go's `switch stmt.(type)` on the one `ast.StmtNode` a command
+/// has, so a front end never parses a command's text a second time to ask
+/// this.
+#[must_use]
+pub fn classify_transaction_control_stmt(statement: &Stmt) -> Option<TransactionControl> {
     let Stmt::Session(session) = statement else {
         return None;
     };
-    match session.into_inner() {
+    match session.clone().into_inner() {
         SessionStmt::Begin(begin) => {
             if begin.as_of.is_some() {
                 // `START TRANSACTION READ ONLY AS OF TIMESTAMP <expr>` pins a

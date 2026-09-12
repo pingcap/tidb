@@ -80,8 +80,8 @@ fn test_field_text() {
 #[test]
 fn test_sql_mode_op() {
     use tidb_mysql::{
-        ModeAllowInvalidDates, ModeNoBackslashEscapes, ModeOnlyFullGroupBy, delete_sql_mode,
-        set_sql_mode,
+        delete_sql_mode, set_sql_mode, ModeAllowInvalidDates, ModeNoBackslashEscapes,
+        ModeOnlyFullGroupBy,
     };
 
     let mode = ModeNoBackslashEscapes | ModeOnlyFullGroupBy;

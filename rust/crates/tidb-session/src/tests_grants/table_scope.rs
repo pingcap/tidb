@@ -299,10 +299,10 @@ fn a_session_with_no_identity_is_unrestricted() {
     assert!(boot.run("DROP TABLE t").is_ok());
 }
 
-/// A prepared statement's requests are derived once for its text and then
-/// checked from that list on every EXECUTE (Go keeps them as the
-/// `PlanCacheStmt.VisitInfos` that `checkPreparedPriv` consults); the GRANTS
-/// are still read live, so a REVOKE between two executes is enforced.
+/// A prepared statement's requests are derived once at PREPARE and kept on
+/// the statement (Go's `PlanCacheStmt.VisitInfos`, which `checkPreparedPriv`
+/// consults on every EXECUTE); the GRANTS are still read live, so a REVOKE
+/// between two executes is enforced.
 #[test]
 fn a_prepared_execute_keeps_its_requests_and_checks_live_grants() {
     let (_, mut boot, mut bob) = scoped();
@@ -310,20 +310,9 @@ fn a_prepared_execute_keeps_its_requests_and_checks_live_grants() {
     bob.run("PREPARE s FROM 'SELECT b FROM t WHERE a = ?'")
         .unwrap();
     bob.run("SET @a = 1").unwrap();
-    assert_eq!(bob.prepared_table_privilege_entries(), 0);
 
     bob.run("EXECUTE s USING @a").unwrap();
-    assert_eq!(
-        bob.prepared_table_privilege_entries(),
-        1,
-        "the first EXECUTE derives the text's requests and keeps them"
-    );
     bob.run("EXECUTE s USING @a").unwrap();
-    assert_eq!(
-        bob.prepared_table_privilege_entries(),
-        1,
-        "a repeat EXECUTE checks the kept list instead of deriving again"
-    );
 
     boot.run("REVOKE SELECT ON test.t FROM 'bob'@'%'").unwrap();
     assert_eq!(

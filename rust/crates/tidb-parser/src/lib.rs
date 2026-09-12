@@ -221,97 +221,14 @@ pub fn parse_with_strict_double_type_check(sql: &str, enabled: bool) -> PResult<
     parse_one_with_parser(sql, &mut parser)
 }
 
-/// One statement text, the configuration it was parsed under, and its tree.
-struct ParsedStatementMemo {
-    sql: String,
-    enable_mariadb: bool,
-    sql_mode: SqlMode,
-    statement: Stmt,
-}
-
-/// A statement larger than this is parsed without being retained, so a bulk
-/// statement's tree is not held past its own execution. OLTP statements are
-/// orders of magnitude smaller; the bound exists for retention, not for speed.
-const RETAINED_PARSE_MAX_SQL_BYTES: usize = 16 * 1024;
-
-thread_local! {
-    /// The statement this thread parsed last through
-    /// [`parse_with_configuration`].
-    ///
-    /// Go parses a command ONCE -- `session.ParseSQL` hands `ExecuteStmt` an
-    /// `ast.StmtNode` -- and every later question about it reads that one
-    /// node: its statement kind, its resource-group hint, whether it is
-    /// transaction control, whether it is a `LOAD STATS`, whether it changes
-    /// stored state. This port's front end is layered instead, and each of
-    /// those questions takes the SQL TEXT, so one text statement was lexed and
-    /// parsed about eight times: 7.5% of connection-thread CPU in parser
-    /// construction alone, 14% in the whole parse chain, measured on
-    /// `oltp_insert` at 16 threads.
-    ///
-    /// [`parse_with_configuration`] is a pure function of `(sql,
-    /// enable_mariadb, sql_mode)` -- it reads no global state and the
-    /// charset/collation it passes on are constants -- so answering a repeat
-    /// of the same question from the previous answer gives the same tree. One
-    /// entry per thread, replaced by the next distinct statement. A failed
-    /// parse is never retained: its error carries positions the caller
-    /// reports, and a repeat re-parses.
-    static LAST_PARSED_STATEMENT: std::cell::RefCell<Option<ParsedStatementMemo>> =
-        const { std::cell::RefCell::new(None) };
-
-    /// How many statements this thread actually lexed and parsed, so a test
-    /// can tell a memo hit from a re-parse.
-    #[cfg(test)]
-    static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Drops the statement retained for repeats on this thread.
-///
-/// Go drops a command's `ast.StmtNode` with the command; the memo exists only
-/// so the questions one command asks share one parse, so the connection loop
-/// calls this once a command is answered. Beyond the repeat cost, the memo
-/// holds the statement TEXT, and `CREATE USER ... IDENTIFIED BY '...'` or
-/// `SET PASSWORD` must not stay resident in a thread after they ran.
-pub fn release_retained_statement() {
-    LAST_PARSED_STATEMENT.with(|slot| *slot.borrow_mut() = None);
-}
-
-/// The number of real parses this thread has run (test observation).
-#[cfg(test)]
-pub(crate) fn parses_so_far() -> usize {
-    PARSES.with(std::cell::Cell::get)
-}
-
 fn parse_with_configuration(sql: &str, enable_mariadb: bool, sql_mode: SqlMode) -> PResult<Stmt> {
-    let repeated = LAST_PARSED_STATEMENT.with(|slot| {
-        slot.borrow().as_ref().and_then(|memo| {
-            (memo.enable_mariadb == enable_mariadb && memo.sql_mode == sql_mode && memo.sql == sql)
-                .then(|| memo.statement.clone())
-        })
-    });
-    if let Some(statement) = repeated {
-        return Ok(statement);
-    }
-    #[cfg(test)]
-    PARSES.with(|count| count.set(count.get() + 1));
-    let statement = parse_with_full_configuration(
+    parse_with_full_configuration(
         sql,
         enable_mariadb,
         sql_mode,
         tidb_mysql::DefaultCharset,
         tidb_mysql::DefaultCollationName,
-    )?;
-    if sql.len() <= RETAINED_PARSE_MAX_SQL_BYTES {
-        let retained = statement.clone();
-        LAST_PARSED_STATEMENT.with(|slot| {
-            *slot.borrow_mut() = Some(ParsedStatementMemo {
-                sql: sql.to_owned(),
-                enable_mariadb,
-                sql_mode,
-                statement: retained,
-            });
-        });
-    }
-    Ok(statement)
+    )
 }
 
 fn parse_with_full_configuration(

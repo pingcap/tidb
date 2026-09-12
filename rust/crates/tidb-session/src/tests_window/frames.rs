@@ -538,7 +538,10 @@ fn window_range_interval_bounds() {
         "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN INTERVAL '-1 2' DAY_HOUR PRECEDING AND CURRENT ROW) FROM td"
     ).unwrap_err().to_mysql_error();
     assert_eq!(error.code, 3586);
-    assert_eq!(error.message, "Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type");
+    assert_eq!(
+        error.message,
+        "Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type"
+    );
 
     // Captured: the `2020-01-02` rows see the whole day back to
     // `2020-01-01 00:00:00` INCLUSIVE (10+20+30+40 = 100), the tie shares

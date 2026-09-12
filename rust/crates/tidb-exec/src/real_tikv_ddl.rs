@@ -201,7 +201,17 @@ pub fn prepare_cluster_ddl_with_context(
     let Ok(statement) = tidb_parser::parse_with_sql_mode(sql, context.sql_mode()) else {
         return Ok(None);
     };
-    lower_ddl_with_context(&statement, default_schema, context)
+    prepare_cluster_ddl_parsed(&statement, default_schema, context)
+}
+
+/// [`prepare_cluster_ddl_with_context`] over a statement the caller parsed
+/// under the same context's SQL mode.
+pub fn prepare_cluster_ddl_parsed(
+    statement: &tidb_ast::Stmt,
+    default_schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<Option<DdlStatement>, DdlAdmissionError> {
+    lower_ddl_with_context(statement, default_schema, context)
 }
 
 /// Why a catalog change did not happen.

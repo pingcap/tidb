@@ -263,7 +263,15 @@ pub fn prepare_cluster_analyze(
     let Ok(statement) = tidb_parser::parse(sql) else {
         return Ok(None);
     };
-    lower_analyze(&statement, default_schema)
+    prepare_cluster_analyze_parsed(&statement, default_schema)
+}
+
+/// [`prepare_cluster_analyze`] over a statement the caller already parsed.
+pub fn prepare_cluster_analyze_parsed(
+    statement: &tidb_ast::Stmt,
+    default_schema: &str,
+) -> Result<Option<Vec<AnalyzeStatement>>, AnalyzeError> {
+    lower_analyze(statement, default_schema)
 }
 
 /// What one committed `ANALYZE TABLE` did.

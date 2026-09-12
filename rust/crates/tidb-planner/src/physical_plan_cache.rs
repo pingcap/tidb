@@ -672,156 +672,6 @@ fn rebuild_index_scan(
     Ok(())
 }
 
-/// Go `buildRangesForPointGet` for a fast-plan point get: every key column
-/// is pinned by exactly one `col = const` (Go `IndexConstants` /
-/// `HandleConstant`), so the range is the converted constants, Go
-/// `convertConstant2Datum`, without running the detacher. Each constant is
-/// converted the way the detacher converts a point (`convertPoint`) and must
-/// compare equal afterwards, Go's round-trip check; any other shape, a NULL,
-/// a prefix column, an incompatible collation or a lossy conversion returns
-/// `None` and the detacher decides as before.
-fn try_rebuild_equality_point(
-    access_conditions: &[Expression],
-    key_columns: &[Column],
-    key_lengths: &[i64],
-    context: &CachedPlanRebuildContext<'_>,
-) -> Option<Ranges> {
-    let conditions: Vec<&Expression> = access_conditions.iter().collect();
-    equality_point_range(&conditions, key_columns, key_lengths, context).map(|range| vec![range])
-}
-
-/// Go `buildRangesForBatchGet` for a fast batch plan (`tryWhereIn2BatchPointGet`,
-/// Go `IndexValueParams`): the one access condition is the DNF the planner
-/// expanded `(k1, k2) IN ((?, ?), ...)` into, every DNF item pins every key
-/// column by one equality, and the per-item points are unioned the way the
-/// detacher unions DNF items (`union_ranges` with the plan-cache entry's
-/// consecutive-key merging), so the result is the detacher's, without it.
-fn try_rebuild_equality_batch(
-    access_conditions: &[Expression],
-    key_columns: &[Column],
-    key_lengths: &[i64],
-    context: &CachedPlanRebuildContext<'_>,
-) -> Option<Ranges> {
-    use tidb_expr::expr_util::normal_form::{flatten_cnf_conditions, flatten_dnf_conditions};
-
-    let [Expression::ScalarFunction(dnf)] = access_conditions else {
-        return None;
-    };
-    if dnf.func_name.lowercase() != "or" {
-        return None;
-    }
-    let items = flatten_dnf_conditions(dnf);
-    let mut ranges = Ranges::with_capacity(items.len());
-    for item in &items {
-        let conjuncts: Vec<Expression>;
-        let conditions: Vec<&Expression> = match item {
-            Expression::ScalarFunction(and) if and.func_name.lowercase() == "and" => {
-                conjuncts = flatten_cnf_conditions(and);
-                conjuncts.iter().collect()
-            }
-            other => vec![other],
-        };
-        ranges.push(equality_point_range(
-            &conditions,
-            key_columns,
-            key_lengths,
-            context,
-        )?);
-    }
-    crate::ranger::ranger::union_ranges(ranges, true).ok()
-}
-
-/// One closed point over `key_columns` from `conditions`, or `None` (see
-/// [`try_rebuild_equality_point`]).
-fn equality_point_range(
-    conditions: &[&Expression],
-    key_columns: &[Column],
-    key_lengths: &[i64],
-    context: &CachedPlanRebuildContext<'_>,
-) -> Option<crate::ranger::types::Range> {
-    use crate::ranger::checker::UNSPECIFIED_LENGTH;
-    use crate::ranger::points::{
-        convert_point_in_place, convert_point_to_sort_key_in_place, Point,
-    };
-    use crate::ranger::types::Range;
-
-    if conditions.is_empty()
-        || conditions.len() != key_columns.len()
-        || key_lengths.len() != key_columns.len()
-        || key_lengths.iter().any(|len| *len != UNSPECIFIED_LENGTH)
-    {
-        return None;
-    }
-    let mut values: Vec<Option<Datum>> = vec![None; key_columns.len()];
-    let mut collators = vec![tidb_datatype::Collation::Binary; key_columns.len()];
-    for condition in conditions {
-        let Expression::ScalarFunction(function) = condition else {
-            return None;
-        };
-        if function.func_name.lowercase() != "eq" || function.args.len() != 2 {
-            return None;
-        }
-        let (column, constant) = match (&function.args[0], &function.args[1]) {
-            (Expression::Column(column), constant @ Expression::Constant(_))
-            | (constant @ Expression::Constant(_), Expression::Column(column)) => {
-                (column, constant)
-            }
-            _ => return None,
-        };
-        let offset = key_columns
-            .iter()
-            .position(|key| key.unique_id == column.unique_id)?;
-        if values[offset].is_some() {
-            return None;
-        }
-        let column_type = key_columns[offset].ret_type.as_ref()?;
-        let (_, collation) = function.collation.charset_and_collation();
-        if column_type.eval_type() == tidb_datatype::EvalType::String
-            && !tidb_datatype::compatible_collate(column_type.collation_name(), collation)
-        {
-            return None;
-        }
-        let value = context.evaluate(constant).ok()?;
-        if matches!(value, Datum::Null) {
-            return None;
-        }
-        let range_type = crate::ranger::ranger::new_field_type(column_type);
-        let mut point = Point {
-            value: value.clone(),
-            excl: false,
-            start: true,
-        };
-        let mut skip_plan_cache_reason = None;
-        convert_point_in_place(&mut point, &range_type, &mut skip_plan_cache_reason).ok()?;
-        if skip_plan_cache_reason.is_some()
-            || point.excl
-            || point.value.compare(&value, range_type.collation()).ok()?
-                != std::cmp::Ordering::Equal
-        {
-            return None;
-        }
-        // The plan-cache detacher runs with `convert_to_sort_key` on
-        // (`detacher.rs`, `build_ranges_for_plan_cache`), so a string key's
-        // point is its collation sort key under a binary-collated type (Go
-        // `convertPointToSortKeyInPlace`, `points.go:128`, trimming as the
-        // EQ path does). Emitting the same shape here keeps a range built by
-        // this shortcut identical to one the detacher builds for the same
-        // statement, not merely key-equivalent.
-        convert_point_to_sort_key_in_place(&mut point, &range_type, true).ok()?;
-        let key_type = crate::ranger::ranger::convert_string_ft_to_binary_collate(&range_type);
-        collators[offset] = key_type.collation();
-        values[offset] = Some(point.value);
-    }
-    let low_val = values.into_iter().collect::<Option<Vec<Datum>>>()?;
-    Some(Range {
-        high_val: low_val.clone(),
-        low_val,
-        collators,
-        low_exclude: false,
-        high_exclude: false,
-    })
-}
-
 fn rebuild_point_ranges(
     plan_id: i32,
     ranges: &mut Ranges,
@@ -861,82 +711,13 @@ fn rebuild_point_ranges(
                         detail: "common-handle columns and lengths must be non-empty and aligned",
                     });
                 }
-                if let Some(rebuilt) = try_rebuild_equality_point(
+                // Go `buildRangesForPointGet` (`plan_cache_rebuild.go:263`):
+                // a point get carrying access conditions is one the optimizer
+                // built, and its ranges come from the detacher, nothing else.
+                let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
                     &rebuild.access_conditions,
                     &rebuild.common_handle_columns,
                     &rebuild.common_handle_lengths,
-                    context,
-                )
-                .or_else(|| {
-                    try_rebuild_equality_batch(
-                        &rebuild.access_conditions,
-                        &rebuild.common_handle_columns,
-                        &rebuild.common_handle_lengths,
-                        context,
-                    )
-                }) {
-                    let count = rebuild.access_conditions.len();
-                    if !range_is_safe(&original, &rebuilt, count, count, 0, false) {
-                        return Err(PlanCacheRebuildError::UnsafeRange { plan_id });
-                    }
-                    rebuilt
-                } else {
-                    let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
-                        &rebuild.access_conditions,
-                        &rebuild.common_handle_columns,
-                        &rebuild.common_handle_lengths,
-                        0,
-                        &|expr| context.evaluate(expr),
-                    )
-                    .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-                    if !range_is_safe(
-                        &original,
-                        &result.ranges,
-                        rebuild.access_conditions.len(),
-                        result.access_conds.len(),
-                        result.remained_conds.len(),
-                        false,
-                    ) {
-                        return Err(PlanCacheRebuildError::UnsafeRange { plan_id });
-                    }
-                    result.ranges
-                }
-            }
-        }
-        PointRangeRebuild::Index(rebuild) => {
-            if rebuild.index_columns.is_empty()
-                || rebuild.index_columns.len() != rebuild.index_column_lengths.len()
-            {
-                return Err(PlanCacheRebuildError::InvalidMetadata {
-                    plan_id,
-                    detail: "index columns and lengths must be non-empty and aligned",
-                });
-            }
-            bind_conditions(&mut rebuild.access_conditions, context)?;
-            if let Some(rebuilt) = try_rebuild_equality_point(
-                &rebuild.access_conditions,
-                &rebuild.index_columns,
-                &rebuild.index_column_lengths,
-                context,
-            )
-            .or_else(|| {
-                try_rebuild_equality_batch(
-                    &rebuild.access_conditions,
-                    &rebuild.index_columns,
-                    &rebuild.index_column_lengths,
-                    context,
-                )
-            }) {
-                let count = rebuild.access_conditions.len();
-                if !range_is_safe(&original, &rebuilt, count, count, 0, false) {
-                    return Err(PlanCacheRebuildError::UnsafeRange { plan_id });
-                }
-                rebuilt
-            } else {
-                let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
-                    &rebuild.access_conditions,
-                    &rebuild.index_columns,
-                    &rebuild.index_column_lengths,
                     0,
                     &|expr| context.evaluate(expr),
                 )
@@ -953,6 +734,38 @@ fn rebuild_point_ranges(
                 }
                 result.ranges
             }
+        }
+        PointRangeRebuild::Index(rebuild) => {
+            if rebuild.index_columns.is_empty()
+                || rebuild.index_columns.len() != rebuild.index_column_lengths.len()
+            {
+                return Err(PlanCacheRebuildError::InvalidMetadata {
+                    plan_id,
+                    detail: "index columns and lengths must be non-empty and aligned",
+                });
+            }
+            bind_conditions(&mut rebuild.access_conditions, context)?;
+            // Go `buildRangesForPointGet` (`plan_cache_rebuild.go:265`):
+            // `DetachCondAndBuildRangeForIndex` on the access conditions.
+            let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+                &rebuild.access_conditions,
+                &rebuild.index_columns,
+                &rebuild.index_column_lengths,
+                0,
+                &|expr| context.evaluate(expr),
+            )
+            .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+            if !range_is_safe(
+                &original,
+                &result.ranges,
+                rebuild.access_conditions.len(),
+                result.access_conds.len(),
+                result.remained_conds.len(),
+                false,
+            ) {
+                return Err(PlanCacheRebuildError::UnsafeRange { plan_id });
+            }
+            result.ranges
         }
     };
     if expected_count.is_some_and(|expected| rebuilt.len() != expected) {
