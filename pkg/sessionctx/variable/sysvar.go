@@ -2278,6 +2278,10 @@ var defaultSysVars = []*SysVar{
 		appendDeprecationWarning(vars, TiDBHashAggFinalConcurrency, TiDBExecutorConcurrency)
 		return normalizedValue, nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashAggUniqueLimitThreshold, Value: strconv.Itoa(DefTiDBHashAggUniqueLimitThreshold), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.HashAggUniqueLimitThreshold = TidbOptInt64(val, DefTiDBHashAggUniqueLimitThreshold)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBWindowConcurrency, Value: strconv.Itoa(DefTiDBWindowConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
 		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 		return nil

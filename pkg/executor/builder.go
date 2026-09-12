@@ -125,6 +125,10 @@ type executorBuilder struct {
 
 	// Used when building MPPGather.
 	encounterUnionScan bool
+
+	// hashAggUniqueLimitTargets stores the target unique group count for HashAgg plan ID.
+	// The target is usually `offset+count` from parent Limit.
+	hashAggUniqueLimitTargets map[int]uint64
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -818,6 +822,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 }
 
 func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) exec.Executor {
+	b.tryMarkHashAggUniqueLimit(v)
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -842,6 +847,35 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) exec.Executor
 		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
+}
+
+func (b *executorBuilder) tryMarkHashAggUniqueLimit(v *plannercore.PhysicalLimit) {
+	threshold := b.ctx.GetSessionVars().HashAggUniqueLimitThreshold
+	if threshold <= 0 {
+		return
+	}
+
+	hashAggPlan, ok := v.Children()[0].(*plannercore.PhysicalHashAgg)
+	if !ok || !canUseHashAggUniqueLimit(hashAggPlan) {
+		return
+	}
+
+	target := v.Offset + v.Count
+	if target > uint64(threshold) {
+		return
+	}
+
+	if b.hashAggUniqueLimitTargets == nil {
+		b.hashAggUniqueLimitTargets = make(map[int]uint64)
+	}
+	b.hashAggUniqueLimitTargets[hashAggPlan.ID()] = target
+}
+
+func canUseHashAggUniqueLimit(v *plannercore.PhysicalHashAgg) bool {
+	if len(v.GroupByItems) == 0 || !aggregation.IsAllFirstRow(v.AggFuncs) {
+		return false
+	}
+	return true
 }
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) exec.Executor {
@@ -2057,6 +2091,10 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
 			e.IsUnparallelExec = true
 		}
+	}
+	if target, ok := b.hashAggUniqueLimitTargets[v.ID()]; ok {
+		e.IsUnparallelExec = true
+		e.UniqueLimitTarget = target
 	}
 	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
 	// we do not need to parallelly execute hash agg,
