@@ -2421,10 +2421,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             partition: (!ds.partition_definition_ids.is_empty()
                                 && ds.physical_table_id == ds.table_id
                                 && (ds.pk_is_handle || common_handle.is_some()))
-                            .then(|| crate::physical::PointGetPartition {
-                                names: ds.partition_names.clone(),
-                                physical_table_id: None,
-                            }),
+                                .then(|| crate::physical::PointGetPartition {
+                                    names: ds.partition_names.clone(),
+                                    physical_table_id: None,
+                                }),
                             index_id: None,
                             ranges,
                             range_rebuild: table_range_rebuild
@@ -2821,8 +2821,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 tidb_expr::simple_expr::extract_columns(condition)
                                     .into_iter()
                                     .filter_map(|column| {
-                                        index_cols
-                                            .iter()
+                                        index_cols.iter()
                                             .position(|index| index.unique_id == column.unique_id)
                                             .map(|index| (column.unique_id, index_lengths[index]))
                                     })
@@ -2869,8 +2868,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         .unwrap_or(ranges.len() as f64)
                         .min(ranges.len() as f64);
                     point_base.base.set_stats(
-                        ds.table_stats
-                            .as_ref()
+                        ds.table_stats.as_ref()
                             .or_else(|| ds.base.base.stats_info())
                             .map(|stats| stats.scale_by_expect_cnt(access_rows, ctx.skew_ratio)),
                     );
@@ -3349,8 +3347,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             .map(|candidate| candidate.4.clone())
             .collect::<Option<Vec<_>>>()
         {
-            if let Some(selected) = crate::find_best_task::candidate::choose_heuristic_path(&paths)
-            {
+            if let Some(selected) = crate::find_best_task::candidate::choose_heuristic_path(&paths) {
                 return Ok(ordinary_candidates.swap_remove(selected).0);
             }
         }

@@ -846,9 +846,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut seen = BTreeSet::new();
         for name in &names {
             if !seen.insert(name.names.column.original.clone()) {
-                return Err(PlanError::duplicate_column_name(
-                    &name.names.column.original,
-                ));
+                return Err(PlanError::duplicate_column_name(&name.names.column.original));
             }
         }
         // NOT `LogicalPlan::set_output_names`: that is Go

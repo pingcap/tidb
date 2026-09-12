@@ -583,8 +583,10 @@ fn hash_join_candidates(
     // model then prefers the smaller build (TPC-H Q22 builds the 10,834
     // filtered customers rather than the 1.5M orders). Go's non-GA gate is
     // `UseHashJoinV2ForNonGAJoin`, flipped to true in its `init()`.
-    let semi_outer_build =
-        use_hash_join_v2 && !join.left_keys.is_empty() && !join.has_null_eq && !join.has_na_keys;
+    let semi_outer_build = use_hash_join_v2
+        && !join.left_keys.is_empty()
+        && !join.has_null_eq
+        && !join.has_na_keys;
     for shape in hash_join_shapes(join.join_type, false, false, semi_outer_build) {
         if let Some(runtime) = &prop.index_join_prop {
             // Go `getHashJoin`: for a parent index-join runtime property,

@@ -2921,13 +2921,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> FieldName {
         if field.column_reference && correlated {
             if let Expr::Column(path) = &field.expr {
-                let mut name =
-                    FieldName::new(FieldNameMetadata {
-                        column: IdentifierMetadata::new(field.alias.as_deref().unwrap_or_else(
-                            || path.last().map(String::as_str).unwrap_or_default(),
-                        )),
-                        ..FieldNameMetadata::default()
-                    });
+                let mut name = FieldName::new(FieldNameMetadata {
+                    column: IdentifierMetadata::new(
+                        field.alias.as_deref().unwrap_or_else(|| {
+                            path.last().map(String::as_str).unwrap_or_default()
+                        }),
+                    ),
+                    ..FieldNameMetadata::default()
+                });
                 name.hidden = field.hidden;
                 return name;
             }
@@ -2940,22 +2941,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let (true, Some(index)) = (field.column_reference, resolved_index) {
             if let Expr::Column(path) = &field.expr {
                 let matches_path = |name: &FieldName| {
-                    let column =
-                        name.names.column.original.eq_ignore_ascii_case(
-                            path.last().map(String::as_str).unwrap_or_default(),
-                        );
+                    let column = name.names.column.original.eq_ignore_ascii_case(
+                        path.last().map(String::as_str).unwrap_or_default(),
+                    );
                     let table = path.len() < 2
-                        || name
-                            .names
-                            .table
-                            .original
-                            .eq_ignore_ascii_case(&path[path.len() - 2]);
+                        || name.names.table.original.eq_ignore_ascii_case(&path[path.len() - 2]);
                     let database = path.len() < 3
-                        || name
-                            .names
-                            .database
-                            .original
-                            .eq_ignore_ascii_case(&path[path.len() - 3]);
+                        || name.names.database.original.eq_ignore_ascii_case(&path[path.len() - 3]);
                     column && table && database
                 };
                 if let Some(origin) = names.iter().find(|name| matches_path(name)) {
@@ -3499,10 +3491,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .checked_sub(1)
                         .and_then(|index| schema.columns.get(index))
                         .ok_or_else(|| {
-                            PlanError::unknown_column_in_clause(
-                                position.to_string(),
-                                "order clause",
-                            )
+                            PlanError::unknown_column_in_clause(position.to_string(), "order clause")
                         })?;
                     let mut column = column.clone();
                     column.index = position as i64 - 1;
