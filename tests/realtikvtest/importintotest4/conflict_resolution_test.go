@@ -54,11 +54,9 @@ func (s *mockGCSSuite) TestNextGenExpiredConflictRowCleanup() {
 		t.Skip("requires the NextGen distributed task framework")
 	}
 
-	const (
-		sourceBucket = "expired-conflict-source"
-		sortBucket   = "expired-conflict-sort"
-		dbName       = "expired_conflict_cleanup"
-	)
+	sourceBucket := fmt.Sprintf("expired-conflict-source-%d", rand.Int())
+	sortBucket := fmt.Sprintf("expired-conflict-sort-%d", rand.Int())
+	dbName := fmt.Sprintf("expired_conflict_cleanup_%d", rand.Int())
 	ctx := s.ctx
 	baseSortURI := fmt.Sprintf("gs://%s?endpoint=%s", sortBucket, gcsEndpoint)
 	originalCloudStorageURI := vardef.CloudStorageURI.Load()
@@ -68,6 +66,10 @@ func (s *mockGCSSuite) TestNextGenExpiredConflictRowCleanup() {
 
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortBucket})
+	t.Cleanup(func() {
+		testutils.RemoveAllObjects(t, s.server, sourceBucket)
+		testutils.RemoveAllObjects(t, s.server, sortBucket)
+	})
 	vardef.CloudStorageURI.Store(baseSortURI)
 	rootedSortURI := handle.GetCloudStorageURI(ctx, s.store)
 	sortStore, err := importer.GetSortStore(ctx, rootedSortURI)
