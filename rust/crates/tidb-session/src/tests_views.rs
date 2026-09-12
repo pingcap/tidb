@@ -4,6 +4,21 @@ use crate::tests_support::*;
 use crate::*;
 
 #[test]
+fn derived_alias_validation_visits_nested_queries_and_respects_oracle_mode() {
+    let mut session = Session::new();
+    for sql in [
+        "SELECT * FROM (SELECT 1)",
+        "EXPLAIN SELECT * FROM (SELECT 1)",
+        "SELECT (SELECT 1 FROM (SELECT 1))",
+        "SELECT * FROM (SELECT 1 UNION ALL SELECT 2)",
+    ] {
+        assert_eq!(session.run(sql).unwrap_err().to_mysql_error().code, 1248, "{sql}");
+    }
+    session.run("SET sql_mode = 'ORACLE'").unwrap();
+    assert!(session.run("SELECT 1 FROM (SELECT 1)").is_ok());
+}
+
+#[test]
 fn derived_duplicate_column_preserves_mysql_identity() {
     let mut session = Session::new();
     for sql in [

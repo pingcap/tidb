@@ -1784,7 +1784,7 @@ fn render_physical_query(
     format: ExplainFormat,
     analyze: bool,
 ) -> Result<SelectMeta, DriverError> {
-    crate::driver::set_opr::validate_query_usage(query)?;
+    crate::driver::set_opr::validate_query_usage(query, ctx)?;
     let (mut physical, scalar_subqueries) =
         crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
     let runtime = analyze

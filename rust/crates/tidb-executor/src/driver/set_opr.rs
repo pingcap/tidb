@@ -89,8 +89,8 @@ pub(super) fn validate_set_opr_usage(stmt: &tidb_ast::SetOprStmt) -> Result<(), 
     Ok(())
 }
 
-/// Runs the set-operation part of Go's AST preprocessor over a complete
-/// query.
+/// Runs Go's set-operation and derived-alias preprocessing over a complete
+/// query, including the ORACLE-mode exception for unnamed derived tables.
 ///
 /// Go's preprocessor is a full `ast.Visitor`, so EVERY child query is
 /// visited: a CTE definition, a derived table in `FROM`, a scalar subquery, an
@@ -99,15 +99,27 @@ pub(super) fn validate_set_opr_usage(stmt: &tidb_ast::SetOprStmt) -> Result<(), 
 /// own `WITH`) accepted
 /// `select 1 from (select a from t0 limit 1 union all select a from t0 limit 1) tmp`,
 /// which Go rejects with 1221.
-pub(crate) fn validate_query_usage(query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
+pub(crate) fn validate_query_usage(
+    query: &tidb_ast::QueryStmt,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
     struct SetOprUsage {
         error: Option<DriverError>,
+        oracle_mode: bool,
     }
 
     impl tidb_ast::Visitor for SetOprUsage {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
             if self.error.is_some() {
                 return true;
+            }
+            if let Some(tidb_ast::JoinNode::Derived { alias, .. }) =
+                node.downcast_ref::<tidb_ast::JoinNode>()
+            {
+                if !self.oracle_mode && alias.as_ref().is_none_or(String::is_empty) {
+                    self.error = Some(DriverError::DerivedMustHaveAlias);
+                    return true;
+                }
             }
             if let Some(set_opr) = node.downcast_ref::<tidb_ast::SetOprStmt>() {
                 if let Err(error) = validate_set_opr_usage(set_opr) {
@@ -126,7 +138,10 @@ pub(crate) fn validate_query_usage(query: &tidb_ast::QueryStmt) -> Result<(), Dr
     // `Visitable` walks a MUTABLE child graph, which is what Go's visitor
     // takes; the check itself only reads, so a clone is enough.
     let mut owned = query.clone();
-    let mut visitor = SetOprUsage { error: None };
+    let mut visitor = SetOprUsage {
+        error: None,
+        oracle_mode: ctx.ddl_sql_mode() & tidb_mysql::ModeOracle.0 != 0,
+    };
     tidb_ast::Visitable::accept(&mut owned, &mut visitor);
     match visitor.error {
         Some(error) => Err(error),

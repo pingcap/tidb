@@ -413,7 +413,7 @@ pub(crate) fn run_query_stmt(
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     validate_query_sequence_names(query, ctx)?;
-    set_opr::validate_query_usage(query)?;
+    set_opr::validate_query_usage(query, ctx)?;
     let mut physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
     physical_builder::execute_query(query, &mut physical, catalog, ctx)
 }
