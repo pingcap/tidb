@@ -101,7 +101,7 @@ func TestInTxnPSProtoPointGet(t *testing.T) {
 }
 
 func TestTxnGoString(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
