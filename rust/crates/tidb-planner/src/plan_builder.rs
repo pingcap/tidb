@@ -2077,7 +2077,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `buildTableDual()` (`logical_plan_builder.go:4658`).
     pub fn build_table_dual(&mut self) -> LogicalPlan {
         self.handle_helper.push_empty();
-        LogicalPlan::TableDual(LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 1))
+        let mut dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 1);
+        // Go's LogicalSchemaProducer.Schema initializes an empty leaf schema.
+        dual.base.base.set_schema(Some(Schema::new(Vec::new())));
+        LogicalPlan::TableDual(dual)
     }
 
     /// Go `buildDataSource(ctx, tn, asName)`

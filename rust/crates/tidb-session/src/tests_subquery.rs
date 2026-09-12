@@ -741,6 +741,17 @@ fn uncorrelated_set_operation_subqueries_fold_like_top_level_queries() {
     );
 }
 
+#[test]
+fn fromless_subquery_apply_has_an_empty_outer_schema() {
+    let mut session = Session::new();
+    for (sql, expected) in [
+        ("SELECT 2 IN (SELECT 1 EXCEPT SELECT 2)", "0"),
+        ("SELECT 2 > ALL (SELECT 1 UNION SELECT 0)", "1"),
+    ] {
+        assert_eq!(row_text(session.run(sql)), [[expected]], "{sql}");
+    }
+}
+
 /// Correlation is a property of a query expression, not only a lone SELECT.
 /// Each set-operation term must be rebound for the current outer row before
 /// the existing set-operation executor folds the terms.
