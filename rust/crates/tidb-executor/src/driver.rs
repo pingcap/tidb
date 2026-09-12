@@ -472,6 +472,9 @@ pub(super) fn run_physical_set_opr_stmt(
 
 pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError) -> DriverError {
     match error.kind() {
+        tidb_planner::plan_base::PlanErrorKind::DuplicateColumnName(name) => {
+            DriverError::DuplicateColumnName(name.clone())
+        }
         tidb_planner::plan_base::PlanErrorKind::IllegalReference { name, reason } => {
             DriverError::IllegalReference { name: name.clone(), reason }
         }

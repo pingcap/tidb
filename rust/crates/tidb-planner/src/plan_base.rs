@@ -283,6 +283,8 @@ pub struct PlanError {
 /// The planner error classes whose MySQL identity survives the plan boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlanErrorKind {
+    /// Go ErrDupFieldName (1060), preserving the original column spelling.
+    DuplicateColumnName(String),
     /// Go ErrIllegalReference (1247), including the referenced alias.
     IllegalReference { name: String, reason: &'static str },
     /// Aggregate descriptor validation before executor construction.
@@ -573,6 +575,16 @@ impl PlanError {
         Self {
             kind: PlanErrorKind::ViewWrongList,
             message: "View's SELECT and view's field list have different column counts".to_owned(),
+        }
+    }
+
+    /// Go plannererrors.ErrDupFieldName.
+    #[must_use]
+    pub fn duplicate_column_name(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!("Duplicate column name '{name}'"),
+            kind: PlanErrorKind::DuplicateColumnName(name),
         }
     }
 

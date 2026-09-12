@@ -3,6 +3,19 @@
 use crate::tests_support::*;
 use crate::*;
 
+#[test]
+fn derived_duplicate_column_preserves_mysql_identity() {
+    let mut session = Session::new();
+    for sql in [
+        "SELECT * FROM (SELECT 1 AS a, 2 AS a) q",
+        "SELECT * FROM (SELECT 1 AS A, 2 AS A) q",
+    ] {
+        let error = session.run(sql).unwrap_err();
+        assert_eq!(error.to_mysql_error().code, 1060, "{sql}");
+    }
+    assert!(session.run("SELECT 1 FROM (SELECT 1 AS a, 2 AS A) q").is_ok());
+}
+
 /// Every `ALGORITHM` a `CREATE VIEW` may write round-trips through
 /// `SHOW CREATE VIEW`, and NONE of them changes what the view returns.
 ///
