@@ -204,6 +204,7 @@ unicode-general-category = "1.1"
 # `JSON_SCHEMA_VALID` follows TiDB's qri-io validator at draft 2019-09,
 # including its file and HTTP(S) retrieval of external `$ref` schemas.
 jsonschema = { version = "0.49.9", default-features = false, features = ["resolve-file", "resolve-http", "tls-ring"] }
+fluent-uri = "0.3"
 # PD's placement-rule API is HTTP-only -- `pd/client/http` is what Go reaches
 # it through, and neither this tree's gRPC PD client nor `tikv/client-rust`
 # exposes it. Already in the lock as a transitive dependency of `jsonschema`,

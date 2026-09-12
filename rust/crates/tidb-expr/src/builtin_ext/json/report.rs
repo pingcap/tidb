@@ -114,13 +114,35 @@ fn prepare_json_schema(value: &Datum) -> Result<Option<PreparedJsonSchema>, Eval
 }
 
 fn build_json_schema(schema: &Json) -> Result<jsonschema::Validator, EvalError> {
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(invalid_json_schema)?;
     jsonschema::options()
         .with_draft(jsonschema::Draft::Draft201909)
         // qri-io's Draft2019_09 `Format` keyword is an assertion, while the
         // Rust validator follows the newer annotation default unless enabled.
         .should_validate_formats(true)
+        .with_retriever(LocalSchemaRetriever { client })
         .build(schema)
         .map_err(invalid_json_schema)
+}
+
+struct LocalSchemaRetriever {
+    client: reqwest::blocking::Client,
+}
+
+impl jsonschema::Retrieve for LocalSchemaRetriever {
+    fn retrieve(
+        &self,
+        uri: &jsonschema::Uri<String>,
+    ) -> Result<Json, Box<dyn std::error::Error + Send + Sync>> {
+        match uri.scheme().as_str() {
+            "http" | "https" => Ok(self.client.get(uri.as_str()).send()?.json()?),
+            "file" => Ok(serde_json::from_reader(std::fs::File::open(uri.path().as_str())?)?),
+            scheme => Err(format!("unsupported schema URI scheme: {scheme}").into()),
+        }
+    }
 }
 
 fn invalid_json_schema(error: impl ToString) -> EvalError {
