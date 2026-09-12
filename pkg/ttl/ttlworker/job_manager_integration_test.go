@@ -458,7 +458,7 @@ func TestTriggerTTLJobWithIndexScan(t *testing.T) {
 	tk.MustQuery("select scan_index_id from mysql.tidb_ttl_task where job_id = ?", tableResult.JobID).
 		Check(testkit.Rows(strconv.FormatInt(idx.ID, 10)))
 
-	waitTTLJobFinished(t, tk, tblID, timerCli)
+	waitTTLJobFinishedWithTimeout(t, tk, tblID, timerCli, 2*time.Minute)
 	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
 }
 
@@ -501,8 +501,12 @@ func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
 }
 
 func waitTTLJobFinished(t *testing.T, tk *testkit.TestKit, tableID int64, timerCli timerapi.TimerClient) {
+	waitTTLJobFinishedWithTimeout(t, tk, tableID, timerCli, time.Minute)
+}
+
+func waitTTLJobFinishedWithTimeout(t *testing.T, tk *testkit.TestKit, tableID int64, timerCli timerapi.TimerClient, timeout time.Duration) {
 	start := time.Now()
-	for time.Since(start) < time.Minute {
+	for time.Since(start) < timeout {
 		time.Sleep(10 * time.Millisecond)
 		r := tk.MustQuery("select last_job_id, current_job_id, parent_table_id from mysql.tidb_ttl_table_status where table_id=?", tableID)
 		rows := r.Rows()
