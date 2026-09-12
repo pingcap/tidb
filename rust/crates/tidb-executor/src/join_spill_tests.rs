@@ -49,7 +49,7 @@ fn inner_join(memory: StatementMemory) -> JoinExec<NoColumns> {
 /// A quota the build side cannot fit in, but which is still far larger
 /// than a single chunk -- so the spill has something to release and the
 /// read-path cancellation #289 describes is not what is being measured.
-const TIGHT_QUOTA_BYTES: i64 = 250 * 1024;
+const TIGHT_QUOTA_BYTES: i64 = 340 * 1024;
 
 fn tight_quota() -> StatementMemory {
     StatementMemory::new(TIGHT_QUOTA_BYTES, OomAction::Cancel, 1)
@@ -195,7 +195,10 @@ fn a_spilled_outer_join_pads_exactly_where_the_unspilled_one_does() {
     let expected = run(&mut roomy);
     assert!(!roomy.build_side_spilled());
 
-    let mut tight = build(tight_quota());
+    // Go's entry store charges 16 bytes per chained build row in slabs
+    // (about 390 KiB for these 20000 rows) and that part never spills, so
+    // this quota sits above it and below the build side with its chunks.
+    let mut tight = build(StatementMemory::new(600 * 1024, OomAction::Cancel, 1));
     let spilled = run(&mut tight);
     assert!(tight.build_side_spilled());
     assert_eq!(spilled, expected);

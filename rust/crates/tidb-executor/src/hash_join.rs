@@ -159,6 +159,135 @@ impl Hasher for ExactIntHasher {
 
 type ExactIntBuckets<V> = HashMap<i128, V, BuildHasherDefault<ExactIntHasher>>;
 
+/// Go v1 `entry`: one build-row pointer and the next entry under the same
+/// key (`CHAIN_END` closes the chain).
+#[derive(Clone, Copy, Debug)]
+struct ChainEntry {
+    ptr: RowPtr,
+    next: u32,
+}
+
+const CHAIN_END: u32 = u32::MAX;
+
+/// A key's chain: its first entry, and its last so the next build row is
+/// appended in input order (see the ordering note on [`BuildTable`]).
+#[derive(Clone, Copy, Debug)]
+struct ChainHead {
+    first: u32,
+    last: u32,
+}
+
+/// Go v1 `entryStore`: every chain entry of the table in one slab, so a new
+/// key or a new row under a key costs no allocation of its own.
+#[derive(Default)]
+struct ChainStore {
+    entries: Vec<ChainEntry>,
+}
+
+/// The bytes Go's `entryStore` has charged once it holds `entries`: slabs
+/// of 16-byte entries (`unsafe.Sizeof(entry{})`) that start at 64 entries
+/// and double up to 8192 (`initialEntrySliceLen`, `maxEntrySliceLen`), each
+/// charged whole when allocated (`GetStore`). The slab is Go's memory
+/// contract for the query quota; the Rust slab is one vector.
+fn go_entry_store_bytes(entries: usize) -> usize {
+    const ENTRY_BYTES: usize = 16;
+    const INITIAL_SLICE_LEN: usize = 64;
+    const MAX_SLICE_LEN: usize = 8192;
+    let mut charged = INITIAL_SLICE_LEN;
+    let mut slab = INITIAL_SLICE_LEN;
+    while charged < entries {
+        slab = (slab * 2).min(MAX_SLICE_LEN);
+        charged += slab;
+    }
+    charged * ENTRY_BYTES
+}
+
+impl ChainStore {
+    /// Appends `ptr` under `head` (a new chain when `None`) and returns the
+    /// head to keep in the map.
+    fn push(&mut self, head: Option<ChainHead>, ptr: RowPtr) -> Result<ChainHead, BuildError> {
+        let index = u32::try_from(self.entries.len())
+            .ok()
+            .filter(|index| *index != CHAIN_END)
+            .ok_or(BuildError::Key)?;
+        self.entries.push(ChainEntry {
+            ptr,
+            next: CHAIN_END,
+        });
+        Ok(match head {
+            Some(head) => {
+                self.entries[head.last as usize].next = index;
+                ChainHead {
+                    first: head.first,
+                    last: index,
+                }
+            }
+            None => ChainHead {
+                first: index,
+                last: index,
+            },
+        })
+    }
+
+    fn chain(&self, head: Option<&ChainHead>) -> Chain<'_> {
+        Chain {
+            entries: &self.entries,
+            next: head.map_or(CHAIN_END, |head| head.first),
+        }
+    }
+}
+
+/// The build rows chained under one key, in build order. `Copy`, so a
+/// caller can walk it more than once.
+#[derive(Clone, Copy)]
+pub(crate) struct Chain<'a> {
+    entries: &'a [ChainEntry],
+    next: u32,
+}
+
+impl<'a> Chain<'a> {
+    pub(crate) fn empty() -> Self {
+        Chain {
+            entries: &[],
+            next: CHAIN_END,
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.next == CHAIN_END
+    }
+
+    /// The number of rows in the chain, walked.
+    pub(crate) fn len(&self) -> usize {
+        (*self).count()
+    }
+
+    pub(crate) fn first(&self) -> Option<RowPtr> {
+        let mut chain = *self;
+        chain.next()
+    }
+
+    /// The chain's only row, `None` when it holds none or more than one.
+    pub(crate) fn single(&self) -> Option<RowPtr> {
+        let mut chain = *self;
+        let first = chain.next()?;
+        chain.next().is_none().then_some(first)
+    }
+}
+
+impl Iterator for Chain<'_> {
+    type Item = RowPtr;
+
+    fn next(&mut self) -> Option<RowPtr> {
+        if self.next == CHAIN_END {
+            return None;
+        }
+        let entry = self.entries[self.next as usize];
+        self.next = entry.next;
+        Some(entry.ptr)
+    }
+}
+
 /// The comparison domain a hash join key column is encoded in.
 ///
 /// One variant per arm of `eval_binary_full`'s comparison dispatch that this
@@ -857,16 +986,15 @@ pub(crate) fn equi_keys_equal_chunk_rows(
 /// is what v2 does, with a completely different partitioned machinery.
 pub(crate) struct BuildTable {
     rows: RowContainer,
-    buckets: HashBuckets<Vec<RowPtr>>,
-    exact_int_buckets: Option<ExactIntBuckets<Vec<RowPtr>>>,
+    buckets: HashBuckets<ChainHead>,
+    exact_int_buckets: Option<ExactIntBuckets<ChainHead>>,
+    /// The chain entries both maps point into (Go v1 `entryStore`).
+    chains: ChainStore,
     /// Go v1's `outerMatchedStatus` / v2's row-table used flag. Present only
     /// when an outer join builds its preserved side, so the post-probe scan
     /// can emit build rows that never satisfied the complete ON condition.
     matched: Option<Mutex<Vec<Vec<u8>>>>,
     bucket_bytes: i64,
-    /// Sum of the capacities of all bucket pointer vectors. Keeping this
-    /// incrementally avoids walking every bucket after each input chunk.
-    bucket_pointer_capacity: usize,
     /// Sum of the capacities of the per-chunk matched bitmaps.
     matched_bitmap_capacity: usize,
 }
@@ -900,9 +1028,9 @@ impl BuildTable {
             rows: RowContainer::new(field_types, chunk_size, spill_storage),
             buckets: HashBuckets::default(),
             exact_int_buckets: use_exact_int.then(ExactIntBuckets::default),
+            chains: ChainStore::default(),
             matched: track_matches.then(|| Mutex::new(Vec::<Vec<u8>>::new())),
             bucket_bytes: 0,
-            bucket_pointer_capacity: 0,
             matched_bitmap_capacity: 0,
         }
     }
@@ -955,6 +1083,9 @@ impl BuildTable {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(bitmap);
         }
+        let chains = &mut self.chains;
+        let buckets = &mut self.buckets;
+        let mut exact_buckets = self.exact_int_buckets.as_mut();
         for row_idx in 0..chunk.num_rows() {
             if !selected.is_empty() && !selected[row_idx] {
                 continue;
@@ -970,11 +1101,17 @@ impl BuildTable {
                 {
                     let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
                     let pointer = RowPtr { chk_idx, row_idx };
-                    let pointers = self
-                        .exact_int_buckets
-                        .as_mut()
+                    let pointers = exact_buckets
+                        .as_deref_mut()
                         .expect("exact integer buckets initialized");
-                    pointers.entry(key).or_default().push(pointer);
+                    match pointers.entry(key) {
+                        Entry::Occupied(mut entry) => {
+                            *entry.get_mut() = chains.push(Some(*entry.get()), pointer)?;
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(chains.push(None, pointer)?);
+                        }
+                    }
                 }
                 continue;
             }
@@ -983,21 +1120,12 @@ impl BuildTable {
             if let Some(key) = key {
                 let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
                 let pointer = RowPtr { chk_idx, row_idx };
-                match self.buckets.entry(key) {
+                match buckets.entry(key) {
                     Entry::Occupied(mut entry) => {
-                        let pointers = entry.get_mut();
-                        let before = pointers.capacity();
-                        pointers.push(pointer);
-                        self.bucket_pointer_capacity = self
-                            .bucket_pointer_capacity
-                            .saturating_add(pointers.capacity().saturating_sub(before));
+                        *entry.get_mut() = chains.push(Some(*entry.get()), pointer)?;
                     }
                     Entry::Vacant(entry) => {
-                        let pointers = vec![pointer];
-                        self.bucket_pointer_capacity = self
-                            .bucket_pointer_capacity
-                            .saturating_add(pointers.capacity());
-                        entry.insert(pointers);
+                        entry.insert(chains.push(None, pointer)?);
                     }
                 }
             }
@@ -1011,15 +1139,16 @@ impl BuildTable {
     }
 
     /// The build rows that could match `key`, in build order.
-    pub(crate) fn probe(&self, key: u64) -> &[RowPtr] {
-        self.buckets.get(&key).map_or(&[], Vec::as_slice)
+    pub(crate) fn probe(&self, key: u64) -> Chain<'_> {
+        self.chains.chain(self.buckets.get(&key))
     }
 
-    pub(crate) fn probe_exact_int(&self, key: i128) -> &[RowPtr] {
-        self.exact_int_buckets
-            .as_ref()
-            .and_then(|buckets| buckets.get(&key))
-            .map_or(&[], Vec::as_slice)
+    pub(crate) fn probe_exact_int(&self, key: i128) -> Chain<'_> {
+        self.chains.chain(
+            self.exact_int_buckets
+                .as_ref()
+                .and_then(|buckets| buckets.get(&key)),
+        )
     }
 
     pub(crate) fn has_exact_int(&self) -> bool {
@@ -1035,7 +1164,7 @@ impl BuildTable {
     pub(crate) fn exact_int_is_unique(&self) -> bool {
         self.exact_int_buckets
             .as_ref()
-            .is_some_and(|buckets| buckets.values().all(|rows| rows.len() <= 1))
+            .is_some_and(|buckets| buckets.values().all(|head| head.first == head.last))
     }
 
     /// Marks one preserved build row as matched after every ON conjunct has
@@ -1160,26 +1289,23 @@ impl BuildTable {
         self.bucket_bytes = 0;
         self.buckets = HashBuckets::default();
         self.exact_int_buckets = None;
+        self.chains = ChainStore::default();
         self.matched = None;
-        self.bucket_pointer_capacity = 0;
         self.matched_bitmap_capacity = 0;
         self.rows.close();
     }
 
     fn refresh_bucket_memory(&mut self) {
         let map_slots = self.buckets.capacity().saturating_mul(
-            std::mem::size_of::<(u64, Vec<RowPtr>)>() + std::mem::size_of::<usize>(),
+            std::mem::size_of::<(u64, ChainHead)>() + std::mem::size_of::<usize>(),
         );
         let retained = GO_V1_HASH_TABLE_FIXED_BYTES
             .saturating_add(map_slots)
-            .saturating_add(std::mem::size_of::<HashBuckets<Vec<RowPtr>>>())
-            .saturating_add(
-                self.bucket_pointer_capacity
-                    .saturating_mul(std::mem::size_of::<RowPtr>()),
-            )
+            .saturating_add(std::mem::size_of::<HashBuckets<ChainHead>>())
+            .saturating_add(go_entry_store_bytes(self.chains.entries.len()))
             .saturating_add(self.exact_int_buckets.as_ref().map_or(0, |buckets| {
                 buckets.capacity()
-                    * (std::mem::size_of::<(i128, Vec<RowPtr>)>() + std::mem::size_of::<usize>())
+                    * (std::mem::size_of::<(i128, ChainHead)>() + std::mem::size_of::<usize>())
             }))
             .saturating_add(self.matched.as_ref().map_or(0, |chunks| {
                 chunks

@@ -2100,7 +2100,6 @@ impl<C: Columns> GroupedStreamAggExec<C> {
         same_group: &mut [bool],
         scratch: &mut [Vec<u8>; 3],
     ) -> Result<(), ExecError> {
-        let rows = self.child_chunk.num_rows();
         let expr = &self.group_by[item];
         if let Expression::Column(column) = expr {
             let is_int = column.get_static_type().is_some_and(|field_type| {

@@ -155,7 +155,7 @@
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::{
     equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, row_hash, row_hash_chunk,
-    row_key, row_key_by, BuildError, BuildTable, EquiKey, FastBytesMap, KeyClass, KeyError,
+    row_key, row_key_by, BuildError, BuildTable, Chain, EquiKey, FastBytesMap, KeyClass, KeyError,
 };
 use crate::mem_quota::StatementMemory;
 mod output;
@@ -3103,12 +3103,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 if let Some(key) =
                     exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
                 {
-                    candidates.extend_from_slice(table.probe_exact_int(key));
+                    candidates.extend(table.probe_exact_int(key));
                 }
             } else if let Some(key) =
                 row_hash_chunk(keys, probe_row, probe_types, offset).map_err(key_error)?
             {
-                candidates.extend_from_slice(table.probe(key));
+                candidates.extend(table.probe(key));
             }
             let mut matched = false;
             for &ptr in &candidates {
@@ -3300,12 +3300,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let mut all_matched = true;
             for probe_index in 0..input.num_rows() {
                 let exact_key = exact_key_at(probe_index);
-                let candidates = exact_key.map_or(&[][..], |key| table.probe_exact_int(key));
-                if candidates.len() != 1 {
+                let Some(ptr) = exact_key.and_then(|key| table.probe_exact_int(key).single())
+                else {
                     all_matched = false;
                     break;
-                }
-                batch_ptrs.push(candidates[0]);
+                };
+                batch_ptrs.push(ptr);
             }
             if all_matched {
                 // Semi/anti have no joined row to assemble: a preserved
@@ -3413,8 +3413,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         for probe_index in 0..input.num_rows() {
             let probe_row = input.get_row(probe_index);
             let exact_key = exact_key_at(probe_index);
-            let candidates: &[RowPtr] = exact_key.map_or(&[], |key| table.probe_exact_int(key));
-            debug_assert!(candidates.len() <= 1);
+            let candidates =
+                exact_key.map_or_else(Chain::empty, |key| table.probe_exact_int(key));
+            debug_assert!(candidates.single().is_some() || candidates.is_empty());
             // Semi/anti emit the preserved LEFT row once per match decision;
             // with the preserved side built they only collect matches for the
             // post-probe scan.
@@ -3424,7 +3425,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     output_layout.preserved(&mut output, probe_row);
                 }
                 if builds_preserved {
-                    if let Some(&ptr) = candidates.first() {
+                    if let Some(ptr) = candidates.first() {
                         matched_build_rows.push(ptr);
                     }
                 }
@@ -3434,7 +3435,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 continue;
             }
             let mut matched = false;
-            for &ptr in candidates {
+            for ptr in candidates {
                 let emitted = table
                     .with_row(ptr, &mut build_buf, |build_row| {
                         if !residual_conditions.is_empty() {
@@ -3688,7 +3689,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             // a spilled build side becomes a read from the spill file.
             let candidates: Vec<RowPtr> = match key {
                 Some(key) => {
-                    let ptrs = hash.table.probe(key).to_vec();
+                    let ptrs: Vec<RowPtr> = hash.table.probe(key).collect();
                     let mut rows = Vec::with_capacity(ptrs.len());
                     for ptr in ptrs {
                         let key_matches = {
@@ -3887,16 +3888,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 let selected =
                     hash.probe_selected.is_empty() || hash.probe_selected[hash.probe_row];
                 let candidates = if !selected {
-                    &[][..]
+                    Chain::empty()
                 } else if let Some(key) = exact_int {
                     exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
-                        .map_or(&[][..], |key| hash.table.probe_exact_int(key))
+                        .map_or_else(Chain::empty, |key| hash.table.probe_exact_int(key))
                 } else {
                     row_hash_chunk(keys, probe_row, probe_types, offset)
                         .map_err(key_error)?
-                        .map_or(&[][..], |key| hash.table.probe(key))
+                        .map_or_else(Chain::empty, |key| hash.table.probe(key))
                 };
-                hash.probe_candidates.extend_from_slice(candidates);
+                hash.probe_candidates.extend(candidates);
                 hash.probe_matched = false;
             }
             if let Some(&ptr) = hash.probe_candidates.get(hash.probe_candidate_idx) {
@@ -4037,9 +4038,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     };
                     hash.probe_candidates = if exact_int.is_some() {
                         exact_key
-                            .map_or_else(Vec::new, |key| hash.table.probe_exact_int(key).to_vec())
+                            .map_or_else(Vec::new, |key| hash.table.probe_exact_int(key).collect())
                     } else {
-                        key.map_or_else(Vec::new, |key| hash.table.probe(key).to_vec())
+                        key.map_or_else(Vec::new, |key| hash.table.probe(key).collect())
                     };
                     hash.probe_candidate_idx = 0;
                     if hash.probe_candidates.is_empty() {
