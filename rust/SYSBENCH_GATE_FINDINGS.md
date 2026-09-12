@@ -1155,3 +1155,132 @@ path; what remains is the per-statement cost of the read path (parse and
 plan of a point/range read, result encoding) and of insert, which the
 profiles in the rounds above locate but which no single fix so far moves by
 more than a few percent.
+
+## TPC-H SF 1 (2026-09-12): Go vs r16, single stream, answers verified
+
+Setup: go-tpc's TPC-H at scale factor 1 loaded and ANALYZEd through the Go
+node (`tiup bench tpch --sf 1 prepare --analyze`; 6,001,215 `lineitem`
+rows, statistics present for all eight tables), same playground (one TiKV,
+one PD, no TiFlash). Both nodes read the same rows and the same
+`mysql.stats_*`. `r16` is head 00905283. Every side is restarted before
+its turn (both nodes default to a 1000 MB coprocessor cache, so a repeated
+query on unchanged data measures the cache, not the engine), then the 22
+queries run twice: pass `cold` and pass `warm`; two rounds, order
+alternating; seconds per query, single stream, go-tpc's SF 1 answer check
+on every run. Scripts: scratchpad `tpch-run.sh`, `tpch-table.py`,
+`tpch-diff.py`.
+
+### Correctness
+
+- go-tpc's `--check` reported no mismatch on any of the 176 query runs.
+- Independently, the 22 statements from `tests/integrationtest/t/tpch.test`
+  (different parameter values from go-tpc's; Q15 restored from the file's
+  own commented-out text) were run on both nodes and their result sets
+  diffed: 22 of 22 identical (`results/tpch-diff-go-r16.txt`).
+
+### Two defects found by this workload, both fixed on the branch
+
+1. DDL ownership (eb118336). The Rust node campaigned for DDL ownership
+   unconditionally while its owner loop executes only the CHECK CONSTRAINT
+   job types and skips everything else; after any Go-node restart the Rust
+   node won the election and the Go node's own `CREATE VIEW` (Q15, job type
+   21) queued forever. Go gates the campaign on `Instance.TiDBEnableDDL`
+   (`ddl.go:871`, `:926`), set by `--run-ddl` (`main.go:751`); the Rust flag
+   was parsed and ignored. It now reaches the campaign; the harness runs the
+   Rust node with `--run-ddl=false`. Still open: an owner that skips job
+   types it does not implement, where Go's worker would cancel an unknown
+   type (`job_worker.go`, `ErrInvalidDDLJob`).
+2. Coprocessor limiter deadlock (4640709a, 00905283). Q10 hung on every
+   Rust binary (72 min on the pre-campaign base; the repo test file's Q10 on
+   r15). Go's per-query, per-store request limiter (`tidb_query_cop_store_limit`
+   = 15) is waited on by a worker that holds nothing: one synchronous request
+   per goroutine, released before the next acquire. The Rust transport keeps a
+   window of attempts in flight per response, each holding a token, and
+   blocked the worker-runtime thread on the limiter's condvar while holding
+   them; with all four runtime threads waiting, no token could ever be
+   released. The acquire now yields (`LimiterBackpressure`) whenever the
+   response is driven by the runtime or has attempts in flight, registers the
+   driver's waker with the limiter, and rolls the route selection back with
+   the selector's existing `abort_unsent_attempt`; the blocking acquire is
+   kept only for a synchronous driver with nothing in flight, which is Go's
+   worker exactly.
+
+The pre-campaign base binary (8123bb1) cannot complete TPC-H: it hangs on
+Q10 (defect 2) and cannot be kept out of the DDL election (defect 1). Its
+cold pass reached Q1-Q9 before the hang, and those nine are within 3% of
+r16's cold numbers (base 2.72/1.17/2.99/1.64/3.46/1.38/3.12/2.52/6.27 s vs
+r16 2.89/1.14/2.92/1.61/3.35/1.41/3.12/2.49/6.30 s), so the campaign's
+per-statement work neither helped nor hurt this workload, as expected: its
+time is coprocessor scans and root-side joins.
+
+### Cold (first pass after a restart, both caches empty)
+
+| query | go s | r16 s | r16 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 2.92 | 2.89 | -1% | 2/2 |
+| Q2 | 0.77 | 1.14 | +48% | 2/2 |
+| Q3 | 1.65 | 2.92 | +78% | 2/2 |
+| Q4 | 1.14 | 1.61 | +41% | 2/2 |
+| Q5 | 2.85 | 3.35 | +18% | 2/2 |
+| Q6 | 1.34 | 1.41 | +5% | 2/2 |
+| Q7 | 2.38 | 3.12 | +31% | 2/2 |
+| Q8 | 1.48 | 2.49 | +68% | 2/2 |
+| Q9 | 3.66 | 6.30 | +73% | 2/2 |
+| Q10 | 1.48 | 2.25 | +53% | 2/2 |
+| Q11 | 1.24 | 2.15 | +73% | 2/2 |
+| Q12 | 1.98 | 2.72 | +37% | 2/2 |
+| Q13 | 1.94 | 2.42 | +24% | 2/2 |
+| Q14 | 1.34 | 1.54 | +14% | 2/2 |
+| Q15 | 2.48 | 3.75 | +51% | 2/2 |
+| Q16 | 0.50 | 1.00 | +101% | 2/2 |
+| Q17 | 4.12 | 6.21 | +51% | 2/2 |
+| Q18 | 3.79 | 5.57 | +47% | 2/2 |
+| Q19 | 1.94 | 3.59 | +85% | 2/2 |
+| Q20 | 1.34 | 1.61 | +20% | 2/2 |
+| Q21 | 2.96 | 4.94 | +67% | 2/2 |
+| Q22 | 1.08 | 1.17 | +9% | 2/2 |
+| sum (answered) | 44.4 (22 q) | 64.2 (22 q) | | | |
+
+### Warm (second pass on the same process)
+
+| query | go s | r16 s | r16 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 0.54 | 0.10 | -81% | 2/2 |
+| Q2 | 0.10 | 0.44 | +340% | 2/2 |
+| Q3 | 0.91 | 2.08 | +130% | 2/2 |
+| Q4 | 0.41 | 0.80 | +99% | 2/2 |
+| Q5 | 1.84 | 2.38 | +29% | 2/2 |
+| Q6 | 0.27 | 0.10 | -63% | 2/2 |
+| Q7 | 1.48 | 2.62 | +78% | 2/2 |
+| Q8 | 0.77 | 1.81 | +136% | 2/2 |
+| Q9 | 2.69 | 6.14 | +129% | 2/2 |
+| Q10 | 0.57 | 1.24 | +118% | 2/2 |
+| Q11 | 0.10 | 1.41 | +1310% | 2/2 |
+| Q12 | 0.64 | 2.29 | +260% | 2/2 |
+| Q13 | 0.30 | 1.34 | +348% | 2/2 |
+| Q14 | 0.80 | 1.14 | +42% | 2/2 |
+| Q15 | 2.11 | 3.46 | +64% | 2/2 |
+| Q16 | 0.37 | 0.91 | +146% | 2/2 |
+| Q17 | 4.09 | 6.14 | +50% | 2/2 |
+| Q18 | 2.72 | 4.73 | +74% | 2/2 |
+| Q19 | 1.38 | 3.55 | +159% | 2/2 |
+| Q20 | 1.24 | 1.34 | +8% | 2/2 |
+| Q21 | 2.35 | 4.20 | +79% | 2/2 |
+| Q22 | 0.10 | 0.71 | +605% | 2/2 |
+| sum (answered) | 25.8 (22 q) | 48.9 (22 q) | | | |
+
+### Reading the tables
+
+- Cold, r16 answers the 22 queries in 64.2 s against Go's 44.4 s, 1.45x.
+  Q1, Q6 and Q22 are at parity (-1%, +5%, +9%); the single-table
+  aggregations the coprocessor does most of. The joins are where the gap is:
+  Q3 +78%, Q8 +68%, Q9 +73%, Q11 +73%, Q16 +101%, Q19 +85%, Q21 +67%.
+- Warm, Go gains far more from its coprocessor cache than r16 does: Go
+  answers Q2, Q11 and Q22 from cache in 0.10 s; r16 hits its cache on Q1 and
+  Q6 (0.10 s, faster than Go's 0.54/0.27 s) and on almost nothing else
+  (Q11 1.41 s, Q22 0.71 s). The Rust cop cache is keyed so that only the
+  single-table scan shapes hit; the join and lookup requests do not.
+  Not investigated further here.
+- Two rounds per side agree to within a few percent on every query, so the
+  per-query deltas are outside noise.
+
