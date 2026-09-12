@@ -548,6 +548,9 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::WrongNumberOfColumnsInSelect
         }
         tidb_planner::plan_base::PlanErrorKind::ViewWrongList => DriverError::ViewWrongList,
+        tidb_planner::plan_base::PlanErrorKind::InvalidLateralJoin(reason) => {
+            DriverError::InvalidLateralJoin(reason)
+        }
         tidb_planner::plan_base::PlanErrorKind::ViewInvalid(name) => {
             DriverError::Schema(SchemaErrorKind::ViewInvalid(name.clone()))
         }

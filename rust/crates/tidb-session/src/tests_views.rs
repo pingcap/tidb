@@ -214,14 +214,21 @@ fn lateral_derived_table_join_shapes() {
     );
     assert_eq!(rows, [["3", "300"], ["3", "301"], ["3", "302"]]);
 
-    // Captured: [planner:3809]. Go rejects outer joins with LATERAL.
-    assert!(matches!(
-        session
-            .run("SELECT t.a FROM t LEFT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE"),
-        Err(DriverError::InvalidLateralJoin(
-            "LEFT JOIN is not supported with LATERAL"
-        ))
+    // Go master supports LEFT LATERAL and null-extends unmatched rows.
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT t.a FROM t LEFT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x \
+         ON TRUE ORDER BY t.a",
+    );
+    assert_eq!(rows, [["1"], ["1"], ["2"], ["3"], ["3"], ["3"]]);
+    let rows = row_text(session.run(
+        "SELECT t.a, x.v FROM t LEFT JOIN LATERAL \
+         (SELECT v FROM s WHERE s.k = t.a AND v > 300) x ON TRUE ORDER BY t.a, x.v",
     ));
+    assert_eq!(
+        rows,
+        [["1", "NULL"], ["2", "NULL"], ["3", "301"], ["3", "302"]]
+    );
     assert!(matches!(
         session.run(
             "SELECT t.a FROM t RIGHT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE"
@@ -235,6 +242,29 @@ fn lateral_derived_table_join_shapes() {
     // ordinary derived table (captured: it runs).
     let (_, rows) = query_text(&mut session, "SELECT * FROM LATERAL (SELECT 1) x");
     assert_eq!(rows, [["1"]]);
+}
+
+#[test]
+fn lateral_correlated_projection_names_are_columns_not_expression_text() {
+    let mut session = lateral_session();
+    let (names, rows) = query_text(
+        &mut session,
+        "SELECT x.a, z.y FROM t, LATERAL (SELECT t.a) x, \
+         LATERAL (SELECT x.a + 1 AS y) z ORDER BY x.a",
+    );
+    assert_eq!(names, ["a", "y"]);
+    assert_eq!(rows, [["1", "2"], ["2", "3"], ["3", "4"]]);
+    let (names, rows) = query_text(
+        &mut session,
+        "SELECT x.renamed FROM t, LATERAL (SELECT t.a AS renamed) x ORDER BY x.renamed",
+    );
+    assert_eq!(names, ["renamed"]);
+    assert_eq!(rows, [["1"], ["2"], ["3"]]);
+    let error = session
+        .run("SELECT * FROM t RIGHT JOIN LATERAL (SELECT t.a) x ON TRUE")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 3809);
 }
 
 /// A `LATERAL` derived table whose body is a set operation (`UNION`/

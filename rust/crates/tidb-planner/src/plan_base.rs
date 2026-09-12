@@ -339,6 +339,8 @@ pub enum PlanErrorKind {
     ViewWrongList,
     /// Go plannererrors.ErrViewInvalid (1356), with the qualified view name.
     ViewInvalid(String),
+    /// Go plannererrors.ErrInvalidLateralJoin (3809).
+    InvalidLateralJoin(&'static str),
     /// Go `plannererrors.ErrWrongGroupField` (1056).
     WrongGroupField(String),
     /// Go `plannererrors.ErrCTERecursiveRequiresUnion` (3573).
@@ -589,6 +591,15 @@ impl PlanError {
                 "View '{name}' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"
             ),
             kind: PlanErrorKind::ViewInvalid(name),
+        }
+    }
+
+    /// Go plannererrors.ErrInvalidLateralJoin.
+    #[must_use]
+    pub fn invalid_lateral_join(reason: &'static str) -> Self {
+        Self {
+            message: format!("Invalid LATERAL join: {reason}"),
+            kind: PlanErrorKind::InvalidLateralJoin(reason),
         }
     }
 

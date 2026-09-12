@@ -2914,7 +2914,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         field: &ProjectionField,
         names: &[FieldName],
         resolved_index: Option<usize>,
+        correlated: bool,
     ) -> FieldName {
+        if field.column_reference && correlated {
+            if let Expr::Column(path) = &field.expr {
+                let mut name = FieldName::new(FieldNameMetadata {
+                    column: IdentifierMetadata::new(
+                        field.alias.as_deref().unwrap_or_else(|| {
+                            path.last().map(String::as_str).unwrap_or_default()
+                        }),
+                    ),
+                    ..FieldNameMetadata::default()
+                });
+                name.hidden = field.hidden;
+                return name;
+            }
+        }
         // `:1537` "Field is a column reference": the origin names survive, and
         // only `ColName` takes the alias. Go tests the field's AST node
         // (`innerNode.(*ast.ColumnNameExpr)`), not the rewritten expression:
@@ -3268,7 +3283,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 Expression::Column(column) => usize::try_from(column.index).ok(),
                 _ => None,
             };
-            let name = Self::projection_field_name(field, &names, resolved_index);
+            let name = Self::projection_field_name(
+                field,
+                &names,
+                resolved_index,
+                matches!(&built, Expression::CorrelatedColumn(_)),
+            );
             // Go `buildProjectionField`: a rewritten Column is the projection
             // output column itself. Only a computed expression allocates a
             // fresh UniqueID. Preserving this identity is also what lets an
@@ -3367,7 +3387,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 Expression::Column(column) => usize::try_from(column.index).ok(),
                 _ => None,
             };
-            let name = Self::projection_field_name(field, &names, resolved_index);
+            let name = Self::projection_field_name(
+                field,
+                &names,
+                resolved_index,
+                matches!(&built, Expression::CorrelatedColumn(_)),
+            );
             let ret_type = built
                 .static_type()
                 .cloned()

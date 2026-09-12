@@ -1080,13 +1080,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:961` "NATURAL JOIN and USING clauses are not supported with
         // LATERAL derived tables."
         if join_node.natural {
-            return Err(PlanError::internal(
-                "Invalid LATERAL join: NATURAL JOIN is not supported with LATERAL",
+            return Err(PlanError::invalid_lateral_join(
+                "NATURAL JOIN is not supported with LATERAL",
             ));
         }
         if !join_node.using.is_empty() {
-            return Err(PlanError::internal(
-                "Invalid LATERAL join: USING clause is not supported with LATERAL",
+            return Err(PlanError::invalid_lateral_join(
+                "USING clause is not supported with LATERAL",
             ));
         }
         let join_type = match join_node.tp {
@@ -1095,8 +1095,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 LogicalJoinType::LeftOuter
             }
             JoinType::Right => {
-                return Err(PlanError::internal(
-                    "Invalid LATERAL join: RIGHT JOIN is not supported with LATERAL",
+                return Err(PlanError::invalid_lateral_join(
+                    "RIGHT JOIN is not supported with LATERAL",
                 ))
             }
             // Comma syntax and an explicit `INNER JOIN` are the same node.
