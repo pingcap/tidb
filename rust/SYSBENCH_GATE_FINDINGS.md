@@ -1418,3 +1418,156 @@ Each query was run with the node's and TiKV's CPU time sampled around it
   Q11, Q19 and Q20 are the cold ones minus TiKV's block cache effect.
 - Two rounds per side agree to within a few percent on every query except
   Go's Q3 cold.
+
+## TPC-H SF 1, round 3 (2026-09-12): the join executor, Go vs r20
+
+`r20` is head a5e12d4a. Same harness and answer check as above (no mismatch
+on any of the 176 runs). Go's cold column in this run is not comparable with
+the r16/r18 runs: the Rust side ran first and TiKV's block cache was warm
+when the Go node was restarted for its cold pass, so Go's "cold" Q2/Q3/Q22
+(0.14/1.00/0.57 s) are cache numbers; read the Rust columns against the
+r18 run above and the warm columns against each other.
+
+### The coprocessor cache is not the warm gap
+
+The r16 reading guessed the Rust cache key missed on join shapes. A traced
+build (env-gated prints in `CoprCache::prepare_request` / `handle_response`,
+not committed) on a warm Q3 showed the cache behaving exactly as Go's: the
+key is Go's `coprCacheBuildKey` byte for byte, the 136 skipped requests were
+the index-join inner lookups with more than 500 ranges, which Go's
+`CheckRequestAdmission` refuses too (Go's own `TableReader_80` shows a 0.00
+hit ratio there), the large pages were stored on the first run and found on
+the second, and the only rejected responses were early pages under Go's
+5 ms admission (paging sizes grow 128 -> 50,000 as `growPagingSize` does).
+The Rust node exposes no `copr_cache` counters and no cop-task execution
+info in EXPLAIN ANALYZE, which is why this took a traced build; that is a
+gap in observability, not in the cache.
+
+### Where the join queries' time goes: the session thread
+
+Profiling the Rust node process shows the same shape as Go's pprof (memmove
+24%/20%, probe ~40%), only at 2.5x the CPU. Profiling the session thread
+alone is what explains the wall time: Q9 ran at 1.3 busy cores for 5.2 s
+because the session thread was busy for all of it.
+
+- With the fork-join windows (r18), the session thread pulled
+  `concurrency * 16` probe chunks while the workers idled, then waited for
+  the window; 8% of node CPU was kernel scheduling from the per-window
+  parks. Ported Go's `hash_join_v2` pipeline (commit ae441fa3): the session
+  thread fetches and consumes as Go's fetcher goroutine and `Next` do, one
+  pool task per probe chunk probes it, `Concurrency` probe chunks and
+  `Concurrency + 1` result chunks in circulation. Q9 did not move: the
+  session thread was still saturated.
+- The session-thread profile on that build put 28% in `drain_probe_chunk`,
+  the serial probe: the parallel path was gated to one integer key over a
+  unique build, and Q9's two largest joins (partsupp on a composite key,
+  orders on a non-unique key) ran serially. Go's `processOneProbeChunk`
+  runs every shape on workers. Ported a general worker from the serial
+  chunk-backed probe (commit a5e12d4a): composite keys, non-unique
+  candidates, residual conditions, per-kind arms, several result chunks per
+  probe chunk. Q9 warm 5.33 -> 4.83 s (-9%), cold 5.60 -> 5.00 s; Q3 and
+  Q16 unchanged; node CPU +13% on Q9 from the extra handoffs.
+- The session thread on r20 is still saturated. Its profile: hash-table
+  build on the session thread (`index_chunk_selected` 9% self; Go builds on
+  `Concurrency` build workers, `BuildWorkerV2.splitPartitionAndAppendToRowTable`),
+  kernel scheduling from the per-chunk handoffs (20%; Go's goroutine
+  handoffs stay in user space), the decimal projection under the aggregate
+  (`eval_binary_full` 10%, `l_extendedprice * (1 - l_discount) - ps_supplycost * l_quantity`
+  evaluated row by row where Go's `VecEval` runs it over a column), the
+  coprocessor response decode (`prost merge_repeated` 9%, with one copy more
+  than Go: `cop_paging.rs` clones `response.data` after prost has already
+  copied it out of the gRPC buffer), and the join output assembly (memmove
+  13%). Each of these is Go-structured differently; none is a single
+  divergence. In order of expected yield: a parallel build phase, then a
+  vectorized projection/filter path, then batching the per-chunk handoffs.
+- Also measured and not the cause: allocator page faults. jemalloc with
+  Go-like retention (`_RJEM_MALLOC_CONF=oversize_threshold:0,dirty_decay_ms:-1,muzzy_decay_ms:-1`)
+  cut Q9's minor faults 50x (580k -> 12k) and node CPU 10%, wall 0%.
+  Not committed: the wall time is the session thread, not the faults.
+
+### A/B on the warm join queries (node CPU, wall, minor faults; two runs each)
+
+| build | Q9 wall | Q9 CPU | Q3 wall | Q3 CPU | Q16 wall | Q16 CPU |
+|---|---|---|---|---|---|---|
+| r18 (windows) | 5.4-5.6 s | 7.2-7.5 s | 2.26 s | 1.03-1.11 s | 0.91 s | 0.60 s |
+| r19 (pipeline) | 5.5-5.6 s | 8.2-8.4 s | 2.35 s | 1.11 s | 0.95 s | 0.65 s |
+| r20 (+ general worker) | 4.9-5.0 s | 8.4-8.5 s | 2.25-2.34 s | 1.06-1.12 s | 0.90 s | 0.60-0.66 s |
+| Go | 2.3-2.6 s | ~2.7 s | 0.9 s | | 0.4 s | |
+
+### Cold (first pass after a restart; see the caveat on Go's column)
+
+| query | go s | r20 s | r20 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 2.08 | 2.72 | +31% | 2/2 |
+| Q2 | 0.14 | 1.04 | +670% | 2/2 |
+| Q3 | 1.00 | 2.98 | +197% | 2/2 |
+| Q4 | 0.80 | 1.71 | +112% | 2/2 |
+| Q5 | 2.15 | 3.19 | +48% | 2/2 |
+| Q6 | 0.88 | 1.31 | +50% | 2/2 |
+| Q7 | 1.88 | 2.99 | +59% | 2/2 |
+| Q8 | 1.07 | 2.55 | +137% | 2/2 |
+| Q9 | 2.51 | 5.00 | +99% | 2/2 |
+| Q10 | 0.97 | 2.08 | +114% | 2/2 |
+| Q11 | 0.71 | 1.38 | +96% | 2/2 |
+| Q12 | 1.30 | 2.55 | +95% | 2/2 |
+| Q13 | 1.07 | 2.25 | +109% | 2/2 |
+| Q14 | 1.07 | 1.44 | +34% | 2/2 |
+| Q15 | 2.15 | 3.53 | +64% | 2/2 |
+| Q16 | 0.47 | 1.00 | +114% | 2/2 |
+| Q17 | 3.79 | 5.54 | +46% | 2/2 |
+| Q18 | 3.22 | 5.07 | +57% | 2/2 |
+| Q19 | 1.65 | 1.88 | +14% | 2/2 |
+| Q20 | 1.27 | 1.48 | +16% | 2/2 |
+| Q21 | 2.66 | 4.96 | +87% | 2/2 |
+| Q22 | 0.57 | 1.11 | +95% | 2/2 |
+| sum (answered) | 33.4 (22 q) | 57.8 (22 q) | | |
+
+### Warm (second pass on the same process)
+
+| query | go s | r20 s | r20 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 0.10 | 0.10 | +0% | 2/2 |
+| Q2 | 0.10 | 0.33 | +235% | 2/2 |
+| Q3 | 0.97 | 2.25 | +132% | 2/2 |
+| Q4 | 0.37 | 0.88 | +136% | 2/2 |
+| Q5 | 1.64 | 2.35 | +43% | 2/2 |
+| Q6 | 0.10 | 0.10 | +0% | 2/2 |
+| Q7 | 1.31 | 2.52 | +92% | 2/2 |
+| Q8 | 0.77 | 1.81 | +136% | 2/2 |
+| Q9 | 2.29 | 4.83 | +112% | 2/2 |
+| Q10 | 0.50 | 1.14 | +128% | 2/2 |
+| Q11 | 0.10 | 0.27 | +165% | 2/2 |
+| Q12 | 0.43 | 1.44 | +231% | 2/2 |
+| Q13 | 0.23 | 1.08 | +367% | 2/2 |
+| Q14 | 0.73 | 0.97 | +32% | 2/2 |
+| Q15 | 1.91 | 3.25 | +70% | 2/2 |
+| Q16 | 0.44 | 0.88 | +99% | 2/2 |
+| Q17 | 3.72 | 5.40 | +45% | 2/2 |
+| Q18 | 2.62 | 4.33 | +65% | 2/2 |
+| Q19 | 1.27 | 1.44 | +13% | 2/2 |
+| Q20 | 1.17 | 1.41 | +21% | 2/2 |
+| Q21 | 2.29 | 4.23 | +85% | 2/2 |
+| Q22 | 0.10 | 0.64 | +540% | 2/2 |
+| sum (answered) | 23.2 (22 q) | 41.7 (22 q) | | |
+
+### Reading the tables
+
+- r20 against r18: cold 57.8 vs 58.4 s, warm 41.7 vs 41.5 s. Q9 is the
+  query that moved (cold 5.60 -> 5.00 s, warm 5.33 -> 4.83 s). The two
+  executor commits are the correct Go shape for the probe phase, but the
+  probe phase was not the critical path on most queries; the session thread
+  is, for the reasons listed above.
+- Warm against Go: 41.7 vs 23.2 s, 1.80x (r16: 1.90x, r18: 1.82x). Q1, Q6
+  at parity from the cache; Q19 +13%, Q20 +21%, Q14 +32%, the rest is the
+  session-thread structure.
+- Validation for the two commits: `cargo test -p tidb-executor --lib`
+  (1306 passed; the 4 failures fail on the parent without these commits:
+  the point-get ORDER BY test, the DDL MODIFY diagnostics test, the
+  full-group-by flag test, and `index_lookup_pushdown_hint_reaches_the_shared_physical_reader`,
+  which asserts `can_reorder_handles` in `access_path.rs`), the session
+  join/explain/subquery suites (22 failures, all in the parent's set; the
+  new one, `hash_join_pricing_reads_the_sessions_concurrency`, fails on the
+  parent too), `cargo clippy -p tidb-executor --lib` clean. The
+  nested-loop row-for-row equivalence test now runs on the workers for
+  every join kind over duplicate and NULL keys and passes unchanged, since
+  results are released in source-chunk order.
