@@ -120,24 +120,20 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */, testFuncName)
 	defer sp.close()
 	sp.getMemTracker().AttachTo(rootTracker)
+	totalRows := int64(sz * 10240)
 	for range 10240 {
 		canadd := sp.add(chk)
 		require.True(t, canadd)
 	}
 	err := sp.sort()
 	require.NoError(t, err)
-	var cancelTime time.Time
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
-		cancelTime = time.Now()
-		wg.Done()
-	}()
+	// Set the kill signal before spilling. The signal persists atomically and
+	// will be detected by HandleKillSignal() after the first full chunk is
+	// written during spillToDiskImpl(). This avoids timing-dependent race
+	// conditions where a failpoint delay + goroutine sleep may not align.
+	rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 	err = sp.spillToDisk()
-	wg.Wait()
-	cancelDuration := time.Since(cancelTime)
-	require.Less(t, cancelDuration, 1*time.Second)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))
+	require.Greater(t, sp.numRowInDiskForTest(), int64(0))
+	require.Less(t, sp.numRowInDiskForTest(), totalRows)
 }
