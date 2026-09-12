@@ -1772,6 +1772,65 @@ fn finish_agg_value_claiming<C: Columns>(
     Ok(value)
 }
 
+/// Finishes one aggregate state straight into column `column` of `req`.
+///
+/// A fixed-scale DECIMAL SUM appends its MyDecimal cell from the i128
+/// accumulator (Go `sum4Decimal.AppendFinalResult2Chunk`:
+/// `chk.AppendMyDecimal(&p.val)`), the cell `finish_agg_value` plus
+/// `Chunk::append_datum` would build through the digit-string `Decimal`;
+/// every other state takes that path. The SUM's own rounding to a narrower
+/// output scale (`round_avg_result`) stays on the Datum path.
+fn append_finished_agg_value_claiming<C: Columns>(
+    state: &mut AggState,
+    func: &AggFunc,
+    output_type: &FieldType,
+    ctx: &C,
+    claim_truncation: &mut dyn FnMut() -> bool,
+    req: &mut Chunk,
+    column: usize,
+) -> Result<(), ExecError> {
+    if let Partial::SumDecimalFast { sum, scale } = &state.partial {
+        if matches!(func.kind, AggKind::Sum)
+            && output_type.code() == FieldTypeCode::NewDecimal
+            && (output_type.decimal() == UNSPECIFIED_LENGTH
+                || *scale <= output_type.decimal() as u32)
+        {
+            if let Some(cell) = tidb_datatype::MyDecimal::from_scaled_i128(*sum, *scale, *scale) {
+                req.append_my_decimal(column, &cell);
+                return Ok(());
+            }
+        }
+    }
+    let value = finish_agg_value_claiming(state, func, output_type, ctx, claim_truncation)?;
+    req.append_datum(column, &value);
+    Ok(())
+}
+
+/// [`append_finished_agg_value_claiming`] with a plain truncation flag.
+fn append_finished_agg_value<C: Columns>(
+    state: &mut AggState,
+    func: &AggFunc,
+    output_type: &FieldType,
+    ctx: &C,
+    truncated: &mut bool,
+    req: &mut Chunk,
+    column: usize,
+) -> Result<(), ExecError> {
+    append_finished_agg_value_claiming(
+        state,
+        func,
+        output_type,
+        ctx,
+        &mut || {
+            let first = !*truncated;
+            *truncated = true;
+            first
+        },
+        req,
+        column,
+    )
+}
+
 /// Go `StreamAggExec` for a global aggregate (an empty group-by list).
 ///
 /// A global aggregate is already one ordered group, so no hash table or row
@@ -1897,14 +1956,15 @@ impl<C: Columns> Executor for StreamAggExec<C> {
             req.set_num_virtual_rows(1);
         } else {
             for index in 0..self.agg_funcs.len() {
-                let value = finish_agg_value(
+                append_finished_agg_value(
                     &mut self.states[index],
                     &self.agg_funcs[index],
                     &self.meta.ret_field_types()[index],
                     &self.ctx,
                     &mut self.truncated[index],
+                    req,
+                    index,
                 )?;
-                req.append_datum(index, &value);
             }
         }
         self.emitted = true;
@@ -2168,14 +2228,15 @@ impl<C: Columns> GroupedStreamAggExec<C> {
     fn emit_current(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         for index in 0..self.states.len() {
             let output_position = self.output_positions[index];
-            let value = finish_agg_value(
+            append_finished_agg_value(
                 &mut self.states[index],
                 &self.agg_funcs[index],
                 &self.meta.ret_field_types()[output_position],
                 &self.ctx,
                 &mut self.truncated[index],
+                req,
+                output_position,
             )?;
-            req.append_datum(output_position, &value);
         }
         if self.output_group_keys {
             let trailing = self.meta.schema().len() - self.agg_funcs.len();
@@ -2725,14 +2786,15 @@ impl<C: HashAggContext> HashAggExec<C> {
     fn emit_group(&mut self, idx: usize, req: &mut Chunk) -> Result<(), ExecError> {
         let group_offset = idx * self.agg_funcs.len();
         for c in 0..self.agg_funcs.len() {
-            let value = finish_agg_value(
+            append_finished_agg_value(
                 &mut self.ordered[group_offset + c],
                 &self.agg_funcs[c],
                 &self.meta.ret_field_types()[c],
                 &self.ctx,
                 &mut self.truncated[c],
+                req,
+                c,
             )?;
-            req.append_datum(c, &value);
         }
         if self.output_group_keys {
             let trailing = self.meta.schema().len() - self.agg_funcs.len();
@@ -3028,7 +3090,10 @@ fn read_avg_decimal_cells(
     if row.is_null(sum_index) {
         return Some(None);
     }
-    let (coefficient, scale) = row.get_my_decimal(sum_index).to_i128_scaled()?;
+    let (coefficient, scale) = row
+        .chunk()?
+        .column(sum_index)
+        .get_my_decimal_i128_scaled(row.idx())?;
     Some(Some((coefficient, scale, count)))
 }
 
@@ -3060,8 +3125,7 @@ fn eval_agg_input<C: Columns>(
                         .chunk()
                         .expect("row has chunk")
                         .column(index)
-                        .get_my_decimal(row.idx())
-                        .to_i128_scaled()
+                        .get_my_decimal_i128_scaled(row.idx())
                     {
                         return Ok(AggInput {
                             value: None,
@@ -3991,7 +4055,10 @@ mod tests {
         let key = Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
             tidb_ast::CiString::new("plus"),
             long(),
-            vec![col(0), Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(10), long()))],
+            vec![
+                col(0),
+                Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(10), long())),
+            ],
         ));
         let mut exec = grouped(
             key,

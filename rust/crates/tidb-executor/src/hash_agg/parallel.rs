@@ -1505,14 +1505,15 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             let mut states: Vec<AggState> = plan.agg_funcs.iter().map(AggState::new).collect();
             let mut chunk = Chunk::new_with_capacity(&ret_types, 1);
             for (column, state) in states.iter_mut().enumerate() {
-                let value = finish_agg_value(
+                append_finished_agg_value(
                     state,
                     &plan.agg_funcs[column],
                     &ret_types[column],
                     &plan.ctx,
                     &mut self.truncated[column],
+                    &mut chunk,
+                    column,
                 )?;
-                chunk.append_datum(column, &value);
             }
             if plan.agg_funcs.is_empty() {
                 chunk.set_num_virtual_rows(1);
@@ -1546,7 +1547,7 @@ fn finalize_map<C: Columns + Send + Sync + Clone + 'static>(
     let mut current = Chunk::new_with_capacity(ret_types, capacity);
     for mut group in map.into_values() {
         for (column, state) in group.states.iter_mut().enumerate() {
-            let value = finish_agg_value_claiming(
+            append_finished_agg_value_claiming(
                 state,
                 &plan.agg_funcs[column],
                 &ret_types[column],
@@ -1561,8 +1562,9 @@ fn finalize_map<C: Columns + Send + Sync + Clone + 'static>(
                         )
                         .is_ok()
                 },
+                &mut current,
+                column,
             )?;
-            current.append_datum(column, &value);
         }
         if width == 0 {
             // Go: `chk.SetNumVirtualRows(chk.NumRows() + 1)`, a group with
