@@ -156,6 +156,7 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 	userTK.MustQuery(`select variable_value from mysql.tidb where variable_name = 'new_collation_enabled'`).
 		Check(testkit.Rows("False"))
 	require.False(t, collate.NewCollationEnabled())
+	sysKSTK := testkit.NewTestKit(t, runtimes[keyspace.System].Store)
 
 	ctx := context.Background()
 	s3Args := "access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%3a%2f%2f0.0.0.0%3a9000"
@@ -166,27 +167,12 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 	})
 
 	var taskSubmitCnt atomic.Int64
-	var taskRefreshCnt atomic.Int64
 	testfailpoint.EnableCall(
 		t,
 		"github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
 		func(*int, *proto.ExtraParams) {
 			collate.SetNewCollationEnabledForTest(true)
 			taskSubmitCnt.Add(1)
-		},
-	)
-	testfailpoint.EnableCall(
-		t,
-		"github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterRefreshTask",
-		func(task *proto.Task) {
-			if task == nil || task.Type != proto.ImportInto || !strings.HasPrefix(task.Key, userKeyspace+"/ImportInto/") {
-				return
-			}
-			var taskMeta importinto.TaskMeta
-			require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
-			require.NotNil(t, taskMeta.Plan.UseNewCollate)
-			require.False(t, *taskMeta.Plan.UseNewCollate)
-			taskRefreshCnt.Add(1)
 		},
 	)
 
@@ -597,12 +583,13 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 			}
 			require.NoError(t, objStore.WriteFile(ctx, tc.fileName, []byte(tc.fileData)))
 			beforeSubmit := taskSubmitCnt.Load()
-			before := taskRefreshCnt.Load()
 			fileURL := fmt.Sprintf("s3://next-gen-test/collate-data/%s?%s", tc.fileName, s3Args)
 			result := userTK.MustQuery(fmt.Sprintf(tc.importSQL, fileURL)).Rows()
 			require.Len(t, result, 1)
 			require.Greater(t, taskSubmitCnt.Load(), beforeSubmit)
-			require.Greater(t, taskRefreshCnt.Load(), before)
+			jobID, err := strconv.Atoi(result[0][0].(string))
+			require.NoError(t, err)
+			requireImportTaskUseNewCollate(t, sysKSTK, importinto.TaskKey(int64(jobID)), false)
 
 			collate.SetNewCollationEnabledForTest(false)
 			checkImportTableAndIndexes(userTK, tc.table, tc.indexes, "3")
@@ -612,6 +599,20 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 			checkImportTableAndIndexes(userTK, tc.table, tc.indexes, "3")
 		})
 	}
+}
+
+func requireImportTaskUseNewCollate(t *testing.T, tk *testkit.TestKit, taskKey string, expected bool) {
+	rows := tk.MustQuery(`
+		select meta from (
+			select meta from mysql.tidb_global_task where task_key = ?
+			union
+			select meta from mysql.tidb_global_task_history where task_key = ?
+		) t`, taskKey, taskKey).Rows()
+	require.Len(t, rows, 1)
+	var taskMeta importinto.TaskMeta
+	require.NoError(t, json.Unmarshal([]byte(rows[0][0].(string)), &taskMeta))
+	require.NotNil(t, taskMeta.Plan.UseNewCollate)
+	require.Equal(t, expected, *taskMeta.Plan.UseNewCollate)
 }
 
 func checkImportTableAndIndexes(tk *testkit.TestKit, tableName string, indexes []string, expectedCount string) {
