@@ -2892,10 +2892,26 @@ impl RemoteRowCursor {
             let batch = self.pending_chunk.as_ref().expect("just installed");
             let available = batch.num_rows().saturating_sub(self.pending_chunk_row);
             let take = available.min(target_rows.saturating_sub(output.num_rows()));
-            let projection =
-                (self.width != batch.num_cols()).then(|| (0..self.width).collect::<Vec<_>>());
-            for row in self.pending_chunk_row..self.pending_chunk_row + take {
-                output.append_row_by_col_idxs(batch.get_row(row), projection.as_deref());
+            let (begin, end) = (self.pending_chunk_row, self.pending_chunk_row + take);
+            // Go's chunk decoder appends whole column ranges; a row-by-row
+            // cell copy of a 6M-row scan was a fifth of the session thread.
+            // A selection vector on either side, or a column-less output,
+            // keeps the row path, whose accounting covers those shapes.
+            let column_wise = self.width > 0
+                && self.width <= batch.num_cols()
+                && batch.sel().is_none()
+                && output.sel().is_none()
+                && output.num_cols() == self.width;
+            if column_wise {
+                for column in 0..self.width {
+                    output.append_column_range_from(column, batch, column, begin, end);
+                }
+            } else {
+                let projection =
+                    (self.width != batch.num_cols()).then(|| (0..self.width).collect::<Vec<_>>());
+                for row in begin..end {
+                    output.append_row_by_col_idxs(batch.get_row(row), projection.as_deref());
+                }
             }
             self.pending_chunk_row += take;
             if self.pending_chunk_row == batch.num_rows() {
@@ -6148,6 +6164,81 @@ mod remote_cursor_tests {
         );
         assert_eq!(output.get_row(0).get_int64(0), 7);
         assert_eq!(output.get_row(1).get_int64(0), 8);
+    }
+
+    /// A batch wider than the projected width, appended behind rows the
+    /// output already holds and split across two requests, lands column by
+    /// column with the same cells the row path appends.
+    #[test]
+    fn clean_remote_cursor_appends_a_wider_batch_column_wise() {
+        let long = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let text = FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let source_types = vec![long.clone(), text.clone(), long.clone()];
+        let mut batch = Chunk::new_with_capacity(&source_types, 4);
+        for (id, name) in [(7, Some("seven")), (8, None), (9, Some("")), (10, Some("ten"))] {
+            batch.append_int64(0, id);
+            match name {
+                Some(name) => batch.append_bytes(1, name.as_bytes()),
+                None => batch.append_null(1),
+            }
+            batch.append_int64(2, id * 10);
+        }
+        let mut cursor = RemoteRowCursor {
+            stream: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            staged: Vec::new().into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+            field_types: source_types.clone(),
+            width: 2,
+            handle_index: None,
+            common_identity: None,
+            table_id: 0,
+            merge_staged: false,
+            unordered_shadowed: None,
+            unsigned_handle_order: false,
+            descending: false,
+            noted_rows: 0,
+            predicates_applied: true,
+        };
+        let mut output = Chunk::new_with_capacity(&[long.clone(), text.clone()], 4);
+        output.append_int64(0, 1);
+        output.append_bytes(1, b"one");
+        assert_eq!(
+            cursor.append_clean_chunk(&mut output, 3, false).unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            cursor.append_clean_chunk(&mut output, 5, false).unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            cursor.append_clean_chunk(&mut output, 6, false).unwrap(),
+            Some(0)
+        );
+        let rows: Vec<(i64, Option<String>)> = (0..output.num_rows())
+            .map(|row| {
+                let row = output.get_row(row);
+                (
+                    row.get_int64(0),
+                    (!row.is_null(1)).then(|| row.get_string(1).to_string()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (1, Some("one".to_owned())),
+                (7, Some("seven".to_owned())),
+                (8, None),
+                (9, Some(String::new())),
+                (10, Some("ten".to_owned())),
+            ]
+        );
     }
 
     /// `SelectResponseIter` has already applied Go `readFromChunk`'s
