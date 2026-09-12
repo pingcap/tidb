@@ -3336,8 +3336,8 @@ def go_deps():
         name = "com_github_microsoft_go_winio",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/Microsoft/go-winio",
-        sum = "h1:9/kr64B9VUZrLm5YYwbGtUJnMgqWVOdUAXu6Migciow=",
-        version = "v0.6.1",
+        sum = "h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=",
+        version = "v0.6.2",
     )
     go_repository(
         name = "com_github_miekg_dns",
@@ -5403,8 +5403,8 @@ def go_deps():
         name = "com_google_cloud_go_monitoring",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/monitoring",
-        sum = "h1:vKiypZVFD/5a3BbQMvI4gZdl8445ITzXFh257XBgrS0=",
-        version = "v1.24.1",
+        sum = "h1:csSKiCJ+WVRgNkRzzz3BPoGjFhjPY23ZTcaenToJxMM=",
+        version = "v1.24.0",
     )
     go_repository(
         name = "com_google_cloud_go_networkconnectivity",
@@ -5684,8 +5684,8 @@ def go_deps():
         name = "com_google_cloud_go_trace",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/trace",
-        sum = "h1:CALS1loyxJMnRiCwZSpdf8ac7iCsjreMxFD2WGxzzHU=",
-        version = "v1.11.5",
+        sum = "h1:c+I4YFjxRQjvAhRmSsmjpASUKq88chOX854ied0K/pE=",
+        version = "v1.11.3",
     )
     go_repository(
         name = "com_google_cloud_go_translate",
@@ -6096,13 +6096,6 @@ def go_deps():
         version = "v0.24.0",
     )
     go_repository(
-        name = "io_opencensus_go_contrib_exporter_stackdriver",
-        build_file_proto_mode = "disable_global",
-        importpath = "contrib.go.opencensus.io/exporter/stackdriver",
-        sum = "h1:xRc46S76eyn4ZF3jWX8I+aUSKVLw5EQ1aDvHwfV5W1o=",
-        version = "v0.13.15-0.20230702191903-2de6d2748484",
-    )
-    go_repository(
         name = "io_opentelemetry_go_auto_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/auto/sdk",
@@ -6178,13 +6171,6 @@ def go_deps():
         importpath = "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
         sum = "h1:FyjCyI9jVEfqhUh2MoSkmolPjfh5fp2hnV0b0irxH4Q=",
         version = "v1.22.0",
-    )
-    go_repository(
-        name = "io_opentelemetry_go_otel_exporters_prometheus",
-        build_file_proto_mode = "disable_global",
-        importpath = "go.opentelemetry.io/otel/exporters/prometheus",
-        sum = "h1:AHh/lAP1BHrY5gBwk8ncc25FXWm/gmmY3BX258z5nuk=",
-        version = "v0.57.0",
     )
     go_repository(
         name = "io_opentelemetry_go_otel_metric",
@@ -6353,27 +6339,6 @@ def go_deps():
         importpath = "google.golang.org/grpc/examples",
         sum = "h1:ExN12ndbJ608cboPYflpTny6mXSzPrDLh0iTaVrRrds=",
         version = "v0.0.0-20250407062114-b368379ef8f6",
-    )
-    go_repository(
-        name = "org_golang_google_grpc_gcp_observability",
-        build_file_proto_mode = "disable_global",
-        importpath = "google.golang.org/grpc/gcp/observability",
-        sum = "h1:2IQ7szW1gobfZaS/sDSAu2uxO0V/aTryMZvlcyqKqQA=",
-        version = "v1.0.1",
-    )
-    go_repository(
-        name = "org_golang_google_grpc_security_advancedtls",
-        build_file_proto_mode = "disable_global",
-        importpath = "google.golang.org/grpc/security/advancedtls",
-        sum = "h1:/KQ7VP/1bs53/aopk9QhuPyFAp9Dm9Ejix3lzYkCrDA=",
-        version = "v1.0.0",
-    )
-    go_repository(
-        name = "org_golang_google_grpc_stats_opencensus",
-        build_file_proto_mode = "disable_global",
-        importpath = "google.golang.org/grpc/stats/opencensus",
-        sum = "h1:evSYcRZaSToQp+borzWE52+03joezZeXcKJvZDfkUJA=",
-        version = "v1.0.0",
     )
     go_repository(
         name = "org_golang_google_protobuf",

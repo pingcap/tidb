@@ -199,6 +199,15 @@ ssl-cert = ""
 # Path of file that contains X509 key in PEM format for connection with mysql client.
 ssl-key = ""
 
+# Absolute unix:/// SPIFFE Workload API endpoint used to obtain TiDB's X.509-SVID and trust bundle.
+# Peer SPIFFE IDs are carried in certificate URI SANs. URI identity is authoritative;
+# DNS VERIFY_IDENTITY compatibility is not provided. This option cannot be combined with
+# ssl-ca, ssl-cert, ssl-key, or auto-tls.
+spiffe-workload-api-addr = ""
+
+# Positive Go duration to wait at startup for the first valid SPIFFE X.509 context.
+spiffe-workload-api-timeout = "30s"
+
 # Path of file that contains list of trusted SSL CAs for connection with cluster components.
 cluster-ssl-ca = ""
 

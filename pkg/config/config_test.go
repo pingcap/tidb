@@ -1912,6 +1912,75 @@ func TestSecurityValid(t *testing.T) {
 	}
 }
 
+func TestSPIFFEWorkloadAPIConfig(t *testing.T) {
+	const workloadAPIAddr = "unix:///run/spire/sockets/agent.sock"
+
+	conf := NewConfig()
+	require.Empty(t, conf.Security.SPIFFEWorkloadAPIAddr)
+	require.Equal(t, "30s", conf.Security.SPIFFEWorkloadAPITimeout)
+	require.NoError(t, conf.Valid())
+
+	conf.Security.SPIFFEWorkloadAPITimeout = "0s"
+	require.ErrorContains(t, conf.Valid(), "spiffe-workload-api-timeout must be a positive Go duration")
+
+	conf = NewConfig()
+	conf.Security.SPIFFEWorkloadAPIAddr = workloadAPIAddr
+	conf.Security.SPIFFEWorkloadAPITimeout = "250ms"
+	require.NoError(t, conf.Valid())
+
+	for _, addr := range []string{
+		"unix:/run/spire/sockets/agent.sock",
+		"unix://spire/run/spire/sockets/agent.sock",
+		"tcp://127.0.0.1:8081",
+		"unix:///run/spire/sockets/agent.sock?query=true",
+	} {
+		conf := NewConfig()
+		conf.Security.SPIFFEWorkloadAPIAddr = addr
+		require.ErrorContains(t, conf.Valid(), "spiffe-workload-api-addr must be an absolute unix:/// URI", addr)
+	}
+
+	for _, timeout := range []string{"", "invalid", "0s", "-1s"} {
+		conf := NewConfig()
+		conf.Security.SPIFFEWorkloadAPIAddr = workloadAPIAddr
+		conf.Security.SPIFFEWorkloadAPITimeout = timeout
+		require.ErrorContains(t, conf.Valid(), "spiffe-workload-api-timeout must be a positive Go duration", timeout)
+	}
+
+	conflicts := []struct {
+		name      string
+		configure func(*Security)
+	}{
+		{name: "ssl-ca", configure: func(security *Security) { security.SSLCA = "ca.pem" }},
+		{name: "ssl-cert", configure: func(security *Security) { security.SSLCert = "cert.pem" }},
+		{name: "ssl-key", configure: func(security *Security) { security.SSLKey = "key.pem" }},
+		{name: "auto-tls", configure: func(security *Security) { security.AutoTLS = true }},
+	}
+	for _, conflict := range conflicts {
+		t.Run(conflict.name, func(t *testing.T) {
+			conf := NewConfig()
+			conf.Security.SPIFFEWorkloadAPIAddr = workloadAPIAddr
+			conflict.configure(&conf.Security)
+			require.ErrorContains(t, conf.Valid(), "spiffe-workload-api-addr cannot be used with ssl-ca, ssl-cert, ssl-key, or auto-tls")
+		})
+	}
+
+	conf = NewConfig()
+	conf.Security.SPIFFEWorkloadAPIAddr = workloadAPIAddr
+	conf.Security.ClusterSSLCA = "cluster-ca.pem"
+	conf.Security.ClusterSSLCert = "cluster-cert.pem"
+	conf.Security.ClusterSSLKey = "cluster-key.pem"
+	require.NoError(t, conf.Valid())
+
+	t.Run("starter SQL environment conflict", func(t *testing.T) {
+		t.Setenv(EnvSQLCA, "env-ca.pem")
+		t.Setenv(EnvSQLCert, "env-cert.pem")
+		t.Setenv(EnvSQLKey, "env-key.pem")
+		conf := NewConfig()
+		conf.Security.SPIFFEWorkloadAPIAddr = workloadAPIAddr
+		require.ErrorContains(t, conf.AdjustStarterConfig(true), "spiffe-workload-api-addr cannot be used with ssl-ca, ssl-cert, ssl-key, or auto-tls")
+	})
+}
+
 func TestTcpNoDelay(t *testing.T) {
 	c1 := NewConfig()
 	// check default value
