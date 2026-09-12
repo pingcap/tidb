@@ -556,6 +556,27 @@ fn exhaust_physical_plans(
                     // output is what the per-outer-row probe sees; the join's
                     // own profile is already scaled by every OTHER condition.
                     let joined_rows = op.equal_cond_out_cnt;
+                    // Go `constructIndexJoin` (`exhaust_physical_plans.go`):
+                    // the outer side's expectation is
+                    // `CalcChildExpectedCnt(prop, outerRows, joinRows)`, i.e.
+                    // unbounded unless the join is asked for fewer rows than
+                    // it estimates, and scaled in proportion when it is. The
+                    // enumerator's placeholder handed the join's own
+                    // expectation to the outer scan, which (under a
+                    // MaxOneRow's expectation of 2 grown through a stream
+                    // aggregate) clipped an 800k-row scan to 64k rows and
+                    // let an IndexJoin underprice the hash join Go picks.
+                    let join_rows = op
+                        .base
+                        .base
+                        .stats_info()
+                        .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+                    child_props[*outer_idx].expected_cnt = calc_child_expected_cnt(
+                        prop,
+                        outer_rows,
+                        join_rows,
+                        ctx.ordering_index_selectivity_ratio,
+                    );
                     child_props[inner_idx].index_join_prop =
                         Some(crate::physical_property::IndexJoinRuntimeProp {
                             other_conditions: op.other_conditions.clone(),
@@ -5192,4 +5213,36 @@ mod tests {
             Some(PhysicalPlan::TableDual(dual)) if dual.row_count == 3
         ));
     }
+}
+
+/// Go `physicalop.CalcChildExpectedCnt` (`physical_utils.go`): what a join
+/// or apply asks of its outer child when the parent wants fewer rows than
+/// the operator estimates. Unbounded unless `prop.expected_cnt` is below the
+/// operator's own estimate (or, under an ordering requirement with
+/// `tidb_opt_ordering_index_selectivity_ratio` set, below the child's), then
+/// the child's rows scaled in the same proportion plus the ordered rows that
+/// must be read before the first match.
+fn calc_child_expected_cnt(
+    prop: &PhysicalProperty,
+    child_rows: f64,
+    estimated_rows: f64,
+    ordering_ratio: f64,
+) -> f64 {
+    let ordered = !prop.is_sort_item_empty();
+    let ratio = if ordered { ordering_ratio } else { 0.0 };
+    if prop.expected_cnt < estimated_rows
+        || (ordered
+            && ratio > 0.0
+            && child_rows > estimated_rows
+            && prop.expected_cnt < child_rows
+            && estimated_rows > 0.0)
+    {
+        let rows_to_meet_first = if ordered && ratio > 0.0 {
+            ((child_rows - estimated_rows) * ratio).max(0.0)
+        } else {
+            0.0
+        };
+        return child_rows * (prop.expected_cnt / estimated_rows) + rows_to_meet_first;
+    }
+    f64::MAX
 }

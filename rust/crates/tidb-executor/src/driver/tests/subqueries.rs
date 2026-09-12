@@ -35,6 +35,112 @@ use tidb_datatype::{Collation, StringDatum};
 /// nullable column (`logical_join.go`'s
 /// `!mysql.HasNotNullFlag(childCol.RetType.GetFlag())`); a nullable fixture
 /// would add cop `Selection`s the recording does not have.
+/// Go `handleScalarSubQuery` optimizes an uncorrelated subquery with the
+/// builder's own optimizer flags and the same statistics as the enclosing
+/// statement (`DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag,
+/// np)`, `expression_rewriter.go`), so a join inside it is planned exactly
+/// as it would be standalone: partsupp keeps its 800k rows and the filtered
+/// supplier side is the hash-join build. TPC-H Q11's HAVING subquery was
+/// planned with estimates that belonged to other nodes (partsupp 64000) and
+/// chose an IndexJoin driving 800k lookups.
+#[test]
+fn an_uncorrelated_join_subquery_with_a_filter_keeps_its_table_statistics() {
+    let mut catalog = Catalog::default();
+    for table in [
+        "CREATE TABLE supplier (s_suppkey BIGINT PRIMARY KEY CLUSTERED, \
+         s_nationkey BIGINT NOT NULL, s_acctbal DECIMAL(15,2) NOT NULL)",
+        "CREATE TABLE partsupp (ps_partkey BIGINT NOT NULL, ps_suppkey BIGINT NOT NULL, \
+         ps_supplycost DECIMAL(15,2) NOT NULL, PRIMARY KEY (ps_partkey, ps_suppkey) CLUSTERED)",
+    ] {
+        crate::run_create_table_on(table, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    for insert in [
+        "INSERT INTO supplier VALUES (1, 3, 100.00)",
+        "INSERT INTO partsupp VALUES (1, 1, 10.00)",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "supplier",
+        10_000,
+        &[("s_suppkey", 10_000), ("s_nationkey", 25)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "partsupp",
+        800_000,
+        &[
+            ("ps_partkey", 196_960),
+            ("ps_suppkey", 10_000),
+            ("ps_supplycost", 99_865),
+        ],
+        &ctx,
+    );
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let explain = |sql: &str| {
+        let statement = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &statement else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        let (_, plan) = crate::explain::explain_select_stmt(
+            select,
+            &catalog,
+            "test",
+            &ctx,
+            crate::explain::ExplainFormat::Brief,
+        )
+        .unwrap();
+        plan.iter()
+            .map(|row| (text(row, 0), text(row, 1), text(row, 3)))
+            .collect::<Vec<_>>()
+    };
+    let inner = "SELECT SUM(ps_supplycost) * 0.0001 FROM partsupp, supplier \
+                 WHERE ps_suppkey = s_suppkey AND s_nationkey = 3";
+    let standalone = explain(inner);
+    let nested = explain(&format!(
+        "SELECT ps_partkey FROM partsupp WHERE ps_supplycost > ({inner})"
+    ));
+    let subquery_part = nested
+        .iter()
+        .skip_while(|(id, _, _)| !id.starts_with("ScalarSubQuery"))
+        .collect::<Vec<_>>();
+    assert!(
+        !subquery_part.is_empty(),
+        "nested plan lists the subquery: {nested:?}"
+    );
+    let rows_of = |rows: &[&(String, String, String)], table: &str| {
+        rows.iter()
+            .find(|(id, _, object)| id.contains("TableFullScan") && object == table)
+            .map(|(_, rows, _)| rows.clone())
+            .unwrap_or_else(|| panic!("no full scan of {table} in {rows:?}"))
+    };
+    let standalone_rows = standalone.iter().collect::<Vec<_>>();
+    assert_eq!(
+        rows_of(&subquery_part, "table:partsupp"),
+        rows_of(&standalone_rows, "table:partsupp"),
+        "the nested subquery scans partsupp with the table's own statistics\n{nested:#?}"
+    );
+    assert_eq!(rows_of(&subquery_part, "table:partsupp"), "800000.00");
+    assert!(
+        subquery_part
+            .iter()
+            .any(|(id, _, _)| id.contains("HashJoin"))
+            && !subquery_part
+                .iter()
+                .any(|(id, _, _)| id.contains("IndexJoin") || id.contains("IndexHashJoin")),
+        "the nested subquery keeps the standalone hash join\n{nested:#?}"
+    );
+}
+
 #[test]
 fn tpch_q2_correlated_min_matches_recorded_hash_join_plan() {
     let mut catalog = Catalog::default();
