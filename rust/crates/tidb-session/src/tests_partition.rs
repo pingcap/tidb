@@ -904,7 +904,8 @@ fn range_columns_pruning_reads_the_matching_tuple_partition() {
         ("a = 2 AND b = 1", "2", "1"),
         ("a = 1 AND b = 9", "2", "1"),
         ("a = 9 AND b = 9", "2", "1"),
-        ("a = 1", "6", "2"),
+        // Go's multi-column ranger also prunes a leading-column prefix.
+        ("a = 1", "2", "2"),
     ] {
         let rows = tests_support::row_text(session.run(&format!(
             "EXPLAIN ANALYZE SELECT c FROM rcpr WHERE {predicate}"
@@ -913,6 +914,10 @@ fn range_columns_pruning_reads_the_matching_tuple_partition() {
         assert_eq!(scan[2], read, "records read for `{predicate}`: {}", scan[0]);
         assert_eq!(rows[0][2], returned, "rows returned for `{predicate}`");
     }
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT c FROM rcpr WHERE a = 1 ORDER BY c")),
+        vec![vec!["11"], vec!["19"]]
+    );
 }
 
 /// TiDB pushes a HAVING conjunct over the grouping key below the aggregation
