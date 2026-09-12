@@ -1116,7 +1116,9 @@ func TestStaleReadPrepare(t *testing.T) {
 		placement.DCLabelKey: "sh",
 	}
 	config.StoreGlobalConfig(&conf)
-	time1 := time.Now()
+	currentTS, getTSErr := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, getTSErr)
+	time1 := oracle.GetTimeFromTS(currentTS)
 	tso := oracle.ComposeTS(time1.Unix()*1000, 0)
 	time.Sleep(200 * time.Millisecond)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertExecutePrepareStatementStalenessOption",
