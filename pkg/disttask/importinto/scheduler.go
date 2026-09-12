@@ -140,7 +140,7 @@ type importScheduler struct {
 	currTaskID            atomic.Int64
 	disableTiKVImportMode atomic.Bool
 
-	storeWithPD kv.StorageWithPD
+	store kv.Storage
 }
 
 var _ scheduler.Extension = (*importScheduler)(nil)
@@ -150,13 +150,13 @@ func NewImportScheduler(
 	ctx context.Context,
 	task *proto.Task,
 	param scheduler.Param,
-	storeWithPD kv.StorageWithPD,
+	store kv.Storage,
 ) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := &importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
-		storeWithPD:   storeWithPD,
+		store:         store,
 	}
 	return sch
 }
@@ -233,7 +233,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
+	pdHTTPCli := sch.store.(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToImportMode(ctx)
@@ -371,7 +371,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
-		Store:                sch.storeWithPD,
+		Store:                sch.store,
 		ExecuteNodesCnt:      len(execIDs),
 		ThreadCnt:            task.Concurrency,
 	}
@@ -473,7 +473,7 @@ func (sch *importScheduler) switchTiKV2NormalMode(ctx context.Context, task *pro
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
+	pdHTTPCli := sch.store.(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToNormalMode(ctx)
