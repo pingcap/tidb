@@ -1736,6 +1736,18 @@ func TestBuiltin(t *testing.T) {
 
 		{"SELECT LEAST(), LEAST(1, 2, 3);", true, "SELECT LEAST(),LEAST(1, 2, 3)"},
 
+		{"SELECT INTERVAL()", false, ""},
+		{"SELECT INTERVAL(1)", false, ""},
+		{"SELECT INTERVAL(1, 0)", true, "SELECT INTERVAL(1, 0)"},
+		{"SELECT NOW() + INTERVAL(1+2) DAY `add`", true, "SELECT DATE_ADD(NOW(), INTERVAL (1+2) DAY) AS `add`"},
+		{"SELECT d + INTERVAL (q - 1) QUARTER", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT d - INTERVAL (q - 1) QUARTER", true, "SELECT DATE_SUB(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT INTERVAL (q - 1) QUARTER + d", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ADDDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT ADDDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT SUBDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT SUBDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ROW(ROW(1,2),3), ROW(1,ROW(2,3))", true, "SELECT ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT (1,2), ((1,2),3), (1,(2,3))", true, "SELECT ROW(1,2),ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT MAKEDATE(YEAR(d), 1) + INTERVAL (QUARTER(d) - 1) QUARTER", true, "SELECT DATE_ADD(MAKEDATE(YEAR(`d`), 1), INTERVAL (QUARTER(`d`)-1) QUARTER)"},
 		{"SELECT INTERVAL(1, 0, 1, 2)", true, "SELECT INTERVAL(1, 0, 1, 2)"},
 		{"SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2", true, "SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2"},
 		{"SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)", true, "SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)"},
