@@ -1055,13 +1055,103 @@ next section when it completes. Tail = sysbench p95 / TPC-C p99. Spread =
 | tpcc_STOCK_LEVEL | 497.1 | 703.5 | +41.5% | 86.50 | 25.87 | -70.1% | 646.60 | 64.30 | -90.1% | 21.2% / 9.9% | YES |
 | tpcc_tpmC | 5414.0 | 8002.8 | +47.8% | - | - | - | - | - | - | 43.8% / 1.7% | - |
 
-Against the goal (>=25% on BOTH throughput and average latency): 8 of 16 at
-16 threads -- delete, update_index, update_non_index and all five TPC-C
-transaction types. The update rows are +49%, not the +161% the drained-table
-runs reported. The read family (point_select +13%, read_only +17%,
+RETRACTED (see the final section below): this run's summary said "8 of 16
+at 16 threads -- delete, update_index, update_non_index and all five TPC-C
+transaction types". The three sysbench rows stand (they reproduce below). The
+five TPC-C rows do NOT: their base side carried 42-46% round spread from one
+bad baseline round (base r1 NEW_ORDER 4018 tpmC, p99 1409 ms, against
+~6100 in the other two rounds), the table averaged that outlier in, and a row
+whose base noise exceeds the claimed effect must not be scored as meeting
+the goal. On a fresh cluster with a stable base (2% spread) the same Rust
+binary shows +21-26% on TPC-C, not +37-50%. The honest count for this run
+is 3 of 16. The read family (point_select +13%, read_only +17%,
 select_random_points +10%, select_random_ranges +14%), insert (+15%),
 bulk_insert (+16%) and the two mixed sysbench workloads (write_only and
-read_write, +30% throughput but -23% latency) do not meet it. The TPC-C base
-rows carry 42-46% round spread from one bad baseline round (p99 581 ms on
-NEW_ORDER), so their deltas are right in direction and larger than their
-noise, but less precise than the sysbench rows.
+read_write, +30% throughput but -23% latency) do not meet it.
+
+## FINAL RE-MEASURE (2026-09-12): r14, Go-default lease, fresh cluster, 16 and 4 threads
+
+`r14` is head 6b6de167 (the interim's r13 plus the second-pass review fixes:
+one parse per statement at the connection, PREPARE-time database pinning,
+the Go retry/fair-locking gates). The Rust node now starts with Go's default
+schema lease (45 s) and default connection limit -- the harness's
+`--lease-ms 2000` and `--max-connections` flags are gone. The playground
+(PD, one TiKV, Go TiDB :4000) was rebuilt from an empty data directory after
+TiKV died of a full disk (14 GB of MVCC garbage from the earlier runs), and
+TPC-C's 10 warehouses were reloaded through the Go node. Everything else is
+the interim's corrected harness: sysbench 4 x 10k re-prepared before EVERY
+workload, ABBA side order, three 20 s rounds, TPC-C 60 s. Tail = sysbench
+p95 / TPC-C p99. Spread = (max - min) / mean of the three rounds per side.
+
+### 16 threads
+
+| workload | base tps | new tps | tps Δ | base avg ms | new avg ms | avg Δ | base tail | new tail | tail Δ | spread base/new | both ≥25%? |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| oltp_point_select | 12236.0 | 14391.9 | +17.6% | 1.31 | 1.11 | -15.1% | 2.25 | 1.89 | -15.9% | 4.0% / 3.7% | no |
+| oltp_read_only | 430.8 | 509.1 | +18.2% | 37.10 | 31.40 | -15.4% | 44.98 | 39.65 | -11.8% | 1.5% / 2.0% | no |
+| oltp_write_only | 785.8 | 1011.3 | +28.7% | 20.35 | 15.82 | -22.3% | 29.72 | 24.11 | -18.9% | 2.9% / 5.6% | no |
+| oltp_read_write | 237.0 | 299.3 | +26.3% | 67.43 | 53.40 | -20.8% | 86.54 | 72.27 | -16.5% | 3.4% / 2.6% | no |
+| oltp_insert | 3391.3 | 4042.7 | +19.2% | 4.72 | 3.95 | -16.2% | 7.44 | 6.03 | -19.0% | 7.3% / 3.3% | no |
+| oltp_delete | 2114.2 | 4338.5 | +105.2% | 7.56 | 3.68 | -51.3% | 11.80 | 7.48 | -36.6% | 3.7% / 3.4% | YES |
+| oltp_update_index | 2008.3 | 2970.3 | +47.9% | 7.96 | 5.39 | -32.3% | 12.08 | 8.18 | -32.3% | 2.9% / 3.8% | YES |
+| oltp_update_non_index | 2034.8 | 3024.8 | +48.7% | 7.86 | 5.31 | -32.4% | 12.01 | 8.38 | -30.3% | 5.0% / 14.9% | YES |
+| select_random_points | 1853.1 | 2033.0 | +9.7% | 8.63 | 7.86 | -8.8% | 13.14 | 12.37 | -5.8% | 2.2% / 3.3% | no |
+| select_random_ranges | 2309.4 | 2976.5 | +28.9% | 7.03 | 5.37 | -23.6% | 11.43 | 8.13 | -28.9% | 27.7% / 2.6% | no |
+| bulk_insert | 3.0 | 3.3 | +10.1% | 0.17 | 0.16 | -9.6% | 0.00 | 0.00 | - | 3.0% / 5.5% | no |
+| tpcc_NEW_ORDER | 6248.1 | 7573.4 | +21.2% | 75.77 | 60.03 | -20.8% | 156.60 | 130.00 | -17.0% | 1.8% / 14.1% | no |
+| tpcc_PAYMENT | 5904.1 | 7197.0 | +21.9% | 50.03 | 42.80 | -14.5% | 145.40 | 128.60 | -11.6% | 5.8% / 13.7% | no |
+| tpcc_ORDER_STATUS | 534.4 | 655.5 | +22.7% | 40.27 | 33.10 | -17.8% | 127.20 | 121.63 | -4.4% | 9.4% / 18.7% | no |
+| tpcc_DELIVERY | 534.6 | 674.7 | +26.2% | 272.47 | 227.43 | -16.5% | 615.17 | 536.87 | -12.7% | 9.2% / 18.5% | no |
+| tpcc_STOCK_LEVEL | 558.4 | 677.3 | +21.3% | 29.27 | 27.13 | -7.3% | 71.30 | 64.30 | -9.8% | 8.6% / 17.6% | no |
+| tpcc_tpmC | 6248.0 | 7573.4 | +21.2% | - | - | - | - | - | - | 1.8% / 14.1% | - |
+
+### 4 threads
+
+| workload | base tps | new tps | tps Δ | base avg ms | new avg ms | avg Δ | base tail | new tail | tail Δ | spread base/new | both ≥25%? |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| oltp_point_select | 6119.8 | 8018.8 | +31.0% | 0.65 | 0.50 | -23.5% | 1.04 | 0.79 | -23.7% | 13.0% / 7.1% | no |
+| oltp_read_only | 240.4 | 326.5 | +35.8% | 16.95 | 12.24 | -27.8% | 20.46 | 14.64 | -28.5% | 33.3% / 0.1% | YES |
+| oltp_write_only | 461.5 | 531.3 | +15.1% | 8.72 | 7.52 | -13.7% | 12.00 | 10.86 | -9.5% | 17.5% / 4.1% | no |
+| oltp_read_write | 155.7 | 190.2 | +22.1% | 25.79 | 21.14 | -18.0% | 31.80 | 25.55 | -19.6% | 14.7% / 16.7% | no |
+| oltp_insert | 1509.1 | 1790.6 | +18.7% | 2.70 | 2.25 | -16.7% | 4.45 | 3.55 | -20.3% | 32.3% / 21.6% | no |
+| oltp_delete | 1076.9 | 1572.0 | +46.0% | 3.81 | 2.54 | -33.3% | 6.12 | 5.05 | -17.5% | 37.4% / 6.2% | YES |
+| oltp_update_index | 1094.3 | 1549.9 | +41.6% | 3.81 | 2.58 | -32.3% | 5.80 | 3.57 | -38.5% | 40.4% / 9.9% | YES |
+| oltp_update_non_index | 1278.8 | 1681.6 | +31.5% | 3.13 | 2.38 | -24.0% | 4.23 | 3.17 | -25.0% | 2.1% / 1.5% | no |
+| select_random_points | 1250.4 | 1389.0 | +11.1% | 3.20 | 2.88 | -9.9% | 4.23 | 3.80 | -10.2% | 0.6% / 1.5% | no |
+| select_random_ranges | 1612.6 | 1773.9 | +10.0% | 2.48 | 2.27 | -8.6% | 3.55 | 3.31 | -6.8% | 4.5% / 19.4% | no |
+| bulk_insert | 2.8 | 3.4 | +22.7% | 0.04 | 0.04 | -15.4% | 0.00 | 0.00 | - | 10.8% / 16.5% | no |
+| tpcc_NEW_ORDER | 4835.1 | 5915.4 | +22.3% | 26.67 | 21.30 | -20.1% | 46.80 | 36.37 | -22.3% | 7.5% / 2.6% | no |
+| tpcc_PAYMENT | 4630.5 | 5648.3 | +22.0% | 13.80 | 11.20 | -18.8% | 31.13 | 23.43 | -24.7% | 6.8% / 2.3% | no |
+| tpcc_ORDER_STATUS | 420.0 | 528.9 | +25.9% | 12.83 | 10.93 | -14.8% | 37.77 | 29.00 | -23.2% | 4.8% / 6.3% | no |
+| tpcc_DELIVERY | 402.2 | 507.8 | +26.2% | 86.17 | 73.13 | -15.1% | 159.40 | 125.80 | -21.1% | 22.7% / 7.6% | no |
+| tpcc_STOCK_LEVEL | 419.5 | 528.1 | +25.9% | 13.97 | 11.20 | -19.8% | 37.73 | 20.97 | -44.4% | 18.8% / 3.9% | no |
+| tpcc_tpmC | 4835.1 | 5915.4 | +22.3% | - | - | - | - | - | - | 7.5% / 2.6% | - |
+
+### Reading the two tables
+
+Against the goal (>=25% on BOTH throughput and average latency):
+
+- 16 threads: 3 of 16 -- delete (+105% / -51%), update_index (+48% / -32%),
+  update_non_index (+49% / -32%). write_only (+29%), read_write (+26%),
+  select_random_ranges (+29%) and TPC-C DELIVERY (+26%) clear the
+  throughput half only; at a fixed thread count their latency lands where
+  Little's law puts it (-21% to -24%). The read family sits at +10% to
+  +18% (point_select +18%, read_only +18%, select_random_points +10%),
+  insert at +19%, bulk_insert at +10%, TPC-C at +21% to +26%.
+- 4 threads: 3 rows score "yes" (read_only, delete, update_index), but the
+  BASE side of those three carries 33-40% round spread, so only
+  update_non_index (+31% / -24%, 2% spread) is a precise miss and the
+  three "yes" rows are within their own noise. The precise rows say
+  +10% to +31% throughput: point_select +31% / -24%, TPC-C +22% to +26%,
+  select_random_points +11%, select_random_ranges +10%.
+- The r13 interim's TPC-C "+37% to +50%" is retracted above: it rested on
+  one bad base round. With a stable base the TPC-C gain is +21% to +26%
+  at both thread counts, and the Rust binary's own numbers did not move
+  between r13 and r14 (~7900 tpmC at 16 threads).
+
+The goal -- >=25% on both halves on EVERY workload -- is NOT met. Every
+change in this branch is a Go-parity root fix with no workload-specific
+path; what remains is the per-statement cost of the read path (parse and
+plan of a point/range read, result encoding) and of insert, which the
+profiles in the rounds above locate but which no single fix so far moves by
+more than a few percent.
