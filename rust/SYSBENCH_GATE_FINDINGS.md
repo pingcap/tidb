@@ -1596,3 +1596,22 @@ the call chains): Q12 made 127,093 futex calls in a 1.5 s query, 97% under
 issued by `std` even with no waiter) and the rest under the aggregate
 pipeline's `send` (one chunk per key group from the merge join, 37,000
 chunks for 31,282 rows). After the fixes the same query makes 48.
+
+### Round 4, continued: Q7, the index-join chunk path, the arbitrator budget
+
+| query | before | after | Go | change |
+|---|---|---|---|---|
+| Q7 | 2.63 s | 1.83-1.92 s | 1.48 s | a single-column DNF estimates from point ranges, so Q7's build side matches Go's (b320e1c1) |
+| Q8 | 1.69 s (1.5 s CPU) | 1.51-1.57 s (1.05 s CPU) | 0.89 s | the common-handle lookup appends coprocessor batches as chunks (4b76a4b9, bb2beceb) |
+| Q21 | 4.0 s (3.13 s CPU) | 3.84-4.0 s (2.55 s CPU) | 2.4 s | same; the wall is bounded by lookups in flight, see below |
+| Q9 | 4.77 s | 4.5-4.67 s | 2.3 s | the tracker's big budget grows as Go's does (a7eda1a5) |
+| Q13 | 1.09 s | 1.01 s | 0.28 s | same |
+
+Q21's remaining gap is measured, not yet fixed: its session thread blocks 2.0 s
+in the prefetched lookup cursor's response wait, and TiKV's own counters show
+why. During Q21 the Go node keeps about nine coprocessor requests in flight
+(20.2 s of request time over 2.3 s of wall) and the Rust node about 3.4
+(13.2 s over 3.9 s) for the same keys scanned; on a pure index-join query the
+Go node holds 3.9 in flight and the Rust node 0.6, so the lookups run nearly
+one request at a time and TiKV idles 40% of the time. The ExecPlan carries
+the investigation.
