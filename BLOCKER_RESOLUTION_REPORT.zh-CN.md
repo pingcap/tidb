@@ -3877,3 +3877,11 @@ git diff --check
 ```
 
 结果分别为 8、16、34、310 项通过，lint 退出 0。日志为 `/tmp/group-check-final-focused.log`、`/tmp/group-check-planner-fd.log`、`/tmp/group-check-planner-aggregation.log`、`/tmp/group-check-session-integration.log`、`/tmp/group-check-ready-lint.log`。Go 对照实例已关闭。当前只完成该失败类别，未重跑全量 session lib、全部 RealTiKV 和全部 Go/Bazel gates，不构成完整 Go planner package 转写完成声明。原 chunk panic 的完整根因证据、access-path 估算差异及其余质量门禁继续保留未完成状态。
+
+## 2026-09-12 GROUP BY 聚合别名错误码
+
+基线 `ce61bb1c4a`。`tests_coalesced_joins::group_by_an_aggregate_alias_is_illegal` 原本得到 1105，Go 要求 1247。Go master `logical_plan_builder.go:3453-3458` 返回 `ErrIllegalReference(..., "reference to group function")`；实机 `/tmp/group-alias-go.out` 为 `ERROR 1247 (42S22) Reference 'c' not supported (reference to group function)`。
+
+Rust 已正确识别聚合别名，但 `resolve_gby_exprs` 使用 `PlanError::internal` 丢失错误类别。修复新增 `PlanErrorKind::IllegalReference` 并在 executor 恢复 DriverError，回归检查 code=1247、state=42S22、完整消息。红测 `/tmp/group-alias-red.log`，修复后 `/tmp/group-alias-final.log` 通过。
+
+验证：planner 聚合 80 passed（`/tmp/group-alias-planner.log`），session 集成 310 passed（`/tmp/group-alias-integration.log`），`make lint` 退出 0（`/tmp/group-alias-lint.log`），`git diff --check` 通过。该类别已独立提交并推送；全量目标仍未完成。

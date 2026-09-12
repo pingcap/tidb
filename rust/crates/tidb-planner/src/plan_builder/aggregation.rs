@@ -561,15 +561,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 };
                 let field = &fields[index];
                 if aggregate_anywhere(&field.expr) {
-                    error = Some(PlanError::internal(format!(
-                        "Reference '{}' not supported (reference to group function)",
-                        path.last().cloned().unwrap_or_default()
-                    )));
+                    error = Some(PlanError::illegal_reference(
+                        path.last().cloned().unwrap_or_default(),
+                        "reference to group function",
+                    ));
                 } else if has_window_flag(&field.expr) {
-                    error = Some(PlanError::internal(format!(
-                        "Reference '{}' not supported (reference to window function)",
-                        path.last().cloned().unwrap_or_default()
-                    )));
+                    error = Some(PlanError::illegal_reference(
+                        path.last().cloned().unwrap_or_default(),
+                        "reference to window function",
+                    ));
                 } else {
                     *node = field.expr.clone();
                 }

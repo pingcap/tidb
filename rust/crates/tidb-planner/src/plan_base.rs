@@ -283,6 +283,8 @@ pub struct PlanError {
 /// The planner error classes whose MySQL identity survives the plan boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlanErrorKind {
+    /// Go ErrIllegalReference (1247), including the referenced alias.
+    IllegalReference { name: String, reason: &'static str },
     /// Aggregate descriptor validation before executor construction.
     Aggregation(tidb_expr::aggregation::AggDescError),
     /// An expression error whose MySQL identity must survive the planner
@@ -453,6 +455,15 @@ impl PlanError {
         Self {
             kind: PlanErrorKind::Internal,
             message: message.into(),
+        }
+    }
+
+    /// Go ErrIllegalReference for a reference unavailable in this clause.
+    #[must_use]
+    pub fn illegal_reference(name: String, reason: &'static str) -> Self {
+        Self {
+            message: format!("Reference '{name}' not supported ({reason})"),
+            kind: PlanErrorKind::IllegalReference { name, reason },
         }
     }
 

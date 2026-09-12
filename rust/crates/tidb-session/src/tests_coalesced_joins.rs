@@ -499,10 +499,10 @@ fn group_by_an_aggregate_alias_is_illegal() {
         .unwrap_err();
     let mysql = error.clone().to_mysql_error();
     assert_eq!(mysql.code, 1247);
-    assert!(
-        mysql.message.contains("group function"),
-        "{}",
-        mysql.message
+    assert_eq!(mysql.state, *b"42S22");
+    assert_eq!(
+        mysql.message,
+        "Reference 'c' not supported (reference to group function)"
     );
 }
 
