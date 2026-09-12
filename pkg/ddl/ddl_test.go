@@ -144,10 +144,16 @@ func TestAccountJobRU(t *testing.T) {
 	accountedRU := job.RU
 	w.tp = addIdxWorker
 	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += float64(activeTxn.Size())
+	}
 	require.Equal(t, accountedRU, job.RU)
 
 	w.tp = backgroundWorker
 	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += float64(activeTxn.Size())
+	}
 	require.Equal(t, accountedRU, job.RU)
 
 	t.Run("reports through the DDL session resource group", func(t *testing.T) {

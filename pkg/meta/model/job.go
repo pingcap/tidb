@@ -1087,6 +1087,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:             parentJob.Collate,
 		AdminOperator:       parentJob.AdminOperator,
 		ResumeReason:        parentJob.ResumeReason,
+		RU:                  parentJob.RU,
 		TraceInfo:           parentJob.TraceInfo,
 		SQLMode:             parentJob.SQLMode,
 		SessionVars:         parentJob.SessionVars,

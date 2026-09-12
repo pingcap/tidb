@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlmock "github.com/pingcap/tidb/pkg/ddl/mock"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
@@ -32,6 +33,88 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func TestAccountDistTaskRU(t *testing.T) {
+	tests := []struct {
+		name string
+		task *proto.Task
+		want float64
+	}{
+		{
+			name: "successful task with summary",
+			task: &proto.Task{
+				TaskBase: proto.TaskBase{State: proto.TaskStateSucceed},
+				Meta:     []byte(`{"summary":{"index_kv_size":42}}`),
+			},
+			want: 42,
+		},
+		{
+			name: "unfinished task",
+			task: &proto.Task{
+				TaskBase: proto.TaskBase{State: proto.TaskStateRunning},
+				Meta:     []byte(`{"summary":{"index_kv_size":42}}`),
+			},
+			want: 0,
+		},
+		{
+			name: "successful task without summary",
+			task: &proto.Task{
+				TaskBase: proto.TaskBase{State: proto.TaskStateSucceed},
+				Meta:     []byte(`{}`),
+			},
+			want: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const jobID int64 = 1
+			rc := &reorgCtx{}
+			dc := &ddlCtx{}
+			dc.reorgCtx.reorgCtxMap = map[int64]*reorgCtx{jobID: rc}
+			err := (&worker{ddlCtx: dc}).recordDistTaskRU(jobID, tt.task)
+			require.NoError(t, err)
+			want := tt.want
+			if !kerneltype.IsNextGen() {
+				want = 0
+			}
+			require.Equal(t, want, rc.getRU())
+
+			jobCtx := &jobContext{}
+			job := &model.Job{RU: 7}
+			stageReorgResultRU(jobCtx, reorgFnResult{ru: rc.getRU()})
+			accountPendingReorgRU(jobCtx, job, nil)
+			require.Equal(t, 7+want, job.RU)
+		})
+	}
+
+	t.Run("failed reorg does not stage collected RU", func(t *testing.T) {
+		jobCtx := &jobContext{}
+		job := &model.Job{RU: 7}
+		stageReorgResultRU(jobCtx, reorgFnResult{ru: 42, err: errors.New("reorg failed")})
+		accountPendingReorgRU(jobCtx, job, nil)
+		require.Equal(t, float64(7), job.RU)
+	})
+
+	t.Run("failed metadata transition does not account collected RU", func(t *testing.T) {
+		jobCtx := &jobContext{}
+		job := &model.Job{RU: 7}
+		stageReorgResultRU(jobCtx, reorgFnResult{ru: 42})
+		accountPendingReorgRU(jobCtx, job, errors.New("metadata update failed"))
+		require.Equal(t, float64(7), job.RU)
+		require.Zero(t, jobCtx.pendingReorgRU)
+	})
+
+	t.Run("multi-schema proxy preserves accounted RU", func(t *testing.T) {
+		parentJob := &model.Job{RU: 7}
+		proxyJob := (&model.SubJob{}).ToProxyJob(parentJob, 0)
+		require.Equal(t, parentJob.RU, proxyJob.RU)
+
+		proxyJob.RU += 42
+		updateParentJobFromProxy(parentJob, &proxyJob)
+		require.Equal(t, float64(49), parentJob.RU)
+	})
+}
 
 func TestResolveCloudStorageURI(t *testing.T) {
 	originalURI := vardef.CloudStorageURI.Load()

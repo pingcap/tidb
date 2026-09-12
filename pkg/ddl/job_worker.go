@@ -128,6 +128,8 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
+	// pendingReorgRU is persisted only after the matching table-state transition succeeds.
+	pendingReorgRU float64
 	// Keep storage-class history changes pending until a batched multi-schema
 	// step is known to commit its TableInfo changes.
 	deferStorageClassTransitionStaging bool
@@ -205,9 +207,12 @@ const (
 	backgroundWorker workerType = 2
 )
 
-// TODO: Refactor this weight and the statement RU weights in
+// TODO: Refactor these weights and the statement RU weights in
 // pkg/executor/statement_ru_result.go into a shared location, then make them configurable.
-const ddlTxnRUKVBytesWeight = 1.0
+const (
+	ddlTxnRUKVBytesWeight    = 1.0
+	ddlIngestRUKVBytesWeight = 1.0
+)
 
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
@@ -649,8 +654,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 }
 
 func (w *worker) accountJobRU(job *model.Job) error {
-	// Only general DDL jobs on NextGen calculate RU for now.
-	if !kerneltype.IsNextGen() || w.tp != generalWorker {
+	if !kerneltype.IsNextGen() {
 		return nil
 	}
 	txn, err := w.sess.Txn()
@@ -728,6 +732,10 @@ func (w *worker) transitOneJobStep(
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
 	restoreStorageClassTransitionStep := checkpointStorageClassTransitionStep(w.sess, txn, job)
+	jobCtx.pendingReorgRU = 0
+	defer func() {
+		jobCtx.pendingReorgRU = 0
+	}()
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
 	if restoreStorageClassTransitionStep != nil {
 		var stagingErr *storageClassTransitionStagingError

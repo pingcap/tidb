@@ -1939,6 +1939,7 @@ func doReorgWorkForCreateIndex(
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		accountPendingReorgRU(jobCtx, job, err)
 		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
@@ -3309,11 +3310,13 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		return err
 	}
 
+	var finishedTask *proto.Task
 	waitTaskDoneOrAutoPause := func(taskID int64) error {
 		found, err := handle.WaitTaskDoneOrPausedWithResult(ctx, taskID)
 		if err != nil {
 			return err
 		}
+		finishedTask = found
 		if found.State == proto.TaskStatePaused && errdef.IsKVDiskFullError(found.Error) {
 			logutil.DDLLogger().Warn("auto pause add-index DDL job because DXF task hit storage node disk full",
 				zap.Int64("job-id", reorgInfo.Job.ID),
@@ -3344,7 +3347,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			logutil.DDLLogger().Info(
 				"task succeed, start to resume the ddl job",
 				zap.String("task-key", taskKey))
-			return nil
+			return w.recordDistTaskRU(reorgInfo.Job.ID, task)
 		}
 		taskMeta := &BackfillTaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
@@ -3466,7 +3469,26 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	})
 
 	err = g.Wait()
-	return err
+	if err != nil {
+		return err
+	}
+	return w.recordDistTaskRU(reorgInfo.Job.ID, finishedTask)
+}
+
+func (w *worker) recordDistTaskRU(jobID int64, task *proto.Task) error {
+	if !kerneltype.IsNextGen() || task == nil || task.State != proto.TaskStateSucceed {
+		return nil
+	}
+	taskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	if taskMeta.Summary != nil {
+		if rc := w.getReorgCtx(jobID); rc != nil {
+			rc.setRU(float64(taskMeta.Summary.IndexKVSize) * ddlIngestRUKVBytesWeight)
+		}
+	}
+	return nil
 }
 
 func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, taskKey string) (err error) {
