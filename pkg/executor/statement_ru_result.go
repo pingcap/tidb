@@ -85,26 +85,37 @@ type statementRUCalibrationSnapshot struct {
 }
 
 // statementRUCalculationSetup is installed once for an eligible statement
-// and cleared by the first terminal attempt. It contains no plan pointer,
-// topology state, publication mode, or consumer.
+// and cleared by the first terminal attempt. It snapshots the reporting mode
+// and contains no plan pointer, topology state, or consumer.
 type statementRUCalculationSetup struct {
 	frontendCompileBytes float64
+	fullReport           bool
 }
 
-// statementRUFinalizedSnapshot contains only values. It cannot retain an ExecStmt,
-// FlatOperator, Origin, flat plan, calculator, or ExecDetails pointer.
+// statementRUFinalizedSnapshot owns scalar results and an optional full-mode
+// report of numeric values. It retains no plan, executor, or runtime statistics.
 type statementRUFinalizedSnapshot struct {
 	units            ruv3.StmtUnits
 	result           ruv3.StmtResult
 	calibrationState statementRUCalibrationState
-	writeSQL         bool
+	sqlType          string
+	engineRU         statementRUEngineResult
+	report           *statementRUFullReport
+	failure          statementRUFailureReason
 }
 
 func installStatementRUOwner(stmt *ExecStmt) {
 	setup, ok := newStatementRUCalculationSetup(stmt)
+	fullReport := config.GetGlobalConfig().RUV2.ReportMode == config.RUReportModeFull
 	if !ok {
+		// Restricted work is outside the user-statement calibration population.
+		if fullReport && stmt != nil && stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil &&
+			!stmt.Ctx.GetSessionVars().InRestrictedSQL {
+			publishStatementRUFailureSafely(statementRUIneligible)
+		}
 		return
 	}
+	setup.fullReport = fullReport
 	owner := newStatementRUOwner(stmt)
 	owner.calculationSetup = setup
 	stmt.statementRUOwner = owner
@@ -194,15 +205,21 @@ func trimStatementRUExplainPrefix(normalizedSQL string) string {
 // statementRUCalculator is terminal-local. It accumulates only typed scalar
 // units; no plan or execution-detail pointer survives calculateStatementRU.
 type statementRUCalculator struct {
-	units ruv3.StmtUnits
+	units   ruv3.StmtUnits
+	compute [statementRUEngineCount]statementRUComputeUnits
+	report  *statementRUFullReport
 }
 
 func newStatementRUCalculator(setup statementRUCalculationSetup) statementRUCalculator {
-	return statementRUCalculator{
+	calculator := statementRUCalculator{
 		units: ruv3.StmtUnits{
 			FrontendCompileBytes: setup.frontendCompileBytes,
 		},
 	}
+	if setup.fullReport {
+		calculator.report = new(statementRUFullReport)
+	}
+	return calculator
 }
 
 type statementRUScanEvidenceState uint8
@@ -247,15 +264,30 @@ func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes in
 }
 
 func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot, bool) {
-	result, ok := ruv3.Calculate(calculator.units, currentStatementRUWeights())
+	weights := currentStatementRUWeights()
+	result, ok := ruv3.Calculate(calculator.units, weights)
 	if !ok {
-		return statementRUFinalizedSnapshot{}, false
+		return statementRUFailed(statementRUOperatorInvalid), false
+	}
+	engineRU := calculator.engineResult(weights)
+	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV} {
+		if ru < 0 || math.IsNaN(ru) || math.IsInf(ru, 0) {
+			return statementRUFailed(statementRUOperatorInvalid), false
+		}
+	}
+	if calculator.report != nil {
+		// Freeze full-mode details independently of the mutable accumulator.
+		report := *calculator.report
+		report.addStatementUnits(calculator.units)
+		calculator.report = &report
 	}
 	return statementRUFinalizedSnapshot{
 		units:            calculator.units,
 		result:           result,
+		engineRU:         engineRU,
+		report:           calculator.report,
 		calibrationState: statementRUCalibrationIncomplete,
-		writeSQL:         calculator.units.WriteStatement != 0 || calculator.units.WriteKeys != 0,
+		sqlType:          "select",
 	}, true
 }
 
@@ -263,58 +295,43 @@ func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
 	finalized statementRUFinalizedSnapshot,
 ) {
-	reportStatementRUV3ConsumptionSafely(stmt, finalized.result.TotalRU)
+	reportStatementRUV3ConsumptionSafely(stmt, finalized.engineRU)
 	publishStatementRUMetricsSafely(finalized)
+	if finalized.report == nil {
+		return
+	}
 	publishStatementRUCalibrationSafely(stmt, statementRUCalibrationSnapshot{
 		State: finalized.calibrationState,
 		Units: finalized.units,
 	})
 }
 
-func reportStatementRUV3ConsumptionSafely(stmt *ExecStmt, totalRU float64) {
+func reportStatementRUV3ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
 	defer func() {
 		_ = recover()
 	}()
-	if stmt == nil || stmt.Ctx == nil || totalRU <= 0 {
+	if stmt == nil || stmt.Ctx == nil || (result.TiDB <= 0 && result.TiKV <= 0) {
 		return
 	}
 	dctx := stmt.Ctx.GetDistSQLCtx()
 	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
 		return
 	}
-	// TODO: distinguish TiDB/KV/Flash RU.
-	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, 0, totalRU, 0)
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, result.TiKV, result.TiDB, 0)
 }
 
-// publishStatementRUMetricsSafely projects one immutable finalized snapshot to
-// the existing RU v3 counters. ResultOnly retains aggregate CPUWork rather than
-// a site split, so publication preserves the producer-owned engine boundary:
-// TiKV receives scan, network and committed write work; Total and SQLType receive the
-// complete best-effort result.
+// publishStatementRUMetricsSafely publishes result metrics using cached counters.
+// All label lookup and calibration projections live behind the full-mode guard.
 func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 	defer func() {
-		_ = recover()
+		if recover() != nil && finalized.report != nil {
+			publishStatementRUFailureSafely(statementRUPanic)
+		}
 	}()
-	totalRU := finalized.result.TotalRU
-	metrics.RUV3Total.Add(totalRU)
-	sqlType := metrics.LblSQLTypeRead
-	if finalized.writeSQL {
-		sqlType = metrics.LblSQLTypeWrite
+	metrics.AddRUV3Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.result.TotalRU, finalized.sqlType)
+	if finalized.report != nil {
+		publishStatementRUFullMetrics(finalized)
 	}
-	metrics.RUV3BySQLType.WithLabelValues(sqlType).Add(totalRU)
-	weights := currentStatementRUWeights()
-	metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV).Add(
-		weights.ScanByte*finalized.units.ScanBytes +
-			weights.NetByte*finalized.units.NetBytes +
-			weights.WriteKey*finalized.units.WriteKeys +
-			weights.WriteByte*finalized.units.WriteBytes,
-	)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitCPUWork).Add(finalized.units.CPUWork)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitScanBytes).Add(finalized.units.ScanBytes)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitNetBytes).Add(finalized.units.NetBytes)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitFrontendCompileBytes).Add(finalized.units.FrontendCompileBytes)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitHashStateRows).Add(finalized.units.HashStateRows)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitJoinOutputRows).Add(finalized.units.JoinOutputRows)
 }
 
 func publishStatementRUCalibrationSafely(
@@ -324,9 +341,8 @@ func publishStatementRUCalibrationSafely(
 	defer func() {
 		_ = recover()
 	}()
-	// The typed calibration boundary is intentionally dormant until a later PR
-	// installs the real consumer. This failpoint only observes the same production
-	// call; it does not select a test-only calculation or publication mode.
+	// Full-mode tests observe the same terminal units as the metrics consumer.
+	// Result mode never calls this calibration-only projection.
 	connectionID := uint64(0)
 	if stmt != nil && stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil {
 		connectionID = stmt.Ctx.GetSessionVars().ConnectionID
