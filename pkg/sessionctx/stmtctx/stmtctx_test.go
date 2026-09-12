@@ -572,6 +572,9 @@ func TestReservedRowIDAlloc(t *testing.T) {
 	require.Equal(t, int64(0), id)
 	// reset some ids
 	reserved.Reset(12, 15)
+	curBase, curMax := reserved.Current()
+	require.Equal(t, int64(12), curBase)
+	require.Equal(t, int64(15), curMax)
 	require.False(t, reserved.Exhausted())
 	id, ok = reserved.Consume()
 	require.True(t, ok)

@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	parser_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -50,6 +52,59 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	restore()
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "before", sessVars.CurrentDB)
+}
+
+func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {
+	sel, err := parseSelectFromSQL("select a as k, count(1) from t group by k")
+	require.NoError(t, err)
+
+	usage, err := analyzeMVColumnUsage(sel, "a")
+	require.NoError(t, err)
+	require.Empty(t, usage.unsupportedReason)
+	require.Equal(t, []int{0}, usage.directOutputOffsets)
+	require.True(t, usage.isGroupKey)
+}
+
+func TestAnalyzeMVColumnUsageWhereReferenceUnsupported(t *testing.T) {
+	sel, err := parseSelectFromSQL("select a, count(1) from t where b > 0 group by a")
+	require.NoError(t, err)
+
+	usage, err := analyzeMVColumnUsage(sel, "b")
+	require.NoError(t, err)
+	require.Equal(t, "WHERE clause", usage.unsupportedReason)
+	require.Empty(t, usage.directOutputOffsets)
+	require.False(t, usage.isGroupKey)
+}
+
+func TestFieldTypeForMVRelatedColumnClearsBaseOnlyFlags(t *testing.T) {
+	oldRelatedFT := parser_types.NewFieldType(mysql.TypeLong)
+	oldRelatedFT.AddFlag(mysql.UniqueKeyFlag)
+	oldRelatedCol := &model.ColumnInfo{FieldType: *oldRelatedFT}
+
+	baseNewFT := parser_types.NewFieldType(mysql.TypeLonglong)
+	baseNewFT.AddFlag(mysql.NotNullFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag |
+		mysql.PreventNullInsertFlag | mysql.GeneratedColumnFlag | mysql.PriKeyFlag)
+	baseNewCol := &model.ColumnInfo{FieldType: *baseNewFT}
+
+	newFieldType := fieldTypeForMVRelatedColumn(oldRelatedCol, baseNewCol)
+	require.True(t, mysql.HasNotNullFlag(newFieldType.GetFlag()))
+	require.True(t, mysql.HasUniKeyFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasPriKeyFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasAutoIncrementFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasOnUpdateNowFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasPreventNullInsertFlag(newFieldType.GetFlag()))
+	require.Zero(t, newFieldType.GetFlag()&mysql.GeneratedColumnFlag)
+}
+
+func TestAnalyzeMVColumnUsageGroupByOrdinal(t *testing.T) {
+	sel, err := parseSelectFromSQL("select a, count(1) from t group by 1")
+	require.NoError(t, err)
+
+	usage, err := analyzeMVColumnUsage(sel, "a")
+	require.NoError(t, err)
+	require.Empty(t, usage.unsupportedReason)
+	require.Equal(t, []int{0}, usage.directOutputOffsets)
+	require.True(t, usage.isGroupKey)
 }
 
 func TestUpdateMaterializedViewBaseInfoOnCreateMissingBaseTable(t *testing.T) {

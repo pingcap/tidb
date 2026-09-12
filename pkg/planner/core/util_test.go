@@ -20,9 +20,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -325,4 +327,33 @@ func TestExtractTableList(t *testing.T) {
 			require.Equal(t, c.expect[j].Name.L, tn.Name.L, "case %d sql: %s, j: %d, actual: %s", i, c.sql, j, tableNamesAsStr(tableNames))
 		}
 	}
+}
+
+func TestCheckMViewUpdatable(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	mv := &model.TableInfo{
+		Name:             ast.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{},
+	}
+	mlog := &model.TableInfo{
+		Name:                ast.NewCIStr("$mlog$t"),
+		MaterializedViewLog: &model.MaterializedViewLogInfo{},
+	}
+	base := &model.TableInfo{Name: ast.NewCIStr("t")}
+
+	require.NoError(t, CheckMViewUpdatable(vars, base, "", "INSERT"))
+	require.Error(t, CheckMViewUpdatable(vars, mv, "", "INSERT"))
+	require.Error(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
+
+	// Maintenance SQL must be restricted; otherwise this is an internal error.
+	vars.InMViewMaintenance = true
+	vars.InRestrictedSQL = false
+	err := CheckMViewUpdatable(vars, mv, "", "INSERT")
+	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
+	err = CheckMViewUpdatable(vars, mlog, "", "INSERT")
+	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
+
+	vars.InRestrictedSQL = true
+	require.NoError(t, CheckMViewUpdatable(vars, mv, "", "INSERT"))
+	require.NoError(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
 }
