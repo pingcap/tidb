@@ -747,13 +747,17 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 	return nil
 }
 
+const idxlookupAllowPendingTasks = 1
+
 func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
 	// indexWorker will submit lookup-table tasks (processed by tableWorker) to the pool,
 	// so fetching index and getting table data can run concurrently.
 	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
 	e.pool = &workerPool{
 		needSpawn: func(workers, tasks uint32) bool {
-			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
+			// Since the index worker and table workers share the same pool, the total number of workers is limited by
+			// indexLookupConcurrency+1 (1 for index worker).
+			return workers < uint32(e.indexLookupConcurrency+1) && tasks > idxlookupAllowPendingTasks
 		},
 	}
 	if err := e.startIndexWorker(ctx, initBatchSize); err != nil {
@@ -1451,6 +1455,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 	}
 
 	taskID := 0
+	// rateLimit prevents the index worker from getting too far ahead of table workers. The pool only starts a new
+	// goroutine when pending tasks exceed idxlookupAllowPendingTasks, so its capacity must be one greater.
+	rateLimit := make(chan struct{}, idxlookupAllowPendingTasks+1)
 	for i := 0; i < len(results); {
 		curResultIdx := i
 		result := results[curResultIdx]
@@ -1466,7 +1473,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			i++
 		}
 
-		stopped := w.buildAndDispatchLookupTasks(ctx, curResultIdx, &taskID, &data)
+		stopped := w.buildAndDispatchLookupTasks(ctx, curResultIdx, &taskID, &data, rateLimit)
 		if stopped {
 			return nil
 		}
@@ -1526,6 +1533,8 @@ func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, 
 	}
 
 	taskID := 0
+	// Keep table task submission bounded while index results are fetched lazily.
+	rateLimit := make(chan struct{}, idxlookupAllowPendingTasks+1)
 	for i := 0; i < len(results); {
 		curResultIdx := i
 		result := &results[curResultIdx]
@@ -1545,7 +1554,7 @@ func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, 
 			i++
 		}
 
-		stopped := w.buildAndDispatchLookupTasks(ctx, curResultIdx, &taskID, &data)
+		stopped := w.buildAndDispatchLookupTasks(ctx, curResultIdx, &taskID, &data, rateLimit)
 		if stopped {
 			return nil
 		}
@@ -1590,7 +1599,7 @@ func (w *indexWorker) extractLookupTaskData(
 	return data, err
 }
 
-func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResultIdx int, taskID *int, data *extractedLookupTaskData) (stopped bool) {
+func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResultIdx int, taskID *int, data *extractedLookupTaskData, rateLimit chan struct{}) (stopped bool) {
 	if len(data.handles) == 0 && len(data.completedRows) == 0 {
 		return false
 	}
@@ -1624,7 +1633,7 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		return true
 	case <-w.finished:
 		return true
-	default:
+	case rateLimit <- struct{}{}:
 		if completedTask != nil {
 			w.resultCh <- completedTask
 		}
@@ -1633,6 +1642,7 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 			e := w.idxLookup
 			e.tblWorkerWg.Add(1)
 			e.pool.submit(func() {
+				<-rateLimit
 				defer e.tblWorkerWg.Done()
 				select {
 				case <-e.finished:
@@ -1643,6 +1653,8 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 				}
 			})
 			w.resultCh <- tableLookUpTask
+		} else {
+			<-rateLimit
 		}
 	}
 	if w.idxLookup.stats != nil {
