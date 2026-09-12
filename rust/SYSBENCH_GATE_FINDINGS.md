@@ -1408,10 +1408,10 @@ Each query was run with the node's and TiKV's CPU time sampled around it
 
 - Cold, r18 answers the 22 queries in 58.4 s against Go's 49.2 s, 1.19x
   (r16: 1.45x). Excluding Go's Q3 outlier (1.58 s in round 2) the ratio is
-  58.4 / 44.5 = 1.31x. Ten queries are now within 15% of Go (Q1, Q5, Q6,
-  Q11, Q13, Q14, Q19, Q20, Q22 and, on round 2's number, Q2 at 1.08 vs
-  0.83 s is not; Q11 +13%). The remaining gap is root cause 3 above: Q8
-  +77%, Q9 +62%, Q16 +108%, Q21 +52%, Q15 +46%.
+  58.4 / 44.5 = 1.31x. Nine queries are now within 15% of Go (Q1, Q5, Q6,
+  Q11, Q13, Q14, Q19, Q20, Q22); Q2 and Q4 are next at +29%. The remaining
+  gap is root cause 3 above: Q8 +77%, Q9 +62%, Q16 +108%, Q21 +52%, Q15
+  +46%.
 - Warm, 41.5 s against 22.8 s, 1.82x (r16: 1.90x). Q19 +8% and Q11 +200%
   (0.30 vs 0.10 s) were +159% and +1310%. The Rust node still misses its
   coprocessor cache on every join shape, so warm numbers other than Q1, Q6,
