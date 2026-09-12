@@ -176,7 +176,12 @@ run_sql "DROP DATABASE $DB;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/snap_client/restore-createtables-error=return(true)"
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128 || { cat $RESTORE_LOG; }
+if run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128; then
+    echo "TEST: [$TEST_NAME] expected restore to fail on batch create tables"
+    exit 1
+else
+    cat $RESTORE_LOG
+fi
 export GO_FAILPOINTS=""
 
 panic_count=$(cat $RESTORE_LOG | grep "panic"| wc -l)
@@ -185,9 +190,11 @@ if [ "${panic_count}" != "0" ];then
     exit 1
 fi
 
+run_br --pd $PD_ADDR abort restore full -s "local://$TEST_DIR/$DB"
+
 # clear restore environment
 run_sql "DROP DATABASE $DB;"
-run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
+run_sql "DROP DATABASE IF EXISTS __tidb_br_temporary_mysql;"
 snapshot_checkpoint_databases=($(run_sql "SHOW DATABASES LIKE '__TiDB_BR_Temporary%';" | awk '/Database/{print $3}'))
 for snapshot_checkpoint_database in "${snapshot_checkpoint_databases[@]}"; do
     run_sql "DROP DATABASE $snapshot_checkpoint_database"
