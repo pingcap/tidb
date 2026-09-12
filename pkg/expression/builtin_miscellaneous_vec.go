@@ -734,6 +734,8 @@ func (b *builtinInet6NtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	if err := b.args[0].VecEvalString(ctx, input, val); err != nil {
 		return err
 	}
+	tc := typeCtx(ctx)
+	argTp := b.args[0].GetType(ctx)
 	result.ReserveString(n)
 	for i := range n {
 		if val.IsNull(i) {
@@ -741,6 +743,11 @@ func (b *builtinInet6NtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 			continue
 		}
 		valI := val.GetString(i)
+		if inet6NtoaArgInvalid(argTp, len(valI)) {
+			tc.AppendWarning(errWrongValueForType.FastGenByArgs("string", valI, "inet6_ntoa"))
+			result.AppendNull()
+			continue
+		}
 		ip := net.IP(valI).String()
 		if len(valI) == net.IPv6len && !strings.Contains(ip, ":") {
 			ip = fmt.Sprintf("::ffff:%s", ip)
