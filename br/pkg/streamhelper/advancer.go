@@ -682,7 +682,7 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 	if c.subscriber == nil {
 		return nil
 	}
-	failpoint.Inject("get_subscriber", nil)
+	failpoint.InjectCall("get_subscriber")
 	if err := c.subscriber.UpdateStoreTopology(ctx); err != nil {
 		log.Warn("Error when updating store topology.",
 			zap.String("category", "log backup advancer"), logutil.ShortError(err))
