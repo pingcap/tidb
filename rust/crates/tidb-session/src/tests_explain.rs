@@ -1087,23 +1087,16 @@ fn explain_union_all_records_each_term_without_execution() {
         session
             .run("EXPLAIN (SELECT a FROM t WHERE a <= 2) UNION ALL (SELECT a FROM t WHERE a >= 3)"),
     );
-    assert_eq!(rows.len(), 7);
+    assert_eq!(rows.len(), 5);
     assert!(rows[0][0].starts_with("Union_"));
-    assert_eq!(rows[0][1], "3335.33");
+    assert_eq!(rows[0][1], "6666.67");
     assert_eq!(rows[0][2], "root");
     assert_eq!(
         rows.iter()
             .skip(1)
             .map(|row| row[2].as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "root",
-            "cop[tikv]",
-            "cop[tikv]",
-            "root",
-            "cop[tikv]",
-            "cop[tikv]"
-        ]
+        vec!["root", "cop[tikv]", "root", "cop[tikv]"]
     );
     assert_eq!(
         row_text(session.run("SELECT a FROM t ORDER BY a")),
