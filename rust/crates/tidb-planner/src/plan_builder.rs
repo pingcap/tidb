@@ -2763,6 +2763,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.cur_clause != ClauseCode::Having {
             self.cur_clause = ClauseCode::Where;
         }
+        // Go allocates Selection before rewriting, even when constant
+        // folding later returns TableDual or removes every condition.
+        let selection_base = self.base(LogicalSelection::TYPE);
         let mut conditions = Vec::new();
         // Go's `splitWhere` decomposes the top-level AND chain before
         // expression rewriting. A filter subquery is itself lowered into a
@@ -2848,7 +2851,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if conditions.is_empty() {
             return Ok(plan);
         }
-        let mut selection = LogicalSelection::new(self.base(LogicalSelection::TYPE), conditions);
+        let mut selection = LogicalSelection::new(selection_base, conditions);
         selection.base.set_children(vec![plan]);
         Ok(LogicalPlan::Selection(selection))
     }

@@ -874,12 +874,12 @@ fn a_point_write_keys_the_row_a_scan_would_have_filtered_to() {
     // A constant that is not written as an integer. The key is the constant
     // IN THE COLUMN'S DOMAIN or there is no point plan
     // (`driver::point_get_key`), so `150.0` and `'150'` key row 150 and
-    // `150.5` keys nothing and reaches the row through a scan that matches
-    // nothing either.
+    // `150.5` is impossible in the NOT NULL integer domain. Go's ordinary
+    // expression refinement folds it to false and produces TableDual.
     for (predicate, operator, survivors) in [
         ("id = 150.0", "Point_Get_1", 12),
         ("id = '150'", "Point_Get_1", 12),
-        ("id = 150.5", "TableRangeScan_1", 13),
+        ("id = 150.5", "TableDual_7", 13),
     ] {
         let mut session = sbtest1_with_rows();
         assert_eq!(

@@ -159,20 +159,14 @@ fn compare_int_with_constant(
 /// the non-int `con` re-expressed in the int column's own type, so the
 /// comparison that survives is int-to-int.
 ///
-/// `None` is Go's `return con, false` -- the comparison is left exactly as
-/// written. Both of Go's `isExceptional` outcomes (an overflowing constant,
-/// and an `EQ`/`NullEQ` against a value with a non-zero fraction) answer
-/// `None` here rather than Go's `[]Expression{NewZero(), NewOne()}` rewrite.
-/// That rewrite is a pure OPTIMIZATION -- Go itself applies it only when the
-/// column carries `NotNullFlag` (`:1815-1820`), and the unrefined per-row
-/// comparison computes the same rows either way -- so leaving it out costs
-/// speed, never an answer.
+/// `None` leaves the comparison unchanged. A returned constant carries Go's
+/// `isExceptional` bit, which the caller combines with the column nullability.
 fn refine_compared_constant(
     ctx: &dyn Columns,
     target: &FieldType,
     con: &Constant,
     op: &str,
-) -> Option<Constant> {
+) -> Option<(Constant, bool)> {
     // `:1580-1582`: a BIT column is refined against LONGLONG instead.
     let target = if matches!(target.code(), FieldTypeCode::Bit) {
         &FieldType::new(FieldTypeCode::LongLong)
@@ -187,7 +181,10 @@ fn refine_compared_constant(
         .with_truncate_as_warning(true);
     let converted = con.value.convert_to(target, flags).ok()?;
     if matches!(converted.event, Some(ScalarConversionEvent::Overflow(_))) {
-        return None;
+        let mut refined = con.clone();
+        refined.value = converted.value;
+        refined.ret_type = Some(target.clone());
+        return Some((refined, true));
     }
     // The FIRST warning: the string->int conversion runs the float-prefix
     // scan (`getValidIntPrefix`'s non-cast arm), which raises 1292.
@@ -207,7 +204,7 @@ fn refine_compared_constant(
     // `:1600-1609`: an exact constant is already the answer.
     let ordering = compare_int_with_constant(ctx, &int_datum, &con.value).ok()?;
     if ordering == std::cmp::Ordering::Equal {
-        return Some(int_constant(int_datum));
+        return Some((int_constant(int_datum), false));
     }
 
     match op {
@@ -231,7 +228,7 @@ fn refine_compared_constant(
             if folded.event.is_some() {
                 return None;
             }
-            Some(int_constant(folded.value))
+            Some((int_constant(folded.value), false))
         }
         // `:1622-1657`: Go's `EQ`/`NullEQ` case switches on the CONSTANT's
         // own eval type, and the two halves are not the same rule.
@@ -253,8 +250,7 @@ fn refine_compared_constant(
         // ```
         //
         // A REAL/DECIMAL constant is Go's `isExceptional` -- `int = 1.1` is
-        // definitely false -- which this port answers by leaving the
-        // comparison alone (see the doc above). A STRING constant is NOT:
+        // definitely false for a NOT NULL operand. A STRING constant is NOT:
         // when the string reads as a WHOLE double it is refined to
         // `intDatum`, and Go's own comment says which target that arm exists
         // for:
@@ -276,8 +272,10 @@ fn refine_compared_constant(
         "eq" | "nulleq" => {
             // A `None` ret_type is a nil `*types.FieldType`, which Go never
             // builds here; it takes the unrefined answer.
-            if con.ret_type.as_ref().map(FieldType::eval_type) != Some(EvalType::String) {
-                return None;
+            match con.ret_type.as_ref().map(FieldType::eval_type) {
+                Some(EvalType::Real | EvalType::Decimal) => return Some((con.clone(), true)),
+                Some(EvalType::String) => {}
+                _ => return None,
             }
             // The fold's own string->double coercion, raising the truncation
             // once more when the string is partial -- the same second warning
@@ -285,9 +283,9 @@ fn refine_compared_constant(
             let value = con.value.to_f64().ok()?.value;
             note_string_truncation(ctx, &con.value).ok()?;
             if value != value.trunc() {
-                return None;
+                return Some((con.clone(), true));
             }
-            Some(int_constant(int_datum))
+            Some((int_constant(int_datum), false))
         }
         // Go's switch has no `NE` arm: a `!=` whose constant is inexact
         // falls through to `return con, false`.
@@ -940,7 +938,8 @@ fn refine_int_operand_constant(
     mirrored: &str,
     ctx: &dyn Columns,
 ) {
-    let (column, constant, op) = match (left, right) {
+    let constant_on_left = matches!(left, Expression::Constant(_));
+    let (column, constant, op) = match (&mut *left, &mut *right) {
         (column, Expression::Constant(constant))
             if left_is_int && !right_is_int && !matches!(column, Expression::Constant(_)) =>
         {
@@ -956,8 +955,34 @@ fn refine_int_operand_constant(
     let Some(target) = column.static_type().cloned() else {
         return;
     };
-    if let Some(refined) = refine_compared_constant(ctx, &target, constant, op) {
-        *constant = refined;
+    if let Some((refined, exceptional)) = refine_compared_constant(ctx, &target, constant, op) {
+        if !exceptional {
+            *constant = refined;
+            return;
+        }
+        // Mutable values cannot be replaced by a plan-time truth value, and
+        // nullable operands must retain NULL propagation (Go refineArgs).
+        if target.flags() & FieldTypeFlags::NOT_NULL == 0
+            || constant.param_marker.is_some()
+            || constant.deferred_expr.is_some()
+        {
+            return;
+        }
+        let negative_infinite = match &refined.value {
+            Datum::Int(value) => Some(value & 1 == 0),
+            Datum::UInt(value) => Some(value & 1 == 0),
+            _ => None,
+        };
+        let swap = !matches!(name, "eq" | "nulleq")
+            && negative_infinite.is_some_and(|negative| negative != constant_on_left);
+        *left = Expression::Constant(Constant::new(
+            Datum::Int(i64::from(swap)),
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+        *right = Expression::Constant(Constant::new(
+            Datum::Int(i64::from(!swap)),
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
     }
 }
 
@@ -1390,14 +1415,44 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
-    /// `EQ` against an inexact value is Go's `isExceptional`, which this port
-    /// answers by leaving the comparison alone. The per-row comparison still
+    /// `EQ` against an inexact value is Go's `isExceptional`; nullable columns
+    /// retain the comparison so NULL still propagates. The per-row comparison
     /// computes the right (empty) answer -- captured: `a = '3.5'` returns no
     /// row and warns zero times.
     #[test]
     fn an_inexact_equality_casts_the_unrefined_constant_like_go() {
         let (expr, _) = refine("eq", int_column(), string_constant("3.5"));
         assert_eq!(constant_of(&expr, 1), Datum::Real(3.5));
+    }
+
+    #[test]
+    fn exceptional_integer_comparisons_fold_only_for_not_null_columns() {
+        for (op, literal, expected) in [
+            ("eq", "150.5", false),
+            ("nulleq", "150.5", false),
+            ("lt", "999999999999999999999999", true),
+            ("gt", "-999999999999999999999999", true),
+        ] {
+            for mirrored in [false, true] {
+                let field_type =
+                    FieldType::new(FieldTypeCode::Long).with_flags(FieldTypeFlags::NOT_NULL);
+                let column = Expression::Column(crate::column::Column::new(1, field_type));
+                let constant = string_constant(literal);
+                let (left, right, operator) = if mirrored {
+                    (constant, column, symmetric_op(op).unwrap())
+                } else {
+                    (column, constant, op)
+                };
+                let (expr, _) = refine(operator, left, right);
+                assert!(crate::constant_fold::folds_to_constant(&expr), "{expr:?}");
+                assert_eq!(
+                    crate::eval_expression_once(&expr, &Sink::default()).unwrap(),
+                    Datum::Int(i64::from(expected))
+                );
+            }
+            let (nullable, _) = refine(op, int_column(), string_constant(literal));
+            assert!(!crate::constant_fold::folds_to_constant(&nullable));
+        }
     }
 
     /// An overflowing constant is Go's other `isExceptional`; left unrefined

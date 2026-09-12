@@ -146,8 +146,8 @@ pub(crate) fn shape(expr: &Expression) -> String {
 ///
 /// Rows whose Go output is a comment rather than a `==>` translation pin the
 /// structural comparison this tier retains where Go folds or re-types:
-/// the `isExceptional` constant-folding arm of `refineArgs`
-/// (`builtin_compare.go:1884-1906`) remains a gap. Constant comparison casts
+/// the `isExceptional` arm now emits Go's zero/one argument pairs for
+/// constants already exposed to refinement. Constant comparison casts
 /// now fold at construction, including the NE-against-DOUBLE arguments.
 /// The remaining optimization and warning-count differences are recorded in
 /// [`refine_exceptional_folds_are_not_modeled`].
@@ -167,16 +167,14 @@ fn test_compare_function_with_refine() {
         // NOTE: this row's constant is an unquoted DECIMAL literal.
         ("a > 1.1", "gt(col(Some(Long)), Const:INT:1)"),
         ("a >= '1.1'", "ge(col(Some(Long)), Const:INT:2)"),
-        // Go folds the condition into a constant "0"; Rust retains the
-        // generated DOUBLE comparison signature while that fold is pending.
+        // Go refineArgs emits eq(0,1), which its function builder folds to 0.
         (
             "a = '1.1'",
-            "eq(cast_double(col(Some(Long))), Const:FLOAT:1.1)",
+            "eq(Const:INT:0, Const:INT:1)",
         ),
-        // Go folds it too; Rust retains the generated DOUBLE signature.
         (
             "a <=> '1.1'",
-            "nulleq(cast_double(col(Some(Long))), Const:FLOAT:1.1)",
+            "nulleq(Const:INT:0, Const:INT:1)",
         ),
         // Go folds the constant cast while retaining the column cast.
         (
@@ -195,15 +193,13 @@ fn test_compare_function_with_refine() {
         ("'1.1' <= a", "le(Const:INT:2, col(Some(Long)))"),
         ("'1.1' > a", "gt(Const:INT:2, col(Some(Long)))"),
         ("'1.1' >= a", "ge(Const:INT:1, col(Some(Long)))"),
-        // Go folds it ("0"); Rust retains the generated DOUBLE signature.
         (
             "'1.1' = a",
-            "eq(Const:FLOAT:1.1, cast_double(col(Some(Long))))",
+            "eq(Const:INT:0, Const:INT:1)",
         ),
-        // Go folds it ("0"); Rust retains the generated DOUBLE signature.
         (
             "'1.1' <=> a",
-            "nulleq(Const:FLOAT:1.1, cast_double(col(Some(Long))))",
+            "nulleq(Const:INT:0, Const:INT:1)",
         ),
         // Go: ne(1.1, cast(a, double BINARY)).
         (
@@ -213,18 +209,18 @@ fn test_compare_function_with_refine() {
         // Go folds it ("0": the conversion overflows and EQ is exceptional).
         (
             "'123456789123456711111189' = a",
-            "eq(Const:FLOAT:123456789123456700000000, cast_double(col(Some(Long))))",
+            "eq(Const:INT:0, Const:INT:1)",
         ),
         // Go folds it ("0", the ETDecimal EQ branch). The DECIMAL column wrap
         // this tier produces matches Go's own cast arm of generateCmpSigs.
         (
             "123456789123456789.12345 = a",
-            "eq(Const:DEC:123456789123456789.12345, cast_decimal(col(Some(Long))))",
+            "eq(Const:INT:0, Const:INT:1)",
         ),
         // These four fold to "1"/"0"/"0"/"1" through the +-inf overflow arms.
         (
             "123456789123456789123456789.12345 > a",
-            "gt(Const:DEC:123456789123456789123456789.12345, cast_decimal(col(Some(Long))))",
+            "gt(Const:INT:1, Const:INT:0)",
         ),
         (
             "-123456789123456789123456789.12345 > a",
@@ -232,7 +228,7 @@ fn test_compare_function_with_refine() {
         ),
         (
             "123456789123456789123456789.12345 < a",
-            "lt(Const:DEC:123456789123456789123456789.12345, cast_decimal(col(Some(Long))))",
+            "lt(Const:INT:1, Const:INT:0)",
         ),
         (
             "-123456789123456789123456789.12345 < a",
@@ -260,8 +256,8 @@ fn ast_rewrite_refines_integer_constant_before_comparison_casts() {
     assert_eq!(shape(&built), "lt(col(Some(Long)), Const:INT:1)");
 }
 
-/// go-parity-gap: exceptional EQ/NULLEQ/LT/GT comparisons still retain their
-/// comparison node instead of Go's NewZero/NewOne rewrite.
+/// go-parity-gap: negative literals represented as unaryminus trees in the
+/// context-free rewriter can acquire casts before constant refinement.
 ///
 /// `builtin_compare.rs` documents these drops as shape-only (identical
 /// per-row answers; plan speed/warning-count differences), so the port pins
@@ -269,7 +265,7 @@ fn ast_rewrite_refines_integer_constant_before_comparison_casts() {
 /// of asserting outputs it cannot reproduce; those retained structural rows
 /// include the comparison casts selected for their original operand types.
 #[test]
-#[ignore = "go-parity-gap: refineArgs' isExceptional whole-comparison folding is unmodeled"]
+#[ignore = "go-parity-gap: negative literal folding before context-free comparison casts"]
 fn refine_exceptional_folds_are_not_modeled() {}
 
 /// GO PORT of `pkg/expression/builtin_compare_test.go:80 TestCompare`
