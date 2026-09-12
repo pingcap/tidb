@@ -1017,3 +1017,45 @@ Noted for a later pass, pre-existing and outside this change: the text
 execute where Go holds a pointer; the legacy `real_tikv_node` session arms
 fair locking from the bootstrap value because that node has no
 session-variable store.
+
+## RE-MEASURE, interim (2026-09-12): corrected harness, 16 threads, node lease 2 s
+
+Same real TiKV (tiup playground nightly, one TiKV, one PD, no TiFlash), sysbench
+4 x 10k re-prepared before EVERY workload, ABBA side order, three 20 s rounds
+(TPC-C 60 s, 10 warehouses), tails reported. `base` is the pre-campaign build
+(8123bb1); `r13` is head 24084c91 (every review fix plus the removals).
+This run kept the harness's `--lease-ms 2000` on the Rust node; the reference
+run under Go's default 45 s lease and default connection limit follows in the
+next section when it completes. Tail = sysbench p95 / TPC-C p99. Spread =
+(max - min) / mean of the three rounds per side.
+
+| workload | base tps | new tps | tps Δ | base avg ms | new avg ms | avg Δ | base tail | new tail | tail Δ | spread base/new | both ≥25%? |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| oltp_point_select | 12384.8 | 14009.3 | +13.1% | 1.29 | 1.14 | -11.6% | 2.19 | 1.98 | -9.9% | 2.5% / 4.6% | no |
+| oltp_read_only | 430.1 | 502.1 | +16.7% | 37.17 | 31.84 | -14.3% | 45.80 | 41.62 | -9.1% | 2.4% / 4.1% | no |
+| oltp_write_only | 792.2 | 1028.6 | +29.8% | 20.19 | 15.54 | -23.0% | 29.56 | 23.24 | -21.4% | 5.6% / 1.4% | no |
+| oltp_read_write | 224.2 | 291.6 | +30.1% | 71.50 | 55.00 | -23.1% | 95.62 | 76.04 | -20.5% | 12.7% / 13.5% | no |
+| oltp_insert | 3508.3 | 4025.1 | +14.7% | 4.56 | 3.97 | -12.9% | 7.21 | 6.09 | -15.6% | 3.7% / 0.5% | no |
+| oltp_delete | 2206.1 | 4546.9 | +106.1% | 7.25 | 3.52 | -51.5% | 11.11 | 7.08 | -36.2% | 4.2% / 2.1% | YES |
+| oltp_update_index | 1980.0 | 2953.3 | +49.2% | 8.10 | 5.41 | -33.2% | 12.56 | 8.34 | -33.6% | 12.8% / 7.3% | YES |
+| oltp_update_non_index | 2112.3 | 3149.8 | +49.1% | 7.57 | 5.09 | -32.8% | 11.66 | 7.88 | -32.4% | 2.9% / 11.5% | YES |
+| select_random_points | 1959.4 | 2152.5 | +9.9% | 8.16 | 7.43 | -9.0% | 12.45 | 11.52 | -7.5% | 2.6% / 1.9% | no |
+| select_random_ranges | 2550.7 | 2898.3 | +13.6% | 6.27 | 5.52 | -11.9% | 9.50 | 8.76 | -7.8% | 2.1% / 10.6% | no |
+| bulk_insert | 2.8 | 3.2 | +16.1% | 0.19 | 0.16 | -12.5% | 0.00 | 0.00 | - | 7.2% / 8.1% | no |
+| tpcc_NEW_ORDER | 5414.0 | 8002.8 | +47.8% | 88.67 | 58.47 | -34.1% | 581.63 | 125.80 | -78.4% | 43.8% / 1.7% | YES |
+| tpcc_PAYMENT | 5235.4 | 7631.5 | +45.8% | 67.00 | 38.77 | -42.1% | 455.77 | 107.70 | -76.4% | 42.1% / 5.8% | YES |
+| tpcc_ORDER_STATUS | 466.2 | 700.0 | +50.2% | 38.97 | 25.23 | -35.2% | 197.10 | 89.50 | -54.6% | 45.9% / 1.8% | YES |
+| tpcc_DELIVERY | 524.7 | 717.9 | +36.8% | 300.70 | 210.13 | -30.1% | 1839.90 | 464.20 | -74.8% | 24.8% / 10.7% | YES |
+| tpcc_STOCK_LEVEL | 497.1 | 703.5 | +41.5% | 86.50 | 25.87 | -70.1% | 646.60 | 64.30 | -90.1% | 21.2% / 9.9% | YES |
+| tpcc_tpmC | 5414.0 | 8002.8 | +47.8% | - | - | - | - | - | - | 43.8% / 1.7% | - |
+
+Against the goal (>=25% on BOTH throughput and average latency): 8 of 16 at
+16 threads -- delete, update_index, update_non_index and all five TPC-C
+transaction types. The update rows are +49%, not the +161% the drained-table
+runs reported. The read family (point_select +13%, read_only +17%,
+select_random_points +10%, select_random_ranges +14%), insert (+15%),
+bulk_insert (+16%) and the two mixed sysbench workloads (write_only and
+read_write, +30% throughput but -23% latency) do not meet it. The TPC-C base
+rows carry 42-46% round spread from one bad baseline round (p99 581 ms on
+NEW_ORDER), so their deltas are right in direction and larger than their
+noise, but less precise than the sysbench rows.
