@@ -1338,7 +1338,9 @@ func TestMDLCreateMaterializedViewLogBlockByBaseTableTxn(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_metadata_lock=1")
+	}
 	tk.MustExec("set tidb_mview_enable = on")
 	tkDDL.MustExec("set tidb_mview_enable = on")
 	tk.MustExec("create table t(a int)")
@@ -1377,7 +1379,9 @@ func TestMDLCreateMaterializedViewLogNewTxnWriteMLog(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_metadata_lock=1")
+	}
 	tk.MustExec("set tidb_mview_enable = on")
 	tkDDL.MustExec("set tidb_mview_enable = on")
 	tk.MustExec("create table t(a int)")
