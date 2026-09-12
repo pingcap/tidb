@@ -25,11 +25,14 @@ import (
 	autoidpb "github.com/pingcap/kvproto/pkg/autoid"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	metaautoid "github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -134,6 +137,126 @@ func TestFilterDifferentAllocators(t *testing.T) {
 		require.GreaterOrEqual(t, orderedHandles[0], int64(3000001))
 
 		tk.MustExec("drop table t1")
+	}
+}
+
+func TestDefaultAutoIDCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select @@global.tidb_default_auto_id_cache, @@session.tidb_default_auto_id_cache").Check(testkit.Rows("0 0"))
+	existing := testkit.NewTestKit(t, store)
+	existing.MustExec("use test") // Initialize session globals before changing the global default.
+	existing.MustQuery("select @@session.tidb_default_auto_id_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_default_auto_id_cache = 100")
+	tk.MustQuery("select @@session.tidb_default_auto_id_cache").Check(testkit.Rows("0"))
+	existing.MustQuery("select @@session.tidb_default_auto_id_cache").Check(testkit.Rows("0"))
+	fresh := testkit.NewTestKit(t, store)
+	fresh.MustExec("use test")
+	fresh.MustQuery("select @@session.tidb_default_auto_id_cache").Check(testkit.Rows("100"))
+	tk.MustExec("set session tidb_default_auto_id_cache = 1")
+	tk.MustQuery("select @@global.tidb_default_auto_id_cache, @@session.tidb_default_auto_id_cache").Check(testkit.Rows("100 1"))
+	existing.MustQuery("select @@session.tidb_default_auto_id_cache").Check(testkit.Rows("0"))
+	fresh.MustQuery("select @@session.tidb_default_auto_id_cache").Check(testkit.Rows("100"))
+	tk.MustExec("set global tidb_default_auto_id_cache = 0")
+
+	checkCache := func(tk *testkit.TestKit, name string, want int64, local bool) {
+		t.Helper()
+		if local {
+			tbl, exists := tk.Session().GetSessionVars().LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+			require.True(t, exists)
+			require.Equal(t, want, tbl.Meta().AutoIDCache, name)
+		} else {
+			require.Equal(t, want, external.GetTableByName(t, tk, "test", name).Meta().AutoIDCache, name)
+		}
+		ddl := tk.MustQuery("show create table " + name).Rows()[0][1].(string)
+		if want == 0 {
+			require.NotContains(t, ddl, "AUTO_ID_CACHE=")
+		} else {
+			require.Contains(t, ddl, fmt.Sprintf("AUTO_ID_CACHE=%d", want))
+		}
+	}
+	for i, session := range []*testkit.TestKit{existing, tk, fresh} {
+		name := fmt.Sprintf("session_cache_%d", i)
+		session.MustExec("create table " + name + " (id int primary key auto_increment)")
+		checkCache(session, name, []int64{0, 1, 100}[i], false)
+	}
+
+	// Cover each CREATE entrypoint and explicit overrides of a different default.
+	for _, kind := range []struct {
+		name, prefix, suffix string
+		local                bool
+	}{
+		{"normal", "create table ", "", false},
+		{"local", "create temporary table ", "", true},
+		{"global", "create global temporary table ", " on commit delete rows", false},
+	} {
+		for _, option := range []struct {
+			name, sql string
+			cache     int64
+		}{
+			{"default", "", 7},
+			{"zero", " auto_id_cache = 0", 0},
+			{"one", " auto_id_cache = 1", 1},
+			{"hundred", " auto_id_cache = 100", 100},
+		} {
+			tk.MustExec("set session tidb_default_auto_id_cache = 7")
+			name := kind.name + "_" + option.name
+			tk.MustExec(kind.prefix + name + " (id int primary key auto_increment)" + option.sql + kind.suffix)
+			checkCache(tk, name, option.cache, kind.local)
+		}
+	}
+
+	// LIKE, SET, and unrelated DDL must retain the stored value, including zero.
+	tk.MustExec("set session tidb_default_auto_id_cache = 42")
+	for _, source := range []struct {
+		name  string
+		cache int64
+	}{
+		{"normal_zero", 0},
+		{"normal_one", 1},
+		{"normal_hundred", 100},
+	} {
+		checkCache(tk, source.name, source.cache, false)
+		tk.MustExec("create table " + source.name + "_copy like " + source.name)
+		checkCache(tk, source.name+"_copy", source.cache, false)
+		tk.MustExec("alter table " + source.name + " add column v int")
+		checkCache(tk, source.name, source.cache, false)
+		tk.MustExec("truncate table " + source.name)
+		checkCache(tk, source.name, source.cache, false)
+	}
+
+	// A default of one supports the same basic inserts as explicit AUTO_ID_CACHE=1.
+	tk.MustExec("set session tidb_default_auto_id_cache = 1")
+	tk.MustExec("create table implicit_one (id bigint primary key auto_increment, v int)")
+	tk.MustExec("set session tidb_default_auto_id_cache = 100")
+	tk.MustExec("create table explicit_one (id bigint primary key auto_increment, v int) auto_id_cache = 1")
+	for _, name := range []string{"implicit_one", "explicit_one"} {
+		checkCache(tk, name, 1, false)
+		tk.MustExec("insert into " + name + " (v) values (10), (20)")
+		tk.MustQuery("select id, v from " + name + " order by id").Check(testkit.Rows("1 10", "2 20"))
+	}
+
+	for _, scope := range []string{"session", "global"} {
+		set := "set " + scope + " tidb_default_auto_id_cache = "
+		query := "select @@" + scope + ".tidb_default_auto_id_cache"
+		for _, value := range []string{"0", "1", "2147483647"} {
+			tk.MustExec(set + value)
+			tk.MustQuery(query).Check(testkit.Rows(value))
+		}
+		for _, value := range []string{"'invalid'", "1.5"} {
+			tk.MustGetDBError(set+value, variable.ErrWrongTypeForVar)
+		}
+		for _, boundary := range []struct{ input, normalized string }{
+			{"-1", "0"},
+			{"2147483648", "2147483647"},
+		} {
+			tk.MustExec(set + boundary.input)
+			tk.MustQuery("show warnings").Check(testkit.Rows(fmt.Sprintf(
+				"Warning 1292 Truncated incorrect tidb_default_auto_id_cache value: '%s'", boundary.input)))
+			tk.MustQuery(query).Check(testkit.Rows(boundary.normalized))
+		}
+		tk.MustExec(set + "0")
 	}
 }
 

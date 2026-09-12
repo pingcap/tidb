@@ -1186,6 +1186,9 @@ const (
 
 	// TiDBTxnFileMinMutationSize is the minimum mutation size for using file-based transactions.
 	TiDBTxnFileMinMutationSize = "tidb_txn_file_min_mutation_size"
+
+	// TiDBDefaultAutoIDCache indicates the default auto id cache size when create table.
+	TiDBDefaultAutoIDCache = "tidb_default_auto_id_cache"
 )
 
 // TiDB vars that have only global scope
@@ -1949,6 +1952,8 @@ const (
 	MinTiDBAnalyzeDefaultNumTopN int64 = 0
 	// MaxTiDBAnalyzeDefaultNumTopN is the upper bound for the default ANALYZE TopN count.
 	MaxTiDBAnalyzeDefaultNumTopN uint64 = 100000
+	// DefTiDBDefaultAutoIDCache preserves the existing table cache default.
+	DefTiDBDefaultAutoIDCache = 0
 )
 
 // Process global variables.

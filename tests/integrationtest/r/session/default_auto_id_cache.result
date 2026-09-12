@@ -1,0 +1,64 @@
+use test;
+select @@global.tidb_default_auto_id_cache, @@session.tidb_default_auto_id_cache;
+@@global.tidb_default_auto_id_cache	@@session.tidb_default_auto_id_cache
+0	0
+set session tidb_default_auto_id_cache = 1;
+create table default_cache (id bigint primary key auto_increment);
+show create table default_cache;
+Table	Create Table
+default_cache	CREATE TABLE `default_cache` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=1 */
+insert into default_cache values (NULL), (NULL);
+select * from default_cache order by id;
+id
+1
+2
+create table zero_cache (id bigint primary key auto_increment) auto_id_cache = 0;
+show create table zero_cache;
+Table	Create Table
+zero_cache	CREATE TABLE `zero_cache` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create table custom_cache (id bigint primary key auto_increment) auto_id_cache = 100;
+show create table custom_cache;
+Table	Create Table
+custom_cache	CREATE TABLE `custom_cache` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */
+set session tidb_default_auto_id_cache = 7;
+show create table default_cache;
+Table	Create Table
+default_cache	CREATE TABLE `default_cache` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=3 /*T![auto_id_cache] AUTO_ID_CACHE=1 */
+create table copied_zero like zero_cache;
+show create table copied_zero;
+Table	Create Table
+copied_zero	CREATE TABLE `copied_zero` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create table copied_custom like custom_cache;
+show create table copied_custom;
+Table	Create Table
+copied_custom	CREATE TABLE `copied_custom` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */
+create table new_cache (id bigint primary key auto_increment);
+show create table new_cache;
+Table	Create Table
+new_cache	CREATE TABLE `new_cache` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=7 */
+set session tidb_default_auto_id_cache = default;
+select @@session.tidb_default_auto_id_cache;
+@@session.tidb_default_auto_id_cache
+0
+drop table default_cache, zero_cache, custom_cache, copied_zero, copied_custom, new_cache;
