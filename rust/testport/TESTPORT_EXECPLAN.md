@@ -11574,3 +11574,6 @@ risks without claiming repository-wide parity.
  is RESTORED after being accidentally overwritten; the new variant pin
  (pre-existing duplicate, 4-affected arithmetic) lives alongside it in
  `crates/tidb-session/tests/insert_select_odku_variants_source.rs`.
+- 2026-09-08 (TRUNCATE FK pin): TRUNCATE on an FK-referenced parent refuses
+ with MySQL's 1701 text, data untouched; the child truncates freely.
+ Pinned in `crates/tidb-session/tests/truncate_fk_parent_source.rs`.
