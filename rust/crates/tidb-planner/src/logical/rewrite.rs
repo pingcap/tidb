@@ -277,9 +277,14 @@ pub(crate) fn analyzed_filter_selectivity(
         // two-table DNF) becomes point ranges against the histogram instead
         // of the 0.8 default; that default made the planner build Q7's
         // orders join from 1.5M orders rather than the 144,734-row side.
+        // `isnull` and the join-rewrite's derived `not(isnull)` are the same
+        // story: Go routes them through `buildFromNot`/`isNull` points and
+        // `GetRowCountByColumnRanges` answers from the histogram's null
+        // count, while the 0.8 fallback scaled an ANALYZEd null-free side to
+        // 80% of its rows and flipped Go's join-order choice.
         if matches!(
             function.func_name.lowercase(),
-            "lt" | "le" | "gt" | "ge" | "or"
+            "lt" | "le" | "gt" | "ge" | "or" | "isnull" | "not"
         ) {
             let columns = tidb_expr::simple_expr::extract_columns(condition);
             if columns.len() == 1 {
