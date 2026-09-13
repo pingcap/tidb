@@ -11606,3 +11606,6 @@ risks without claiming repository-wide parity.
  `crates/tidb-session/tests/generated_default_1221_source.rs` (all three
  spellings; 1221 text present, 1064 absent). Verified against the live
  Go parser.
+- 2026-09-08 (LAST_INSERT_ID batch pin): after a multi-row insert
+ LAST_INSERT_ID reports the FIRST generated id of the batch. Pinned in
+ `crates/tidb-session/tests/last_insert_id_batch_source.rs`.
