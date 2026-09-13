@@ -4372,8 +4372,14 @@ mod tests {
             NoColumns,
             StatementMemory::default(),
         );
+        // Go's map order is unspecified, so the groups come back in any order.
+        let mut got = run(outer);
+        got.sort_by_key(|row| match row[1] {
+            Datum::Int(value) => std::cmp::Reverse(value),
+            _ => std::cmp::Reverse(i64::MIN),
+        });
         assert_eq!(
-            run(outer),
+            got,
             vec![
                 vec![Datum::Int(100_000), Datum::Int(1)],
                 vec![Datum::Int(50_000), Datum::Int(0)]

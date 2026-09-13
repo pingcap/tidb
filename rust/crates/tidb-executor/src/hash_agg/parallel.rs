@@ -94,8 +94,8 @@
 
 use super::spill::parallel_new_group_bytes;
 use super::*;
-use indexmap::map::Entry;
-use indexmap::IndexMap;
+use hashbrown::hash_map::{Entry, EntryRef};
+use hashbrown::HashMap as SwissMap;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -289,7 +289,7 @@ impl std::hash::Hash for PipelineMapKeyRef<'_> {
     }
 }
 
-impl indexmap::Equivalent<PipelineMapKey> for PipelineMapKeyRef<'_> {
+impl hashbrown::Equivalent<PipelineMapKey> for PipelineMapKeyRef<'_> {
     fn equivalent(&self, key: &PipelineMapKey) -> bool {
         match (self, key) {
             (PipelineMapKeyRef::Int(value), PipelineMapKey::Int(other)) => value == other,
@@ -301,14 +301,17 @@ impl indexmap::Equivalent<PipelineMapKey> for PipelineMapKeyRef<'_> {
     }
 }
 
-impl PipelineMapKeyRef<'_> {
-    fn to_owned(self) -> PipelineMapKey {
-        match self {
-            PipelineMapKeyRef::Int(value) => PipelineMapKey::Int(value),
+/// The owned key a vacant slot stores, copying the encoded bytes once.
+impl From<&PipelineMapKeyRef<'_>> for PipelineMapKey {
+    fn from(key: &PipelineMapKeyRef<'_>) -> Self {
+        match key {
+            PipelineMapKeyRef::Int(value) => PipelineMapKey::Int(*value),
             PipelineMapKeyRef::Bytes(bytes) => PipelineMapKey::Bytes(bytes.to_vec()),
         }
     }
+}
 
+impl PipelineMapKeyRef<'_> {
     /// The byte length `new_group_bytes` was charging under the encoded
     /// representation, kept for tracker continuity.
     fn charge_len(self) -> usize {
@@ -320,10 +323,11 @@ impl PipelineMapKeyRef<'_> {
     }
 }
 
-// Dense values keep finalization sequential without imposing a global group
-// order. Buckets and worker merges still determine unordered SQL output.
+/// Go's `AggPartialResultMapper` is a runtime map (a swiss table whose
+/// groups hold the keys); hashbrown is the same table shape, one probe per
+/// lookup. Iteration order is unspecified, as Go's map order is.
 type PipelineMap =
-    IndexMap<PipelineMapKey, PipelineGroup, BuildHasherDefault<super::HashAggHasher>>;
+    SwissMap<PipelineMapKey, PipelineGroup, BuildHasherDefault<super::HashAggHasher>>;
 
 /// One group inside a worker's map: its aggregate partial states.
 struct PipelineGroup {
@@ -1755,15 +1759,15 @@ fn fold_chunk<C: Columns>(
             }
         };
         let map = &mut maps[map_key_bucket(key, bucket_count)];
-        let index = match map.get_index_of(&key) {
-            Some(index) => index,
-            None => {
+        let group = match map.entry_ref(&key) {
+            EntryRef::Occupied(slot) => slot.into_mut(),
+            EntryRef::Vacant(slot) => {
                 let (group, bytes) = PipelineGroup::new(agg_funcs, collations, key.charge_len());
                 new_group_bytes_total += bytes;
-                map.insert_full(key.to_owned(), group).0
+                slot.insert(group)
             }
         };
-        state_memory_delta += update_group(&mut map[index], agg_funcs, ctx, row)?;
+        state_memory_delta += update_group(group, agg_funcs, ctx, row)?;
     }
     if new_group_bytes_total > 0 {
         tracker.consume(new_group_bytes_total);
