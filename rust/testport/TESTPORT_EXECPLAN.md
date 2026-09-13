@@ -11595,3 +11595,7 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (indexed generated pin): an indexed STORED generated column
  filters (b = 5, b < 3) and groups over 25 rows. Pinned in
  `crates/tidb-session/tests/indexed_generated_source.rs`.
+- 2026-09-08 (ON UPDATE explicit-wins pin): an explicitly assigned value
+ overrides ON UPDATE CURRENT_TIMESTAMP; an update omitting the column
+ fires the stamp. Pinned in
+ `crates/tidb-session/tests/on_update_explicit_wins_source.rs`.
