@@ -11553,3 +11553,6 @@ risks without claiming repository-wide parity.
  JSON_CONTAINS projections in
  `crates/tidb-session/tests/grouped_json_agg_source.rs`. The earlier
  recorded datapoint is retired.
+- 2026-09-08 (LIMIT edges pin): LIMIT 0 empty, over-count full, offset
+ remainder, and the negative-bound parse refusal. Pinned in
+ `crates/tidb-session/tests/limit_edge_source.rs`.
