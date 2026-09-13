@@ -11635,3 +11635,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (view status pin): SHOW TABLE STATUS for a view reports a NULL
  engine and the VIEW comment. Pinned in
  `crates/tidb-session/tests/status_view_source.rs`.
+- 2026-09-08 (PROCESSLIST pin): SHOW PROCESSLIST lists the session's own
+ connection with Command=Query and the current database. Pinned in
+ `crates/tidb-session/tests/processlist_self_source.rs`.
