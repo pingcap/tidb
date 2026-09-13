@@ -70,10 +70,11 @@ pub use number::{
     encode_int_to_cmp_uint, encode_uint, encode_uint_desc, encode_uvarint, encode_varint,
 };
 pub use package::{
-    convert_by_collation, convert_by_collation_string, cut_column_id, decode_as_datetime,
-    decode_as_float32, decode_one_typed, decode_one_typed_in_timezone, encode_hash_datum,
-    encode_mysql_time, equal_rows, hash_column, hash_group_key, hash_group_key_in_timezone,
-    hash_row, serialize_keys, set_raw_values, HashColumnOutput, SerializeMode,
+    append_hash_group_key_in_timezone, convert_by_collation, convert_by_collation_string,
+    cut_column_id, decode_as_datetime, decode_as_float32, decode_one_typed,
+    decode_one_typed_in_timezone, encode_hash_datum, encode_mysql_time, equal_rows, hash_column,
+    hash_group_key, hash_group_key_in_timezone, hash_row, serialize_keys, set_raw_values,
+    HashColumnOutput, SerializeMode,
 };
 pub(crate) use package::{value_size_of_signed_int, value_size_of_unsigned_int};
 pub use row_decoder::{decode_raw_int, decode_raw_uint, RawRowValue, RowDecodeError, RowDecoder};

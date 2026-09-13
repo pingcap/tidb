@@ -1664,6 +1664,7 @@ fn fold_chunk<C: Columns>(
     } = inputs;
     let mut new_group_bytes_total = 0i64;
     let mut state_memory_delta = 0i64;
+    let timezone = ctx.time_zone();
     for row_index in 0..chunk.num_rows() {
         let row = chunk.get_row(row_index);
         let (key, key_len): (PipelineMapKey, usize) = match integer_columns {
@@ -1689,7 +1690,7 @@ fn fold_chunk<C: Columns>(
                     None => {
                         for expr in group_by {
                             let datum = expr.eval(ctx, row)?;
-                            append_hash_agg_group_key_part(ctx, expr, &datum, &mut key)?;
+                            append_hash_agg_group_key_part(&timezone, expr, &datum, &mut key)?;
                         }
                     }
                 }

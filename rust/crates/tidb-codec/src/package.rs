@@ -381,99 +381,111 @@ pub fn hash_group_key_in_timezone<TZ: TimeZone + 'static>(
     values: &[Datum],
     field_type: &FieldType,
 ) -> Result<Vec<Vec<u8>>, CodecError> {
-    let collator = field_type.runtime_collator();
     values
         .iter()
         .map(|value| {
-            if value.is_null() {
-                return Ok(vec![NIL_FLAG]);
-            }
             let mut output = Vec::new();
-            match (field_type.eval_type(), value) {
-                (EvalType::Int, Datum::Int(value)) => {
-                    output.push(VARINT_FLAG);
-                    encode_varint(&mut output, *value);
-                }
-                (EvalType::Int, Datum::UInt(value)) => {
-                    output.push(VARINT_FLAG);
-                    encode_varint(&mut output, *value as i64);
-                }
-                (EvalType::Int, Datum::Enum(value, _)) => {
-                    output.push(VARINT_FLAG);
-                    encode_varint(&mut output, value.value() as i64);
-                }
-                (EvalType::Int, Datum::Bit(value) | Datum::BinaryLiteral(value)) => {
-                    output.push(VARINT_FLAG);
-                    encode_varint(&mut output, binary_literal_to_u64(value)? as i64);
-                }
-                (EvalType::Real, Datum::Real(value) | Datum::Float32(value)) => {
-                    output.push(FLOAT_FLAG);
-                    encode_float(&mut output, *value);
-                }
-                (EvalType::Decimal, Datum::Decimal(value)) => {
-                    output.push(DECIMAL_FLAG);
-                    encode_decimal_fixed(
-                        &mut output,
-                        value,
-                        field_type.flen(),
-                        field_type.decimal(),
-                    )?;
-                }
-                (EvalType::Datetime | EvalType::Timestamp, Datum::Time(value)) => {
-                    output.push(UINT_FLAG);
-                    encode_mysql_time(timezone, *value, None, &mut output)?;
-                }
-                (EvalType::Duration, Datum::Duration(value)) => {
-                    output.push(DURATION_FLAG);
-                    encode_int(&mut output, value.nanoseconds());
-                }
-                (EvalType::Json, Datum::Json(value)) => {
-                    output.push(JSON_FLAG);
-                    output.extend_from_slice(
-                        &value
-                            .hash_value()
-                            .map_err(|_| CodecError::InvalidEncoding("invalid binary JSON"))?,
-                    );
-                }
-                (EvalType::String, Datum::String(value)) => {
-                    output.push(COMPACT_BYTES_FLAG);
-                    let key = collator.key(value.bytes());
-                    crate::encode_compact_bytes(&mut output, &key);
-                }
-                (EvalType::String, Datum::Bytes(value)) => {
-                    output.push(COMPACT_BYTES_FLAG);
-                    let key = collator.key(value);
-                    crate::encode_compact_bytes(&mut output, &key);
-                }
-                (EvalType::String, Datum::Enum(value, _)) => {
-                    output.push(COMPACT_BYTES_FLAG);
-                    let name = field_type
-                        .with_elems_visible(|elements| parse_enum_value(elements, value.value()))
-                        .map(|value| value.name_bytes().to_vec())
-                        .unwrap_or_default();
-                    let key = collator.key(&name);
-                    crate::encode_compact_bytes(&mut output, &key);
-                }
-                (EvalType::String, Datum::Set(value, _)) => {
-                    output.push(COMPACT_BYTES_FLAG);
-                    let value = field_type
-                        .with_elems_visible(|elements| parse_set_value(elements, value.value()))
-                        .map_err(|_| CodecError::InvalidEncoding("invalid set value"))?;
-                    let key = collator.key(value.name_bytes());
-                    crate::encode_compact_bytes(&mut output, &key);
-                }
-                (EvalType::VectorFloat32, Datum::VectorFloat32(value)) => {
-                    value.serialize_to(&mut output);
-                }
-                _ => {
-                    return Err(CodecError::InvalidEncoding(
-                        "datum and evaluation type do not match",
-                    ))
-                }
-            }
+            append_hash_group_key_in_timezone(timezone, value, field_type, &mut output)?;
             Ok(output)
         })
         .collect()
+}
+
+/// Source `HashGroupKey` for one value, appending its bytes to `output` the
+/// way Go appends every column's encoding onto the caller's per-row `buf[i]`
+/// instead of returning a fresh slice. A STRING value is encoded through the
+/// collator's `ImmutableKey`, which borrows the input under a binary
+/// collation and produces the same bytes as `Key`.
+pub fn append_hash_group_key_in_timezone<TZ: TimeZone + 'static>(
+    timezone: &TZ,
+    value: &Datum,
+    field_type: &FieldType,
+    output: &mut Vec<u8>,
+) -> Result<(), CodecError> {
+    if value.is_null() {
+        output.push(NIL_FLAG);
+        return Ok(());
+    }
+    match (field_type.eval_type(), value) {
+        (EvalType::Int, Datum::Int(value)) => {
+            output.push(VARINT_FLAG);
+            encode_varint(output, *value);
+        }
+        (EvalType::Int, Datum::UInt(value)) => {
+            output.push(VARINT_FLAG);
+            encode_varint(output, *value as i64);
+        }
+        (EvalType::Int, Datum::Enum(value, _)) => {
+            output.push(VARINT_FLAG);
+            encode_varint(output, value.value() as i64);
+        }
+        (EvalType::Int, Datum::Bit(value) | Datum::BinaryLiteral(value)) => {
+            output.push(VARINT_FLAG);
+            encode_varint(output, binary_literal_to_u64(value)? as i64);
+        }
+        (EvalType::Real, Datum::Real(value) | Datum::Float32(value)) => {
+            output.push(FLOAT_FLAG);
+            encode_float(output, *value);
+        }
+        (EvalType::Decimal, Datum::Decimal(value)) => {
+            output.push(DECIMAL_FLAG);
+            encode_decimal_fixed(output, value, field_type.flen(), field_type.decimal())?;
+        }
+        (EvalType::Datetime | EvalType::Timestamp, Datum::Time(value)) => {
+            output.push(UINT_FLAG);
+            encode_mysql_time(timezone, *value, None, output)?;
+        }
+        (EvalType::Duration, Datum::Duration(value)) => {
+            output.push(DURATION_FLAG);
+            encode_int(output, value.nanoseconds());
+        }
+        (EvalType::Json, Datum::Json(value)) => {
+            output.push(JSON_FLAG);
+            output.extend_from_slice(
+                &value
+                    .hash_value()
+                    .map_err(|_| CodecError::InvalidEncoding("invalid binary JSON"))?,
+            );
+        }
+        (EvalType::String, Datum::String(value)) => {
+            output.push(COMPACT_BYTES_FLAG);
+            let key = field_type.runtime_collator().immutable_key(value.bytes());
+            crate::encode_compact_bytes(output, &key);
+        }
+        (EvalType::String, Datum::Bytes(value)) => {
+            output.push(COMPACT_BYTES_FLAG);
+            let key = field_type.runtime_collator().immutable_key(value);
+            crate::encode_compact_bytes(output, &key);
+        }
+        (EvalType::String, Datum::Enum(value, _)) => {
+            output.push(COMPACT_BYTES_FLAG);
+            let name = field_type
+                .with_elems_visible(|elements| parse_enum_value(elements, value.value()))
+                .map(|value| value.name_bytes().to_vec())
+                .unwrap_or_default();
+            let key = field_type.runtime_collator().immutable_key(&name);
+            crate::encode_compact_bytes(output, &key);
+        }
+        (EvalType::String, Datum::Set(value, _)) => {
+            output.push(COMPACT_BYTES_FLAG);
+            let value = field_type
+                .with_elems_visible(|elements| parse_set_value(elements, value.value()))
+                .map_err(|_| CodecError::InvalidEncoding("invalid set value"))?;
+            let key = field_type
+                .runtime_collator()
+                .immutable_key(value.name_bytes());
+            crate::encode_compact_bytes(output, &key);
+        }
+        (EvalType::VectorFloat32, Datum::VectorFloat32(value)) => {
+            value.serialize_to(output);
+        }
+        _ => {
+            return Err(CodecError::InvalidEncoding(
+                "datum and evaluation type do not match",
+            ))
+        }
+    }
+    Ok(())
 }
 
 /// Source `HashChunkColumns` / `HashChunkSelected`, returning the bytes each

@@ -251,16 +251,13 @@ impl CteProducer {
         }
         let mut key = Vec::new();
         let timezone = self.context.session_zone();
+        let mut part = Vec::new();
         for (value, field_type) in row.iter().zip(&self.output_types) {
-            let encoded = tidb_codec::hash_group_key_in_timezone(
-                &timezone,
-                std::slice::from_ref(value),
-                field_type,
-            )
-            .map_err(|error| ExecError::internal(error.to_string()))?;
-            let part = &encoded[0];
+            part.clear();
+            tidb_codec::append_hash_group_key_in_timezone(&timezone, value, field_type, &mut part)
+                .map_err(|error| ExecError::internal(error.to_string()))?;
             key.extend_from_slice(&(part.len() as u64).to_le_bytes());
-            key.extend_from_slice(part);
+            key.extend_from_slice(&part);
         }
         Ok(key)
     }

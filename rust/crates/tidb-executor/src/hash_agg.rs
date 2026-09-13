@@ -97,7 +97,7 @@ use tidb_datatype::{
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_expr::{Columns, SessionTimeZone};
 use tidb_util::disk;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
 use tidb_util::selection::{select, Selectable};
@@ -766,8 +766,12 @@ fn append_integer_group_key_part(
 
 /// Appends one value with Go `codec.HashGroupKey`, including field-type
 /// directed integer, decimal, time-zone, JSON and collation encoding.
-fn append_hash_agg_group_key_part<C: Columns>(
-    ctx: &C,
+///
+/// Go's `HashGroupKey` appends each column's bytes onto the row's existing
+/// buffer with the statement time zone resolved once per chunk; callers pass
+/// that zone in so a row costs no allocation beyond the key it builds.
+fn append_hash_agg_group_key_part(
+    timezone: &SessionTimeZone,
     expr: &Expression,
     datum: &Datum,
     output: &mut Vec<u8>,
@@ -775,14 +779,8 @@ fn append_hash_agg_group_key_part<C: Columns>(
     let field_type = expr
         .static_type()
         .ok_or_else(|| ExecError::internal("HashAgg group expression has no field type"))?;
-    let encoded = tidb_codec::hash_group_key_in_timezone(
-        &ctx.time_zone(),
-        std::slice::from_ref(datum),
-        field_type,
-    )
-    .map_err(|error| ExecError::internal(error.to_string()))?;
-    output.extend_from_slice(&encoded[0]);
-    Ok(())
+    tidb_codec::append_hash_group_key_in_timezone(timezone, datum, field_type, output)
+        .map_err(|error| ExecError::internal(error.to_string()))
 }
 
 pub(crate) fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8> {
@@ -2118,9 +2116,10 @@ impl<C: Columns> GroupedStreamAggExec<C> {
         key: &mut Vec<u8>,
     ) -> Result<(), ExecError> {
         key.clear();
+        let timezone = self.ctx.time_zone();
         for expr in &self.group_by {
             let datum = expr.eval(&self.ctx, row)?;
-            append_hash_agg_group_key_part(&self.ctx, expr, &datum, key)?;
+            append_hash_agg_group_key_part(&timezone, expr, &datum, key)?;
         }
         Ok(())
     }
@@ -2226,12 +2225,13 @@ impl<C: Columns> GroupedStreamAggExec<C> {
         }
         let [_, previous, current] = scratch;
         previous.clear();
+        let timezone = self.ctx.time_zone();
         let datum = expr.eval(&self.ctx, self.child_chunk.get_row(0))?;
-        append_hash_agg_group_key_part(&self.ctx, expr, &datum, previous)?;
+        append_hash_agg_group_key_part(&timezone, expr, &datum, previous)?;
         for (row, same) in same_group.iter_mut().enumerate().skip(1) {
             current.clear();
             let datum = expr.eval(&self.ctx, self.child_chunk.get_row(row))?;
-            append_hash_agg_group_key_part(&self.ctx, expr, &datum, current)?;
+            append_hash_agg_group_key_part(&timezone, expr, &datum, current)?;
             if *same && current != previous {
                 *same = false;
             }
@@ -2604,6 +2604,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// refused to open a group for (Go's `sel`).
     fn fold_chunk(&mut self, chunk: &Chunk, rows: usize) -> Result<Vec<usize>, ExecError> {
         let mut sel: Vec<usize> = Vec::new();
+        let timezone = self.ctx.time_zone();
         for r in 0..rows {
             let row = chunk.get_row(r);
             self.group_key_buffer.clear();
@@ -2616,7 +2617,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                 for expr in &self.group_by {
                     let datum = expr.eval(&self.ctx, row)?;
                     append_hash_agg_group_key_part(
-                        &self.ctx,
+                        &timezone,
                         expr,
                         &datum,
                         &mut self.group_key_buffer,
