@@ -83,34 +83,39 @@ fn the_fused_topn_returns_gos_rows() {
     assert!(row_text(session.run("select a from t order by a limit 100,3")).is_empty());
 }
 
-/// The plan the fusion produces. Real TiDB prints a ROOT `TopN` with this
-/// info text (captured: `TopN_8|2.00|root||test.t.a, offset:0, count:2`);
-/// this tier's standing divergence adds the always-present `Projection`; the
-/// root reader and cop task otherwise retain Go's physical split.
+/// The plan the fusion produces. Go master (unistore, `fdfadb96b2`, port
+/// 14833, auto-analyze off) prints a ROOT `TopN` with this info text and NO
+/// root `Projection`:
+///
+/// ```text
+/// TopN_7|2.00|root||test.t.a, offset:0, count:2
+/// └─TableReader_17|2.00|root||data:TopN_16
+///   └─TopN_16|2.00|cop[tikv]||test.t.a, offset:0, count:2
+///     └─TableFullScan_15|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo
+/// ```
 #[test]
 fn the_fused_topn_prints_gos_operator_info() {
     let mut session = topn_session();
     assert_eq!(
         plan(&mut session, "explain select a from t order by a limit 2"),
         vec![
-            "Projection_5|2.00|root||test.t.a",
-            "└─TopN_4|2.00|root||test.t.a, offset:0, count:2",
-            "  └─TableReader_3|2.00|root||data:TopN",
-            "    └─TopN_2|2.00|cop[tikv]||test.t.a, offset:0, count:2",
-            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "TopN_7|2.00|root||test.t.a, offset:0, count:2",
+            "└─TableReader_17|2.00|root||data:TopN_16",
+            "  └─TopN_16|2.00|cop[tikv]||test.t.a, offset:0, count:2",
+            "    └─TableFullScan_15|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // `limit 1,2`: Go's estRows is the COUNT, not `offset + count`
-    // (`property.DeriveLimitStats(child, Count)`); captured as
-    // `TopN_8|2.00|root||test.t.b, offset:1, count:2`.
+    // (`property.DeriveLimitStats(child, Count)`); Go master prints
+    // `TopN_8|2.00|root||test.t.b, offset:1, count:2` over
+    // `TableReader_18|3.00|root||data:TopN_17` with no root Projection.
     assert_eq!(
         plan(&mut session, "explain select a from t order by b limit 1,2"),
         vec![
-            "Projection_5|2.00|root||test.t.a",
-            "└─TopN_4|2.00|root||test.t.b, offset:1, count:2",
-            "  └─TableReader_3|3.00|root||data:TopN",
-            "    └─TopN_2|3.00|cop[tikv]||test.t.b, offset:0, count:3",
-            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "TopN_8|2.00|root||test.t.b, offset:1, count:2",
+            "└─TableReader_18|3.00|root||data:TopN_17",
+            "  └─TopN_17|3.00|cop[tikv]||test.t.b, offset:0, count:3",
+            "    └─TableFullScan_16|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // A descending by-item prints Go's `:desc` suffix, as the `Sort` did.
@@ -120,11 +125,10 @@ fn the_fused_topn_prints_gos_operator_info() {
             "explain select a from t order by b desc limit 3"
         ),
         vec![
-            "Projection_5|3.00|root||test.t.a",
-            "└─TopN_4|3.00|root||test.t.b:desc, offset:0, count:3",
-            "  └─TableReader_3|3.00|root||data:TopN",
-            "    └─TopN_2|3.00|cop[tikv]||test.t.b:desc, offset:0, count:3",
-            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "TopN_8|3.00|root||test.t.b:desc, offset:0, count:3",
+            "└─TableReader_18|3.00|root||data:TopN_17",
+            "  └─TopN_17|3.00|cop[tikv]||test.t.b:desc, offset:0, count:3",
+            "    └─TableFullScan_16|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
 }
@@ -149,14 +153,14 @@ fn select_distinct_fuses_above_aggregation_and_keeps_gos_rows() {
             "explain select distinct a from t order by a limit 2"
         ),
         vec![
-            "TopN_5|2.00|root||test.t.a, offset:0, count:2",
-            "└─HashAgg_4|8000.00|root||group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
-            "  └─TableReader_3|8000.00|root||data:HashAgg",
+            "TopN_9|2.00|root||test.t.a, offset:0, count:2",
+            "└─HashAgg_18|8000.00|root||group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+            "  └─TableReader_19|8000.00|root||data:HashAgg_14",
             // The cop dedup has NO `funcs:` and keeps the separator's trailing
-            // space, as TiDB records it (`tests/integrationtest/r/
-            // explain_easy.result:104`: `group by:explain_easy.t2.c2, `).
-            "    └─HashAgg_2|8000.00|cop[tikv]||group by:test.t.a, ",
-            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            // space: Go master prints `group by:test.t.a, ` for it
+            // (`BasePhysicalAgg.explainInfo`'s group-by branch ends with ", ").
+            "    └─HashAgg_14|8000.00|cop[tikv]||group by:test.t.a, ",
+            "      └─TableFullScan_17|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
 }
@@ -169,10 +173,9 @@ fn an_order_by_without_a_limit_still_builds_a_sort() {
     assert_eq!(
         plan(&mut session, "explain select a from t order by a"),
         vec![
-            "Projection_4|10000.00|root||test.t.a",
-            "└─Sort_3|10000.00|root||test.t.a",
-            "  └─TableReader_2|10000.00|root||data:TableFullScan",
-            "    └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "Sort_4|10000.00|root||test.t.a",
+            "└─TableReader_8|10000.00|root||data:TableFullScan_7",
+            "  └─TableFullScan_7|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     assert_eq!(
@@ -228,9 +231,12 @@ fn a_group_by_pipeline_fuses_above_the_aggregate() {
             "explain select a, count(*) from t group by a order by a limit 2"
         ),
         vec![
-            "TopN_3|2.00|root||test.t.a, offset:0, count:2",
-            "└─HashAgg_2|8000.00|root||group by:test.t.a, funcs:count(1)->Column#0, funcs:firstrow(test.t.a)->test.t.a",
-            "  └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
+            "Projection_7|2.00|root||test.t.a, Column#5",
+            "└─TopN_10|2.00|root||test.t.a, offset:0, count:2",
+            "  └─HashAgg_19|8000.00|root||group by:test.t.a, funcs:count(Column#6)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+            "    └─TableReader_20|8000.00|root||data:HashAgg_15",
+            "      └─HashAgg_15|8000.00|cop[tikv]||group by:test.t.a, funcs:count(1)->Column#6",
+            "        └─TableFullScan_18|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // gorun: `select a, count(*) from t group by a order by a limit 2`
