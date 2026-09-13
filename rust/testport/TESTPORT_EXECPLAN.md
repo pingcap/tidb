@@ -11624,3 +11624,7 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (multi-rename pin): rename table a to b, c to d moves both
  tables atomically; old names vanish. Pinned in
  `crates/tidb-session/tests/multi_rename_source.rs`.
+- 2026-09-08 (REPLACE generated refusal pin): REPLACE with an explicit
+ generated-column target refuses with the ErrBadGeneratedColumn text and
+ stores nothing. Pinned in
+ `crates/tidb-session/tests/replace_generated_refusal_source.rs`.
