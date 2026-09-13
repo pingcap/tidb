@@ -64,7 +64,8 @@ TPC-H differs from the other workloads in what it stresses. Sysbench and TPC-C a
 - [ ] Milestone 4: the hash join build phase on workers, as Go's `BuildWorkerV2` does.
 - [ ] Milestone 5: column-wise expression evaluation for projections and filters over chunk inputs, as Go's `VectorizedExecute` does; the decimal fast path aligned to Go's scale handling (done in the working tree, tested, awaiting its A/B).
 - [ ] Milestone 6, remainder: the per-chunk handoff cost on the hash aggregate and join pipelines; the response decode copy.
-- [ ] Milestone 7: full harness run, all 22 queries faster than Go warm; findings document updated; `Ready` validation.
+- [x] (2026-09-13) Full harness at r63 (cb90e1d7), both sides restarted per turn, two rounds, answers verified on all 176 runs: warm 26.4 s vs Go's 21.8 s (1.21x; r28 1.53x, r20 1.80x), cold 44.9 vs 41.8 s (1.07x). Warm per query, Rust/Go: Q1 1.00, Q2 1.26, Q3 1.17, Q4 1.00, Q5 1.08, Q6 1.00, Q7 1.08, Q8 1.26, Q9 1.34, Q10 1.36, Q11 1.00, Q12 1.45, Q13 1.46, Q14 1.20, Q15 1.69, Q16 1.19, Q17 1.12, Q18 1.16, Q19 1.15, Q20 1.09, Q21 1.16, Q22 1.00. Five queries at parity, none faster: the acceptance bar is not met. Tables and the round's findings are in `SYSBENCH_GATE_FINDINGS.md` (round 5).
+- [ ] Milestone 7: all 22 queries faster than Go warm. Open items, in the order of expected yield: the worker pool's wake-per-chunk scheduling (kernel time about a fifth of the node's samples on join queries; Go's goroutine handoff costs none), the coprocessor cache's cached-set growth across repeated runs (Go's send order drifts, the Rust node's stays in lockstep), the decimal `Datum` (an ASCII digit string, so every decimal read into a datum and every decimal hash key pays a conversion; Q2's aggregate input and join key), and the index-join task preparation still serial on the session thread.
 
 
 ## Surprises & Discoveries
@@ -91,7 +92,7 @@ TPC-H differs from the other workloads in what it stresses. Sysbench and TPC-C a
 ## Outcomes & Retrospective
 
 
-(To be written at the end.)
+Interim (2026-09-13, r63): the warm total went from 1.80x Go (r20) through 1.53x (r28) to 1.21x, with five queries at parity and every remaining gap under 1.5x except Q15 (1.69x, the index hash join's view). Every change followed the owning Go package's structure and landed with its own two-run A/B; the two attempts that measured neutral (the constant-length cell copy and the column-wise batch assembly) were reverted rather than kept. What the campaign did not reach is the runtime layer: the executor now does the same work in the same shape as Go on the queries measured, and the residual is the pool's OS-level wakeups per chunk, the allocator, and the decimal datum representation. The acceptance bar (all 22 faster warm) stands unmet; the honest per-query state is in the findings document.
 
 
 ## Context and Orientation

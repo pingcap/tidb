@@ -1715,3 +1715,142 @@ against the r20 run above and the warm columns against each other.
   queries (Q13, Q9, Q18, Q15, Q12) and the small-result queries where a
   fixed per-statement cost shows (Q2, Q11).
 - Rust cold against the r20 run: 51.3 vs 57.8 s.
+
+## TPC-H SF 1, round 5 (2026-09-13): Go vs r63
+
+`r63` is head cb90e1d7. Since the r28 run the branch carries the exact
+integer build table in Go's v2 `subTable` shape with batched lookups,
+the stream aggregate's in-place state reset and the column-wise
+Selection filter, the decimal projection and SUM fast paths, the index
+join joined on the worker that drains its task, the hash aggregate's
+group keys appended in place and looked up through a reused scratch key,
+the coprocessor request encoded once from the borrowed task, the merge
+join's row-container reset gated on use, and the BatchCommands bodies as
+shared bytes. Same harness: both sides restarted before their turn, a
+cold pass and a warm pass, side order alternating per round, go-tpc's
+`--check` on every run.
+
+No answer mismatch on any of the 176 runs.
+
+### Cold (first pass after a restart)
+
+| query | go s | r63 s | r63 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 2.72 | 2.75 | +1% | 2/2 |
+| Q2 | 0.70 | 0.84 | +20% | 2/2 |
+| Q3 | 1.44 | 1.58 | +10% | 2/2 |
+| Q4 | 1.04 | 1.21 | +16% | 2/2 |
+| Q5 | 2.45 | 2.79 | +14% | 2/2 |
+| Q6 | 1.18 | 1.21 | +3% | 2/2 |
+| Q7 | 2.15 | 2.25 | +5% | 2/2 |
+| Q8 | 1.27 | 1.44 | +13% | 2/2 |
+| Q9 | 3.25 | 3.72 | +14% | 2/2 |
+| Q10 | 1.38 | 1.58 | +14% | 2/2 |
+| Q11 | 1.14 | 1.24 | +9% | 2/2 |
+| Q12 | 1.94 | 1.94 | +0% | 2/2 |
+| Q13 | 1.88 | 1.88 | +0% | 2/2 |
+| Q14 | 1.27 | 1.34 | +5% | 2/2 |
+| Q15 | 2.15 | 3.12 | +45% | 2/2 |
+| Q16 | 0.50 | 0.60 | +21% | 2/2 |
+| Q17 | 4.40 | 4.20 | -5% | 2/2 |
+| Q18 | 3.59 | 3.96 | +10% | 2/2 |
+| Q19 | 1.75 | 1.85 | +6% | 2/2 |
+| Q20 | 1.34 | 1.41 | +5% | 2/2 |
+| Q21 | 3.16 | 2.99 | -5% | 2/2 |
+| Q22 | 1.10 | 1.04 | -6% | 2/2 |
+| sum (answered) | 41.8 (22 q) | 44.9 (22 q) | | |
+
+### Warm (second pass on the same process)
+
+| query | go s | r63 s | r63 vs go | rounds |
+|---|---|---|---|---|
+| Q1 | 0.10 | 0.10 | +0% | 2/2 |
+| Q2 | 0.14 | 0.17 | +26% | 2/2 |
+| Q3 | 0.80 | 0.94 | +17% | 2/2 |
+| Q4 | 0.37 | 0.37 | +0% | 2/2 |
+| Q5 | 1.65 | 1.78 | +8% | 2/2 |
+| Q6 | 0.10 | 0.10 | +0% | 2/2 |
+| Q7 | 1.31 | 1.41 | +8% | 2/2 |
+| Q8 | 0.64 | 0.80 | +26% | 2/2 |
+| Q9 | 2.29 | 3.06 | +34% | 2/2 |
+| Q10 | 0.47 | 0.64 | +36% | 2/2 |
+| Q11 | 0.10 | 0.10 | +0% | 2/2 |
+| Q12 | 0.30 | 0.43 | +45% | 2/2 |
+| Q13 | 0.23 | 0.33 | +46% | 2/2 |
+| Q14 | 0.64 | 0.77 | +20% | 2/2 |
+| Q15 | 1.75 | 2.96 | +69% | 2/2 |
+| Q16 | 0.37 | 0.44 | +19% | 2/2 |
+| Q17 | 3.55 | 3.99 | +12% | 2/2 |
+| Q18 | 2.49 | 2.88 | +16% | 2/2 |
+| Q19 | 1.17 | 1.34 | +15% | 2/2 |
+| Q20 | 1.17 | 1.27 | +9% | 2/2 |
+| Q21 | 2.11 | 2.45 | +16% | 2/2 |
+| Q22 | 0.10 | 0.10 | +0% | 2/2 |
+| sum (answered) | 21.8 (22 q) | 26.4 (22 q) | | |
+
+### Reading the tables
+
+- Warm against Go: 26.4 vs 21.8 s, 1.21x (r28: 1.53x, r20: 1.80x). Q1,
+  Q4, Q6, Q11 and Q22 are at parity; nothing is faster than Go on the
+  warm pass, so the acceptance bar of this campaign (every query faster
+  warm) is not met. Cold against Go: 44.9 vs 41.8 s, 1.07x, with Q17, Q21
+  and Q22 faster and Q12/Q13 level; Go's cold column in this run is a
+  genuine cold column (the Go side restarted before each turn, and the
+  Rust side ran first in round 2).
+- The harness's warm pass is the second run after a restart. Both nodes'
+  coprocessor caches admit the same pages on that run (see the cache
+  finding below), so the warm gaps are node CPU: on the join and
+  aggregate queries the Rust node still spends 1.3-1.8x Go's CPU (Q3
+  770 vs 420 ms, Q8 830 vs 520, Q10 830 vs 520, Q21 1780 vs 1060, Q9
+  3610 vs 2980 in a fresh-cache comparison of r61), and on a four-core
+  box that CPU competes with TiKV's read pool.
+
+### What this round changed, with its A/B
+
+Each commit carries its own two-run warm A/B in the message; in order:
+
+- Hash-aggregate group keys appended in place with the time zone fetched
+  once per chunk (ef002f5f), then the parallel fold looking its group
+  up through a reused scratch key (601c0afe): Q10 node CPU 1000 -> 860
+  ms, Q9 3900/3820 -> 3580/3680 ms.
+- The coprocessor request encoded once from the borrowed task, no
+  envelope clone, a single-copy context splice, the attempt's task
+  cloned without the base ranges (390c086c): Q3 node CPU 870/850 ->
+  790/780 ms, Q8 930 -> 820/850, Q21 1920/1980 -> 1810/1820, with wall
+  following (Q3 0.99/1.04 -> 0.96/0.96 s, Q8 0.84/0.86 -> 0.78/0.80).
+- The merge join's row container reset only after it took a chunk
+  (b4302110): Q12 node CPU 470/450 -> 330/330 ms, wall 0.54/0.47 ->
+  0.47/0.37 s.
+- BatchCommands bodies as shared bytes (cb90e1d7): Q5 node CPU
+  1650/1620 -> 1490/1520 ms, Q9 3940/3780 -> 3800/3810 ms.
+- Earlier in the same day: the flat exact-integer build table with
+  batched lookups (beef7864, f20a03b7) and the index-join task joined on
+  the worker that drains it (8effb7af).
+
+### Two things measured and not fixed
+
+- The coprocessor cache's growth. Every rule matches Go (page counts,
+  the 50-page admission index, the process-time floor, the unbuffered
+  worker-to-consumer rendezvous), and the first two runs after a
+  restart are within 6% on Q14 and Q19. From the third run on the Go
+  node's cached page set keeps growing (Q14: 0.51, 0.54, 0.49, 0.36,
+  0.29, 0.30 s over runs 5-10, TiKV handle time 1.57 -> 0.67 s) while
+  the Rust node's plateaus (0.66 s and 1.8 s of handle time, flat). The
+  trace shows the Rust node sending the eleven lineitem regions' pages
+  in lockstep, so each region's largest page always draws an admission
+  index above 50; Go's order drifts across runs and those pages get in
+  a few at a time. The index is taken at the same point in both
+  implementations; a deliberate perturbation of the order would have no
+  Go counterpart, so it was not added. Anyone comparing the two nodes
+  after many repeated runs of the same scan-bound query will see this
+  as a widening gap that is not executor speed.
+- The worker pool's scheduling cost. One Q9 makes 28,904 context
+  switches and 1,495 CPU migrations on the Rust node against Go's 9,059
+  and 211: every parallel probe chunk wakes a parked pool worker through
+  the shared mutex+condvar queue (a futex wake and usually an IPI on
+  this KVM guest), and kernel frames are about a fifth of the node's
+  samples. Go hands the same chunks between goroutines inside its
+  runtime. TiKV's own handle time for Q9 is 13% higher when the Rust
+  node drives it, consistent with that extra CPU competing for the four
+  cores. A spin-before-park pool was tried earlier and dropped; the
+  correct version remains the open structural item.
