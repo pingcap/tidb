@@ -11592,3 +11592,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (multi-column CHECK pin): a two-column CHECK evaluates the
  pair with three-valued NULL semantics. Pinned in
  `crates/tidb-session/tests/multi_column_check_source.rs`.
+- 2026-09-08 (indexed generated pin): an indexed STORED generated column
+ filters (b = 5, b < 3) and groups over 25 rows. Pinned in
+ `crates/tidb-session/tests/indexed_generated_source.rs`.
