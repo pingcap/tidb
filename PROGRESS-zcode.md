@@ -10,9 +10,14 @@
 - 审计对账：expr-builtin item 1/2/3/4/6/7 全闭环（466d4e6120/bdf90f7245）；chunk A-3 核实过期（0b8f2de438）
 - 2026-09-04: `BuildCastFunction4Union` unsigned-integer `inUnion` carrier across `tidb-ast` → `tidb-expr` → `tidb-planner`, including recursive CTE projections; focused regressions and receipt are complete, and the batch is pushed to `hparser-integration`.
 
+## 环境迁移(2026-09-13)
+- /tmp worktree 全部损坏；会话迁至 ~/Documents/GitHub/tidb-zcode-push（detached，push HEAD:hparser-integration）。
+- 恢复了丢失的 187 文档批（78599a731373）并推送。
+
 ## 队列
-1. parser #11（结构性）
+1. ~~parser #11~~（已关闭，见下）
 2. 分区裁剪验证（等用户对照查询）
+3. hint 去重残余已关闭（fec2a6ae1e56）；剩余开放项均阻塞于 live 证据（#186/#202/#194-195/distsql 只读层警告汇）
 
 - 2026-09-04: chunk A-1 datum storage parity is implemented in Rust and
   validated in the isolated worktree. `Datum::Decimal` now follows Go's
@@ -261,6 +266,7 @@
   门禁: codec 46+166 全绿; datatype 410/0; planner 908/0; distsql 253+28/0; fmt/clippy/diff-check/make lint PASS。
   chunk(35)/executor(122)为预存环境失败, stash A/B 证明与本批无关。
 - 本会话累计 32 个提交。下批: parser #11 charset-aware scanner。
+- hint-parity-audit 残余(READ_FROM_STORAGE 去重按合并文本)关闭并推送 `fec2a6ae1e56`: Go parseStorageHint 每引擎组产出一个 TableOptimizerHint，RemoveDuplicatedHints/RestoreOptimizerHints 因此按组为键；Rust 单 hint 多组建模不变，restore_keys_per_group 展开每组键——重复组从 occurrence 剪除、全重复 occurrence 丢弃，与 Go 逐 hint 丢弃语义等价。2 组回归 pre-fix 失败已证；tidb-hint 7/0、fmt/clippy/make lint PASS。
 - parser #11(client-charset scanner)关闭为 parity-by-API 并推送 `2d97d650ba8`:
   核实链条完整——GBK/big5/sjis 危险字节对(lead≥0x81 + trail 0x5C/0x27/0x60)永非法 UTF-8; mysql_connection.rs 查询解码门先行转码/拒绝非 UTF-8; Lexer 全链 &str 无法表达该输入。加 charset 字段 = 无可达行为的规格化声明(违反 No speculative behavior), 故记录关闭而非实现。
 - 下批: Time::round_frac 时区语义(跨 tidb-datatype/tidb-expr)。
