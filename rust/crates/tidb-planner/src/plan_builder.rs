@@ -1457,6 +1457,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             select_offset: self.select_offset(),
             flags: self.flags,
             hints: self.hints,
+            join_hints: Rc::clone(&self.join_hints),
         }
     }
 

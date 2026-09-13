@@ -80,6 +80,7 @@ impl Fixture {
             select_offset: 0,
             flags,
             hints: RewriterHints::default(),
+            join_hints: std::rc::Rc::new(crate::plan_builder::from::JoinHints::default()),
         })
     }
 

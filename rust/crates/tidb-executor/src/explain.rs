@@ -676,12 +676,17 @@ fn physical_operator_name(
             }
         }
         PhysicalPlan::IndexScan(scan) => {
-            if scan.ranges.is_empty()
-                || tidb_planner::ranger::types::has_full_range(&scan.ranges, false)
-            {
-                "IndexFullScan".to_owned()
-            } else {
+            let static_range = !scan.ranges.is_empty()
+                && !tidb_planner::ranger::types::has_full_range(&scan.ranges, false);
+            // Go names an index scan `IndexRangeScan` when it carries either
+            // static ranges or a runtime `RangeInfo`: the IndexJoin's inner
+            // probe owns only the latter (the ranges are decided by the join
+            // keys at run time), so the probe must not fall back to
+            // `IndexFullScan` just because its static range list is empty.
+            if static_range || is_index_join_index_range(plan, index_join_context) {
                 "IndexRangeScan".to_owned()
+            } else {
+                "IndexFullScan".to_owned()
             }
         }
         PhysicalPlan::PointGet(_) => "Point_Get".to_owned(),

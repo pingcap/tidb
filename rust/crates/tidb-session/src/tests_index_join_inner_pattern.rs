@@ -158,11 +158,23 @@ fn an_index_joins_dedup_build_side_keeps_its_ordered_index_stream_agg() {
         &mut session,
         "EXPLAIN SELECT /*+ TIDB_INLJ(t1) */ * FROM t1 WHERE t1.a IN (SELECT t2.a FROM t2)",
     );
+    // Refreshed against the LIVE oracle (SELECT tidb_version() =>
+    // fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85): Go builds the hinted
+    // IndexJoin with the dedup StreamAgg chain as the OUTER build side and
+    // t1 as the INNER probe through its `a(a)` index -- `IndexJoin ->
+    // IndexLookUp(Probe) -> [IndexRangeScan decided-by | TableRowIDScan]`.
+    // The hint reaches the rewritten join through Go's
+    // `SetPreferredJoinTypeAndOrder(b.TableHints())` stamp on the subquery
+    // apply (logical_plan_builder.go:5760).
     for expected in [
-        "StreamAgg_4(Build) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-        "IndexReader_3 8000.00 root  index:StreamAgg",
-        "StreamAgg_2 8000.00 cop[tikv]  group by:test.t2.a, ",
-        "IndexFullScan_1 10000.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+        "IndexJoin_11 10000.00 root  inner join, inner:IndexLookUp_26, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+        "StreamAgg_40(Build) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+        "IndexReader_41 8000.00 root  index:StreamAgg_30",
+        "StreamAgg_30 8000.00 cop[tikv]  group by:test.t2.a, ",
+        "IndexFullScan_19 10000.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+        "IndexLookUp_26(Probe) 10000.00 root",
+        "IndexRangeScan_24(Build) 10000.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo",
+        "TableRowIDScan_25(Probe) 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
     ] {
         assert!(
             plan_text.contains(expected),

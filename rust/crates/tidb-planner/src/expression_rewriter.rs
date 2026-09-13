@@ -333,6 +333,13 @@ pub struct RewriterEnv<'a, C: Columns> {
     pub flags: RewriterSessionFlags,
     /// Go `b.TableHints()`, narrowed.
     pub hints: RewriterHints,
+    /// Go `b.TableHints()`'s join half. Go stamps the subquery-created joins
+    /// with `SetPreferredJoinTypeAndOrder(b.TableHints())` — the apply built
+    /// by `buildSemiApply` (`logical_plan_builder.go:5760`) and the rewritten
+    /// join+agg inside it — so a `TIDB_INLJ(t)` hint on the outer table names
+    /// the probe side of an `IN`-subquery join even though the join was never
+    /// written in the FROM clause.
+    pub join_hints: std::rc::Rc<crate::plan_builder::from::JoinHints>,
 }
 
 impl<C: Columns> RewriterEnv<'_, C> {
@@ -1042,6 +1049,19 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         }
         if force_rewrite || self.env.flags.enable_semi_join_rewrite {
             join.prefer_join_type |= PREFER_REWRITE_SEMI_JOIN;
+        }
+        // Go `buildSemiApply`'s `ap.LogicalJoin.SetPreferredJoinTypeAndOrder(
+        // b.TableHints())` (`logical_plan_builder.go:5760`): a subquery was
+        // never written as a FROM join, so the join hints reach it only here.
+        {
+            let left_names = outer.output_names().to_vec();
+            let right_names = inner.output_names().to_vec();
+            crate::plan_builder::from::set_preferred_join_type_and_order(
+                &mut join,
+                &self.env.join_hints,
+                &left_names,
+                &right_names,
+            );
         }
 
         let mut names = outer.output_names().to_vec();
@@ -1866,6 +1886,20 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
                 join.full_schema = left.full_schema.clone();
                 join.full_names = left.full_names.clone();
             }
+        }
+        // Go `buildSemiJoin`'s rewrite arm flows through the same
+        // `ap.LogicalJoin.SetPreferredJoinTypeAndOrder(b.TableHints())` stamp
+        // (`logical_plan_builder.go:5760`): the rewritten join must still see
+        // the block's `TIDB_INLJ`/`INL_JOIN` hints.
+        {
+            let left_names = outer.output_names().to_vec();
+            let right_names = agg.output_names().to_vec();
+            crate::plan_builder::from::set_preferred_join_type_and_order(
+                &mut join,
+                &self.env.join_hints,
+                &left_names,
+                &right_names,
+            );
         }
         let mut plan = LogicalPlan::Join(join);
         plan.set_children(vec![outer, agg]);
