@@ -88,6 +88,14 @@ struct BuildState {
     index_scan_limit: Option<u64>,
     /// Reader subplans use coprocessor expression semantics.
     in_reader: bool,
+    /// Whether a `PhysicalProjection` may run Go's projection workers. Go
+    /// keeps every projection serial inside INSERT/UPDATE/DELETE (its
+    /// `inUpdateStmt`/`inDeleteStmt`/`inInsertStmt` builder flags, because
+    /// those statements write the membuffer the workers would race).
+    projection_workers_allowed: bool,
+    /// Go `executorBuilder.hasLock`: a `SELECT ... FOR UPDATE` below keeps the
+    /// projections above it serial for the same reason.
+    has_lock: bool,
 }
 
 pub(crate) type PhysicalRuntimeStats = HashMap<usize, Rc<Cell<u64>>>;
@@ -3461,6 +3469,7 @@ fn build_with_state(
         PhysicalPlan::PointGet(point) => build_point_get(plan, point, catalog, ctx),
         PhysicalPlan::BatchPointGet(batch) => build_batch_point_get(plan, batch, catalog, ctx),
         PhysicalPlan::Lock(lock) => {
+            state.has_lock = true;
             let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
             let Some(selected) = ctx.selected_lock_keys() else {
                 return Ok(child);
@@ -3588,12 +3597,24 @@ fn build_with_state(
                 }
             }
             let expressions = resolve_expressions(&projection.exprs, child.schema())?;
-            let executor: Box<dyn Executor> = Box::new(ProjectionExec::new(
-                meta(plan, plan_schema(plan)?),
-                expressions,
-                child,
-                ctx.clone(),
-            ));
+            let meta = meta(plan, plan_schema(plan)?);
+            // Go `newProjectionExec`: `tidb_projection_concurrency` workers,
+            // none when the estimated row count is under one chunk ("to
+            // reduce the goroutine overhead"), inside a writing statement or
+            // above a lock.
+            let workers = if state.projection_workers_allowed
+                && !state.has_lock
+                && plan
+                    .stats_count()
+                    .is_some_and(|rows| rows >= meta.max_chunk_size() as f64)
+            {
+                ctx.projection_concurrency()
+            } else {
+                0
+            };
+            let executor: Box<dyn Executor> = Box::new(
+                ProjectionExec::new(meta, expressions, child, ctx.clone()).with_workers(workers),
+            );
             Ok(executor)
         }
         PhysicalPlan::Selection(selection) => {
@@ -3894,7 +3915,11 @@ pub(super) fn build(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    let child = build_with_state(plan, catalog, ctx, &mut BuildState::default())?;
+    let mut state = BuildState {
+        projection_workers_allowed: true,
+        ..BuildState::default()
+    };
+    let child = build_with_state(plan, catalog, ctx, &mut state)?;
     let output = plan_schema(plan)?;
     if output.len() != child.schema().len() {
         let expressions = output
@@ -4066,6 +4091,7 @@ pub(crate) fn execute_for_explain(
     prepare_execution_plan(physical, catalog, ctx)?;
     let mut state = BuildState {
         runtime_counters: Some(HashMap::new()),
+        projection_workers_allowed: true,
         ..BuildState::default()
     };
     let mut root = build_with_state(physical, catalog, ctx, &mut state)?;

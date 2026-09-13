@@ -2070,6 +2070,19 @@ impl StmtContext {
         self.executor_concurrency
     }
 
+    /// Go `SessionVars.ProjectionConcurrency()`: `tidb_projection_concurrency`
+    /// when set, else `tidb_executor_concurrency` (the session resolves that
+    /// fallback into the cost environment).
+    #[must_use]
+    pub fn projection_concurrency(&self) -> usize {
+        let resolved = self.optimizer_cost_env().session.projection_concurrency;
+        if resolved > 0.0 {
+            resolved as usize
+        } else {
+            self.executor_concurrency
+        }
+    }
+
     /// Attaches Go's two resolved HashAgg worker counts.
     ///
     /// Go's cost model reads `HashAggFinalConcurrency()` directly from the
