@@ -1070,8 +1070,22 @@ impl Column {
             let elem_len = src.elem_buffer_len();
             let offset = row_idx * elem_len;
             let data = src.data.read();
-            self.data
-                .extend_from_slice(&data[offset..offset + elem_len]);
+            let cell = &data[offset..offset + elem_len];
+            // Go appends the cell's bytes with `append(c.data, cell...)`; the
+            // common widths copy as one compile-time-sized store here rather
+            // than a runtime-length copy call per cell.
+            match elem_len {
+                8 => self
+                    .data
+                    .extend_from_array::<8>(cell.try_into().expect("an eight-byte cell")),
+                4 => self
+                    .data
+                    .extend_from_array::<4>(cell.try_into().expect("a four-byte cell")),
+                1 => self
+                    .data
+                    .extend_from_array::<1>(cell.try_into().expect("a one-byte cell")),
+                _ => self.data.extend_from_slice(cell),
+            }
         } else {
             let start = src.offsets[row_idx] as usize;
             let end = src.offsets[row_idx + 1] as usize;

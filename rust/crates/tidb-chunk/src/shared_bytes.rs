@@ -118,19 +118,31 @@ impl SharedBytes {
         }
     }
 
+    /// The visible bytes. An owned or frozen backing answers with a plain
+    /// slice, inlined into the cell accessors that call this per row; only a
+    /// shared backing takes its read guard, out of line.
+    #[inline]
     pub(crate) fn read(&self) -> SharedBytesRead<'_> {
         match &self.backing {
             Backing::Owned(bytes) => {
                 SharedBytesRead::Owned(&bytes[self.start..self.start + self.len])
             }
+            Backing::Frozen(bytes) => {
+                SharedBytesRead::Owned(&bytes[self.start..self.start + self.len])
+            }
+            Backing::Shared(_) => self.read_locked(),
+        }
+    }
+
+    #[inline(never)]
+    fn read_locked(&self) -> SharedBytesRead<'_> {
+        match &self.backing {
             Backing::Shared(backing) => SharedBytesRead::Shared {
                 backing: Self::read_shared(backing),
                 start: self.start,
                 len: self.len,
             },
-            Backing::Frozen(bytes) => {
-                SharedBytesRead::Owned(&bytes[self.start..self.start + self.len])
-            }
+            Backing::Owned(_) | Backing::Frozen(_) => self.read(),
         }
     }
 
@@ -197,6 +209,13 @@ impl SharedBytes {
             .expect("SharedBytes length overflow");
         if self.start == 0 {
             if let Backing::Owned(bytes) = &mut self.backing {
+                if bytes.len() == old_len {
+                    // The usual growth: nothing beyond the visible bytes, so
+                    // the vector's own append writes the source once.
+                    bytes.extend_from_slice(source);
+                    self.len = new_len;
+                    return;
+                }
                 if new_len > bytes.len() {
                     bytes.resize(new_len, 0);
                 }
@@ -211,6 +230,32 @@ impl SharedBytes {
         self.ensure_initialized(new_len);
         self.len = new_len;
         self.with_write(|bytes| bytes[old_len..new_len].copy_from_slice(source));
+    }
+
+    /// [`Self::extend_from_slice`] for a cell whose width is known at compile
+    /// time (a fixed-length column element). The owned paths -- a reused
+    /// buffer with room after a reset, or plain growth -- copy `N` bytes as
+    /// one store instead of a runtime-length copy call per cell; every other
+    /// shape takes the general path.
+    #[inline]
+    pub(crate) fn extend_from_array<const N: usize>(&mut self, source: &[u8; N]) {
+        if self.start == 0 {
+            if let Backing::Owned(bytes) = &mut self.backing {
+                let old_len = self.len;
+                let new_len = old_len + N;
+                if new_len <= bytes.len() {
+                    bytes[old_len..new_len].copy_from_slice(source);
+                    self.len = new_len;
+                    return;
+                }
+                if bytes.len() == old_len {
+                    bytes.extend_from_slice(source);
+                    self.len = new_len;
+                    return;
+                }
+            }
+        }
+        self.extend_from_slice(source);
     }
 
     pub(crate) fn fill(&mut self, value: u8) {
@@ -419,6 +464,38 @@ mod tests {
         bytes.reserve(128);
         bytes.resize_preserving(96);
         assert!(!bytes.is_shared());
+    }
+
+    #[test]
+    fn const_width_appends_reuse_room_grow_and_detach_like_slice_appends() {
+        let mut bytes = SharedBytes::with_capacity(4);
+        bytes.extend_from_array(&[1u8; 8]);
+        bytes.extend_from_array(&[2u8; 8]);
+        assert_eq!(
+            &*bytes.read(),
+            &[1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2]
+        );
+        // A reset keeps the vector's bytes behind a zero visible length; the
+        // next appends overwrite in place, then run past the old end.
+        bytes.reset();
+        bytes.extend_from_array(&[3u8; 8]);
+        assert_eq!(&*bytes.read(), &[3u8; 8]);
+        bytes.truncate(4);
+        bytes.extend_from_array(&[4u8; 8]);
+        assert_eq!(&*bytes.read(), &[3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4]);
+        bytes.extend_from_array(&[5u8; 8]);
+        assert_eq!(bytes.len(), 20);
+        assert_eq!(&bytes.read()[12..], &[5u8; 8]);
+        assert!(!bytes.is_shared());
+        // A shared backing takes the general path: the alias keeps its view.
+        let alias = bytes.share_range(0, 4);
+        bytes.extend_from_array(&[6u8; 4]);
+        assert_eq!(&*alias.read(), &[3u8; 4]);
+        assert_eq!(&bytes.read()[20..], &[6u8; 4]);
+        bytes.extend_from_array(&[7u8; 64]);
+        assert_eq!(&*alias.read(), &[3u8; 4]);
+        assert_eq!(&bytes.read()[24..], &[7u8; 64]);
+        assert!(!bytes.backing_ptr_eq(&alias));
     }
 
     #[test]
