@@ -11569,3 +11569,7 @@ risks without claiming repository-wide parity.
  validates existing rows, refuses by constraint name, and lands live
  after the data is fixed. Pinned in
  `crates/tidb-session/tests/alter_add_check_existing_source.rs`.
+- 2026-09-08 (INSERT SELECT + ODKU pin): insert-select with ON DUPLICATE
+ KEY UPDATE composes — the correlated source column resolves and the
+ affected count follows MySQL's convention (4 = 2x dup + 2 inserts).
+ Pinned in `crates/tidb-session/tests/insert_select_odku_source.rs`.
