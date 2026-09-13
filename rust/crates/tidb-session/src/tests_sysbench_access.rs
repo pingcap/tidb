@@ -99,13 +99,29 @@ fn source_row(session: &mut Session, sql: &str) -> Vec<String> {
         .next()
         .expect("a drawn name is nonempty")
         .to_owned();
-    let name = match name.rsplit_once('_') {
-        Some((stem, suffix))
-            if !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit()) =>
-        {
-            stem.to_owned()
+    // Go annotates a join's read side as `(Probe)`/`(Build)` AFTER the plan id
+    // (`TableRowIDScan_7(Probe)`); strip the id beneath the annotation so the
+    // annotation survives as identity, per the contract comment above.
+    let name = match name.rsplit_once('(') {
+        Some((stem, annotation)) if annotation.ends_with(')') && !annotation.contains(' ') => {
+            let stem = match stem.rsplit_once('_') {
+                Some((prefix, suffix))
+                    if !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit()) =>
+                {
+                    prefix
+                }
+                _ => stem,
+            };
+            format!("{stem}({side}", side = annotation)
         }
-        _ => name,
+        _ => match name.rsplit_once('_') {
+            Some((stem, suffix))
+                if !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit()) =>
+            {
+                stem.to_owned()
+            }
+            _ => name,
+        },
     };
     vec![name, last[1].clone(), last[3].clone(), last[4].clone()]
 }
@@ -539,16 +555,19 @@ fn the_sysbench_write_shapes_read_a_handle_range() {
         // a write's read from the same cost chooser, so `WHERE k = 500` takes
         // `k_1` (captured for the read side; the recorded corpus shows the same
         // for `delete from t1 where c2 = 1`).
-        // GO MASTER'S ROW for this write is the PROBE under the IndexLookUp:
-        // `Update_4 <- IndexLookUp_8 <- [IndexRangeScan_6(Build) 1.25 |
-        // TableRowIDScan_7(Probe) 1.25]` (captured from fdfadb96b2). The
-        // 1.25 is Go's pseudo estimate for a point range over a
-        // placeholder-statistics index; this tier still prints 10.00 here --
-        // the documented estimation gap this pin keeps red.
+        // GO MASTER'S ROW for this write is the PROBE under the IndexLookUp,
+        // refreshed against the LIVE oracle (SELECT tidb_version() =>
+        // fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85): on this exact fixture
+        // (fresh sbtest1 -- empty, unanalyzed) Go prints
+        // `Update_4 <- IndexLookUp_8 <- [IndexRangeScan_6(Build) 10.00 |
+        // TableRowIDScan_7(Probe) 10.00]`, both `keep order:false,
+        // stats:pseudo`. 10.00 is the pseudo point estimate -- the 10000-row
+        // pseudo table divided by `pseudoEqualRate` 1000 -- and an earlier
+        // 1.25 receipt does not reproduce on this fixture state.
         (
             "UPDATE sbtest1 SET c = 'x' WHERE k = 500",
             "TableRowIDScan(Probe)",
-            "1.25",
+            "10.00",
             "keep order:false, stats:pseudo",
         ),
         // No `WHERE` at all: also the whole table, which is every row the
