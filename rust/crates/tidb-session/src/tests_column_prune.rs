@@ -136,11 +136,16 @@ fn the_gate_refuses_every_wide_shape_and_they_still_answer_correctly() {
         "correlated subquery decoded {decoded:?}"
     );
 
-    // A window function.
+    // A window function. Go's own plan keeps only the ORDER BY column in the
+    // scan: `row_number()` reads no column values, so `PruneColumns` leaves
+    // the scan schema at `[b]` -- confirmed against master (`cbotest` probe):
+    // TableScan columns=[b(id=2)] schemaLen=1 under
+    // Projection ← Window ← Sort ← TableReader. The decode set is exactly
+    // that one column, and the row values (row numbers) need nothing more.
     let (rows, decoded) =
         rows_and_decoded(&mut session, "SELECT ROW_NUMBER() OVER (ORDER BY b) FROM t");
     assert_eq!(rows, vec![vec!["1"], vec!["2"], vec!["3"]]);
-    assert_eq!(decoded, all);
+    assert_eq!(decoded, BTreeSet::from([B]));
 
     // A `WITH` clause: the outer query reads a materialized CTE, not a base
     // table, so the gate refuses it. The CTE's own body is a separate,
@@ -161,53 +166,78 @@ fn the_gate_refuses_every_wide_shape_and_they_still_answer_correctly() {
 
 /// The Go differential for the pruned scan's operator info.
 ///
-/// Captured from real TiDB (`pkg/executor/zz_dump_prune_test.go`, mock store,
-/// `-tags=intest`): the `TableFullScan`'s access object and operator info are
-/// **byte-identical** whether the query reads one column or all four --
+/// Captured from Go master (`cbotest` probe, `fdfadb96b2`): the
+/// `TableFullScan`'s access object and operator info are **byte-identical**
+/// whether the query reads one column or all four --
 ///
 /// ```text
 /// explain select c from t where a > 1
-///   TableFullScan_9 10000.00 cop[tikv] table:t  keep order:false, stats:pseudo
+///   TableReader_11 root data:Projection_5
+///   └─Projection_5 cop[tikv] test.t.c
+///     └─Selection_10 cop[tikv] gt(test.t.a, 1)
+///       └─TableFullScan_9 cop[tikv] table:t keep order:false, stats:pseudo
 /// explain select * from t where a > 1
-///   TableFullScan_5 10000.00 cop[tikv] table:t  keep order:false, stats:pseudo
+///   TableReader_7 root data:Selection_6
+///   └─Selection_6 cop[tikv] gt(test.t.a, 1)
+///     └─TableFullScan_5 cop[tikv] table:t keep order:false, stats:pseudo
 /// ```
 ///
 /// Pruning is a change to the scan's *schema*, which `EXPLAIN` never prints
-/// for a `TableFullScan`; Go's only visible pruning artefact is a separate
-/// coprocessor `Projection`, which this tier does not build. So the correct
-/// behaviour here is that the plan text does not move at all -- which is why
-/// pruning is applied after the trace records the scan, and why this test
-/// pins both spellings to the same rows. The captured scan row is matched
-/// whole now, `cop[tikv]` task included: the read is a cop task under its
-/// `TableReader`.
+/// for a `TableFullScan`; Go's only visible pruning artefact is the
+/// coprocessor `Projection` under the narrow read's `TableReader`. So the
+/// correct behaviour here is that the plan text does not move at all -- which
+/// is why pruning is applied after the trace records the scan. Both captured
+/// shapes are pinned whole with the plan-id allocator suffix stripped: the
+/// narrow read is `TableReader ← data:Projection ← Selection ← TableFullScan`,
+/// the wide read drops the identity `Projection`.
 #[test]
 fn pruning_leaves_the_plan_text_exactly_where_it_was() {
     let mut session = prune_session();
     let narrow = row_text(session.run("EXPLAIN SELECT c FROM t WHERE a > 1"));
     let wide = row_text(session.run("EXPLAIN SELECT * FROM t WHERE a > 1"));
-    // The narrow query keeps its proper-subset Projection, while Go's strict
-    // physical projection elimination removes the wide query's identity
-    // Projection. Every operator below that one extra narrow node -- the
-    // Selection and the scan -- must have the same name and semantic columns;
-    // only the tree connector changes when each operator is promoted one level.
-    fn operator_name(name: &str) -> &str {
-        name.trim_start_matches(|c: char| matches!(c, ' ' | '└' | '─'))
+    fn normalized(row: &[String]) -> String {
+        // Plan ids surface twice: the operator's own name and the
+        // `data:`/`index:` references in its operator info.
+        let mut normalized = row.to_owned();
+        for cell in &mut normalized {
+            if let Some((stem, suffix)) = cell.rsplit_once('_') {
+                if !suffix.is_empty()
+                    && suffix.bytes().all(|byte| byte.is_ascii_digit())
+                    && stem.bytes().any(|byte| !byte.is_ascii_digit())
+                {
+                    *cell = stem.to_owned();
+                }
+            }
+        }
+        if let Some(name) = normalized.first_mut() {
+            *name = name
+                .trim_start_matches(|character: char| matches!(character, ' ' | '└' | '─' | '├'))
+                .to_owned();
+        }
+        normalized.join("|")
     }
-    assert_eq!(narrow.len(), wide.len() + 1);
-    for (narrow_row, wide_row) in narrow[1..].iter().zip(&wide) {
-        assert_eq!(operator_name(&narrow_row[0]), operator_name(&wide_row[0]));
-        assert_eq!(narrow_row[1..], wide_row[1..]);
-    }
+    let narrowed: Vec<_> = narrow.iter().map(|row| normalized(row)).collect();
     assert_eq!(
-        narrow.last().unwrap(),
-        &vec![
-            "    └─TableFullScan_1".to_owned(),
-            "10000.00".to_owned(),
-            "cop[tikv]".to_owned(),
-            "table:t".to_owned(),
-            "keep order:false, stats:pseudo".to_owned(),
+        narrowed,
+        vec![
+            "TableReader|3333.33|root||data:Projection",
+            "Projection|3333.33|cop[tikv]||test.t.c",
+            "Selection|3333.33|cop[tikv]||gt(test.t.a, 1)",
+            "TableFullScan|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
+    let widened: Vec<_> = wide.iter().map(|row| normalized(row)).collect();
+    assert_eq!(
+        widened,
+        vec![
+            "TableReader|3333.33|root||data:Selection",
+            "Selection|3333.33|cop[tikv]||gt(test.t.a, 1)",
+            "TableFullScan|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    // The one row both statements share is the scan itself: pruning changed
+    // nothing the reader can see.
+    assert_eq!(narrowed.last(), widened.last());
 }
 
 /// An uncorrelated subquery is evaluated and folded into a literal *before*
@@ -457,14 +487,14 @@ fn the_join_gate_refuses_the_shapes_it_cannot_see_all_the_references_of() {
         "the window's ORDER BY and the join key, not the whole row"
     );
 
-    // A side no clause mentions keeps its full width: the scan refuses an
-    // empty prune, because a zero-column row is not a shape any source here
-    // emits. The two sides answer independently, so the cross join's `j`
-    // stays wide while `t` still narrows to `c` -- which is why the union is
-    // the full set here even though half the join really was pruned.
+    // A side no clause mentions gets Go's empty-schema carrier: the same
+    // contract the `COUNT(*)` case above pins -- `preferKeyColumnFromTable`
+    // forces `_tidb_rowid` into the scan schema, and the carrier is read from
+    // the record KEY, so no stored column of `j` is ever decoded. `t` still
+    // narrows to `c`, which is why the set is exactly `t.c`.
     let (rows, decoded) = rows_and_decoded(&mut session, "SELECT t.c FROM t, j ORDER BY t.c");
     assert_eq!(rows.len(), 6);
-    assert_eq!(decoded, all);
+    assert_eq!(decoded, BTreeSet::from([C]));
 }
 
 /// The Go differential for the join's plan text.
@@ -537,9 +567,17 @@ fn aggregate_shapes_prune_through_their_arguments() {
     assert_eq!(rows, vec![vec!["1,2,3"]]);
     assert_eq!(decoded, BTreeSet::from([A, D]));
 
-    // `COUNT(*)` names no column, so the kept set is empty and the scan
-    // refuses the prune -- the full-width path answers it.
+    // `COUNT(*)` names no column, so the kept set is empty. Go answers the
+    // same way this tier does: `DataSource.PruneColumns` forces ONE carrier
+    // back into the schema (`preferKeyColumnFromTable`), which for a
+    // handle-less table is `_tidb_rowid`; the cop request asks exactly that
+    // column (`PhysicalTableScan.ToPB` ->
+    // `BuildTableScanFromInfos(p.Table, p.Columns)`; master probe:
+    // TableScan columns=[(id=-1)] schemaLen=1), the carrier is read from the
+    // record KEY -- never from the row bytes -- and the cop-level `count(1)`
+    // consumes no stored column. No stored column is ever decoded, so the
+    // set is empty; the count itself is answered from row cardinality.
     let (rows, decoded) = rows_and_decoded(&mut session, "SELECT COUNT(*) FROM t");
     assert_eq!(rows, vec![vec!["3"]]);
-    assert_eq!(decoded, BTreeSet::from([A, B, C, D]));
+    assert_eq!(decoded, BTreeSet::new());
 }
