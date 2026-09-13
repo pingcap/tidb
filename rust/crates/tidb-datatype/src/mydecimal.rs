@@ -1704,20 +1704,30 @@ impl MyDecimal {
         if used_words > MAX_WORD_BUF_LEN {
             return None;
         }
+        // A fraction word holds nine digits; the digits past `digits_frac`
+        // are zero padding. Trim them off the LAST word with one 32-bit
+        // division instead of dividing the assembled i128 (a 128-bit
+        // division per cell in an aggregate's hot loop): the prefix words
+        // contribute a multiple of the trimmed power, so the two agree.
+        let fraction_padding =
+            fraction_words * DIGITS_PER_WORD as usize - usize::try_from(digits_frac).ok()?;
         let mut magnitude = 0_i128;
-        for chunk in bytes[4..4 + used_words * 4].as_chunks::<4>().0 {
+        let words = bytes[4..4 + used_words * 4].as_chunks::<4>().0;
+        for (index, chunk) in words.iter().enumerate() {
             let word = i32::from_ne_bytes(*chunk);
             if !(0..WORD_BASE as i32).contains(&word) {
                 return None;
             }
-            magnitude = magnitude
-                .checked_mul(i128::from(WORD_BASE))?
-                .checked_add(i128::from(word))?;
-        }
-        let fraction_padding =
-            fraction_words * DIGITS_PER_WORD as usize - usize::try_from(digits_frac).ok()?;
-        if fraction_padding > 0 {
-            magnitude /= i128::from(POWERS10[fraction_padding]);
+            if fraction_padding > 0 && index + 1 == used_words {
+                let kept = POWERS10[DIGITS_PER_WORD as usize - fraction_padding];
+                magnitude = magnitude
+                    .checked_mul(i128::from(kept))?
+                    .checked_add(i128::from(word / POWERS10[fraction_padding]))?;
+            } else {
+                magnitude = magnitude
+                    .checked_mul(i128::from(WORD_BASE))?
+                    .checked_add(i128::from(word))?;
+            }
         }
         if bytes[3] == 1 {
             magnitude = magnitude.checked_neg()?;
@@ -1837,11 +1847,18 @@ mod tests {
         for _ in 0..2000 {
             let bits = next();
             let magnitude = i128::from_ne_bytes(
-                [next().to_ne_bytes(), next().to_ne_bytes()].concat().try_into().unwrap(),
+                [next().to_ne_bytes(), next().to_ne_bytes()]
+                    .concat()
+                    .try_into()
+                    .unwrap(),
             )
             .unsigned_abs()
                 >> (bits % 120);
-            let value = if bits & 1 == 0 { magnitude as i128 } else { -(magnitude as i128) };
+            let value = if bits & 1 == 0 {
+                magnitude as i128
+            } else {
+                -(magnitude as i128)
+            };
             let storage_scale = (bits >> 8) as u32 % 31;
             let result_frac = ((bits >> 16) as u32 % 31).min(storage_scale);
             cases.push((value, storage_scale, result_frac));
@@ -2153,7 +2170,11 @@ mod tests {
             ("0", 0_i128, 0_u32),
             ("0.01", 1, 2),
             ("-12.3400", -123_400, 4),
+            ("1.5", 15, 1),
+            ("0.123456", 123_456, 6),
+            ("-7.12345678", -712_345_678, 8),
             ("123456789.987654321", 123_456_789_987_654_321, 9),
+            ("42.1234567891", 421_234_567_891, 10),
             (
                 "12345678901234567890.123456789012345678",
                 12_345_678_901_234_567_890_123_456_789_012_345_678,
