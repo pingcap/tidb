@@ -11547,3 +11547,9 @@ risks without claiming repository-wide parity.
   "append_bytes on a fixed-length column" (the aggregate's variable-length
   JSON result is appended into a fixed-length column). Sibling chunk-crate
   region; NOT FIXED, no pin.
+- 2026-09-08 (grouped JSON aggregates pin, GAP CLOSED): the chunk
+ fixed-length column panic is fixed (sibling landing); grouped
+ JSON_ARRAYAGG and JSON_OBJECTAGG work — pinned via JSON_LENGTH /
+ JSON_CONTAINS projections in
+ `crates/tidb-session/tests/grouped_json_agg_source.rs`. The earlier
+ recorded datapoint is retired.
