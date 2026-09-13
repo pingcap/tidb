@@ -471,8 +471,10 @@ fn replace_top_level_context(
     encoded_request: &[u8],
     context: &KvrpcContext,
 ) -> Result<Vec<u8>, DirectUnaryClientError> {
+    // One pass records where the existing context fields lie; the body is
+    // then copied once around them, straight into the result.
     let mut position = 0;
-    let mut body_without_context = Vec::with_capacity(encoded_request.len());
+    let mut context_spans: Vec<(usize, usize)> = Vec::new();
     while position < encoded_request.len() {
         let field_start = position;
         let tag = read_varint(encoded_request, &mut position)?;
@@ -485,21 +487,21 @@ fn replace_top_level_context(
             ));
         }
         skip_field_value(encoded_request, &mut position, field_number, wire_type)?;
-        if field_number != 1 {
-            body_without_context.extend_from_slice(&encoded_request[field_start..position]);
+        if field_number == 1 {
+            context_spans.push((field_start, position));
         }
     }
 
-    let encoded_context = context.encode_to_vec();
-    let mut result = Vec::with_capacity(
-        1 + varint_len(encoded_context.len() as u64)
-            + encoded_context.len()
-            + body_without_context.len(),
-    );
-    write_varint(10, &mut result);
-    write_varint(encoded_context.len() as u64, &mut result);
-    result.extend_from_slice(&encoded_context);
-    result.extend_from_slice(&body_without_context);
+    let removed: usize = context_spans.iter().map(|(start, end)| end - start).sum();
+    let context_len = prost::encoding::message::encoded_len(1, context);
+    let mut result = Vec::with_capacity(context_len + encoded_request.len() - removed);
+    prost::encoding::message::encode(1, context, &mut result);
+    let mut copied = 0;
+    for (start, end) in context_spans {
+        result.extend_from_slice(&encoded_request[copied..start]);
+        copied = end;
+    }
+    result.extend_from_slice(&encoded_request[copied..]);
     Ok(result)
 }
 
@@ -582,21 +584,13 @@ fn advance(
     Ok(())
 }
 
+#[cfg(test)]
 fn write_varint(mut value: u64, destination: &mut Vec<u8>) {
     while value >= 0x80 {
         destination.push((value as u8) | 0x80);
         value >>= 7;
     }
     destination.push(value as u8);
-}
-
-fn varint_len(mut value: u64) -> usize {
-    let mut length = 1;
-    while value >= 0x80 {
-        length += 1;
-        value >>= 7;
-    }
-    length
 }
 
 fn invalid_wire(message: &str) -> DirectUnaryClientError {

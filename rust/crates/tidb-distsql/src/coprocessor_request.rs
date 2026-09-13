@@ -20,8 +20,8 @@
 //! the raw DAG/analyze/checksum payload and ordered key-range bytes, while
 //! leaving Context, batch tasks, region routing, and RPC ownership explicit.
 
-use prost::Message;
-use tidb_proto::{CoprocessorKeyRange, CoprocessorRequest, KvrpcContext};
+use prost::encoding::{self, WireType};
+use tidb_proto::KvrpcContext;
 
 use crate::{KvRequestMetadata, RequestKeyRange};
 
@@ -121,33 +121,153 @@ impl CoprocessorRequestEnvelope {
     }
 
     /// Serializes the exact protobuf field numbers owned by this projection.
+    ///
+    /// The bytes are those `prost` derives for `coprocessor.Request`
+    /// (fields in tag order, default scalars omitted), written straight from
+    /// the borrowed payload and ranges: Go marshals the request once with
+    /// `Data` shared and `ToPBRanges` aliasing the task's ranges, so a page
+    /// costs one copy of its bytes, not one `Vec` per range boundary.
     #[must_use]
     pub fn encode_to_vec(&self) -> Vec<u8> {
-        CoprocessorRequest {
-            context: self.context.clone(),
-            tp: self.tp,
-            data: self.data.clone(),
-            ranges: self
-                .ranges
-                .iter()
-                .map(|range| CoprocessorKeyRange {
-                    start: range.start_key.to_vec(),
-                    end: range.end_key.to_vec(),
-                })
-                .collect(),
-            is_cache_enabled: self.is_cache_enabled,
-            cache_if_match_version: self.cache_if_match_version,
-            start_ts: self.start_ts,
-            schema_ver: self.schema_ver,
-            is_trace_enabled: self.is_trace_enabled,
-            paging_size: self.paging_size,
-            connection_id: self.connection_id,
-            connection_alias: self.connection_alias.clone(),
-            max_keys_read: self.max_keys_read,
-            paging_size_bytes: self.paging_size_bytes,
-            allow_batch_task_data_merge: self.allow_batch_task_data_merge,
-            execute_batch_tasks_serially: self.execute_batch_tasks_serially,
-        }
-        .encode_to_vec()
+        let mut buf = Vec::with_capacity(self.encoded_len());
+        self.encode_raw(&mut buf);
+        buf
     }
+
+    fn encode_raw(&self, buf: &mut Vec<u8>) {
+        if let Some(context) = &self.context {
+            encoding::message::encode(1, context, buf);
+        }
+        if self.tp != 0 {
+            encoding::int64::encode(2, &self.tp, buf);
+        }
+        if !self.data.is_empty() {
+            encode_bytes_field(3, &self.data, buf);
+        }
+        for range in &self.ranges {
+            encoding::encode_key(4, WireType::LengthDelimited, buf);
+            encoding::encode_varint(key_range_encoded_len(range) as u64, buf);
+            let (start, end) = (range.start_key.as_slice(), range.end_key.as_slice());
+            if !start.is_empty() {
+                encode_bytes_field(1, start, buf);
+            }
+            if !end.is_empty() {
+                encode_bytes_field(2, end, buf);
+            }
+        }
+        if self.is_cache_enabled {
+            encoding::bool::encode(5, &self.is_cache_enabled, buf);
+        }
+        if self.cache_if_match_version != 0 {
+            encoding::uint64::encode(6, &self.cache_if_match_version, buf);
+        }
+        if self.start_ts != 0 {
+            encoding::uint64::encode(7, &self.start_ts, buf);
+        }
+        if self.schema_ver != 0 {
+            encoding::int64::encode(8, &self.schema_ver, buf);
+        }
+        if self.is_trace_enabled {
+            encoding::bool::encode(9, &self.is_trace_enabled, buf);
+        }
+        if self.paging_size != 0 {
+            encoding::uint64::encode(10, &self.paging_size, buf);
+        }
+        if self.connection_id != 0 {
+            encoding::uint64::encode(12, &self.connection_id, buf);
+        }
+        if !self.connection_alias.is_empty() {
+            encoding::string::encode(13, &self.connection_alias, buf);
+        }
+        if self.max_keys_read != 0 {
+            encoding::uint64::encode(16, &self.max_keys_read, buf);
+        }
+        if self.paging_size_bytes != 0 {
+            encoding::uint64::encode(17, &self.paging_size_bytes, buf);
+        }
+        if self.allow_batch_task_data_merge {
+            encoding::bool::encode(18, &self.allow_batch_task_data_merge, buf);
+        }
+        if self.execute_batch_tasks_serially {
+            encoding::bool::encode(19, &self.execute_batch_tasks_serially, buf);
+        }
+    }
+
+    fn encoded_len(&self) -> usize {
+        let mut len = 0;
+        if let Some(context) = &self.context {
+            len += encoding::message::encoded_len(1, context);
+        }
+        if self.tp != 0 {
+            len += encoding::int64::encoded_len(2, &self.tp);
+        }
+        if !self.data.is_empty() {
+            len += bytes_field_len(3, self.data.len());
+        }
+        for range in &self.ranges {
+            let inner = key_range_encoded_len(range);
+            len += encoding::key_len(4) + encoding::encoded_len_varint(inner as u64) + inner;
+        }
+        if self.is_cache_enabled {
+            len += encoding::bool::encoded_len(5, &self.is_cache_enabled);
+        }
+        if self.cache_if_match_version != 0 {
+            len += encoding::uint64::encoded_len(6, &self.cache_if_match_version);
+        }
+        if self.start_ts != 0 {
+            len += encoding::uint64::encoded_len(7, &self.start_ts);
+        }
+        if self.schema_ver != 0 {
+            len += encoding::int64::encoded_len(8, &self.schema_ver);
+        }
+        if self.is_trace_enabled {
+            len += encoding::bool::encoded_len(9, &self.is_trace_enabled);
+        }
+        if self.paging_size != 0 {
+            len += encoding::uint64::encoded_len(10, &self.paging_size);
+        }
+        if self.connection_id != 0 {
+            len += encoding::uint64::encoded_len(12, &self.connection_id);
+        }
+        if !self.connection_alias.is_empty() {
+            len += encoding::string::encoded_len(13, &self.connection_alias);
+        }
+        if self.max_keys_read != 0 {
+            len += encoding::uint64::encoded_len(16, &self.max_keys_read);
+        }
+        if self.paging_size_bytes != 0 {
+            len += encoding::uint64::encoded_len(17, &self.paging_size_bytes);
+        }
+        if self.allow_batch_task_data_merge {
+            len += encoding::bool::encoded_len(18, &self.allow_batch_task_data_merge);
+        }
+        if self.execute_batch_tasks_serially {
+            len += encoding::bool::encoded_len(19, &self.execute_batch_tasks_serially);
+        }
+        len
+    }
+}
+
+/// The body length of one `coprocessor.KeyRange` (`start` 1, `end` 2, an
+/// empty boundary omitted as `prost` omits a default `bytes` field).
+fn key_range_encoded_len(range: &RequestKeyRange) -> usize {
+    let (start, end) = (range.start_key.as_slice(), range.end_key.as_slice());
+    let mut len = 0;
+    if !start.is_empty() {
+        len += bytes_field_len(1, start.len());
+    }
+    if !end.is_empty() {
+        len += bytes_field_len(2, end.len());
+    }
+    len
+}
+
+fn bytes_field_len(tag: u32, len: usize) -> usize {
+    encoding::key_len(tag) + encoding::encoded_len_varint(len as u64) + len
+}
+
+fn encode_bytes_field(tag: u32, bytes: &[u8], buf: &mut Vec<u8>) {
+    encoding::encode_key(tag, WireType::LengthDelimited, buf);
+    encoding::encode_varint(bytes.len() as u64, buf);
+    buf.extend_from_slice(bytes);
 }

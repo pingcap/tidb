@@ -86,6 +86,59 @@ fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
 }
 
 #[test]
+fn coprocessor_request_encoding_matches_the_derived_message_for_every_range_shape() {
+    // The envelope writes its bytes without materialising a
+    // `coprocessor.Request`; an unbounded range's empty boundary and a
+    // populated context must encode exactly as `prost` derives them.
+    let mut builder = KvRequestBuilder::new();
+    builder
+        .set_request_type(RequestType::Dag)
+        .set_start_ts(7)
+        .set_data(vec![9; 40]);
+    let metadata = builder.build().expect("metadata");
+    let ranges = vec![
+        RequestKeyRange {
+            start_key: vec![1, 2].into(),
+            end_key: vec![].into(),
+        },
+        RequestKeyRange {
+            start_key: vec![].into(),
+            end_key: vec![3].into(),
+        },
+        RequestKeyRange {
+            start_key: vec![0x80; 300].into(),
+            end_key: vec![0x81; 300].into(),
+        },
+    ];
+    let envelope = CoprocessorRequestEnvelope::from_metadata(&metadata, ranges.clone())
+        .with_context(KvrpcContext {
+            region_id: 300,
+            ..KvrpcContext::default()
+        })
+        .with_paging_size(128);
+    let derived = CoprocessorRequest {
+        context: Some(KvrpcContext {
+            region_id: 300,
+            ..KvrpcContext::default()
+        }),
+        tp: RequestType::Dag.raw(),
+        data: vec![9; 40],
+        ranges: ranges
+            .iter()
+            .map(|range| tidb_proto::CoprocessorKeyRange {
+                start: range.start_key.to_vec(),
+                end: range.end_key.to_vec(),
+            })
+            .collect(),
+        start_ts: 7,
+        paging_size: 128,
+        ..CoprocessorRequest::default()
+    }
+    .encode_to_vec();
+    assert_eq!(envelope.encode_to_vec(), derived);
+}
+
+#[test]
 fn transport_request_rejects_unbound_serialization_and_allows_bound_snapshot() {
     let mut builder = KvRequestBuilder::new();
     builder

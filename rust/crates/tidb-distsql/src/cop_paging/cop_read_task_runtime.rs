@@ -913,8 +913,12 @@ impl CopReadTaskRuntime {
         ranges: Vec<RequestKeyRange>,
         paging_size: u64,
     ) -> Result<u64, CopReadTaskError> {
-        let base_task = &self.tasks[logical_task_index].task;
+        // The attempt carries its own ranges; the base task's are not copied
+        // along with the rest of the envelope.
+        let base_task = &mut self.tasks[logical_task_index].task;
+        let base_ranges = std::mem::take(&mut base_task.ranges);
         let mut task = base_task.clone();
+        base_task.ranges = base_ranges;
         task.ranges.clone_from(&ranges);
         task.paging_size = paging_size;
         let page_index = allocate_paging_task_index(
