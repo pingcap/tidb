@@ -11577,3 +11577,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (TRUNCATE FK pin): TRUNCATE on an FK-referenced parent refuses
  with MySQL's 1701 text, data untouched; the child truncates freely.
  Pinned in `crates/tidb-session/tests/truncate_fk_parent_source.rs`.
+- 2026-09-08 (chained cascade pin): a two-level FK cascade empties child
+ and grandchild with the grandparent. Pinned in
+ `crates/tidb-session/tests/chained_cascade_source.rs`.
