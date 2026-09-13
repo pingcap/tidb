@@ -260,13 +260,62 @@ impl std::hash::Hash for PipelineMapKey {
 }
 
 impl PipelineMapKey {
+    fn as_ref(&self) -> PipelineMapKeyRef<'_> {
+        match self {
+            PipelineMapKey::Int(value) => PipelineMapKeyRef::Int(*value),
+            PipelineMapKey::Bytes(bytes) => PipelineMapKeyRef::Bytes(bytes),
+        }
+    }
+}
+
+/// A row's group key as the fold builds it, before the map holds it: Go's
+/// `updatePartialResult` reuses the row's `groupKey[i][:0]` buffer and copies
+/// the bytes into the map (`string(groupKey[i])`) only when it opens a group,
+/// so a row of an existing group costs no allocation. Hashes and compares
+/// exactly as the owned [`PipelineMapKey`] it looks up.
+#[derive(Clone, Copy)]
+enum PipelineMapKeyRef<'a> {
+    Int(Option<i64>),
+    Bytes(&'a [u8]),
+}
+
+impl std::hash::Hash for PipelineMapKeyRef<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            PipelineMapKeyRef::Int(Some(value)) => state.write_u64(*value as u64),
+            PipelineMapKeyRef::Int(None) => state.write_u8(NIL_FLAG),
+            PipelineMapKeyRef::Bytes(bytes) => state.write(bytes),
+        }
+    }
+}
+
+impl indexmap::Equivalent<PipelineMapKey> for PipelineMapKeyRef<'_> {
+    fn equivalent(&self, key: &PipelineMapKey) -> bool {
+        match (self, key) {
+            (PipelineMapKeyRef::Int(value), PipelineMapKey::Int(other)) => value == other,
+            (PipelineMapKeyRef::Bytes(bytes), PipelineMapKey::Bytes(other)) => {
+                *bytes == other.as_slice()
+            }
+            _ => false,
+        }
+    }
+}
+
+impl PipelineMapKeyRef<'_> {
+    fn to_owned(self) -> PipelineMapKey {
+        match self {
+            PipelineMapKeyRef::Int(value) => PipelineMapKey::Int(value),
+            PipelineMapKeyRef::Bytes(bytes) => PipelineMapKey::Bytes(bytes.to_vec()),
+        }
+    }
+
     /// The byte length `new_group_bytes` was charging under the encoded
     /// representation, kept for tracker continuity.
-    fn charge_len(&self) -> usize {
+    fn charge_len(self) -> usize {
         match self {
             // Go preallocates ten bytes per group item in `GetGroupKey`.
-            PipelineMapKey::Int(_) => 10,
-            PipelineMapKey::Bytes(bytes) => bytes.len(),
+            PipelineMapKeyRef::Int(_) => 10,
+            PipelineMapKeyRef::Bytes(bytes) => bytes.len(),
         }
     }
 }
@@ -914,7 +963,7 @@ impl ParallelSpillPartitions {
     }
 
     fn bucket(key: &PipelineMapKey) -> usize {
-        map_key_bucket(key, SPILLED_PARTITION_NUM)
+        map_key_bucket(key.as_ref(), SPILLED_PARTITION_NUM)
     }
 
     fn flush(&mut self, partition: usize) -> Result<(), ExecError> {
@@ -990,9 +1039,9 @@ fn key_bucket(key: &[u8], bucket_count: usize) -> usize {
     crate::shuffle::murmur3_sum32(key) as usize % bucket_count
 }
 
-fn map_key_bucket(key: &PipelineMapKey, bucket_count: usize) -> usize {
+fn map_key_bucket(key: PipelineMapKeyRef<'_>, bucket_count: usize) -> usize {
     match key {
-        PipelineMapKey::Int(value) => {
+        PipelineMapKeyRef::Int(value) => {
             // Go hashes the group key bytes it already holds; the integer
             // lane re-encodes them on the stack (a NULL flag, or the varint
             // flag and at most ten varint bytes) rather than in a heap
@@ -1001,7 +1050,7 @@ fn map_key_bucket(key: &PipelineMapKey, bucket_count: usize) -> usize {
             let len = match value {
                 Some(value) => {
                     encoded[0] = VARINT_FLAG;
-                    1 + encode_varint_into(&mut encoded[1..], *value)
+                    1 + encode_varint_into(&mut encoded[1..], value)
                 }
                 None => {
                     encoded[0] = NIL_FLAG;
@@ -1010,7 +1059,7 @@ fn map_key_bucket(key: &PipelineMapKey, bucket_count: usize) -> usize {
             };
             key_bucket(&encoded[..len], bucket_count)
         }
-        PipelineMapKey::Bytes(bytes) => key_bucket(bytes, bucket_count),
+        PipelineMapKeyRef::Bytes(bytes) => key_bucket(bytes, bucket_count),
     }
 }
 
@@ -1665,9 +1714,12 @@ fn fold_chunk<C: Columns>(
     let mut new_group_bytes_total = 0i64;
     let mut state_memory_delta = 0i64;
     let timezone = ctx.time_zone();
+    // Go `GetGroupKey` reuses one buffer per row across chunks, sized to
+    // ten bytes per group item; one scratch buffer serves every row here.
+    let mut key_scratch: Vec<u8> = Vec::with_capacity(10 * group_by.len());
     for row_index in 0..chunk.num_rows() {
         let row = chunk.get_row(row_index);
-        let (key, key_len): (PipelineMapKey, usize) = match integer_columns {
+        let key = match integer_columns {
             Some([index]) => {
                 let index = *index;
                 let value = if row.is_null(index) {
@@ -1675,39 +1727,41 @@ fn fold_chunk<C: Columns>(
                 } else {
                     Some(row.get_int64(index))
                 };
-                let key = PipelineMapKey::Int(value);
-                let len = key.charge_len();
-                (key, len)
+                PipelineMapKeyRef::Int(value)
             }
             _ => {
-                let mut key = Vec::new();
+                key_scratch.clear();
                 match integer_columns {
                     Some(columns) => {
                         for &index in columns {
-                            append_integer_group_key_part(row, index, &mut key);
+                            append_integer_group_key_part(row, index, &mut key_scratch);
                         }
                     }
                     None => {
                         for expr in group_by {
                             let datum = expr.eval(ctx, row)?;
-                            append_hash_agg_group_key_part(&timezone, expr, &datum, &mut key)?;
+                            append_hash_agg_group_key_part(
+                                &timezone,
+                                expr,
+                                &datum,
+                                &mut key_scratch,
+                            )?;
                         }
                     }
                 }
-                let len = key.len();
-                (PipelineMapKey::Bytes(key), len)
+                PipelineMapKeyRef::Bytes(&key_scratch)
             }
         };
-        let bucket = map_key_bucket(&key, bucket_count);
-        let entry = match maps[bucket].entry(key) {
-            Entry::Occupied(occupied) => occupied.into_mut(),
-            Entry::Vacant(vacant) => {
-                let (group, bytes) = PipelineGroup::new(agg_funcs, collations, key_len);
+        let map = &mut maps[map_key_bucket(key, bucket_count)];
+        let index = match map.get_index_of(&key) {
+            Some(index) => index,
+            None => {
+                let (group, bytes) = PipelineGroup::new(agg_funcs, collations, key.charge_len());
                 new_group_bytes_total += bytes;
-                vacant.insert(group)
+                map.insert_full(key.to_owned(), group).0
             }
         };
-        state_memory_delta += update_group(entry, agg_funcs, ctx, row)?;
+        state_memory_delta += update_group(&mut map[index], agg_funcs, ctx, row)?;
     }
     if new_group_bytes_total > 0 {
         tracker.consume(new_group_bytes_total);
