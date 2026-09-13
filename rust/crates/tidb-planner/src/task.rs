@@ -406,11 +406,11 @@ impl CopTask {
     /// Go `CopTask.handleRootTaskConds` (`physicalop/task.go:47`): the
     /// conditions that could not push down (virtual columns) become a
     /// `PhysicalSelection` at root, `FromDataSource`, its stats scaled by
-    /// the conditions' selectivity. `cardinality.Selectivity` reads the
-    /// table's histograms (`TblColHists`), which this port's tasks do not
-    /// carry — the scaling therefore takes Go's OWN error fallback,
-    /// `cost.SelectionFactor` (0.8), the value Go uses whenever the
-    /// histogram read fails. The skew ratio is Go's default 1.0.
+    /// `cardinality.Selectivity(ctx, t.TblColHists, t.RootTaskConds, nil)`.
+    /// The child plan's profile carries that HistColl, so the same call runs
+    /// here through the Selectivity port; Go's own error fallback
+    /// (`cost.SelectionFactor`) applies only when the estimate cannot be
+    /// computed. The skew ratio is Go's default 1.0.
     fn handle_root_task_conds(
         conds: Vec<Expression>,
         mut root: RootTask,
@@ -422,7 +422,11 @@ impl CopTask {
         let Some(plan) = root.take_plan() else {
             return root;
         };
-        let selectivity = crate::cost_factors::SELECTION_FACTOR;
+        let selectivity = plan
+            .stats_info()
+            .and_then(|stats| crate::logical::rewrite::analyzed_filter_selectivity(stats, &conds))
+            .filter(|value| *value > 0.0)
+            .unwrap_or(crate::cost_factors::SELECTION_FACTOR);
         let mut base = crate::physical::BasePhysicalPlan::new(
             allocator,
             "Selection",

@@ -340,6 +340,21 @@ pub(crate) fn analyzed_filter_selectivity(
                 recognized = true;
                 continue;
             }
+            // Go's leftover classification (`selectivity.go:421-433`): a
+            // negated string match (NOT LIKE / NOT REGEXP) is covered by
+            // `GetNegateStrMatchDefaultSelectivity()` = 1 - the string-match
+            // default (0.1), NOT the generic 0.8 factor; `c not like '%a%'`
+            // on the unanalyzed fixture prints 9000.00 in Go.
+            ("not", [inner @ Expression::ScalarFunction(negated)]) => {
+                let lowered = negated.func_name.lowercase();
+                if lowered == "like" || lowered == "regexp" {
+                    selectivity_total *= 1.0 - DEFAULT_STRING_MATCH_SELECTIVITY;
+                } else {
+                    selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
+                }
+                recognized = true;
+                continue;
+            }
             _ => {
                 selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
                 continue;
