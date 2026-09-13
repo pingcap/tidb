@@ -3115,15 +3115,27 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let mut matched_build_rows = Vec::new();
         let mut extra_outputs = Vec::new();
         let mut candidates: Vec<RowPtr> = Vec::new();
-        for probe_index in 0..input.num_rows() {
+        // An exact-integer key is looked up for the whole chunk before the
+        // row loop, so the table's cache misses overlap across rows.
+        let mut exact_found: Vec<Option<usize>> = vec![None; input.num_rows()];
+        if let Some(key) = exact_int {
+            let keys: Vec<Option<i128>> = (0..input.num_rows())
+                .map(|probe_index| {
+                    exact_int_key_chunk(
+                        input.get_row(probe_index),
+                        offset(key),
+                        &probe_types[offset(key)],
+                    )
+                })
+                .collect();
+            let mut home_slots = Vec::new();
+            table.probe_exact_int_many(&keys, &mut home_slots, &mut exact_found);
+        }
+        for (probe_index, &found) in exact_found.iter().enumerate() {
             let probe_row = input.get_row(probe_index);
             candidates.clear();
-            if let Some(key) = exact_int {
-                if let Some(key) =
-                    exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
-                {
-                    candidates.extend(table.probe_exact_int(key));
-                }
+            if exact_int.is_some() {
+                candidates.extend(table.exact_int_chain(found));
             } else if let Some(key) =
                 row_hash_chunk(keys, probe_row, probe_types, offset).map_err(key_error)?
             {
@@ -3314,12 +3326,19 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         // A preserved build side (Go `leftOuterJoinProbe` with the left side
         // built) takes the same bulk path and records every emitted match
         // for the post-probe scan.
+        // Every key of the chunk is looked up at once, so the table's cache
+        // misses overlap across rows instead of stalling one row at a time.
+        let mut exact_found: Vec<Option<usize>> = Vec::new();
+        {
+            let keys: Vec<Option<i128>> = (0..input.num_rows()).map(exact_key_at).collect();
+            let mut home_slots = Vec::new();
+            table.probe_exact_int_many(&keys, &mut home_slots, &mut exact_found);
+        }
         if input.num_rows() > 0 {
             let mut batch_ptrs = Vec::with_capacity(input.num_rows());
             let mut all_matched = true;
-            for probe_index in 0..input.num_rows() {
-                let exact_key = exact_key_at(probe_index);
-                let Some(ptr) = exact_key.and_then(|key| table.probe_exact_int_single(key)) else {
+            for &found in &exact_found {
+                let Some(ptr) = found.and_then(|index| table.exact_int_single_at(index)) else {
                     all_matched = false;
                     break;
                 };
@@ -3435,10 +3454,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 });
             }
         }
-        for probe_index in 0..input.num_rows() {
+        for (probe_index, &found) in exact_found.iter().enumerate() {
             let probe_row = input.get_row(probe_index);
-            let exact_key = exact_key_at(probe_index);
-            let candidates = exact_key.map_or_else(Chain::empty, |key| table.probe_exact_int(key));
+            let candidates = table.exact_int_chain(found);
             debug_assert!(candidates.single().is_some() || candidates.is_empty());
             // Semi/anti emit the preserved LEFT row once per match decision;
             // with the preserved side built they only collect matches for the
