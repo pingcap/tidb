@@ -11615,3 +11615,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (multi-table UPDATE/DELETE pin): joined multi-table UPDATE and
  DELETE t1 FROM t1, t2 both key off the join condition. Pinned in
  `crates/tidb-session/tests/multi_table_dml_join_source.rs`.
+- 2026-09-08 (arrow operators pin): `->` keeps the JSON quoting, `->>`
+ unquotes, and both filter in WHERE. Pinned in
+ `crates/tidb-session/tests/json_arrow_operators_source.rs`.
