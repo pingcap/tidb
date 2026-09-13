@@ -11580,3 +11580,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (chained cascade pin): a two-level FK cascade empties child
  and grandchild with the grandparent. Pinned in
  `crates/tidb-session/tests/chained_cascade_source.rs`.
+- 2026-09-08 (NULL FK pin): a NULL FK column is exempt from the referential
+ check while a concrete unmatched value refuses. Pinned in
+ `crates/tidb-session/tests/null_fk_exempt_source.rs`.
