@@ -1156,6 +1156,13 @@ impl Session {
                     .with_enable_check_constraint(self.enable_check_constraint())
                     .with_sysdate_is_now(sysdate_is_now)
                     .with_replica_read(replica_read)
+                    .with_dist_sql_scan_concurrency(
+                        self.vars
+                            .get_system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)
+                            .ok()
+                            .and_then(|value| value.parse::<u64>().ok())
+                            .unwrap_or(tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64),
+                    )
                     .with_lazy_clock(snapshot.timestamp, zone);
             if let Some(latest_index_schema) = latest_index_schema {
                 ctx = ctx.with_latest_index_schema(latest_index_schema);
@@ -1527,6 +1534,25 @@ mod tests {
             executing_memory.stmt_tracker(),
             retained_memory.stmt_tracker(),
         ));
+    }
+
+    /// Go `SetFromSessionVars`: `Request.Concurrency` is the session's
+    /// `tidb_distsql_scan_concurrency`, so a statement context built after
+    /// `SET` carries the new value.
+    #[test]
+    fn distsql_scan_concurrency_reaches_the_statement_context() {
+        let mut session = Session::new();
+        assert_eq!(
+            session.statement_context(false).dist_sql_scan_concurrency(),
+            15
+        );
+        session
+            .run("SET tidb_distsql_scan_concurrency = 3")
+            .unwrap();
+        assert_eq!(
+            session.statement_context(false).dist_sql_scan_concurrency(),
+            3
+        );
     }
 
     #[test]

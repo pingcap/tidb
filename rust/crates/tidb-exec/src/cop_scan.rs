@@ -559,6 +559,7 @@ where
             replica_read: request.statement.replica_read,
             priority: request.statement.priority,
             not_fill_cache: request.statement.not_fill_cache,
+            dist_sql_scan_concurrency: request.statement.dist_sql_scan_concurrency,
             query_cop_store_limiter: request.statement.query_cop_store_limiter.clone(),
             warnings: request.statement.warnings.clone(),
             cop_lite_worker: Arc::clone(&request.statement.cop_lite_worker),
@@ -619,6 +620,8 @@ struct RemoteScanPlan {
     priority: tidb_distsql::Priority,
     /// Go `StmtCtx.NotFillCache` for this request.
     not_fill_cache: bool,
+    /// Go `SessionVars.DistSQLScanConcurrency()` for this request.
+    dist_sql_scan_concurrency: u64,
     /// Query-scoped per-store limiter shared by all region tasks for this
     /// statement.
     query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
@@ -663,10 +666,11 @@ where
     //
     // The remaining `SetFromSessionVars` fields (request source, task id,
     // max_execution_time, tidb_kv_read_timeout, the runaway checker) are
-    // session variables no `StmtContext` carries yet. Resource group,
-    // priority, and `NotFillCache` are statement-scoped in Go and are
-    // therefore copied from this request rather than the stock context.
+    // session variables no `StmtContext` carries yet. The scan concurrency,
+    // resource group, priority, and `NotFillCache` ride the statement and
+    // are therefore copied from this request rather than the stock context.
     let mut context = DistSqlContext::new();
+    context.request.dist_sql_concurrency = plan.dist_sql_scan_concurrency;
     context.request.resource_group_name = plan.resource_group_name;
     context.request.replica_read = plan.replica_read;
     context.request.priority = plan.priority;

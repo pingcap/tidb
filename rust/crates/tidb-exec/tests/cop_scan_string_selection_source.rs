@@ -531,6 +531,18 @@ fn the_request_carries_the_statement_concurrency_and_resource_group() {
     assert_eq!(observation.resource_group_name, "analytics");
 }
 
+/// Go `SetFromSessionVars` takes the request concurrency from the session's
+/// `tidb_distsql_scan_concurrency`, not from a process-wide default: a
+/// session that set it to 3 keeps at most 3 region tasks in flight.
+#[test]
+fn the_request_carries_the_sessions_distsql_scan_concurrency() {
+    let (catalog, region) = fixture("utf8mb4_bin");
+    let context = StmtContext::for_query().with_dist_sql_scan_concurrency(3);
+    run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
+        .expect("the scan is served by the coprocessor");
+    assert_eq!(sole_observation(&region).concurrency, 3);
+}
+
 /// Go `builder_utils.go:73-76`: `dagReq.DivPrecisionIncrement` is sent from
 /// the statement's `div_precision_increment` whenever it differs from the
 /// default, and omitted from the wire at the default.

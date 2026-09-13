@@ -23,6 +23,10 @@ use tidb_distsql::{ReplicaReadType, WarningCollector, WarningLevel};
 use tidb_expr::{Columns, CurrentTso, ErrorLevel, MysqlRng};
 
 const MAX_WARNING_COUNT: usize = u16::MAX as usize;
+/// Go `vardef.DefDistSQLScanConcurrency`, the value a context built without
+/// a session behind it sends.
+const DEFAULT_DIST_SQL_SCAN_CONCURRENCY: u64 =
+    tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64;
 
 use crate::error_context::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};
@@ -473,6 +477,10 @@ pub struct StmtContextData {
     /// `ResetContextOfStmt` sets as `!SelectStmtOpts.SQLCache` and
     /// `SetFromSessionVars` copies to every KV request.
     not_fill_cache: bool,
+    /// Go `SessionVars.DistSQLScanConcurrency()`: the session's
+    /// `tidb_distsql_scan_concurrency`, which `SetFromSessionVars` copies to
+    /// every coprocessor request as its concurrency and upper bound.
+    dist_sql_scan_concurrency: u64,
     /// Go `SessionVars.IsolationReadEngines`, in the session variable's
     /// canonical comma-separated spelling.
     isolation_read_engines: String,
@@ -920,6 +928,7 @@ impl StmtContext {
             replica_read: ReplicaReadType::Leader,
             statement_priority: tidb_ast::StatementPriority::None,
             not_fill_cache: false,
+            dist_sql_scan_concurrency: DEFAULT_DIST_SQL_SCAN_CONCURRENCY,
             isolation_read_engines: session.isolation_read_engines,
             connection_charset: session.connection_charset,
             connection_collation: session.connection_collation,
@@ -2738,6 +2747,19 @@ impl StmtContext {
     pub fn with_not_fill_cache(mut self, not_fill_cache: bool) -> Self {
         self.not_fill_cache = not_fill_cache;
         self
+    }
+
+    /// Sets Go `SessionVars.DistSQLScanConcurrency()` for this statement.
+    #[must_use]
+    pub fn with_dist_sql_scan_concurrency(mut self, concurrency: u64) -> Self {
+        self.dist_sql_scan_concurrency = concurrency;
+        self
+    }
+
+    /// Go `SessionVars.DistSQLScanConcurrency()` for this statement.
+    #[must_use]
+    pub fn dist_sql_scan_concurrency(&self) -> u64 {
+        self.dist_sql_scan_concurrency
     }
 
     /// Go `StmtCtx.Priority` for this statement.

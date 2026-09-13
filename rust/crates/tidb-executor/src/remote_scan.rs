@@ -510,6 +510,9 @@ pub struct PushdownStatementContext {
     pub priority: tidb_distsql::Priority,
     /// Go `StmtCtx.NotFillCache`, set by a SELECT's `SQL_NO_CACHE`.
     pub not_fill_cache: bool,
+    /// Go `SessionVars.DistSQLScanConcurrency()`, the request concurrency
+    /// `SetFromSessionVars` gives every DistSQL request.
+    pub dist_sql_scan_concurrency: u64,
     /// Go's query-scoped per-store coprocessor limiter, shared by every
     /// remote scan in this statement.
     pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
@@ -530,6 +533,7 @@ impl Default for PushdownStatementContext {
             replica_read: tidb_distsql::ReplicaReadType::Leader,
             priority: tidb_distsql::Priority::NoPriority,
             not_fill_cache: false,
+            dist_sql_scan_concurrency: tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64,
             query_cop_store_limiter: None,
             // Go `vardef.DefDivPrecisionIncrement`; a caller with no statement
             // behind it has no session value to send.
@@ -552,6 +556,7 @@ impl PushdownStatementContext {
             replica_read: ctx.replica_read(),
             priority: kv_priority(ctx.statement_priority()),
             not_fill_cache: ctx.not_fill_cache(),
+            dist_sql_scan_concurrency: ctx.dist_sql_scan_concurrency(),
             query_cop_store_limiter: ctx.query_cop_store_limiter(),
             div_precision_increment: ctx.div_precision_increment(),
         }
