@@ -11562,3 +11562,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (column selection variants pin): bare, qualified, t.*, star
  plus extras, and constant expressions all resolve. Pinned in
  `crates/tidb-session/tests/column_selection_variants_source.rs`.
+- 2026-09-08 (view/partition pin): a view over a partitioned table sees
+ through all partitions and tracks later re-routing. Pinned in
+ `crates/tidb-session/tests/view_partitioned_source.rs`.
