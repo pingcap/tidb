@@ -1575,6 +1575,24 @@ pub struct IndexRangeSourceExec {
     /// source) simply stops exposing demand, and an eager worker then walks
     /// nothing the serial walk would not have.
     chunk_demand: u64,
+    /// Whether Go's `UnionScanExec` two-stream merge sits over this read:
+    /// an UNORDERED double read whose table the open transaction has
+    /// written. See [`Self::enable_dirty_union_scan_merge`].
+    dirty_merge: bool,
+    /// Go `compareExec.usedIndex`: the index's own columns' offsets in the
+    /// emitted row, in index order. `compare` walks them before the handle.
+    dirty_used_index: Vec<usize>,
+    /// One collation per `dirty_used_index` entry -- Go
+    /// `us.collators[colOff]`, indexed by the COLUMN offset.
+    dirty_collations: Vec<tidb_datatype::Collation>,
+    /// The added stream's fetched rows, in the index order the walk produced
+    /// them. Go `addedRowsIter`, buffered per batch because the staged rows
+    /// live behind the same session-local storage the snapshot lookup uses.
+    dirty_added_queue: std::collections::VecDeque<(TableHandle, Vec<Datum>)>,
+    /// Go `getAddedRow`'s peeked cursor (`cursor4AddRows`).
+    dirty_added_head: Option<(TableHandle, Vec<Datum>)>,
+    /// Go `getSnapshotRow`'s peeked cursor (`cursor4SnapshotRows`).
+    dirty_snapshot_head: Option<(TableHandle, Vec<Datum>)>,
 }
 
 /// Go's `IndexLookUpExecutor.CalculateBatchSize`.
@@ -1798,7 +1816,54 @@ impl IndexRangeSourceExec {
             lookup_concurrency: DEFAULT_LOOKUP_FETCH_CONCURRENCY,
             lookup_pipeline: None,
             chunk_demand: 0,
+            dirty_merge: false,
+            dirty_used_index: Vec::new(),
+            dirty_collations: Vec::new(),
+            dirty_added_queue: std::collections::VecDeque::new(),
+            dirty_added_head: None,
+            dirty_snapshot_head: None,
         }
+    }
+
+    /// Arms Go's `UnionScanExec` two-stream merge over this unordered double
+    /// read: `getOneRow` peeks the SNAPSHOT stream's head (this tier's
+    /// handle-sorted lookup batches, with every handle the open transaction
+    /// staged routed to the other stream) and the ADDED stream's head (the
+    /// staged rows in the index order the walk produced), compares them by
+    /// the index's own columns then the handle (`compareExec.compare`, with
+    /// `usedIndex` filled from the index's columns by
+    /// `buildUnionScanFromReader`'s fallback), and emits the smaller -- on a
+    /// tie the ADDED row, Go's `isSnapshotRow = isSnapshotRowInt < 0`.
+    pub(crate) fn enable_dirty_union_scan_merge(&mut self) {
+        if self.covering || !self.can_reorder_handles || !self.table.has_dirty_content() {
+            return;
+        }
+        // Go `buildUnionScanFromReader`'s IndexLookUp arm: `usedIndex` is
+        // every index column found among the reader's columns. A column the
+        // projection dropped contributes nothing to `compare`, exactly as the
+        // Go loop that cannot find it appends nothing.
+        let Some(index) = self
+            .table
+            .indexes()
+            .iter()
+            .find(|index| index.id == self.index_id)
+        else {
+            return;
+        };
+        for &offset in &index.column_offsets {
+            let Some(position) = self.keep.iter().position(|&kept| kept == offset) else {
+                continue;
+            };
+            let collation = self.meta.schema().columns[position]
+                .ret_type
+                .as_ref()
+                .map_or(tidb_datatype::Collation::Binary, |field_type| {
+                    field_type.collation()
+                });
+            self.dirty_used_index.push(position);
+            self.dirty_collations.push(collation);
+        }
+        self.dirty_merge = true;
     }
 
     /// Installs Go `SessionVars.IndexLookupConcurrency()` for this executor.
@@ -2037,6 +2102,32 @@ impl IndexRangeSourceExec {
             }
         }
         self.batch_size = (self.batch_size * 2).min(MAX_HANDLE_BATCH);
+        if self.dirty_merge {
+            // Go's UnionScan split: a handle whose record key the open
+            // transaction staged belongs to the ADDED stream (`getOneRow`
+            // takes it from `addedRowsIter`, which reads the membuffer) and
+            // must NOT enter the sorted snapshot batch -- Go drops the
+            // shadowed snapshot copy in `getSnapshotRow`'s `memBufSnap.Get`
+            // probe and the staged row reaches it through the other stream.
+            // Partition BEFORE the sort so the added side keeps the INDEX
+            // order the walk produced; the snapshot side then sorts exactly
+            // as Go's `buildTableReaderFromHandles(..., true)` does over the
+            // handles its index worker extracted.
+            let physical_ids = self.table.record_physical_ids();
+            let mut added = Vec::new();
+            self.batch.retain(|handle| {
+                let staged = physical_ids
+                    .iter()
+                    .any(|physical_id| self.table.record_key_is_staged(*physical_id, handle));
+                if staged {
+                    added.push(handle.clone());
+                }
+                !staged
+            });
+            if !added.is_empty() {
+                self.enqueue_dirty_added_rows(added)?;
+            }
+        }
         if self.can_reorder_handles {
             // Go `buildTableReaderFromHandles(..., canReorderHandles=true)`:
             // `slices.SortFunc(handles, ...i.Compare(j))` -- per TASK, which
@@ -2065,6 +2156,9 @@ impl IndexRangeSourceExec {
     /// executor half of Go's `lookupTableTask`: the cluster storage receives
     /// one region-grouped batch request instead of one point read per handle.
     fn next_lookup_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
+        if self.dirty_merge {
+            return self.next_merged_lookup_row();
+        }
         loop {
             if self.lookup_chunk.is_some() {
                 // The caller's direct chunk path owns this batch. Returning a
@@ -2125,6 +2219,149 @@ impl IndexRangeSourceExec {
                 }));
             }
         }
+    }
+
+    /// Go `UnionScanExec.getOneRow` over this read's two streams: peek each
+    /// side's head, emit the smaller by `compareExec.compare` -- and on a tie
+    /// the ADDED row, Go's `isSnapshotRow = isSnapshotRowInt < 0`. Only the
+    /// taken side advances; a snapshot row that tied is compared again
+    /// against the next added row.
+    fn next_merged_lookup_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
+        // Go `getSnapshotRow`: peek the snapshot stream, refilling handle
+        // batches (each possibly fully filtered away) until one yields a row
+        // or the walk ends.
+        if self.dirty_snapshot_head.is_none() {
+            self.dirty_snapshot_head = self.next_snapshot_merge_row()?;
+        }
+        // Go `getAddedRow`: peek the added stream's cursor.
+        if self.dirty_added_head.is_none() {
+            self.dirty_added_head = self.dirty_added_queue.pop_front();
+        }
+        let (handle, row) = match (
+            self.dirty_snapshot_head.take(),
+            self.dirty_added_head.take(),
+        ) {
+            (None, None) => return Ok(None),
+            (Some(snapshot), None) => snapshot,
+            (None, Some(added)) => added,
+            (Some(snapshot), Some(added)) => {
+                if self.dirty_compare(&snapshot, &added)? == std::cmp::Ordering::Less {
+                    self.dirty_added_head = Some(added);
+                    snapshot
+                } else {
+                    self.dirty_snapshot_head = Some(snapshot);
+                    added
+                }
+            }
+        };
+        Ok(Some(match self.extra_handle_slot {
+            Some(slot) => crate::kv_table::insert_extra_handle(row, slot, &handle),
+            None => row,
+        }))
+    }
+
+    /// Go `getSnapshotRow`: the next row of the handle-sorted lookup stream.
+    /// The snapshot side of the merge -- everything left of the batch after
+    /// [`Self::fill_handle_batch`] routed the staged handles away.
+    fn next_snapshot_merge_row(&mut self) -> Result<Option<(TableHandle, Vec<Datum>)>, ExecError> {
+        loop {
+            if self.lookup_row_at == self.lookup_rows.len() {
+                self.lookup_rows.clear();
+                self.lookup_row_at = 0;
+                self.lookup_filter_complete = false;
+                let Some((rows, lookup_handles, filter_complete, lookup_chunk)) =
+                    self.next_lookup_batch()?
+                else {
+                    return Ok(None);
+                };
+                self.lookup_rows = rows;
+                self.lookup_handles = lookup_handles;
+                self.lookup_filter_complete = filter_complete
+                    && self
+                        .filter
+                        .as_ref()
+                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
+                debug_assert!(
+                    lookup_chunk.is_none(),
+                    "a dirty double read never takes the chunk path",
+                );
+                // A fully-filtered batch leaves no rows for this window: the
+                // next handle batch must be collected NOW, or the emission
+                // below indexes an empty vector.
+                if self.lookup_rows.is_empty() {
+                    self.lookup_row_at = 0;
+                    continue;
+                }
+            }
+            let row = std::mem::take(&mut self.lookup_rows[self.lookup_row_at]);
+            let handle = self
+                .lookup_handles
+                .get(self.lookup_row_at)
+                .and_then(Option::as_ref)
+                .cloned();
+            self.lookup_row_at += 1;
+            if let Some(row) = row {
+                let handle = handle.ok_or_else(|| {
+                    ExecError::unsupported("a dirty double read lookup lost its row handle")
+                })?;
+                return Ok(Some((handle, row)));
+            }
+        }
+    }
+
+    /// Fetches one batch's added-side rows -- Go `buildMemIndexLookUpReader`'s
+    /// membuffer walk. The staged rows decode under the same projection and
+    /// answer through the same storage view the snapshot lookup reads, so a
+    /// staged INSERT's row and a staged UPDATE's new row arrive here, while a
+    /// staged DELETE's handle never reaches the walk at all (its index entry
+    /// is gone, which is Go's tombstone never entering `addedRowsIter`).
+    fn enqueue_dirty_added_rows(&mut self, handles: Vec<TableHandle>) -> Result<(), ExecError> {
+        let rows = self
+            .table
+            .get_rows_by_handles_projected_with_context(
+                &handles,
+                Some(&self.keep),
+                &self.decode_context,
+            )
+            .map_err(ExecError::from)?;
+        for (handle, row) in handles.into_iter().zip(rows) {
+            if let Some(row) = row {
+                self.dirty_added_queue.push_back((handle, row));
+            }
+        }
+        Ok(())
+    }
+
+    /// Go `compareExec.compare`: the `usedIndex` columns in order, each
+    /// through its collator (`us.collators[colOff]`), then the handle
+    /// (`handleCols.Compare`). `desc` never applies -- arming the merge
+    /// requires `can_reorder_handles`, and a descending read clears it.
+    fn dirty_compare(
+        &self,
+        snapshot: &(TableHandle, Vec<Datum>),
+        added: &(TableHandle, Vec<Datum>),
+    ) -> Result<std::cmp::Ordering, ExecError> {
+        for (position, collation) in self
+            .dirty_used_index
+            .iter()
+            .zip(&self.dirty_collations)
+        {
+            let ordering = match (snapshot.1.get(*position), added.1.get(*position)) {
+                (Some(left), Some(right)) => {
+                    tidb_expr::compare_datums_with_collation(left, right, *collation)
+                        .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "union scan merge cannot compare index columns: {error:?}"
+                            ))
+                        })?
+                }
+                _ => std::cmp::Ordering::Equal,
+            };
+            if ordering != std::cmp::Ordering::Equal {
+                return Ok(ordering);
+            }
+        }
+        Ok(snapshot.0.cmp(&added.0))
     }
 
     /// Produces the next lookup window's decodable rows: collects a handle
@@ -2313,8 +2550,9 @@ impl IndexRangeSourceExec {
                 LookupFetch::LocalFallback(handles) => {
                     // The local batch answers one slot per requested handle,
                     // in the order asked, so the worker-owned handles line up
-                    // with it.
-                    let lookup_handles = if self.extra_handle_slot.is_some() {
+                    // with it. The dirty merge also compares by handle, so
+                    // its slots are kept even without an extra-handle column.
+                    let lookup_handles = if self.extra_handle_slot.is_some() || self.dirty_merge {
                         handles.iter().cloned().map(Some).collect()
                     } else {
                         Vec::new()

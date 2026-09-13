@@ -647,6 +647,13 @@ pub struct KvTable {
     /// [`crate::access_path::IndexRangeSourceExec`] for the row ORDER that
     /// operator imposes.
     dirty_content: DirtyMark,
+    /// The record keys this table's open transaction staged -- Go
+    /// `txn.GetMemBuffer()`'s key set, narrowed to this tier. `DirtyMark`
+    /// answers Go's `HasDirtyContent`; this answers Go's
+    /// `memBufSnap.Get(checkKey)` (`union_scan.go:272`), the per-key probe
+    /// that drops a snapshot row the transaction has written so the staged
+    /// copy replaces it. Cleared with the mark at the transaction boundary.
+    staged_record_keys: StagedRecordKeys,
 }
 
 /// Go PointGetExecutor keeps immutable table metadata and a separate snapshot.
@@ -722,6 +729,63 @@ impl Clone for DirtyMark {
     fn clone(&self) -> Self {
         DirtyMark(std::sync::atomic::AtomicBool::new(
             self.0.load(std::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// Go `txn.GetMemBuffer()`'s key set, narrowed to the record keys row writes
+/// stage. Shared across the `Arc`-shared table clones a lookup worker owns,
+/// hence the mutex; writes are single inserts/updates/deletes, so contention
+/// is never a factor.
+#[derive(Default)]
+struct StagedRecordKeys(std::sync::Mutex<std::collections::HashSet<Vec<u8>>>);
+
+impl std::fmt::Debug for StagedRecordKeys {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StagedRecordKeys")
+            .field(
+                "keys",
+                &self
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .len(),
+            )
+            .finish()
+    }
+}
+
+impl StagedRecordKeys {
+    fn note(&self, key: &[u8]) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.to_vec());
+    }
+
+    fn contains(&self, key: &[u8]) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(key)
+    }
+
+    fn clear(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+}
+
+impl Clone for StagedRecordKeys {
+    fn clone(&self) -> Self {
+        Self(std::sync::Mutex::new(
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
         ))
     }
 }
@@ -961,6 +1025,7 @@ impl KvTable {
             placement_policy: None,
             read_partitions: None,
             dirty_content: DirtyMark::default(),
+            staged_record_keys: StagedRecordKeys::default(),
         }
     }
 
@@ -1045,6 +1110,24 @@ impl KvTable {
         self.dirty_content
             .0
             .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.staged_record_keys.clear();
+    }
+
+    /// Records one staged row write's record key -- Go `membuf.Set(key)`.
+    /// `key` is the full encoded record key, physical table id included, so a
+    /// partitioned write stages under the partition's own prefix.
+    pub fn note_staged_record_key(&self, key: &[u8]) {
+        self.staged_record_keys.note(key);
+    }
+
+    /// Go `memBufSnap.Get(checkKey)`'s answer for one row handle: does the
+    /// open transaction hold a staged write under this record key? A staged
+    /// DELETE stages a tombstone and still answers true, exactly as Go's
+    /// probe succeeds on the tombstone value.
+    #[must_use]
+    pub fn record_key_is_staged(&self, physical_id: i64, handle: &TableHandle) -> bool {
+        let key = encode_row_key_with_handle(physical_id, &handle.record_handle());
+        self.staged_record_keys.contains(&key)
     }
 
     /// Builds the table `CREATE TABLE ... LIKE self` creates: Go
@@ -3208,6 +3291,7 @@ impl KvTable {
         // Go writes the row first, then its index entries; a duplicate on a
         // unique index aborts the statement.
         self.write_index_entries(row, &handle, physical_id, &zone, lazy_dup_check)?;
+        self.staged_record_keys.note(key.as_bytes());
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -3631,10 +3715,12 @@ impl KvTable {
             &new_handle.record_handle(),
         ));
         if let Some(old_key) = old_key.filter(|old_key| *old_key != key) {
+            self.staged_record_keys.note(old_key.as_bytes());
             self.store
                 .delete(old_key)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
+        self.staged_record_keys.note(key.as_bytes());
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -3695,6 +3781,7 @@ impl KvTable {
         if !self.indexes.is_empty() {
             self.delete_index_entries(old_row, handle, old_physical_id, &zone)?;
         }
+        self.staged_record_keys.note(key.as_bytes());
         self.store
             .delete(key)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;

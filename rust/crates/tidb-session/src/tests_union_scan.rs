@@ -42,14 +42,16 @@
 //! the first test below asserts the row SET beside the order so that stays
 //! true.
 //!
-//! The third rule is the one that was missing, and the only one with an
-//! observable cost: a NON-COVERING index read answers in handle order here
-//! (Go's `canReorderHandles` batch sort, ported in
-//! `tidb_executor::access_path`), which for a dirty table is not what the
-//! merge above it produces. Merging one index-ordered stream into another
-//! index-ordered stream yields that same index order, so on this tier the
-//! whole of `compare()` reduces to: over a dirty table, do not reorder the
-//! handle batch.
+//! The third rule is the one with an observable cost: the two streams do NOT
+//! collapse into one handle-ordered read. Go's unordered `IndexLookUp` table
+//! worker fetches its handles with `canReorderHandles = true`
+//! (`distsql.go:1179` -> `buildTableReaderFromHandles`'s `slices.SortFunc`),
+//! so the SNAPSHOT stream is handle-ordered, while the ADDED stream walks the
+//! membuffer's index entries in index order -- and `UnionScanExec.getOneRow`
+//! merges the two heads by `compareExec.compare` (the index's own columns,
+//! then the handle; a tie emits the added row). The recorded source of truth
+//! for this whole module is `/tmp/union-scan-go.out`, captured from Go master
+//! over `/tmp/union-scan-oracle.sql` -- this exact fixture.
 //!
 //! # Why this fixture discriminates
 //!
@@ -102,9 +104,10 @@ fn double_read(session: &mut Session, table: &str) -> Vec<Vec<String>> {
     )
 }
 
-/// THE MISSING OPERATOR'S ONE OBSERVABLE EFFECT: a double read of a table the
-/// open transaction has written answers in INDEX order, and the three staged
-/// edits each show up the way `UnionScanExec` shows them.
+/// THE MERGE'S OBSERVABLE EFFECT: a double read of a table the open
+/// transaction has written answers as `UnionScanExec.getOneRow`'s two-stream
+/// merge, not as either raw stream, and the three staged edits each show up
+/// the way Go shows them.
 ///
 /// The transaction stages one of each kind Go's merge distinguishes:
 ///
@@ -117,9 +120,10 @@ fn double_read(session: &mut Session, table: &str) -> Vec<Vec<String>> {
 ///  * `h=3` -- a DELETED row, which must not appear at all.
 ///
 /// Derived from Go for this exact fixture: the snapshot stream is `h1(k=50)`,
-/// `h4(k=60)` (h2 and h3 are dropped by the membuffer probe), the added stream
-/// is `h5(k=10)`, `h2(k=80)`, and `compare` on `k` then handle interleaves them
-/// as `h5, h1, h4, h2`.
+/// `h4(k=60)` in HANDLE order (h2 and h3 are dropped by the membuffer probe),
+/// the added stream is `h5(k=10)`, `h2(k=80)` in index order, and `compare`
+/// on `k` then handle interleaves them as `h5, h1, h4, h2` -- the same vector
+/// `/tmp/union-scan-go.out` records.
 ///
 /// Both halves are asserted: the ORDERED vector is the merge, and the sorted
 /// multiset beside it is read-your-own-writes -- which held before this rule
@@ -162,9 +166,14 @@ fn a_double_read_of_a_dirty_table_answers_in_index_order_with_the_staged_rows_me
 /// stages all three at once, so it would still pass with two of the three
 /// marks missing; these three stage exactly one apiece.
 ///
-/// Every expected vector below is the `ki` walk and disagrees with the handle
-/// walk, so "unmarked" is a visible answer rather than a coincidence:
-/// `1, 2, 3, 4`-shaped orders are what a missing mark produces.
+/// Every expected vector below is `/tmp/union-scan-go.out`'s recorded answer
+/// for the identical fixture (`/tmp/union-scan-oracle.sql`, Go master
+/// `fdfadb96b2`): Go's unordered `IndexLookUp` table worker fetches its
+/// handles with `canReorderHandles = true` (`distsql.go:1179` ->
+/// `buildTableReaderFromHandles`), so the SNAPSHOT stream is handle-ordered
+/// and the merge interleaves the staged stream into it -- a `1,2,3,4`-shaped
+/// tail is Go's own answer, not a missing mark; what a missing mark produces
+/// is the staged row LAST (`1,2,3,4,5`).
 #[test]
 fn a_staged_insert_alone_marks_the_table() {
     let mut session = session_with_rows();
@@ -174,17 +183,19 @@ fn a_staged_insert_alone_marks_the_table() {
         double_read(&mut session, "us"),
         vec![
             vec!["5".to_owned(), "500".to_owned()],
-            vec!["2".to_owned(), "200".to_owned()],
             vec!["1".to_owned(), "100".to_owned()],
-            vec!["4".to_owned(), "400".to_owned()],
+            vec!["2".to_owned(), "200".to_owned()],
             vec!["3".to_owned(), "300".to_owned()],
+            vec!["4".to_owned(), "400".to_owned()],
         ],
     );
 }
 
 /// See [`a_staged_insert_alone_marks_the_table`]. The update touches only a
-/// NON-indexed column, so it moves no index entry and the order it produces
-/// comes from the mark alone.
+/// NON-indexed column, so it moves no index entry: the snapshot stream is
+/// `2,3,4` (handle order, h1 dropped by the membuffer probe) and the added
+/// row h1 (k=50) is emitted when it beats the snapshot head h3 (k=70) --
+/// Go's recorded `2,1,3,4`.
 #[test]
 fn a_staged_update_alone_marks_the_table() {
     let mut session = session_with_rows();
@@ -195,8 +206,8 @@ fn a_staged_update_alone_marks_the_table() {
         vec![
             vec!["2".to_owned(), "200".to_owned()],
             vec!["1".to_owned(), "999".to_owned()],
-            vec!["4".to_owned(), "400".to_owned()],
             vec!["3".to_owned(), "300".to_owned()],
+            vec!["4".to_owned(), "400".to_owned()],
         ],
     );
 }
@@ -204,7 +215,8 @@ fn a_staged_update_alone_marks_the_table() {
 /// See [`a_staged_insert_alone_marks_the_table`]. A delete stages a membuffer
 /// entry in Go just as a write does, which is why `HasDirtyContent` -- a plain
 /// prefix seek over the buffer -- answers true for a transaction that has only
-/// deleted.
+/// deleted. With no added row to merge, the answer is the handle-ordered
+/// snapshot stream minus the deleted h1: Go's recorded `2,3,4`.
 #[test]
 fn a_staged_delete_alone_marks_the_table() {
     let mut session = session_with_rows();
@@ -214,20 +226,18 @@ fn a_staged_delete_alone_marks_the_table() {
         double_read(&mut session, "us"),
         vec![
             vec!["2".to_owned(), "200".to_owned()],
-            vec!["4".to_owned(), "400".to_owned()],
             vec!["3".to_owned(), "300".to_owned()],
+            vec!["4".to_owned(), "400".to_owned()],
         ],
     );
 }
 
-/// The tie-break is the HANDLE, which is `compare`'s last step after every
-/// `usedIndex` column compared equal (`pkg/executor/union_scan.go:327`:
-/// `cmp, err = ce.handleCols.Compare(a, b, ...)`).
-///
-/// `h=6` is staged with the `k` an existing row already has, so the two rows
-/// tie on the only index column and only the handle separates them: `h=2`
-/// before `h=6`. Reversing that step reorders the first two rows without
-/// touching the rest.
+/// The handle breaks a tie on the index key (`pkg/executor/union_scan.go:327`:
+/// `cmp, err = ce.handleCols.Compare(a, b, ...)`), but the tie itself never
+/// forms in Go's answer: the added head h6 (k=30) is compared against the
+/// SNAPSHOT HEAD h1 (k=50) -- not against h2, which sits behind h1 in the
+/// handle-ordered snapshot stream -- so h6 is emitted first and the snapshot
+/// suffix follows in handle order: Go's recorded `6,1,2,3,4`.
 #[test]
 fn rows_that_tie_on_the_index_key_come_back_in_handle_order() {
     let mut session = session_with_rows();
@@ -236,11 +246,11 @@ fn rows_that_tie_on_the_index_key_come_back_in_handle_order() {
     assert_eq!(
         double_read(&mut session, "us"),
         vec![
-            vec!["2".to_owned(), "200".to_owned()],
             vec!["6".to_owned(), "600".to_owned()],
             vec!["1".to_owned(), "100".to_owned()],
-            vec!["4".to_owned(), "400".to_owned()],
+            vec!["2".to_owned(), "200".to_owned()],
             vec!["3".to_owned(), "300".to_owned()],
+            vec!["4".to_owned(), "400".to_owned()],
         ],
     );
 }

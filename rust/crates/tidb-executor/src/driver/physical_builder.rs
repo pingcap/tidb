@@ -1487,6 +1487,12 @@ fn build_index_reader(
             ));
         }
     }
+    // Go puts `UnionScanExec` above this reader when the open transaction has
+    // written the table, and for an UNORDERED lookup that operator re-merges
+    // the handle-ordered snapshot stream with the index-ordered staged stream
+    // by `compareExec.compare`. This tier folds that merge into the source;
+    // arming it here keeps every other read untouched.
+    source.enable_dirty_union_scan_merge();
     let stats = catalog.table_statistics(table.stats_physical_id());
     Ok(Box::new(CopIndexUsageExec::new(
         Box::new(source),
