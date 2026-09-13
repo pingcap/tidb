@@ -600,25 +600,26 @@ fn web3bench_small_aggregates_follow_go_cost_boundary() {
 /// A pushed `WHERE` keeps its `Selection` BETWEEN the partial aggregate and
 /// the scan, all three in the same coprocessor task.
 ///
-/// TiDB's own recording of the same shape
-/// (`tests/integrationtest/r/explain_easy.result:208-214`):
+/// Captured from Go master (`fdfadb96b2`, unistore): the two-phase HASH
+/// aggregate wins the cost comparison for this ungrouped count over an
+/// unordered pseudo scan --
 ///
 /// ```text
-/// StreamAgg             root       funcs:count(1)->Column
-/// └─StreamAgg           root       funcs:count(Column)->Column
-///   └─TableReader       root       data:StreamAgg
-///     └─StreamAgg       cop[tikv]  funcs:count(1)->Column
-///       └─Selection     cop[tikv]  eq(explain_easy.t1.c3, 100)
-///         └─TableFullScan cop[tikv] table:t1  keep order:false, stats:pseudo
+/// HashAgg_13 1.00 root funcs:count(Column#6)->Column#5
+/// └─TableReader_14 1.00 root data:HashAgg_6
+///   └─HashAgg_6 1.00 cop[tikv] funcs:count(1)->Column#6
+///     └─Selection_12 3333.33 cop[tikv] gt(test.t.a, 10)
+///       └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo
 /// ```
 ///
-/// The partial aggregate goes to the top of the COP TASK, not directly onto
-/// the scan. Requiring a bare scan under it left this shape unprintable.
-///
-/// The constant is the refined one for the reason
-/// [`crate::tests_compare_refinement`] states: Go runs `refineArgs` before it
-/// builds the comparison at all, so `int_col > '10ab'` is `gt(..., 10)`
-/// everywhere -- in the plan text, and in what the scan is asked to evaluate.
+/// (Older recordings show a StreamAgg in these slots; the current cost
+/// model's division of the cop hash work by the final concurrency made
+/// hash cheaper.) The partial aggregate goes to the top of the COP TASK,
+/// not directly onto the scan. The constant is the refined one for the
+/// reason [`crate::tests_compare_refinement`] states: Go runs `refineArgs`
+/// before it builds the comparison at all, so `int_col > '10ab'` is
+/// `gt(..., 10)` everywhere -- in the plan text, and in what the scan is
+/// asked to evaluate.
 #[test]
 fn a_pushed_where_keeps_its_cop_selection_under_the_partial_aggregate() {
     let mut session = Session::new();
@@ -638,11 +639,11 @@ fn a_pushed_where_keeps_its_cop_selection_under_the_partial_aggregate() {
             "EXPLAIN SELECT count(*) FROM t WHERE a > '10ab'"
         ),
         [
-            "StreamAgg_5|1.00|root||funcs:count(Column#0)->Column#0",
-            "└─TableReader_4|1.00|root||data:StreamAgg",
-            "  └─StreamAgg_3|1.00|cop[tikv]||funcs:count(1)->Column#0",
-            "    └─Selection_2|3333.33|cop[tikv]||gt(test.t.a, 10)",
-            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "HashAgg_13|1.00|root||funcs:count(Column#6)->Column#5",
+            "└─TableReader_14|1.00|root||data:HashAgg_6",
+            "  └─HashAgg_6|1.00|cop[tikv]||funcs:count(1)->Column#6",
+            "    └─Selection_12|3333.33|cop[tikv]||gt(test.t.a, 10)",
+            "      └─TableFullScan_11|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // The answer the refined plan gives is the answer the string gave.
@@ -1212,13 +1213,18 @@ fn explain_analyze_mixed_union_keeps_the_distinct_prefix_separate() {
         .unwrap();
     session.run("INSERT INTO t VALUES (1),(2),(3),(4)").unwrap();
 
+    // Live Go master (fdfadb96b2, unistore) answers with EIGHT rows: the
+    // distinct prefix (HashAgg over the two-sided Union) and the ALL
+    // suffix (Point_Get) hang directly under the outer Union. The nine-row
+    // shape in older recordings carried an extra operator that current Go
+    // no longer builds.
     let rows = row_text(session.run(
         "EXPLAIN ANALYZE \
          (SELECT a FROM t WHERE a <= 2) UNION \
          (SELECT a FROM t WHERE a >= 2 AND a <= 3) UNION ALL \
          (SELECT a FROM t WHERE a = 4)",
     ));
-    assert_eq!(rows.len(), 9);
+    assert_eq!(rows.len(), 8);
     assert!(rows[0][0].starts_with("Union_"));
     assert_eq!(rows[0][2], "4");
     assert!(rows[1][0].contains("HashAgg_"));
@@ -1230,7 +1236,7 @@ fn explain_analyze_mixed_union_keeps_the_distinct_prefix_separate() {
             .skip(3)
             .map(|row| row[2].as_str())
             .collect::<Vec<_>>(),
-        vec!["2", "2", "2", "2", "1", "1"]
+        vec!["2", "2", "2", "2", "1"]
     );
 }
 
