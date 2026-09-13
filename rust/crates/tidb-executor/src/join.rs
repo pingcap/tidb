@@ -670,6 +670,10 @@ struct IndexLookupState {
     /// Once a lookup shape refuses remote prefetch, retain the synchronous
     /// path for the rest of this executor.
     prefetch_disabled: bool,
+    /// Result chunks a pool worker joined for the current task, in outer
+    /// order, and how far the front chunk is served.
+    joined: VecDeque<Chunk>,
+    joined_row: usize,
 }
 
 struct PendingIndexLookupTask {
@@ -687,12 +691,275 @@ enum PendingIndexLookupSource {
     /// for the row path to finish.
     Draining {
         source: IndexLookupSource,
-        results: std::sync::mpsc::Receiver<(
-            Result<Vec<Chunk>, ExecError>,
-            Option<crate::kv_table::RemoteRowCursor>,
-        )>,
+        results: std::sync::mpsc::Receiver<IndexTaskOutcome>,
     },
     Synchronous(Vec<IndexTaskProbe>),
+}
+
+/// What a pool worker needs to join one index task by itself: the join's
+/// shape and the statement's budget, shared by every task (Go's
+/// `indexHashJoinInnerWorker` holds the same through its `IndexLookUpJoin`).
+struct IndexTaskShared<C: Columns> {
+    output: JoinOutput,
+    kind: JoinKind,
+    outer_is_left: bool,
+    keys: Vec<EquiKey>,
+    /// [`JoinExec::matches`]'s condition list for the index strategy: the
+    /// complete `ON` clause.
+    conditions: Vec<Expression>,
+    /// Whether a candidate pair still needs the conditions evaluated after
+    /// its key match ([`JoinExec::emit_outer_chunk_rows`]'s rule).
+    evaluate_residual: bool,
+    condition_types: Vec<FieldType>,
+    ctx: C,
+    inner_types: Vec<FieldType>,
+    inner_not_null: Vec<usize>,
+    output_types: Vec<FieldType>,
+    init_cap: usize,
+    max_chunk_size: usize,
+    tracker: Arc<Tracker>,
+    memory: StatementMemory,
+}
+
+/// What the pool worker of one index task hands back.
+enum IndexTaskOutcome {
+    /// The worker drained and joined the task: its result chunks, in outer
+    /// order, with the outer rows it was given.
+    Joined {
+        outer: Vec<Vec<Datum>>,
+        chunks: Vec<Chunk>,
+        inner_rows: u64,
+        condition_evals: u64,
+    },
+    /// The cursor could not hand every batch over; the session thread
+    /// finishes the lookup and the join from the drained chunks.
+    Deferred {
+        outer: Vec<Vec<Datum>>,
+        chunks: Vec<Chunk>,
+        cursor: Option<Box<crate::kv_table::RemoteRowCursor>>,
+    },
+    Failed(Box<ExecError>),
+}
+
+/// Go `indexHashJoinInnerWorker.handleTask` for one task: `fetchInnerResults`
+/// (the cursor drain), then the join of the task's outer rows against what
+/// it read, on the pool worker instead of the session thread.
+fn run_index_task<C: Columns>(
+    shared: &IndexTaskShared<C>,
+    outer: Vec<Vec<Datum>>,
+    drain: crate::access_path::PrefetchedDrain,
+) -> IndexTaskOutcome {
+    let (chunks, cursor) = drain.run();
+    let chunks = match chunks {
+        Ok(chunks) => chunks,
+        Err(error) => return IndexTaskOutcome::Failed(Box::new(error)),
+    };
+    if cursor.is_some() {
+        return IndexTaskOutcome::Deferred {
+            outer,
+            chunks,
+            cursor: cursor.map(Box::new),
+        };
+    }
+    let inner_rows = chunks.iter().map(|chunk| chunk.num_rows() as u64).sum();
+    match join_index_task(shared, &outer, chunks) {
+        Ok((chunks, condition_evals)) => IndexTaskOutcome::Joined {
+            outer,
+            chunks,
+            inner_rows,
+            condition_evals,
+        },
+        Err(error) => IndexTaskOutcome::Failed(Box::new(error)),
+    }
+}
+
+/// [`JoinExec::materialize_index_inner`] and [`JoinExec::drain_index_batch`]
+/// for one task, producing whole result chunks: the inner rows are indexed
+/// by their key encoding and every outer row, in order, emits what
+/// [`JoinExec::emit_outer_chunk_rows`] would.
+fn join_index_task<C: Columns>(
+    shared: &IndexTaskShared<C>,
+    outer: &[Vec<Datum>],
+    prefetched: Vec<Chunk>,
+) -> Result<(Vec<Chunk>, u64), ExecError> {
+    let inner_offset = |key: &EquiKey| {
+        if shared.outer_is_left {
+            key.right
+        } else {
+            key.left
+        }
+    };
+    let outer_offset = |key: &EquiKey| {
+        if shared.outer_is_left {
+            key.left
+        } else {
+            key.right
+        }
+    };
+    let inner_types = shared.inner_types.as_slice();
+    let mut inner = List::new(inner_types, shared.init_cap, shared.max_chunk_size);
+    let mut inner_bytes = 0i64;
+    for chunk in prefetched {
+        if chunk.num_rows() == 0 {
+            continue;
+        }
+        inner_bytes += chunk.memory_usage();
+        inner.add(chunk);
+    }
+    shared.tracker.consume(inner_bytes);
+    let released = |bytes: i64| shared.tracker.consume(-bytes);
+    if let Err(error) = shared.memory.check() {
+        released(inner_bytes);
+        return Err(error);
+    }
+    let result = (|| {
+        if !shared.inner_not_null.is_empty() {
+            let mut retained = Vec::with_capacity(inner.len());
+            for row in list_datum_rows(&inner, inner_types) {
+                if row_non_null_at(&row, &shared.inner_not_null)? {
+                    retained.push(row);
+                }
+            }
+            let after = retained.iter().map(|row| row_bytes(row)).sum::<i64>();
+            shared.tracker.consume(after - inner_bytes);
+            inner_bytes = after;
+            replace_list_with_rows(&mut inner, inner_types, retained);
+            shared.memory.check()?;
+        }
+        let mut matched: FastBytesMap<Vec<RowPtr>> = FastBytesMap::default();
+        for chk_idx in 0..inner.num_chunks() {
+            for row_idx in 0..inner.num_rows_of_chunk(chk_idx) {
+                let ptr = RowPtr::new(chk_idx as u32, row_idx as u32);
+                let row = inner.get_row(ptr);
+                let key = row_key_by(&shared.keys, |key| {
+                    let offset = inner_offset(key);
+                    row.get_datum(offset, &inner_types[offset])
+                })
+                .map_err(|_: KeyError| {
+                    ExecError::unsupported("a join key column has no comparable encoding")
+                })?;
+                if let Some(key) = key {
+                    matched.entry(key).or_default().push(ptr);
+                }
+            }
+        }
+        let mut chunks = Vec::new();
+        let mut out = Chunk::new(&shared.output_types, shared.init_cap, shared.max_chunk_size);
+        let mut condition_evals = 0u64;
+        for outer_row in outer {
+            let key = row_key(&shared.keys, outer_row, outer_offset).map_err(|_: KeyError| {
+                ExecError::unsupported("a join key column has no comparable encoding")
+            })?;
+            let candidates = key
+                .and_then(|key| matched.get(&key))
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            emit_index_task_row(
+                shared,
+                &mut out,
+                outer_row,
+                candidates.iter().map(|ptr| inner.get_row(*ptr)),
+                &mut condition_evals,
+            )?;
+            if out.num_rows() >= shared.max_chunk_size {
+                let fresh =
+                    Chunk::new(&shared.output_types, shared.init_cap, shared.max_chunk_size);
+                chunks.push(std::mem::replace(&mut out, fresh));
+            }
+        }
+        if out.num_rows() > 0 {
+            chunks.push(out);
+        }
+        Ok((chunks, condition_evals))
+    })();
+    released(inner_bytes);
+    result
+}
+
+/// [`JoinExec::emit_outer_chunk_rows`] with the join's shape read from
+/// [`IndexTaskShared`].
+fn emit_index_task_row<'a, C: Columns>(
+    shared: &IndexTaskShared<C>,
+    out: &mut Chunk,
+    outer_row: &[Datum],
+    candidates: impl Iterator<Item = Row<'a>>,
+    condition_evals: &mut u64,
+) -> Result<(), ExecError> {
+    let mut matched = false;
+    for inner_row in candidates {
+        if shared.evaluate_residual {
+            let inner_values = inner_row.get_datum_row(&shared.inner_types);
+            let joined: Vec<Datum> = if shared.outer_is_left {
+                outer_row.iter().chain(&inner_values).cloned().collect()
+            } else {
+                inner_values.iter().chain(outer_row).cloned().collect()
+            };
+            if !index_task_matches(shared, &joined, condition_evals)? {
+                continue;
+            }
+        }
+        matched = true;
+        match shared.kind {
+            JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                shared
+                    .output
+                    .datum_chunk(out, shared.outer_is_left, outer_row, inner_row);
+            }
+            JoinKind::Semi => {
+                shared.output.datums(out, outer_row);
+                break;
+            }
+            JoinKind::LeftOuterSemi => {
+                shared.output.datums(out, outer_row);
+                out.append_datum(shared.output.width(), &Datum::Int(1));
+                break;
+            }
+            JoinKind::AntiSemi => break,
+        }
+    }
+    if !matched {
+        match shared.kind {
+            JoinKind::Left | JoinKind::Right => {
+                let padded = shared.output.padded(shared.outer_is_left, outer_row);
+                shared.output.datums(out, &padded);
+            }
+            JoinKind::AntiSemi => shared.output.datums(out, outer_row),
+            JoinKind::LeftOuterSemi => {
+                shared.output.datums(out, outer_row);
+                out.append_datum(shared.output.width(), &Datum::Int(0));
+            }
+            JoinKind::Inner | JoinKind::Semi => {}
+        }
+    }
+    Ok(())
+}
+
+/// [`JoinExec::matches`] for the index strategy, on the worker.
+fn index_task_matches<C: Columns>(
+    shared: &IndexTaskShared<C>,
+    joined: &[Datum],
+    condition_evals: &mut u64,
+) -> Result<bool, ExecError> {
+    if shared.conditions.is_empty() {
+        return Ok(true);
+    }
+    *condition_evals += 1;
+    let mut chunk = Chunk::new_with_capacity(&shared.condition_types, 1);
+    for (i, value) in joined.iter().enumerate() {
+        chunk.append_datum(i, value);
+    }
+    let row = chunk.get_row(0);
+    if shared.kind == JoinKind::AntiSemi {
+        let (matched, has_null) = crate::joiner::eval_bool(&shared.ctx, &shared.conditions, row)?;
+        return Ok(matched || has_null);
+    }
+    for condition in &shared.conditions {
+        let value = condition.eval(&shared.ctx, row)?;
+        if !truthy(&value)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// One deduped lookup content of an outer batch: its equality-key tuple plus
@@ -806,6 +1073,9 @@ pub struct JoinExec<C: Columns> {
     index_lookup: Option<IndexLookupPlan>,
     /// The index strategy's live state; absent until the first `next()`.
     index_state: Option<IndexLookupState>,
+    /// What a pool worker needs to join one index task on its own (Go's
+    /// `indexHashJoinInnerWorker`), built with the index state.
+    index_task_shared: Option<Arc<IndexTaskShared<C>>>,
     /// How many times the `ON` clause has been evaluated. This is the cost
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
@@ -922,6 +1192,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             merge_state: None,
             index_lookup: None,
             index_state: None,
+            index_task_shared: None,
             condition_evals: Cell::new(0),
             memory,
             tracker,
@@ -1439,11 +1710,34 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 batch_size: self.meta.max_chunk_size().min(INDEX_JOIN_BATCH_SIZE),
                 pending: std::collections::VecDeque::new(),
                 prefetch_disabled: false,
+                joined: VecDeque::new(),
+                joined_row: 0,
             });
+            let plan = self
+                .index_lookup
+                .as_ref()
+                .expect("this path runs only with a plan");
+            self.index_task_shared = Some(Arc::new(IndexTaskShared {
+                output: self.output.clone(),
+                kind: self.kind,
+                outer_is_left: self.outer_is_left(),
+                keys: self.keys.clone(),
+                conditions: self.conditions.clone(),
+                evaluate_residual: self.keys.is_empty() || !self.residual_conditions.is_empty(),
+                condition_types: self.condition_types.clone(),
+                ctx: self.ctx.clone(),
+                inner_types: plan.source.ret_field_types().to_vec(),
+                inner_not_null: plan.inner_not_null.clone(),
+                output_types: self.meta.ret_field_types().to_vec(),
+                init_cap: self.meta.init_cap(),
+                max_chunk_size: self.meta.max_chunk_size(),
+                tracker: Arc::clone(&self.tracker),
+                memory: self.memory.clone(),
+            }));
         }
         loop {
             let state = self.index_state.as_ref().expect("just installed above");
-            if state.cursor < state.outer.len() {
+            if state.cursor < state.outer.len() || !state.joined.is_empty() {
                 return Ok(true);
             }
             if state.pending.is_empty()
@@ -1474,9 +1768,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             memory,
             index_lookup,
             index_state,
+            index_task_shared,
+            condition_evals,
             ctx,
             ..
         } = self;
+        let shared = index_task_shared
+            .as_ref()
+            .expect("fill_index_batch installed it");
         let outer_child = if outer_is_left {
             left.as_deref_mut()
                 .expect("an index join keeps its left outer child")
@@ -1500,6 +1799,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         state.inner_bytes = 0;
         state.matched.clear();
         state.cursor = 0;
+        state.joined.clear();
+        state.joined_row = 0;
 
         if state.pending.is_empty() {
             Self::fill_index_task_queue(
@@ -1511,15 +1812,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 outer_is_left,
                 tracker,
                 memory,
+                shared,
                 INDEX_LOOKUP_JOIN_CONCURRENCY,
             )?;
         }
         let Some(task) = state.pending.pop_front() else {
             return Ok(());
         };
-        debug_assert_eq!(
-            task.outer_bytes,
-            task.outer.iter().map(|row| row_bytes(row)).sum::<i64>()
+        debug_assert!(
+            task.outer.is_empty()
+                || task.outer_bytes == task.outer.iter().map(|row| row_bytes(row)).sum::<i64>()
         );
         state.outer = task.outer;
 
@@ -1534,6 +1836,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             outer_is_left,
             tracker,
             memory,
+            shared,
             INDEX_LOOKUP_JOIN_CONCURRENCY.saturating_sub(1),
         )?;
 
@@ -1553,26 +1856,60 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 mut source,
                 results,
             } => {
-                let (chunks, cursor) = results.recv().map_err(|_| {
+                let outcome = results.recv().map_err(|_| {
                     ExecError::internal("the index-join inner worker stopped without a result")
                 })?;
-                let chunks = chunks?;
-                if let (Some(cursor), IndexLookupSource::Leaf(leaf)) = (cursor, &mut source) {
-                    leaf.restore_cursor(cursor);
+                match outcome {
+                    IndexTaskOutcome::Joined {
+                        outer,
+                        chunks,
+                        inner_rows,
+                        condition_evals: evals,
+                    } => {
+                        // The worker joined the task (Go's inner worker
+                        // `doJoinUnordered`); its result chunks are served
+                        // as they are, in outer order.
+                        if let IndexLookupSource::Leaf(leaf) = &source {
+                            leaf.add_produced(inner_rows);
+                        }
+                        condition_evals.set(condition_evals.get() + evals);
+                        state.outer = outer;
+                        state.cursor = state.outer.len();
+                        let bytes = chunks.iter().map(Chunk::memory_usage).sum::<i64>();
+                        tracker.consume(bytes);
+                        state.inner_bytes += bytes;
+                        state.joined = chunks.into();
+                        state.joined_row = 0;
+                        memory.check()
+                    }
+                    IndexTaskOutcome::Deferred {
+                        outer,
+                        chunks,
+                        cursor,
+                    } => {
+                        state.outer = outer;
+                        if let (Some(cursor), IndexLookupSource::Leaf(leaf)) = (cursor, &mut source)
+                        {
+                            leaf.restore_cursor(*cursor);
+                        }
+                        if let IndexLookupSource::Leaf(leaf) = &source {
+                            leaf.add_produced(
+                                chunks.iter().map(|chunk| chunk.num_rows() as u64).sum(),
+                            );
+                        }
+                        Self::materialize_index_inner(
+                            &mut source,
+                            chunks,
+                            state,
+                            keys,
+                            outer_is_left,
+                            &inner_not_null,
+                            tracker,
+                            memory,
+                        )
+                    }
+                    IndexTaskOutcome::Failed(error) => Err(*error),
                 }
-                if let IndexLookupSource::Leaf(leaf) = &source {
-                    leaf.add_produced(chunks.iter().map(|chunk| chunk.num_rows() as u64).sum());
-                }
-                Self::materialize_index_inner(
-                    &mut source,
-                    chunks,
-                    state,
-                    keys,
-                    outer_is_left,
-                    &inner_not_null,
-                    tracker,
-                    memory,
-                )
             }
             PendingIndexLookupSource::Synchronous(probes) => {
                 let (keys_seeded, bound_values) = probes
@@ -1608,11 +1945,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         outer_is_left: bool,
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
+        shared: &Arc<IndexTaskShared<C>>,
         target: usize,
     ) -> Result<(), ExecError> {
         let outer_types = outer_child.ret_field_types().to_vec();
         while state.pending.len() < target {
-            let (outer, outer_bytes) = Self::read_index_outer_task(
+            let (mut outer, outer_bytes) = Self::read_index_outer_task(
                 outer_child,
                 &outer_types,
                 &plan.outer_not_null,
@@ -1650,9 +1988,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 };
                 match drain {
                     Some(drain) => {
+                        // Go's inner worker then builds the task's hash
+                        // table and joins it; the outer rows travel with
+                        // the task and come back with its result.
                         let (tx, results) = std::sync::mpsc::sync_channel(1);
+                        let shared = Arc::clone(shared);
+                        let task_outer = std::mem::take(&mut outer);
                         crate::worker_pool::enqueue_public(Box::new(move || {
-                            let _ = tx.send(drain.run());
+                            let _ = tx.send(run_index_task(&shared, task_outer, drain));
                         }));
                         PendingIndexLookupSource::Draining { source, results }
                     }
@@ -1938,6 +2281,33 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let outer_is_left = self.outer_is_left();
         let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
         let cap = self.meta.max_chunk_size();
+        {
+            // A task a worker joined: hand its chunks over, the first one
+            // whole when the request is empty (Go `handleResult`'s
+            // `req.SwapColumns`), the rest range by range.
+            let state = self
+                .index_state
+                .as_mut()
+                .expect("this path runs only with a batch");
+            while let Some(front) = state.joined.front_mut() {
+                if req.num_rows() >= cap {
+                    return Ok(());
+                }
+                let remaining = front.num_rows() - state.joined_row;
+                if state.joined_row == 0 && req.num_rows() == 0 && remaining <= cap {
+                    req.swap_columns(front);
+                    state.joined.pop_front();
+                    continue;
+                }
+                let take = remaining.min(cap - req.num_rows());
+                req.append_range_from(front, state.joined_row, state.joined_row + take);
+                state.joined_row += take;
+                if state.joined_row == front.num_rows() {
+                    state.joined.pop_front();
+                    state.joined_row = 0;
+                }
+            }
+        }
         loop {
             let state = self
                 .index_state
