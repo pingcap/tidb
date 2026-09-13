@@ -101,7 +101,7 @@ use tidb_expr::{Columns, SessionTimeZone};
 use tidb_util::disk;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
 use tidb_util::selection::{select, Selectable};
-use tidb_util::set::StringSetWithMemoryUsage;
+use tidb_util::set::{Int64SetWithMemoryUsage, StringSetWithMemoryUsage};
 
 struct DatumSelection<'a>(&'a mut [Datum]);
 
@@ -362,6 +362,13 @@ impl AggFunc {
 /// One group's partial results, in agg-func order.
 enum Partial {
     Count(i64),
+    /// `COUNT(DISTINCT x)` over one integer argument: Go's
+    /// `partialResult4CountDistinctInt`, the values themselves in an
+    /// `Int64Set` (`baseCountDistinct4Int`: `EvalInt`, skip NULL, insert;
+    /// merged by set union, finished as the set's size). Every other DISTINCT
+    /// keeps the encoded-key set on the state and, in the parallel partial
+    /// phase, its retained inputs.
+    CountDistinctInt(Int64SetWithMemoryUsage),
     FinalCount(i64),
     /// `None` until the first non-NULL input (an empty sum is NULL). Go
     /// sums an integer or decimal argument exactly, in the decimal domain --
@@ -507,6 +514,33 @@ fn state_collation(func: &AggFunc) -> tidb_datatype::Collation {
         .map_or(tidb_datatype::Collation::DEFAULT, expr_collation)
 }
 
+/// Go `buildCount`: a single-argument `COUNT(DISTINCT)` over an integer
+/// (`types.ETInt`) argument is `countOriginalWithDistinct4Int`, whose partial
+/// result is the typed value set rather than an encoded-key set.
+fn count_distinct_int(func: &AggFunc) -> bool {
+    matches!(func.kind, AggKind::Count)
+        && func.distinct
+        && func.extra_args.is_empty()
+        && func.order_by.is_empty()
+        && func
+            .arg
+            .as_ref()
+            .and_then(Expression::static_type)
+            .is_some_and(|ty| ty.eval_type() == EvalType::Int)
+}
+
+/// The chunk column a typed integer `COUNT(DISTINCT)` reads directly, when
+/// its argument is a bare column.
+fn count_distinct_int_column(func: &AggFunc) -> Option<usize> {
+    if !count_distinct_int(func) {
+        return None;
+    }
+    func.arg
+        .as_ref()
+        .and_then(Expression::as_column)
+        .and_then(|column| usize::try_from(column.index).ok())
+}
+
 impl AggState {
     fn new(func: &AggFunc) -> AggState {
         Self::with_collation(func, state_collation(func))
@@ -516,9 +550,8 @@ impl AggState {
     /// open a state per group and derive each function's collation once.
     fn with_collation(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
         AggState {
-            partial: Partial::new(&func.kind),
-            seen: func
-                .distinct
+            partial: Partial::for_func(func),
+            seen: (func.distinct && !count_distinct_int(func))
                 .then(|| Box::new(StringSetWithMemoryUsage::new([]).0)),
             distinct_inputs: None,
             collation,
@@ -528,7 +561,7 @@ impl AggState {
     /// Go `ResetPartialResult`: the state is reused for the next group
     /// instead of being reallocated (the collation is derived once).
     fn reset(&mut self, func: &AggFunc) {
-        self.partial = Partial::new(&func.kind);
+        self.partial = Partial::for_func(func);
         if self.seen.is_some() {
             self.seen = Some(Box::new(StringSetWithMemoryUsage::new([]).0));
         }
@@ -545,7 +578,7 @@ impl AggState {
 
     fn new_parallel_with(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
         let mut state = Self::with_collation(func, collation);
-        state.distinct_inputs = func.distinct.then(Vec::new);
+        state.distinct_inputs = (func.distinct && !count_distinct_int(func)).then(Vec::new);
         state
     }
 
@@ -569,6 +602,22 @@ impl AggState {
         distinct_key: Option<Vec<u8>>,
     ) -> Result<i64, ExecError> {
         let mut delta: i64 = 0;
+        if let Partial::CountDistinctInt(set) = &mut self.partial {
+            // Go `baseCountDistinct4Int.UpdatePartialResult`: `EvalInt`, skip
+            // NULL, insert (an unsigned value contributes its bits).
+            match value {
+                Some(Datum::Int(value)) => delta += set.insert(value),
+                Some(Datum::UInt(value)) => delta += set.insert(value as i64),
+                Some(Datum::Null) => {}
+                None => return Err(ExecError::unsupported("COUNT requires an argument")),
+                Some(other) => {
+                    return Err(ExecError::unsupported(format!(
+                        "COUNT(DISTINCT) over {other:?} is not an integer"
+                    )))
+                }
+            }
+            return Ok(delta);
+        }
         if let Some(seen) = &mut self.seen {
             let datum = value.clone().unwrap_or(Datum::Null);
             if datum != Datum::Null {
@@ -680,6 +729,16 @@ impl AggState {
     /// Updates the scalar COUNT accumulator without materializing its input
     /// datum. Returns false for DISTINCT or a non-COUNT state so the caller
     /// can use the complete aggregate path.
+    /// Go `baseCountDistinct4Int.UpdatePartialResult` on a column cell read
+    /// straight from the chunk (`None` for a NULL cell). Answers the bytes
+    /// the set grew by, or `None` when this state is not the typed set.
+    fn update_count_distinct_int_fast(&mut self, value: Option<i64>) -> Option<i64> {
+        let Partial::CountDistinctInt(set) = &mut self.partial else {
+            return None;
+        };
+        Some(value.map_or(0, |value| set.insert(value)))
+    }
+
     fn update_count_fast(&mut self, input_is_non_null: bool) -> bool {
         if self.seen.is_some() {
             return false;
@@ -975,6 +1034,17 @@ mod mysql_type {
 }
 
 impl Partial {
+    /// The initial state for `func`: [`Self::new`] for its kind, or the typed
+    /// integer DISTINCT set (see [`count_distinct_int`]).
+    fn for_func(func: &AggFunc) -> Partial {
+        if count_distinct_int(func) {
+            return Partial::CountDistinctInt(
+                Int64SetWithMemoryUsage::new(std::iter::empty::<i64>()).0,
+            );
+        }
+        Partial::new(&func.kind)
+    }
+
     fn new(kind: &AggKind) -> Partial {
         match kind {
             AggKind::Count => Partial::Count(0),
@@ -1401,6 +1471,11 @@ impl Partial {
                     "a fixed-scale MIN/MAX state reached the datum fold unmaterialized",
                 ));
             }
+            (Partial::CountDistinctInt(_), _) => {
+                return Err(ExecError::internal(
+                    "a typed COUNT(DISTINCT) state is folded by its aggregate state",
+                ));
+            }
             (Partial::MaxMin { .. }, Some(Datum::Null)) => {}
             (Partial::MaxMin { value, is_max }, Some(input)) => match value {
                 None => *value = Some(input),
@@ -1668,6 +1743,9 @@ impl Partial {
             Partial::MaxMin { value, .. } => value.clone().unwrap_or(Datum::Null),
             Partial::MaxMinDecimalFast { value, scale, .. } => {
                 Datum::Decimal(Decimal::from_scaled_i128(*value, *scale))
+            }
+            Partial::CountDistinctInt(set) => {
+                Datum::Int(i64::try_from(set.len()).unwrap_or(i64::MAX))
             }
             Partial::MaxMinCount { count, .. } => Datum::Int(*count),
             // Go divides the exact sum by the count with the session's
@@ -1986,6 +2064,15 @@ impl<C: Columns> StreamAggExec<C> {
     ) -> Result<(), ExecError> {
         for index in 0..agg_funcs.len() {
             let func = &agg_funcs[index];
+            if let Some(column) = count_distinct_int_column(func) {
+                let value = (!row.is_null(column)).then(|| row.get_int64(column));
+                if states[index]
+                    .update_count_distinct_int_fast(value)
+                    .is_some()
+                {
+                    continue;
+                }
+            }
             let mut extra_values = Vec::new();
             let input = eval_agg_input(func, ctx, row, &mut extra_values)?;
             let mut sort_key = Vec::with_capacity(func.order_by.len());
@@ -2753,6 +2840,13 @@ impl<C: HashAggContext> HashAggExec<C> {
         for c in 0..self.agg_funcs.len() {
             let f = &self.agg_funcs[c];
             let state = &mut self.ordered[group_offset + c];
+            if let Some(column) = count_distinct_int_column(f) {
+                let value = (!row.is_null(column)).then(|| row.get_int64(column));
+                if let Some(grown) = state.update_count_distinct_int_fast(value) {
+                    delta += grown;
+                    continue;
+                }
+            }
             // Go's typed COUNT implementations only inspect the source
             // column's NULL bitmap. Keep COUNT(*) and the common
             // COUNT(column) path equally direct.

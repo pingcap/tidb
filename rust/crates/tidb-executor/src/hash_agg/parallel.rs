@@ -548,6 +548,15 @@ fn write_partial(writer: &mut SpillWriter, partial: &Partial) -> Result<(), Exec
             writer.i128(*value);
             writer.u32(*scale);
         }
+        Partial::CountDistinctInt(set) => {
+            writer.u8(19);
+            writer.u32(u32::try_from(set.len()).map_err(|_| {
+                ExecError::SpillFailed("too many HashAgg DISTINCT values".to_owned())
+            })?);
+            for value in set.iter() {
+                writer.i64(*value);
+            }
+        }
         Partial::MaxMinCount { value, count, .. } => {
             writer.u8(17);
             writer.optional_datum(value.as_ref())?;
@@ -691,6 +700,14 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
             value: reader.optional_datum()?,
             is_max: true,
         },
+        (AggKind::Count, 19) => {
+            let count = reader.u32()? as usize;
+            let mut set = Int64SetWithMemoryUsage::new(std::iter::empty::<i64>()).0;
+            for _ in 0..count {
+                set.insert(reader.i64()?);
+            }
+            Partial::CountDistinctInt(set)
+        }
         (AggKind::Min | AggKind::Max, 18) => Partial::MaxMinDecimalFast {
             value: reader.i128()?,
             scale: reader.u32()?,
@@ -845,7 +862,7 @@ fn write_state(
     state: &AggState,
     func: &AggFunc,
 ) -> Result<(), ExecError> {
-    if func.distinct {
+    if func.distinct && !super::count_distinct_int(func) {
         let inputs = state.distinct_inputs.as_ref().ok_or_else(|| {
             ExecError::SpillFailed(
                 "parallel DISTINCT state did not retain its partial inputs".to_owned(),
@@ -863,7 +880,7 @@ fn write_state(
 
 fn read_state(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<AggState, ExecError> {
     let mut state = AggState::new_parallel(func);
-    if func.distinct {
+    if func.distinct && !super::count_distinct_int(func) {
         let count = reader.u32()? as usize;
         let mut inputs = Vec::with_capacity(count);
         let mut seen = StringSetWithMemoryUsage::new([]).0;
@@ -1800,6 +1817,13 @@ fn update_group<C: Columns>(
     let mut delta = 0i64;
     for (c, func) in agg_funcs.iter().enumerate() {
         let state = &mut group.states[c];
+        if let Some(column) = super::count_distinct_int_column(func) {
+            let value = (!row.is_null(column)).then(|| row.get_int64(column));
+            if let Some(grown) = state.update_count_distinct_int_fast(value) {
+                delta += grown;
+                continue;
+            }
+        }
         if matches!(func.kind, AggKind::Count)
             && !func.distinct
             && func.extra_args.is_empty()
@@ -1948,6 +1972,13 @@ fn merge_state(dst: &mut AggState, mut src: AggState) -> Result<(), ExecError> {
     }
     match (&mut dst.partial, src.partial) {
         (Partial::Count(a), Partial::Count(b)) => *a = a.wrapping_add(b),
+        // Go `countPartialWithDistinct4Int.MergePartialResult`: the union of
+        // the two value sets.
+        (Partial::CountDistinctInt(dst_set), Partial::CountDistinctInt(src_set)) => {
+            for value in src_set.iter() {
+                dst_set.insert(*value);
+            }
+        }
         (Partial::FinalCount(a), Partial::FinalCount(b)) => *a = a.wrapping_add(b),
         (Partial::SumDecimal(a), Partial::SumDecimal(b)) => {
             if let Some(sum) = b {
@@ -2545,6 +2576,158 @@ mod tests {
         sort_rows(&mut expected);
         sort_rows(&mut actual);
         assert_eq!(actual, expected);
+    }
+
+    /// Two long columns whose second holds `None` as NULL, `chunk_rows` per
+    /// chunk.
+    struct IntNullSource {
+        meta: ExecutorMeta,
+        fields: Vec<FieldType>,
+        data: Chunk,
+        offset: usize,
+        chunk_size: usize,
+    }
+    impl IntNullSource {
+        fn new(rows: &[(i64, Option<i64>)], chunk_size: usize) -> Box<dyn Executor> {
+            let fields = vec![long(), long()];
+            let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
+            for (group, value) in rows {
+                data.append_int64(0, *group);
+                match value {
+                    Some(value) => data.append_int64(1, *value),
+                    None => data.append_null(1),
+                }
+            }
+            let mut group = Column::new(1, long());
+            group.index = 0;
+            let mut value = Column::new(2, long());
+            value.index = 1;
+            Box::new(IntNullSource {
+                meta: ExecutorMeta::new(Schema::new(vec![group, value]), 0, chunk_size, chunk_size),
+                fields,
+                data,
+                offset: 0,
+                chunk_size,
+            })
+        }
+    }
+    impl Executor for IntNullSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            self.offset = 0;
+            Ok(())
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            let end = (self.offset + self.chunk_size).min(self.data.num_rows());
+            for row in self.offset..end {
+                req.append_row(self.data.get_row(row));
+            }
+            self.offset = end;
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            Chunk::new_with_capacity(&self.fields, self.chunk_size)
+        }
+    }
+
+    fn integer_count_distinct_dataset(
+        groups: i64,
+        rows_per_group: i64,
+    ) -> (Vec<(i64, Option<i64>)>, Vec<Vec<Datum>>) {
+        let mut data = Vec::new();
+        let mut expected = Vec::new();
+        for group in 0..groups {
+            let mut distinct = std::collections::HashSet::new();
+            for i in 0..rows_per_group {
+                let value = if i % 9 == 4 {
+                    None
+                } else {
+                    Some((i * 31 + group) % 37 - 18)
+                };
+                if let Some(value) = value {
+                    distinct.insert(value);
+                }
+                data.push((group, value));
+            }
+            expected.push(vec![Datum::Int(distinct.len() as i64)]);
+        }
+        data.push((groups, None));
+        expected.push(vec![Datum::Int(0)]);
+        data.sort_by_key(|(group, value)| (value.map_or(-1, |v| v.rem_euclid(5)), *group));
+        (data, expected)
+    }
+
+    fn integer_count_distinct_funcs() -> Vec<AggFunc> {
+        let mut func = AggFunc::new(AggKind::Count, Some(col(1)));
+        func.distinct = true;
+        vec![func]
+    }
+
+    /// Go's `countOriginalWithDistinct4Int` keeps the values in an `Int64Set`
+    /// and skips NULL; the typed state answers the distinct count of a
+    /// NULL-bearing, duplicate-heavy input serially and through the
+    /// pipeline's set-union merge.
+    #[test]
+    fn integer_count_distinct_counts_its_value_set() {
+        let (data, mut expected) = integer_count_distinct_dataset(40, 250);
+        let mut serial = build(
+            vec![col(0)],
+            integer_count_distinct_funcs(),
+            IntNullSource::new(&data, 128),
+            &[long()],
+        )
+        .with_pipeline_concurrency_override(1, 1);
+        let mut serial_rows = run(&mut serial);
+        let mut parallel = build(
+            vec![col(0)],
+            integer_count_distinct_funcs(),
+            IntNullSource::new(&data, 128),
+            &[long()],
+        );
+        assert!(parallel.pipeline_eligibility().is_some());
+        let mut parallel_rows = run(&mut parallel);
+        sort_rows(&mut expected);
+        sort_rows(&mut serial_rows);
+        sort_rows(&mut parallel_rows);
+        assert_eq!(serial_rows, expected);
+        assert_eq!(parallel_rows, expected);
+    }
+
+    /// The typed value set round-trips the spill format.
+    #[test]
+    fn integer_count_distinct_survives_a_spill() {
+        let (data, mut expected) = integer_count_distinct_dataset(20_000, 3);
+        let mut spilled = HashAggExec::new(
+            out_meta(&[long()]),
+            vec![col(0)],
+            integer_count_distinct_funcs(),
+            IntNullSource::new(&data, 128),
+            NoColumns,
+            StatementMemory::new(2 * 1024 * 1024, crate::mem_quota::OomAction::Cancel, 42)
+                .with_tmp_storage_on_oom(true),
+        );
+        spilled.open().unwrap();
+        let mut spilled_rows = drain_rows(&mut spilled);
+        assert!(spilled.spill_times() > 0, "the quota must force a spill");
+        spilled.close().unwrap();
+        sort_rows(&mut expected);
+        sort_rows(&mut spilled_rows);
+        assert_eq!(spilled_rows, expected);
     }
 
     /// Go admits REAL-domain SUM to the partial/final worker pipeline.
