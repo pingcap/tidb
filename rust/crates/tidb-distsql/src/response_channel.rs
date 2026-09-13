@@ -949,9 +949,15 @@ impl SelectResponseIter {
                         .last()
                         .expect("the channel index was just read")
                         .field_types;
+                    // No preallocated column data: the usual outcome below is
+                    // Go's `ReuseIntermChk` swap, after which the decoder
+                    // points these columns at the response payload and drops
+                    // any buffer they came with (a `required_rows`-sized
+                    // jemalloc extent per column, faulted in and freed per
+                    // chunk); the append path grows its columns on demand.
                     SelectResultRow::new(
                         channel_index,
-                        DecodedChunk::new_with_capacity(field_types, required_rows),
+                        DecodedChunk::new(field_types, 0, required_rows),
                     )
                 });
                 let ready = self
