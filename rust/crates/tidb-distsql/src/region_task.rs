@@ -607,6 +607,65 @@ mod tests {
             ranges.len()
         );
     }
+
+    /// Every region task carries the row-count hint of the ranges that fall
+    /// inside it, and a request whose ranges are not monotonic keeps no hint
+    /// at all (`-1`) because sorting them breaks the alignment Go relies on.
+    #[test]
+    fn region_tasks_carry_the_hints_of_the_ranges_they_cover() {
+        let key = |value: u32| value.to_be_bytes().to_vec();
+        let range = |start: u32, end: u32| tidb_txnkv::KeyRange {
+            start_key: key(start).into(),
+            end_key: key(end).into(),
+        };
+        let topology = |split: u32| {
+            vec![
+                RegionTaskTopology {
+                    region_id: 1,
+                    start_key: Vec::new(),
+                    end_key: key(split),
+                    ..RegionTaskTopology::default()
+                },
+                RegionTaskTopology {
+                    region_id: 2,
+                    start_key: key(split),
+                    end_key: Vec::new(),
+                    ..RegionTaskTopology::default()
+                },
+            ]
+        };
+        let metadata_for = |ranges: Vec<tidb_txnkv::KeyRange>, hints: Vec<usize>| {
+            let mut request = tidb_txnkv::Request::default();
+            request.key_ranges = Some(
+                tidb_txnkv::PartitionedKeyRanges::new_non_partitioned_with_hints(ranges, hints),
+            );
+            KvRequestMetadata::from_request(request)
+        };
+
+        let sorted = metadata_for(
+            vec![range(10, 11), range(20, 21), range(40, 41)],
+            vec![3, 5, 7],
+        );
+        let tasks = build_region_tasks(&sorted, &topology(30)).expect("tasks");
+        let hints: Vec<i64> = tasks.iter().map(|task| task.row_count_hint).collect();
+        assert_eq!(
+            hints,
+            vec![8, 7],
+            "the first region holds the 3 and 5 ranges"
+        );
+
+        // The same ranges out of order: the sort that repairs them also
+        // detaches the hints, so no task may claim one.
+        let unsorted = metadata_for(
+            vec![range(40, 41), range(10, 11), range(20, 21)],
+            vec![7, 3, 5],
+        );
+        let tasks = build_region_tasks(&unsorted, &topology(30)).expect("tasks");
+        assert!(
+            tasks.iter().all(|task| task.row_count_hint == -1),
+            "reordered ranges keep no hints"
+        );
+    }
 }
 
 fn batch_tasks(
