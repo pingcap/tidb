@@ -333,6 +333,11 @@ impl AggFunc {
                 if state.partial_update_with_coefficient(coefficient, scale) {
                     continue;
                 }
+                // The fold refused (a scale change or an overflow): the
+                // state is materialized, so replay this row as its datum.
+                let value = Datum::Decimal(Decimal::from_scaled_i128(coefficient, scale));
+                state.update(Some(value), &extra_values, sort_key, input.distinct_key)?;
+                continue;
             }
             state.update(input.value, &extra_values, sort_key, input.distinct_key)?;
         }
@@ -377,6 +382,18 @@ enum Partial {
     /// `MIN`/`MAX`: the extreme seen so far, `None` while every input was NULL.
     MaxMin {
         value: Option<Datum>,
+        is_max: bool,
+    },
+    /// Fixed-scale DECIMAL `MIN`/`MAX`: Go's `partialResult4MaxMinDecimal`
+    /// keeps the extremum as a `MyDecimal` value in place, compared by
+    /// `Compare` and appended with `AppendMyDecimal`. The signed i128
+    /// coefficient plays that role here: one comparison per row instead of
+    /// a `Decimal` build (its digit string) and a datum compare, and no heap
+    /// object per group. A differing-scale or non-i128 input materializes
+    /// the state into [`Partial::MaxMin`] via [`Partial::materialize_max_min_fast`].
+    MaxMinDecimalFast {
+        value: i128,
+        scale: u32,
         is_max: bool,
     },
     /// `MIN_COUNT`/`MAX_COUNT`: the selected extreme plus the number of rows
@@ -596,6 +613,12 @@ impl AggState {
     /// into this state. Returns `false` when the caller must replay the row
     /// through the complete path.
     fn partial_update_with_coefficient(&mut self, coefficient: i128, scale: u32) -> bool {
+        if matches!(
+            self.partial,
+            Partial::MaxMin { .. } | Partial::MaxMinDecimalFast { .. }
+        ) {
+            return self.update_decimal_max_min_fast(coefficient, scale);
+        }
         self.partial.update_with_coefficient(coefficient, scale)
     }
 
@@ -670,45 +693,50 @@ impl AggState {
         true
     }
 
-    /// Folds a fixed-scale DECIMAL MIN/MAX by comparing coefficients directly
-    /// and only materializing a Decimal when a group first receives (or
-    /// replaces) its extremum.
+    /// Folds a fixed-scale DECIMAL MIN/MAX cell into
+    /// [`Partial::MaxMinDecimalFast`] (Go `maxMin4Decimal.UpdatePartialResult`:
+    /// `input.Compare(&p.val)`, then `p.val = *input`). Returns `false` when
+    /// this state cannot take the coefficient -- DISTINCT, a scale that
+    /// differs from the accumulated one, or a state already materialized as
+    /// a datum -- and the caller must replay the row through the complete
+    /// path; a fast state is materialized first so that replay compares
+    /// exact decimals.
     fn update_decimal_max_min_fast(&mut self, coefficient: i128, scale: u32) -> bool {
         if self.seen.is_some() {
             return false;
         }
-        let Partial::MaxMin { value, is_max } = &mut self.partial else {
-            return false;
-        };
-        match value {
-            None => {
-                *value = Some(Datum::Decimal(Decimal::from_scaled_i128(
-                    coefficient,
+        match &mut self.partial {
+            Partial::MaxMin {
+                value: None,
+                is_max,
+            } => {
+                self.partial = Partial::MaxMinDecimalFast {
+                    value: coefficient,
                     scale,
-                )));
+                    is_max: *is_max,
+                };
                 true
             }
-            Some(Datum::Decimal(current)) => {
-                let Some((current_coefficient, current_scale)) = current.coefficient_i128() else {
-                    return false;
-                };
-                if current_scale != scale {
-                    return false;
-                }
+            Partial::MaxMinDecimalFast {
+                value,
+                scale: current_scale,
+                is_max,
+            } if *current_scale == scale => {
                 let improves = if *is_max {
-                    coefficient > current_coefficient
+                    coefficient > *value
                 } else {
-                    coefficient < current_coefficient
+                    coefficient < *value
                 };
                 if improves {
-                    *value = Some(Datum::Decimal(Decimal::from_scaled_i128(
-                        coefficient,
-                        scale,
-                    )));
+                    *value = coefficient;
                 }
                 true
             }
-            Some(_) => false,
+            Partial::MaxMinDecimalFast { .. } => {
+                self.partial.materialize_max_min_fast();
+                false
+            }
+            _ => false,
         }
     }
 
@@ -1024,6 +1052,22 @@ impl Partial {
         }
     }
 
+    /// Replaces a fixed-scale MIN/MAX accumulator by the exact decimal state
+    /// every datum-path rule (compare, merge, spill) understands.
+    fn materialize_max_min_fast(&mut self) {
+        if let Partial::MaxMinDecimalFast {
+            value,
+            scale,
+            is_max,
+        } = self
+        {
+            *self = Partial::MaxMin {
+                value: Some(Datum::Decimal(Decimal::from_scaled_i128(*value, *scale))),
+                is_max: *is_max,
+            };
+        }
+    }
+
     fn materialize_avg_fast(&mut self) {
         let replacement = match self {
             Partial::AvgDecimalFast { sum, scale, count } => {
@@ -1189,6 +1233,7 @@ impl Partial {
         // A caller that cannot keep using the fixed-scale fast path falls
         // back to the ordinary Decimal state before entering this match.
         self.materialize_avg_fast();
+        self.materialize_max_min_fast();
         match (self, value) {
             // Go appends the converted value for EVERY row, so a NULL input
             // lands in the array as JSON `null` rather than being skipped.
@@ -1350,6 +1395,11 @@ impl Partial {
             }
             (Partial::MaxMin { .. }, None) => {
                 return Err(ExecError::unsupported("MIN/MAX requires an argument"));
+            }
+            (Partial::MaxMinDecimalFast { .. }, _) => {
+                return Err(ExecError::internal(
+                    "a fixed-scale MIN/MAX state reached the datum fold unmaterialized",
+                ));
             }
             (Partial::MaxMin { .. }, Some(Datum::Null)) => {}
             (Partial::MaxMin { value, is_max }, Some(input)) => match value {
@@ -1616,6 +1666,9 @@ impl Partial {
             Partial::SumReal(Some(v)) => Datum::Real(*v),
             Partial::FirstRow(v) => v.clone().unwrap_or(Datum::Null),
             Partial::MaxMin { value, .. } => value.clone().unwrap_or(Datum::Null),
+            Partial::MaxMinDecimalFast { value, scale, .. } => {
+                Datum::Decimal(Decimal::from_scaled_i128(*value, *scale))
+            }
             Partial::MaxMinCount { count, .. } => Datum::Int(*count),
             // Go divides the exact sum by the count with the session's
             // div_precision_increment, the same rule the `/` operator follows.
@@ -1813,13 +1866,28 @@ fn append_finished_agg_value_claiming<C: Columns>(
     req: &mut Chunk,
     column: usize,
 ) -> Result<(), ExecError> {
-    if let Partial::SumDecimalFast { sum, scale } = &state.partial {
-        if matches!(func.kind, AggKind::Sum)
-            && output_type.code() == FieldTypeCode::NewDecimal
-            && (output_type.decimal() == UNSPECIFIED_LENGTH
-                || *scale <= output_type.decimal() as u32)
+    let fixed_scale_cell = match &state.partial {
+        Partial::SumDecimalFast { sum, scale } if matches!(func.kind, AggKind::Sum) => {
+            Some((*sum, *scale))
+        }
+        // Go `maxMin4Decimal.AppendFinalResult2Chunk` rounds to the result
+        // type's scale before `AppendMyDecimal`; a coefficient already at or
+        // under that scale rounds to itself.
+        Partial::MaxMinDecimalFast { value, scale, .. }
+            if matches!(func.kind, AggKind::Min | AggKind::Max) =>
         {
-            if let Some(cell) = tidb_datatype::MyDecimal::from_scaled_i128(*sum, *scale, *scale) {
+            Some((*value, *scale))
+        }
+        _ => None,
+    };
+    if let Some((coefficient, scale)) = fixed_scale_cell {
+        if output_type.code() == FieldTypeCode::NewDecimal
+            && (output_type.decimal() == UNSPECIFIED_LENGTH
+                || scale <= output_type.decimal() as u32)
+        {
+            if let Some(cell) =
+                tidb_datatype::MyDecimal::from_scaled_i128(coefficient, scale, scale)
+            {
                 req.append_my_decimal(column, &cell);
                 return Ok(());
             }
@@ -1928,6 +1996,9 @@ impl<C: Columns> StreamAggExec<C> {
                 if states[index].partial_update_with_coefficient(coefficient, scale) {
                     continue;
                 }
+                let value = Datum::Decimal(Decimal::from_scaled_i128(coefficient, scale));
+                states[index].update(Some(value), &extra_values, sort_key, input.distinct_key)?;
+                continue;
             }
             states[index].update(input.value, &extra_values, sort_key, input.distinct_key)?;
         }
@@ -2812,6 +2883,9 @@ impl<C: HashAggContext> HashAggExec<C> {
                 if state.partial_update_with_coefficient(coefficient, scale) {
                     continue;
                 }
+                let value = Datum::Decimal(Decimal::from_scaled_i128(coefficient, scale));
+                delta += state.update(Some(value), &extra_values, sort_key, input.distinct_key)?;
+                continue;
             }
             delta += state.update(input.value, &extra_values, sort_key, input.distinct_key)?;
         }
@@ -3139,12 +3213,12 @@ fn eval_agg_input<C: Columns>(
     row: tidb_chunk::row::Row<'_>,
     extra_values: &mut Vec<Datum>,
 ) -> Result<AggInput, ExecError> {
-    // A non-DISTINCT SUM over a bare DECIMAL column reads the raw MyDecimal
-    // words directly and returns the i128 coefficient -- skipping the Datum
-    // materialization whose NewDecimal arm converts via an ASCII digit
-    // round trip (`Decimal::from_my_decimal`). The fold consumes
+    // A non-DISTINCT SUM, MIN or MAX over a bare DECIMAL column reads the raw
+    // MyDecimal words directly and returns the i128 coefficient -- skipping
+    // the Datum materialization whose NewDecimal arm converts via an ASCII
+    // digit round trip (`Decimal::from_my_decimal`). The fold consumes
     // `decimal_coefficient` without building a `Decimal`.
-    if matches!(f.kind, AggKind::Sum)
+    if matches!(f.kind, AggKind::Sum | AggKind::Min | AggKind::Max)
         && !f.distinct
         && f.extra_args.is_empty()
         && f.order_by.is_empty()

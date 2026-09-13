@@ -543,6 +543,11 @@ fn write_partial(writer: &mut SpillWriter, partial: &Partial) -> Result<(), Exec
             writer.u8(6);
             writer.optional_datum(value.as_ref())?;
         }
+        Partial::MaxMinDecimalFast { value, scale, .. } => {
+            writer.u8(18);
+            writer.i128(*value);
+            writer.u32(*scale);
+        }
         Partial::MaxMinCount { value, count, .. } => {
             writer.u8(17);
             writer.optional_datum(value.as_ref())?;
@@ -685,6 +690,11 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
         (AggKind::Max, 6) => Partial::MaxMin {
             value: reader.optional_datum()?,
             is_max: true,
+        },
+        (AggKind::Min | AggKind::Max, 18) => Partial::MaxMinDecimalFast {
+            value: reader.i128()?,
+            scale: reader.u32()?,
+            is_max: matches!(func.kind, AggKind::Max),
         },
         (AggKind::MinCount, 17) => Partial::MaxMinCount {
             value: reader.optional_datum()?,
@@ -1905,6 +1915,20 @@ fn merge_state(dst: &mut AggState, mut src: AggState) -> Result<(), ExecError> {
         dst.partial.materialize_sum_fast();
         src.partial.materialize_sum_fast();
     }
+    let max_min_fast_matches = matches!(
+        (&dst.partial, &src.partial),
+        (
+            Partial::MaxMinDecimalFast { scale: a, .. },
+            Partial::MaxMinDecimalFast { scale: b, .. }
+        ) if a == b
+    );
+    if !max_min_fast_matches
+        && (matches!(dst.partial, Partial::MaxMinDecimalFast { .. })
+            || matches!(src.partial, Partial::MaxMinDecimalFast { .. }))
+    {
+        dst.partial.materialize_max_min_fast();
+        src.partial.materialize_max_min_fast();
+    }
     // Fixed-scale AVG accumulators over the same column share one scale; a
     // representation or scale mismatch materializes both sides into full
     // decimals so the merge stays exact.
@@ -2050,6 +2074,24 @@ fn merge_state(dst: &mut AggState, mut src: AggState) -> Result<(), ExecError> {
         (state @ Partial::SumDecimalFast { .. }, Partial::SumDecimal(None)) => {
             // An empty partial contributes nothing to a Fast accumulator.
             let _ = state;
+        }
+        // Go `maxMin4Decimal.MergePartialResult`: compare the two extrema
+        // and keep the better one.
+        (
+            Partial::MaxMinDecimalFast {
+                value: dst_value,
+                scale: dst_scale,
+                is_max,
+            },
+            Partial::MaxMinDecimalFast {
+                value: src_value,
+                scale: src_scale,
+                ..
+            },
+        ) if dst_scale == &src_scale => {
+            if (*is_max && src_value > *dst_value) || (!*is_max && src_value < *dst_value) {
+                *dst_value = src_value;
+            }
         }
         // A Fast state adopting an empty partial, or vice versa: the empty
         // side contributes nothing.
@@ -2670,6 +2712,207 @@ mod tests {
         sort_rows(&mut expected);
         sort_rows(&mut actual);
         assert_eq!(actual, expected);
+    }
+
+    /// A two-column source whose second column holds DECIMAL(15,2) cells
+    /// given as `(coefficient, scale)` (`None` is NULL), so an aggregate
+    /// over it takes the fixed-scale coefficient path exactly as a TPC-H
+    /// column does; a cell stored at another scale exercises the
+    /// materialized fallback.
+    struct DecimalChunkSource {
+        meta: ExecutorMeta,
+        fields: Vec<FieldType>,
+        data: Chunk,
+        offset: usize,
+        chunk_size: usize,
+    }
+    impl DecimalChunkSource {
+        fn field_type() -> FieldType {
+            let mut decimal = decimal();
+            decimal.set_flen(15);
+            decimal.set_decimal(2);
+            decimal
+        }
+
+        fn column(index: i64) -> Expression {
+            let mut c = Column::new(index + 1, Self::field_type());
+            c.index = index;
+            Expression::Column(c)
+        }
+
+        fn new(rows: &[(i64, Option<(i64, u32)>)], chunk_size: usize) -> Box<dyn Executor> {
+            let fields = vec![long(), Self::field_type()];
+            let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
+            for (group, cell) in rows {
+                data.append_int64(0, *group);
+                match cell {
+                    Some((coefficient, scale)) => data.append_my_decimal(
+                        1,
+                        &tidb_datatype::MyDecimal::from_scaled_i128(
+                            i128::from(*coefficient),
+                            *scale,
+                            *scale,
+                        )
+                        .expect("a short fraction fits"),
+                    ),
+                    None => data.append_null(1),
+                }
+            }
+            let mut group = Column::new(1, long());
+            group.index = 0;
+            let mut value = Column::new(2, Self::field_type());
+            value.index = 1;
+            Box::new(DecimalChunkSource {
+                meta: ExecutorMeta::new(Schema::new(vec![group, value]), 0, chunk_size, chunk_size),
+                fields,
+                data,
+                offset: 0,
+                chunk_size,
+            })
+        }
+    }
+    impl Executor for DecimalChunkSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            self.offset = 0;
+            Ok(())
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            let end = (self.offset + self.chunk_size).min(self.data.num_rows());
+            for row in self.offset..end {
+                req.append_row(self.data.get_row(row));
+            }
+            self.offset = end;
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            Chunk::new_with_capacity(&self.fields, self.chunk_size)
+        }
+    }
+
+    /// Group `g` holds values spread over both signs, most as DECIMAL(15,2)
+    /// cents and every seventeenth as a three-digit-fraction cell that no
+    /// two-digit coefficient can represent (the fast state must materialize
+    /// and the datum path take over); group 0 holds only NULLs. The expected
+    /// extrema are computed from the integers directly, in mills,
+    /// independent of either aggregate representation.
+    fn decimal_min_max_dataset(
+        groups: i64,
+        rows_per_group: i64,
+    ) -> (Vec<(i64, Option<(i64, u32)>)>, Vec<Vec<Datum>>) {
+        let mut data = Vec::new();
+        let mut expected = vec![vec![Datum::Null, Datum::Null]];
+        for group in 1..=groups {
+            let mut mills = Vec::new();
+            for i in 0..rows_per_group {
+                let value = (i * 7919 + group * 31) % 20_011 - 10_005;
+                if i % 17 == 3 {
+                    mills.push(value * 10 + 5);
+                    data.push((group, Some((value * 10 + 5, 3))));
+                } else {
+                    mills.push(value * 10);
+                    data.push((group, Some((value, 2))));
+                }
+                if i % 11 == 0 {
+                    data.push((group, None));
+                }
+            }
+            // Both extrema of every group are three-digit-fraction cells
+            // outside the two-digit range, so a refused fold that dropped or
+            // failed its row would change the answer.
+            for extreme in [-1_000_055, 1_000_055] {
+                mills.push(extreme);
+                data.push((group, Some((extreme, 3))));
+            }
+            let decimal = |mills: i64| {
+                Datum::Decimal(tidb_datatype::Decimal::from_scaled_i128(mills.into(), 3))
+            };
+            expected.push(vec![
+                decimal(*mills.iter().min().unwrap()),
+                decimal(*mills.iter().max().unwrap()),
+            ]);
+        }
+        for _ in 0..5 {
+            data.push((0, None));
+        }
+        // Interleave the groups so every worker and every chunk sees most of them.
+        data.sort_by_key(|(group, cell)| (cell.map_or(0, |(c, _)| c.rem_euclid(13)), *group));
+        (data, expected)
+    }
+
+    fn decimal_min_max_funcs() -> Vec<AggFunc> {
+        vec![
+            AggFunc::new(AggKind::Min, Some(DecimalChunkSource::column(1))),
+            AggFunc::new(AggKind::Max, Some(DecimalChunkSource::column(1))),
+        ]
+    }
+
+    /// Go `maxMin4Decimal` keeps the extremum as a MyDecimal value in place;
+    /// the fixed-scale coefficient state must answer exactly what the datum
+    /// path answers, serial and parallel, NULL-only groups included.
+    #[test]
+    fn decimal_min_max_fold_by_coefficient_matches_the_expected_extrema() {
+        let (data, mut expected) = decimal_min_max_dataset(37, 97);
+        let types = [decimal(), decimal()];
+        let mut serial_exec = build(
+            vec![col(0)],
+            decimal_min_max_funcs(),
+            DecimalChunkSource::new(&data, 128),
+            &types,
+        )
+        .with_pipeline_concurrency_override(1, 1);
+        let mut serial = run(&mut serial_exec);
+        let mut exec = build(
+            vec![col(0)],
+            decimal_min_max_funcs(),
+            DecimalChunkSource::new(&data, 128),
+            &types,
+        );
+        assert!(exec.pipeline_eligibility().is_some());
+        let mut parallel = run(&mut exec);
+        sort_rows(&mut expected);
+        sort_rows(&mut serial);
+        sort_rows(&mut parallel);
+        assert_eq!(serial, expected);
+        assert_eq!(parallel, expected);
+    }
+
+    /// The fixed-scale MIN/MAX state round-trips through the spill format
+    /// and merges back into the same extrema.
+    #[test]
+    fn decimal_min_max_states_survive_a_spill() {
+        let (data, mut expected) = decimal_min_max_dataset(20_000, 1);
+        let mut exec = HashAggExec::new(
+            out_meta(&[decimal(), decimal()]),
+            vec![col(0)],
+            decimal_min_max_funcs(),
+            DecimalChunkSource::new(&data, 128),
+            NoColumns,
+            StatementMemory::new(2 * 1024 * 1024, crate::mem_quota::OomAction::Cancel, 42)
+                .with_tmp_storage_on_oom(true),
+        );
+        exec.open().unwrap();
+        let mut rows = drain_rows(&mut exec);
+        assert!(exec.spill_times() > 0, "the quota must force a spill");
+        exec.close().unwrap();
+        sort_rows(&mut expected);
+        sort_rows(&mut rows);
+        assert_eq!(rows, expected);
     }
 
     /// A test context answering session-variable reads from a map, to prove
