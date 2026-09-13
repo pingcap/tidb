@@ -11612,3 +11612,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (EXPLAIN ANALYZE pin): ANALYZE executes the plan and reports
  the 9-column actuals shape versus plain EXPLAIN's 5 columns. Pinned in
  `crates/tidb-session/tests/explain_analyze_shape_source.rs`.
+- 2026-09-08 (multi-table UPDATE/DELETE pin): joined multi-table UPDATE and
+ DELETE t1 FROM t1, t2 both key off the join condition. Pinned in
+ `crates/tidb-session/tests/multi_table_dml_join_source.rs`.
