@@ -11565,3 +11565,7 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (view/partition pin): a view over a partitioned table sees
  through all partitions and tracks later re-routing. Pinned in
  `crates/tidb-session/tests/view_partitioned_source.rs`.
+- 2026-09-08 (ALTER ADD CONSTRAINT CHECK pin): standalone CHECK addition
+ validates existing rows, refuses by constraint name, and lands live
+ after the data is fixed. Pinned in
+ `crates/tidb-session/tests/alter_add_check_existing_source.rs`.
