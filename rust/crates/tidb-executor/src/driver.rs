@@ -353,6 +353,29 @@ pub fn run_select_meta_in(
     run_query_stmt(query, catalog, current_db, ctx)
 }
 
+/// Plans the query in `sql` and returns only its result-column metadata:
+/// Go's `PlanBuilder` for `CREATE VIEW` builds the body's logical plan and
+/// reads `plan.Schema()` and `plan.OutputNames()` (`planbuilder.go`, the
+/// `*ast.CreateViewStmt` case); the body is never executed. The same
+/// validation and optimizer as [`run_select_meta_in`] run, so a body that
+/// cannot be planned fails here exactly as it would there.
+pub fn plan_select_meta_in(
+    sql: &str,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<(String, FieldType)>, DriverError> {
+    let stmt = ctx.parse(sql)?;
+    let query = match &stmt {
+        Stmt::Query(query) => query.as_ref(),
+        _ => return Err(DriverError::unsupported("only SELECT is supported")),
+    };
+    validate_query_sequence_names(query, ctx)?;
+    set_opr::validate_query_usage(query, ctx)?;
+    let physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
+    physical_builder::planned_query_result_columns(query, &physical)
+}
+
 /// Go's expression builder resolves the name argument of every sequence
 /// builtin before it constructs a physical executor. Keep that ordering for
 /// Rust's row/chunk evaluators: a later invalid projection item must not allow
@@ -476,7 +499,10 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::DuplicateColumnName(name.clone())
         }
         tidb_planner::plan_base::PlanErrorKind::IllegalReference { name, reason } => {
-            DriverError::IllegalReference { name: name.clone(), reason }
+            DriverError::IllegalReference {
+                name: name.clone(),
+                reason,
+            }
         }
         tidb_planner::plan_base::PlanErrorKind::Aggregation(aggregate) => {
             use tidb_expr::aggregation::AggDescError;
@@ -554,12 +580,16 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::ViewInvalid(name) => {
             DriverError::Schema(SchemaErrorKind::ViewInvalid(name.clone()))
         }
-        tidb_planner::plan_base::PlanErrorKind::WindowDefinition { code, name, base } => match code {
+        tidb_planner::plan_base::PlanErrorKind::WindowDefinition { code, name, base } => match code
+        {
             3579 => DriverError::WindowNoSuchWindow(name.clone()),
             3580 => DriverError::WindowCircularity,
             3581 => DriverError::WindowNoChildPartitioning,
             3582 => DriverError::WindowNoInheritFrame(name.clone()),
-            3583 => DriverError::WindowNoRedefineOrderBy { window: name.clone(), base: base.clone() },
+            3583 => DriverError::WindowNoRedefineOrderBy {
+                window: name.clone(),
+                base: base.clone(),
+            },
             _ => unreachable!("unsupported window definition error"),
         },
         tidb_planner::plan_base::PlanErrorKind::WindowInvalidWindowFuncUse(name) => {

@@ -1227,3 +1227,23 @@ fn a_view_column_type_follows_the_base_column() {
     );
     assert_eq!(rows, [["SELECT `x` AS `x`,`y` AS `y` FROM `test`.`bt`"]]);
 }
+
+/// Go's `PlanBuilder` for `CREATE VIEW` builds the body's plan and reads its
+/// schema and output names (`planbuilder.go`, the `*ast.CreateViewStmt`
+/// case); the body never runs. A `NEXTVAL` in the body is the observable: on
+/// a Go server the sequence's first value after the CREATE is still 1, so a
+/// definition that had run its body would hand out 2 here.
+#[test]
+fn create_view_plans_its_body_without_running_it() {
+    let mut session = Session::new();
+    session.run("create sequence sq").unwrap();
+    session
+        .run("create view vseq as select nextval(sq) as n")
+        .unwrap();
+    let (_, rows) = query_text(&mut session, "select nextval(sq)");
+    assert_eq!(rows, [["1"]]);
+    // The definition still settled its column from the plan.
+    let (columns, rows) = query_text(&mut session, "select n from vseq");
+    assert_eq!(columns, ["n"]);
+    assert_eq!(rows, [["2"]]);
+}

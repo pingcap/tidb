@@ -2796,7 +2796,9 @@ fn point_partition_id(
     let route = if table.common_handle_offsets().is_empty() {
         let handles = point_handles(&table, &point.ranges, ctx)?;
         if handles.len() != 1 {
-            return Err(DriverError::unsupported("partition point must retain one handle"));
+            return Err(DriverError::unsupported(
+                "partition point must retain one handle",
+            ));
         }
         table.handle_partition_routes(&handles, &ctx.session_zone(), ctx)[0]
     } else {
@@ -2805,7 +2807,9 @@ fn point_partition_id(
         let Some(tidb_planner::physical_plan_cache::PointRangeRebuild::Table(rebuild)) =
             &point.range_rebuild
         else {
-            return Err(DriverError::unsupported("partition point lost its access conditions"));
+            return Err(DriverError::unsupported(
+                "partition point lost its access conditions",
+            ));
         };
         let result = tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition_in(
             &rebuild.access_conditions,
@@ -2816,11 +2820,15 @@ fn point_partition_id(
         )
         .map_err(|error| DriverError::unsupported(format!("point partition range: {error:?}")))?;
         let [range] = result.ranges.as_slice() else {
-            return Err(DriverError::unsupported("partition point must rebuild one key"));
+            return Err(DriverError::unsupported(
+                "partition point must rebuild one key",
+            ));
         };
         let values = point_range_values(range)?;
         if values.len() != table.common_handle_offsets().len() {
-            return Err(DriverError::unsupported("partition point key width is invalid"));
+            return Err(DriverError::unsupported(
+                "partition point key width is invalid",
+            ));
         }
         let mut row = vec![tidb_datatype::Datum::Null; table.columns.len()];
         for (&offset, value) in table.common_handle_offsets().iter().zip(values) {
@@ -2831,7 +2839,9 @@ fn point_partition_id(
     Ok(route.and_then(|(ordinal, id)| {
         (routing.names.is_empty()
             || routing.names.iter().any(|name| {
-                partition.definitions[ordinal].name.eq_ignore_ascii_case(name)
+                partition.definitions[ordinal]
+                    .name
+                    .eq_ignore_ascii_case(name)
             }))
         .then_some(id)
     }))
@@ -2844,7 +2854,10 @@ fn build_point_get(
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let Some(physical_id) = point_partition_id(point, catalog, ctx)? else {
-        return Ok(Box::new(TableDualExec::new(meta(plan, plan_schema(plan)?), 0)));
+        return Ok(Box::new(TableDualExec::new(
+            meta(plan, plan_schema(plan)?),
+            0,
+        )));
     };
     let table = catalog
         .physical_kv_table_by_id(physical_id)
@@ -3998,6 +4011,20 @@ pub(super) fn planned_result_columns(
         &plan_schema(physical)?,
         physical.base().base.output_names(),
     ))
+}
+
+/// [`planned_result_columns`] for either query shape, choosing the naming
+/// rule exactly as [`execute_query`] does for the executor it would build.
+pub(super) fn planned_query_result_columns(
+    query: &tidb_ast::QueryStmt,
+    physical: &PhysicalPlan,
+) -> Result<Vec<(String, FieldType)>, DriverError> {
+    match query {
+        tidb_ast::QueryStmt::Select(select) => planned_result_columns(select, physical),
+        tidb_ast::QueryStmt::SetOpr(_) => {
+            Ok(physical_result_columns(physical, &plan_schema(physical)?))
+        }
+    }
 }
 
 /// Go's common query execution seam: both SELECT and set-operation logical

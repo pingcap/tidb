@@ -148,8 +148,10 @@ pub fn resolve_view_definition(
         catalog
     };
     let select_sql = canonical_view_query(&create.query, resolving, &database)?;
-    // Running the canonical body both validates it and settles the output
-    // column types the view reports to DESCRIBE and SHOW CREATE VIEW.
+    // Planning the canonical body both validates it and settles the output
+    // column types the view reports to DESCRIBE and SHOW CREATE VIEW; Go's
+    // `PlanBuilder` builds the body's plan and reads its schema, and never
+    // runs it (a view over a large table must not scan it at CREATE time).
     // Go buildProjection delays the new GROUP BY checker during CREATE VIEW.
     // The stored body is checked again in the querying session's context.
     let definition_ctx = if ctx.new_only_full_group_by_check() {
@@ -157,8 +159,8 @@ pub fn resolve_view_definition(
     } else {
         ctx.clone()
     };
-    let (body_columns, _) =
-        crate::driver::run_select_meta_in(&select_sql, resolving, &database, &definition_ctx)?;
+    let body_columns =
+        crate::driver::plan_select_meta_in(&select_sql, resolving, &database, &definition_ctx)?;
     let columns = match create.columns.len() {
         0 => body_columns,
         n if n == body_columns.len() => create
