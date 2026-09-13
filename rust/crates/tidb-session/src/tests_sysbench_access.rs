@@ -83,8 +83,13 @@ fn sbtest1() -> Session {
     session
 }
 
-/// The access row (`id`, `estRows`, `access object`, `operator info`) of a
-/// plan's deepest node -- the source the whole shape reads through.
+/// The access row (`operator`, `estRows`, `access object`, `operator info`)
+/// of a plan's deepest node -- the source the whole shape reads through.
+/// The operator's plan-id suffix is stripped: Go's own leaf ids move with its
+/// plan depth (`Point_Get_1` for a bare point read but `TableRangeScan_8`,
+/// `TableFullScan_12`, `Batch_Point_Get_6` under today's cop projections --
+/// captured from master fdfadb96b2), so the id is allocator bookkeeping, not
+/// a contract.
 fn source_row(session: &mut Session, sql: &str) -> Vec<String> {
     let rows = row_text(session.run(sql));
     let last = rows.last().expect("a plan has at least one row").clone();
@@ -94,6 +99,14 @@ fn source_row(session: &mut Session, sql: &str) -> Vec<String> {
         .next()
         .expect("a drawn name is nonempty")
         .to_owned();
+    let name = match name.rsplit_once('_') {
+        Some((stem, suffix))
+            if !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            stem.to_owned()
+        }
+        _ => name,
+    };
     vec![name, last[1].clone(), last[3].clone(), last[4].clone()]
 }
 
@@ -105,7 +118,7 @@ fn point_select_reads_one_handle() {
     assert_eq!(
         source_row(&mut session, "EXPLAIN SELECT c FROM sbtest1 WHERE id = 100"),
         vec![
-            "Point_Get_1".to_owned(),
+            "Point_Get".to_owned(),
             "1.00".to_owned(),
             "table:sbtest1".to_owned(),
             "handle:100".to_owned(),
@@ -132,7 +145,7 @@ fn range_select_reads_only_the_handle_range() {
             "EXPLAIN SELECT c FROM sbtest1 WHERE id BETWEEN 100 AND 199"
         ),
         vec![
-            "TableRangeScan_1".to_owned(),
+            "TableRangeScan".to_owned(),
             "99.00".to_owned(),
             "table:sbtest1".to_owned(),
             "range:[100,199], keep order:false, stats:pseudo".to_owned(),
@@ -155,7 +168,7 @@ fn aggregate_over_a_range_does_not_scan_an_unrelated_index() {
             "EXPLAIN SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN 100 AND 199"
         ),
         vec![
-            "TableRangeScan_1".to_owned(),
+            "TableRangeScan".to_owned(),
             "99.00".to_owned(),
             "table:sbtest1".to_owned(),
             "range:[100,199], keep order:false, stats:pseudo".to_owned(),
@@ -171,7 +184,7 @@ fn aggregate_over_a_range_does_not_scan_an_unrelated_index() {
 fn ordered_and_distinct_selects_read_the_same_range() {
     let mut session = sbtest1();
     let expected = vec![
-        "TableRangeScan_1".to_owned(),
+        "TableRangeScan".to_owned(),
         "99.00".to_owned(),
         "table:sbtest1".to_owned(),
         "range:[100,199], keep order:false, stats:pseudo".to_owned(),
@@ -369,34 +382,31 @@ fn the_handle_range_corpus_matches_go() {
         // `try_batch_point_get` does not claim these two shapes, so before
         // the handle range they fell all the way through to a
         // `TableFullScan` over 10000 rows. They now read the three (and two)
-        // point ranges the handles name -- the same records Go's batch point
-        // get reads, through a scan node instead of a point node. Closing the
-        // rest is `try_batch_point_get`'s gate, which this unit did not
-        // touch.
+        // point ranges the handles name -- and Go master takes the batch
+        // point get itself for both spellings (`Batch_Point_Get_6 | 2.00 |
+        // table:sbtest1 | handle:[1 150], keep order:false, desc:false`,
+        // captured from fdfadb96b2), matching the module header's corpus.
         (
             "id IN (-1, 2, 150)",
-            "TableRangeScan",
+            "Batch_Point_Get",
             "3.00",
-            "range:[-1,-1], [2,2], [150,150]",
+            "handle:[-1 2 150], keep order:false, desc:false",
         ),
         (
             "id = 150 OR id = 1",
-            "TableRangeScan",
+            "Batch_Point_Get",
             "2.00",
-            "range:[1,1], [150,150]",
+            "handle:[1 150], keep order:false, desc:false",
         ),
         // A `WHERE` no handle satisfies reads NOTHING, which is the one
         // direction a range must never get wrong -- and Go names that a
         // `TableDual`, not a scan over an empty range list
         // (`find_best_task.go`: `if len(path.Ranges) == 0`). Captured:
         // `explain select * from t where id > 100 and id < 100` ->
-        // `TableDual_5 | 1.00 | rows:0`. The OPERATOR now matches; the estRows
-        // does not, because Go reaches ITS dual here through an earlier
-        // always-false predicate rule (whose dual prints 1.00) rather than
-        // through the empty-range short-circuit (whose dual prints 0.00, as it
-        // does for `id is null`). This tier has only the latter, so it lands
-        // on 0.00 for both -- one rule short, not one rule wrong.
-        ("id > 100 AND id < 100", "TableDual", "0.00", "rows:0"),
+        // `TableDual_5 | 1.00 | rows:0` -- Go reaches the dual through the
+        // always-false predicate rule, whose dual prints 1.00, and this tier
+        // now takes the same rule and the same row.
+        ("id > 100 AND id < 100", "TableDual", "1.00", "rows:0"),
         // No handle bound at all: still the whole table.
         ("k > 5", "TableFullScan", "10000.00", "keep order:false"),
     ] {
@@ -406,7 +416,7 @@ fn the_handle_range_corpus_matches_go() {
         );
         assert_eq!(
             (row[0].as_str(), row[1].as_str()),
-            (format!("{operator}_1").as_str(), est_rows),
+            (operator, est_rows),
             "operator or estRows changed for `{predicate}` (info: {})",
             row[3]
         );
@@ -529,11 +539,17 @@ fn the_sysbench_write_shapes_read_a_handle_range() {
         // a write's read from the same cost chooser, so `WHERE k = 500` takes
         // `k_1` (captured for the read side; the recorded corpus shows the same
         // for `delete from t1 where c2 = 1`).
+        // GO MASTER'S ROW for this write is the PROBE under the IndexLookUp:
+        // `Update_4 <- IndexLookUp_8 <- [IndexRangeScan_6(Build) 1.25 |
+        // TableRowIDScan_7(Probe) 1.25]` (captured from fdfadb96b2). The
+        // 1.25 is Go's pseudo estimate for a point range over a
+        // placeholder-statistics index; this tier still prints 10.00 here --
+        // the documented estimation gap this pin keeps red.
         (
             "UPDATE sbtest1 SET c = 'x' WHERE k = 500",
-            "IndexRangeScan",
-            "10.00",
-            "range:[500,500]",
+            "TableRowIDScan(Probe)",
+            "1.25",
+            "keep order:false, stats:pseudo",
         ),
         // No `WHERE` at all: also the whole table, which is every row the
         // statement names.
@@ -547,7 +563,7 @@ fn the_sysbench_write_shapes_read_a_handle_range() {
         let row = source_row(&mut session, &format!("EXPLAIN {sql}"));
         assert_eq!(
             (row[0].as_str(), row[1].as_str()),
-            (format!("{operator}_1").as_str(), est_rows),
+            (operator, est_rows),
             "operator or estRows changed for `{sql}` (info: {})",
             row[3]
         );
@@ -821,11 +837,12 @@ fn a_point_write_opens_no_scan_at_all() {
         ("id = 150", 0),
         // A key no record carries is still a lookup, not a scan.
         ("id = 151", 0),
-        // The SAME single record, named as a range instead. Go plans a
-        // `TableRangeScan` here too (`getNameValuePairs` takes equalities
-        // only), and a range is scanned -- which is exactly what the point
-        // plan avoids, spelled as the same one record.
-        ("id BETWEEN 150 AND 150", 1),
+        // The SAME single record, named as a range instead. Go master folds
+        // the equal-bound BETWEEN to the equality and plans the point read:
+        // `EXPLAIN UPDATE sbtest1 SET pad = 'W' WHERE id BETWEEN 150 AND 150`
+        // is `Update_4 <- Point_Get_6 | 1.00 | handle:150` (captured from
+        // fdfadb96b2) -- no scan opens, exactly as for the spelled equality.
+        ("id BETWEEN 150 AND 150", 0),
         ("id BETWEEN 100 AND 199", 1),
         // Two disjoint ranges, one iterator each.
         ("id NOT BETWEEN 0 AND 200", 2),
@@ -877,9 +894,9 @@ fn a_point_write_keys_the_row_a_scan_would_have_filtered_to() {
     // `150.5` is impossible in the NOT NULL integer domain. Go's ordinary
     // expression refinement folds it to false and produces TableDual.
     for (predicate, operator, survivors) in [
-        ("id = 150.0", "Point_Get_1", 12),
-        ("id = '150'", "Point_Get_1", 12),
-        ("id = 150.5", "TableDual_7", 13),
+        ("id = 150.0", "Point_Get", 12),
+        ("id = '150'", "Point_Get", 12),
+        ("id = 150.5", "TableDual", 13),
     ] {
         let mut session = sbtest1_with_rows();
         assert_eq!(
@@ -919,7 +936,7 @@ fn a_point_write_keys_the_row_a_scan_would_have_filtered_to() {
             &mut session,
             "EXPLAIN UPDATE u SET v = 99 WHERE id = 18446744073709551615"
         )[0],
-        "Point_Get_1",
+        "Point_Get",
         "the unsigned handle must reach the point plan, not fall back to a scan"
     );
     session
@@ -948,7 +965,7 @@ fn a_point_write_keys_the_row_a_scan_would_have_filtered_to() {
         .unwrap();
     assert_eq!(
         source_row(&mut session, "EXPLAIN UPDATE q SET v = 0 WHERE uk = 20")[0],
-        "Point_Get_1",
+        "Point_Get",
         "a pinned unique index must reach the point plan"
     );
     session.run("UPDATE q SET v = 0 WHERE uk = 20").unwrap();
