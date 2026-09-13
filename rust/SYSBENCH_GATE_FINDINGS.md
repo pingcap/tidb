@@ -1716,87 +1716,89 @@ against the r20 run above and the warm columns against each other.
   fixed per-statement cost shows (Q2, Q11).
 - Rust cold against the r20 run: 51.3 vs 57.8 s.
 
-## TPC-H SF 1, round 5 (2026-09-13): Go vs r63
+## TPC-H SF 1, round 5 (2026-09-13): Go vs r65
 
-`r63` is head cb90e1d7. Since the r28 run the branch carries the exact
+`r65` is head 7bf1406d. Since the r28 run the branch carries the exact
 integer build table in Go's v2 `subTable` shape with batched lookups,
 the stream aggregate's in-place state reset and the column-wise
 Selection filter, the decimal projection and SUM fast paths, the index
-join joined on the worker that drains its task, the hash aggregate's
-group keys appended in place and looked up through a reused scratch key,
-the coprocessor request encoded once from the borrowed task, the merge
-join's row-container reset gated on use, and the BatchCommands bodies as
-shared bytes. Same harness: both sides restarted before their turn, a
-cold pass and a warm pass, side order alternating per round, go-tpc's
-`--check` on every run.
+join joined on the worker that drains it, the hash aggregate's group
+keys appended in place and looked up through a reused scratch key, the
+coprocessor request encoded once from the borrowed task, the merge
+join's row-container reset gated on use, the BatchCommands bodies as
+shared bytes, and two DDL-path fixes found through Q15 (below). Same
+harness: both sides restarted before their turn, a cold pass and a warm
+pass, side order alternating per round, go-tpc's `--check` on every run.
 
-No answer mismatch on any of the 176 runs.
+No answer mismatch on any of the 176 runs. (An r63 run earlier the same
+day, before the DDL fixes, gave 26.4 s warm and 44.9 s cold with Q15 at
+2.96 s warm; those numbers are superseded by this run.)
 
 ### Cold (first pass after a restart)
 
-| query | go s | r63 s | r63 vs go | rounds |
+| query | go s | r65 s | r65 vs go | rounds |
 |---|---|---|---|---|
-| Q1 | 2.72 | 2.75 | +1% | 2/2 |
-| Q2 | 0.70 | 0.84 | +20% | 2/2 |
-| Q3 | 1.44 | 1.58 | +10% | 2/2 |
-| Q4 | 1.04 | 1.21 | +16% | 2/2 |
-| Q5 | 2.45 | 2.79 | +14% | 2/2 |
-| Q6 | 1.18 | 1.21 | +3% | 2/2 |
-| Q7 | 2.15 | 2.25 | +5% | 2/2 |
-| Q8 | 1.27 | 1.44 | +13% | 2/2 |
-| Q9 | 3.25 | 3.72 | +14% | 2/2 |
-| Q10 | 1.38 | 1.58 | +14% | 2/2 |
-| Q11 | 1.14 | 1.24 | +9% | 2/2 |
-| Q12 | 1.94 | 1.94 | +0% | 2/2 |
-| Q13 | 1.88 | 1.88 | +0% | 2/2 |
-| Q14 | 1.27 | 1.34 | +5% | 2/2 |
-| Q15 | 2.15 | 3.12 | +45% | 2/2 |
+| Q1 | 2.75 | 2.72 | -1% | 2/2 |
+| Q2 | 0.70 | 0.88 | +25% | 2/2 |
+| Q3 | 1.51 | 1.48 | -2% | 2/2 |
+| Q4 | 1.11 | 1.11 | +0% | 2/2 |
+| Q5 | 2.49 | 2.65 | +7% | 2/2 |
+| Q6 | 1.21 | 1.18 | -2% | 2/2 |
+| Q7 | 2.15 | 2.18 | +2% | 2/2 |
+| Q8 | 1.21 | 1.44 | +20% | 2/2 |
+| Q9 | 3.25 | 3.76 | +16% | 2/2 |
+| Q10 | 1.38 | 1.54 | +12% | 2/2 |
+| Q11 | 1.14 | 1.21 | +6% | 2/2 |
+| Q12 | 1.88 | 1.98 | +5% | 2/2 |
+| Q13 | 1.78 | 1.85 | +4% | 2/2 |
+| Q14 | 1.24 | 1.27 | +3% | 2/2 |
+| Q15 | 2.21 | 2.25 | +2% | 2/2 |
 | Q16 | 0.50 | 0.60 | +21% | 2/2 |
-| Q17 | 4.40 | 4.20 | -5% | 2/2 |
-| Q18 | 3.59 | 3.96 | +10% | 2/2 |
-| Q19 | 1.75 | 1.85 | +6% | 2/2 |
-| Q20 | 1.34 | 1.41 | +5% | 2/2 |
-| Q21 | 3.16 | 2.99 | -5% | 2/2 |
-| Q22 | 1.10 | 1.04 | -6% | 2/2 |
-| sum (answered) | 41.8 (22 q) | 44.9 (22 q) | | |
+| Q17 | 3.83 | 4.22 | +10% | 2/2 |
+| Q18 | 3.59 | 3.90 | +8% | 2/2 |
+| Q19 | 1.78 | 1.81 | +2% | 2/2 |
+| Q20 | 1.27 | 1.41 | +11% | 2/2 |
+| Q21 | 2.82 | 3.02 | +7% | 2/2 |
+| Q22 | 0.97 | 1.10 | +14% | 2/2 |
+| sum (answered) | 40.8 (22 q) | 43.6 (22 q) | | |
 
 ### Warm (second pass on the same process)
 
-| query | go s | r63 s | r63 vs go | rounds |
+| query | go s | r65 s | r65 vs go | rounds |
 |---|---|---|---|---|
 | Q1 | 0.10 | 0.10 | +0% | 2/2 |
-| Q2 | 0.14 | 0.17 | +26% | 2/2 |
-| Q3 | 0.80 | 0.94 | +17% | 2/2 |
+| Q2 | 0.10 | 0.17 | +70% | 2/2 |
+| Q3 | 0.87 | 0.91 | +5% | 2/2 |
 | Q4 | 0.37 | 0.37 | +0% | 2/2 |
-| Q5 | 1.65 | 1.78 | +8% | 2/2 |
+| Q5 | 1.65 | 1.81 | +10% | 2/2 |
 | Q6 | 0.10 | 0.10 | +0% | 2/2 |
-| Q7 | 1.31 | 1.41 | +8% | 2/2 |
-| Q8 | 0.64 | 0.80 | +26% | 2/2 |
-| Q9 | 2.29 | 3.06 | +34% | 2/2 |
-| Q10 | 0.47 | 0.64 | +36% | 2/2 |
+| Q7 | 1.31 | 1.44 | +10% | 2/2 |
+| Q8 | 0.64 | 0.77 | +20% | 2/2 |
+| Q9 | 2.29 | 3.08 | +35% | 2/2 |
+| Q10 | 0.50 | 0.60 | +21% | 2/2 |
 | Q11 | 0.10 | 0.10 | +0% | 2/2 |
-| Q12 | 0.30 | 0.43 | +45% | 2/2 |
-| Q13 | 0.23 | 0.33 | +46% | 2/2 |
-| Q14 | 0.64 | 0.77 | +20% | 2/2 |
-| Q15 | 1.75 | 2.96 | +69% | 2/2 |
+| Q12 | 0.41 | 0.40 | -1% | 2/2 |
+| Q13 | 0.30 | 0.30 | +0% | 2/2 |
+| Q14 | 0.64 | 0.80 | +26% | 2/2 |
+| Q15 | 1.78 | 1.91 | +7% | 2/2 |
 | Q16 | 0.37 | 0.44 | +19% | 2/2 |
 | Q17 | 3.55 | 3.99 | +12% | 2/2 |
-| Q18 | 2.49 | 2.88 | +16% | 2/2 |
-| Q19 | 1.17 | 1.34 | +15% | 2/2 |
-| Q20 | 1.17 | 1.27 | +9% | 2/2 |
-| Q21 | 2.11 | 2.45 | +16% | 2/2 |
+| Q18 | 2.52 | 2.88 | +15% | 2/2 |
+| Q19 | 1.21 | 1.38 | +14% | 2/2 |
+| Q20 | 1.21 | 1.27 | +6% | 2/2 |
+| Q21 | 2.25 | 2.49 | +10% | 2/2 |
 | Q22 | 0.10 | 0.10 | +0% | 2/2 |
-| sum (answered) | 21.8 (22 q) | 26.4 (22 q) | | |
+| sum (answered) | 22.3 (22 q) | 25.4 (22 q) | | |
 
 ### Reading the tables
 
-- Warm against Go: 26.4 vs 21.8 s, 1.21x (r28: 1.53x, r20: 1.80x). Q1,
-  Q4, Q6, Q11 and Q22 are at parity; nothing is faster than Go on the
-  warm pass, so the acceptance bar of this campaign (every query faster
-  warm) is not met. Cold against Go: 44.9 vs 41.8 s, 1.07x, with Q17, Q21
-  and Q22 faster and Q12/Q13 level; Go's cold column in this run is a
-  genuine cold column (the Go side restarted before each turn, and the
-  Rust side ran first in round 2).
+- Warm against Go: 25.4 vs 22.3 s, 1.14x (r28: 1.53x, r20: 1.80x). Q12
+  is marginally faster than Go, Q1, Q4, Q6, Q11, Q13 and Q22 are at
+  parity, and the rest are 5-35% slower, so the acceptance bar of this
+  campaign (every query faster warm) is not met. Cold against Go: 43.6
+  vs 40.8 s, 1.07x, with Q1, Q3 and Q6 faster and Q4 level; Go's cold
+  column in this run is a genuine cold column (the Go side restarted
+  before each turn, and the Rust side ran first in round 2).
 - The harness's warm pass is the second run after a restart. Both nodes'
   coprocessor caches admit the same pages on that run (see the cache
   finding below), so the warm gaps are node CPU: on the join and
@@ -1826,6 +1828,19 @@ Each commit carries its own two-run warm A/B in the message; in order:
 - Earlier in the same day: the flat exact-integer build table with
   batched lookups (beef7864, f20a03b7) and the index-join task joined on
   the worker that drains it (8effb7af).
+- Two DDL-path defects, found because go-tpc's Q15 creates its view,
+  runs the query and drops the view inside the timed statement. The
+  schema-version acknowledger ticked at schema_lease / 2 (22.5 s) where
+  Go's `MDLCheckLoop` ticks every 50 ms, so with this node in the
+  cluster every other node's DDL waited up to a tick per schema step:
+  the Go node's CREATE VIEW took 6-22 s and its DROP VIEW 67 s, and 0.1
+  s with the node stopped (9512b83d; 0.10-0.21 s with the node running
+  afterwards). And CREATE VIEW settled the view's columns by executing
+  its body where Go's `PlanBuilder` builds the body's plan and reads its
+  schema; Q15's view scanned and aggregated lineitem at CREATE time,
+  0.9-1.3 s of the 2.92 s the r63 run recorded for the query (7bf1406d,
+  with a regression test; CREATE VIEW on the node 0.08-0.12 s
+  afterwards, and Q15 warm 1.91 vs 1.78 s in this run).
 
 ### Two things measured and not fixed
 
