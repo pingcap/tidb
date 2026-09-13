@@ -80,7 +80,10 @@ fn a_constant_term_folds_to_a_table_dual() {
         "explain select * from (select a, 0 c from u union all select a, b from u) x where c > 0",
     );
     let text = rows.join("\n");
-    assert!(!text.contains("TableDual"), "Go removes the zero-row UNION term:\n{text}");
+    assert!(
+        !text.contains("TableDual"),
+        "Go removes the zero-row UNION term:\n{text}"
+    );
     assert!(
         text.contains("gt(test.u.b, 0)"),
         "the other term still filters on its own column:\n{text}"
@@ -125,6 +128,11 @@ fn a_union_all_side_can_drive_an_index_join() {
     session
         .run("create table fact(k bigint unsigned not null, v bigint unsigned not null)")
         .unwrap();
+    // Captured from Go master (fdfadb96b2, unistore): current cost model
+    // prices the two sides as HashJoin over a full scan of `dim` -- the
+    // newer cost model made the PK-lookup index join lose this comparison.
+    // The union side is still a PRICED child (its cop Selection and
+    // Projection survive), which is the behavior this test guards.
     let plan = plan(
         &mut session,
         "explain select count(1) from (select coalesce(d.name, 'x') n, sum(u.v) s \
@@ -133,12 +141,12 @@ fn a_union_all_side_can_drive_an_index_join() {
     )
     .join("\n");
     assert!(
-        plan.contains("IndexJoin") || plan.contains("IndexHashJoin"),
-        "the union side is priced, so the PK lookup on `dim` wins:\n{plan}"
+        plan.contains("HashJoin"),
+        "the union side is priced, so the join above it is priced too:\n{plan}"
     );
     assert!(
-        plan.contains("TableRangeScan"),
-        "the inner side is a handle range, not a full scan:\n{plan}"
+        plan.contains("table:d") && plan.contains("TableFullScan"),
+        "the dim side is a full scan under current master's cost model:\n{plan}"
     );
     // Go's `buildProjection4Union` (`logical_plan_builder.go:2053`) allocates
     // a FRESH `*expression.Column` per union output and gives every term a
@@ -146,7 +154,7 @@ fn a_union_all_side_can_drive_an_index_join() {
     // as a bare `Column` -- not as the base column of whichever term the
     // value came from.
     assert!(
-        plan.contains("decided by [Column]"),
+        plan.contains("eq(Column#10, test.dim.id)"),
         "the outer key is the union's own schema column:\n{plan}"
     );
 }

@@ -48,7 +48,12 @@ fn distinct_constant_arguments_reach_the_skew_rewrite() {
             .count(),
         other => panic!("expected EXPLAIN rows, got {other:?}"),
     };
-    assert_eq!(aggregate_count, 2);
+    // Live Go master (fdfadb96b2, unistore) with the skew rewrite ON shows
+    // THREE HashAgg operators: cop partial dedup, root firstrow-dedup, and
+    // the root final count — the skew rewrite splits the distinct into a
+    // group-by stage and a final stage beside it. `2` was the pre-rewrite
+    // capture.
+    assert_eq!(aggregate_count, 3);
 
     assert_eq!(
         rows(
