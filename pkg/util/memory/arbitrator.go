@@ -65,9 +65,8 @@ const (
 	defHeapReclaimCheckDuration               = time.Second * 1
 	defOOMRiskRatio                           = 0.95
 	defMemRiskRatio                           = 0.9
-	defTickDurMilli                           = kilo * 1            // 1s
-	defStorePoolMediumCapDurMilli             = defTickDurMilli * 5 // 5s
-	defStoreTopNProfilesDurMilli              = defTickDurMilli * 5 // 5s
+	defTickDurMilli                           = kilo * 1             // 1s
+	defStorePoolMediumCapDurMilli             = defTickDurMilli * 10 // 10s
 	defTrackMemStatsDurMilli                  = kilo * 1
 	defMax                             int64  = 9e15
 	defServerlimitSmallLimitNum               = 1000
@@ -75,7 +74,7 @@ const (
 	defServerlimitMaxUnitNum                  = 100
 	defUpdateMemConsumedTimeAlignSec          = 30
 	defUpdateMemMagnifUtimeAlign              = 30
-	defUpdateDigestTimeAlignSec               = 60
+	defUpdateProfileTimeAlignSec              = 30
 	defRedundancy                             = 2
 	defPoolReservedQuota                      = byteSizeMB
 	defAwaitFreePoolAllocAlignSize            = defPoolReservedQuota + byteSizeMB
@@ -558,7 +557,6 @@ type MemArbitrator struct {
 		shardsMask uint64
 		num        atomic.Int64
 		limit      int64 // max number of digest profiles; shrink to limit/2 when num > limit;
-		top3       top3Digest
 	}
 	entryMap  entryMap // sharded hash map & ordered quota map
 	awaitFree struct { // await-free pool
@@ -583,7 +581,7 @@ type MemArbitrator struct {
 		}
 	}
 
-	buffer atomic.Int64 // reserved buffer quota which only works under priority mode
+	buffer buffer // reserved buffer quota which only works under priority mode
 
 	mu struct {
 		sync.Mutex
@@ -628,20 +626,20 @@ type MemArbitrator struct {
 	mode        ArbitratorWorkMode
 }
 
+type buffer struct {
+	size     atomic.Int64 // approximate max quota usage of root pool
+	timedMap [2 + defRedundancy]struct {
+		sync.RWMutex
+		wrapTimeSizeQuota
+	}
+}
+
 func (m *MemArbitrator) setBufferSize(v int64) {
-	m.buffer.Store(v)
+	m.buffer.size.Store(v)
 }
 
 func (m *MemArbitrator) bufferSize() int64 {
-	return m.buffer.Load()
-}
-
-func (m *MemArbitrator) updateBuffer(sz int64) {
-	for b := m.bufferSize(); b < sz; b = m.bufferSize() {
-		if m.buffer.CompareAndSwap(b, sz) {
-			return
-		}
-	}
+	return m.buffer.size.Load()
 }
 
 type digestProfileShard struct {
@@ -874,7 +872,7 @@ func (m *MemArbitrator) UpdateDigestProfileCache(digestID uint64, memConsumed in
 	const maxNum = int64(len(pf.timedMap))
 	const maxDur = maxNum - defRedundancy
 
-	tsAlign := utimeSec / defUpdateDigestTimeAlignSec
+	tsAlign := utimeSec / defUpdateProfileTimeAlignSec
 	tar := &pf.timedMap[tsAlign%maxNum]
 
 	if oriTs := tar.tsAlign.Load(); oriTs < tsAlign && oriTs != 0 {
@@ -950,6 +948,12 @@ type wrapTimeMaxval struct {
 	maxVal  atomic.Int64
 }
 
+type wrapTimeSizeQuota struct {
+	ts    atomic.Int64
+	size  atomic.Int64
+	quota atomic.Int64
+}
+
 type statisticsTimedMapElement struct {
 	tsAlign atomic.Int64
 	slot    [defServerlimitMinUnitNum]uint32
@@ -1013,6 +1017,8 @@ func (m *MemArbitrator) deleteUnderKill(entry *rootPoolEntry) {
 	if entry.arbitratorMu.underKill.start {
 		m.underKill.delete(entry)
 		entry.arbitratorMu.underKill.start = false
+
+		m.warnKillCancel(entry, &entry.arbitratorMu.underKill, "Finish to `KILL` root pool")
 	}
 }
 
@@ -1119,6 +1125,70 @@ func (m *MemArbitrator) recordMemConsumed(memConsumed, utimeSec int64) {
 	}
 }
 
+func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, utimeSec int64) {
+	const maxNum = int64(len(m.buffer.timedMap))
+	const maxDur = maxNum - defRedundancy
+
+	tsAlign := utimeSec / defUpdateProfileTimeAlignSec
+	tar := &m.buffer.timedMap[tsAlign%maxNum]
+
+	if oriTs := tar.ts.Load(); oriTs < tsAlign && oriTs != 0 {
+		tar.Lock()
+
+		if oriTs = tar.ts.Load(); oriTs < tsAlign && oriTs != 0 {
+			tar.wrapTimeSizeQuota = wrapTimeSizeQuota{}
+		}
+
+		tar.Unlock()
+	}
+	cleanNext := false
+	{
+		tar.RLock()
+
+		updateSize := false
+
+		if ts := tar.ts.Load(); ts == 0 {
+			if tar.ts.CompareAndSwap(0, tsAlign) {
+				cleanNext = true
+			}
+		}
+
+		for oldVal := tar.size.Load(); oldVal < memConsumed; oldVal = tar.size.Load() {
+			if tar.size.CompareAndSwap(oldVal, memConsumed) {
+				updateSize = true
+				break
+			}
+		}
+
+		if updateSize {
+			// tsAlign-1, tsAlign
+			for i := range maxDur {
+				d := &m.buffer.timedMap[(maxNum+tsAlign-i)%maxNum]
+
+				if ts := d.ts.Load(); ts > tsAlign-maxDur && ts <= tsAlign {
+					memConsumed = max(memConsumed, d.size.Load())
+				}
+			}
+			if updateSize && m.bufferSize() != memConsumed {
+				m.setBufferSize(memConsumed)
+			}
+		}
+
+		tar.RUnlock()
+	}
+
+	if cleanNext {
+		d := &m.buffer.timedMap[(tsAlign+1)%maxNum]
+		d.Lock()
+
+		if v := d.ts.Load(); v < tsAlign+1 && v != 0 {
+			d.wrapTimeSizeQuota = wrapTimeSizeQuota{}
+		}
+
+		d.Unlock()
+	}
+}
+
 func (m *MemArbitrator) gc() {
 	m.mu.lastGC = m.mu.released
 	if m.actions.GC != nil {
@@ -1160,6 +1230,7 @@ func (m *MemArbitrator) resetRootPoolEntry(entry *rootPoolEntry) bool {
 			return false
 		}
 		entry.setExecState(execStateIdle)
+		entry.ctx.Store(nil)
 		entry.ctx.idleUtimeSec.Store(m.approxUnixTimeSec())
 
 		entry.stateMu.Unlock()
@@ -1181,6 +1252,17 @@ func (m *MemArbitrator) resetRootPoolEntry(entry *rootPoolEntry) bool {
 	}
 
 	return true
+}
+
+func (m *MemArbitrator) warnKillCancel(entry *rootPoolEntry, ctx *entryKillCancelCtx, reason string) {
+	m.actions.Warn(
+		reason,
+		zap.Uint64("uid", entry.pool.uid),
+		zap.String("name", entry.pool.name),
+		zap.String("mem-priority", entry.ctx.memPriority.String()),
+		zap.Int64("reclaimed", ctx.reclaim),
+		zap.Time("start-time", ctx.startTime),
+	)
 }
 
 // RemoveRootPoolByID removes & terminates the root pool by ID
@@ -1565,7 +1647,7 @@ func (m *MemArbitrator) ableToGC() bool {
 
 func (m *MemArbitrator) tryRuntimeGC() bool {
 	if m.ableToGC() {
-		m.updateTrackedHeapStats(nil)
+		m.updateTrackedHeapStats()
 		m.reclaimHeap()
 		return true
 	}
@@ -1658,14 +1740,6 @@ func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, record
 			m.heapController.memStateRecorder.lastMemState.Store(s)
 			m.doSetMemMagnif(s.Magnif)
 			m.poolAllocStats.mediumQuota.Store(s.PoolMediumCap)
-			m.digestProfileCache.top3.restore(s.TopNProfiles)
-			for i := range s.TopNProfiles {
-				t := &s.TopNProfiles[i]
-				if t.DigestID == InvalidDigestID {
-					continue
-				}
-				m.UpdateDigestProfileCache(t.DigestID, t.Size, t.UtimeSec)
-			}
 		}
 
 		m.heapController.memStateRecorder.Unlock()
@@ -1892,14 +1966,6 @@ func (m *MemArbitrator) implicitRun() { // satisfy any subscription task
 	}
 }
 
-// TryRunOneRound attempts to run one round of memory arbitration if the execution lock can be acquired.
-func (m *MemArbitrator) TryRunOneRound() {
-	if m.execMu.TryLock() {
-		m.runOneRound()
-		m.execMu.Unlock()
-	}
-}
-
 func (m *MemArbitrator) tick() {
 	m.execMu.Lock()
 	m.runOneRound()
@@ -1969,15 +2035,15 @@ func (m *MemArbitrator) asyncRun(duration time.Duration) bool {
 }
 
 // RestartEntryByContext starts the root pool with the given context
-func (m *MemArbitrator) RestartEntryByContext(entry rootPoolWrap, ctx *ArbitrationContext) (bool, func()) {
+func (m *MemArbitrator) RestartEntryByContext(entry rootPoolWrap, ctx *ArbitrationContext) bool {
 	if entry == nil {
-		return false, nil
+		return false
 	}
 	entry.stateMu.Lock()
 	defer entry.stateMu.Unlock()
 
 	if entry.stateMu.stop.Load() || entry.execState() != execStateIdle {
-		return false, nil
+		return false
 	}
 
 	entry.pool.mu.Lock()
@@ -2019,7 +2085,7 @@ func (m *MemArbitrator) RestartEntryByContext(entry rootPoolWrap, ctx *Arbitrati
 	entry.ctx.idleUtimeSec.Store(0)
 	entry.setExecState(execStateRunning)
 
-	return true, func() { entry.ctx.Store(nil) }
+	return true
 }
 
 // DebugFields is used to store debug fields for logging
@@ -2464,8 +2530,6 @@ func (m *MemArbitrator) executeTick(utimeMilli int64) bool { // exec batch tasks
 	}
 	// suggest pool cap
 	m.updatePoolMediumCapacity(utimeMilli)
-	// persist changed top digest profiles without writing on every sampling interval
-	m.tryPersistTopNProfiles(utimeMilli)
 	// shrink mem profile cache
 	m.shrinkDigestProfile(utimeMilli/kilo, m.digestProfileCache.limit, m.digestProfileCache.limit/2)
 	return true
@@ -2530,155 +2594,14 @@ func (m *MemArbitrator) HandleRuntimeStats(s memStats) {
 }
 
 func (m *MemArbitrator) tryUpdateTrackedMemStats(utimeMilli int64) bool {
-	if m.avoidance.heapTracked.lastUpdateUtimeMilli.Load()+200 <= utimeMilli {
-		// var top3 top3DigestDataGroup
-		m.updateTrackedHeapStats(nil)
-		// m.digestProfileCache.top3.merge(top3, m.approxUnixTimeSec())
+	if m.avoidance.heapTracked.lastUpdateUtimeMilli.Load()+defTrackMemStatsDurMilli <= utimeMilli {
+		m.updateTrackedHeapStats()
 		return true
 	}
 	return false
 }
 
-// Top3DigestData records the memory profile of a SQL digest for runtime state persistence.
-type Top3DigestData struct {
-	DigestID uint64 `json:"id"`
-	Size     int64  `json:"size"`
-	UtimeSec int64  `json:"utime_sec"`
-}
-
-type top3DigestDataGroup [3]Top3DigestData
-
-type top3DigestSnapshot struct {
-	data    top3DigestDataGroup
-	version uint64
-}
-
-type top3Digest struct {
-	snapshotState [2]struct {
-		sync.Mutex
-		top3DigestSnapshot
-	}
-	index atomic.Int64
-	sync.Mutex
-}
-
-func (t *top3Digest) restore(data top3DigestDataGroup) {
-	t.Lock()
-	defer t.Unlock()
-
-	t.index.Store(0)
-	t.snapshotState[0].Lock()
-	t.snapshotState[0].top3DigestSnapshot = top3DigestSnapshot{data: data}
-	t.snapshotState[0].Unlock()
-}
-
-func (t *top3Digest) snapshot() (res top3DigestSnapshot) {
-	index := t.index.Load()
-	t.snapshotState[index].Lock()
-	res = t.snapshotState[index].top3DigestSnapshot
-	t.snapshotState[index].Unlock()
-	return
-}
-
-func (t *top3Digest) version() (version uint64) {
-	index := t.index.Load()
-	t.snapshotState[index].Lock()
-	version = t.snapshotState[index].top3DigestSnapshot.version
-	t.snapshotState[index].Unlock()
-	return
-}
-
-func (t *top3Digest) merge(other top3DigestDataGroup, utimeSec int64) bool {
-	t.Lock()
-	defer t.Unlock()
-
-	s := t.snapshot()
-	cleaned := s.data.clean(utimeSec)
-	next := cleaned.merge(other)
-	if next == s.data {
-		return false
-	}
-	index := 1 - t.index.Load()
-	t.snapshotState[index].Lock()
-	t.snapshotState[index].top3DigestSnapshot = top3DigestSnapshot{data: next, version: s.version + 1}
-	t.snapshotState[index].Unlock()
-
-	t.index.Store(index)
-	return true
-}
-
-func (t *top3DigestDataGroup) clean(utimeSec int64) top3DigestDataGroup {
-	res := top3DigestDataGroup{}
-	j := 0
-	for i := range 3 {
-		if t[i].UtimeSec+24*60*60 >= utimeSec {
-			res[j] = t[i]
-			j++
-		}
-	}
-	return res
-}
-
-func (t *top3DigestDataGroup) merge(other top3DigestDataGroup) top3DigestDataGroup {
-	res := *t
-	for i := range 3 {
-		res.update(other[i].DigestID, other[i].Size, other[i].UtimeSec)
-	}
-	return res
-}
-
-func (t *top3DigestDataGroup) update(digestID uint64, size int64, utimeSec int64) {
-	if digestID == 0 {
-		return
-	}
-	if size <= t[2].Size {
-		return
-	}
-	for i := range 3 {
-		if t[i].DigestID == digestID {
-			t[i].UtimeSec = utimeSec
-			if size <= t[i].Size {
-				return
-			}
-			t[i].Size = size
-			// reorder
-			if t[1].Size < t[2].Size {
-				t[1], t[2] = t[2], t[1]
-			}
-			if t[0].Size < t[1].Size {
-				t[0], t[1] = t[1], t[0]
-			}
-			if t[1].Size < t[2].Size {
-				t[1], t[2] = t[2], t[1]
-			}
-			return
-		}
-	}
-	if size >= t[0].Size {
-		t[2] = t[1]
-		t[1] = t[0]
-		t[0] = Top3DigestData{
-			DigestID: digestID,
-			Size:     size,
-			UtimeSec: utimeSec,
-		}
-	} else if size >= t[1].Size {
-		t[2] = t[1]
-		t[1] = Top3DigestData{
-			DigestID: digestID,
-			Size:     size,
-			UtimeSec: utimeSec,
-		}
-	} else if size >= t[2].Size {
-		t[2] = Top3DigestData{
-			DigestID: digestID,
-			Size:     size,
-			UtimeSec: utimeSec,
-		}
-	}
-}
-
-func (m *MemArbitrator) updateTrackedHeapStats(top3 *top3DigestDataGroup) {
+func (m *MemArbitrator) updateTrackedHeapStats() {
 	totalTrackedHeap := int64(0)
 	maxHeapUsed := int64(0)
 	idleDeadline := m.approxUnixTimeSec() - defContextCacheIdleTimeoutSec
@@ -2693,22 +2616,19 @@ func (m *MemArbitrator) updateTrackedHeapStats(top3 *top3DigestDataGroup) {
 				}
 				e.stateMu.Unlock()
 			}
-			if e.notRunning() {
-				return true
-			}
 
-			if ctx := e.ctx.Load(); ctx.available() {
+			if ctx := e.ctx.Load(); ctx != nil && ctx.arbitrateHelper != nil {
 				inuse := ctx.arbitrateHelper.MemUsage()
 				totalTrackedHeap += min(e.pool.ApproxCap(), inuse.RootPoolUsed)
-				if top3 != nil {
-					top3.update(ctx.id, inuse.HeapInuse, m.approxUnixTimeSec())
-				}
-				maxHeapUsed = max(maxHeapUsed, inuse.MaxHeapUsed)
+				maxHeapUsed = max(maxHeapUsed, inuse.HeapInuse)
 			}
 			return true
 		})
+		if m.bufferSize() < maxHeapUsed {
+			m.tryToUpdateBuffer(maxHeapUsed, m.approxUnixTimeSec())
+		}
 	}
-	m.setBufferSize(maxHeapUsed)
+
 	totalTrackedHeap += min(m.awaitFreePoolCap(), m.awaitFreePoolUsed().trackedHeap)
 	m.avoidance.heapTracked.Store(totalTrackedHeap)
 	m.avoidance.heapTracked.lastUpdateUtimeMilli.Store(nowUnixMilli())
@@ -2805,9 +2725,13 @@ func (m *MemArbitrator) calcMemRisk() (lastRisk LastRisk, magnif int64, ok bool)
 // return `true` is memory state is safe
 func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 	if m.atMemRisk() {
-		m.refreshRuntimeMemStats()
+		gcExecuted := m.tryRuntimeGC()
+		if !gcExecuted {
+			m.refreshRuntimeMemStats()
+		}
+
 		if m.isMemNoRisk() {
-			m.updateTrackedHeapStats(nil)
+			m.updateTrackedHeapStats()
 			m.updateAvoidSize() // no need to refresh runtime mem stats
 
 			{ // warning
@@ -2819,7 +2743,7 @@ func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 		}
 
 		m.doReclaimNonBlockingTasks()
-		m.handleMemRisk()
+		m.handleMemRisk(gcExecuted)
 		return false
 	} else if !m.isMemSafe() {
 		m.doReclaimNonBlockingTasks()
@@ -2828,7 +2752,7 @@ func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 		// GC in intoMemRisk has already refreshed the runtime memory statistics,
 		// so start reclaiming SQL in the same arbitration round if it did not help.
 		if m.hardOOMRisk() {
-			m.handleMemRisk()
+			m.handleMemRisk(true)
 		}
 		return false
 	}
@@ -2844,7 +2768,7 @@ func (*MemArbitrator) innerTime() time.Time {
 	return now()
 }
 
-func (m *MemArbitrator) handleMemRisk() {
+func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 	now := m.innerTime()
 	hardOOMRisk := m.hardOOMRisk()
 	// intoMemRisk already forces a GC and refreshes runtime memory statistics.
@@ -2853,10 +2777,19 @@ func (m *MemArbitrator) handleMemRisk() {
 		return
 	}
 
-	memToReclaim := m.heapController.memInuse.Load() - m.memRisk()
-
 	m.intoOOMRisk()
+	memToReclaim := m.heapController.memInuse.Load() - m.memRisk()
+	{ // warning
+		profile := m.recordDebugProfile()
+		profile.append(
+			zap.Int64("quota-to-reclaim", max(0, memToReclaim)),
+		)
+		m.actions.Warn("`OOM RISK`: try to `KILL` running root pool", profile.fields[:profile.n]...)
+	}
 	m.killTopnEntry(memToReclaim)
+	if !gcExecuted {
+		m.gc()
+	}
 }
 
 func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed int64) {
@@ -2868,6 +2801,14 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 				continue
 			}
 			if deadline := ctx.startTime.Add(defKillCancelCheckTimeout); now.Compare(deadline) >= 0 {
+				m.actions.Error("Failed to `KILL` root pool due to timeout",
+					zap.Uint64("uid", entry.pool.uid),
+					zap.String("name", entry.pool.name),
+					zap.Int64("mem-to-reclaim", ctx.reclaim),
+					zap.String("mem-priority", entry.ctx.memPriority.String()),
+					zap.Time("start-time", ctx.startTime),
+					zap.Time("deadline", deadline),
+				)
 				ctx.fail = true
 				continue
 			}
@@ -2897,6 +2838,15 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 					ctx.stop(ArbitratorOOMRiskKill)
 					newKillNum++
 					m.execMetrics.Risk.OOMKill[prio]++
+
+					{ // warning
+						m.actions.Warn("Start to `KILL` root pool",
+							zap.Uint64("uid", entry.pool.uid),
+							zap.String("name", entry.pool.name),
+							zap.Int64("mem-used", memoryUsed),
+							zap.String("mem-priority", ctx.memPriority.String()),
+							zap.Int64("rest-to-reclaim", max(0, required-reclaimed)))
+					}
 					if m.removeTask(entry) {
 						entry.windUp(0, ArbitrateFail)
 					}
@@ -2929,6 +2879,15 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 			ctx.stop(ArbitratorOOMRiskKill)
 			newKillNum++
 			m.execMetrics.Risk.OOMKill[entry.ctx.memPriority]++
+
+			{ // warning
+				m.actions.Warn("Start to `KILL` root pool",
+					zap.Uint64("uid", entry.pool.uid),
+					zap.String("name", entry.pool.name),
+					zap.Int64("mem-used", memoryUsed),
+					zap.String("mem-priority", ctx.memPriority.String()),
+					zap.Int64("rest-to-reclaim", max(0, required-reclaimed)))
+			}
 			if m.removeTask(entry) {
 				entry.windUp(0, ArbitrateFail)
 			}
@@ -2958,19 +2917,14 @@ type RuntimeMemStateV1 struct {
 	// medium quota usage of root pools
 	PoolMediumCap int64 `json:"pool-medium-cap"`
 	// top N digest profiles
-	TopNProfiles [3]Top3DigestData `json:"topn-profiles"`
-	// top3Version tracks the in-memory Top3 snapshot and is not persisted.
-	top3Version uint64
+	// TopNProfiles [3]Top3DigestData `json:"topn-profiles"`
 }
 
 func (m *MemArbitrator) buildRuntimeMemState() (memState RuntimeMemStateV1) {
-	s := m.digestProfileCache.top3.snapshot()
 	memState = RuntimeMemStateV1{
 		Version:       1,
 		Magnif:        m.memMagnif(),
 		PoolMediumCap: m.poolMediumQuota(),
-		TopNProfiles:  s.data,
-		top3Version:   s.version,
 	}
 	if lastMemState := m.lastMemState(); lastMemState != nil {
 		memState.LastRisk = lastMemState.LastRisk
@@ -2999,17 +2953,6 @@ func (m *MemArbitrator) persistRuntimeMemState(reason string, mutate func(*Runti
 		zap.String("data", fmt.Sprintf("%+v", memState)),
 	)
 	return nil
-}
-
-func (m *MemArbitrator) tryPersistTopNProfiles(utimeMilli int64) bool {
-	if lastMemState := m.lastMemState(); lastMemState != nil && lastMemState.top3Version >= m.digestProfileCache.top3.version() {
-		return false
-	}
-	if m.heapController.memStateRecorder.lastRecordUtimeMilli.Load()+defStoreTopNProfilesDurMilli > utimeMilli {
-		return false
-	}
-	m.persistRuntimeMemState("new top digest profiles", nil)
-	return true
 }
 
 // GetAwaitFreeBudgets returns the concurrent budget shard by the given uid
@@ -3089,7 +3032,7 @@ func (r ArbitratorStopReason) String() (desc string) {
 
 // MemUsage represents the heap usage of the arbitrate helper
 type MemUsage struct {
-	RootPoolUsed, HeapInuse, MaxHeapUsed int64
+	RootPoolUsed, HeapInuse int64
 }
 
 // ArbitrateHelper is an interface for the arbitrate helper
@@ -3125,14 +3068,12 @@ func (ctx *ArbitrationContext) stop(reason ArbitratorStopReason) {
 
 // NewArbitrationContext creates a new arbitration context
 func NewArbitrationContext(
-	arbitrateHelperID uint64,
 	arbitrateHelper ArbitrateHelper,
 	memPriority ArbitrationPriority,
 	waitAverse bool,
 	preferPrivilege bool,
 ) *ArbitrationContext {
 	return &ArbitrationContext{
-		id:              arbitrateHelperID,
 		arbitrateHelper: arbitrateHelper,
 		memPriority:     memPriority,
 		waitAverse:      waitAverse,

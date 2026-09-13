@@ -447,6 +447,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	t.Consume(newConsumed)
 }
 
+// AddReversal adds a reversal of memory usage to the memory arbitrator's budget. This is used to adjust the memory usage accounting when memory is released.
 func (t *Tracker) AddReversal(delta int64) {
 	if delta == 0 {
 		return
@@ -454,6 +455,7 @@ func (t *Tracker) AddReversal(delta int64) {
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if m := tracker.MemArbitrator; m != nil {
 			m.budget.reversal.Add(delta)
+			break
 		}
 	}
 }
@@ -975,10 +977,9 @@ const (
 
 type memArbitrator struct {
 	*MemArbitrator
-	ctx     *ArbitrationContext
-	killer  *sqlkiller.SQLKiller
-	maxUsed *atomicutil.Int64
-	budget  struct {
+	ctx    *ArbitrationContext
+	killer *sqlkiller.SQLKiller
+	budget struct {
 		smallB *TrackedConcurrentBudget
 		mu     struct {
 			bigB      ConcurrentBudget // bigB.Used (aks growThreshold): threshold to pull from upstream (95% * bigB.Capacity)
@@ -1145,16 +1146,14 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	smallUsed := max(0, m.smallBudgetUsed())
 
-	if ok, reset := m.RestartEntryByContext(root, m.ctx); !ok {
+	if !m.RestartEntryByContext(root, m.ctx) {
 		panic("failed to init mem pool")
-	} else {
-		m.state.reset = reset
 	}
 
 	m.state.Store(memArbitratorStateIntoBigBudget)
 
 	if maxMemHint := max(m.preMaxMem, smallUsed); maxMemHint > 0 {
-		m.updateBuffer(maxMemHint)
+		m.tryToUpdateBuffer(maxMemHint, m.approxUnixTimeSec())
 	}
 
 	{
@@ -1284,11 +1283,6 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		m.bigBudget().Stop()
 		m.ResetRootPoolByID(m.uid, maxConsumed, !exception)
 	}
-
-	if m.state.reset != nil {
-		m.state.reset()
-		m.state.reset = nil
-	}
 	return true
 }
 
@@ -1327,14 +1321,12 @@ func (t *Tracker) InitMemArbitrator(
 		MemArbitrator: g,
 		uid:           uid,
 		killer:        killer,
-		maxUsed:       &t.maxConsumed,
 		digestID:      digestID,
 		reserveSize:   explicitReserveSize,
 		isInternal:    isInternal,
 	}
 	t.MemArbitrator = m
 	m.ctx = NewArbitrationContext(
-		m.digestID,
 		m,
 		memPriority,
 		waitAverse,
@@ -1382,11 +1374,9 @@ func (m *memArbitrator) MemUsage() (res MemUsage) {
 		return MemUsage{
 			RootPoolUsed: used,
 			HeapInuse:    used,
-			MaxHeapUsed:  max(m.maxUsed.Load(), m.preMaxMem),
 		}
 	}
 	return MemUsage{
-		HeapInuse:   max(0, max(m.smallBudgetUsed(), m.bigBudgetUsed())-m.budget.reversal.Load()),
-		MaxHeapUsed: max(m.maxUsed.Load(), m.preMaxMem),
+		HeapInuse: max(0, max(m.smallBudgetUsed(), m.bigBudgetUsed())-m.budget.reversal.Load()),
 	}
 }
