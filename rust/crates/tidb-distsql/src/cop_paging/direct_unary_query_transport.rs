@@ -1301,7 +1301,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         attempt_id: u64,
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
-        let prepared = self.runtime.prepared_attempt(attempt_id).cloned().ok_or(
+        let prepared = self.runtime.prepared_attempt_shared(attempt_id).ok_or(
             DirectUnaryTransportError::ResponseState("active attempt is not prepared"),
         )?;
         let region = task_region_ver_id(prepared.task())?;

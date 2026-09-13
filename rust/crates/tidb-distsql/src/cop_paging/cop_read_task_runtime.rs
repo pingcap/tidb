@@ -541,6 +541,16 @@ impl CopReadTaskRuntime {
             .map(AsRef::as_ref)
     }
 
+    /// The prepared attempt behind its shared handle. A dispatch holds this
+    /// across the send instead of copying the task's ranges and payload; Go's
+    /// worker sends from the task it was handed.
+    pub fn prepared_attempt_shared(&self, attempt_id: u64) -> Option<Arc<PreparedCopReadTask>> {
+        self.prepared
+            .iter()
+            .find(|prepared| prepared.attempt_id == attempt_id)
+            .cloned()
+    }
+
     /// Returns the active attempt IDs in deterministic order.
     #[must_use]
     pub fn in_flight_attempt_ids(&self) -> Vec<u64> {
