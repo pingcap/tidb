@@ -107,8 +107,17 @@ pub fn handle_cop_request(
 ) -> coprocessor::Response {
     match req.tp {
         REQ_TYPE_DAG => handle_cop_dag_request(store, req),
+        // The analyze arm is a deliberate architectural refusal, not a
+        // pending port: this tier serves ANALYZE in-process
+        // (`tidb-exec/src/cluster_analyze.rs`, whose receipts pin Go's
+        // histogram/TopN/CMS/FM shapes) and nothing in the production
+        // stack produces a `ReqTypeAnalyze` cop request, so Go's
+        // `handleCopAnalyzeRequest` has no reachable consumer here. See
+        // `rust/docs/unistore-lock-parity-audit.md` for the closure
+        // chain; reopen the arm if ANALYZE ever routes through the
+        // coprocessor.
         REQ_TYPE_ANALYZE => other_error(
-            "handleCopAnalyzeRequest (cophandler/analyze.go) is a later course of this port",
+            "handleCopAnalyzeRequest is refused by this tier: ANALYZE is served in-process by cluster_analyze (see unistore-lock-parity-audit.md)",
         ),
         // Go's stub (`cop_handler.go:750`): a marshalled
         // `tipb.ChecksumResponse{Checksum:1, TotalKvs:1, TotalBytes:1}` --
@@ -4970,6 +4979,27 @@ mod tests {
             },
         );
         assert_eq!(resp.other_error, "unsupported request type 999");
+    }
+
+    #[test]
+    fn analyze_requests_name_the_in_process_owner() {
+        // The analyze arm is a deliberate architectural refusal, not a
+        // pending port: this tier serves ANALYZE in-process
+        // (`cluster_analyze`), and no production path produces a
+        // `ReqTypeAnalyze` request — see `unistore-lock-parity-audit.md`.
+        let mut store = MvccStore::new();
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_ANALYZE,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(
+            resp.other_error.contains("cluster_analyze"),
+            "the refusal must name the in-process owner: {}",
+            resp.other_error
+        );
     }
 
     #[test]

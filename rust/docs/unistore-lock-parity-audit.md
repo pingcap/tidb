@@ -87,7 +87,28 @@ Go tests. Audit findings against `mvcc.go` @ a85e0fd5df:
 - Still open for a full-budget session: line-level audit of
   `prewrite_pessimistic`/`pessimistic_rollback`/`check_txn_status`/
   `resolve_lock` bodies against `mvcc.go:435-935`, and the `cophandler`
-  seed vs the closure_exec/analyze/mpp tail.
+  seed vs the closure_exec/analyze/mpp tail. The four mvcc bodies were
+  covered by the body-level audit below (2026-09-07), and the analyze
+  slice of the cophandler tail is closed as parity-by-architecture
+  (2026-09-13, next section) — the mpp course plus the closure_exec
+  expression/TopN tail remain the open course.
+
+## cophandler analyze arm — CLOSED, parity-by-architecture (2026-09-13)
+
+Go's unistore implements `handleCopAnalyzeRequest`
+(`cophandler/analyze.go`, 702 lines: TypeIndex / TypeCommonHandle /
+TypeColumn / TypeMixed / full-sampling) because Go's ANALYZE routes
+through distsql to a `ReqTypeAnalyze` coprocessor request. The Rust tier
+serves ANALYZE differently: `tidb-exec/src/cluster_analyze.rs` reads the
+store in-process and already builds the same statistics surfaces
+(`tidb_tablecodec::cut_index_key` for index keys, tidb-stats histogram
+buckets/TopN/CMS/FM), with receipts pinning Go's shapes — and the distsql
+builder's `set_analyze_request` has ZERO production callers (tests only),
+so nothing in the production stack can reach the cophandler's analyze
+arm. Porting `analyze.go` behind the cop front door would duplicate
+existing, Go-pinned logic behind an unreachable surface (speculative
+behavior), so the arm stays a deliberate refusal whose message names the
+in-process owner. Reopen when ANALYZE routes through the coprocessor.
 
 ## mvcc.go:418-935 body-level audit (2026-09-07, same session)
 
