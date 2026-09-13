@@ -1009,8 +1009,36 @@ pub fn build_prepared_point_get_plan(
     let tidb_ast::QueryStmt::Select(select) = &**query else {
         return None;
     };
+    // A scope-qualified index hint (`USE INDEX FOR JOIN ...`) is inert for a
+    // point read: Go's hint processing skips any hint whose scope is not
+    // `HintForScan` before it ever reaches the name lookup, so the plan is
+    // the same Point_Get the unhinted statement gets. Treat such hints as
+    // absent here; only an unscoped (FOR SCAN / no qualifier) hint can
+    // change the access path.
+    fn join_has_unscoped_index_hint(join: &tidb_ast::Join) -> bool {
+        node_has_unscoped_index_hint(&join.left)
+            || join
+                .right
+                .as_ref()
+                .is_some_and(node_has_unscoped_index_hint)
+    }
+
+    fn node_has_unscoped_index_hint(node: &tidb_ast::JoinNode) -> bool {
+        match node {
+            tidb_ast::JoinNode::Table(table) => table
+                .hints
+                .iter()
+                .any(|hint| hint.scope == tidb_ast::IndexHintScope::All),
+            tidb_ast::JoinNode::Join(join) => join_has_unscoped_index_hint(join),
+            _ => false,
+        }
+    }
+    let hints_all_unscoped = select
+        .from
+        .as_ref()
+        .is_none_or(|join| !join_has_unscoped_index_hint(join));
     if !crate::access_path::select_is_bare_point_read(select)
-        || !select.hints.is_empty()
+        || (!select.hints.is_empty() && !hints_all_unscoped)
         || select.priority != tidb_ast::StatementPriority::None
         || select.sql_small_result
         || select.sql_big_result

@@ -121,8 +121,17 @@ impl HintedIndex {
     pub fn index_string(&self) -> String {
         let mut value = format!("{}.{}", self.database_name, self.table_name);
         if !self.index_names.is_empty() {
+            // Go lowercases each index name here (`hint.go:699`:
+            // `IndexNames[i].L`), so the 1815 inapplicable-hint warning
+            // prints the folded spelling while the table keeps its own
+            // case.
+            let lowered: Vec<String> = self
+                .index_names
+                .iter()
+                .map(|name| name.to_lowercase())
+                .collect();
             value.push_str(", ");
-            value.push_str(&self.index_names.join(", "));
+            value.push_str(&lowered.join(", "));
         }
         value
     }

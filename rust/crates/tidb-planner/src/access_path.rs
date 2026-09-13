@@ -1259,7 +1259,13 @@ pub fn fast_index_is_available_by_hints(
         None => name.eq_ignore_ascii_case("primary"),
     };
     let mut is_ignore = false;
-    let mut saw_hint = !table_hints.is_empty();
+    // Go skips any hint whose scope is not `HintForScan` before it can mark
+    // anything (`hint.HintScope != ast.HintForScan -> continue`), so a
+    // `FOR JOIN`/`FOR ORDER BY`/`FOR GROUP BY` hint never makes a point read
+    // fall back, exactly as if it were absent.
+    let mut saw_hint = table_hints
+        .iter()
+        .any(|hint| hint.scope == IndexHintScope::All);
     let mut apply = |kind: IndexHintKind, scope: IndexHintScope, indexes: &[String]| {
         if scope != IndexHintScope::All {
             return None;
