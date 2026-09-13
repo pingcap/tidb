@@ -547,22 +547,97 @@ pub fn restore_table_optimizer_hint(hint: &Hint) -> String {
     hint.restore().to_ascii_lowercase()
 }
 
+/// The dedup keys Go's text-keyed hint paths would compare for `hint`.
+///
+/// Go's parser emits one `TableOptimizerHint` per READ_FROM_STORAGE engine
+/// group (`hintparser.go` `parseStorageHint`), so `RemoveDuplicatedHints`
+/// and `RestoreOptimizerHints` key each group separately. The Rust AST keeps
+/// one written occurrence as a single multi-group hint, so expand it into the
+/// per-group restored texts; rendering reuses the single-group restore, which
+/// is byte-identical to the corresponding block of the combined restore.
+pub(crate) fn restore_keys_per_group(hint: &Hint) -> Vec<String> {
+    if let HintKind::ReadFromStorage { qb_name, groups } = &hint.kind {
+        if groups.len() > 1 {
+            return groups
+                .iter()
+                .map(|(store, tables)| {
+                    let single = Hint {
+                        name: hint.name.clone(),
+                        kind: HintKind::ReadFromStorage {
+                            qb_name: qb_name.clone(),
+                            groups: vec![(store.clone(), tables.clone())],
+                        },
+                    };
+                    restore_table_optimizer_hint(&single)
+                })
+                .collect();
+        }
+    }
+    vec![restore_table_optimizer_hint(hint)]
+}
+
 /// Go `RestoreOptimizerHints`, including its first-occurrence-preserving
 /// duplicate removal.
 pub fn restore_optimizer_hints(hints: &[Hint]) -> String {
     let mut seen = HashSet::with_capacity(hints.len());
-    hints
-        .iter()
-        .map(restore_table_optimizer_hint)
-        .filter(|restored| seen.insert(restored.clone()))
-        .collect::<Vec<_>>()
-        .join(", ")
+    let mut parts = Vec::with_capacity(hints.len());
+    for hint in hints {
+        for key in restore_keys_per_group(hint) {
+            if !seen.contains(&key) {
+                seen.insert(key.clone());
+                parts.push(key);
+            }
+        }
+    }
+    parts.join(", ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::StmtHints;
+
+    fn read_from_storage(groups: &[(&str, &[&str])]) -> Hint {
+        Hint {
+            name: "READ_FROM_STORAGE".to_owned(),
+            kind: HintKind::ReadFromStorage {
+                qb_name: None,
+                groups: groups
+                    .iter()
+                    .map(|(store, tables)| {
+                        (
+                            (*store).to_owned(),
+                            tables
+                                .iter()
+                                .map(|t| HintTable {
+                                    db_name: None,
+                                    name: (*t).to_owned(),
+                                    qb_name: None,
+                                    partitions: Vec::new(),
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    #[test]
+    fn restore_optimizer_hints_dedups_per_storage_group() {
+        // Go's parser emits one TableOptimizerHint per engine group
+        // (hintparser.go parseStorageHint), so RestoreOptimizerHints keys
+        // each group separately: the repeated TIKV[`t2`] group is dropped
+        // while the first occurrence's groups survive.
+        let hints = [
+            read_from_storage(&[("TIFLASH", &["t1"]), ("TIKV", &["t2"])]),
+            read_from_storage(&[("TIKV", &["t2"])]),
+        ];
+        assert_eq!(
+            restore_optimizer_hints(&hints),
+            "read_from_storage(tiflash[`t1`]), read_from_storage(tikv[`t2`])"
+        );
+    }
 
     #[test]
     #[deny(unused_must_use)]

@@ -43,7 +43,13 @@ processor.rs, query_block.rs, plan.rs).
   corner where two occurrences share exactly one engine group still keys
   on the combined text (Go would key per item), recorded as the residual
   narrowing. The tidb-ast Go-oracle table (run with the Go toolchain on
-  PATH) validates the restored text.
+  PATH) validates the restored text. **Residual CLOSED (2026-09-13):**
+  `remove_duplicated_hints` and `restore_optimizer_hints` now key per
+  engine group (`restore_keys_per_group`), reproducing Go's per-occurrence
+  `TableOptimizerHint` granularity from `parseStorageHint`: a duplicate
+  group is pruned from its occurrence and an occurrence whose every group
+  is a duplicate is dropped. Regressions pin the duplicate-group and
+  mixed-new/duplicate-group shapes (pre-fix failures recorded).
 
 ## Verified matching (highlights)
 

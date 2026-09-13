@@ -743,10 +743,42 @@ pub fn extract_unmatched_tables(tables: &[HintedTable]) -> Vec<String> {
 }
 
 /// Go `RemoveDuplicatedHints`, preserving the first structurally equal hint.
+///
+/// Keys compare per READ_FROM_STORAGE engine group (see
+/// `restore_keys_per_group`), so a duplicate group is pruned from its
+/// occurrence and an occurrence whose every group is a duplicate is dropped,
+/// exactly like Go dropping the corresponding per-group TableOptimizerHint.
 pub fn remove_duplicated_hints(hints: &[Hint]) -> Vec<Hint> {
     let mut seen = std::collections::HashSet::with_capacity(hints.len());
     let mut result = Vec::with_capacity(hints.len());
     for hint in hints {
+        if let HintKind::ReadFromStorage { qb_name, groups } = &hint.kind {
+            if groups.len() > 1 {
+                let mut kept = Vec::with_capacity(groups.len());
+                for (store, tables) in groups {
+                    let single = Hint {
+                        name: hint.name.clone(),
+                        kind: HintKind::ReadFromStorage {
+                            qb_name: qb_name.clone(),
+                            groups: vec![(store.clone(), tables.clone())],
+                        },
+                    };
+                    if seen.insert(crate::restore_table_optimizer_hint(&single)) {
+                        kept.push((store.clone(), tables.clone()));
+                    }
+                }
+                if !kept.is_empty() {
+                    result.push(Hint {
+                        name: hint.name.clone(),
+                        kind: HintKind::ReadFromStorage {
+                            qb_name: qb_name.clone(),
+                            groups: kept,
+                        },
+                    });
+                }
+                continue;
+            }
+        }
         if seen.insert(crate::restore_table_optimizer_hint(hint)) {
             result.push(hint.clone());
         }
@@ -834,6 +866,70 @@ fn unmatched_table_names(tables: &[HintedTable]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_ast::HintTable;
+
+    fn read_from_storage(groups: &[(&str, &[&str])]) -> Hint {
+        Hint {
+            name: "READ_FROM_STORAGE".to_owned(),
+            kind: HintKind::ReadFromStorage {
+                qb_name: None,
+                groups: groups
+                    .iter()
+                    .map(|(store, tables)| {
+                        (
+                            (*store).to_owned(),
+                            tables
+                                .iter()
+                                .map(|t| HintTable {
+                                    db_name: None,
+                                    name: (*t).to_owned(),
+                                    qb_name: None,
+                                    partitions: Vec::new(),
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    #[test]
+    fn remove_duplicated_hints_prunes_per_storage_group() {
+        // A duplicate group is dropped at the group level even when the
+        // surrounding occurrence differs (Go compares per TableOptimizerHint,
+        // one per engine group).
+        let hints = [
+            read_from_storage(&[("TIFLASH", &["t1"])]),
+            read_from_storage(&[("TIFLASH", &["t1"]), ("TIKV", &["t3"])]),
+        ];
+        let result = remove_duplicated_hints(&hints);
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result[1].kind,
+            HintKind::ReadFromStorage {
+                qb_name: None,
+                groups: vec![(
+                    "TIKV".to_owned(),
+                    vec![HintTable {
+                        db_name: None,
+                        name: "t3".to_owned(),
+                        qb_name: None,
+                        partitions: Vec::new(),
+                    }],
+                )],
+            }
+        );
+
+        // A later occurrence whose every group is a duplicate is dropped.
+        let hints = [
+            read_from_storage(&[("TIFLASH", &["t1"]), ("TIKV", &["t2"])]),
+            read_from_storage(&[("TIKV", &["t2"])]),
+        ];
+        let result = remove_duplicated_hints(&hints);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], hints[0]);
+    }
 
     #[test]
     #[deny(unused_must_use)]
