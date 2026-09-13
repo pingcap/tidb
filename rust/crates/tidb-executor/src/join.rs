@@ -368,6 +368,12 @@ struct MergeInnerGroup {
     staging: Chunk,
     read_back: Chunk,
     types: Vec<FieldType>,
+    /// Whether `rows` has taken a chunk since its last reset. Go hands the
+    /// child chunk to its row container only when a group outgrows it, and
+    /// resets the container before every group regardless; the Rust
+    /// container's reset walks the spill coordinator, so an untouched one is
+    /// left as it is (its state is exactly what the last reset produced).
+    flushed: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -394,13 +400,19 @@ impl MergeInnerGroup {
             staging,
             read_back,
             types,
+            flushed: false,
         }
     }
 
     fn reset(&mut self) {
         self.staging.reset();
-        self.read_back.reset();
-        self.rows.reset();
+        if self.read_back.num_rows() != 0 {
+            self.read_back.reset();
+        }
+        if self.flushed {
+            self.rows.reset();
+            self.flushed = false;
+        }
     }
 
     fn append(
@@ -426,6 +438,7 @@ impl MergeInnerGroup {
             .add(chunk)
             .map_err(|error| ExecError::SpillFailed(error.to_string()));
         tracker.consume(-chunk_bytes);
+        self.flushed = true;
         result?;
         self.staging = self.rows.alloc_chunk();
         tracker.consume(self.staging.memory_usage());
