@@ -23,6 +23,16 @@ use crate::client::PhysicalChannelIdentity;
 
 use super::DirectUnaryClientError;
 
+/// Pinned client-go `DefGrpcInitialWindowSize` (128 MiB): `conn_pool.go`
+/// dials every TiKV connection with
+/// `grpc.WithInitialWindowSize(cfg.TiKVClient.GrpcInitialWindowSize)`, where
+/// tonic would otherwise use the h2 default of 64 KiB per stream.
+const GRPC_INITIAL_WINDOW_SIZE: u32 = 1 << 27;
+/// Pinned client-go `DefGrpcInitialConnWindowSize` (128 MiB), the
+/// connection-level flow-control window `grpc.WithInitialConnWindowSize` sets
+/// alongside the per-stream one.
+const GRPC_INITIAL_CONN_WINDOW_SIZE: u32 = 1 << 27;
+
 #[derive(Clone)]
 pub(super) struct VersionedChannel {
     physical_channel: PhysicalChannelIdentity,
@@ -71,12 +81,13 @@ impl ChannelPool {
             return Ok(channel.clone());
         }
 
-        let endpoint = secure_endpoint(address, &self.security).map_err(|error| {
-            DirectUnaryClientError::InvalidAddress {
+        let endpoint = secure_endpoint(address, &self.security)
+            .map_err(|error| DirectUnaryClientError::InvalidAddress {
                 address: address.to_owned(),
                 message: error.to_string(),
-            }
-        })?;
+            })?
+            .initial_stream_window_size(GRPC_INITIAL_WINDOW_SIZE)
+            .initial_connection_window_size(GRPC_INITIAL_CONN_WINDOW_SIZE);
         // Every connection in the shared transport uses this allocator. A
         // failed-attempt identity must never name a healthy sibling connection.
         let version = {
