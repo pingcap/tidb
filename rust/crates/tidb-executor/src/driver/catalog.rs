@@ -223,6 +223,10 @@ pub struct Catalog {
     /// The immutable domain index view belongs to this metadata version.
     /// Catalog clones share the view; DDL invalidates only the mutated owner.
     latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+    /// The planner's view of this catalog image, shared by clones like the
+    /// index view and dropped by every mutator that moves [`Self::version`]
+    /// or the metadata epoch.
+    planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
     /// The entries a session's LOCAL temporary tables are DISPLACING while
     /// they are attached: `(folded database, folded name, the entry that was
     /// there)`.
@@ -350,10 +354,21 @@ impl SequenceSnapshot {
 /// the planner must see only immutable table/view metadata.
 pub(crate) struct PlannerCatalog {
     current_database: String,
+    view: Arc<PlannerSchemaView>,
+    latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+}
+
+/// The planner's view of one schema image: the position Go's immutable
+/// `infoschema.InfoSchema` holds. Go builds it once per schema version and
+/// every statement plans against the shared value; this tier builds it once
+/// per catalog metadata version (the same epoch, see
+/// [`Catalog::metadata_version`]) and hands every statement the same `Arc`,
+/// rather than converting every column of every table per statement.
+#[derive(Debug, Default)]
+pub(crate) struct PlannerSchemaView {
     databases: std::collections::HashSet<String>,
     tables: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceTable>,
     views: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceView>,
-    latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
 }
 
 impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
@@ -366,11 +381,13 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         db_name: &str,
         table_name: &str,
     ) -> Option<&tidb_planner::plan_builder::catalog::SourceTable> {
-        self.tables.get(&CatalogTableKey::new(db_name, table_name))
+        self.view
+            .tables
+            .get(&CatalogTableKey::new(db_name, table_name))
     }
 
     fn database_exists(&self, db_name: &str) -> bool {
-        self.databases.contains(&db_name.go_to_lower())
+        self.view.databases.contains(&db_name.go_to_lower())
     }
 
     fn latest_index_schema(&self) -> Option<&tidb_planner::domain_misc::LatestIndexSchema> {
@@ -382,7 +399,9 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         db_name: &str,
         view_name: &str,
     ) -> Option<&tidb_planner::plan_builder::catalog::SourceView> {
-        self.views.get(&CatalogTableKey::new(db_name, view_name))
+        self.view
+            .views
+            .get(&CatalogTableKey::new(db_name, view_name))
     }
 }
 
@@ -423,6 +442,7 @@ struct CatalogSnapshot {
     metadata_version: u64,
     statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<statistics::StatisticsSchema>>>>,
     latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+    planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
     shadowed_by_local_temporary: Vec<(String, String, Arc<TableEntry>)>,
     temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
 }
@@ -443,6 +463,7 @@ impl CatalogSnapshot {
             metadata_version: catalog.metadata_version,
             statistics_schemas: Arc::clone(&catalog.statistics_schemas),
             latest_index_schema: catalog.latest_index_schema.clone(),
+            planner_view: catalog.planner_view.clone(),
             shadowed_by_local_temporary: catalog.shadowed_by_local_temporary.clone(),
             temporary_sweep: catalog.temporary_sweep.clone(),
         }
@@ -462,6 +483,7 @@ impl CatalogSnapshot {
             version: self.version,
             metadata_version: self.metadata_version,
             latest_index_schema: self.latest_index_schema.clone(),
+            planner_view: self.planner_view.clone(),
             shadowed_by_local_temporary: self.shadowed_by_local_temporary.clone(),
             statistics: Arc::clone(&owner.statistics),
             statistics_view: owner.statistics_view.clone(),
@@ -563,6 +585,7 @@ impl Default for Catalog {
             version: 0,
             metadata_version: 0,
             latest_index_schema: std::sync::OnceLock::new(),
+            planner_view: std::sync::OnceLock::new(),
             shadowed_by_local_temporary: Vec::new(),
             statistics: Arc::default(),
             statistics_view: None,
@@ -871,7 +894,7 @@ impl Catalog {
             .tables
             .insert(name.go_to_lower(), std::sync::Arc::new(table));
         self.foreign_keys_present |= table_has_foreign_keys;
-        self.version += 1;
+        self.bump_version();
         Ok(())
     }
 
@@ -989,7 +1012,7 @@ impl Catalog {
         self.next_policy_id += 1;
         policy.id = self.next_policy_id;
         self.policies.insert(key, policy);
-        self.version += 1;
+        self.bump_version();
         true
     }
 
@@ -1009,7 +1032,7 @@ impl Catalog {
             return false;
         };
         policy.placement_settings = Some(tidb_model::GoShared::new(settings));
-        self.version += 1;
+        self.bump_version();
         true
     }
 
@@ -1020,7 +1043,7 @@ impl Catalog {
         if self.policies.remove(&key).is_none() {
             return false;
         }
-        self.version += 1;
+        self.bump_version();
         true
     }
 
@@ -1078,7 +1101,7 @@ impl Catalog {
                 tables: HashMap::new(),
             }),
         );
-        self.version += 1;
+        self.bump_version();
         true
     }
 
@@ -1127,7 +1150,7 @@ impl Catalog {
                 tables: HashMap::new(),
             }),
         );
-        self.version += 1;
+        self.bump_version();
         true
     }
 
@@ -1172,7 +1195,7 @@ impl Catalog {
             .expect("destination schema was checked above")
             .tables
             .insert(to_name.go_to_lower(), source);
-        self.version += 1;
+        self.bump_version();
         true
     }
 
@@ -1268,6 +1291,25 @@ impl Catalog {
         current_database: &str,
         latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     ) -> PlannerCatalog {
+        PlannerCatalog {
+            current_database: current_database.to_owned(),
+            view: self.planner_schema_view(),
+            latest_index_schema,
+        }
+    }
+
+    /// The planner's view of this catalog's schema, built on first use and
+    /// shared by every statement that plans against the same catalog image
+    /// (Go's immutable `InfoSchema` per schema version). Any mutation drops
+    /// it, so a statement never plans against a schema that has moved.
+    pub(crate) fn planner_schema_view(&self) -> Arc<PlannerSchemaView> {
+        Arc::clone(
+            self.planner_view
+                .get_or_init(|| Arc::new(self.build_planner_schema_view())),
+        )
+    }
+
+    fn build_planner_schema_view(&self) -> PlannerSchemaView {
         use tidb_planner::plan_builder::catalog::{
             SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, SourceView,
         };
@@ -1473,12 +1515,10 @@ impl Catalog {
                 }
             }
         }
-        PlannerCatalog {
-            current_database: current_database.to_owned(),
+        PlannerSchemaView {
             databases,
             tables,
             views,
-            latest_index_schema,
         }
     }
 
@@ -1534,7 +1574,7 @@ impl Catalog {
     /// changing nothing still bumps it. That can refuse a commit Go would
     /// allow, never the reverse.
     pub(crate) fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
-        self.version += 1;
+        self.bump_version();
         let key = CatalogTableKey::new(database, name);
         let entry = self
             .database_mut(&key.database)?
@@ -1559,9 +1599,22 @@ impl Catalog {
         self.metadata_version
     }
 
+    /// Advances the mutation counter and drops the derived views that
+    /// belong to the image it counted.
+    ///
+    /// Every handle that can change a table takes this, `get_mut_in`
+    /// included: a caller holding `&mut TableEntry` may add an index (Go's
+    /// DDL owns that, but this tier hands the entry out), so the planner's
+    /// view cannot outlive a version.
+    fn bump_version(&mut self) {
+        self.version += 1;
+        self.planner_view.take();
+    }
+
     fn bump_metadata_version(&mut self) {
         self.metadata_version += 1;
         self.latest_index_schema.take();
+        self.planner_view.take();
         self.statistics_schemas = Arc::default();
     }
 
@@ -2574,7 +2627,7 @@ impl Catalog {
     /// [`Catalog::sequence_in`] for the `ALTER SEQUENCE` path, which replaces
     /// the options on the entry in place.
     pub fn sequence_mut_in(&mut self, database: &str, name: &str) -> Option<&mut SequenceDef> {
-        self.version += 1;
+        self.bump_version();
         match self.get_mut_in(database, name) {
             Some(TableEntry::Sequence(sequence)) => Some(sequence),
             _ => None,
@@ -3782,5 +3835,75 @@ mod statistics_request_tests {
                 .collect::<std::collections::HashSet<_>>(),
             partition_ids
         );
+    }
+}
+
+#[cfg(test)]
+mod planner_view_tests {
+    use super::*;
+    use tidb_planner::plan_builder::catalog::TableSource as _;
+
+    /// The planner's schema view is Go's immutable per-version `InfoSchema`:
+    /// one value shared by every statement and every clone that plans the
+    /// same image, and rebuilt by any mutation -- including a schema change
+    /// made through the mutable table handle, which moves the mutation
+    /// counter without claiming to be DDL.
+    #[test]
+    fn the_planner_view_is_shared_until_the_catalog_moves() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE pv(a INT PRIMARY KEY, b INT)", &mut catalog)
+            .unwrap();
+        let first = catalog.planner_schema_view();
+        assert!(Arc::ptr_eq(&first, &catalog.planner_schema_view()));
+        assert!(
+            Arc::ptr_eq(&first, &catalog.clone().planner_schema_view()),
+            "a clone plans against the same image"
+        );
+        assert!(catalog
+            .planner_catalog(DEFAULT_DATABASE, None)
+            .find_table(DEFAULT_DATABASE, "pv")
+            .is_some());
+
+        // An index added through the mutable handle is a schema change even
+        // though the accessor is the DML-narrow one: the next statement must
+        // see it.
+        let TableEntry::Kv(table) = catalog.get_mut_in(DEFAULT_DATABASE, "pv").unwrap() else {
+            panic!("pv is not a KV table");
+        };
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 7,
+                name: "ib".to_owned(),
+                comment: String::new(),
+                unique: false,
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                column_offsets: vec![1],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        let after_index = catalog.planner_schema_view();
+        assert!(!Arc::ptr_eq(&first, &after_index), "the view is rebuilt");
+        assert!(
+            after_index
+                .tables
+                .get(&CatalogTableKey::new(DEFAULT_DATABASE, "pv"))
+                .is_some_and(|table| table.indexes.iter().any(|index| index.name == "ib")),
+            "the new index reaches the planner"
+        );
+
+        crate::run_create_table_on("CREATE TABLE pv2(a INT)", &mut catalog).unwrap();
+        let after_ddl = catalog.planner_schema_view();
+        assert!(
+            !Arc::ptr_eq(&after_index, &after_ddl),
+            "DDL rebuilds it too"
+        );
+        let planner = catalog.planner_catalog(DEFAULT_DATABASE, None);
+        assert!(planner.find_table(DEFAULT_DATABASE, "pv").is_some());
+        assert!(planner.find_table(DEFAULT_DATABASE, "pv2").is_some());
+        assert_eq!(after_index.tables.len() + 1, after_ddl.tables.len());
     }
 }
