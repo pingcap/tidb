@@ -11618,3 +11618,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (arrow operators pin): `->` keeps the JSON quoting, `->>`
  unquotes, and both filter in WHERE. Pinned in
  `crates/tidb-session/tests/json_arrow_operators_source.rs`.
+- 2026-09-08 (SHOW COLUMNS WHERE pin): the WHERE predicate filters the
+ column listing (field = / field <>). Pinned in
+ `crates/tidb-session/tests/show_columns_where_source.rs`.
