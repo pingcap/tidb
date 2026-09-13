@@ -63,27 +63,31 @@ const (
 	// Notice that for V1 the partition id is still in the value part as well,
 	// for decreasing the risk of issues changing the read code path for various index reads.
 	GlobalIndexVersionV1 uint8 = 1
-	// GlobalIndexVersionV2 is the next, not yet implemented format (version 2) where partition ID
-	// is encoded in the key ONLY!
+	// GlobalIndexVersionV2 is the format (version 2) where partition ID is encoded in the key ONLY
+	// (not in the value) for global indexes on non-clustered tables where the handle is in the key:
+	// non-unique indexes (handle always in key) and unique indexes with nullable columns
+	// (handle in key when any indexed value is NULL). This reduces storage overhead compared to V1.
+	// This is the preferred format for new global indexes.
 	GlobalIndexVersionV2 uint8 = 2
 )
 
-// globalIndexV1Supported tracks whether all TiDB nodes in the cluster support
-// GlobalIndexVersionV1 key encoding. This is set by the DDL version detection
-// loop and checked when creating new global indexes to prevent V1 indexes from
-// being created during rolling upgrades where old nodes cannot handle V1 format.
-var globalIndexV1Supported atomic.Bool
+// globalIndexMaxVersion tracks the maximum GlobalIndexVersion supported by all
+// TiDB nodes in the cluster. This is set by the DDL version detection loop and
+// checked when creating new global indexes to prevent V1/V2 indexes from being
+// created during rolling upgrades where old nodes cannot handle the new format.
+// 0 means only legacy (V0) is safe; 1 means V1 is safe; 2 means V2 is safe.
+var globalIndexMaxVersion atomic.Uint32
 
-// SetGlobalIndexV1Supported sets whether GlobalIndexVersionV1 is supported
+// SetGlobalIndexMaxVersion sets the maximum GlobalIndexVersion supported
 // by all nodes in the cluster.
-func SetGlobalIndexV1Supported(supported bool) {
-	globalIndexV1Supported.Store(supported)
+func SetGlobalIndexMaxVersion(ver uint8) {
+	globalIndexMaxVersion.Store(uint32(ver))
 }
 
-// GetGlobalIndexV1Supported returns whether GlobalIndexVersionV1 is supported
+// GetGlobalIndexMaxVersion returns the maximum GlobalIndexVersion supported
 // by all nodes in the cluster.
-func GetGlobalIndexV1Supported() bool {
-	return globalIndexV1Supported.Load()
+func GetGlobalIndexMaxVersion() uint8 {
+	return uint8(globalIndexMaxVersion.Load())
 }
 
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
@@ -277,11 +281,11 @@ type IndexInfo struct {
 	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
 	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
 	// Version of global index key format for non-clustered tables.
-	// Set to V1 when the handle can appear in the index key (non-unique indexes,
+	// Set when the handle can appear in the index key (non-unique indexes,
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
 	// 0=legacy, or unique with all NOT NULL columns, or clustered.
 	// 1=v1 with partition ID in key and value.
-	// 2=v2 with partition ID in key only (TODO).
+	// 2=v2 with partition ID in key only (for entries where the handle is in the key).
 	GlobalIndexVersion uint8              `json:"global_index_version,omitempty"`
 	RegionSplitPolicy  *RegionSplitPolicy `json:"region_split_policy,omitempty"` // RegionSplitPolicy is the persistent split policy.
 }
@@ -570,10 +574,10 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 
 func init() {
 	if kerneltype.IsNextGen() {
-		// For now, we don't need to detect job version and global index v1 support for NextGen
-		// as they are always V2 and support global index v1.
+		// For now, we don't need to detect job version and global index support for NextGen
+		// as they always support the latest version.
 		// To keep align with the logic of `JobVersion`, we set it in the init function of model
 		// package. The `JobVersion` is set in the init function of `job.go`.
-		SetGlobalIndexV1Supported(true)
+		SetGlobalIndexMaxVersion(GlobalIndexVersionV2)
 	}
 }
