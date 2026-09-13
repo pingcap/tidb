@@ -624,6 +624,34 @@ fn index_join_decided_by_text(context: IndexJoinExplainContext<'_>) -> String {
     format!("range: decided by [{}]", decided.join(" "))
 }
 
+/// Go `indexJoinIntPKRangeInfo` (`index_join_path.go:597`): the INT-PK probe
+/// scan's `decided by` text is the OUTER join keys rendered alone --
+/// `indexJoinIntPKRangeInfo` writes each outer key with no eq wrapping.
+fn index_join_int_pk_decided_by_text(context: &IndexJoinExplainContext<'_>) -> String {
+    let decided = context
+        .outer_keys
+        .iter()
+        .map(|outer| expression_text(&tidb_expr::expression::Expression::Column(outer.clone())))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("range: decided by [{}]", decided)
+}
+
+/// The decided-by text for a `TableScan` probe. Single-column INT-PK probes
+/// (one join key, no outer-derived bounds) get the outer-keys-only rendering;
+/// multi-key or bounded probes get the full rendering with eq pairs + bounds.
+fn index_join_decided_by_text_for_scan(
+    context: &IndexJoinExplainContext<'_>,
+    scan: &tidb_planner::physical::PhysicalTableScan,
+) -> String {
+    let single_pk = context.outer_keys.len() == 1 && context.access_conditions.is_empty();
+    if single_pk {
+        index_join_int_pk_decided_by_text(context)
+    } else {
+        index_join_decided_by_text(*context)
+    }
+}
+
 fn columns_text(columns: &[tidb_expr::column::Column]) -> String {
     columns
         .iter()
@@ -929,9 +957,13 @@ fn physical_operator_info(
         PhysicalPlan::TableScan(scan) => {
             let mut parts = Vec::new();
             if is_index_join_table_range(plan, index_join_context) {
-                parts.push(index_join_decided_by_text(
-                    index_join_context.expect("index join context"),
-                ));
+                let ctx = index_join_context.expect("index join context");
+                // Go `indexJoinIntPKRangeInfo` renders the INT-PK probe's
+                // decided-by as the OUTER join keys alone. For a composite-PK
+                // probe with outer-derived bounds on the trailing key column,
+                // the full rendering (eq pairs + bounds) applies.
+                let parts_text = index_join_decided_by_text_for_scan(&ctx, scan);
+                parts.push(parts_text);
             } else if scan
                 .scan_kind()
                 .is_some_and(|kind| kind.plan_type() == "TableRangeScan")
