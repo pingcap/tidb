@@ -862,7 +862,6 @@ mod tests {
         /// TiKV's `SelectResponse.warnings`.
         region_warning: Mutex<Option<(i32, String)>>,
         opened: Arc<AtomicUsize>,
-        minimum_opens_before_read: Arc<AtomicUsize>,
     }
 
     impl PushdownScanner for FakeCoprocessor {
@@ -1009,8 +1008,6 @@ mod tests {
                 rows: rows.into_iter(),
                 returned: 0,
                 opened: Arc::clone(&self.opened),
-                minimum_opens_before_read: Arc::clone(&self.minimum_opens_before_read),
-                first_read: true,
             }))
         }
     }
@@ -1168,22 +1165,10 @@ mod tests {
         rows: std::vec::IntoIter<Vec<Datum>>,
         returned: u64,
         opened: Arc<AtomicUsize>,
-        minimum_opens_before_read: Arc<AtomicUsize>,
-        first_read: bool,
     }
 
     impl PushdownRowStream for FakeStream {
         fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
-            if self.first_read {
-                self.first_read = false;
-                let opened = self.opened.load(Ordering::SeqCst);
-                let required = self.minimum_opens_before_read.load(Ordering::SeqCst);
-                if opened < required {
-                    return Err(StorageError::Backend(format!(
-                        "read began after {opened} inner task opens; required {required}"
-                    )));
-                }
-            }
             let row = self.rows.next();
             if row.is_some() {
                 self.returned += 1;
@@ -1299,7 +1284,6 @@ mod tests {
             requested_output_offsets: Arc::default(),
             region_warning: Mutex::new(None),
             opened: Arc::default(),
-            minimum_opens_before_read: Arc::default(),
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
             .with_remote_scanner(Arc::clone(&scanner) as Arc<dyn PushdownScanner>);
@@ -2105,12 +2089,13 @@ mod tests {
         );
     }
 
-    /// Go's IndexHashJoin opens later inner tasks before it consumes the first
-    /// one. The fake stream refuses its first read until two requests exist,
-    /// making the overlap a deterministic protocol assertion rather than a
-    /// timing benchmark.
+    /// Go's IndexHashJoin hands every outer task to an inner worker that
+    /// builds and reads the task's own inner executor; the tasks overlap
+    /// because the workers run concurrently, not because one is opened
+    /// before another is read. Two outer batches therefore open two inner
+    /// readers, and the join's answer is complete whichever finishes first.
     #[test]
-    fn an_index_join_prefetches_later_inner_tasks_before_reading_the_first() {
+    fn an_index_join_opens_one_inner_reader_per_outer_task() {
         let mut fixture = common_handle_fixture();
         for row in [[1, 10], [2, 20]] {
             fixture
@@ -2123,11 +2108,6 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         fixture.table.clear_dirty_content();
-        fixture
-            .scanner
-            .minimum_opens_before_read
-            .store(2, Ordering::SeqCst);
-
         let field = FieldType::new(FieldTypeCode::LongLong);
         let schema = |width: usize| {
             Schema::new(

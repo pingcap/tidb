@@ -539,27 +539,6 @@ pub(crate) enum IndexLookupSource {
 }
 
 impl IndexLookupSource {
-    fn fork_prefetched_common_handle(
-        &self,
-        probes: Vec<IndexTaskProbe>,
-    ) -> Result<Option<Self>, ExecError> {
-        match self {
-            Self::Leaf(source) => {
-                let (keys, bound_values) = probes
-                    .into_iter()
-                    .map(|probe| (probe.key, probe.bounds))
-                    .unzip();
-                source
-                    .fork_prefetched_common_handle(crate::access_path::IndexJoinProbes {
-                        keys,
-                        bound_values,
-                    })
-                    .map(|source| source.map(Self::Leaf))
-            }
-            Self::Composite { .. } => Ok(None),
-        }
-    }
-
     fn set_probes(&mut self, probes: crate::access_path::IndexJoinProbes) -> Result<(), ExecError> {
         match self {
             Self::Leaf(source) => {
@@ -750,23 +729,33 @@ struct PendingIndexLookupTask {
 }
 
 enum PendingIndexLookupSource {
-    Prefetched(IndexLookupSource),
-    /// Go `indexHashJoinInnerWorker.fetchInnerResults`: a pool worker is
-    /// draining the task's remote cursor into request-shaped chunks while
-    /// the session thread works on earlier tasks. The receiver yields the
-    /// chunks and, when the worker could not hand a batch over, the cursor
-    /// for the row path to finish.
+    /// Go `indexHashJoinInnerWorker.handleTask`: a lane thread builds the
+    /// task's lookup contents and reader, drains its cursor and joins the
+    /// batch while the session thread works on earlier tasks. The receiver
+    /// yields the joined chunks, or the batch back when the session's own
+    /// reader has to serve it.
     Draining {
-        source: IndexLookupSource,
         results: std::sync::mpsc::Receiver<IndexTaskOutcome>,
     },
     Synchronous(Vec<IndexTaskProbe>),
+}
+
+/// The lookup-content shape of one index join, what
+/// [`index_task_probes`] needs from the plan for every batch.
+struct IndexProbePlan {
+    probe_keys: Vec<usize>,
+    probe_key_domains: Vec<IndexProbeKeyDomain>,
+    probe_bounds: Vec<crate::access_path::LookupProbeBound>,
 }
 
 /// What a pool worker needs to join one index task by itself: the join's
 /// shape and the statement's budget, shared by every task (Go's
 /// `indexHashJoinInnerWorker` holds the same through its `IndexLookUpJoin`).
 struct IndexTaskShared<C: Columns> {
+    /// The forkable lookup, when the inner side is a common-handle prefix
+    /// leaf; `None` keeps every task on the session's own reader.
+    template: Option<crate::access_path::LookupForkTemplate>,
+    probe_plan: IndexProbePlan,
     output: JoinOutput,
     kind: JoinKind,
     outer_is_left: bool,
@@ -799,35 +788,76 @@ enum IndexTaskOutcome {
         inner_rows: u64,
         condition_evals: u64,
     },
-    /// The cursor could not hand every batch over; the session thread
-    /// finishes the lookup and the join from the drained chunks.
-    Deferred {
+    /// The batch's probes reach no forkable range; the session's own
+    /// reader serves them, as it does without a template.
+    Unforked {
         outer: OuterBatch,
-        chunks: Vec<Chunk>,
-        cursor: Option<Box<crate::kv_table::RemoteRowCursor>>,
+        probes: Vec<IndexTaskProbe>,
     },
     Failed(Box<ExecError>),
 }
 
-/// Go `indexHashJoinInnerWorker.handleTask` for one task: `fetchInnerResults`
-/// (the cursor drain), then the join of the task's outer rows against what
-/// it read, on the pool worker instead of the session thread.
-fn run_index_task<C: Columns>(
-    shared: &IndexTaskShared<C>,
-    outer: OuterBatch,
-    drain: crate::access_path::PrefetchedDrain,
-) -> IndexTaskOutcome {
-    let (chunks, cursor) = drain.run();
-    let chunks = match chunks {
-        Ok(chunks) => chunks,
+/// Go `indexHashJoinInnerWorker.handleTask` for one task, on the lane
+/// thread: the lookup contents (`constructLookupContent`), the task's own
+/// reader and its cursor (`fetchInnerResults` -> `buildExecutorForIndexJoin`),
+/// the drain of what it reads, then the join of the task's outer rows
+/// against it.
+fn run_index_task<C: Columns>(shared: &IndexTaskShared<C>, outer: OuterBatch) -> IndexTaskOutcome {
+    let probes = match index_task_probes(
+        &shared.ctx,
+        &shared.keys,
+        &shared.probe_plan,
+        &outer,
+        &shared.outer_types,
+        shared.outer_is_left,
+    ) {
+        Ok(probes) => probes,
         Err(error) => return IndexTaskOutcome::Failed(Box::new(error)),
     };
-    if cursor.is_some() {
-        return IndexTaskOutcome::Deferred {
-            outer,
-            chunks,
-            cursor: cursor.map(Box::new),
-        };
+    let Some(template) = shared.template.as_ref() else {
+        return IndexTaskOutcome::Unforked { outer, probes };
+    };
+    let (keys, bound_values) = probes
+        .into_iter()
+        .map(|probe| (probe.key, probe.bounds))
+        .unzip();
+    let mut task = match template.open(crate::access_path::IndexJoinProbes { keys, bound_values }) {
+        Ok(Ok(task)) => task,
+        Ok(Err(probes)) => {
+            let probes = probes
+                .keys
+                .into_iter()
+                .zip(probes.bound_values)
+                .map(|(key, bounds)| IndexTaskProbe { key, bounds })
+                .collect();
+            return IndexTaskOutcome::Unforked { outer, probes };
+        }
+        Err(error) => return IndexTaskOutcome::Failed(Box::new(error)),
+    };
+    let mut chunks = Vec::new();
+    // A cop worker sends a task's next page only once the previous one was
+    // taken, so the drain keeps the task's pages flowing while the session
+    // thread serves earlier tasks (TPC-H Q21: 0.6 coprocessor requests in
+    // flight against Go's 3.9 when the session thread drained alone).
+    let drained = match task.take_prefetched_drain() {
+        Some(drain) => {
+            let (drained, cursor) = drain.run();
+            match drained {
+                Ok(drained) => chunks = drained,
+                Err(error) => return IndexTaskOutcome::Failed(Box::new(error)),
+            }
+            match cursor {
+                Some(cursor) => {
+                    task.restore_cursor(cursor);
+                    drain_lookup_task(&mut task, &mut chunks)
+                }
+                None => Ok(()),
+            }
+        }
+        None => drain_lookup_task(&mut task, &mut chunks),
+    };
+    if let Err(error) = drained {
+        return IndexTaskOutcome::Failed(Box::new(error));
     }
     let inner_rows = chunks.iter().map(|chunk| chunk.num_rows() as u64).sum();
     match join_index_task(shared, &outer, chunks) {
@@ -838,6 +868,163 @@ fn run_index_task<C: Columns>(
             condition_evals,
         },
         Err(error) => IndexTaskOutcome::Failed(Box::new(error)),
+    }
+}
+
+/// Go `constructLookupContent` and `sortAndDedupLookUpContents` for one
+/// outer batch: the deduped lookup contents, on whichever thread runs the
+/// task.
+fn index_task_probes<C: Columns>(
+    ctx: &C,
+    keys: &[EquiKey],
+    plan: &IndexProbePlan,
+    outer: &OuterBatch,
+    outer_types: &[FieldType],
+    outer_is_left: bool,
+) -> Result<Vec<IndexTaskProbe>, ExecError> {
+    let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
+    let probe_encoding: Vec<EquiKey> = plan
+        .probe_keys
+        .iter()
+        .enumerate()
+        .map(|(at, key)| EquiKey {
+            left: at,
+            right: at,
+            class: keys[*key].class,
+            null_safe: keys[*key].null_safe,
+        })
+        .collect();
+    // Go's `ColWithCmpFuncManager` dedup: lookup contents compare equal
+    // only when their keys AND their affected-column values match
+    // (`CompareRow`). Encode the evaluated bounds into the dedup key so
+    // two outer rows sharing a prefix but not a window stay two probes.
+    let bound_encoding: Vec<EquiKey> = plan
+        .probe_bounds
+        .iter()
+        .enumerate()
+        .filter_map(|(at, bound)| {
+            let field_type = bound.arg.static_type()?.clone();
+            use crate::hash_join::KeyClass;
+            let class = KeyClass::of(&field_type, &field_type, tidb_datatype::Collation::Binary)?;
+            Some(EquiKey {
+                left: at,
+                right: at,
+                class,
+                null_safe: false,
+            })
+        })
+        .collect();
+    if bound_encoding.len() != plan.probe_bounds.len() {
+        return Err(ExecError::unsupported(
+            "a lookup probe bound has no comparable encoding",
+        ));
+    }
+    let mut probes_by_key = std::collections::BTreeMap::new();
+    for index in 0..outer.len() {
+        let row = outer.row(index);
+        let probe: Option<Vec<Datum>> = plan
+            .probe_keys
+            .iter()
+            .map(|at| {
+                let key = &keys[*at];
+                let offset = outer_offset(key);
+                let value = row.get_datum(offset, &outer_types[offset]);
+                (!matches!(value, Datum::Null) || key.null_safe).then_some(value)
+            })
+            .collect();
+        let Some(mut probe) = probe else {
+            continue;
+        };
+        if !plan.probe_key_domains.is_empty() {
+            if plan.probe_key_domains.len() != probe.len() {
+                return Err(ExecError::unsupported(
+                    "an index-join lookup key has incomplete inner-column domains",
+                ));
+            }
+            let mut valid = true;
+            for ((value, domain), key_offset) in probe
+                .iter_mut()
+                .zip(&plan.probe_key_domains)
+                .zip(&plan.probe_keys)
+            {
+                if value.is_null() {
+                    if !keys[*key_offset].null_safe {
+                        valid = false;
+                        break;
+                    }
+                    continue;
+                }
+                let Some(converted) =
+                    crate::driver::point_get_key::point_get_value(&domain.field_type, value)
+                else {
+                    valid = false;
+                    break;
+                };
+                *value = converted;
+                crate::index_prefix_cut::cut_datum_by_prefix_len(
+                    value,
+                    domain.prefix_length,
+                    &domain.field_type,
+                );
+            }
+            if !valid {
+                continue;
+            }
+        }
+        // Evaluate this row's bounds. A NULL result is Go's empty range:
+        // the content reads nothing and contributes no probe.
+        let bounds = if plan.probe_bounds.is_empty() {
+            Vec::new()
+        } else {
+            let mut evaluated = Vec::with_capacity(plan.probe_bounds.len());
+            for bound in &plan.probe_bounds {
+                match bound.arg.eval(ctx, row).map_err(ExecError::Eval)? {
+                    Datum::Null => {
+                        evaluated.clear();
+                        break;
+                    }
+                    value => evaluated.push(value),
+                }
+            }
+            if evaluated.is_empty() && !plan.probe_bounds.is_empty() {
+                continue;
+            }
+            evaluated
+        };
+        let encoded = row_key(&probe_encoding, &probe, |key| key.left).map_err(|_: KeyError| {
+            ExecError::unsupported("a join key column has no comparable encoding")
+        })?;
+        let mut encoded = match encoded {
+            Some(encoded) => encoded,
+            None => continue,
+        };
+        if !bound_encoding.is_empty() {
+            let bound_bytes = row_key_by(&bound_encoding, |key| bounds[key.left].clone()).map_err(
+                |_: KeyError| ExecError::unsupported("a lookup probe bound is not encodable"),
+            )?;
+            match bound_bytes {
+                Some(bytes) => encoded.extend_from_slice(&bytes),
+                None => continue,
+            }
+        }
+        probes_by_key.insert(encoded, IndexTaskProbe { key: probe, bounds });
+    }
+    Ok(probes_by_key.into_values().collect())
+}
+
+/// Reads the rest of a forked task through its row path, the part of a
+/// lookup its cursor could not hand over as whole batches.
+fn drain_lookup_task(
+    task: &mut crate::access_path::IndexJoinLookupExec,
+    chunks: &mut Vec<Chunk>,
+) -> Result<(), ExecError> {
+    loop {
+        let mut chunk = task.new_chunk();
+        task.next(&mut chunk)?;
+        if chunk.num_rows() == 0 {
+            return Ok(());
+        }
+        chunks.push(chunk);
     }
 }
 
@@ -1836,7 +2023,18 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 .index_lookup
                 .as_ref()
                 .expect("this path runs only with a plan");
+            let template = match &plan.source {
+                IndexLookupSource::Leaf(leaf) => leaf.fork_template(),
+                IndexLookupSource::Composite { .. } => None,
+            };
+            let prefetch_disabled = template.is_none();
             self.index_task_shared = Some(Arc::new(IndexTaskShared {
+                template,
+                probe_plan: IndexProbePlan {
+                    probe_keys: plan.probe_keys.clone(),
+                    probe_key_domains: plan.probe_key_domains.clone(),
+                    probe_bounds: plan.probe_bounds.clone(),
+                },
                 output: self.output.clone(),
                 kind: self.kind,
                 outer_is_left: self.outer_is_left(),
@@ -1854,6 +2052,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 tracker: Arc::clone(&self.tracker),
                 memory: self.memory.clone(),
             }));
+            if let Some(state) = self.index_state.as_mut() {
+                state.prefetch_disabled = prefetch_disabled;
+            }
         }
         loop {
             let state = self.index_state.as_ref().expect("just installed above");
@@ -1957,9 +2158,21 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         )?;
 
         let inner_not_null = plan.inner_not_null.clone();
-        match task.source {
-            PendingIndexLookupSource::Prefetched(mut source) => Self::materialize_index_inner(
-                &mut source,
+        let synchronous = |plan: &mut IndexLookupPlan,
+                           state: &mut IndexLookupState,
+                           probes: Vec<IndexTaskProbe>|
+         -> Result<(), ExecError> {
+            let (keys_seeded, bound_values) = probes
+                .into_iter()
+                .map(|probe| (probe.key, probe.bounds))
+                .unzip();
+            plan.source
+                .set_probes(crate::access_path::IndexJoinProbes {
+                    keys: keys_seeded,
+                    bound_values,
+                })?;
+            Self::materialize_index_inner(
+                &mut plan.source,
                 Vec::new(),
                 state,
                 keys,
@@ -1967,11 +2180,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 &inner_not_null,
                 tracker,
                 memory,
-            ),
-            PendingIndexLookupSource::Draining {
-                mut source,
-                results,
-            } => {
+            )
+        };
+        match task.source {
+            PendingIndexLookupSource::Draining { results } => {
                 let outcome = results.recv().map_err(|_| {
                     ExecError::internal("the index-join inner worker stopped without a result")
                 })?;
@@ -1985,7 +2197,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         // The worker joined the task (Go's inner worker
                         // `doJoinUnordered`); its result chunks are served
                         // as they are, in outer order.
-                        if let IndexLookupSource::Leaf(leaf) = &source {
+                        if let IndexLookupSource::Leaf(leaf) = &plan.source {
                             leaf.add_produced(inner_rows);
                         }
                         condition_evals.set(condition_evals.get() + evals);
@@ -1998,56 +2210,18 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         state.joined_row = 0;
                         memory.check()
                     }
-                    IndexTaskOutcome::Deferred {
-                        outer,
-                        chunks,
-                        cursor,
-                    } => {
+                    IndexTaskOutcome::Unforked { outer, probes } => {
+                        // The session's reader serves this batch, and the
+                        // later ones: the fork's refusal is a property of
+                        // the lookup, not of one batch.
                         state.outer = outer;
-                        if let (Some(cursor), IndexLookupSource::Leaf(leaf)) = (cursor, &mut source)
-                        {
-                            leaf.restore_cursor(*cursor);
-                        }
-                        if let IndexLookupSource::Leaf(leaf) = &source {
-                            leaf.add_produced(
-                                chunks.iter().map(|chunk| chunk.num_rows() as u64).sum(),
-                            );
-                        }
-                        Self::materialize_index_inner(
-                            &mut source,
-                            chunks,
-                            state,
-                            keys,
-                            outer_is_left,
-                            &inner_not_null,
-                            tracker,
-                            memory,
-                        )
+                        state.prefetch_disabled = true;
+                        synchronous(plan, state, probes)
                     }
                     IndexTaskOutcome::Failed(error) => Err(*error),
                 }
             }
-            PendingIndexLookupSource::Synchronous(probes) => {
-                let (keys_seeded, bound_values) = probes
-                    .into_iter()
-                    .map(|probe| (probe.key, probe.bounds))
-                    .unzip();
-                plan.source
-                    .set_probes(crate::access_path::IndexJoinProbes {
-                        keys: keys_seeded,
-                        bound_values,
-                    })?;
-                Self::materialize_index_inner(
-                    &mut plan.source,
-                    Vec::new(),
-                    state,
-                    keys,
-                    outer_is_left,
-                    &inner_not_null,
-                    tracker,
-                    memory,
-                )
-            }
+            PendingIndexLookupSource::Synchronous(probes) => synchronous(plan, state, probes),
         }
     }
 
@@ -2079,53 +2253,31 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 }
                 continue;
             }
-            let probes = Self::index_task_probes(
-                ctx,
-                keys,
-                plan,
-                &outer,
-                outer_types.as_slice(),
-                outer_is_left,
-            )?;
             let source = if state.prefetch_disabled {
-                PendingIndexLookupSource::Synchronous(probes.clone())
-            } else if let Some(mut source) =
-                plan.source.fork_prefetched_common_handle(probes.clone())?
-            {
-                // Go runs `fetchInnerResults` on `tidb_index_lookup_join_concurrency`
-                // inner workers; a cop worker sends a task's next page only
-                // once the previous one was taken, so a cursor drained by
-                // the session thread alone keeps at most one page in flight
-                // (TPC-H Q21: 0.6 coprocessor requests in flight against Go's
-                // 3.9 on the same lookups). A pool worker drains each
-                // prefetched task's cursor into chunks instead.
-                let drain = match &mut source {
-                    IndexLookupSource::Leaf(leaf) => leaf.take_prefetched_drain(),
-                    IndexLookupSource::Composite { .. } => None,
-                };
-                match drain {
-                    Some(drain) => {
-                        // Go's inner worker then builds the task's hash
-                        // table and joins it; the outer rows travel with
-                        // the task and come back with its result.
-                        let (tx, results) = std::sync::mpsc::sync_channel(1);
-                        let shared = Arc::clone(shared);
-                        let task_outer = std::mem::replace(
-                            &mut outer,
-                            OuterBatch::new(&outer_types, 1, shared.max_chunk_size.max(1)),
-                        );
-                        // The drain waits on TiKV for the task's pages: an
-                        // inner-worker goroutine in Go, a lane thread here.
-                        crate::worker_pool::spawn_lane_detached("tidb-index-join", move || {
-                            let _ = tx.send(run_index_task(&shared, task_outer, drain));
-                        });
-                        PendingIndexLookupSource::Draining { source, results }
-                    }
-                    None => PendingIndexLookupSource::Prefetched(source),
-                }
+                PendingIndexLookupSource::Synchronous(index_task_probes(
+                    ctx,
+                    keys,
+                    &shared.probe_plan,
+                    &outer,
+                    outer_types.as_slice(),
+                    outer_is_left,
+                )?)
             } else {
-                state.prefetch_disabled = true;
-                PendingIndexLookupSource::Synchronous(probes.clone())
+                // Go runs `handleTask` on `tidb_index_lookup_join_concurrency`
+                // inner workers: the lookup contents, the task's reader and
+                // its requests, the fetch and the join all happen there. A
+                // lane thread takes the whole task; the outer rows travel
+                // with it and come back with its result.
+                let (tx, results) = std::sync::mpsc::sync_channel(1);
+                let shared = Arc::clone(shared);
+                let task_outer = std::mem::replace(
+                    &mut outer,
+                    OuterBatch::new(&outer_types, 1, shared.max_chunk_size.max(1)),
+                );
+                crate::worker_pool::spawn_lane_detached("tidb-index-join", move || {
+                    let _ = tx.send(run_index_task(&shared, task_outer));
+                });
+                PendingIndexLookupSource::Draining { results }
             };
             let synchronous = matches!(source, PendingIndexLookupSource::Synchronous(_));
             tracker.consume(outer_bytes);
@@ -2179,147 +2331,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             .min(INDEX_JOIN_BATCH_SIZE);
         let bytes = outer.settle_bytes();
         Ok((outer, bytes))
-    }
-
-    fn index_task_probes(
-        ctx: &C,
-        keys: &[EquiKey],
-        plan: &IndexLookupPlan,
-        outer: &OuterBatch,
-        outer_types: &[FieldType],
-        outer_is_left: bool,
-    ) -> Result<Vec<IndexTaskProbe>, ExecError> {
-        let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
-        let probe_encoding: Vec<EquiKey> = plan
-            .probe_keys
-            .iter()
-            .enumerate()
-            .map(|(at, key)| EquiKey {
-                left: at,
-                right: at,
-                class: keys[*key].class,
-                null_safe: keys[*key].null_safe,
-            })
-            .collect();
-        // Go's `ColWithCmpFuncManager` dedup: lookup contents compare equal
-        // only when their keys AND their affected-column values match
-        // (`CompareRow`). Encode the evaluated bounds into the dedup key so
-        // two outer rows sharing a prefix but not a window stay two probes.
-        let bound_encoding: Vec<EquiKey> = plan
-            .probe_bounds
-            .iter()
-            .enumerate()
-            .filter_map(|(at, bound)| {
-                let field_type = bound.arg.static_type()?.clone();
-                use crate::hash_join::KeyClass;
-                let class =
-                    KeyClass::of(&field_type, &field_type, tidb_datatype::Collation::Binary)?;
-                Some(EquiKey {
-                    left: at,
-                    right: at,
-                    class,
-                    null_safe: false,
-                })
-            })
-            .collect();
-        if bound_encoding.len() != plan.probe_bounds.len() {
-            return Err(ExecError::unsupported(
-                "a lookup probe bound has no comparable encoding",
-            ));
-        }
-        let mut probes_by_key = std::collections::BTreeMap::new();
-        for index in 0..outer.len() {
-            let row = outer.row(index);
-            let probe: Option<Vec<Datum>> = plan
-                .probe_keys
-                .iter()
-                .map(|at| {
-                    let key = &keys[*at];
-                    let offset = outer_offset(key);
-                    let value = row.get_datum(offset, &outer_types[offset]);
-                    (!matches!(value, Datum::Null) || key.null_safe).then_some(value)
-                })
-                .collect();
-            let Some(mut probe) = probe else {
-                continue;
-            };
-            if !plan.probe_key_domains.is_empty() {
-                if plan.probe_key_domains.len() != probe.len() {
-                    return Err(ExecError::unsupported(
-                        "an index-join lookup key has incomplete inner-column domains",
-                    ));
-                }
-                let mut valid = true;
-                for ((value, domain), key_offset) in probe
-                    .iter_mut()
-                    .zip(&plan.probe_key_domains)
-                    .zip(&plan.probe_keys)
-                {
-                    if value.is_null() {
-                        if !keys[*key_offset].null_safe {
-                            valid = false;
-                            break;
-                        }
-                        continue;
-                    }
-                    let Some(converted) =
-                        crate::driver::point_get_key::point_get_value(&domain.field_type, value)
-                    else {
-                        valid = false;
-                        break;
-                    };
-                    *value = converted;
-                    crate::index_prefix_cut::cut_datum_by_prefix_len(
-                        value,
-                        domain.prefix_length,
-                        &domain.field_type,
-                    );
-                }
-                if !valid {
-                    continue;
-                }
-            }
-            // Evaluate this row's bounds. A NULL result is Go's empty range:
-            // the content reads nothing and contributes no probe.
-            let bounds = if plan.probe_bounds.is_empty() {
-                Vec::new()
-            } else {
-                let mut evaluated = Vec::with_capacity(plan.probe_bounds.len());
-                for bound in &plan.probe_bounds {
-                    match bound.arg.eval(ctx, row).map_err(ExecError::Eval)? {
-                        Datum::Null => {
-                            evaluated.clear();
-                            break;
-                        }
-                        value => evaluated.push(value),
-                    }
-                }
-                if evaluated.is_empty() && !plan.probe_bounds.is_empty() {
-                    continue;
-                }
-                evaluated
-            };
-            let encoded =
-                row_key(&probe_encoding, &probe, |key| key.left).map_err(|_: KeyError| {
-                    ExecError::unsupported("a join key column has no comparable encoding")
-                })?;
-            let mut encoded = match encoded {
-                Some(encoded) => encoded,
-                None => continue,
-            };
-            if !bound_encoding.is_empty() {
-                let bound_bytes = row_key_by(&bound_encoding, |key| bounds[key.left].clone())
-                    .map_err(|_: KeyError| {
-                        ExecError::unsupported("a lookup probe bound is not encodable")
-                    })?;
-                match bound_bytes {
-                    Some(bytes) => encoded.extend_from_slice(&bytes),
-                    None => continue,
-                }
-            }
-            probes_by_key.insert(encoded, IndexTaskProbe { key: probe, bounds });
-        }
-        Ok(probes_by_key.into_values().collect())
     }
 
     #[allow(clippy::too_many_arguments)]

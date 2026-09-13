@@ -4059,6 +4059,80 @@ impl PrefetchedDrain {
     }
 }
 
+/// What a lane thread needs to rebuild one forked common-handle lookup task
+/// for an outer batch: the immutable lookup description without the
+/// session reader's `Rc` state. See [`IndexJoinLookupExec::fork_template`].
+pub(crate) struct LookupForkTemplate {
+    meta: ExecutorMeta,
+    table: KvTable,
+    object: LookupObject,
+    covering: bool,
+    probe_parts: Vec<LookupProbePart>,
+    probe_key_prefix_lengths: Vec<i64>,
+    decode_context: crate::kv_table::RowDecodeContext,
+    statement: PushdownStatementContext,
+    filters: Vec<Expression>,
+    filter_context: Option<crate::StmtContext>,
+    filter_types: Vec<FieldType>,
+    decode_offsets: Option<Vec<usize>>,
+    output_offsets: Option<Vec<usize>>,
+    probe_bound_ops: Vec<LookupProbeBoundOp>,
+}
+
+impl LookupForkTemplate {
+    /// Rebuilds the forked task on the calling thread, seeds it with the
+    /// batch's probes and opens its remote cursor. Probes that reach no
+    /// range come back unopened for the session's own reader to serve.
+    pub(crate) fn open(
+        &self,
+        probes: IndexJoinProbes,
+    ) -> Result<Result<IndexJoinLookupExec, IndexJoinProbes>, ExecError> {
+        let mut task = IndexJoinLookupExec {
+            meta: self.meta.clone(),
+            table: self.table.clone(),
+            object: self.object.clone(),
+            covering: self.covering,
+            probe_parts: self.probe_parts.clone(),
+            probe_key_prefix_lengths: self.probe_key_prefix_lengths.clone(),
+            probes: Vec::new(),
+            next_probe: 0,
+            cursor: None,
+            record_cursor: None,
+            remote_cursor: None,
+            remote_filters_complete: false,
+            lookup_chunk: None,
+            remote_handles: None,
+            lookup_rows: Vec::new(),
+            lookup_row_at: 0,
+            produced: Rc::new(Cell::new(0)),
+            decode_context: self.decode_context.clone(),
+            statement: self.statement.clone(),
+            filters: self.filters.clone(),
+            filter_context: self.filter_context.clone(),
+            filter_chunk: Chunk::new(
+                &self.filter_types,
+                self.meta.init_cap(),
+                self.meta.max_chunk_size(),
+            ),
+            decode_offsets: self.decode_offsets.clone(),
+            output_offsets: self.output_offsets.clone(),
+            shared_probes: None,
+            shared_generation: 0,
+            probe_bound_ops: self.probe_bound_ops.clone(),
+            probe_bound_values: Vec::new(),
+        };
+        task.set_probes(probes);
+        if task.open_prefetched_common_handle_cursor()? {
+            Ok(Ok(task))
+        } else {
+            Ok(Err(IndexJoinProbes {
+                keys: std::mem::take(&mut task.probes),
+                bound_values: std::mem::take(&mut task.probe_bound_values),
+            }))
+        }
+    }
+}
+
 pub struct IndexJoinLookupExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -4297,18 +4371,16 @@ impl IndexJoinLookupExec {
         }
     }
 
-    /// Forks one common-handle prefix task and starts its remote table reader.
+    /// The thread-safe description of a forked common-handle prefix task, or
+    /// `None` when this lookup's shape cannot be forked.
     ///
     /// Go's `IndexNestedLoopHashJoin` rebuilds one inner executor per outer
-    /// task and lets several of those executors fetch concurrently.  The Rust
-    /// executor remains single-threaded, but a remote cursor is already backed
-    /// by its own DistSQL worker.  Forking the immutable lookup description and
-    /// opening that cursor therefore gives the same bounded request overlap
-    /// without making statement-local `Rc` state cross a thread boundary.
-    pub(crate) fn fork_prefetched_common_handle(
-        &self,
-        probes: IndexJoinProbes,
-    ) -> Result<Option<Self>, ExecError> {
+    /// task on the inner worker that runs it (`fetchInnerResults` ->
+    /// `buildExecutorForIndexJoin`). A lane thread rebuilds the task's reader
+    /// from this template and opens its cursor there, so the ranges, region
+    /// tasks and requests of a batch are prepared off the session thread;
+    /// the statement-local `Rc` counters stay with the session's own reader.
+    pub(crate) fn fork_template(&self) -> Option<LookupForkTemplate> {
         let complete_common_handle = matches!(self.object, LookupObject::CommonHandle)
             && (self.probe_parts.is_empty()
                 || self.probe_parts.len() == self.table.common_handle_offsets().len());
@@ -4316,52 +4388,29 @@ impl IndexJoinLookupExec {
             || complete_common_handle
             || self.shared_probes.is_some()
         {
-            return Ok(None);
+            return None;
         }
-
-        let filter_types = self
-            .table
-            .visible_columns()
-            .iter()
-            .map(|column| column.field_type.clone())
-            .collect::<Vec<_>>();
-        let mut task = Self {
+        Some(LookupForkTemplate {
             meta: self.meta.clone(),
             table: self.table.clone(),
             object: self.object.clone(),
             covering: self.covering,
             probe_parts: self.probe_parts.clone(),
             probe_key_prefix_lengths: self.probe_key_prefix_lengths.clone(),
-            probes: Vec::new(),
-            next_probe: 0,
-            cursor: None,
-            record_cursor: None,
-            remote_cursor: None,
-            remote_filters_complete: false,
-            lookup_chunk: None,
-            remote_handles: None,
-            lookup_rows: Vec::new(),
-            lookup_row_at: 0,
-            produced: Rc::clone(&self.produced),
             decode_context: self.decode_context.clone(),
             statement: self.statement.clone(),
             filters: self.filters.clone(),
             filter_context: self.filter_context.clone(),
-            filter_chunk: Chunk::new(
-                &filter_types,
-                self.meta.init_cap(),
-                self.meta.max_chunk_size(),
-            ),
+            filter_types: self
+                .table
+                .visible_columns()
+                .iter()
+                .map(|column| column.field_type.clone())
+                .collect(),
             decode_offsets: self.decode_offsets.clone(),
             output_offsets: self.output_offsets.clone(),
-            shared_probes: None,
-            shared_generation: 0,
             probe_bound_ops: self.probe_bound_ops.clone(),
-            probe_bound_values: Vec::new(),
-        };
-        task.set_probes(probes);
-        task.open_prefetched_common_handle_cursor()
-            .map(|opened| opened.then_some(task))
+        })
     }
 
     /// Connects this leaf to the outer join's shared probe channel.
