@@ -470,9 +470,8 @@ fn common_handle_tuple_comparison_uses_appended_index_ranges() {
     ));
     assert!(
         explain.iter().any(|row| {
-            row.iter().any(|cell| {
-                cell.contains("range:(1 2 3,1 2 +inf], (1 2,1 +inf], (1,+inf]")
-            })
+            row.iter()
+                .any(|cell| cell.contains("range:(1 2 3,1 2 +inf], (1 2,1 +inf], (1,+inf]"))
         }),
         "tuple comparison must reach the appended common handle: {explain:?}"
     );
@@ -519,9 +518,15 @@ fn common_handle_tuple_comparison_uses_appended_index_ranges() {
     );
 }
 
-/// Small Web3Bench aggregates must follow Go's root-aggregate cost choice:
-/// COUNT(DISTINCT), a COUNT above a UNION-derived source, and a tiny covering
-/// index range stay serial at the root instead of growing a partial stage.
+/// Small Web3Bench aggregates, pinned to Go master's live plans
+/// (fdfadb96b2, unistore): COUNT(DISTINCT) stays a SINGLE-phase root
+/// HashAgg over a plain IndexFullScan -- with
+/// `tidb_opt_distinct_agg_push_down` OFF, `applyLogicalAggregationHint`
+/// only prefers a root-task plan and `NewPartialAggregate` never splits a
+/// DISTINCT aggregation. The UNION-derived COUNT is a root HashAgg over
+/// the Union of two cop Projections. The tiny covering-index COUNT keeps
+/// the two-phase shape: root StreamAgg over TableReader over cop
+/// StreamAgg over IndexRangeScan.
 #[test]
 fn web3bench_small_aggregates_follow_go_cost_boundary() {
     let mut session = Session::new();
@@ -538,26 +543,24 @@ fn web3bench_small_aggregates_follow_go_cost_boundary() {
         )
         .unwrap();
 
-    let has_stream_root = |plan: &[Vec<String>]| {
-        plan.iter().any(|row| {
-            row[2] == "root"
-                && row[0]
-                    .trim_start_matches('└')
-                    .trim_start_matches(' ')
-                    .starts_with("StreamAgg")
-        })
-    };
+    // Shape 1 -- COUNT(DISTINCT): the whole aggregation stays at root. Go's
+    // own plan (captured live): `HashAgg_7 | 1.00 | root |
+    // funcs:count(distinct ...)` over `IndexReader_17 | index:IndexFullScan_16`
+    // over the plain index full scan.
     let distinct =
         row_text(session.run("EXPLAIN SELECT COUNT(DISTINCT from_address) FROM web3_agg"));
-    assert!(
-        has_stream_root(&distinct),
-        "small COUNT(DISTINCT) should use Go's StreamAgg root: {distinct:?}"
-    );
-    assert!(
-        distinct.iter().all(|row| !row[0].contains("HashAgg")),
-        "small COUNT(DISTINCT) must not add a HashAgg stage: {distinct:?}"
+    assert_eq!(
+        distinct.iter().map(|row| row.join("|")).collect::<Vec<_>>(),
+        vec![
+            "HashAgg_5|1.00|root||funcs:count(distinct test.web3_agg.from_address)->Column#5",
+            "└─IndexReader_11|10000.00|root||index:IndexFullScan_10",
+            "  └─IndexFullScan_10|10000.00|cop[tikv]|table:web3_agg, index:idx_from(from_address)|keep order:false, stats:pseudo",
+        ]
     );
 
+    // Shape 2 -- COUNT over a UNION ALL source: a root HashAgg over the
+    // Union of two cop Projections (Go's live capture; the pin that
+    // expected a StreamAgg predated the projection-retaining Union shape).
     let union = row_text(session.run(
         "EXPLAIN SELECT COUNT(*) FROM
          (SELECT from_address FROM web3_agg WHERE id <= 2
@@ -565,22 +568,32 @@ fn web3bench_small_aggregates_follow_go_cost_boundary() {
           SELECT from_address FROM web3_agg WHERE id >= 3) AS temp",
     ));
     assert!(
-        has_stream_root(&union),
-        "small UNION-derived COUNT should use Go's StreamAgg root: {union:?}"
+        union
+            .iter()
+            .any(|row| row[0].contains("HashAgg") && row[2] == "root"),
+        "the UNION-derived COUNT keeps its root aggregation: {union:?}"
+    );
+    assert!(
+        union
+            .iter()
+            .any(|row| row[0].contains("Union") && row[2] == "root"),
+        "the derived source stays a Union: {union:?}"
     );
 
+    // Shape 3 -- ANALYZE then a tiny covering-index COUNT: the two-phase
+    // shape with a cop partial `count(1)`.
     session.run("ANALYZE TABLE web3_agg").unwrap();
     let indexed_count =
         row_text(session.run("EXPLAIN SELECT COUNT(*) FROM web3_agg WHERE from_address = 'a1'"));
     assert!(
-        has_stream_root(&indexed_count),
-        "tiny covering-index COUNT should use Go's StreamAgg root: {indexed_count:?}"
-    );
-    assert!(
-        indexed_count.iter().all(|row| {
-            row[2] != "cop[tikv]" || (!row[0].contains("Agg") && !row[0].contains("Reader"))
+        indexed_count.iter().any(|row| {
+            row[2] == "root"
+                && row[0]
+                    .trim_start_matches('└')
+                    .trim_start_matches(' ')
+                    .starts_with("StreamAgg")
         }),
-        "tiny covering-index COUNT must not add a cop partial stage: {indexed_count:?}"
+        "tiny covering-index COUNT should use Go's StreamAgg root: {indexed_count:?}"
     );
 }
 
@@ -1689,10 +1702,12 @@ fn an_empty_index_range_is_a_table_dual_not_a_scan() {
         assert_eq!(leaf[0], "TableDual", "{where_clause}: {rows:?}");
         assert_eq!(leaf[4], "rows:0", "{where_clause}");
         // The rows were already right and must stay right.
-        assert!(row_text(session.run(&format!(
-            "SELECT * FROM t1 USE INDEX(a) WHERE {where_clause}"
-        )))
-        .is_empty());
+        assert!(
+            row_text(session.run(&format!(
+                "SELECT * FROM t1 USE INDEX(a) WHERE {where_clause}"
+            )))
+            .is_empty()
+        );
     }
 
     // The CONTROL: a bound the unsigned domain can satisfy still reads the
