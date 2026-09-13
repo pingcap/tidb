@@ -11632,3 +11632,6 @@ risks without claiming repository-wide parity.
  `partitioned` in Create_options for a partitioned table and empty for a
  plain one. Pinned in
  `crates/tidb-session/tests/status_partitioned_option_source.rs`.
+- 2026-09-08 (view status pin): SHOW TABLE STATUS for a view reports a NULL
+ engine and the VIEW comment. Pinned in
+ `crates/tidb-session/tests/status_view_source.rs`.
