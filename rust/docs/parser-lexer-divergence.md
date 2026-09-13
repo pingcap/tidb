@@ -537,9 +537,15 @@ claims were compile-verified only.
   and set-operation surfaces consumed the available time.
 - Negative-evidence item 7 establishes that neither parser encodes
   `INTERSECT`'s higher precedence in the AST — it is deferred to the
-  consumer of the flat `Selects`/`terms` list. That consumer was **not**
-  checked on either side, and a mismatch there would be a rank-1 defect
-  invisible to this audit.
+  consumer of the flat `Selects`/`terms` list. **Consumer checked on both
+  sides (2026-09-13, item closed):** Go's `buildSetOpr`
+  (`logical_plan_builder.go:2123`) cuts INTERSECT/INTERSECT-ALL runs first
+  (with the parenthesized-statement limit/order-by break) and folds
+  UNION/EXCEPT left-to-right; Rust's `build_set_opr_body` +
+  `breaks_intersect_run` (`plan_builder/set_opr.rs`) mirror it, pinned at
+  plan shape by `test_intersect_binds_tighter_than_union` and at execution
+  level by the `tests_set_opr_precedence` suite (where a grouping mistake
+  changes the answer, not just the plan).
 
 ## Parser differential ring (2026-09-05)
 

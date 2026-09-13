@@ -2279,6 +2279,8 @@ mod tests_session_part1_source;
 mod tests_session_part2_source;
 #[cfg(test)]
 mod tests_session_var_hooks;
+#[cfg(test)]
+mod tests_set_opr_precedence;
 mod tests_show;
 mod tests_show_admin;
 #[cfg(test)]
