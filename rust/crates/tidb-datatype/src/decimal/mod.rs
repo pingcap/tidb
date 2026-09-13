@@ -2114,7 +2114,7 @@ fn digit_divmod(a: &str, b: &str) -> (String, String) {
     }
     (strip_leading_zeros(&quotient), rem)
 }
-mod codec;
+pub(crate) mod codec;
 
 use codec::{
     digits_to_words, fix_word_cnt_error, MyDecimalWords, CODEC_MAX_DECIMAL_SCALE, CODEC_POWERS10,

@@ -897,6 +897,14 @@ pub(crate) fn row_hash_chunk(
                 encoded.write(&8u64.to_be_bytes());
                 encoded.write(&(if value == 0.0 { 0.0 } else { value }).to_be_bytes());
             }
+            KeyClass::Decimal if is_decimal_cell(&types[at]) => {
+                // Go's `HashChunkSelected` hashes a DECIMAL column through
+                // `MyDecimal.ToHashKey` on the packed words; the datum path
+                // below would first print the digits into a `Decimal`.
+                let part = row.get_my_decimal(at).to_hash_key().map_err(|_| KeyError)?;
+                encoded.write(&(part.len() as u64).to_be_bytes());
+                encoded.write(&part);
+            }
             _ => {
                 let value = row.get_datum(at, &types[at]);
                 let Some(part) = key_part(key.class, &value)? else {
@@ -908,6 +916,12 @@ pub(crate) fn row_hash_chunk(
         }
     }
     Ok(Some(encoded.finish()))
+}
+
+/// Whether a chunk column stores Go `MyDecimal` cells, so a decimal join key
+/// can be read as one instead of through a datum.
+fn is_decimal_cell(field_type: &FieldType) -> bool {
+    field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal
 }
 
 /// Returns the exact signed comparison-domain value for the one-key integer
@@ -1011,6 +1025,16 @@ pub(crate) fn equi_keys_equal_row(
                 };
                 value == other
             }
+            KeyClass::Decimal if is_decimal_cell(field_type) => {
+                let row_key = row
+                    .get_my_decimal(row_at)
+                    .to_hash_key()
+                    .map_err(|_| KeyError)?;
+                match key_part(key.class, datum)? {
+                    Some(datum_key) => row_key.as_slice() == datum_key.as_slice(),
+                    None => false,
+                }
+            }
             KeyClass::Decimal | KeyClass::Str(_) => {
                 let row_datum = row.get_datum(row_at, field_type);
                 let (left_datum, right_datum) = if datums_are_left {
@@ -1072,6 +1096,17 @@ pub(crate) fn equi_keys_equal_chunk_rows(
                     }
                 };
                 number(left, key.left, left_type) == number(right, key.right, right_type)
+            }
+            KeyClass::Decimal if is_decimal_cell(left_type) && is_decimal_cell(right_type) => {
+                let left = left
+                    .get_my_decimal(key.left)
+                    .to_hash_key()
+                    .map_err(|_| KeyError)?;
+                let right = right
+                    .get_my_decimal(key.right)
+                    .to_hash_key()
+                    .map_err(|_| KeyError)?;
+                left == right
             }
             KeyClass::Decimal | KeyClass::Str(_) => {
                 let left = left.get_datum(key.left, left_type);
@@ -1725,6 +1760,74 @@ mod tests {
         let row = chunk.get_row(0);
         assert!(equi_keys_equal_row(&[key], &[Datum::Int(7)], true, row, &types,).unwrap());
         assert!(!equi_keys_equal_row(&[key], &[Datum::Int(8)], true, row, &types,).unwrap());
+    }
+
+    /// A DECIMAL chunk cell hashes and compares through the word-native
+    /// `MyDecimal::to_hash_key`; it must agree with the datum encoding of the
+    /// same value at any written scale, on the hash, the chunk-to-chunk
+    /// recheck, and the datum-to-chunk recheck.
+    #[test]
+    fn decimal_chunk_cells_hash_and_compare_like_their_datums() {
+        let key = EquiKey {
+            left: 0,
+            right: 0,
+            class: KeyClass::Decimal,
+            null_safe: false,
+        };
+        let cells = [
+            "1.50",
+            "1.5000",
+            "-1.50",
+            "0.00",
+            "-0.0",
+            "1234567890.1234567890",
+            "1.51",
+        ];
+        let types = vec![FieldType::new(FieldTypeCode::NewDecimal)];
+        let mut chunk = Chunk::new_with_capacity(&types, cells.len());
+        for cell in cells {
+            let value = tidb_datatype::MyDecimal::from_string(cell.as_bytes()).0;
+            chunk.append_my_decimal(0, &value);
+        }
+        for (left_at, left_text) in cells.iter().enumerate() {
+            let left_datum = Datum::Decimal(Decimal::from_signed_literal(left_text));
+            assert_eq!(
+                row_hash_chunk(&[key], chunk.get_row(left_at), &types, |key| key.left).unwrap(),
+                row_hash(&[key], std::slice::from_ref(&left_datum), |key| key.left).unwrap(),
+                "{left_text}: chunk hash differs from the datum hash"
+            );
+            for (right_at, right_text) in cells.iter().enumerate() {
+                let right_datum = Datum::Decimal(Decimal::from_signed_literal(right_text));
+                let expected = matches!(
+                    (&left_datum, &right_datum),
+                    (Datum::Decimal(l), Datum::Decimal(r)) if l == r
+                );
+                assert_eq!(
+                    equi_keys_equal_chunk_rows(
+                        &[key],
+                        chunk.get_row(left_at),
+                        &types,
+                        chunk.get_row(right_at),
+                        &types,
+                    )
+                    .unwrap(),
+                    expected,
+                    "{left_text} vs {right_text}: chunk rows"
+                );
+                assert_eq!(
+                    equi_keys_equal_row(
+                        &[key],
+                        std::slice::from_ref(&left_datum),
+                        true,
+                        chunk.get_row(right_at),
+                        &types,
+                    )
+                    .unwrap(),
+                    expected,
+                    "{left_text} vs {right_text}: datum against chunk row"
+                );
+            }
+        }
     }
 
     #[test]

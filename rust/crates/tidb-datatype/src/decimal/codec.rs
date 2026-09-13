@@ -200,11 +200,11 @@ pub fn decimal_bin_size(precision: i32, frac: i32) -> Result<usize, DecimalCodec
 /// Go `MyDecimal`'s codec-relevant view: sign, integer/fraction digit counts,
 /// and the base-1e9 word buffer, built from a [`Decimal`] exactly as Go
 /// `FromString` builds it so the ported `ToBin` is line-for-line.
-pub(super) struct MyDecimalWords {
-    pub(super) negative: bool,
-    pub(super) digits_int: i32,
-    pub(super) digits_frac: i32,
-    pub(super) word_buf: [i32; CODEC_WORD_BUF_LEN],
+pub(crate) struct MyDecimalWords {
+    pub(crate) negative: bool,
+    pub(crate) digits_int: i32,
+    pub(crate) digits_frac: i32,
+    pub(crate) word_buf: [i32; CODEC_WORD_BUF_LEN],
 }
 
 impl MyDecimalWords {
@@ -392,12 +392,34 @@ impl Decimal {
         precision: i32,
         frac: i32,
     ) -> Result<(Vec<u8>, Option<DecimalCodecWarning>), DecimalCodecError> {
-        if !(0..=(DIGITS_PER_WORD * CODEC_WORD_BUF_LEN) as i32).contains(&precision)
-            || !(0..=CODEC_MAX_DECIMAL_SCALE).contains(&frac)
-        {
-            return Err(DecimalCodecError::BadNumber);
-        }
-        let d = MyDecimalWords::from_decimal(self);
+        let mut bin = vec![0u8; checked_bin_size(precision, frac)?];
+        let warning = MyDecimalWords::from_decimal(self).write_bin(precision, frac, &mut bin)?;
+        Ok((bin, warning))
+    }
+}
+
+/// Go `ToBin`'s legality check plus `DecimalBinSize`: the byte length of the
+/// encoding at `{precision, frac}`, or `ErrBadNumber` for a shape Go rejects.
+pub(crate) fn checked_bin_size(precision: i32, frac: i32) -> Result<usize, DecimalCodecError> {
+    if !(0..=(DIGITS_PER_WORD * CODEC_WORD_BUF_LEN) as i32).contains(&precision)
+        || !(0..=CODEC_MAX_DECIMAL_SCALE).contains(&frac)
+    {
+        return Err(DecimalCodecError::BadNumber);
+    }
+    decimal_bin_size(precision, frac)
+}
+
+impl MyDecimalWords {
+    /// Go `MyDecimal.WriteBin`: encodes the words at `{precision, frac}` into
+    /// `bin`, which the caller has sized with [`checked_bin_size`]. Returns
+    /// the soft truncation/overflow Go reports beside the bytes.
+    pub(crate) fn write_bin(
+        &self,
+        precision: i32,
+        frac: i32,
+        bin: &mut [u8],
+    ) -> Result<Option<DecimalCodecWarning>, DecimalCodecError> {
+        let d = self;
         let mut warning: Option<DecimalCodecWarning> = None;
         let mut mask: i32 = if d.negative { -1 } else { 0 };
 
@@ -417,7 +439,7 @@ impl Decimal {
         let origin_int_size = int_size;
         let origin_frac_size = frac_size;
 
-        let mut bin = vec![0u8; int_size + frac_size];
+        debug_assert_eq!(bin.len(), int_size + frac_size);
         let mut bin_idx = 0usize;
 
         let (word_idx_from0, digits_int_from) = d.remove_leading_zeros();
@@ -522,9 +544,11 @@ impl Decimal {
             }
         }
         bin[0] ^= 0x80;
-        Ok((bin, warning))
+        Ok(warning)
     }
+}
 
+impl Decimal {
     /// Faithful port of Go `MyDecimal.FromBin`: decodes the fixed-length binary
     /// produced by [`Self::to_bin`] at `{precision, frac}` back into a
     /// [`Decimal`], returning it, the number of bytes consumed, and any soft

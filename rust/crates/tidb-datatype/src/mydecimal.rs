@@ -39,6 +39,9 @@
 
 use smallvec::SmallVec;
 
+use crate::decimal::codec::{self, MyDecimalWords};
+use crate::decimal::DecimalCodecError;
+
 /// Go `maxWordBufLen`: a `MyDecimal` holds 9 words.
 pub const MAX_WORD_BUF_LEN: usize = 9;
 /// Go `digitsPerWord`: one word holds 9 decimal digits.
@@ -1534,6 +1537,60 @@ impl MyDecimal {
         (word_idx, digits_int)
     }
 
+    /// Go `removeTrailingZeros`: index just past the last significant word
+    /// and the count of significant fraction digits.
+    fn remove_trailing_zeros(&self) -> (usize, i32) {
+        let mut digits_frac = i32::from(self.digits_frac);
+        let mut i = ((digits_frac - 1) % DIGITS_PER_WORD) + 1;
+        let mut last_word_idx =
+            (digits_to_words(i32::from(self.digits_int)) + digits_to_words(digits_frac)) as usize;
+        while digits_frac > 0 && self.word_buf[last_word_idx - 1] == 0 {
+            digits_frac -= i;
+            i = DIGITS_PER_WORD;
+            last_word_idx -= 1;
+        }
+        if digits_frac > 0 {
+            digits_frac -= count_trailing_zeroes(
+                9 - ((digits_frac - 1) % DIGITS_PER_WORD),
+                self.word_buf[last_word_idx - 1],
+            );
+        } else {
+            digits_frac = 0;
+        }
+        (last_word_idx, digits_frac)
+    }
+
+    /// Go `MyDecimal.ToHashKey`: the leading and trailing zeros removed, the
+    /// value encoded with `ToBin` at exactly its significant digits, and the
+    /// significant fraction count appended. Two decimals that `Compare`
+    /// equal produce the same key whatever their written scales.
+    ///
+    /// Works on the packed words directly, so a chunk cell hashes without
+    /// the digit-string [`Decimal`] round trip. The key agrees byte for byte
+    /// with [`Decimal::to_hash_key`] on the same value.
+    pub fn to_hash_key(&self) -> Result<SmallVec<[u8; 64]>, DecimalCodecError> {
+        let (_, digits_int) = self.remove_leading_zeros();
+        let (_, digits_frac) = self.remove_trailing_zeros();
+        let mut prec = digits_int + digits_frac;
+        if prec == 0 {
+            // zeroDecimal
+            prec = 1;
+        }
+        let size = codec::checked_bin_size(prec, digits_frac)?;
+        let mut key = SmallVec::from_elem(0u8, size + 1);
+        let words = MyDecimalWords {
+            negative: self.negative,
+            digits_int: i32::from(self.digits_int),
+            digits_frac: i32::from(self.digits_frac),
+            word_buf: self.word_buf,
+        };
+        // A shorter `digitsFrac` after trimming raises ErrTruncated, which Go
+        // ignores here; the bytes are still the value's exact digits.
+        words.write_bin(prec, digits_frac, &mut key[..size])?;
+        key[size] = digits_frac as u8;
+        Ok(key)
+    }
+
     /// Go `ToString`: the decimal's plain text form (no exponent), a
     /// line-for-line port including the zero and fill-digit handling.
     #[must_use]
@@ -2165,6 +2222,85 @@ mod tests {
         let (exponent, exponent_error) = MyDecimal::from_string("1e\u{00a0}5".as_bytes());
         assert_eq!(exponent.to_string_bytes(), b"100000");
         assert_eq!(exponent_error, None);
+    }
+
+    /// The word-native hash key is byte-identical to the digit-string
+    /// `Decimal::to_hash_key`, and its Go contract holds: equal values with
+    /// different written scales share a key, different values never do.
+    #[test]
+    fn to_hash_key_matches_the_decimal_hash_key() {
+        let inputs = [
+            "0",
+            "-0",
+            "0.000",
+            "-0.0",
+            "1",
+            "1.0",
+            "1.00",
+            "0001.000",
+            "-1",
+            "-1.0",
+            "0.1",
+            "0.10",
+            ".1",
+            "-0.1",
+            "0.000000001",
+            "0.0000000010",
+            "0.00000000012345",
+            "123456789",
+            "123456789.000000000",
+            "1234567890",
+            "1234567890.123456789",
+            "1234567890.1234567890",
+            "-1234567890.1234567890",
+            "999999999.999999999",
+            "1000000000.000000001",
+            "1000000000.0000000010",
+            "123987654321.123456789000",
+            "-213123.000123000",
+            "0.001230E-3",
+            "12300E-5",
+            "99999999999999999999999999999999999999999999999999999999999999999",
+            "12345678901234567890123456789012345678901234567890.123456789012345678901234567890",
+            "0.123456789012345678901234567890",
+            "-0.123456789012345678901234567890",
+            "1000.5",
+            "1000.50",
+            "1000.500000000000",
+            "2500.25",
+            "2500.250",
+        ];
+        let mut keys = Vec::new();
+        for input in inputs {
+            let (value, error) = MyDecimal::from_string(input.as_bytes());
+            // The 80-digit input fills all nine words and truncates; the
+            // clamped value still has to hash like its text.
+            assert!(
+                matches!(error, None | Some(DecimalError::Truncated)),
+                "FromString({input}): {error:?}"
+            );
+            let native = value.to_hash_key().expect("legal shape");
+            let text = String::from_utf8(value.to_string_bytes()).expect("ascii");
+            let (reference, _) = crate::Decimal::from_literal(&text)
+                .to_hash_key()
+                .expect("legal shape");
+            assert_eq!(native.as_slice(), reference.as_slice(), "{input} ({text})");
+            keys.push((value, native));
+        }
+        for (left, left_key) in &keys {
+            for (right, right_key) in &keys {
+                let is_zero = |value: &MyDecimal| value.word_buf.iter().all(|word| *word == 0);
+                let equal = left.compare(right) == std::cmp::Ordering::Equal
+                    || (is_zero(left) && is_zero(right));
+                assert_eq!(
+                    left_key == right_key,
+                    equal,
+                    "{} vs {}",
+                    String::from_utf8_lossy(&left.to_string_bytes()),
+                    String::from_utf8_lossy(&right.to_string_bytes())
+                );
+            }
+        }
     }
 
     /// Exact source rows from `pkg/types/mydecimal_test.go::TestRemoveTrailingZeros`.
