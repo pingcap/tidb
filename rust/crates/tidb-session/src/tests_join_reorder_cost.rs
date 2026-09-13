@@ -191,19 +191,33 @@ fn hash_join_pricing_reads_the_sessions_concurrency() {
     let sql = "explain select t1.a, dt.key_a from t1, t5, \
         (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt \
         where t1.b = dt.doubled_b and dt.key_a = t5.a";
+    // Refreshed against the LIVE oracle (SELECT tidb_version() =>
+    // fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85) on this exact fixture.
+    // Go's concurrency leverage here is the HASH-JOIN BUILD/PROBE re-selection,
+    // not an index join: at `tidb_hash_join_concurrency = 1` the divided probe
+    // cost flips the top join's sides and Go prints
+    // `inner join, equal:[eq(test.t5.a, test.t2.a)]` with an IndexReader over
+    // `t5, index:b(b)` as the build; at 5 the division shrinks, the sides
+    // flip back, and the same join prints `equal:[eq(test.t2.a, test.t5.a)]`.
+    // No IndexJoin/`range: decided by` appears at either setting -- an earlier
+    // receipt naming one does not reproduce.
     session.run("set tidb_hash_join_concurrency = 1").unwrap();
     let recorded = plan(&mut session, sql).join("\n");
     assert!(
-        recorded.contains("IndexRangeScan")
-            && recorded.contains("range: decided by [eq(test.t1.b, Column)]"),
-        "at the recorded concurrency the index join probes t1 by the injected column:\n{recorded}"
+        recorded.contains("inner join, equal:[eq(test.t5.a, test.t2.a)]"),
+        "at concurrency 1 the probe cost division flips the top join's build \
+         side to t5 first:\n{recorded}"
     );
     session.run("set tidb_hash_join_concurrency = 5").unwrap();
     let plain = plan(&mut session, sql).join("\n");
+    assert!(
+        plain.contains("inner join, equal:[eq(test.t2.a, test.t5.a)]"),
+        "at 5 the probe terms are shared by five workers and the sides flip \
+         back:\n{plain}"
+    );
     assert_ne!(
         recorded, plain,
-        "at 5 the probe terms are shared by five workers and the comparison moves; \
-         if these became equal the chooser stopped reading the session"
+        "if these became equal the chooser stopped reading the session"
     );
 }
 
