@@ -234,10 +234,11 @@ fn the_system_schema_is_listed_among_the_databases() {
 /// into a silent zero-row answer.
 ///
 /// FLIPS TO SUPPORT as the bootstrap tables land: this count rises toward 61.
-/// It has risen twice so far -- `bind_info` for GLOBAL bindings, then the two
-/// blacklist tables `ADMIN RELOAD` reads (`crate::blacklist`) -- and each
-/// arrival is a feature that needed the table, not a name added to make the
-/// count look better.
+/// It has risen three times so far -- `bind_info` for GLOBAL bindings, the two
+/// blacklist tables `ADMIN RELOAD` reads (`crate::blacklist`), and now the
+/// statistics pair `stats_meta` + `stats_table_locked` that `ANALYZE` and
+/// `SHOW STATS_*` require -- and each arrival is a feature that needed the
+/// table, not a name added to make the count look better.
 #[test]
 fn enumerating_the_system_schema_under_reports() {
     let mut session = Session::new();
@@ -246,6 +247,8 @@ fn enumerating_the_system_schema_under_reports() {
         ["bind_info"],
         ["expr_pushdown_blacklist"],
         ["opt_rule_blacklist"],
+        ["stats_meta"],
+        ["stats_table_locked"],
         ["user"],
     ];
     assert_eq!(row_text(session.run("SHOW TABLES")), stored);
