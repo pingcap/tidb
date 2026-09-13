@@ -49,7 +49,9 @@ fn inner_join(memory: StatementMemory) -> JoinExec<NoColumns> {
 /// A quota the build side cannot fit in, but which is still far larger
 /// than a single chunk -- so the spill has something to release and the
 /// read-path cancellation #289 describes is not what is being measured.
-const TIGHT_QUOTA_BYTES: i64 = 340 * 1024;
+/// (The inner fixture accounts about 341 KiB with the flat exact-integer
+/// table; it was about 365 KiB with the hashbrown map it replaced.)
+const TIGHT_QUOTA_BYTES: i64 = 300 * 1024;
 
 fn tight_quota() -> StatementMemory {
     StatementMemory::new(TIGHT_QUOTA_BYTES, OomAction::Cancel, 1)

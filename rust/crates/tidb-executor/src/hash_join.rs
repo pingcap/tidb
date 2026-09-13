@@ -157,17 +157,117 @@ impl Hasher for ExactIntHasher {
     }
 }
 
-type ExactIntBuckets<V> = HashMap<i128, V, BuildHasherDefault<ExactIntHasher>>;
-
-/// The exact-integer map's value: the key's chain, plus its first row's
-/// pointer inline so a unique key (the dimension-join case, where
-/// `first == last`) is answered from the map slot alone. Go's v2 table probes
-/// one tagged row pointer per key; the chain entry here is a second
-/// dependent cache miss the unique probe no longer pays.
+/// One distinct exact-integer key: its value, its first row's pointer inline
+/// so a unique key (the dimension-join case, where `first == last`) needs no
+/// chain-entry read, and its chain.
 #[derive(Clone, Copy, Debug)]
-struct ExactHead {
+struct ExactKey {
+    key: i128,
     first_ptr: RowPtr,
     head: ChainHead,
+}
+
+/// The exact-integer table, shaped like Go's v2 `subTable`: a power-of-two
+/// array of 8-byte tagged slots over the distinct keys, at most three
+/// quarters full. A probe reads one slot -- the array stays cache-resident
+/// for a dimension table (2 MB for 150k keys) -- and, only when the slot's
+/// hash tag matches, the key it names. The `HashMap<i128, _>` this
+/// replaces kept a 32-byte slot per key, an 8 MB table for the same keys
+/// that missed cache and TLB on every probe row.
+#[derive(Debug)]
+struct ExactIntTable {
+    /// `tag << 32 | key index + 1`; zero is an empty slot.
+    slots: Vec<u64>,
+    mask: usize,
+    keys: Vec<ExactKey>,
+}
+
+const EXACT_INT_MIN_SLOTS: usize = 64;
+
+/// The key's FNV hash, finalized with murmur3's `fmix64` so that keys which
+/// differ only in their low byte (consecutive dimension keys) do not land
+/// in consecutive slots: FNV-1a's last step leaves them differing only in
+/// their low eight bits, and linear probing would turn that adjacency into
+/// full clusters. Go's v2 table chains within a slot and so tolerates it.
+fn exact_int_hash(key: i128) -> u64 {
+    let mut hasher = ExactIntHasher::default();
+    hasher.write_i128(key);
+    let mut hash = hasher.finish();
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    hash ^ (hash >> 33)
+}
+
+impl ExactIntTable {
+    fn new() -> Self {
+        Self {
+            slots: vec![0; EXACT_INT_MIN_SLOTS],
+            mask: EXACT_INT_MIN_SLOTS - 1,
+            keys: Vec::new(),
+        }
+    }
+
+    /// The slot's tag: the hash's high half, never zero so a filled slot is
+    /// never mistaken for an empty one.
+    fn tag(hash: u64) -> u64 {
+        ((hash >> 32) | 1) << 32
+    }
+
+    /// The index of `key` in `keys`, if present.
+    fn find(&self, key: i128) -> Option<usize> {
+        let hash = exact_int_hash(key);
+        let tag = Self::tag(hash);
+        let mut position = hash as usize & self.mask;
+        loop {
+            let slot = self.slots[position];
+            if slot == 0 {
+                return None;
+            }
+            if slot & 0xFFFF_FFFF_0000_0000 == tag {
+                let index = (slot as u32 as usize) - 1;
+                if self.keys[index].key == key {
+                    return Some(index);
+                }
+            }
+            position = (position + 1) & self.mask;
+        }
+    }
+
+    fn place(slots: &mut [u64], mask: usize, hash: u64, index: usize) {
+        let mut position = hash as usize & mask;
+        while slots[position] != 0 {
+            position = (position + 1) & mask;
+        }
+        slots[position] = Self::tag(hash) | (index as u64 + 1);
+    }
+
+    /// Adds a key that `find` did not have.
+    fn push(&mut self, entry: ExactKey) {
+        if (self.keys.len() + 1) * 4 > self.slots.len() * 3 {
+            let slots = self.slots.len() * 2;
+            self.slots = vec![0; slots];
+            self.mask = slots - 1;
+            for (index, existing) in self.keys.iter().enumerate() {
+                Self::place(
+                    &mut self.slots,
+                    self.mask,
+                    exact_int_hash(existing.key),
+                    index,
+                );
+            }
+        }
+        let index = self.keys.len();
+        let hash = exact_int_hash(entry.key);
+        self.keys.push(entry);
+        Self::place(&mut self.slots, self.mask, hash, index);
+    }
+
+    fn bytes(&self) -> usize {
+        self.slots.capacity() * std::mem::size_of::<u64>()
+            + self.keys.capacity() * std::mem::size_of::<ExactKey>()
+    }
 }
 
 /// Go v1 `entry`: one build-row pointer and the next entry under the same
@@ -998,7 +1098,7 @@ pub(crate) fn equi_keys_equal_chunk_rows(
 pub(crate) struct BuildTable {
     rows: RowContainer,
     buckets: HashBuckets<ChainHead>,
-    exact_int_buckets: Option<ExactIntBuckets<ExactHead>>,
+    exact_int_buckets: Option<ExactIntTable>,
     /// The chain entries both maps point into (Go v1 `entryStore`).
     chains: ChainStore,
     /// Go v1's `outerMatchedStatus` / v2's row-table used flag. Present only
@@ -1038,7 +1138,7 @@ impl BuildTable {
         BuildTable {
             rows: RowContainer::new(field_types, chunk_size, spill_storage),
             buckets: HashBuckets::default(),
-            exact_int_buckets: use_exact_int.then(ExactIntBuckets::default),
+            exact_int_buckets: use_exact_int.then(ExactIntTable::new),
             chains: ChainStore::default(),
             matched: track_matches.then(|| Mutex::new(Vec::<Vec<u8>>::new())),
             bucket_bytes: 0,
@@ -1112,18 +1212,20 @@ impl BuildTable {
                 {
                     let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
                     let pointer = RowPtr { chk_idx, row_idx };
-                    let pointers = exact_buckets
+                    let table = exact_buckets
                         .as_deref_mut()
                         .expect("exact integer buckets initialized");
-                    match pointers.entry(key) {
-                        Entry::Occupied(mut entry) => {
-                            let exact = entry.get_mut();
+                    match table.find(key) {
+                        Some(index) => {
+                            let exact = &mut table.keys[index];
                             exact.head = chains.push(Some(exact.head), pointer)?;
                         }
-                        Entry::Vacant(entry) => {
-                            entry.insert(ExactHead {
+                        None => {
+                            let head = chains.push(None, pointer)?;
+                            table.push(ExactKey {
+                                key,
                                 first_ptr: pointer,
-                                head: chains.push(None, pointer)?,
+                                head,
                             });
                         }
                     }
@@ -1162,8 +1264,7 @@ impl BuildTable {
         self.chains.chain(
             self.exact_int_buckets
                 .as_ref()
-                .and_then(|buckets| buckets.get(&key))
-                .map(|exact| &exact.head),
+                .and_then(|table| table.find(key).map(|index| &table.keys[index].head)),
         )
     }
 
@@ -1173,7 +1274,7 @@ impl BuildTable {
     pub(crate) fn probe_exact_int_single(&self, key: i128) -> Option<RowPtr> {
         self.exact_int_buckets
             .as_ref()
-            .and_then(|buckets| buckets.get(&key))
+            .and_then(|table| table.find(key).map(|index| &table.keys[index]))
             .filter(|exact| exact.head.first == exact.head.last)
             .map(|exact| exact.first_ptr)
     }
@@ -1189,9 +1290,10 @@ impl BuildTable {
     /// keeps each worker's output bounded by its input chunk while covering
     /// primary/unique-key dimension joins such as TPC-H q13.
     pub(crate) fn exact_int_is_unique(&self) -> bool {
-        self.exact_int_buckets.as_ref().is_some_and(|buckets| {
-            buckets
-                .values()
+        self.exact_int_buckets.as_ref().is_some_and(|table| {
+            table
+                .keys
+                .iter()
                 .all(|exact| exact.head.first == exact.head.last)
         })
     }
@@ -1200,17 +1302,25 @@ impl BuildTable {
     /// succeeded. A hash-key collision or a rejected residual condition must
     /// not set this bit.
     pub(crate) fn mark_matched(&self, ptr: RowPtr) {
+        self.mark_matched_all(std::slice::from_ref(&ptr));
+    }
+
+    /// [`Self::mark_matched`] for every pointer a probe worker reported,
+    /// under one lock.
+    pub(crate) fn mark_matched_all(&self, ptrs: &[RowPtr]) {
         let Some(chunks) = self.matched.as_ref() else {
             return;
         };
         let mut chunks = chunks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(chunk) = chunks.get_mut(ptr.chk_idx as usize) else {
-            return;
-        };
-        let row = ptr.row_idx as usize;
-        chunk[row / 8] |= 1 << (row % 8);
+        for ptr in ptrs {
+            let Some(chunk) = chunks.get_mut(ptr.chk_idx as usize) else {
+                continue;
+            };
+            let row = ptr.row_idx as usize;
+            chunk[row / 8] |= 1 << (row % 8);
+        }
     }
 
     /// Whether a preserved build row has produced at least one joined row.
@@ -1333,10 +1443,11 @@ impl BuildTable {
             .saturating_add(map_slots)
             .saturating_add(std::mem::size_of::<HashBuckets<ChainHead>>())
             .saturating_add(go_entry_store_bytes(self.chains.entries.len()))
-            .saturating_add(self.exact_int_buckets.as_ref().map_or(0, |buckets| {
-                buckets.capacity()
-                    * (std::mem::size_of::<(i128, ExactHead)>() + std::mem::size_of::<usize>())
-            }))
+            .saturating_add(
+                self.exact_int_buckets
+                    .as_ref()
+                    .map_or(0, ExactIntTable::bytes),
+            )
             .saturating_add(self.matched.as_ref().map_or(0, |chunks| {
                 chunks
                     .lock()
@@ -1370,6 +1481,70 @@ impl BuildError {
 
 #[cfg(test)]
 mod tests {
+    /// The flat exact-integer table finds every key it was given (across
+    /// its growth steps, with duplicates chained rather than re-added), and
+    /// none it was not, over the whole `i128` key domain the join uses.
+    #[test]
+    fn exact_int_table_finds_its_keys_and_only_those() {
+        let mut table = super::ExactIntTable::new();
+        let mut chains = super::ChainStore::default();
+        let keys: Vec<i128> = (0..5_000i128)
+            .map(|i| i * 7 - 2_500)
+            .chain([
+                i128::from(u64::MAX),
+                i128::from(i64::MIN),
+                1 << 70,
+                -(1 << 70),
+            ])
+            .collect();
+        for (round, &key) in keys.iter().cycle().take(keys.len() * 2).enumerate() {
+            let pointer = super::RowPtr {
+                chk_idx: round as u32 / 1024,
+                row_idx: round as u32 % 1024,
+            };
+            match table.find(key) {
+                Some(index) => {
+                    let head = table.keys[index].head;
+                    table.keys[index].head = chains.push(Some(head), pointer).unwrap();
+                }
+                None => {
+                    let head = chains.push(None, pointer).unwrap();
+                    table.push(super::ExactKey {
+                        key,
+                        first_ptr: pointer,
+                        head,
+                    });
+                }
+            }
+        }
+        assert_eq!(table.keys.len(), keys.len());
+        for (index, &key) in keys.iter().enumerate() {
+            let found = table.find(key).expect("every inserted key is found");
+            assert_eq!(table.keys[found].key, key);
+            let head = table.keys[found].head;
+            assert_eq!(
+                chains.chain(Some(&head)).len(),
+                2,
+                "each key was added twice"
+            );
+            assert_eq!(
+                chains.chain(Some(&head)).first(),
+                Some(table.keys[found].first_ptr)
+            );
+            assert_eq!(table.keys[found].first_ptr.row_idx, index as u32 % 1024);
+        }
+        for missing in [1i128, 4, 3, 12_345, i128::MAX, i128::MIN, (1 << 70) + 1] {
+            assert!(
+                table.find(missing).is_none(),
+                "{missing} was never inserted"
+            );
+        }
+        assert!(
+            table.slots.len() >= keys.len() * 4 / 3,
+            "the table stays at most three quarters full"
+        );
+    }
+
     use super::*;
     use tidb_datatype::{Decimal, FieldTypeCode};
 

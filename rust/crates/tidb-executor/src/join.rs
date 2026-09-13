@@ -3057,9 +3057,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         for mut result in released {
             result.input.reset();
             hash.parallel_probe_input_reuse.push(result.input);
-            for ptr in result.matched_build_rows {
-                hash.table.mark_matched(ptr);
-            }
+            hash.table.mark_matched_all(&result.matched_build_rows);
             // The set-aside chunks were filled before the one the worker
             // still held, so they are released first.
             hash.parallel_probe_pending.extend(result.extra_outputs);
