@@ -162,7 +162,12 @@ pub struct RootTask {
     /// Go's private `p`. `None` is Go's nil plan, which is what makes a
     /// root task [`Task::invalid`] — `base.InvalidTask` is exactly an empty
     /// `RootTask`.
-    plan: Option<Box<PhysicalPlan>>,
+    ///
+    /// Shared, because Go's `Copy` copies the task and keeps the plan
+    /// POINTER (`p: t.p`). Writes go through [`Task::plan_mut`] and
+    /// [`Self::take_plan`], which copy first if another task still holds
+    /// this plan, so the sharing is invisible to every caller.
+    plan: Option<Arc<PhysicalPlan>>,
     /// Go `RootTask.IndexJoinInfo`, passed through unary root operators until
     /// the owning physical index join consumes it.
     pub index_join_info: Option<IndexJoinInfo>,
@@ -182,20 +187,24 @@ impl RootTask {
 
     /// Go `SetPlan`.
     pub fn set_plan(&mut self, plan: PhysicalPlan) {
-        self.plan = Some(Box::new(plan));
+        self.plan = Some(Arc::new(plan));
     }
 
     /// Takes the plan out, for the ownership handoff `attachPlan2Task`'s
     /// `p.SetChildren(v.GetPlan()); v.SetPlan(p)` pair performs.
+    ///
+    /// Go hands over the pointer it shares; here the tree is copied when
+    /// another task still holds it, and moved out untouched when this task
+    /// is its only owner (the common case: the memo stores its copy only
+    /// after the winning task is built).
     pub fn take_plan(&mut self) -> Option<PhysicalPlan> {
-        self.plan.take().map(|plan| *plan)
+        self.plan
+            .take()
+            .map(|plan| Arc::try_unwrap(plan).unwrap_or_else(|shared| (*shared).clone()))
     }
 
-    /// Go `Copy` (`task_base.go:131-142`): same plan, warnings COPIED so the
-    /// two instances never share a slice. Go copies the plan POINTER where
-    /// this clones the owned tree; observably equal until someone mutates a
-    /// shared plan through one task, which Go's planner does not do between
-    /// copies.
+    /// Go `Copy` (`task_base.go:131-142`): the same plan, warnings COPIED so
+    /// the two instances never share a slice.
     #[must_use]
     pub fn copy(&self) -> RootTask {
         let mut copied = RootTask {
@@ -920,7 +929,7 @@ impl Task {
     /// side effects Go writes onto the selected plan tree.
     pub fn plan_mut(&mut self) -> Option<&mut PhysicalPlan> {
         match self {
-            Task::Root(task) => task.plan.as_deref_mut(),
+            Task::Root(task) => task.plan.as_mut().map(Arc::make_mut),
             Task::Cop(task) => {
                 if task.index_plan_finished {
                     task.table_plan.as_deref_mut()
@@ -1449,6 +1458,43 @@ mod tests {
                 .abs()
                 < f64::EPSILON
         );
+    }
+
+    /// Go `RootTask.Copy` keeps the plan POINTER (`p: t.p`) and copies only
+    /// the warnings. A copy must still behave as its own value: a write
+    /// through one task cannot reach the other's plan, and a task that owns
+    /// its plan alone hands it over without copying.
+    #[test]
+    fn a_task_copy_shares_the_plan_and_writes_do_not_cross() {
+        let mut original = RootTask::default();
+        original.set_plan(dual_with_rows(3.0));
+        let rows = |task: &RootTask| task.get_plan().stats_info().expect("stats").row_count();
+
+        let copied = original.copy();
+        assert!((rows(&copied) - 3.0).abs() < f64::EPSILON);
+
+        let mut written = Task::Root(copied);
+        written
+            .plan_mut()
+            .expect("plan")
+            .set_stats(Some(StatsInfo::new(9.0, [])));
+        assert!(
+            (rows(&original) - 3.0).abs() < f64::EPSILON,
+            "the write must not reach the task it was copied from"
+        );
+        let Task::Root(mut written) = written else {
+            panic!("root task");
+        };
+        assert!((rows(&written) - 9.0).abs() < f64::EPSILON);
+
+        // The warnings are copied, not shared, exactly as Go's Copy does.
+        original.warnings.append_warning("one");
+        assert_eq!(written.warnings.warning_count(), 0);
+
+        // Taking the plan out of its only owner yields the same value.
+        let taken = written.take_plan().expect("plan");
+        assert!((taken.stats_info().expect("stats").row_count() - 9.0).abs() < f64::EPSILON);
+        assert!(written.take_plan().is_none());
     }
 
     #[test]

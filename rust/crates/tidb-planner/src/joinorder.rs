@@ -1771,17 +1771,17 @@ fn optimize_dp(
 
 fn replace_join_group_vertices(
     mut plan: LogicalPlan,
-    replacements: &BTreeMap<i32, LogicalPlan>,
+    replacements: &BTreeMap<i32, Rc<LogicalPlan>>,
 ) -> LogicalPlan {
     if let Some(replacement) = replacements.get(&plan.id()) {
-        return replacement.clone();
+        return replacement.as_ref().clone();
     }
     if plan.children().is_empty() {
         return plan;
     }
     let children = plan
-        .children()
-        .to_vec()
+        .base_mut()
+        .take_children()
         .into_iter()
         .map(|child| replace_join_group_vertices(child, replacements))
         .collect();
@@ -1850,21 +1850,35 @@ fn optimize_recursive(
     if matches!(plan, LogicalPlan::CTE(_)) {
         return Ok(plan);
     }
-    let mut group = extract_join_group(context, Rc::new(plan.clone()));
+    // Go walks the tree through pointers (`extractJoinGroup(p)`); the group
+    // here owns its root, so hand the plan over rather than copying the
+    // subtree, and take it back below when there is nothing to reorder.
+    let plan_id = plan.id();
+    let mut group = extract_join_group(context, Rc::new(plan));
     if group.vertexes.is_empty() {
         return Err(PlanError::internal(format!(
-            "join group has no vertexes, plan: {}",
-            plan.id()
+            "join group has no vertexes, plan: {plan_id}"
         )));
     }
     if group.vertexes.len() == 1 {
-        let children = plan.children().to_vec();
+        // A group of one is the plan itself (`make_single_group`), so the
+        // root is its only owner once the vertex list is dropped.
+        let JoinGroup {
+            root,
+            vertexes,
+            leading_hints,
+            has_user_leading_hint,
+            ..
+        } = group;
+        drop(vertexes);
+        let mut plan = Rc::try_unwrap(root).unwrap_or_else(|shared| shared.as_ref().clone());
+        let children = plan.base_mut().take_children();
         let mut optimized = Vec::with_capacity(children.len());
         for child in children {
             optimized.push(optimize_recursive(context, child)?);
         }
         plan.set_children(optimized);
-        if group.has_user_leading_hint && !group.leading_hints.is_empty() {
+        if has_user_leading_hint && !leading_hints.is_empty() {
             set_hint_warning(
                 context,
                 "leading hint is inapplicable, check the join type or the join algorithm hint",
@@ -1874,16 +1888,19 @@ fn optimize_recursive(
     }
 
     let mut replacements = BTreeMap::new();
-    for vertex in &mut group.vertexes {
+    let vertexes = std::mem::take(&mut group.vertexes);
+    let mut reordered = Vec::with_capacity(vertexes.len());
+    for vertex in vertexes {
         let old_id = vertex.id();
-        let optimized = optimize_recursive(context, vertex.as_ref().clone())?;
-        *vertex = Rc::new(optimized.clone());
+        let plan = Rc::try_unwrap(vertex).unwrap_or_else(|shared| shared.as_ref().clone());
+        let optimized = Rc::new(optimize_recursive(context, plan)?);
+        reordered.push(Rc::clone(&optimized));
         replacements.insert(old_id, optimized);
     }
-    group.root = Rc::new(replace_join_group_vertices(
-        group.root.as_ref().clone(),
-        &replacements,
-    ));
+    group.vertexes = reordered;
+    let root = std::mem::replace(&mut group.root, Rc::clone(&group.vertexes[0]));
+    let root = Rc::try_unwrap(root).unwrap_or_else(|shared| shared.as_ref().clone());
+    group.root = Rc::new(replace_join_group_vertices(root, &replacements));
     optimize_join_group(context, &group)
 }
 
