@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -118,6 +120,8 @@ func drainStatementRURecordSet(t *testing.T, rs sqlexec.RecordSet) error {
 
 func enableStatementRUExecutionInfo(t *testing.T) {
 	t.Helper()
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) { cfg.RUV2.ReportMode = config.RUReportModeFull })
 	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
 	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
 	t.Cleanup(func() {
@@ -1721,4 +1725,90 @@ func TestStatementRUWriteLifecycle(t *testing.T) {
 		checkWork("update ru_noncluster set v=v", 130)
 		checkWork("delete from ru_noncluster", 130)
 	})
+}
+
+func TestStatementRUReportModesSQL(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_report_modes (id int primary key, v int)")
+	tk.MustExec("insert into ru_report_modes values (1, 2)")
+	for _, mode := range []string{config.RUReportModeResult, config.RUReportModeFull} {
+		t.Run(mode, func(t *testing.T) {
+			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
+			var observed atomic.Int64
+			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(_ uint64, _ string,
+				_, _, _, _, _, _, _, _, _, _ float64) {
+				observed.Add(1)
+			})
+			totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+			tidbBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb"))
+			tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tikv"))
+			tk.MustQuery("select * from ru_report_modes where id > 0").Check(testkit.Rows("1 2"))
+			tk.MustExec("begin")
+			tk.MustExec("update ru_report_modes set v = v + 1 where id = 1")
+			tk.MustExec("commit")
+			tidbDelta := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb")) - tidbBefore
+			tikvDelta := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tikv")) - tikvBefore
+			totalDelta := testutil.ToFloat64(metrics.RUV3Total) - totalBefore
+			require.Positive(t, tidbDelta)
+			require.Positive(t, tikvDelta)
+			require.InDelta(t, tidbDelta+tikvDelta, totalDelta, 1e-9)
+			if mode == config.RUReportModeResult {
+				require.Zero(t, observed.Load())
+			} else {
+				require.Equal(t, int64(3), observed.Load())
+			}
+			checkType := func(sql, stmtType string) {
+				t.Helper()
+				labels := []string{"select", "insert", "replace", "update", "delete", "commit", "analyze", "other"}
+				before := make([]float64, len(labels))
+				for i, label := range labels {
+					before[i] = testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(label))
+				}
+				totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+				if stmtType == "select" {
+					tk.MustQuery(sql)
+				} else {
+					tk.MustExec(sql)
+				}
+				total := testutil.ToFloat64(metrics.RUV3Total) - totalBefore
+				require.Positive(t, total, sql)
+				for i, label := range labels {
+					delta := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(label)) - before[i]
+					if label == stmtType {
+						require.InDelta(t, total, delta, 1e-9, sql)
+					} else {
+						require.Zero(t, delta, sql)
+					}
+				}
+			}
+			checkType("select * from ru_report_modes where id > 0", "select")
+			checkType("insert into ru_report_modes values (2, 3)", "insert")
+			checkType("replace into ru_report_modes values (2, 4)", "replace")
+			checkType("update ru_report_modes set v = 5 where id = 99", "update")
+			checkType("delete from ru_report_modes where id = 99", "delete")
+			tk.MustExec("begin")
+			checkType("insert into ru_report_modes values (3, 4)", "insert")
+			checkType("commit", "commit")
+			tk.MustExec("begin")
+			checkType("commit", "commit")
+			checkType("analyze table ru_report_modes", "analyze")
+			tk.MustExec("set @@tidb_enable_prepared_plan_cache = on")
+			tk.MustExec("prepare ru_report_insert from 'insert into ru_report_modes values (?, ?)'")
+			tk.MustExec("set @ru_id = 4, @ru_v = 5")
+			checkType("execute ru_report_insert using @ru_id, @ru_v", "insert")
+			tk.MustExec("set @ru_id = 5")
+			checkType("execute ru_report_insert using @ru_id, @ru_v", "insert")
+			tk.MustExec("deallocate prepare ru_report_insert")
+			tk.MustExec("prepare ru_report_select from 'select * from ru_report_modes where id > ?'")
+			tk.MustExec("set @ru_id = 0")
+			checkType("execute ru_report_select using @ru_id", "select")
+			checkType("execute ru_report_select using @ru_id", "select")
+			tk.MustExec("deallocate prepare ru_report_select")
+			checkType("delete from ru_report_modes where id > 1", "delete")
+			tk.MustExec("update ru_report_modes set v = 2 where id = 1")
+		})
+	}
 }
