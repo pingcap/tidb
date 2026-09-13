@@ -11586,3 +11586,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (ON UPDATE SET NULL pin): renaming the parent key NULLs the
  referencing children. Pinned in
  `crates/tidb-session/tests/fk_on_update_set_null_source.rs`.
+- 2026-09-08 (FK actions round-trip pin): ON DELETE CASCADE ON UPDATE SET
+ NULL renders verbatim in SHOW CREATE's CONSTRAINT clause. Pinned in
+ `crates/tidb-session/tests/fk_actions_show_create_source.rs`.
