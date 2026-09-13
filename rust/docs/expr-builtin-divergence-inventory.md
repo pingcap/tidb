@@ -386,10 +386,14 @@ these.
    with Rust's `wrap_with_cast_as_*`; `wrap_with_cast_as_string` was
    re-verified line-by-line this session (decimal +3, `MaxIntWidth`,
    bit `(flen+7)/8`, float/double → unspecified, coercibility/bit/
-   connection charset selection). **Residual, verified narrow:**
-   `BINARY(n)`/`DECIMAL(p,s)` target widths come from the parser's
-   `FieldInfo` through the rewriter, not from the eval cast family, so
-   they belong to the statement-rewrite sweep rather than here.
+   connection charset selection). **Residual ABSORBED (2026-09-13, stale):**
+   the rewriter's `cast_target` (`rewriter/result_type.rs`) already
+   derives the full target `FieldType` from the AST `CastType` per the
+   parser.y rules — `BINARY(n)` with a length flips VarString→String with
+   `flen=n`, bare `BINARY` stays unspecified-VarString, `DECIMAL(p,s)`
+   sets flen/decimal, and DOUBLE(22)/FLOAT(12)/YEAR/JSON flags are pinned
+   by `cast_target_types_follow_go_parser_y_cast_rules`. Nothing remains
+   for a separate statement-rewrite sweep.
 6. *Math and rounding* — RESOLVED (2026-09-04): `ABS`, `MOD` as function
    call, `POW`, `EXP`, `LOG`, `RAND`'s per-key seeding
    (`math_fn/mod.rs:49`/`:561`), `CRC32`, and `CONV` are all implemented in

@@ -32,8 +32,11 @@ upper case at registration and refuses names over 32 characters; Rust's
 `is_dynamic_privilege` compares case-insensitively, which is the same
 observable matching. `RegisterDynamicPrivilege` (plugin extension) is
 deliberately unported — this tier loads no plugins and the module doc
-records the `const` decision. Still open as a behavior surface:
-SET-ROLE/role-graph semantics and password-expiry policy.
+records the `const` decision. The SET-ROLE,
+role-graph, and password-expiry surfaces flagged here as open at the
+time are all closed by the passes below (SET ROLE — audit closed,
+2026-09-05; role graph — fourth pass; password expiry — third pass,
+with one recorded DST micro-divergence).
 
 ## Password expiry (2026-09-05, third pass)
 
