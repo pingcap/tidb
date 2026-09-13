@@ -1249,12 +1249,19 @@ fn explain_refuses_what_it_cannot_plan() {
         .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
         .unwrap();
 
-    // INTERSECT/EXCEPT use join-like physical plans in Go and still need their
-    // own trace constructors; only UNION DISTINCT is handled above.
-    assert!(matches!(
-        session.run("EXPLAIN ANALYZE (SELECT a FROM t) INTERSECT (SELECT a FROM t)"),
-        Err(DriverError::Unsupported(reason)) if reason == "EXPLAIN ANALYZE of this set operation is not supported yet"
-    ));
+    // INTERSECT/EXCEPT use join-like physical plans in Go: live master
+    // (fdfadb96b2, unistore) plans the INTERSECT ANALYZE as a semi-join
+    // HashJoin over two TableReaders (the dedup IS the semi join), so the
+    // statement plans and executes instead of refusing.
+    assert!(
+        row_text(
+            session.run("EXPLAIN ANALYZE (SELECT a FROM t) INTERSECT (SELECT a FROM t)")
+        )
+        .iter()
+        .any(|row| row[0].contains("HashJoin")
+            && row.iter().any(|cell| cell.contains("semi join"))),
+        "the INTERSECT analyze must plan through the common physical path"
+    );
     assert!(matches!(
         session.run("EXPLAIN FORMAT = 'bogus' SELECT * FROM t"),
         Err(DriverError::Unsupported(reason)) if reason == "unknown EXPLAIN format name"
