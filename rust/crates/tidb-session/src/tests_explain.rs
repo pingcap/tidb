@@ -470,8 +470,9 @@ fn common_handle_tuple_comparison_uses_appended_index_ranges() {
     ));
     assert!(
         explain.iter().any(|row| {
-            row.iter()
-                .any(|cell| cell.contains("range:(1 2 3,1 2 +inf],(1 2,1 +inf],(1,+inf]"))
+            row.iter().any(|cell| {
+                cell.contains("range:(1 2 3,1 2 +inf], (1 2,1 +inf], (1,+inf]")
+            })
         }),
         "tuple comparison must reach the appended common handle: {explain:?}"
     );
@@ -509,7 +510,9 @@ fn common_handle_tuple_comparison_uses_appended_index_ranges() {
     assert!(
         explain.iter().any(|row| {
             row.iter().any(|cell| {
-                cell.contains("range:(1 2 3 4,1 2 3 +inf],(1 2 3,1 2 +inf],(1 2,1 +inf],(1,+inf]")
+                cell.contains(
+                    "range:(1 2 3 4,1 2 3 +inf], (1 2 3,1 2 +inf], (1 2,1 +inf], (1,+inf]",
+                )
             })
         }),
         "three-column common handles must all be range dimensions: {explain:?}"
