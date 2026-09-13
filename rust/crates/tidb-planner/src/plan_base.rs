@@ -45,6 +45,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 
 use tidb_datatype::FieldName;
 use tidb_expr::column::Column;
@@ -104,9 +105,15 @@ pub struct BasePlan {
     /// Go `stats`, `plan-cache-clone:"shallow"`.
     stats: Option<StatsInfo>,
     /// Go `Plan.Schema()`; `None` when the operator derives it from a child.
-    schema: Option<Schema>,
-    /// Go `types.NameSlice`.
-    output_names: Vec<FieldName>,
+    ///
+    /// Go holds a `*expression.Schema`, and a plan copy or a child-derived
+    /// schema shares the pointer; the `Arc` is that sharing, so cloning a
+    /// plan tree (join reorder, predicate push-down, the task memo) does not
+    /// copy every column of every operator.
+    schema: Option<Arc<Schema>>,
+    /// Go `types.NameSlice`, shared like the slice header Go copies;
+    /// `None` is the empty slice.
+    output_names: Option<Arc<Vec<FieldName>>>,
     /// Go `NoncacheableReason`.
     noncacheable_reason: String,
 }
@@ -205,24 +212,47 @@ impl BasePlan {
 
     /// Go `Plan.Schema()`.
     #[must_use]
-    pub const fn schema(&self) -> Option<&Schema> {
+    pub fn schema(&self) -> Option<&Schema> {
+        self.schema.as_deref()
+    }
+
+    /// The schema as the shared handle Go's `*expression.Schema` is, for a
+    /// `SetSchema(child.Schema())` that shares rather than copies.
+    #[must_use]
+    pub const fn schema_shared(&self) -> Option<&Arc<Schema>> {
         self.schema.as_ref()
     }
 
     /// Sets the operator's own schema.
     pub fn set_schema(&mut self, schema: Option<Schema>) {
+        self.schema = schema.map(Arc::new);
+    }
+
+    /// Sets the operator's schema to one already shared with another plan.
+    pub fn set_schema_shared(&mut self, schema: Option<Arc<Schema>>) {
         self.schema = schema;
     }
 
     /// Go `Plan.OutputNames()`.
     #[must_use]
     pub fn output_names(&self) -> &[FieldName] {
-        &self.output_names
+        self.output_names.as_deref().map_or(&[], Vec::as_slice)
+    }
+
+    /// The output names as the shared slice Go's `NameSlice` copies share.
+    #[must_use]
+    pub const fn output_names_shared(&self) -> Option<&Arc<Vec<FieldName>>> {
+        self.output_names.as_ref()
     }
 
     /// Go `Plan.SetOutputNames(names)`.
     pub fn set_output_names(&mut self, names: Vec<FieldName>) {
-        self.output_names = names;
+        self.output_names = (!names.is_empty()).then(|| Arc::new(names));
+    }
+
+    /// Sets the output names to a slice already shared with another plan.
+    pub fn set_output_names_shared(&mut self, names: Option<Arc<Vec<FieldName>>>) {
+        self.output_names = names.filter(|names| !names.is_empty());
     }
 
     /// Go `Plan.QueryBlockOffset()`.
@@ -301,7 +331,11 @@ pub enum PlanErrorKind {
     /// Go ErrWindowInvalidWindowFuncUse (3593).
     WindowInvalidWindowFuncUse(String),
     /// Go named-window lookup and inheritance errors (3579-3583).
-    WindowDefinition { code: u16, name: String, base: String },
+    WindowDefinition {
+        code: u16,
+        name: String,
+        base: String,
+    },
     /// Go window frame errors, retaining the original window name.
     WindowFrame { code: u16, window: String },
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
@@ -407,7 +441,11 @@ impl PlanError {
         };
         Self {
             message,
-            kind: PlanErrorKind::WindowDefinition { code, name: name.to_owned(), base: base.to_owned() },
+            kind: PlanErrorKind::WindowDefinition {
+                code,
+                name: name.to_owned(),
+                base: base.to_owned(),
+            },
         }
     }
     /// A window call without a resolved window output in this query block.
@@ -893,5 +931,39 @@ mod tests {
     #[test]
     fn base_clone_for_plan_cache_refuses() {
         assert!(BasePlan::clone_for_plan_cache().is_none());
+    }
+
+    /// A plan copy shares its schema and names the way Go copies the
+    /// `*Schema` pointer and the `NameSlice` header, and a setter replaces
+    /// only this plan's handle.
+    #[test]
+    fn a_plan_copy_shares_its_schema_and_names() {
+        let allocator = PlanIdAllocator::default();
+        let mut plan = BasePlan::new(&allocator, "Projection", 0);
+        assert!(plan.output_names().is_empty());
+        assert!(plan.output_names_shared().is_none());
+        plan.set_schema(Some(Schema::new(vec![Column::default()])));
+        plan.set_output_names(vec![FieldName::default()]);
+
+        let copy = plan.clone();
+        let same_schema = match (plan.schema_shared(), copy.schema_shared()) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            _ => false,
+        };
+        assert!(same_schema, "the copy shares the schema allocation");
+        let same_names = match (plan.output_names_shared(), copy.output_names_shared()) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            _ => false,
+        };
+        assert!(same_names, "the copy shares the names allocation");
+
+        plan.set_output_names(Vec::new());
+        assert!(plan.output_names().is_empty());
+        assert_eq!(copy.output_names().len(), 1, "the copy keeps its names");
+        let mut derived = BasePlan::new(&allocator, "Selection", 0);
+        derived.set_schema_shared(copy.schema_shared().cloned());
+        derived.set_output_names_shared(copy.output_names_shared().cloned());
+        assert_eq!(derived.schema().map(|schema| schema.columns.len()), Some(1));
+        assert_eq!(derived.output_names().len(), 1);
     }
 }

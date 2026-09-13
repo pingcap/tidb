@@ -244,7 +244,10 @@ pub(crate) fn analyzed_filter_selectivity(
             continue;
         }
         let unique_id = columns[0].unique_id;
-        match per_column.iter_mut().find(|(column, _)| *column == unique_id) {
+        match per_column
+            .iter_mut()
+            .find(|(column, _)| *column == unique_id)
+        {
             Some((_, indices)) => indices.push(index),
             None => per_column.push((unique_id, vec![index])),
         }
@@ -254,7 +257,10 @@ pub(crate) fn analyzed_filter_selectivity(
         .filter(|(_, indices)| indices.len() >= 2)
     {
         let column = tidb_expr::simple_expr::extract_columns(&conditions[indices[0]]).remove(0);
-        let group: Vec<Expression> = indices.iter().map(|&index| conditions[index].clone()).collect();
+        let group: Vec<Expression> = indices
+            .iter()
+            .map(|&index| conditions[index].clone())
+            .collect();
         if let Some(selectivity) = column_ranges_selectivity(table_stats, &column, &group) {
             selectivity_total *= selectivity;
             recognized = true;
@@ -611,7 +617,12 @@ fn update_join_equal_conditions(
     ctx: &RuleContext<'_>,
     join: &mut super::LogicalJoin,
 ) -> Result<(), PlanError> {
-    let [left_schema, right_schema] = child_schemas(&LogicalPlan::Join(join.clone()))
+    let [left_schema, right_schema] = join
+        .base
+        .children()
+        .iter()
+        .map(effective_schema)
+        .collect::<Vec<Schema>>()
         .try_into()
         .map_err(|_| PlanError::internal("LogicalJoin.updateEQCond needs two children"))?;
 
@@ -732,15 +743,11 @@ fn update_join_equal_conditions_in_plan(
 ) -> Result<bool, PlanError> {
     match plan {
         LogicalPlan::Join(join) => {
-            let mut updated = join.clone();
-            update_join_equal_conditions(ctx, &mut updated)?;
-            *join = updated;
+            update_join_equal_conditions(ctx, join)?;
             Ok(true)
         }
         LogicalPlan::Apply(apply) => {
-            let mut updated = apply.join.clone();
-            update_join_equal_conditions(ctx, &mut updated)?;
-            apply.join = updated;
+            update_join_equal_conditions(ctx, &mut apply.join)?;
             Ok(true)
         }
         _ => Ok(false),
@@ -2933,8 +2940,9 @@ mod analyzed_filter_selectivity_tests {
                 ],
             ))
         };
-        let joint = analyzed_filter_selectivity(&table_stats, &[compare("ge", 2), compare("lt", 3)])
-            .expect("an analyzed profile keeps the ranges");
+        let joint =
+            analyzed_filter_selectivity(&table_stats, &[compare("ge", 2), compare("lt", 3)])
+                .expect("an analyzed profile keeps the ranges");
         let ge_alone = analyzed_filter_selectivity(&table_stats, &[compare("ge", 2)]).unwrap();
         let lt_alone = analyzed_filter_selectivity(&table_stats, &[compare("lt", 3)]).unwrap();
         // The estimator's own answer for the one range the ranger builds.
@@ -2953,8 +2961,7 @@ mod analyzed_filter_selectivity_tests {
             false,
             crate::cardinality::row_count_estimator::EstimatorOptions::default(),
         )
-        .est
-            / 1_000.0;
+        .est / 1_000.0;
         assert!(
             (joint - one_range).abs() < 1e-12,
             "{joint} != {one_range} (the [2, 3) range)"
@@ -3040,10 +3047,7 @@ mod analyzed_filter_selectivity_tests {
         );
         // Both values are bucket bounds, so the estimate is their repeats:
         // (30 + 70) / 1000.
-        assert!(
-            (selectivity - 0.1).abs() < 1e-9,
-            "{selectivity} != 0.1"
-        );
+        assert!((selectivity - 0.1).abs() < 1e-9, "{selectivity} != 0.1");
     }
 
     /// Go `GetSelectivityByFilter` -> `GetStrMatchSelectivity`: a plain
