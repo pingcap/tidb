@@ -11621,3 +11621,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (SHOW COLUMNS WHERE pin): the WHERE predicate filters the
  column listing (field = / field <>). Pinned in
  `crates/tidb-session/tests/show_columns_where_source.rs`.
+- 2026-09-08 (multi-rename pin): rename table a to b, c to d moves both
+ tables atomically; old names vanish. Pinned in
+ `crates/tidb-session/tests/multi_rename_source.rs`.
