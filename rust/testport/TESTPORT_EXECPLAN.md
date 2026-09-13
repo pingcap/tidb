@@ -11556,3 +11556,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (LIMIT edges pin): LIMIT 0 empty, over-count full, offset
  remainder, and the negative-bound parse refusal. Pinned in
  `crates/tidb-session/tests/limit_edge_source.rs`.
+- 2026-09-08 (SHOW DATABASES filter pin): LIKE filtering with the system
+ schema's UPPERCASE display name. Pinned in
+ `crates/tidb-session/tests/show_databases_filter_source.rs`.
