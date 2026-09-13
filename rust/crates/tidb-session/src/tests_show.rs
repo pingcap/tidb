@@ -1874,6 +1874,16 @@ fn every_information_schema_cell_matches_its_declared_column_type() {
                         "{name}.{column_name} is declared {:?} but a row holds bytes",
                         field_type.code()
                     ),
+                    // Go fills the MEMORY_USAGE time cells with
+                    // `types.NewTimeDatum(NewTime(FromGoTime(...), Datetime, 0))`
+                    // (`infoschema_reader.go:3042-3049`) — GC_LAST is ALWAYS a
+                    // Time datum, zero-valued before the first GC. A Time cell
+                    // is faithful wherever the column declares Datetime.
+                    Datum::Time(_) => assert!(
+                        field_type.code() == tidb_datatype::FieldTypeCode::Datetime,
+                        "{name}.{column_name} is declared {:?} but a row holds a Time",
+                        field_type.code()
+                    ),
                     other => panic!("{name}.{column_name} holds an unexpected {other:?}"),
                 }
             }
@@ -2182,13 +2192,20 @@ fn show_stats_meta_honors_prune_mode_and_skips_pseudo_statistics() {
         .run("SET @@tidb_partition_prune_mode = 'static'")
         .unwrap();
 
+    // Both tables ARE listed: Go's fetchShowStatsMeta emits a row for every
+    // physical table whose non-pseudo stats are resident, and the ANALYZEd
+    // `e` is resident exactly like `t`'s partitions (captured from master
+    // fdfadb96b2: `test | e | <empty> | ... | 0 | 0` after ANALYZE TABLE e).
+    // Rows come out in TABLE-ID order -- Go walks SchemaSimpleTableInfos and
+    // this tier sorts its walk the same way -- so `t` precedes `e`. Under
+    // STATIC pruning no `global` row is emitted for the partitioned table.
     let rows = row_text(session.run("SHOW STATS_META"));
     let targets = rows
         .iter()
         .filter(|row| row[1] == "t" || row[1] == "e")
         .map(|row| (row[1].as_str(), row[2].as_str()))
         .collect::<Vec<_>>();
-    assert_eq!(targets, vec![("t", "p0"), ("t", "p1")]);
+    assert_eq!(targets, vec![("t", "p0"), ("t", "p1"), ("e", "")]);
 }
 
 /// Pinned Go `ShowExec.fetchShowStatsHealthy` emits analyzed, non-pseudo
@@ -2202,9 +2219,15 @@ fn show_stats_healthy_reads_the_production_statistics_cache() {
     session.run("CREATE TABLE e (a INT)").unwrap();
     session.run("ANALYZE TABLE e").unwrap();
 
+    // Both ANALYZEd tables are listed -- Go's fetchShowStatsHealthy walks
+    // every schema table with resident non-pseudo stats (captured from
+    // master fdfadb96b2: `t` and `e` both report 100), in table-ID order.
     assert_eq!(
         row_text(session.run("SHOW STATS_HEALTHY WHERE Table_name IN ('t', 'e')")),
-        vec![vec!["test", "t", "", "100"]]
+        vec![
+            vec!["test", "t", "", "100"],
+            vec!["test", "e", "", "100"],
+        ]
     );
 }
 

@@ -157,6 +157,14 @@ pub fn new_collation_enabled() -> bool {
     NEW_COLLATION_ENABLED.load(AtomicOrdering::SeqCst)
 }
 
+/// The flag behind [`Self::new_collation_enabled`], for the charset
+/// registry's own construction: Go's `collate` package init applies
+/// `switchDefaultCollation(NewCollationEnabled())` to the static charset
+/// tables before any consumer reads a default collation.
+pub(crate) fn new_collation_enabled_flag() -> bool {
+    NEW_COLLATION_ENABLED.load(AtomicOrdering::SeqCst)
+}
+
 /// Source test/configuration switch. Callers must serialize changes.
 pub fn set_new_collation_enabled(enabled: bool) {
     set_new_collation_defaults(enabled);

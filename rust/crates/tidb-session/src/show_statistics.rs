@@ -315,10 +315,22 @@ impl Session {
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
             for database in catalog.database_names() {
-                let Some(names) = catalog.table_names(&database) else {
-                    continue;
-                };
-                for name in names {
+                // Go `fetchShowStatsMeta` walks `SchemaSimpleTableInfos`, whose
+                // rows come out in TABLE-ID (creation) order; an alphabetical
+                // walk reorders `e` ahead of `t` where Go keeps `t` first.
+                let mut named = catalog
+                    .table_names(&database)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|name| {
+                        catalog.table_in(&database, &name).map(|entry| match entry {
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            _ => (i64::MAX, name),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                named.sort_by_key(|(id, _)| *id);
+                for (_, name) in named {
                     let Some(tidb_executor::TableEntry::Kv(table)) =
                         catalog.table_in(&database, &name)
                     else {
@@ -477,10 +489,19 @@ impl Session {
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
             for database in catalog.database_names() {
-                let Some(names) = catalog.table_names(&database) else {
-                    continue;
-                };
-                for name in names {
+                let mut named = catalog
+                    .table_names(&database)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|name| {
+                        catalog.table_in(&database, &name).map(|entry| match entry {
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            _ => (i64::MAX, name),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                named.sort_by_key(|(id, _)| *id);
+                for (_, name) in named {
                     let Some(tidb_executor::TableEntry::Kv(table)) =
                         catalog.table_in(&database, &name)
                     else {
@@ -554,10 +575,19 @@ impl Session {
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
             for database in catalog.database_names() {
-                let Some(names) = catalog.table_names(&database) else {
-                    continue;
-                };
-                for name in names {
+                let mut named = catalog
+                    .table_names(&database)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|name| {
+                        catalog.table_in(&database, &name).map(|entry| match entry {
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            _ => (i64::MAX, name),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                named.sort_by_key(|(id, _)| *id);
+                for (_, name) in named {
                     let Some(tidb_executor::TableEntry::Kv(table)) =
                         catalog.table_in(&database, &name)
                     else {
@@ -701,10 +731,19 @@ impl Session {
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
             for database in catalog.database_names() {
-                let Some(names) = catalog.table_names(&database) else {
-                    continue;
-                };
-                for name in names {
+                let mut named = catalog
+                    .table_names(&database)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|name| {
+                        catalog.table_in(&database, &name).map(|entry| match entry {
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            _ => (i64::MAX, name),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                named.sort_by_key(|(id, _)| *id);
+                for (_, name) in named {
                     let Some(tidb_executor::TableEntry::Kv(table)) =
                         catalog.table_in(&database, &name)
                     else {
@@ -848,10 +887,19 @@ impl Session {
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
             for database in catalog.database_names() {
-                let Some(names) = catalog.table_names(&database) else {
-                    continue;
-                };
-                for name in names {
+                let mut named = catalog
+                    .table_names(&database)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|name| {
+                        catalog.table_in(&database, &name).map(|entry| match entry {
+                            tidb_executor::TableEntry::Kv(table) => (table.table_id, name),
+                            _ => (i64::MAX, name),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                named.sort_by_key(|(id, _)| *id);
+                for (_, name) in named {
                     let Some(tidb_executor::TableEntry::Kv(table)) =
                         catalog.table_in(&database, &name)
                     else {

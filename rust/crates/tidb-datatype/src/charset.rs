@@ -515,6 +515,16 @@ impl Registry {
                 pad_attribute: if row.pad_space { PAD_SPACE } else { PAD_NONE }.to_owned(),
             });
         }
+        // Go's `collate` package init runs `switchDefaultCollation(
+        // NewCollationEnabled())` (`util/collate/charset.go:20-32`) before any
+        // consumer reads a default, flipping the Chinese charsets' defaults
+        // between the `_bin` and `_chinese_ci` spellings. The static tables
+        // above are Go's DISABLED-state source; production runs with the new
+        // collations enabled, so apply the same switch here.
+        apply_new_collation_defaults(
+            &mut registry,
+            crate::collation::new_collation_enabled_flag(),
+        );
         registry
     }
 
@@ -803,8 +813,17 @@ mod tests {
             assert_eq!(valid_charset_and_collation(charset, collation), expected);
         }
         assert_eq!(get_default_collation("utf8").unwrap(), "utf8_bin");
-        assert_eq!(get_default_collation("gbk").unwrap(), "gbk_bin");
-        assert_eq!(get_default_collation("gb18030").unwrap(), "gb18030_bin");
+        // New collations are ENABLED: the Chinese charsets' defaults are the
+        // `_chinese_ci` spellings (Go switchDefaultCollation(true); live
+        // master SHOW CHARSET prints gbk_chinese_ci / gb18030_chinese_ci).
+        assert_eq!(
+            get_default_collation("gbk").unwrap(),
+            "gbk_chinese_ci"
+        );
+        assert_eq!(
+            get_default_collation("gb18030").unwrap(),
+            "gb18030_chinese_ci"
+        );
         assert_eq!(get_charset_info("utf8mb3").unwrap().name, "utf8");
         assert_eq!(
             get_collation_by_name("non_exist").unwrap_err().to_string(),
