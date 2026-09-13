@@ -499,6 +499,16 @@ impl MyDecimal {
             return None;
         }
         let magnitude = value.unsigned_abs();
+        // The common aggregate cell -- a coefficient that fits a machine word
+        // at a short scale, every DECIMAL(15,2) sum of TPC-H -- splits and
+        // packs with 64-bit arithmetic. The general path below issues a
+        // 128-bit division per digit and per word, tens of nanoseconds each,
+        // for every finalized group.
+        if storage_scale <= 18 {
+            if let Ok(magnitude) = u64::try_from(magnitude) {
+                return Self::from_scaled_u64(magnitude, value < 0, storage_scale, result_frac);
+            }
+        }
         let scale_pow = 10u128.checked_pow(storage_scale)?;
         let mut integer_part = magnitude / scale_pow;
         let fraction_part = magnitude % scale_pow;
@@ -533,6 +543,49 @@ impl MyDecimal {
         for word_idx in (words_int..words_int + words_frac).rev() {
             result.word_buf[word_idx] = (fraction_padded % u128::from(WORD_BASE)) as i32;
             fraction_padded /= u128::from(WORD_BASE);
+        }
+        Some(result)
+    }
+
+    /// [`Self::from_scaled_i128`] for a coefficient that fits a `u64` at a
+    /// scale of at most 18 digits: the same words, from 64-bit arithmetic.
+    fn from_scaled_u64(
+        magnitude: u64,
+        negative: bool,
+        storage_scale: u32,
+        result_frac: u32,
+    ) -> Option<MyDecimal> {
+        debug_assert!(storage_scale <= 18);
+        let scale_pow = 10u64.pow(storage_scale);
+        let mut integer_part = magnitude / scale_pow;
+        let fraction_part = magnitude % scale_pow;
+        let digits_int = integer_part
+            .checked_ilog10()
+            .map_or(1, |log| log as usize + 1);
+        let words_int = digits_to_words(digits_int as i32) as usize;
+        let words_frac = digits_to_words(storage_scale as i32) as usize;
+        if words_int + words_frac > MAX_WORD_BUF_LEN {
+            return None;
+        }
+        let mut result = MyDecimal {
+            digits_int: digits_int as i8,
+            digits_frac: storage_scale as i8,
+            result_frac: result_frac as i8,
+            negative,
+            word_buf: [0; MAX_WORD_BUF_LEN],
+        };
+        let word_base = WORD_BASE;
+        for word_idx in (0..words_int).rev() {
+            result.word_buf[word_idx] = (integer_part % word_base) as i32;
+            integer_part /= word_base;
+        }
+        // At most two fraction words at this scale, so the padded fraction
+        // stays under 10^18.
+        let padding = words_frac * DIGITS_PER_WORD as usize - storage_scale as usize;
+        let mut fraction_padded = fraction_part * 10u64.pow(padding as u32);
+        for word_idx in (words_int..words_int + words_frac).rev() {
+            result.word_buf[word_idx] = (fraction_padded % word_base) as i32;
+            fraction_padded /= word_base;
         }
         Some(result)
     }
@@ -1849,6 +1902,19 @@ mod tests {
             (1_000_000_000_000_000_000_000_000, 9, 9),
             (i128::MAX, 30, 4),
             (i128::MIN + 1, 0, 0),
+            // The 64-bit boundary of the machine-word path, at its widest
+            // scale and just past it.
+            (u64::MAX as i128, 2, 2),
+            (u64::MAX as i128, 18, 18),
+            (u64::MAX as i128, 19, 19),
+            (u64::MAX as i128 + 1, 2, 2),
+            (-(u64::MAX as i128), 18, 0),
+            (999_999_999_999_999_999, 18, 18),
+            (1_000_000_000_000_000_000, 18, 18),
+            (1_000_000_000_000_000_000, 0, 0),
+            (999_999_999, 9, 9),
+            (1_000_000_000, 9, 9),
+            (-1, 18, 18),
         ];
         for _ in 0..2000 {
             let bits = next();
