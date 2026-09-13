@@ -11628,3 +11628,7 @@ risks without claiming repository-wide parity.
  generated-column target refuses with the ErrBadGeneratedColumn text and
  stores nothing. Pinned in
  `crates/tidb-session/tests/replace_generated_refusal_source.rs`.
+- 2026-09-08 (partitioned Create_options pin): SHOW TABLE STATUS reports
+ `partitioned` in Create_options for a partitioned table and empty for a
+ plain one. Pinned in
+ `crates/tidb-session/tests/status_partitioned_option_source.rs`.
