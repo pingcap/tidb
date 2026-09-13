@@ -113,7 +113,7 @@ impl Tikv for BatchFixture {
                             .await;
                         return;
                     };
-                    let request = match CoprocessorRequest::decode(body.as_slice()) {
+                    let request = match CoprocessorRequest::decode(body.as_ref()) {
                         Ok(request) => request,
                         Err(error) => {
                             let _ = responses
@@ -150,9 +150,9 @@ impl Tikv for BatchFixture {
                     }
                     .encode_to_vec();
                     let cmd = if matches!(mode, ResponseMode::WrongTag) {
-                        ResponseCmd::Empty(response)
+                        ResponseCmd::Empty(response.into())
                     } else {
-                        ResponseCmd::Coprocessor(response)
+                        ResponseCmd::Coprocessor(response.into())
                     };
                     if responses
                         .send(Ok(BatchCommandsResponse {

@@ -75,7 +75,7 @@ impl Tikv for HeldBatchService {
                     let Some(RequestCmd::Coprocessor(body)) = request.cmd else {
                         return;
                     };
-                    let request = CoprocessorRequest::decode(body.as_slice()).unwrap();
+                    let request = CoprocessorRequest::decode(body.as_ref()).unwrap();
                     let _ = seen.send(());
                     while !*release.borrow() {
                         if release.changed().await.is_err() {
@@ -90,7 +90,7 @@ impl Tikv for HeldBatchService {
                     if responses
                         .send(Ok(BatchCommandsResponse {
                             responses: vec![batch_commands_response::Response {
-                                cmd: Some(ResponseCmd::Coprocessor(response)),
+                                cmd: Some(ResponseCmd::Coprocessor(response.into())),
                             }],
                             request_ids: vec![request_id],
                             ..BatchCommandsResponse::default()

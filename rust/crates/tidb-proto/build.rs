@@ -29,6 +29,12 @@ fn main() {
         // message rather than copied out of it, so the chunk decoder above
         // shares the bytes the transport received.
         .bytes(".coprocessor.Response.data")
+        // A BatchCommands envelope carries each command's encoded body as
+        // opaque bytes; a response body is sliced out of the stream frame
+        // (the coprocessor response above then slices its data out of it)
+        // and a request body is handed over without a copy.
+        .bytes(".tikvpb.BatchCommandsRequest.Request")
+        .bytes(".tikvpb.BatchCommandsResponse.Response")
         .compile_protos(
             &[
                 "proto/resourcetag.proto",

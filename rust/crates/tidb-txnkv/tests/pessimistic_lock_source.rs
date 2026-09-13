@@ -459,7 +459,7 @@ impl ScriptedTikv {
     fn answer(&self, cmd: RequestCmd) -> Result<ResponseCmd, tonic::Status> {
         match cmd {
             RequestCmd::Get(body) => {
-                let request = KvrpcGetRequest::decode(body.as_slice())
+                let request = KvrpcGetRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 self.recorded.lock().unwrap().gets.push(request);
                 Ok(ResponseCmd::Get(
@@ -467,19 +467,19 @@ impl ScriptedTikv {
                         value: b"value-at-statement-ts".to_vec(),
                         ..KvrpcGetResponse::default()
                     }
-                    .encode_to_vec(),
+                    .encode_to_vec().into(),
                 ))
             }
             RequestCmd::PessimisticLock(body) => {
-                let request = KvrpcPessimisticLockRequest::decode(body.as_slice())
+                let request = KvrpcPessimisticLockRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 let outcome = self.next_lock();
                 let encoded = lock_response(&outcome, &request);
                 self.recorded.lock().unwrap().locks.push(request);
-                Ok(ResponseCmd::PessimisticLock(encoded))
+                Ok(ResponseCmd::PessimisticLock(encoded.into()))
             }
             RequestCmd::PessimisticRollback(body) => {
-                let request = KvrpcPessimisticRollbackRequest::decode(body.as_slice())
+                let request = KvrpcPessimisticRollbackRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 self.recorded
                     .lock()
@@ -494,11 +494,11 @@ impl ScriptedTikv {
                         } else {
                             responses.remove(0)
                         }
-                    }.encode_to_vec(),
+                    }.encode_to_vec().into(),
                 ))
             }
             RequestCmd::Prewrite(body) => {
-                let request = KvrpcPrewriteRequest::decode(body.as_slice())
+                let request = KvrpcPrewriteRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 self.recorded.lock().unwrap().prewrites.push(request);
                 let blocked = self.prewrite_blocked_by.lock().unwrap().take();
@@ -520,15 +520,15 @@ impl ScriptedTikv {
                         errors,
                         ..KvrpcPrewriteResponse::default()
                     }
-                    .encode_to_vec(),
+                    .encode_to_vec().into(),
                 ))
             }
             RequestCmd::Commit(body) => {
-                let request = KvrpcCommitRequest::decode(body.as_slice())
+                let request = KvrpcCommitRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 self.recorded.lock().unwrap().commits.push(request);
                 Ok(ResponseCmd::Commit(
-                    KvrpcCommitResponse::default().encode_to_vec(),
+                    KvrpcCommitResponse::default().encode_to_vec().into(),
                 ))
             }
             other => Err(tonic::Status::unimplemented(format!(

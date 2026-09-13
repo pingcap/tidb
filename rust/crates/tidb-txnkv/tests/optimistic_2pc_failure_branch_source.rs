@@ -329,7 +329,7 @@ impl ScriptedTikv {
     fn answer(&self, cmd: RequestCmd) -> Result<ResponseCmd, tonic::Status> {
         match cmd {
             RequestCmd::Prewrite(body) => {
-                let request = KvrpcPrewriteRequest::decode(body.as_slice())
+                let request = KvrpcPrewriteRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 let outcome = Self::next(&self.prewrites);
                 let errors = match outcome {
@@ -352,11 +352,11 @@ impl ScriptedTikv {
                         errors,
                         ..KvrpcPrewriteResponse::default()
                     }
-                    .encode_to_vec(),
+                    .encode_to_vec().into(),
                 ))
             }
             RequestCmd::Commit(body) => {
-                let request = KvrpcCommitRequest::decode(body.as_slice())
+                let request = KvrpcCommitRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 let outcome = Self::next(&self.commits);
                 self.recorded.lock().unwrap().commits.push(request);
@@ -365,11 +365,11 @@ impl ScriptedTikv {
                         region_error: region_error(outcome),
                         ..KvrpcCommitResponse::default()
                     }
-                    .encode_to_vec(),
+                    .encode_to_vec().into(),
                 ))
             }
             RequestCmd::BatchRollback(body) => {
-                let request = KvrpcBatchRollbackRequest::decode(body.as_slice())
+                let request = KvrpcBatchRollbackRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 let outcome = Self::next(&self.rollbacks);
                 self.recorded.lock().unwrap().rollbacks.push(request);
@@ -378,7 +378,7 @@ impl ScriptedTikv {
                         region_error: region_error(outcome),
                         ..KvrpcBatchRollbackResponse::default()
                     }
-                    .encode_to_vec(),
+                    .encode_to_vec().into(),
                 ))
             }
             other => Err(tonic::Status::unimplemented(format!(

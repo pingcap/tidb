@@ -122,16 +122,20 @@ define_command_tags! {
 }
 
 /// Immutable pre-encoded body paired with its exact BatchCommands field.
+///
+/// The body is shared bytes: a response body stays a slice of the stream
+/// frame it arrived in (Go's `Unmarshal` copies it once; nothing here copies
+/// it at all), and a request body moves into the envelope without a copy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpaqueBatchCommand {
     tag: BatchCommandTag,
-    body: Vec<u8>,
+    body: bytes::Bytes,
 }
 
 impl OpaqueBatchCommand {
     /// Creates an owned command body that remains valid across repeated sends.
     #[must_use]
-    pub fn new(tag: BatchCommandTag, body: impl Into<Vec<u8>>) -> Self {
+    pub fn new(tag: BatchCommandTag, body: impl Into<bytes::Bytes>) -> Self {
         Self {
             tag,
             body: body.into(),
@@ -156,7 +160,7 @@ impl OpaqueBatchCommand {
     /// completion path can therefore hand those bytes to the response owner
     /// without cloning the body a second time.
     #[must_use]
-    pub fn into_body(self) -> Vec<u8> {
+    pub fn into_body(self) -> bytes::Bytes {
         self.body
     }
 }

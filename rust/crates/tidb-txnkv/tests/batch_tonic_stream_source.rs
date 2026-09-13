@@ -129,14 +129,14 @@ impl Tikv for StreamingTikv {
                             .await;
                         return;
                     };
-                    received_bodies.lock().unwrap().push(body.clone());
-                    if body == b"hold" {
+                    received_bodies.lock().unwrap().push(body.to_vec());
+                    if body.as_ref() == b"hold" {
                         if let Some(hold_seen) = hold_seen.lock().unwrap().take() {
                             let _ = hold_seen.send(());
                         }
                         continue;
                     }
-                    if body == b"fail" {
+                    if body.as_ref() == b"fail" {
                         fail_stream = true;
                         continue;
                     }
@@ -150,7 +150,7 @@ impl Tikv for StreamingTikv {
                     responses: pairs
                         .iter()
                         .map(|(_, body)| batch_commands_response::Response {
-                            cmd: Some(ResponseCmd::Empty(body.clone())),
+                            cmd: Some(ResponseCmd::Empty(body.clone().into())),
                         })
                         .collect(),
                     request_ids: pairs.iter().map(|(request_id, _)| *request_id).collect(),
@@ -238,7 +238,7 @@ impl Drop for TestServer {
 fn entry(body: &[u8], forwarded_host: Option<&str>) -> (BatchCommandEntry, BatchPull) {
     let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
     let entry = BatchCommandEntry::new(
-        OpaqueBatchCommand::new(BatchCommandTag::Empty, body),
+        OpaqueBatchCommand::new(BatchCommandTag::Empty, body.to_vec()),
         completion,
     );
     let entry = match forwarded_host {

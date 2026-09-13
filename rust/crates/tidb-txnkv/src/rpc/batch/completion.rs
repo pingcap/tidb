@@ -305,7 +305,7 @@ mod tests {
         let (completion, mut pull) = reply_pair();
         completion.schedule(Ok(OpaqueBatchCommand::new(
             BatchCommandTag::Coprocessor,
-            b"response",
+            bytes::Bytes::from_static(b"response"),
         )));
 
         let response = pull.try_complete().unwrap().unwrap().unwrap();

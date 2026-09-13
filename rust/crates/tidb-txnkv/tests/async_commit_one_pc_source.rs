@@ -240,7 +240,7 @@ impl Tikv for ScriptedTikv {
                     let mut held = service.hold_commit.as_ref().and_then(|(start_ts, release)| {
                         match &cmd {
                             RequestCmd::Commit(body)
-                                if KvrpcCommitRequest::decode(body.as_slice()).unwrap().start_version == *start_ts =>
+                                if KvrpcCommitRequest::decode(body.as_ref()).unwrap().start_version == *start_ts =>
                             {
                                 Some(release.clone())
                             }
@@ -285,7 +285,7 @@ impl ScriptedTikv {
     fn answer(&self, cmd: RequestCmd) -> Result<ResponseCmd, tonic::Status> {
         match cmd {
             RequestCmd::Prewrite(body) => {
-                let request = KvrpcPrewriteRequest::decode(body.as_slice())
+                let request = KvrpcPrewriteRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 let answer = self.next_prewrite();
                 self.recorded.lock().unwrap().prewrites.push(request);
@@ -295,23 +295,23 @@ impl ScriptedTikv {
                         one_pc_commit_ts: answer.one_pc_commit_ts,
                         ..KvrpcPrewriteResponse::default()
                     }
-                    .encode_to_vec(),
+                    .encode_to_vec().into(),
                 ))
             }
             RequestCmd::Commit(body) => {
-                let request = KvrpcCommitRequest::decode(body.as_slice())
+                let request = KvrpcCommitRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 self.recorded.lock().unwrap().commits.push(request);
                 Ok(ResponseCmd::Commit(
-                    KvrpcCommitResponse::default().encode_to_vec(),
+                    KvrpcCommitResponse::default().encode_to_vec().into(),
                 ))
             }
             RequestCmd::BatchRollback(body) => {
-                let request = KvrpcBatchRollbackRequest::decode(body.as_slice())
+                let request = KvrpcBatchRollbackRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 self.recorded.lock().unwrap().rollbacks.push(request);
                 Ok(ResponseCmd::BatchRollback(
-                    KvrpcBatchRollbackResponse::default().encode_to_vec(),
+                    KvrpcBatchRollbackResponse::default().encode_to_vec().into(),
                 ))
             }
             other => Err(tonic::Status::unimplemented(format!(
