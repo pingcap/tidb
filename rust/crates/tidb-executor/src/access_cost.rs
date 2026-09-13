@@ -1299,7 +1299,27 @@ fn selectivity_of_conjuncts_with_path_context(
                     StatsNodeType::Column
                 },
                 column.id,
-                covered_mask(&conjuncts, &built.residual) | not_null_mask,
+                // Go `getMaskAndRanges` (`selectivity.go:877`) sets each bit
+                // from ACCESS membership: a reserved condition — the prefix
+                // `LIKE` kept as a pad-space filter — is in `AccessConds` AND
+                // in the filters, and its bit stays set, so the leftover
+                // str-match default never fires on top of the node's own
+                // range estimate.
+                // Bit set for every conjunct the detacher ACCEPTED, exactly
+                // Go's `exprs[i].Equal(accessConds[j])` loop.
+                conjuncts
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, conjunct)| {
+                        built.access.iter().any(|accepted| {
+                            std::ptr::eq(
+                                std::ptr::from_ref(*accepted),
+                                std::ptr::from_ref(**conjunct),
+                            )
+                        })
+                    })
+                    .fold(0_i64, |mask, (index, _)| mask | (1_i64 << index))
+                    | not_null_mask,
                 1,
             )
         });
@@ -2897,7 +2917,10 @@ mod tests {
                         name: name.to_owned(),
                         primary_key: false,
                     }),
-                    histogram: tidb_stats::Histogram { id, ..Default::default() },
+                    histogram: tidb_stats::Histogram {
+                        id,
+                        ..Default::default()
+                    },
                     physical_id: table.table_id,
                     ..Default::default()
                 },
@@ -2923,7 +2946,8 @@ mod tests {
         // not pseudoSelectivity's minimum per-predicate rate (two rows).
         assert!(
             (actual * 2000.0 - 1.0).abs() < 1e-12,
-            "rows={}", actual * 2000.0
+            "rows={}",
+            actual * 2000.0
         );
         assert_eq!(stats.columns.len(), 2);
     }

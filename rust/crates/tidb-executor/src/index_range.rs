@@ -1790,6 +1790,14 @@ pub(crate) struct IndexRanges<'a> {
     /// into `IndexFilters` and `TableFilters` (`splitIndexFilterConditions`)
     /// once it knows which columns the index stores.
     pub residual: Vec<&'a Expr>,
+    /// The conjuncts the checker ACCEPTED, Go's `AccessConds`
+    /// (`ranger/detacher.go:56`). A reserved condition — the prefix `LIKE`
+    /// that stays a filter for its pad-space trailing-space re-check — is in
+    /// BOTH lists, and `cardinality.getMaskAndRanges` (`selectivity.go:877`)
+    /// sets a statistics node's mask bit from ACCESS membership, so the node
+    /// still covers the condition and the leftover str-match default never
+    /// fires for it.
+    pub access: Vec<&'a Expr>,
 }
 
 /// Go `detachCNFCondAndBuildRangeForIndex`, reduced to the column walk:
@@ -1939,6 +1947,9 @@ fn build_cnf_ranges<'a>(
         ranges = union_ranges(ranges, true);
     }
     IndexRanges {
+        // `AccessConds` is only materialized by the column detach; the
+        // index paths' masks keep their existing residual-based rule.
+        access: Vec::new(),
         ranges,
         access_count,
         column_count,
@@ -2082,6 +2093,7 @@ fn build_dnf_ranges<'a>(
         } else {
             Vec::new()
         },
+        access: Vec::new(),
     })
 }
 
@@ -2263,6 +2275,9 @@ fn build_first_column_projection_ranges<'a>(
 ) -> IndexRanges<'a> {
     if index_columns.is_empty() {
         return IndexRanges {
+            // `AccessConds` is only materialized by the column detach; the
+            // index paths' masks keep their existing residual-based rule.
+            access: Vec::new(),
             ranges: Vec::new(),
             access_count: 0,
             column_count: 0,
@@ -2316,6 +2331,7 @@ fn build_first_column_projection_ranges<'a>(
         },
         eq_or_in_count: 0,
         residual,
+        access: Vec::new(),
     }
 }
 
@@ -2362,6 +2378,7 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
     let mut points = full_range();
     let mut access_count = 0;
     let mut residual = Vec::new();
+    let mut access = Vec::new();
     for condition in conditions {
         // Go `ExtractAccessConditionsForColumn`: a condition belongs to the
         // column exactly when the point builder can turn it into points.
@@ -2381,6 +2398,7 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
                 if column_points.reserve {
                     residual.push(*condition);
                 }
+                access.push(*condition);
                 access_count += 1;
             }
             None => residual.push(*condition),
@@ -2417,6 +2435,7 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
                         access_columns: Vec::new(),
                         eq_or_in_count: 0,
                         residual: conditions.to_vec(),
+                        access: Vec::new(),
                     },
                     false,
                 )
@@ -2432,6 +2451,7 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
                     access_columns: Vec::new(),
                     eq_or_in_count: 0,
                     residual: conditions.to_vec(),
+                    access: Vec::new(),
                 },
                 true,
             );
@@ -2463,6 +2483,7 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
             // caller is the only user of this entry point and never reads it.
             eq_or_in_count: 0,
             residual,
+            access,
         },
         false,
     )
@@ -2542,6 +2563,9 @@ fn build_row_in_ranges<'a>(
 
     if branches.is_empty() {
         return Some(IndexRanges {
+            // `AccessConds` is only materialized by the column detach; the
+            // index paths' masks keep their existing residual-based rule.
+            access: Vec::new(),
             ranges: Vec::new(),
             access_count: 1,
             column_count: left.len(),
@@ -2569,6 +2593,11 @@ fn build_row_in_ranges<'a>(
     } else {
         vec![condition]
     };
+    let access = if built.access.is_empty() {
+        Vec::new()
+    } else {
+        vec![condition]
+    };
     Some(IndexRanges {
         ranges: built.ranges,
         access_count: 1,
@@ -2576,6 +2605,7 @@ fn build_row_in_ranges<'a>(
         access_columns: built.access_columns,
         eq_or_in_count: built.eq_or_in_count,
         residual,
+        access,
     })
 }
 
@@ -2819,6 +2849,7 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
             access_columns,
             eq_or_in_count: detached.eq_or_in_count,
             residual,
+            access: Vec::new(),
         },
         detached.is_dnf_cond,
         i32::try_from(detached.min_access_conds_for_dnf_cond).unwrap_or(i32::MAX),
