@@ -11589,3 +11589,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (FK actions round-trip pin): ON DELETE CASCADE ON UPDATE SET
  NULL renders verbatim in SHOW CREATE's CONSTRAINT clause. Pinned in
  `crates/tidb-session/tests/fk_actions_show_create_source.rs`.
+- 2026-09-08 (multi-column CHECK pin): a two-column CHECK evaluates the
+ pair with three-valued NULL semantics. Pinned in
+ `crates/tidb-session/tests/multi_column_check_source.rs`.
