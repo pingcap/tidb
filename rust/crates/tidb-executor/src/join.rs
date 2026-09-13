@@ -2007,9 +2007,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         let (tx, results) = std::sync::mpsc::sync_channel(1);
                         let shared = Arc::clone(shared);
                         let task_outer = std::mem::take(&mut outer);
-                        crate::worker_pool::enqueue_public(Box::new(move || {
+                        // The drain waits on TiKV for the task's pages: an
+                        // inner-worker goroutine in Go, a lane thread here.
+                        crate::worker_pool::spawn_lane_detached("tidb-index-join", move || {
                             let _ = tx.send(run_index_task(&shared, task_outer, drain));
-                        }));
+                        });
                         PendingIndexLookupSource::Draining { source, results }
                     }
                     None => PendingIndexLookupSource::Prefetched(source),

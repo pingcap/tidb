@@ -1255,7 +1255,9 @@ fn spawn_partial_lane<C: Columns + Send + Sync + Clone + 'static>(
     tracker: Arc<Tracker>,
     #[cfg(test)] stats: Arc<PipelineStats>,
 ) -> std::sync::mpsc::Receiver<Result<Vec<PipelineMap>, ExecError>> {
-    crate::worker_pool::spawn(move || {
+    // Go's partial worker is a goroutine that blocks on its input channel
+    // for the query's lifetime; that is a lane thread here, not a pool task.
+    crate::worker_pool::spawn_lane("tidb-agg-partial", move || {
         #[cfg(test)]
         stats.record_partial_worker();
         let mut maps: Vec<PipelineMap> = (0..final_concurrency)

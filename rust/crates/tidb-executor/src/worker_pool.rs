@@ -33,13 +33,16 @@ fn shared() -> &'static Arc<Shared> {
     static POOL: OnceLock<Arc<Shared>> = OnceLock::new();
     POOL.get_or_init(|| {
         let shared = Arc::new(Shared::default());
-        // The hash-agg pipeline submits partial+final worker sets as tasks;
-        // sizing below a typical set starves the tail of the queue behind
-        // blocked lanes. Never fewer than 16.
+        // Go's GOMAXPROCS: one worker per core. Every task on this pool is
+        // compute that runs to completion; a lane that blocks for a query's
+        // lifetime (an aggregate partial lane, an index-join task draining
+        // TiKV, a lookup batch) is a goroutine in Go and gets its own thread
+        // here ([`spawn_lane`]), so a blocked lane never holds a core's
+        // worker and the pool never starves behind one.
         let workers = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
-            .max(16);
+            .max(2);
         for _ in 0..workers {
             let worker_shared = Arc::clone(&shared);
             std::thread::Builder::new()
@@ -105,6 +108,39 @@ where
     result_rx
         .recv()
         .unwrap_or_else(|_| panic!("exec pool worker dropped the task result"))
+}
+
+/// Runs a long-lived lane on a thread of its own and returns a receiver for
+/// its result: Go's goroutine for a worker that blocks on a channel or on
+/// TiKV for a query's lifetime. Such a lane must not occupy one of the
+/// pool's per-core workers, where it would starve the short compute tasks
+/// (and deadlock a core-sized pool when the tasks it waits for are queued
+/// behind it). A thread costs tens of microseconds, once per lane per query.
+pub fn spawn_lane<F, R>(name: &'static str, task: F) -> std::sync::mpsc::Receiver<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let (result_tx, result_rx) = std::sync::mpsc::sync_channel::<R>(1);
+    spawn_lane_detached(name, move || {
+        // A disconnected receiver means the caller dropped it before joining;
+        // the value has nowhere to go either way.
+        let _ = result_tx.send(task());
+    });
+    result_rx
+}
+
+/// [`spawn_lane`] for a lane that reports through its own channel.
+pub fn spawn_lane_detached<F>(name: &'static str, task: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    // Go's runtime aborts the process when it cannot create a thread
+    // (`newosproc`); a lane that cannot start has no other home either.
+    std::thread::Builder::new()
+        .name(name.to_owned())
+        .spawn(task)
+        .expect("spawn exec lane thread");
 }
 
 /// Submits `task` without blocking and returns a receiver for its result.

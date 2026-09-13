@@ -2481,11 +2481,12 @@ impl IndexRangeSourceExec {
                 Err(error) => Err(format!("{error:?}")),
             }
         };
-        // Reuse the executor's persistent pool instead of creating one native
-        // thread for every lookup window. Only Send table/request state enters
-        // the task; its thread-local transport and response are born and
-        // consumed there, and only the finished result crosses the channel.
-        let receiver = crate::worker_pool::spawn(worker);
+        // The lookup waits on TiKV for its window: a goroutine in Go, a lane
+        // thread here rather than one of the pool's per-core compute workers.
+        // Only Send table/request state enters the task; its thread-local
+        // transport and response are born and consumed there, and only the
+        // finished result crosses the channel.
+        let receiver = crate::worker_pool::spawn_lane("tidb-lookup", worker);
         Ok(LookupBatchJob {
             handle_count,
             receiver: Some(receiver),
@@ -4032,7 +4033,10 @@ impl PrefetchedDrain {
         let mut chunks = Vec::new();
         loop {
             let mut scratch = Chunk::new_with_capacity(&self.field_types, self.cap);
-            match self.cursor.append_clean_chunk(&mut scratch, self.cap, false) {
+            match self
+                .cursor
+                .append_clean_chunk(&mut scratch, self.cap, false)
+            {
                 Ok(Some(0)) => return (Ok(chunks), None),
                 Ok(Some(rows)) => {
                     let mut output = Chunk::new_with_capacity(&self.output_types, rows);
