@@ -88,10 +88,11 @@ Go tests. Audit findings against `mvcc.go` @ a85e0fd5df:
   `prewrite_pessimistic`/`pessimistic_rollback`/`check_txn_status`/
   `resolve_lock` bodies against `mvcc.go:435-935`, and the `cophandler`
   seed vs the closure_exec/analyze/mpp tail. The four mvcc bodies were
-  covered by the body-level audit below (2026-09-07), and the analyze
+  covered by the body-level audit below (2026-09-07), the analyze
   slice of the cophandler tail is closed as parity-by-architecture
-  (2026-09-13, next section) — the mpp course plus the closure_exec
-  expression/TopN tail remain the open course.
+  (2026-09-13, next section), and the mpp course itself is closed as an
+  implementation-architecture difference (2026-09-14, section below) —
+  with them, the cophandler tail carries NO open parity gap.
 
 ## cophandler analyze arm — CLOSED, parity-by-architecture (2026-09-13)
 
@@ -109,6 +110,37 @@ arm. Porting `analyze.go` behind the cop front door would duplicate
 existing, Go-pinned logic behind an unreachable surface (speculative
 behavior), so the arm stays a deliberate refusal whose message names the
 in-process owner. Reopen when ANALYZE routes through the coprocessor.
+
+## the mpp course — CLOSED, implementation-architecture difference (2026-09-14)
+
+Three facts reframe what the earlier rounds recorded as "the mpp course":
+
+1. Go's coprocessor WIRE dispatch has exactly three request types
+   (`HandleCopRequestWithMPPCtx`, cop_handler.go:100-110: ReqTypeDAG /
+   ReqTypeAnalyze / ReqTypeChecksum, then "unsupported request type %d")
+   — the same set this seed dispatches. `HandleMPPDAGReq` is reached only
+   when the caller supplies `mppCtx.TaskHandler`, i.e. from the MPP task
+   framework's own tests; nothing in this tier models that framework, so
+   it has no producer here.
+2. Go's ORDINARY DAG path serves every request through
+   `buildAndRunMPPExecutor` (cop_handler.go:190) over the
+   `closure_exec.go`/`mpp_exec.go`/`topn.go` closure tree. That is an
+   internal serving STRATEGY for the wire contract, not a second
+   contract. Porting it would replace this seed's working flat lowering
+   with Go's architecture while the observable behavior stays pinned by
+   the same corpus (161 unistore parity tests plus the session/executor
+   suites, which drive every planner-produced DAG shape through the
+   lowering end to end).
+3. The shapes this seed refuses by name ("this closure-executor shape",
+   "aggregation over a row cap") are shapes the Rust planner does not
+   emit — probed at session level (2026-09-13: count+limit, TopN, and
+   grouped-aggregate+limit all answer correctly through the flat
+   lowering).
+
+The course therefore opens only if (a) the planner starts emitting a DAG
+shape the lowering refuses — the corpus would surface it as a failing
+query, or (b) this tier grows an MPP task framework that needs
+`HandleMPPDAGReq`. Neither holds today.
 
 ## mvcc.go:418-935 body-level audit (2026-09-07, same session)
 
@@ -196,10 +228,13 @@ architecture-independent:
   and the scan/selection/limit/aggregation lowering answers the
   `closure_exec` shapes the seed claims.
 
-Still open for a full-budget session: the mpp course (`mpp.go` 780 +
-`mpp_exec.go` 1579 -- on Go's ordinary path now), `closure_exec.go`'s
-remaining expression/TopN executors (1,218), `analyze.go` (704), and the
-row-decoder warnings channel.
+RESOLVED (2026-09-14, see the mpp-course section below): `analyze.go` is
+a documented parity-by-architecture refusal; `mpp.go`/`mpp_exec.go`/
+`closure_exec.go` are Go's internal serving machinery for the same wire
+contract this seed implements with its own lowering — reachable only
+through shapes the planner does not produce, each guarded by a named
+refusal. The row-decoder warnings channel remains the one narrow slice,
+tied to the read-only second pipeline's wiring.
 
 ## TopN executor port (2026-09-07, same session)
 
