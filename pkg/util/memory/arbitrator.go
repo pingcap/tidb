@@ -2603,9 +2603,9 @@ func (m *MemArbitrator) tryUpdateTrackedMemStats(utimeMilli int64) bool {
 
 func (m *MemArbitrator) updateTrackedHeapStats() {
 	totalTrackedHeap := int64(0)
-	maxHeapUsed := int64(0)
 	idleDeadline := m.approxUnixTimeSec() - defContextCacheIdleTimeoutSec
 	if m.entryMap.contextCache.num.Load() != 0 {
+		maxHeapUsed := int64(0)
 		m.entryMap.contextCache.Range(func(_, value any) bool {
 			e := value.(*rootPoolEntry)
 			if t := e.ctx.idleUtimeSec.Load(); t != 0 && t <= idleDeadline && e.stateMu.TryLock() {
@@ -2777,9 +2777,8 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 		return
 	}
 
-	m.intoOOMRisk()
 	memToReclaim := m.heapController.memInuse.Load() - m.memRisk()
-	{ // warning
+	if m.intoOOMRisk() {
 		profile := m.recordDebugProfile()
 		profile.append(
 			zap.Int64("quota-to-reclaim", max(0, memToReclaim)),
@@ -2916,8 +2915,9 @@ type RuntimeMemStateV1 struct {
 	Magnif int64 `json:"magnif"`
 	// medium quota usage of root pools
 	PoolMediumCap int64 `json:"pool-medium-cap"`
-	// top N digest profiles
-	// TopNProfiles [3]Top3DigestData `json:"topn-profiles"`
+
+	// TODO: top-n profiles by digest
+	// topNProfiles [3][2]int64 `json:"top-n-profiles"`
 }
 
 func (m *MemArbitrator) buildRuntimeMemState() (memState RuntimeMemStateV1) {
