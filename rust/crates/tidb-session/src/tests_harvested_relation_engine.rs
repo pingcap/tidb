@@ -725,14 +725,14 @@ fn a_group_by_position_names_a_select_field_or_reports_which_one_it_cannot() {
         .run("INSERT INTO gg VALUES (1,10),(1,20),(2,30)")
         .unwrap();
 
-    assert_eq!(
-        rows(&mut session, "SELECT k, count(*) FROM gg GROUP BY 1"),
-        [["1", "2"], ["2", "1"]]
-    );
-    assert_eq!(
-        rows(&mut session, "SELECT k, v, count(*) FROM gg GROUP BY 1, 2"),
-        [["1", "10", "1"], ["1", "20", "1"], ["2", "30", "1"]]
-    );
+    // A GROUP BY without ORDER BY returns its groups in the aggregate's map
+    // order, which is unspecified (as Go's is); compare them sorted.
+    let mut got = rows(&mut session, "SELECT k, count(*) FROM gg GROUP BY 1");
+    got.sort();
+    assert_eq!(got, [["1", "2"], ["2", "1"]]);
+    let mut got = rows(&mut session, "SELECT k, v, count(*) FROM gg GROUP BY 1, 2");
+    got.sort();
+    assert_eq!(got, [["1", "10", "1"], ["1", "20", "1"], ["2", "30", "1"]]);
     for (sql, code, message) in [
         (
             "SELECT k, count(*) FROM gg GROUP BY 0",
