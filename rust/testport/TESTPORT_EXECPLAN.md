@@ -11609,3 +11609,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (LAST_INSERT_ID batch pin): after a multi-row insert
  LAST_INSERT_ID reports the FIRST generated id of the batch. Pinned in
  `crates/tidb-session/tests/last_insert_id_batch_source.rs`.
+- 2026-09-08 (EXPLAIN ANALYZE pin): ANALYZE executes the plan and reports
+ the 9-column actuals shape versus plain EXPLAIN's 5 columns. Pinned in
+ `crates/tidb-session/tests/explain_analyze_shape_source.rs`.
