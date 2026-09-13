@@ -1776,9 +1776,13 @@ impl Parser {
             _ => None,
         });
         match illegal {
-            Some(option) => {
-                Err(self.err_here(&format!("Incorrect usage of {option} and generated column")))
-            }
+            // Go `ddl_table_parser.go`: the DEFAULT/AUTO_INCREMENT/ON UPDATE
+            // conflict on a generated column is `[ddl:1221]` (ErrWrongUsage),
+            // not a 1064 positional error.
+            Some(option) => Err(self.err_coded(
+                1221,
+                &format!("Incorrect usage of {option} and generated column"),
+            )),
             None => Ok(()),
         }
     }

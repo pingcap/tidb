@@ -11599,3 +11599,10 @@ risks without claiming repository-wide parity.
  overrides ON UPDATE CURRENT_TIMESTAMP; an update omitting the column
  fires the stamp. Pinned in
  `crates/tidb-session/tests/on_update_explicit_wins_source.rs`.
+- 2026-09-08 (generated DEFAULT 1221 fix, REAL DIVERGENCE): Go's parser
+ refuses DEFAULT on a generated column with coded ErrWrongUsage 1221;
+ the port surfaced the generic 1064 syntax error. The refusal is now
+ err_coded(1221). Pins:
+ `crates/tidb-session/tests/generated_default_1221_source.rs` (all three
+ spellings; 1221 text present, 1064 absent). Verified against the live
+ Go parser.
