@@ -266,6 +266,9 @@
   门禁: codec 46+166 全绿; datatype 410/0; planner 908/0; distsql 253+28/0; fmt/clippy/diff-check/make lint PASS。
   chunk(35)/executor(122)为预存环境失败, stash A/B 证明与本批无关。
 - 本会话累计 32 个提交。下批: parser #11 charset-aware scanner。
+- 文档收账批 `26946d98e9c6`: expr-builtin inventory 的 BINARY(n)/DECIMAL(p,s) 语句重写残余与 CHAR(n) write-time ProduceStrWithSpecifiedTp 指针均核实为已吸收(cast_target + datum_convert pad_zero/truncate + write_cast truncate_char_trailing_spaces, Go fixture 钉住); privilege audit 过期 Still-open 行指向已关闭的下层 pass。
+- parser-lexer 审计 rank-1 缺口(INTERSECT 优先级消费者两侧未查)关闭并推送 `68f59286d0b3`: Go buildSetOpr(logical_plan_builder.go:2123) 逐行对照 Rust build_set_opr_body+breaks_intersect_run 一致; 新增执行级钉子 tests_set_opr_precedence(2 断言, 分组错误会改变答案而非仅形状), session 套件失败集与预存环境基线一致(两次运行仅 1 flaky 摆动, 零 set-opr 失败), fmt/clippy/make lint/diff-check PASS。
+- 事故记录: 本仓库 refs/stash 跨 worktree 共享——本会话 git stash push 因 untracked pathspec 整体失败(静默), 随后的 git stash pop 弹出了其他 detached 会话的 WIP 并应用进本 worktree(冲突保留原条目, 零丢失)。已用 checkout -f 恢复本树; 教训=多会话期间禁用 git stash, 换用 diff+apply。
 - hint-parity-audit 残余(READ_FROM_STORAGE 去重按合并文本)关闭并推送 `fec2a6ae1e56`: Go parseStorageHint 每引擎组产出一个 TableOptimizerHint，RemoveDuplicatedHints/RestoreOptimizerHints 因此按组为键；Rust 单 hint 多组建模不变，restore_keys_per_group 展开每组键——重复组从 occurrence 剪除、全重复 occurrence 丢弃，与 Go 逐 hint 丢弃语义等价。2 组回归 pre-fix 失败已证；tidb-hint 7/0、fmt/clippy/make lint PASS。
 - parser #11(client-charset scanner)关闭为 parity-by-API 并推送 `2d97d650ba8`:
   核实链条完整——GBK/big5/sjis 危险字节对(lead≥0x81 + trail 0x5C/0x27/0x60)永非法 UTF-8; mysql_connection.rs 查询解码门先行转码/拒绝非 UTF-8; Lexer 全链 &str 无法表达该输入。加 charset 字段 = 无可达行为的规格化声明(违反 No speculative behavior), 故记录关闭而非实现。
