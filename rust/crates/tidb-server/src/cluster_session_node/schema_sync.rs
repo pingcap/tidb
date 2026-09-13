@@ -233,6 +233,15 @@ impl tidb_session::MdlRelatedTableSink for ConnectionMdlSink {
     }
 }
 
+/// Go `mdlCheckLookDuration` (`pkg/infoschema/issyncer/syncer.go`): the
+/// tick of `MDLCheckLoop`, which acknowledges every job whose tables no
+/// session still uses at an older version. The owner's `WaitVersionSynced`
+/// waits on that acknowledgement from every registered node before the
+/// job's next step, so the tick bounds how long every DDL in the cluster
+/// waits on this node; a tick of `schema_lease / 2` (22.5 s at the default
+/// lease) made each step of every other node's DDL wait up to that long.
+pub const MDL_CHECK_LOOK_DURATION: Duration = Duration::from_millis(50);
+
 /// The background acknowledger; dropping it stops the thread.
 pub struct SchemaSyncAck {
     stop: Arc<AtomicBool>,
@@ -245,11 +254,11 @@ pub struct SchemaSyncAck {
 impl SchemaSyncAck {
     /// Starts the ack loop.
     ///
-    /// `tick` is the reload cadence (the caller passes the catalog
-    /// reloader's own `schema_lease / 2`); the loop only touches TiKV when
-    /// the loaded version moved or an ack is still owed. Session, watch,
-    /// monotonic-write, and owner-wait behavior comes from the shared
-    /// `tidb-schemaver` package implementation.
+    /// `tick` is Go's `MDLCheckLoop` cadence ([`MDL_CHECK_LOOK_DURATION`];
+    /// a caller may only slow it down); each tick costs an atomic load, and
+    /// the loop only touches TiKV when the loaded version moved or an ack is
+    /// still owed. Session, watch, monotonic-write, and owner-wait behavior
+    /// comes from the shared `tidb-schemaver` package implementation.
     pub fn spawn<C, L, P>(
         catalog: Arc<SharedCatalog>,
         opener: RealOptimisticTransactionOpener<C, L, P>,
@@ -292,7 +301,7 @@ impl SchemaSyncAck {
         let syncer: Arc<dyn SchemaVersionSyncer> = syncer;
         let stop = Arc::new(AtomicBool::new(false));
         let stop_seen = Arc::clone(&stop);
-        let tick = tick.max(Duration::from_millis(100));
+        let tick = tick.max(MDL_CHECK_LOOK_DURATION);
         let ack_syncer = Arc::clone(&syncer);
         let ack_context = syncer_context.clone();
         let thread = match std::thread::Builder::new()

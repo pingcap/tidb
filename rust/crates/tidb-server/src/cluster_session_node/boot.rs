@@ -225,7 +225,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 etcd,
                 server_info.local_server_info().static_info.id,
                 Arc::clone(&server_info),
-                config.schema_lease / 2,
+                super::schema_sync::MDL_CHECK_LOOK_DURATION,
                 CONTROL_PLANE_TIMEOUT,
             )
             .map_err(|error| {
