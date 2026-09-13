@@ -922,11 +922,65 @@ pub(crate) fn pseudo_range_filter_selectivity(
         }
     }
     if remaining != 0 {
-        // Go applies the minimum default ONCE to all still-uncovered CNF
-        // items, rather than multiplying 0.8 once per item.
-        selectivity *= selectivity_factor;
+        // Go applies the minimum over the still-uncovered conditions' kinds
+        // ONCE (`selectivity.go:421-433`): a (non-negated) LIKE/REGEXP
+        // charges `GetStrMatchDefaultSelectivity()` (0.1), its NEGATION
+        // charges `GetNegateStrMatchDefaultSelectivity()` (1 - 0.1 = 0.9),
+        // and any other shape charges the selectivity factor (0.8). The
+        // negated arm is what `c not like '%a%'` takes on the unanalyzed
+        // fixture: Go prints 9000.00, not 8000.00.
+        let mut min_selectivity = 1.0_f64;
+        let mut has_other = false;
+        for (offset, condition) in conditions.iter().enumerate() {
+            if remaining & (1_u64 << offset) == 0 {
+                continue;
+            }
+            match uncovered_string_match_kind(condition) {
+                UncoveredStringMatch::Plain => {
+                    min_selectivity = min_selectivity.min(DEFAULT_STRING_MATCH_SELECTIVITY);
+                }
+                UncoveredStringMatch::Negated => {
+                    min_selectivity = min_selectivity.min(1.0 - DEFAULT_STRING_MATCH_SELECTIVITY);
+                }
+                UncoveredStringMatch::None => has_other = true,
+            }
+        }
+        if has_other {
+            min_selectivity = min_selectivity.min(selectivity_factor);
+        }
+        selectivity *= min_selectivity;
     }
     Some(selectivity.max(1.0 / rows.max(1.0)))
+}
+
+/// Which leftover arm one uncovered condition charges. `Go Selectivity`'s
+/// tail names two string-match shapes beside the generic factor:
+/// `like`/`regexp` (0.1) and their negations (0.9).
+enum UncoveredStringMatch {
+    Plain,
+    Negated,
+    None,
+}
+
+fn uncovered_string_match_kind(condition: &Expression) -> UncoveredStringMatch {
+    let name = |function: &tidb_expr::expression::ScalarFunction| {
+        function.func_name.lowercase().to_string()
+    };
+    if let Expression::ScalarFunction(function) = condition {
+        let lowered = name(function);
+        if lowered == "like" || lowered == "regexp" {
+            return UncoveredStringMatch::Plain;
+        }
+        if lowered == "not" && function.args.len() == 1 {
+            if let Expression::ScalarFunction(inner) = &function.args[0] {
+                let inner_lowered = name(inner);
+                if inner_lowered == "like" || inner_lowered == "regexp" {
+                    return UncoveredStringMatch::Negated;
+                }
+            }
+        }
+    }
+    UncoveredStringMatch::None
 }
 
 /// Replaces `node`'s OWN schema, when it has one.
