@@ -115,13 +115,15 @@ fn handle_order_keeps_the_table_walk_over_a_covering_index() {
 /// `select max(_tidb_rowid)` / `select min(_tidb_rowid)`: Go's
 /// `MaxMinEliminator.eliminateSingleMaxMin` rewrites the ungrouped aggregate
 /// to `Agg -> Limit 1 -> Sort col [desc] -> DataSource`, and `findBestTask`
-/// under that one-row ordered property picks the table walk -- the recorded
-/// plan is `StreamAgg` over a one-row `Limit` over `TableFullScan` (desc for
-/// MAX). This tier prints its documented `TopN` spelling of the same
-/// Limit-over-Sort pair (`tidb_executor::explain`'s module doc); the access
-/// decision underneath -- the table path, not a covering `IndexFullScan` --
-/// is what `max_min_eliminated_access_select` re-creates for the chooser and
-/// what this test pins, with the answers over live rows.
+/// under that one-row ordered property picks the table walk. Refreshed
+/// against the LIVE oracle (SELECT tidb_version() => fdfadb96b2...): Go
+/// prints `StreamAgg -> Limit(root, offset:0, count:1) -> TableReader ->
+/// Limit(cop) -> TableFullScan keep order:true[, desc], stats:pseudo` -- the
+/// Sort collapses into the ordered walk's `desc` marker, and this tier now
+/// prints the SAME shape (ids included, from the shared allocator walk).
+/// The access decision underneath -- the table path, not a covering
+/// `IndexFullScan` -- is what this test pins, with the answers over live
+/// rows.
 #[test]
 fn max_min_over_the_handle_is_eliminated_to_a_one_row_ordered_walk() {
     let mut session = Session::new();
@@ -131,7 +133,10 @@ fn max_min_over_the_handle_is_eliminated_to_a_one_row_ordered_walk() {
              KEY `IDX_b` (`b`), KEY `IDX_ab` (`a`, `b`))",
         )
         .unwrap();
-    for (aggregate, direction) in [("max", "Column#0:desc"), ("min", "Column#0")] {
+    for (aggregate, order_suffix) in [
+        ("max", "keep order:true, desc, stats:pseudo"),
+        ("min", "keep order:true, stats:pseudo"),
+    ] {
         let plan = row_text(session.run(&format!(
             "explain select {aggregate}(_tidb_rowid) from access_path_selection"
         )));
@@ -141,7 +146,7 @@ fn max_min_over_the_handle_is_eliminated_to_a_one_row_ordered_walk() {
             plan[0][0]
         );
         assert!(
-            plan[1][0].contains("TopN") && plan[1][4] == format!("{direction}, offset:0, count:1"),
+            plan[1][0].contains("Limit") && plan[1][4] == "offset:0, count:1",
             "{aggregate} eliminates to a one-row ordered read, got {} / {}",
             plan[1][0],
             plan[1][4]
@@ -153,6 +158,10 @@ fn max_min_over_the_handle_is_eliminated_to_a_one_row_ordered_walk() {
             scan[0]
         );
         assert_eq!(scan[3], "table:access_path_selection");
+        assert_eq!(
+            scan[4], order_suffix,
+            "{aggregate} orders the walk {order_suffix}"
+        );
     }
     session
         .run("insert into access_path_selection (a,b) values (1,2),(3,4),(5,6)")

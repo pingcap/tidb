@@ -1155,12 +1155,22 @@ fn empty_range_dual_task(ds: &crate::logical::DataSource, ctx: &DispatchContext<
 ///   the TiFlash arms narrow with the absent tiers.
 /// Go `matchProperty`'s INT-HANDLE arm (`find_best_task.go:1082`): a table
 /// path over an integer handle delivers the required order exactly when the
-/// property is ONE sort item on the pk-is-handle column (asc or desc; Go's
+/// property is ONE sort item on the handle column (asc or desc; Go's
 /// TiFlash-desc refusal narrows with the tier). Cluster tables, vector
 /// properties, and the index-column prefix walk (`:1095`) are later slices,
 /// named here.
+///
+/// The handle column is Go `ds.GetPKIsHandleCol()`: through
+/// `getPKIsHandleColFromSchema` (`logical_datasource.go:578`) it is the pk
+/// column when `PKIsHandle`, ELSE the schema's extra-handle column — so a
+/// no-PK table's implicit `_tidb_rowid` walk satisfies
+/// `ORDER BY _tidb_rowid` for free. Verified live (Go master fdfadb96b2):
+/// `where a > 10 order by _tidb_rowid` on a no-PK table reads
+/// `TableFullScan ... keep order:true`. [`DataSource::handle_is_int`] only
+/// stays true while that handle column survives pruning, so the liveness
+/// half of Go's schema scan is this port's flag reset.
 fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProperty) -> bool {
-    if ds.pk_is_handle && ds.handle_is_int {
+    if ds.handle_is_int {
         let Some(pk_col) = ds.handle_cols.first() else {
             return false;
         };
