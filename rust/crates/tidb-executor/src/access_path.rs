@@ -4856,6 +4856,7 @@ impl IndexJoinLookupExec {
                 None,
                 false,
                 false,
+                true,
                 &self.decode_context,
                 &self.statement,
             )
@@ -5063,6 +5064,7 @@ impl IndexJoinLookupExec {
                 None,
                 false,
                 false,
+                true,
                 &self.decode_context,
                 &self.statement,
             )

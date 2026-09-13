@@ -460,6 +460,11 @@ impl KvTable {
     /// without a client-side handle merge. Its clustered primary metadata is
     /// synthesized when the catalog omits the physical index entry, matching
     /// the table's record-key layout and Go's always-present `IndexInfo`.
+    ///
+    /// `retain_identity` asks for the record handle beside `keep` even when
+    /// the projection omits it: writers, `_tidb_rowid` readers and a dirty
+    /// table's staged merge need it. A clean reader passes `false` and gets
+    /// Go's TableReader wire schema, exactly the pruned columns.
     #[allow(clippy::too_many_arguments)]
     pub fn pushdown_row_cursor_with_context(
         &mut self,
@@ -472,6 +477,7 @@ impl KvTable {
         range_hints: Option<&[usize]>,
         descending: bool,
         keep_order: bool,
+        retain_identity: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
@@ -530,69 +536,77 @@ impl KvTable {
                 }
             })
             .collect();
-        // Every merged row retains its record identity independently of the
+        // A merged row retains its record identity independently of the
         // visible projection. Integer and composite handles use the same
-        // staged replacement/tombstone merge below.
-        let common_identity = common_primary.as_ref().map(|primary| {
-            let parts = primary
-                .column_offsets
-                .iter()
-                .enumerate()
-                .map(|(part, offset)| {
-                    let column = &self.columns[*offset];
-                    let position = columns
-                        .iter()
-                        .position(|kept| kept.id == column.id)
-                        .unwrap_or_else(|| {
-                            columns.push(PushdownScanColumn {
-                                id: column.id,
-                                field_type: column.field_type.clone(),
-                                is_handle: false,
-                                origin_default: column.origin_default.clone(),
+        // staged replacement/tombstone merge below. A read with no handle
+        // consumer requests exactly `keep`, as Go's TableReader does: its
+        // TableScan columns are the pruned schema, and the UnionScan that
+        // needs a handle is planned only over a dirty table. An ordered
+        // partitioned integer read still merges its per-partition streams by
+        // handle, so it keeps the column whatever the caller asked.
+        let retain_identity = retain_identity || (self.partition.is_some() && keep_order);
+        let common_identity = common_primary
+            .as_ref()
+            .filter(|_| retain_identity)
+            .map(|primary| {
+                let parts = primary
+                    .column_offsets
+                    .iter()
+                    .enumerate()
+                    .map(|(part, offset)| {
+                        let column = &self.columns[*offset];
+                        let position = columns
+                            .iter()
+                            .position(|kept| kept.id == column.id)
+                            .unwrap_or_else(|| {
+                                columns.push(PushdownScanColumn {
+                                    id: column.id,
+                                    field_type: column.field_type.clone(),
+                                    is_handle: false,
+                                    origin_default: column.origin_default.clone(),
+                                });
+                                columns.len() - 1
                             });
-                            columns.len() - 1
-                        });
-                    (
-                        position,
-                        primary.prefix_length(part),
-                        column.field_type.clone(),
-                    )
-                })
-                .collect();
-            RemoteCommonHandle {
-                parts,
-                zone: context.zone().clone(),
-                use_new_collation: self.use_new_collation,
-            }
-        });
+                        (
+                            position,
+                            primary.prefix_length(part),
+                            column.field_type.clone(),
+                        )
+                    })
+                    .collect();
+                RemoteCommonHandle {
+                    parts,
+                    zone: context.zone().clone(),
+                    use_new_collation: self.use_new_collation,
+                }
+            });
         let handle_index = if common_handle {
             None
         } else {
-            Some(
-                match self
-                    .pk_handle_offset
-                    .and_then(|offset| keep.iter().position(|kept| *kept == offset))
-                {
-                    Some(index) => index,
-                    None => {
-                        columns.push(match self.pk_handle_offset {
-                            Some(offset) => PushdownScanColumn {
-                                id: self.columns[offset].id,
-                                field_type: self.columns[offset].field_type.clone(),
-                                is_handle: true,
-                                origin_default: None,
-                            },
-                            None => PushdownScanColumn {
-                                id: EXTRA_HANDLE_COLUMN_ID,
-                                field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                                is_handle: true,
-                                origin_default: None,
-                            },
-                        });
-                        columns.len() - 1
-                    }
-                },
-            )
+            match self
+                .pk_handle_offset
+                .and_then(|offset| keep.iter().position(|kept| *kept == offset))
+            {
+                Some(index) => Some(index),
+                None if !retain_identity => None,
+                None => {
+                    columns.push(match self.pk_handle_offset {
+                        Some(offset) => PushdownScanColumn {
+                            id: self.columns[offset].id,
+                            field_type: self.columns[offset].field_type.clone(),
+                            is_handle: true,
+                            origin_default: None,
+                        },
+                        None => PushdownScanColumn {
+                            id: EXTRA_HANDLE_COLUMN_ID,
+                            field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                            is_handle: true,
+                            origin_default: None,
+                        },
+                    });
+                    Some(columns.len() - 1)
+                }
+            }
         };
         let primary_column_ids: Vec<i64> = common_primary
             .as_ref()
@@ -704,12 +718,12 @@ impl KvTable {
             // logical table and could shadow the wrong partition.  Refuse the
             // whole partitioned remote read in that case; the byte-level
             // cursor has the exact UnionScan semantics and is safe.
-            if output_offsets.is_some() && !scan.staged.is_empty() {
-                // A projected remote row may no longer contain the integer
-                // handle needed by UnionScan's staged-row merge. The caller
-                // normally refuses projection as soon as the table is dirty;
-                // retain this storage-boundary guard for a concurrent staged
-                // write or a backend that reports staged content late.
+            if (output_offsets.is_some() || !retain_identity) && !scan.staged.is_empty() {
+                // A projected or identity-free remote row may no longer
+                // contain the handle needed by UnionScan's staged-row merge.
+                // The caller normally refuses both as soon as the table is
+                // dirty; retain this storage-boundary guard for a concurrent
+                // staged write or a backend that reports staged content late.
                 scan.stream.close();
                 for (_, opened_parts) in partition_scans.drain(..) {
                     for mut opened in opened_parts {
@@ -856,6 +870,7 @@ impl KvTable {
             None,
             false,
             false,
+            true,
             &RowDecodeContext::legacy_default(zone),
             statement,
         )
@@ -1019,6 +1034,7 @@ impl KvTable {
             Some(&range_hints),
             false,
             false,
+            true,
             &context,
             statement,
         )?
@@ -2004,6 +2020,7 @@ impl KvTable {
             None,
             false,
             false,
+            true,
             context,
             &PushdownStatementContext::from_stmt(context.expression()),
         )? {
@@ -4445,6 +4462,9 @@ impl Executor for TableScanExec {
                 None,
                 self.descending,
                 self.keep_order,
+                // Go plans UnionScan (which needs the handle) only over a dirty
+                // table; `_tidb_rowid` in the schema is the other handle reader.
+                self.table.has_dirty_content() || self.extra_handle_slot.is_some(),
                 &self.decode_context,
                 &self.statement,
             )
@@ -5240,6 +5260,129 @@ mod remote_cursor_tests {
         }
     }
 
+    /// Go's TableReader requests the pruned schema and nothing else: the
+    /// handle rides along only for a UnionScan (dirty table), a writer or an
+    /// explicit `_tidb_rowid`. The wire schema then matches the cursor width,
+    /// so every clean response batch is handed over without a copy.
+    #[test]
+    fn a_clean_read_requests_only_the_kept_columns() {
+        for common_handle in [false, true] {
+            let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut table = KvTable::with_storage(
+                92,
+                vec![bigint_column(1, "id"), bigint_column(2, "v")],
+                Box::new(PartitionRequestCapture {
+                    captured: std::sync::Arc::clone(&captured),
+                }),
+            );
+            if common_handle {
+                table.set_common_handle_offsets(vec![0]);
+            } else {
+                table.set_pk_handle_offset(0);
+            }
+            let mut open = |retain_identity: bool| {
+                let cursor = table
+                    .pushdown_row_cursor_with_context(
+                        &[1],
+                        &[],
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        false,
+                        false,
+                        retain_identity,
+                        &RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
+                        &PushdownStatementContext::default(),
+                    )
+                    .expect("remote scan construction succeeds")
+                    .expect("the capture backend serves the request");
+                let request = captured
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .pop()
+                    .expect("one request was sent");
+                (
+                    request
+                        .columns
+                        .iter()
+                        .map(|column| column.id)
+                        .collect::<Vec<_>>(),
+                    request.handle_index,
+                    cursor.field_types().len(),
+                )
+            };
+            assert_eq!(
+                open(false),
+                (vec![2], None, 1),
+                "common_handle={common_handle}: a clean read carries no identity column"
+            );
+            assert_eq!(
+                open(true),
+                (vec![2, 1], (!common_handle).then_some(1), 2),
+                "common_handle={common_handle}: a handle consumer still gets the identity"
+            );
+        }
+    }
+
+    /// The table reader keeps the handle only when Go would plan a UnionScan
+    /// over it: the open transaction has written to the table.
+    #[test]
+    fn the_table_reader_requests_the_handle_only_for_a_dirty_table() {
+        use crate::table_access::TableAccess;
+        for dirty in [false, true] {
+            let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut table = KvTable::with_storage(
+                93,
+                vec![bigint_column(1, "id"), bigint_column(2, "v")],
+                Box::new(PartitionRequestCapture {
+                    captured: std::sync::Arc::clone(&captured),
+                }),
+            );
+            table.set_common_handle_offsets(vec![0]);
+            if dirty {
+                table
+                    .dirty_content
+                    .0
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            let schema = tidb_expr::schema::Schema::new(
+                (1..=2)
+                    .map(|id| {
+                        tidb_expr::column::Column::new(
+                            id,
+                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        )
+                    })
+                    .collect(),
+            );
+            let mut scan = TableScanExec::new(
+                ExecutorMeta::new(schema, 0, 4, 4),
+                table,
+                SessionTimeZone::utc(),
+                PushdownStatementContext::default(),
+            );
+            assert!(scan.accept_column_prune(&[1]));
+            scan.open().unwrap();
+            let requests = captured
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .clone();
+            assert_eq!(requests.len(), 1, "dirty={dirty}: one request was sent");
+            assert_eq!(
+                requests[0]
+                    .columns
+                    .iter()
+                    .map(|column| column.id)
+                    .collect::<Vec<_>>(),
+                if dirty { vec![2, 1] } else { vec![2] },
+                "dirty={dirty}: the handle is requested only for the staged merge"
+            );
+            scan.close().unwrap();
+        }
+    }
+
     #[test]
     fn partitioned_remote_scan_opens_one_request_per_physical_table() {
         let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -5288,6 +5431,7 @@ mod remote_cursor_tests {
                 None,
                 false,
                 false,
+                true,
                 &RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
                 &PushdownStatementContext::default(),
             )
