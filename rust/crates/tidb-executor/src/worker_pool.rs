@@ -247,6 +247,48 @@ mod tests {
         assert_eq!(submit(move || value), 42);
     }
 
+    /// The pool wakes a worker only when one is parked, so a lost wakeup
+    /// would strand a task forever. Enqueue from several threads, both while
+    /// the pool is idle and while it is saturated, and require every task to
+    /// run.
+    #[test]
+    fn every_task_runs_whether_the_pool_is_idle_or_busy() {
+        const PRODUCERS: usize = 4;
+        const PER_PRODUCER: usize = 64;
+        let (tx, rx) = std::sync::mpsc::channel::<usize>();
+        // A first wave while the pool is idle (every worker parked).
+        for index in 0..PER_PRODUCER {
+            let tx = tx.clone();
+            enqueue(Box::new(move || {
+                let _ = tx.send(index);
+            }));
+        }
+        // Then waves from several threads at once, on a pool that is still
+        // draining the first.
+        let threads: Vec<_> = (0..PRODUCERS)
+            .map(|producer| {
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    for index in 0..PER_PRODUCER {
+                        let tx = tx.clone();
+                        enqueue(Box::new(move || {
+                            let _ = tx.send(producer * PER_PRODUCER + index);
+                        }));
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().expect("producer");
+        }
+        drop(tx);
+        let mut seen = 0;
+        while rx.recv_timeout(std::time::Duration::from_secs(30)).is_ok() {
+            seen += 1;
+        }
+        assert_eq!(seen, PER_PRODUCER * (PRODUCERS + 1), "every task ran");
+    }
+
     #[test]
     fn map_preserves_submission_order() {
         let inputs: Vec<usize> = (0..32).collect();
