@@ -1661,19 +1661,25 @@ impl MyDecimal {
     pub fn to_i128_scaled(&self) -> Option<(i128, u32)> {
         let integer_words = digits_to_words(i32::from(self.digits_int)) as usize;
         let fraction_words = digits_to_words(i32::from(self.digits_frac)) as usize;
-        let mut magnitude = 0_i128;
-        for word in &self.word_buf[..integer_words + fraction_words] {
-            magnitude = magnitude
-                .checked_mul(i128::from(WORD_BASE))?
-                .checked_add(i128::from(*word))?;
-        }
         // The last fractional word is right-padded with zeroes to a complete
-        // base-1e9 word. Remove only that storage padding; the remaining
-        // coefficient is exactly the value at `digits_frac` scale.
+        // base-1e9 word. Remove only that storage padding, off that word
+        // with a 32-bit division (see `i128_scaled_from_raw_bytes`); the
+        // remaining coefficient is exactly the value at `digits_frac` scale.
         let fraction_padding =
             fraction_words * DIGITS_PER_WORD as usize - usize::try_from(self.digits_frac).ok()?;
-        if fraction_padding > 0 {
-            magnitude /= i128::from(POWERS10[fraction_padding]);
+        let used_words = integer_words + fraction_words;
+        let mut magnitude = 0_i128;
+        for (index, word) in self.word_buf[..used_words].iter().enumerate() {
+            if fraction_padding > 0 && index + 1 == used_words {
+                let kept = POWERS10[DIGITS_PER_WORD as usize - fraction_padding];
+                magnitude = magnitude
+                    .checked_mul(i128::from(kept))?
+                    .checked_add(i128::from(*word / POWERS10[fraction_padding]))?;
+            } else {
+                magnitude = magnitude
+                    .checked_mul(i128::from(WORD_BASE))?
+                    .checked_add(i128::from(*word))?;
+            }
         }
         let signed = if self.negative {
             magnitude.checked_neg()?
