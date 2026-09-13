@@ -11583,3 +11583,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (NULL FK pin): a NULL FK column is exempt from the referential
  check while a concrete unmatched value refuses. Pinned in
  `crates/tidb-session/tests/null_fk_exempt_source.rs`.
+- 2026-09-08 (ON UPDATE SET NULL pin): renaming the parent key NULLs the
+ referencing children. Pinned in
+ `crates/tidb-session/tests/fk_on_update_set_null_source.rs`.
