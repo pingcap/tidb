@@ -268,19 +268,25 @@ fn an_ordered_index_dedup_streams_on_both_sides_of_the_reader() {
             .map(|row| format!("{}|{}|{}", row[0], row[2], row[4]))
             .collect::<Vec<_>>()
     };
-    let streamed = vec![
-        "StreamAgg_4|root|group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a".to_owned(),
-        "└─IndexReader_3|root|index:StreamAgg".to_owned(),
-        "  └─StreamAgg_2|cop[tikv]|group by:test.t2.a, ".to_owned(),
-        "    └─IndexFullScan_1|cop[tikv]|keep order:true, stats:pseudo".to_owned(),
-    ];
+    // Go's own sequential session (unistore, port 14833) allocates the same
+    // ids for the two back-to-back plans: 18/19/7/17, then 19/20/8/18.
     assert_eq!(
         plan(&mut session, "EXPLAIN SELECT DISTINCT a FROM t2"),
-        streamed
+        vec![
+            "StreamAgg_18|root|group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+            "└─IndexReader_19|root|index:StreamAgg_7",
+            "  └─StreamAgg_7|cop[tikv]|group by:test.t2.a, ",
+            "    └─IndexFullScan_17|cop[tikv]|keep order:true, stats:pseudo",
+        ],
     );
     assert_eq!(
         plan(&mut session, "EXPLAIN SELECT a FROM t2 GROUP BY a"),
-        streamed
+        vec![
+            "StreamAgg_19|root|group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+            "└─IndexReader_20|root|index:StreamAgg_8",
+            "  └─StreamAgg_8|cop[tikv]|group by:test.t2.a, ",
+            "    └─IndexFullScan_18|cop[tikv]|keep order:true, stats:pseudo",
+        ],
     );
 
     // The rows the streaming dedup answers, which is the whole point of the
@@ -316,7 +322,21 @@ fn stream_agg_hint_enforces_group_key_order() {
             .into_iter()
             .map(|row| row[0].clone())
             .collect::<Vec<_>>(),
-        ["StreamAgg_3", "└─Sort_2", "  └─TableFullScan_1"]
+        // Go master (unistore, port 14833) prints the same five operators --
+        // the root Projection carrying the reader's columns is NOT stripped:
+        //   Projection_4 root test.t.g, Column#5
+        //   └─StreamAgg_10 root group by:test.t.g, funcs:count(test.t.v)->Column#5,
+        //     funcs:firstrow(test.t.g)->test.t.g
+        //   └─Sort_16 root test.t.g
+        //   └─TableReader_15 root data:TableFullScan_14
+        //   └─TableFullScan_14 cop[tikv] table:t keep order:false, stats:pseudo
+        [
+            "Projection_4",
+            "└─StreamAgg_10",
+            "  └─Sort_16",
+            "    └─TableReader_15",
+            "      └─TableFullScan_14",
+        ]
     );
 
     // Go discards BOTH aggregate preferences when they conflict, with 1815,

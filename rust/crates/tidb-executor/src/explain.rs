@@ -297,41 +297,44 @@ fn aggregate_info(
     group_by: &[tidb_expr::expression::Expression],
     schema: Option<&tidb_expr::schema::Schema>,
 ) -> String {
-    let mut parts = Vec::new();
+    // Go `BasePhysicalAgg.explainInfo` (`base_physical_agg.go:888-916`)
+    // writes the two sections into ONE builder: the group-by branch itself
+    // ends with ", ", and each funcs entry is followed by ", " except the
+    // last. A cop-level dedup whose `RemoveUnnecessaryFirstRow` removed its
+    // only funcs therefore prints `group by:test.t2.a, ` WITH the trailing
+    // separator -- joining separate parts here would trim it.
+    let mut text = String::new();
     if !group_by.is_empty() {
-        // Go `BasePhysicalAgg.explainInfo` renders the GROUP BY items with
+        // The GROUP BY items render with
         // `expression.SortedExplainExpressionList`, which SORTS the rendered
         // strings; the aggregate list below keeps its own order.
-        parts.push(format!("group by:{}", sorted_expressions_text(group_by)));
+        text.push_str("group by:");
+        text.push_str(&sorted_expressions_text(group_by));
+        text.push_str(", ");
     }
-    if !functions.is_empty() {
-        let functions = functions
-            .iter()
-            .enumerate()
-            .map(|(index, function)| {
-                let distinct = if function.has_distinct {
-                    "distinct "
-                } else {
-                    ""
-                };
-                let output = schema
-                    .and_then(|schema| schema.columns.get(index))
-                    .map(|column| {
-                        expression_text(&tidb_expr::expression::Expression::Column(column.clone()))
-                    })
-                    .unwrap_or_else(|| format!("Column#{index}"));
-                format!(
-                    "funcs:{}({}{})->{output}",
-                    function.base.name,
-                    distinct,
-                    expressions_text(&function.base.args)
-                )
+    for (index, function) in functions.iter().enumerate() {
+        if index > 0 {
+            text.push_str(", ");
+        }
+        let distinct = if function.has_distinct {
+            "distinct "
+        } else {
+            ""
+        };
+        let output = schema
+            .and_then(|schema| schema.columns.get(index))
+            .map(|column| {
+                expression_text(&tidb_expr::expression::Expression::Column(column.clone()))
             })
-            .collect::<Vec<_>>()
-            .join(", ");
-        parts.push(functions);
+            .unwrap_or_else(|| format!("Column#{index}"));
+        text.push_str(&format!(
+            "funcs:{}({}{})->{output}",
+            function.base.name,
+            distinct,
+            expressions_text(&function.base.args)
+        ));
     }
-    parts.join(", ")
+    text
 }
 
 /// Go `PhysicalWindow.ExplainInfo` (`physical_window.go:167`) and
