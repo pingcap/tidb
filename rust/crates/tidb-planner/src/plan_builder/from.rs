@@ -1475,7 +1475,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// of them is transcreated, and [`LogicalMemTable`] models the presence of
     /// one as [`LogicalMemTable::has_extractor`]; the SELECT spine reads
     /// nothing else off it.
-    pub fn build_mem_table(&mut self, db_name: &str, table: &SourceTable) -> LogicalPlan {
+    pub fn build_mem_table(
+        &mut self,
+        db_name: &str,
+        table: &SourceTable,
+        alias: Option<&str>,
+    ) -> LogicalPlan {
+        let visible_table = alias.unwrap_or(&table.table_name);
         let mut schema_columns = Vec::with_capacity(table.columns.len());
         let mut names = Vec::with_capacity(table.columns.len());
         let mut handle_cols: Option<PlanHandleCols> = None;
@@ -1483,7 +1489,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             names.push(FieldName {
                 names: FieldNameMetadata {
                     database: IdentifierMetadata::new(db_name),
-                    table: IdentifierMetadata::new(&table.table_name),
+                    table: IdentifierMetadata::new(visible_table),
                     original_table: IdentifierMetadata::new(&table.table_name),
                     column: IdentifierMetadata::new(&source_column.name),
                     original_column: IdentifierMetadata::new(&source_column.name),

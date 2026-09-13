@@ -1038,7 +1038,7 @@ fn test_build_mem_table_produces_the_table_s_own_schema() {
     let harness = Harness::new();
     let mut builder = harness.builder();
     let mem = table(300, "CLUSTER_INFO", &["TYPE", "INSTANCE"]);
-    let plan = builder.build_mem_table("information_schema", &mem);
+    let plan = builder.build_mem_table("information_schema", &mem, None);
     let LogicalPlan::MemTable(mem_table) = &plan else {
         panic!("expected a LogicalMemTable, got {}", plan.tp());
     };

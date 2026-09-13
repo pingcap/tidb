@@ -2165,8 +2165,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         // Go `buildDataSource` routes every virtual table through the same
         // `LogicalMemTable` path before ordinary access-path construction.
+        // The alias reaches the output names exactly as it does for a stored
+        // table (`buildResultSetNode` renames to the visible name), so a
+        // qualified `alias.column` over a memory table resolves.
         if table.is_memory_table {
-            return Ok(self.build_mem_table(&db_name, &table));
+            return Ok(self.build_mem_table(&db_name, &table, table_ref.alias.as_deref()));
         }
 
         // `b.optFlag |= rule.FlagPartitionProcessor` is enabled only for
