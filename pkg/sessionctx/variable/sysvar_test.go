@@ -135,6 +135,25 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
+func TestDMLMaxExecutionTime(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBDMLMaxExecutionTime)
+	require.NotNil(t, sv)
+	require.Equal(t, vardef.ScopeGlobal|vardef.ScopeSession, sv.Scope)
+	require.Equal(t, "0", sv.Value)
+	require.True(t, sv.IsHintUpdatableVerified)
+
+	vars := NewSessionVars(nil)
+	val, err := sv.Validate(vars, "-10", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "99999", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "99999", val)
+	require.NoError(t, sv.SetSessionFromHook(vars, val))
+	require.Equal(t, uint64(99999), vars.DMLMaxExecutionTime)
+}
+
 func TestTiDBMaxKeysRead(t *testing.T) {
 	sv := GetSysVar(vardef.TiDBMaxKeysRead)
 	require.NotNil(t, sv)
