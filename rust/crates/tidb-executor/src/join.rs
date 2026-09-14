@@ -301,9 +301,7 @@ struct ParallelProbePipeline<C> {
 /// The most probe chunks one pool task takes in a run. Each run costs one
 /// pool dispatch and one result handoff, both of which are futex wakes; the
 /// cap bounds how many probe chunks a query buffers ahead of the parent
-/// (`Concurrency * PARALLEL_PROBE_MAX_BATCH`) in exchange for that
-/// amortisation. Four is where a cap sweep stopped buying syscalls cheaply
-/// (the measurements are in `TPCH_GO_PERF_PARITY_EXECPLAN.md`).
+/// (`Concurrency * PARALLEL_PROBE_MAX_BATCH`) while amortising those handoffs.
 const PARALLEL_PROBE_MAX_BATCH: usize = 4;
 
 /// One worker's complete result for one probe chunk. Pure equality over a
