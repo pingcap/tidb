@@ -65,7 +65,7 @@ type dbMetaKey struct {
 }
 
 type dbMetaValue struct {
-	name  string
+	info  *model.DBInfo
 	count int
 }
 
@@ -254,17 +254,17 @@ func (tm *TableMappingManager) parseDBKeyAndUpdateIdMapping(field []byte) (int64
 	return dbID, errors.Trace(err)
 }
 
-func extractDBName(value []byte) (string, error) {
+func extractDBInfo(value []byte) (*model.DBInfo, error) {
 	dbInfo := new(model.DBInfo)
 	if err := json.Unmarshal(value, dbInfo); err != nil {
-		return "", errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return dbInfo.Name.O, nil
+	return dbInfo, nil
 }
 
 func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForDefaultCf(
 	dbId int64, value []byte, startTs uint64) error {
-	dbName, err := extractDBName(value)
+	dbInfo, err := extractDBInfo(value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -278,7 +278,7 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForDefaultCf(
 	}
 
 	tm.tempDefaultKVDbMap[key] = &dbMetaValue{
-		name:  dbName,
+		info:  dbInfo,
 		count: 1,
 	}
 	return nil
@@ -315,11 +315,11 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
 	}
 
 	if len(dbValue) > 0 {
-		dbName, err := extractDBName(dbValue)
+		dbInfo, err := extractDBInfo(dbValue)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		return tm.parseDBValueAndUpdateIdMapping(dbId, dbName, commitTs, collector)
+		return tm.parseDBValueAndUpdateIdMapping(dbId, dbInfo, commitTs, collector)
 	}
 
 	idx := dbMetaKey{
@@ -336,7 +336,7 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
 				zap.Uint64("commit-ts", commitTs),
 				zap.String("value", base64.StdEncoding.EncodeToString(value)))
 		}
-		return tm.parseDBValueAndUpdateIdMapping(dbId, dbValue.name, commitTs, collector)
+		return tm.parseDBValueAndUpdateIdMapping(dbId, dbValue.info, commitTs, collector)
 	}
 	log.Warn("default cf kv is lost when processing write cf kv for database",
 		zap.Int64("db-id", dbId),
@@ -352,13 +352,18 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
 }
 
 func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(
-	dbId int64, dbName string, commitTs uint64, collector MetaInfoCollector) error {
+	dbId int64, dbInfo *model.DBInfo, commitTs uint64, collector MetaInfoCollector) error {
 	dbReplace, err := tm.getOrCreateDBReplace(dbId)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	dbName := ""
+	if dbInfo != nil {
+		dbName = dbInfo.Name.O
+	}
 	if dbName != "" {
 		dbReplace.Name = dbName
+		dbReplace.SourceDBInfo = dbInfo
 		normalizeForeignKeyReferences(dbReplace)
 	}
 	collector.OnDatabaseInfo(dbId, dbName, commitTs)
@@ -960,6 +965,10 @@ func (tm *TableMappingManager) assignSharedTargetDatabaseIDs() error {
 type TargetDatabase struct {
 	Name string
 	ID   DownstreamID
+	// SourceDBInfo is the metadata of the source schema that owns this target.
+	// It is used to create the target schema instead of relying on defaults. It
+	// is nil for legacy persisted maps that don't carry source DBInfo.
+	SourceDBInfo *model.DBInfo
 }
 
 // TableRoute is the stable downstream identity bound to one upstream table ID.
@@ -1086,6 +1095,11 @@ func (tm *TableMappingManager) validateRoutedDependencies(
 // TableRouteTargetDatabases returns the distinct target schemas that must exist
 // before replaying table metadata. A same-schema table rename falls back to its
 // parent DBReplace and therefore doesn't need a separately managed schema.
+//
+// When several source schemas route tables into the same target schema, their
+// database-level settings must be compatible; otherwise this returns an error
+// instead of silently picking defaults. A deterministic winner (by source
+// schema name/id) provides the target metadata.
 func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, error) {
 	targets := make(map[string]TargetDatabase)
 	for _, dbReplace := range tm.DBReplaceMap {
@@ -1101,12 +1115,20 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 				continue
 			}
 			name := ast.NewCIStr(tableReplace.TargetDBName).L
-			if existing, ok := targets[name]; ok && existing.ID != tableReplace.TargetDBID {
+			target, ok := targets[name]
+			if !ok {
+				target = TargetDatabase{Name: tableReplace.TargetDBName}
+			}
+			if target.ID != 0 && target.ID != tableReplace.TargetDBID {
 				return nil, errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
 					"target database %s has conflicting downstream IDs %d and %d",
-					tableReplace.TargetDBName, existing.ID, tableReplace.TargetDBID)
+					tableReplace.TargetDBName, target.ID, tableReplace.TargetDBID)
 			}
-			targets[name] = TargetDatabase{Name: tableReplace.TargetDBName, ID: tableReplace.TargetDBID}
+			target.ID = tableReplace.TargetDBID
+			if err := mergeTargetDBSourceInfo(&target, dbReplace.SourceDBInfo); err != nil {
+				return nil, err
+			}
+			targets[name] = target
 		}
 	}
 
@@ -1122,6 +1144,29 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 		return ast.NewCIStr(result[i].Name).L < ast.NewCIStr(result[j].Name).L
 	})
 	return result, nil
+}
+
+// mergeTargetDBSourceInfo folds one source schema's metadata into a target
+// schema. Sources routed to the same target must agree on charset, collation,
+// and placement policy; the winner is deterministic so resumes and retries
+// create the same target metadata.
+func mergeTargetDBSourceInfo(target *TargetDatabase, sourceDBInfo *model.DBInfo) error {
+	if sourceDBInfo == nil {
+		return nil
+	}
+	if target.SourceDBInfo == nil {
+		target.SourceDBInfo = sourceDBInfo
+		return nil
+	}
+	if !restoreutils.DatabaseSettingsCompatible(target.SourceDBInfo, sourceDBInfo) {
+		return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
+			"source schemas %s and %s routed to target schema %s have incompatible charset, collation, or placement policy",
+			target.SourceDBInfo.Name.O, sourceDBInfo.Name.O, target.Name)
+	}
+	if restoreutils.SourceDBPrecedes(sourceDBInfo, target.SourceDBInfo) {
+		target.SourceDBInfo = sourceDBInfo
+	}
+	return nil
 }
 
 // RebindTableRouteTargetDatabaseID replaces the provisional downstream ID of
@@ -1231,6 +1276,9 @@ func (tm *TableMappingManager) ToProto() []*backuppb.PitrDBMap {
 			},
 			Tables:      make([]*backuppb.PitrTableMap, 0, len(dr.TableMap)),
 			FilteredOut: dr.FilteredOut,
+			// Persist whether the downstream database already existed, so a resumed
+			// task keeps skipping its DBInfo replay instead of overwriting it.
+			Reused: dr.Reused,
 		}
 
 		for tblID, tr := range dr.TableMap {
@@ -1275,6 +1323,7 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 	for _, db := range dbMaps {
 		dr := NewDBReplace(db.Name, db.IdMap.DownstreamId)
 		dr.FilteredOut = db.FilteredOut
+		dr.Reused = db.Reused
 		dbReplaces[db.IdMap.UpstreamId] = dr
 
 		for _, tbl := range db.Tables {
@@ -1310,7 +1359,11 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*restoreutils.DatabaseR
 	dom *domain.Domain) error {
 	dbReplaces := make(map[UpstreamID]*DBReplace)
 	resolvedTargetDBs := make(map[string]*model.DBInfo, len(dbs))
-	sourceDBReused := make(map[UpstreamID]bool, len(dbs))
+	// Reuse is a property of the target schema, not of a source database: one
+	// source database can be split across several target schemas. Key it by the
+	// resolved target name so a reused sibling target cannot mark the source's
+	// own target as reused.
+	targetDBReused := make(map[string]bool, len(dbs))
 
 	for _, dbPlan := range dbs {
 		newDBInfo, exists := dom.InfoSchema().SchemaByName(dbPlan.Target.Name)
@@ -1319,7 +1372,7 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*restoreutils.DatabaseR
 		}
 		upstreamDBID := dbPlan.Source.Info.ID
 		resolvedTargetDBs[newDBInfo.Name.L] = newDBInfo
-		sourceDBReused[upstreamDBID] = sourceDBReused[upstreamDBID] || dbPlan.Source.IsReusedByPITR()
+		targetDBReused[newDBInfo.Name.L] = targetDBReused[newDBInfo.Name.L] || dbPlan.Reused
 		dbReplace, exist := dbReplaces[upstreamDBID]
 		if !exist {
 			if existing, ok := tm.DBReplaceMap[upstreamDBID]; ok {
@@ -1327,6 +1380,7 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*restoreutils.DatabaseR
 				dbReplace.Reused = existing.Reused
 			} else {
 				dbReplace = NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
+				dbReplace.Reused = dbPlan.Reused
 			}
 			dbReplaces[upstreamDBID] = dbReplace
 		}
@@ -1350,7 +1404,7 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*restoreutils.DatabaseR
 		}
 		dbReplace.Name = newDBInfo.Name.O
 		dbReplace.DbID = newDBInfo.ID
-		dbReplace.Reused = dbReplace.Reused || sourceDBReused[upstreamDBID]
+		dbReplace.Reused = dbReplace.Reused || targetDBReused[newDBInfo.Name.L]
 		// MergeBaseDBReplace intentionally preserves a non-empty name from the
 		// log scan. Once the bound parent is resolved, normalize that persisted
 		// route to the actual downstream schema identity before merging.

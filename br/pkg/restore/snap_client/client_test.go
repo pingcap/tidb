@@ -258,14 +258,15 @@ func TestCreateDuplicateDatabaseForOneSession(t *testing.T) {
 
 	ctx := context.Background()
 	db := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}
-	require.False(t, db.IsReusedByPITR())
-	err = client.CreateDatabases(ctx, []*metautil.Database{db})
+	plan := &restoreutils.DatabaseRestorePlan{Source: db, Target: db.Info.Clone()}
+	require.False(t, plan.Reused)
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan})
 	require.NoError(t, err)
-	require.False(t, db.IsReusedByPITR())
+	require.False(t, plan.Reused)
 	// continue to create the same database
-	err = client.CreateDatabases(ctx, []*metautil.Database{db})
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan})
 	require.NoError(t, err)
-	require.True(t, db.IsReusedByPITR())
+	require.True(t, plan.Reused)
 }
 
 func TestCreateDuplicateDatabaseForSessionPool(t *testing.T) {
@@ -281,23 +282,27 @@ func TestCreateDuplicateDatabaseForSessionPool(t *testing.T) {
 	db1 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_1")}}
 	db2 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_2")}}
 	db3 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_3")}}
-	require.False(t, db1.IsReusedByPITR())
-	require.False(t, db2.IsReusedByPITR())
-	require.False(t, db3.IsReusedByPITR())
-	err = client.CreateDatabases(ctx, []*metautil.Database{db1, db2, db3})
+	plan1 := &restoreutils.DatabaseRestorePlan{Source: db1, Target: db1.Info.Clone()}
+	plan2 := &restoreutils.DatabaseRestorePlan{Source: db2, Target: db2.Info.Clone()}
+	plan3 := &restoreutils.DatabaseRestorePlan{Source: db3, Target: db3.Info.Clone()}
+	require.False(t, plan1.Reused)
+	require.False(t, plan2.Reused)
+	require.False(t, plan3.Reused)
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan1, plan2, plan3})
 	require.NoError(t, err)
-	require.False(t, db1.IsReusedByPITR())
-	require.False(t, db2.IsReusedByPITR())
-	require.False(t, db3.IsReusedByPITR())
+	require.False(t, plan1.Reused)
+	require.False(t, plan2.Reused)
+	require.False(t, plan3.Reused)
 	// continue to create the same databases
 	db4 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_4")}}
-	require.False(t, db4.IsReusedByPITR())
-	err = client.CreateDatabases(ctx, []*metautil.Database{db1, db2, db3, db4})
+	plan4 := &restoreutils.DatabaseRestorePlan{Source: db4, Target: db4.Info.Clone()}
+	require.False(t, plan4.Reused)
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan1, plan2, plan3, plan4})
 	require.NoError(t, err)
-	require.True(t, db1.IsReusedByPITR())
-	require.True(t, db2.IsReusedByPITR())
-	require.True(t, db3.IsReusedByPITR())
-	require.False(t, db4.IsReusedByPITR())
+	require.True(t, plan1.Reused)
+	require.True(t, plan2.Reused)
+	require.True(t, plan3.Reused)
+	require.False(t, plan4.Reused)
 }
 
 func TestCheckTargetClusterFreshWithTable(t *testing.T) {

@@ -89,6 +89,11 @@ type DBReplace struct {
 	TableMap    map[UpstreamID]*TableReplace
 	FilteredOut bool
 	Reused      bool
+	// SourceDBInfo keeps the latest source DBInfo observed during the log scan.
+	// It is runtime-only (not persisted) and is used to create a table-route
+	// target schema with the source schema's charset/collation/placement instead
+	// of defaults.
+	SourceDBInfo *model.DBInfo
 }
 
 // RestoresDatabaseMetadata reports whether this mapping still owns its target

@@ -175,12 +175,12 @@ func buildRestoreNamePlan(
 	targetDBs := make(map[string]*restoreutils.DatabaseRestorePlan)
 	addTargetDB := func(source *metautil.Database, sourceInfo *model.DBInfo, targetName ast.CIStr) (*model.DBInfo, error) {
 		if existing, ok := targetDBs[targetName.L]; ok {
-			if !databaseRestoreSettingsCompatible(sourceInfo, existing.Source.Info) {
+			if !restoreutils.DatabaseSettingsCompatible(sourceInfo, existing.Source.Info) {
 				return nil, errors.Annotatef(berrors.ErrInvalidArgument,
 					"source schemas %s and %s routed to target schema %s have incompatible charset, collation, or placement policy",
 					existing.Source.Info.Name.O, sourceInfo.Name.O, targetName.O)
 			}
-			if sourceDBPrecedes(sourceInfo, existing.Source.Info) {
+			if restoreutils.SourceDBPrecedes(sourceInfo, existing.Source.Info) {
 				target := sourceInfo.Clone()
 				target.Name = targetName
 				*existing.Target = *target
@@ -275,23 +275,6 @@ func hasRoutedForeignKey(router *nameroute.Router, sourceObject nameroute.Object
 		}
 	}
 	return false
-}
-
-func sourceDBPrecedes(candidate, existing *model.DBInfo) bool {
-	if candidate.Name.L != existing.Name.L {
-		return candidate.Name.L < existing.Name.L
-	}
-	return candidate.ID < existing.ID
-}
-
-func databaseRestoreSettingsCompatible(first, second *model.DBInfo) bool {
-	if !strings.EqualFold(first.Charset, second.Charset) || !strings.EqualFold(first.Collate, second.Collate) {
-		return false
-	}
-	if first.PlacementPolicyRef == nil || second.PlacementPolicyRef == nil {
-		return first.PlacementPolicyRef == nil && second.PlacementPolicyRef == nil
-	}
-	return first.PlacementPolicyRef.Name.L == second.PlacementPolicyRef.Name.L
 }
 
 func buildPiTRRestoreNameSources(

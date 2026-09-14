@@ -107,6 +107,7 @@ func TestToProto(t *testing.T) {
 	dr := NewDBReplace(dbName, newDBID)
 	dr.TableMap[oldTblID] = tr
 	dr.FilteredOut = true
+	dr.Reused = true
 
 	drs := make(map[UpstreamID]*DBReplace)
 	drs[oldDBID] = dr
@@ -122,6 +123,7 @@ func TestToProto(t *testing.T) {
 	require.Equal(t, dbMap[0].IdMap.UpstreamId, oldDBID)
 	require.Equal(t, dbMap[0].IdMap.DownstreamId, newDBID)
 	require.Equal(t, dbMap[0].FilteredOut, true)
+	require.Equal(t, dbMap[0].Reused, true)
 
 	tableMap := dbMap[0].Tables
 	require.Equal(t, len(tableMap), 1)
@@ -627,6 +629,78 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, int64(901), tm.DBReplaceMap[2].TableMap[12].TargetDBID)
 	})
 
+	t.Run("carry source metadata into a table-route target database", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name:         "source_1",
+				DbID:         101,
+				SourceDBInfo: &model.DBInfo{ID: 1, Name: ast.NewCIStr("source_1"), Charset: "utf8mb4", Collate: "utf8mb4_bin"},
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "t1", TableID: 111, TargetDBName: "target_db", TargetDBID: 900},
+				},
+			},
+		}
+		targets, err := tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.Equal(t, "target_db", targets[0].Name)
+		require.NotNil(t, targets[0].SourceDBInfo)
+		require.Equal(t, "source_1", targets[0].SourceDBInfo.Name.O)
+		require.Equal(t, "utf8mb4", targets[0].SourceDBInfo.Charset)
+	})
+
+	t.Run("pick a deterministic source metadata winner", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name:         "b_source",
+				DbID:         101,
+				SourceDBInfo: &model.DBInfo{ID: 1, Name: ast.NewCIStr("b_source"), Charset: "utf8mb4", Collate: "utf8mb4_bin"},
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "t1", TableID: 111, TargetDBName: "target_db", TargetDBID: 900},
+				},
+			},
+			2: {
+				Name:         "a_source",
+				DbID:         102,
+				SourceDBInfo: &model.DBInfo{ID: 2, Name: ast.NewCIStr("a_source"), Charset: "utf8mb4", Collate: "utf8mb4_bin"},
+				TableMap: map[UpstreamID]*TableReplace{
+					12: {Name: "t2", TableID: 112, TargetDBName: "target_db", TargetDBID: 900},
+				},
+			},
+		}
+		targets, err := tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.NotNil(t, targets[0].SourceDBInfo)
+		require.Equal(t, "a_source", targets[0].SourceDBInfo.Name.O)
+	})
+
+	t.Run("reject incompatible source metadata for one target database", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name:         "source_1",
+				DbID:         101,
+				SourceDBInfo: &model.DBInfo{ID: 1, Name: ast.NewCIStr("source_1"), Charset: "utf8mb4", Collate: "utf8mb4_bin"},
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "t1", TableID: 111, TargetDBName: "target_db", TargetDBID: 900},
+				},
+			},
+			2: {
+				Name:         "source_2",
+				DbID:         102,
+				SourceDBInfo: &model.DBInfo{ID: 2, Name: ast.NewCIStr("source_2"), Charset: "latin1", Collate: "latin1_bin"},
+				TableMap: map[UpstreamID]*TableReplace{
+					12: {Name: "t2", TableID: 112, TargetDBName: "target_db", TargetDBID: 900},
+				},
+			},
+		}
+		_, err := tm.TableRouteTargetDatabases()
+		require.ErrorContains(t, err, "incompatible charset, collation, or placement policy")
+	})
+
 	t.Run("share and rebind a filtered database alias", func(t *testing.T) {
 		tm := NewTableMappingManager()
 		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
@@ -967,6 +1041,55 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, int64(900), tm.DBReplaceMap[2].DbID)
 		require.Equal(t, int64(900), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
 		require.Equal(t, int64(900), tm.DBReplaceMap[2].TableMap[22].TargetDBID)
+	})
+
+	t.Run("target reuse does not leak across target schemas of one source database", func(t *testing.T) {
+		dom := domain.NewMockDomain()
+		dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"source": 800, "target": 900}))
+		source := &metautil.Database{Info: &model.DBInfo{ID: 1, Name: ast.NewCIStr("source")}}
+
+		newManager := func() *TableMappingManager {
+			tm := NewTableMappingManager()
+			tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+				1: {
+					Name: "source",
+					DbID: -1,
+					TableMap: map[UpstreamID]*TableReplace{
+						11: {Name: "identity", TableID: -11},
+						12: {Name: "routed", TableID: -12, TargetDBName: "target", TargetDBID: -2},
+					},
+				},
+			}
+			return tm
+		}
+
+		// The sibling target schema is reused, but the source schema's own target
+		// is not, so its DBInfo must still be replayed during log restore.
+		tm := newManager()
+		err := tm.UpdateDownstreamIds(
+			[]*restoreutils.DatabaseRestorePlan{
+				{Source: source, Target: &model.DBInfo{Name: ast.NewCIStr("source")}},
+				{Source: source, Target: &model.DBInfo{Name: ast.NewCIStr("target")}, Reused: true},
+			},
+			nil,
+			dom,
+		)
+		require.NoError(t, err)
+		require.False(t, tm.DBReplaceMap[1].Reused)
+
+		// The source schema's own target is reused, so replaying its DBInfo must be
+		// skipped regardless of the sibling target.
+		tm = newManager()
+		err = tm.UpdateDownstreamIds(
+			[]*restoreutils.DatabaseRestorePlan{
+				{Source: source, Target: &model.DBInfo{Name: ast.NewCIStr("source")}, Reused: true},
+				{Source: source, Target: &model.DBInfo{Name: ast.NewCIStr("target")}},
+			},
+			nil,
+			dom,
+		)
+		require.NoError(t, err)
+		require.True(t, tm.DBReplaceMap[1].Reused)
 	})
 }
 
@@ -1796,8 +1919,10 @@ func TestParseDBValueNormalizesForeignKeyReferences(t *testing.T) {
 	dbReplace.TableMap[100] = tableReplace
 	tm.DBReplaceMap[40] = dbReplace
 
-	require.NoError(t, tm.parseDBValueAndUpdateIdMapping(40, "source", 1, collector))
+	require.NoError(t, tm.parseDBValueAndUpdateIdMapping(40, &model.DBInfo{ID: 40, Name: ast.NewCIStr("source")}, 1, collector))
 	require.Equal(t, "source", dbReplace.Name)
+	require.NotNil(t, dbReplace.SourceDBInfo)
+	require.Equal(t, "source", dbReplace.SourceDBInfo.Name.O)
 	require.Equal(t, []ForeignKeyReference{{Schema: "source", Table: "parent"}}, tableReplace.ForeignKeyReferences)
 }
 

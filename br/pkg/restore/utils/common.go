@@ -15,6 +15,8 @@
 package utils
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -25,6 +27,11 @@ import (
 type DatabaseRestorePlan struct {
 	Source *metautil.Database
 	Target *model.DBInfo
+	// Reused reports whether Target already existed in the downstream cluster
+	// when the snapshot phase created it. It belongs to the target schema, not
+	// to Source: one source database can be split across several target schemas.
+	// A reused target must not have its DBInfo replayed during log restore.
+	Reused bool
 }
 
 // TableRestorePlan keeps the immutable source table and its target identity.
@@ -63,4 +70,28 @@ func (t *CreatedTable) TargetDBName() ast.CIStr {
 		return t.OldTable.DB.Name
 	}
 	return ast.CIStr{}
+}
+
+// DatabaseSettingsCompatible reports whether two source schemas can be merged
+// into one target schema without losing database-level settings. It is used by
+// both the snapshot plan and the log-only target schema creation so the two
+// paths stay consistent.
+func DatabaseSettingsCompatible(first, second *model.DBInfo) bool {
+	if !strings.EqualFold(first.Charset, second.Charset) || !strings.EqualFold(first.Collate, second.Collate) {
+		return false
+	}
+	if first.PlacementPolicyRef == nil || second.PlacementPolicyRef == nil {
+		return first.PlacementPolicyRef == nil && second.PlacementPolicyRef == nil
+	}
+	return first.PlacementPolicyRef.Name.L == second.PlacementPolicyRef.Name.L
+}
+
+// SourceDBPrecedes reports whether candidate's metadata should win over
+// existing's when several source schemas are merged into one target schema. It
+// gives a deterministic winner independent of iteration order.
+func SourceDBPrecedes(candidate, existing *model.DBInfo) bool {
+	if candidate.Name.L != existing.Name.L {
+		return candidate.Name.L < existing.Name.L
+	}
+	return candidate.ID < existing.ID
 }

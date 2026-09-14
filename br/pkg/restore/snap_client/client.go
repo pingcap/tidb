@@ -1122,8 +1122,8 @@ func (rc *SnapClient) CreateDatabasesWithPlan(ctx context.Context, plans []*rest
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if exists && plan.Source != nil {
-				plan.Source.SetReusedByPITR()
+			if exists {
+				plan.Reused = true
 			}
 		}
 		return nil
@@ -1140,8 +1140,8 @@ func (rc *SnapClient) CreateDatabasesWithPlan(ctx context.Context, plans []*rest
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if exists && plan.Source != nil {
-				plan.Source.SetReusedByPITR()
+			if exists {
+				plan.Reused = true
 			}
 			return nil
 		})

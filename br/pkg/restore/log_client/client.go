@@ -1649,7 +1649,7 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 			// only set back tables that are in restore mode
 			if tbl.Meta().Mode != model.TableModeRestore {
 				log.Warn("table not in restore mode, skipping",
-					zap.Int64("schemaID", dbReplace.DbID),
+					zap.Int64("schemaID", dbID),
 					zap.Int64("tableID", tableReplace.TableID),
 					zap.String("tableName", tableReplace.Name),
 					zap.Any("tableMode", tbl.Meta().Mode))
@@ -2482,10 +2482,8 @@ func (rc *LogClient) ensureTableRouteTargetDatabases(
 			return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
 				"cannot create target database %s without a restore session", target.Name)
 		}
-		if err := rc.unsafeSession.CreateDatabaseOnExistError(ctx, &model.DBInfo{
-			ID:   target.ID,
-			Name: ast.NewCIStr(target.Name),
-		}); err != nil {
+		targetInfo := targetInfoForCreate(target)
+		if err := rc.unsafeSession.CreateDatabaseOnExistError(ctx, targetInfo); err != nil {
 			return errors.Annotatef(err, "failed to create table-route target database %s", target.Name)
 		}
 		dbInfo, exists := rc.dom.InfoSchema().SchemaByName(ast.NewCIStr(target.Name))
@@ -2498,6 +2496,23 @@ func (rc *LogClient) ensureTableRouteTargetDatabases(
 		}
 	}
 	return nil
+}
+
+// targetInfoForCreate builds the DBInfo used to create a table-route target
+// schema. It clones the source schema metadata so charset, collation and
+// placement are preserved instead of falling back to DDL defaults. When the
+// source metadata is unavailable (legacy persisted maps), it degrades to an
+// ID/name-only DBInfo.
+func targetInfoForCreate(target stream.TargetDatabase) *model.DBInfo {
+	if target.SourceDBInfo == nil {
+		log.Warn("table-route target database has no source metadata; creating it with defaults",
+			zap.String("target", target.Name))
+		return &model.DBInfo{ID: target.ID, Name: ast.NewCIStr(target.Name)}
+	}
+	targetInfo := target.SourceDBInfo.Clone()
+	targetInfo.ID = target.ID
+	targetInfo.Name = ast.NewCIStr(target.Name)
+	return targetInfo
 }
 
 // called by failpoint, only used for test
@@ -2680,6 +2695,12 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 		dbReplace, ok := schemasReplace.DbReplaceMap[upstreamDBID]
 		if !ok {
 			return errors.Errorf("the deleted database(upstream ID: %d) has no record in replace map", upstreamDBID)
+		}
+		// A source schema whose selected tables are all routed elsewhere is not
+		// restored, so a deleted table under it must not trigger a DB-level
+		// refresh of the source schema. This mirrors the add/update branch.
+		if !dbReplace.RestoresDatabaseMetadata() {
+			continue
 		}
 		args := &model.RefreshMetaArgs{
 			SchemaID:      dbReplace.DbID,

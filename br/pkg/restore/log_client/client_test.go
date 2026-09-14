@@ -1551,6 +1551,67 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.Equal(t, int64(120), session.refreshArgs[0].TableID)
 		require.Equal(t, "target_db", session.refreshArgs[0].InvolvedDB)
 	})
+
+	t.Run("skip database refresh when every table is routed to another schema", func(t *testing.T) {
+		session := &recordingSession{}
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, nil, session)
+		schemasReplace := stream.NewSchemasReplace(map[stream.UpstreamID]*stream.DBReplace{
+			10: {
+				Name: "source_db",
+				DbID: 110,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					20: {
+						Name:         "target_table",
+						TableID:      120,
+						TargetDBName: "target_db",
+						TargetDBID:   210,
+					},
+				},
+			},
+		}, false, nil, 0, nil, false)
+		// A deleted table under a fully routed-out source schema is observed, but
+		// that must not trigger a DB-level refresh of the source schema itself.
+		schemasReplace.GetDeletedTables()[10] = map[stream.UpstreamID]struct{}{20: {}}
+
+		require.NoError(t, client.RefreshMetaForTables(ctx, schemasReplace))
+		require.Len(t, session.refreshArgs, 1)
+		require.Equal(t, int64(120), session.refreshArgs[0].TableID)
+		require.Equal(t, "target_db", session.refreshArgs[0].InvolvedDB)
+	})
+
+	t.Run("create table-route target database with source schema metadata", func(t *testing.T) {
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name: "source_db",
+			DbID: 110,
+			SourceDBInfo: &model.DBInfo{
+				ID:      10,
+				Name:    ast.NewCIStr("source_db"),
+				Charset: "latin1",
+				Collate: "latin1_bin",
+			},
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {
+					Name:         "t",
+					TableID:      120,
+					TargetDBName: "routed_target",
+					TargetDBID:   900,
+				},
+			},
+		}
+		require.NoError(t, client.EnsureTableRouteTargetDatabases(ctx, manager))
+		dbInfo, exists := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("routed_target"))
+		require.True(t, exists)
+		require.Equal(t, "latin1", dbInfo.Charset)
+		require.Equal(t, "latin1_bin", dbInfo.Collate)
+		require.Equal(t, dbInfo.ID, manager.DBReplaceMap[10].TableMap[20].TargetDBID)
+	})
 }
 
 func downstreamID(upstreamID int64) int64 {
