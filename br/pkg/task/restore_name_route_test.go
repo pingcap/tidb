@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -164,6 +165,30 @@ func TestApplyNameRoutesDistinguishesSchemaAndExactTableRules(t *testing.T) {
 	require.Equal(t, "table_target", mapping.DBReplaceMap[2].TableMap[22].TargetDBName)
 	require.Equal(t, int64(0), mapping.DBReplaceMap[2].TableMap[22].TargetDBID)
 	require.Equal(t, "copy", mapping.DBReplaceMap[2].TableMap[22].Name)
+	require.True(t, mapping.DBReplaceMap[1].SchemaRouted)
+	require.False(t, mapping.DBReplaceMap[2].SchemaRouted)
+
+	t.Run("schema rule restores its schema when all tables are overridden", func(t *testing.T) {
+		router, err := nameroute.Parse([]string{"a:x", "a.t1:y.t1"})
+		require.NoError(t, err)
+		db := &metautil.Database{Info: &model.DBInfo{ID: 1, Name: ast.NewCIStr("a")}}
+		table := &metautil.Table{DB: db.Info, Info: &model.TableInfo{ID: 10, Name: ast.NewCIStr("t1")}}
+		db.Tables = []*metautil.Table{table}
+
+		plan, err := buildRestoreNamePlan(router, []*metautil.Database{db}, []*metautil.Table{table}, nil)
+		require.NoError(t, err)
+		require.Len(t, plan.tables, 1)
+		require.Equal(t, "y", plan.tables[0].TargetDB.Name.O)
+		require.Equal(t, "t1", plan.tables[0].TargetInfo.Name.O)
+
+		// Both the schema rule target x and the overridden table target y exist.
+		dbNames := make([]string, 0, len(plan.databases))
+		for _, planDB := range plan.databases {
+			dbNames = append(dbNames, planDB.Target.Name.O)
+		}
+		slices.Sort(dbNames)
+		require.Equal(t, []string{"x", "y"}, dbNames)
+	})
 
 	t.Run("blocklist includes routed target databases", func(t *testing.T) {
 		manager := stream.NewTableMappingManager()

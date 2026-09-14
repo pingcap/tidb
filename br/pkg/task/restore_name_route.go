@@ -240,18 +240,20 @@ func buildRestoreNamePlan(
 		plan.targetTables = append(plan.targetTables, tablePlan.TargetTable())
 	}
 	// A table route creates only the schemas actually used by its targets. Keep
-	// an independent database plan only for a selected empty schema.
+	// an independent database plan for a selected empty schema, and always keep
+	// one for a schema-level route so the schema itself is restored even when all
+	// of its tables are overridden to other target schemas.
 	for _, db := range dbs {
-		if _, hasSelectedTable := tableDBIDs[db.Info.ID]; hasSelectedTable {
-			continue
-		}
 		sourceSchema := db.Info.Name
 		if sources != nil {
 			if routedSource, ok := sources.databases[db.Info.ID]; ok {
 				sourceSchema = routedSource
 			}
 		}
-		targetSchema, _, _ := router.Route(sourceSchema, ast.CIStr{})
+		targetSchema, _, schemaRouted := router.Route(sourceSchema, ast.CIStr{})
+		if _, hasSelectedTable := tableDBIDs[db.Info.ID]; hasSelectedTable && !schemaRouted {
+			continue
+		}
 		if _, err := addTargetDB(db, db.Info, targetSchema); err != nil {
 			return nil, err
 		}
@@ -423,6 +425,7 @@ func applyNameRoutesToTableMapping(
 		// the source parent name unchanged.
 		if schemaRouted {
 			dbReplace.Name = targetSchema.O
+			dbReplace.SchemaRouted = true
 		}
 	}
 

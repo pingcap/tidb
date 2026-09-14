@@ -89,6 +89,11 @@ type DBReplace struct {
 	TableMap    map[UpstreamID]*TableReplace
 	FilteredOut bool
 	Reused      bool
+	// SchemaRouted reports that an explicit schema-level rename rule matched
+	// this source schema. The schema itself is then restored even when every
+	// selected table is overridden to another target schema. It is runtime-only
+	// (not persisted); on retry the target schema already exists.
+	SchemaRouted bool
 	// SourceDBInfo keeps the latest source DBInfo observed during the log scan.
 	// It is runtime-only (not persisted) and is used to create a table-route
 	// target schema with the source schema's charset/collation/placement instead
@@ -104,6 +109,11 @@ type DBReplace struct {
 func (dr *DBReplace) RestoresDatabaseMetadata() bool {
 	if dr.FilteredOut {
 		return false
+	}
+	if dr.SchemaRouted {
+		// A schema-level rename rule explicitly restores the schema itself, even
+		// when all of its selected tables are overridden to other target schemas.
+		return true
 	}
 	hasSelectedTable := false
 	for _, tableReplace := range dr.TableMap {

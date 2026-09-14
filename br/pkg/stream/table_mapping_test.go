@@ -731,6 +731,35 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.ErrorContains(t, err, "incompatible charset, collation, or placement policy")
 	})
 
+	t.Run("schema route restores metadata and its target schema", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		dbReplace := &DBReplace{
+			Name:         "target_db",
+			DbID:         900,
+			SchemaRouted: true,
+			SourceDBInfo: &model.DBInfo{ID: 1, Name: ast.NewCIStr("source_db"), Charset: "latin1", Collate: "latin1_bin"},
+			TableMap: map[UpstreamID]*TableReplace{
+				11: {Name: "t1", TableID: 111, TargetDBName: "other_db", TargetDBID: 901},
+			},
+		}
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{1: dbReplace}
+
+		// A schema rule restores the schema itself even when all of its tables are
+		// overridden to another target schema.
+		require.True(t, dbReplace.RestoresDatabaseMetadata())
+
+		targets, err := tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Len(t, targets, 2)
+		byName := make(map[string]TargetDatabase, len(targets))
+		for _, target := range targets {
+			byName[target.Name] = target
+		}
+		require.Equal(t, int64(900), byName["target_db"].ID)
+		require.NotNil(t, byName["target_db"].SourceDBInfo)
+		require.Equal(t, int64(901), byName["other_db"].ID)
+	})
+
 	t.Run("share and rebind a filtered database alias", func(t *testing.T) {
 		tm := NewTableMappingManager()
 		tm.DBReplaceMap = map[UpstreamID]*DBReplace{

@@ -1075,9 +1075,34 @@ func (tm *TableMappingManager) validateRoutedDependencies(
 // schema name/id) provides the target metadata.
 func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, error) {
 	targets := make(map[string]TargetDatabase)
+	mergeTarget := func(name, displayName string, id DownstreamID, sourceDBInfo *model.DBInfo) error {
+		target, ok := targets[name]
+		if !ok {
+			target = TargetDatabase{Name: displayName}
+		}
+		if target.ID != 0 && target.ID != id {
+			return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
+				"target database %s has conflicting downstream IDs %d and %d",
+				displayName, target.ID, id)
+		}
+		target.ID = id
+		if err := mergeTargetDBSourceInfo(&target, sourceDBInfo); err != nil {
+			return err
+		}
+		targets[name] = target
+		return nil
+	}
+
 	for _, dbReplace := range tm.DBReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
+		}
+		// A schema-level rename rule restores the schema itself, even when every
+		// selected table is overridden to another target schema.
+		if dbReplace.SchemaRouted && dbReplace.Name != "" {
+			if err := mergeTarget(ast.NewCIStr(dbReplace.Name).L, dbReplace.Name, dbReplace.DbID, dbReplace.SourceDBInfo); err != nil {
+				return nil, err
+			}
 		}
 		for _, tableReplace := range dbReplace.TableMap {
 			if tableReplace.FilteredOut || tableReplace.TargetDBName == "" {
@@ -1087,21 +1112,9 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 				ast.NewCIStr(tableReplace.TargetDBName).L == ast.NewCIStr(dbReplace.Name).L {
 				continue
 			}
-			name := ast.NewCIStr(tableReplace.TargetDBName).L
-			target, ok := targets[name]
-			if !ok {
-				target = TargetDatabase{Name: tableReplace.TargetDBName}
-			}
-			if target.ID != 0 && target.ID != tableReplace.TargetDBID {
-				return nil, errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
-					"target database %s has conflicting downstream IDs %d and %d",
-					tableReplace.TargetDBName, target.ID, tableReplace.TargetDBID)
-			}
-			target.ID = tableReplace.TargetDBID
-			if err := mergeTargetDBSourceInfo(&target, dbReplace.SourceDBInfo); err != nil {
+			if err := mergeTarget(ast.NewCIStr(tableReplace.TargetDBName).L, tableReplace.TargetDBName, tableReplace.TargetDBID, dbReplace.SourceDBInfo); err != nil {
 				return nil, err
 			}
-			targets[name] = target
 		}
 	}
 
@@ -1163,6 +1176,11 @@ func (tm *TableMappingManager) RebindTableRouteTargetDatabaseID(
 		if ast.NewCIStr(dbReplace.Name).L == name {
 			if err := checkID(dbReplace.DbID); err != nil {
 				return err
+			}
+			// A schema-level route binds the target on the DBReplace itself rather
+			// than on a table's TargetDBName.
+			if dbReplace.SchemaRouted {
+				foundRoute = true
 			}
 		}
 		for _, tableReplace := range dbReplace.TableMap {
@@ -1351,6 +1369,7 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*restoreutils.DatabaseR
 			if existing, ok := tm.DBReplaceMap[upstreamDBID]; ok {
 				dbReplace = NewDBReplace(existing.Name, existing.DbID)
 				dbReplace.Reused = existing.Reused
+				dbReplace.SchemaRouted = existing.SchemaRouted
 			} else {
 				dbReplace = NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
 				dbReplace.Reused = dbPlan.Reused
@@ -1373,6 +1392,7 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*restoreutils.DatabaseR
 		if !exists {
 			dbReplace = NewDBReplace(existing.Name, existing.DbID)
 			dbReplace.Reused = existing.Reused
+			dbReplace.SchemaRouted = existing.SchemaRouted
 			dbReplaces[upstreamDBID] = dbReplace
 		}
 		dbReplace.Name = newDBInfo.Name.O
@@ -1421,6 +1441,7 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*restoreutils.DatabaseR
 			}
 			dbReplace = NewDBReplace(existing.Name, existing.DbID)
 			dbReplace.Reused = existing.Reused
+			dbReplace.SchemaRouted = existing.SchemaRouted
 			dbReplaces[oldTable.DB.ID] = dbReplace
 		}
 
