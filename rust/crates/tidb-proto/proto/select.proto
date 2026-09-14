@@ -165,6 +165,8 @@ enum ScalarFuncSig {
   LogicalAnd = 3101;
   LogicalOr = 3102;
   UnaryNotInt = 3104;
+  IntIsTrue = 3122;
+  IntIsTrueWithNull = 3142;
   DecimalIsNull = 3111;
   DurationIsNull = 3112;
   RealIsNull = 3113;

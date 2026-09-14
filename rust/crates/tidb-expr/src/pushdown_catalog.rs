@@ -1105,6 +1105,153 @@ pub const CATALOG: &[BuiltinSignature] = &[
     // `piFunctionClass.getFunction`: no arguments, and `PI()` is a constant on
     // both sides of the wire.
     signature("pi", &[], &[], EvalType::Real, ScalarFuncSig::Pi, false),
+    // The boolean families Go's own expression BUILDER composes when a WHERE
+    // clause is lowered: `istrue_with_null` is the wrapper
+    // `builtinIsTrueWithNullSig` (IntIsTrueWithNull) that Go's rewriter puts
+    // under every NOT over an integer-valued predicate, and `not` over an
+    // integer argument is `UnaryNotInt`. Both return a nonzero-count TINYINT.
+    signature(
+        "istrue_with_null",
+        &[ArgPattern::ANY],
+        &[EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::IntIsTrueWithNull,
+        false,
+    ),
+    signature(
+        "not",
+        &[ArgPattern::eval(EvalType::Int)],
+        &[EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::UnaryNotInt,
+        false,
+    ),
+    // The internal cast nodes the planner emits around columns whose type a
+    // Real/Decimal slot does not accept (Go wraps the same operands with
+    // `WrapWithCastAsReal`/`WrapWithCastAsDecimal`). The result copies the
+    // first argument's UNSIGNED flag, exactly as Go's cast signatures do.
+    signature(
+        "cast_double",
+        &[ArgPattern::eval(EvalType::Int)],
+        &[EvalType::Int],
+        EvalType::Real,
+        ScalarFuncSig::CastIntAsReal,
+        true,
+    ),
+    signature(
+        "cast_double",
+        &[ArgPattern::eval(EvalType::Decimal)],
+        &[EvalType::Decimal],
+        EvalType::Real,
+        ScalarFuncSig::CastDecimalAsReal,
+        true,
+    ),
+    signature(
+        "cast_double",
+        &[ArgPattern::eval(EvalType::String)],
+        &[EvalType::String],
+        EvalType::Real,
+        ScalarFuncSig::CastStringAsReal,
+        true,
+    ),
+    signature(
+        "cast_decimal",
+        &[ArgPattern::eval(EvalType::Int)],
+        &[EvalType::Int],
+        EvalType::Decimal,
+        ScalarFuncSig::CastIntAsDecimal,
+        true,
+    ),
+    signature(
+        "cast_decimal",
+        &[ArgPattern::eval(EvalType::String)],
+        &[EvalType::String],
+        EvalType::Decimal,
+        ScalarFuncSig::CastStringAsDecimal,
+        true,
+    ),
+    // The integer arithmetic family, and the comparisons that compose it.
+    // Go `arithmeticPlusFunctionClass.getFunction`: two ints are PlusInt with
+    // the result unsigned when either operand is unsigned; the four
+    // signedness pairs are four rows so the selector can see them. The
+    // comparisons and the logical connectives are the shapes Go's rewriter
+    // nests UNDER `or`/`and` when a whole predicate tree travels.
+    signature(
+        "plus",
+        &[ArgPattern::int(false), ArgPattern::int(false)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::PlusInt,
+        false,
+    ),
+    signature(
+        "plus",
+        &[ArgPattern::int(true), ArgPattern::int(false)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::PlusInt,
+        false,
+    ),
+    signature(
+        "plus",
+        &[ArgPattern::int(false), ArgPattern::int(true)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::PlusInt,
+        false,
+    ),
+    signature(
+        "plus",
+        &[ArgPattern::int(true), ArgPattern::int(true)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::PlusInt,
+        false,
+    ),
+    signature(
+        "gt",
+        &[
+            ArgPattern::eval(EvalType::Int),
+            ArgPattern::eval(EvalType::Int),
+        ],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::GtInt,
+        false,
+    ),
+    signature(
+        "eq",
+        &[
+            ArgPattern::eval(EvalType::Int),
+            ArgPattern::eval(EvalType::Int),
+        ],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::EqInt,
+        false,
+    ),
+    signature(
+        "or",
+        &[
+            ArgPattern::eval(EvalType::Int),
+            ArgPattern::eval(EvalType::Int),
+        ],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::LogicalOr,
+        false,
+    ),
+    signature(
+        "and",
+        &[
+            ArgPattern::eval(EvalType::Int),
+            ArgPattern::eval(EvalType::Int),
+        ],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::LogicalAnd,
+        false,
+    ),
     // `powFunctionClass.getFunction`. MySQL spells the same function `POW` and
     // `POWER`; TiDB registers both names on one class, so both are rows.
     signature(
@@ -3230,5 +3377,60 @@ mod tests {
             );
             assert_ne!(row.sig, ScalarFuncSig::Unspecified, "{}", row.name);
         }
+    }
+}
+
+#[cfg(test)]
+mod probe2 {
+    use super::*;
+
+    #[test]
+    fn probe_nested_gt_plus() {
+        let plus = build_call(
+            "plus",
+            vec![
+                PbScalar::Column {
+                    offset: 0,
+                    field_type: FieldType::new(FieldTypeCode::LongLong),
+                },
+                PbScalar::IntLiteral(1),
+            ],
+        );
+        println!("plus resolves: {:?}", plus.is_some());
+        let Some(plus) = plus else { return };
+        let gt = build_call("gt", vec![plus, PbScalar::IntLiteral(999)]);
+        println!("gt resolves: {:?}", gt.is_some());
+        let Some(gt) = gt else { return };
+        let descriptors = |scalar: &PbScalar| {
+            let mut declared = Vec::new();
+            fn collect(scalar: &PbScalar, out: &mut Vec<(u32, ColumnDescriptor)>) {
+                match scalar {
+                    PbScalar::Column { offset, field_type } => out.push((
+                        *offset,
+                        ColumnDescriptor {
+                            tp: field_type.code().mysql_type().into(),
+                            flag: field_type.flags(),
+                            flen: i32::try_from(field_type.flen()).unwrap_or(UNSPECIFIED_LENGTH),
+                            decimal: i32::try_from(field_type.decimal())
+                                .unwrap_or(UNSPECIFIED_LENGTH),
+                            charset: "binary".to_owned(),
+                            collation: field_type.collation_name().to_owned(),
+                            elems: Vec::new(),
+                            array: false,
+                        },
+                    )),
+                    PbScalar::Call { args, .. } => args.iter().for_each(|arg| collect(arg, out)),
+                    _ => {}
+                }
+            }
+            collect(scalar, &mut declared);
+            move |offset: u32| {
+                declared
+                    .iter()
+                    .find(|(at, _)| *at == offset)
+                    .map(|(_, d)| d.clone())
+            }
+        };
+        println!("gt lowers: {:?}", to_pb(&gt, &descriptors(&gt)).is_some());
     }
 }

@@ -485,19 +485,23 @@ fn column_comparison_to_pb(
             width: columns.len(),
         },
     )?;
-    if comparison.left_type.code() != comparison.right_type.code() {
-        return Err(WideScanSelectionError::UnsupportedColumnType {
-            offset: comparison.left_offset,
-        });
-    }
     let op = comparison_op(comparison.op);
     let code = comparison.left_type.code();
+    // Go `compareFunctionClass` coerces two integer operands of different
+    // widths to the wider one and pushes `GTInt` (live receipt:
+    // `gt(sbig, small)` crosses the wire), so the width check must not gate
+    // the integer family.
     if is_int_family_type(left.tp) && is_int_family_type(right.tp) {
         return Ok(int_comparison_to_pb(
             op,
             int_column_operand(comparison.left_offset, columns)?,
             int_column_operand(comparison.right_offset, columns)?,
         )?);
+    }
+    if comparison.left_type.code() != comparison.right_type.code() {
+        return Err(WideScanSelectionError::UnsupportedColumnType {
+            offset: comparison.left_offset,
+        });
     }
     if code == FieldTypeCode::NewDecimal {
         return Ok(decimal_comparison_to_pb(
@@ -741,12 +745,10 @@ fn int_literal_operand(
     let Datum::Int(value) = literal else {
         return Err(WideScanSelectionError::UnsupportedLiteral { offset });
     };
-    // Go's `refineArgsByUnsignedFlag` returns the arguments untouched exactly
-    // when the constant is strictly positive; at or below zero it rewrites the
-    // comparison, so the form written here would not be the form Go sends.
-    if is_unsigned(column_flags) && *value <= 0 {
-        return Err(WideScanSelectionError::UnsupportedLiteral { offset });
-    }
+    // Go master's own plans push the constant verbatim against an UNSIGNED
+    // column (live receipts: `ge(ubig, 0)` and `gt(ubig, -1)` cross the wire
+    // exactly as written), so the literal is encoded whatever its sign.
+    let _ = column_flags;
     Ok(IntPbOperand::Literal(*value))
 }
 

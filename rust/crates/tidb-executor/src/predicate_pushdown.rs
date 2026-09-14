@@ -561,23 +561,29 @@ fn describe_condition(
                     op,
                 }));
             }
-            let (column_offset, column_type, constant, column_on_left) =
-                if let Some((offset, field_type)) = column(left) {
-                    (offset, field_type, right, true)
-                } else {
-                    let (offset, field_type) = column(right).ok_or_else(unsupported)?;
-                    (offset, field_type, left, false)
-                };
-            let (literal, literal_type) = literal(constant, context)?;
-            Ok(ScanPredicate::Compare(ScanComparison {
-                column_offset,
-                column_type,
-                literal_type,
-                op,
-                literal,
-                column_on_left,
-                collation,
-            }))
+            if let Some((offset, field_type)) = column(left).or_else(|| column(right)) {
+                let column_on_left = column(left).is_some();
+                let constant = if column_on_left { right } else { left };
+                let (literal, literal_type) = literal(constant, context)?;
+                return Ok(ScanPredicate::Compare(ScanComparison {
+                    column_offset: offset,
+                    column_type: field_type,
+                    literal_type,
+                    op,
+                    literal,
+                    column_on_left,
+                    collation,
+                }));
+            }
+            // Neither operand is a bare column (an arithmetic or builtin side,
+            // as in `sbig + 1 > 999`). Go pushes the comparison expression
+            // whole (`scalarExprSupportedByTiKV` walks the tree), so describe
+            // it as a builtin call and let the catalog's comparison rows
+            // encode it, instead of refusing here.
+            match scalar(expression, context)? {
+                call @ PbScalar::Call { .. } => Ok(ScanPredicate::Builtin(call)),
+                _ => Err(unsupported()),
+            }
         }
         _ => match scalar(expression, context)? {
             call @ PbScalar::Call { .. } => Ok(ScanPredicate::Builtin(call)),

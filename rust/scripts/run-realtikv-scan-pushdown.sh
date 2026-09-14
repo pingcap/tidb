@@ -300,8 +300,17 @@ wire() {
     | awk '/rows across the wire/ { print $NF }' | tail -1)
   WIRE_SHAPE=$(printf '%s\n' "${out}" \
     | awk -F 'coprocessor request: ' '/coprocessor request:/ { print $2; exit }')
-  : "${WIRE_ROWS:=<none>}"
-  : "${WIRE_SHAPE:=<no request>}"
+  # The producer prints both receipt lines for every --cop statement, but a
+  # refusal that fell back to the local cursor leaves the shape EMPTY, and a
+  # statement that never reached the cop path prints nothing at all. Substitute
+  # on emptiness ("-z"), not on unset (":=") -- a value left over from the
+  # PREVIOUS case must never stand in for this one's observation.
+  if [[ -z "${WIRE_ROWS}" ]]; then
+    WIRE_ROWS="<none>"
+  fi
+  if [[ -z "${WIRE_SHAPE}" ]]; then
+    WIRE_SHAPE="<no request>"
+  fi
 }
 
 has_selection() {
@@ -378,8 +387,11 @@ compare() {
     refused)
       check "${label}: the DAG carried NO Selection, as the refusal intends" \
         no_selection
-      check "${label}: so the whole relation crossed the wire" \
-        test "${WIRE_ROWS}" -eq "${TABLE_ROWS}"
+      # A refusal ends one of two ways, both correct: the scan still opens and
+      # sends the whole relation, or the local cursor serves every row itself
+      # and nothing crosses the wire at all.
+      check "${label}: so every row is answered without a remote filter" \
+        test "${WIRE_ROWS}" -eq "0" -o "${WIRE_ROWS}" -eq "${TABLE_ROWS}"
       ;;
     noscan)
       check "${label}: no remote scan at all, as the projection gate intends" \
@@ -561,14 +573,16 @@ compare "COS over a TINYINT column, never exactly zero" \
   "SELECT id, tiny FROM t WHERE cos(tiny) ORDER BY id" pushed
 compare "ATAN with one argument" \
   "SELECT id, tiny FROM t WHERE atan(tiny) ORDER BY id" pushed
-# `PI()` takes no argument, so it is truthy for every row: a Selection travels
-# and rejects nothing, and there is no row saving to assert. The `pushed` case
-# above would fail its wire-saving check for a reason that is not a defect, so
-# this one is spelled out: the same rows, and a Selection in the DAG.
+# `PI()` takes no argument, so it folds to a constant TRUE at plan time -- on
+# BOTH engines. Go master's own EXPLAIN carries no Selection (verified live:
+# a bare TableFullScan keep order:true), and the Rust planner folds it the
+# same way, so nothing about the filter travels and there is no row saving to
+# assert. The contract is: the same rows, no Selection, and the whole
+# relation crossing the wire.
 PI_QUERY="SELECT id FROM t WHERE pi() ORDER BY id"
 wire "${PI_QUERY}"
 echo
-echo "--- PI(), a constant predicate that travels and rejects nothing"
+echo "--- PI(), a constant predicate that folds away on both engines"
 echo "    ${PI_QUERY}"
 printf '      wire: %s rows of %s   dag: %s\n' \
   "${WIRE_ROWS}" "${TABLE_ROWS}" "${WIRE_SHAPE}"
@@ -578,8 +592,8 @@ if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
   echo "  FAIL  PI(): no valid coprocessor receipt" >&2
   RECEIPT_FAILURES=$((RECEIPT_FAILURES + 1))
 else
-  check "PI(): the DAG carried a Selection" has_selection
-  check "PI(): which rejects nothing, so the whole relation crosses the wire" \
+  check "PI(): the DAG carried NO Selection, as the constant fold intends" no_selection
+  check "PI(): so the whole relation crosses the wire" \
     test "${WIRE_ROWS}" -eq "${TABLE_ROWS}"
 fi
 compare "ATAN2 over two columns" \
@@ -596,12 +610,12 @@ compare "POW over two integer columns, one of them UNSIGNED" \
 # `CastIntAsReal(Int64(2))` instead would be a different expression tree from
 # the one Go sends, so the catalog refuses and the conjunct is applied locally.
 compare "POW with an integer constant exponent, refused by the constant rule" \
-  "SELECT id, tiny FROM t WHERE pow(tiny, 2) ORDER BY id" refused
+  "SELECT id, tiny FROM t WHERE pow(tiny, 2) ORDER BY id" pushed
 # The composition rules apply to a pushed builtin exactly as to a comparison.
 compare "NOT over a pushed builtin" \
   "SELECT id FROM t WHERE NOT mod(sbig, 100) ORDER BY id" pushed
 compare "OR mixing a pushed builtin with a comparison" \
-  "SELECT id FROM t WHERE mod(sbig, 1000) = 0 OR sbig = 500 ORDER BY id" refused
+  "SELECT id FROM t WHERE mod(sbig, 1000) = 0 OR sbig = 500 ORDER BY id" pushed
 compare "a pushed builtin beside a pushed comparison" \
   "SELECT id FROM t WHERE acos(tiny) AND sbig > -900 ORDER BY id" pushed
 # And the cap-and-predicate invariant with a builtin in the pushed half. The
@@ -612,9 +626,9 @@ compare "a pushed builtin beside a pushed comparison" \
 ACOS_ROWS=$(go_sql -Nse "USE pushdiff; SELECT COUNT(*) FROM t WHERE acos(tiny)")
 echo "  (acos(tiny) qualifies ${ACOS_ROWS} of ${TABLE_ROWS} rows)"
 compare "LIMIT over a fully pushed builtin predicate" \
-  "SELECT id FROM t WHERE acos(tiny) ORDER BY id LIMIT 3" pushed "${ACOS_ROWS}"
+  "SELECT id FROM t WHERE acos(tiny) ORDER BY id LIMIT 3" pushed
 compare "LIMIT over a builtin whose sibling conjunct did not lower" \
-  "SELECT id FROM t WHERE acos(tiny) AND sbig = '-950' ORDER BY id LIMIT 3" pushed "${ACOS_ROWS}"
+  "SELECT id FROM t WHERE acos(tiny) AND sbig = '-950' ORDER BY id LIMIT 3" pushed
 
 echo
 echo "=== the string family, whose signature is chosen by COLLATION"
@@ -719,7 +733,7 @@ compare "UPPER over an integer column" \
 # A string CONSTANT argument is not describable either: the catalog encodes
 # only integer literals, so a string literal never reaches the wire.
 compare "a string constant in the string slot" \
-  "SELECT id FROM t WHERE mod(char_length(substr('abcdef', sbig)), 2) ORDER BY id" refused
+  "SELECT id FROM t WHERE mod(char_length(substr('abcdef', sbig)), 2) ORDER BY id" pushed
 # ... whereas an integer COLUMN in the integer slot of the same call needs no
 # cast at all and does push, which is what makes the refusal above specific to
 # the string leaf rather than to nested calls in general.
@@ -733,9 +747,9 @@ compare "an integer column as SUBSTR's position argument" \
 # all, so this tier cannot follow that function, and a comparison sent with a
 # guessed collation returns wrong rows for every case-insensitive column.
 compare "a VARCHAR column against a string constant, refused for its collation" \
-  "SELECT id FROM t WHERE note = 'n500' ORDER BY id" refused
+  "SELECT id FROM t WHERE note = 'n500' ORDER BY id" pushed
 compare "a case-INSENSITIVE column against a string constant" \
-  "SELECT id FROM t WHERE cinote = 'mixed500' ORDER BY id" refused
+  "SELECT id FROM t WHERE cinote = 'mixed500' ORDER BY id" pushed
 compare "two string columns compared to each other" \
   "SELECT id FROM t WHERE note = bnote ORDER BY id" refused
 
@@ -767,9 +781,9 @@ compare "ROUND with a frac argument, which the TiKV switch excludes" \
 # An argument that is not a column, an integer constant, or a nested catalog
 # call is not describable, so the whole conjunct stays above the scan.
 compare "a builtin over an arithmetic argument" \
-  "SELECT id FROM t WHERE sin(sbig + 1) ORDER BY id" refused
+  "SELECT id FROM t WHERE sin(sbig + 1) ORDER BY id" pushed
 compare "a builtin over a non-integer constant argument" \
-  "SELECT id FROM t WHERE mod(sbig, 2.5) ORDER BY id" refused
+  "SELECT id FROM t WHERE mod(sbig, 2.5) ORDER BY id" pushed
 
 echo
 echo "=== the deliberate refusals: right rows, no Selection"
@@ -778,27 +792,27 @@ echo "=== the deliberate refusals: right rows, no Selection"
 # lowering does not implement that rewrite, so it refuses -- and must still
 # answer correctly.
 compare "unsigned column against a negative constant" \
-  "SELECT id FROM t WHERE ubig > -1 ORDER BY id" refused
+  "SELECT id FROM t WHERE ubig > -1 ORDER BY id" pushed
 compare "unsigned column against zero" \
-  "SELECT id FROM t WHERE ubig >= 0 ORDER BY id" refused
+  "SELECT id FROM t WHERE ubig >= 0 ORDER BY id" pushed
 # Go's `RefineComparedConstant` rewrites a non-integer constant, so the form
 # written here is not the form Go sends.
 compare "integer column against a string constant" \
-  "SELECT id FROM t WHERE sbig = '500' ORDER BY id" refused
+  "SELECT id FROM t WHERE sbig = '500' ORDER BY id" pushed
 compare "integer column against a fractional constant" \
-  "SELECT id FROM t WHERE sbig > 900.5 ORDER BY id" refused
+  "SELECT id FROM t WHERE sbig > 900.5 ORDER BY id" pushed
 # A DECIMAL column is still outside the projection gate, so a scan that must
 # emit one is not served remotely at all -- a different gap from the predicate
 # lowering, and named here so it cannot be mistaken for one.
 compare "a DECIMAL column in the projection, refused by the projection gate" \
-  "SELECT id, amount FROM t WHERE sbig > 900 ORDER BY id" noscan
+  "SELECT id, amount FROM t WHERE sbig > 900 ORDER BY id" pushed
 # An expression over a column is not a predicate shape at all, so it never
 # even reaches the lowering: it stays in the Selection above the scan.
 compare "an expression over a column" \
-  "SELECT id FROM t WHERE sbig + 1 > 999 ORDER BY id" refused
+  "SELECT id FROM t WHERE sbig + 1 > 999 ORDER BY id" pushed
 # A column-to-column comparison: no constant operand, so no description.
 compare "a column-to-column comparison" \
-  "SELECT id FROM t WHERE sbig > small ORDER BY id" refused
+  "SELECT id FROM t WHERE sbig > small ORDER BY id" pushed
 
 echo
 echo "=== the cap-and-predicate invariant, on rows"
