@@ -1970,6 +1970,8 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		}
+		// TODO: Account the RU staged by the temporary-index merge. It is currently
+		// discarded when this job step ends.
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		return true, ver, errors.Trace(err)
 	default:
@@ -3483,10 +3485,9 @@ func (w *worker) recordDistTaskRU(jobID int64, task *proto.Task) error {
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: Include scan bytes in this estimate. For partial indexes, the
-	// ingested KV size can be much smaller than the scanned bytes. Also account
-	// for the add-index temporary-index merge phase. For now, only ingest KV size
-	// is considered because normal and multi-valued indexes are more common.
+	// TODO: Include scan bytes in this estimate. For partial indexes, the index
+	// KV size can be much smaller than the scanned bytes. For now, only index KV
+	// size is considered because normal and multi-valued indexes are more common.
 	if taskMeta.Summary != nil {
 		if rc := w.getReorgCtx(jobID); rc != nil {
 			rc.setRU(float64(taskMeta.Summary.IndexKVSize) * currentDDLRUWeights().IngestKVBytes)
