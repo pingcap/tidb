@@ -18,10 +18,7 @@ use crate::{Datum, Session, StmtResult};
 use std::sync::{Mutex, OnceLock};
 
 fn embedding_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(Mutex::default)
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    crate::tests_support::process_switch_tests()
 }
 
 fn one(session: &mut Session, sql: &str) -> String {
