@@ -95,18 +95,24 @@ fn top_est_rows(session: &mut Session, sql: &str) -> String {
 fn first_analyze_without_cached_statistics_collects_small_table_distribution() {
     let mut session = Session::new();
     session.run("CREATE TABLE fresh_stats (a INT)").unwrap();
-    session.run("INSERT INTO fresh_stats VALUES (1),(2),(2)").unwrap();
-    session.run("ANALYZE TABLE fresh_stats ALL COLUMNS").unwrap();
-    session.with_catalog_mut(|catalog| {
-        let Some(TableEntry::Kv(table)) = catalog.table_in("test", "fresh_stats") else {
-            panic!("fresh_stats is not a stored table");
-        };
-        let stats = catalog.table_statistics(table.table_id).unwrap();
-        let column = stats.columns.values().next().unwrap();
-        assert_eq!(column.total_row_count(), 3.0);
-        assert_eq!(column.histogram.ndv, 2);
-        Ok(())
-    }).unwrap();
+    session
+        .run("INSERT INTO fresh_stats VALUES (1),(2),(2)")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE fresh_stats ALL COLUMNS")
+        .unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "fresh_stats") else {
+                panic!("fresh_stats is not a stored table");
+            };
+            let stats = catalog.table_statistics(table.table_id).unwrap();
+            let column = stats.columns.values().next().unwrap();
+            assert_eq!(column.total_row_count(), 3.0);
+            assert_eq!(column.histogram.ndv, 2);
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
@@ -1181,6 +1187,9 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                         .collect::<Vec<_>>();
                     let mut options = tidb_executor::analyze::AnalyzeOptions::default();
                     options.num_topn = 0;
+                    // This fixture scales every sampled bucket into a fixed
+                    // distribution; do not randomly omit its seed rows.
+                    options.sample_rate = Some(1.0);
                     let statistics =
                         tidb_executor::analyze::kv::analyze_kv_table(table, &options, None, &ctx)
                             .unwrap();
@@ -1270,8 +1279,9 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                 .find(|row| row[0].contains("HashJoin") && row[4].contains("customer.c_nationkey"))
                 .unwrap_or_else(|| panic!("no final nation join in q7 plan: {rows:#?}"));
             assert_eq!(
-                final_nation_join[1], "38877.73",
-                "the next connection did not observe q3's physical handle request and its +                 first same-version resident column"
+                final_nation_join[1], "38839.37",
+                "the next connection did not observe q3's physical handle request and its \
+                 first same-version resident column"
             );
         })
         .unwrap()
