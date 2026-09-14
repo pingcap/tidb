@@ -155,7 +155,7 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, _, _, _, _ float64,
-		_, _, _, _ float64,
+		_, _, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -231,7 +231,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		connectionID := tk.Session().GetSessionVars().ConnectionID
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 			id uint64, state string, _, observedScanBytes, _, _, observedHashRows, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if id == connectionID {
 				require.Equal(t, "incomplete", state)
@@ -460,7 +460,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1058,7 +1058,7 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, netBytes, _, _, _ float64,
-		_, _, _, _ float64,
+		_, _, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -1167,7 +1167,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1213,7 +1213,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1264,7 +1264,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1298,7 +1298,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			observedCPUWork, _, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1583,7 +1583,7 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 		connectionID := tk1.Session().GetSessionVars().ConnectionID
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 			observedConnectionID uint64, _ string, _, _, _, _, _, _ float64,
-			writeStatement, _, _, _ float64,
+			writeStatement, _, _, _, _ float64,
 		) {
 			if observedConnectionID == connectionID {
 				chargedWrites.Add(int64(writeStatement))
@@ -1619,7 +1619,7 @@ func TestStatementRUWriteLifecycle(t *testing.T) {
 	connectionID := tk.Session().GetSessionVars().ConnectionID
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 		observedConnectionID uint64, _ string, cpu, _, _, _, _, _ float64,
-		ws, operators, keys, bytes float64,
+		ws, operators, keys, bytes, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -1739,7 +1739,7 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
 			var observed atomic.Int64
 			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(_ uint64, _ string,
-				_, _, _, _, _, _, _, _, _, _ float64) {
+				_, _, _, _, _, _, _, _, _, _, _ float64) {
 				observed.Add(1)
 			})
 			totalBefore := testutil.ToFloat64(metrics.RUV3Total)

@@ -575,6 +575,7 @@ type RuntimeStatsColl struct {
 	rootStats                  map[int]*RootRuntimeStats
 	copStats                   map[int]*CopRuntimeStats
 	analyzeScanBytes           map[int]float64
+	tiFlashExecutionUnits      map[int]TiFlashExecutionUnits
 	copResponseSummaryExpected map[int]copResponseSummaryExpectation
 	stmtCopStats               StmtCopRuntimeStats
 	mu                         sync.Mutex
@@ -599,6 +600,7 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 		for k := range reuse.copStats {
 			delete(reuse.copStats, k)
 		}
+		clear(reuse.tiFlashExecutionUnits)
 		for k := range reuse.analyzeScanBytes {
 			delete(reuse.analyzeScanBytes, k)
 		}
