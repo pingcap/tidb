@@ -25,29 +25,18 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 )
 
 // currentStatementRUWeights reads the loaded config rather than capturing
 // package-initialization defaults. RU v3 shares the ru-v2 config section while
 // replacing the legacy model; its statement weights are not dynamically reloadable.
-func currentStatementRUWeights() ruv3.StmtWeights {
-	weights := config.DefaultRUV2Config()
+func currentStatementRUWeights() ruv2.StmtWeights {
+	weights := ruv2.DefaultWeights()
 	if cfg := config.GetGlobalConfig(); cfg != nil {
-		weights = cfg.RUV2
+		weights = cfg.RUV2.StmtWeights
 	}
-	return ruv3.StmtWeights{
-		CPUWork:             weights.StatementCPUWork,
-		ScanByte:            weights.StatementScanBytes,
-		NetByte:             weights.StatementNetBytes,
-		FrontendCompileByte: weights.StatementFrontendCompileBytes,
-		HashStateRow:        weights.StatementHashStateRows,
-		JoinOutputRow:       weights.StatementJoinOutputRows,
-		WriteStatement:      weights.StatementWriteStatement,
-		OperatorNum:         weights.StatementOperatorNum,
-		WriteKey:            weights.StatementWriteKeys,
-		WriteByte:           weights.StatementWriteBytes,
-	}
+	return weights
 }
 
 // The current producers cannot prove that all successful or canceled remote
@@ -81,7 +70,7 @@ func (state statementRUCalibrationState) String() string {
 
 type statementRUCalibrationSnapshot struct {
 	State statementRUCalibrationState
-	Units ruv3.StmtUnits
+	Units ruv2.StmtUnits
 }
 
 // statementRUCalculationSetup is installed once for an eligible statement
@@ -95,8 +84,8 @@ type statementRUCalculationSetup struct {
 // statementRUFinalizedSnapshot owns scalar results and an optional full-mode
 // report of numeric values. It retains no plan, executor, or runtime statistics.
 type statementRUFinalizedSnapshot struct {
-	units            ruv3.StmtUnits
-	result           ruv3.StmtResult
+	units            ruv2.StmtUnits
+	result           ruv2.StmtResult
 	calibrationState statementRUCalibrationState
 	sqlType          string
 	engineRU         statementRUEngineResult
@@ -205,14 +194,14 @@ func trimStatementRUExplainPrefix(normalizedSQL string) string {
 // statementRUCalculator is terminal-local. It accumulates only typed scalar
 // units; no plan or execution-detail pointer survives calculateStatementRU.
 type statementRUCalculator struct {
-	units   ruv3.StmtUnits
+	units   ruv2.StmtUnits
 	compute [statementRUEngineCount]statementRUComputeUnits
 	report  *statementRUFullReport
 }
 
 func newStatementRUCalculator(setup statementRUCalculationSetup) statementRUCalculator {
 	calculator := statementRUCalculator{
-		units: ruv3.StmtUnits{
+		units: ruv2.StmtUnits{
 			FrontendCompileBytes: setup.frontendCompileBytes,
 		},
 	}
@@ -265,7 +254,7 @@ func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes in
 
 func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot, bool) {
 	weights := currentStatementRUWeights()
-	result, ok := ruv3.Calculate(calculator.units, weights)
+	result, ok := ruv2.Calculate(calculator.units, weights)
 	if !ok {
 		return statementRUFailed(statementRUOperatorInvalid), false
 	}
