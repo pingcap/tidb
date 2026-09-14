@@ -107,6 +107,7 @@ func TestToProto(t *testing.T) {
 	dr.TableMap[oldTblID] = tr
 	dr.FilteredOut = true
 	dr.Reused = true
+	dr.SchemaRouted = true
 
 	drs := make(map[UpstreamID]*DBReplace)
 	drs[oldDBID] = dr
@@ -123,6 +124,7 @@ func TestToProto(t *testing.T) {
 	require.Equal(t, dbMap[0].IdMap.DownstreamId, newDBID)
 	require.Equal(t, dbMap[0].FilteredOut, true)
 	require.Equal(t, dbMap[0].Reused, true)
+	require.Equal(t, dbMap[0].SchemaRouted, true)
 
 	tableMap := dbMap[0].Tables
 	require.Equal(t, len(tableMap), 1)
@@ -758,6 +760,12 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, int64(900), byName["target_db"].ID)
 		require.NotNil(t, byName["target_db"].SourceDBInfo)
 		require.Equal(t, int64(901), byName["other_db"].ID)
+
+		// The flag must survive a persisted PiTR ID map round-trip, otherwise a
+		// resume would stop replaying the target schema's DBInfo.
+		restored := FromDBMapProto(tm.ToProto())
+		require.True(t, restored[1].SchemaRouted)
+		require.True(t, restored[1].RestoresDatabaseMetadata())
 	})
 
 	t.Run("share and rebind a filtered database alias", func(t *testing.T) {

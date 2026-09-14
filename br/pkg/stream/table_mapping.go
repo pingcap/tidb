@@ -1272,6 +1272,10 @@ func (tm *TableMappingManager) ToProto() []*backuppb.PitrDBMap {
 			// Persist whether the downstream database already existed, so a resumed
 			// task keeps skipping its DBInfo replay instead of overwriting it.
 			Reused: dr.Reused,
+			// Persist whether an explicit schema-level route owns this schema, so a
+			// resumed task keeps replaying its DBInfo even when all of its tables
+			// are routed elsewhere.
+			SchemaRouted: dr.SchemaRouted,
 		}
 
 		for tblID, tr := range dr.TableMap {
@@ -1317,6 +1321,7 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 		dr := NewDBReplace(db.Name, db.IdMap.DownstreamId)
 		dr.FilteredOut = db.FilteredOut
 		dr.Reused = db.Reused
+		dr.SchemaRouted = db.SchemaRouted
 		dbReplaces[db.IdMap.UpstreamId] = dr
 
 		for _, tbl := range db.Tables {
