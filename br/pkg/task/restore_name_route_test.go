@@ -192,7 +192,9 @@ func TestApplyNameRoutesDistinguishesSchemaAndExactTableRules(t *testing.T) {
 
 		tableIDs, dbIDs := collectLogRestoreBlocklistIDs(manager)
 		require.Equal(t, []int64{301, 302, 401}, tableIDs)
-		require.Equal(t, []int64{101, 102, 201}, dbIDs)
+		// 101 restores its own schema and 201 is the routed target; 102's schema
+		// is not created because all of its tables are routed elsewhere.
+		require.Equal(t, []int64{101, 201}, dbIDs)
 	})
 }
 

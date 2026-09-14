@@ -151,7 +151,7 @@ func (r *Router) ValidateTargets(objects []ObjectName) error {
 		targetSchema, targetTable, _ := r.Route(normalized.Schema, normalized.Table)
 		target := ObjectName{Schema: targetSchema, Table: targetTable}
 		targetKey := keyOf(target)
-		if previous, ok := targets[targetKey]; ok && keyOf(previous) != sourceKey {
+		if previous, ok := targets[targetKey]; ok {
 			return fmt.Errorf("source objects %s and %s conflict at target %s",
 				formatObject(previous), formatObject(normalized), formatObject(target))
 		}

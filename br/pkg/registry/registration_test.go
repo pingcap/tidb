@@ -15,17 +15,45 @@
 package registry
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
+
+// closeCountingGlue fails the second CreateSession call and records how many
+// times each created session was closed.
+type closeCountingGlue struct {
+	glue.Glue
+	sessions []*closeCountingSession
+}
+
+func (g *closeCountingGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
+	if len(g.sessions) == 1 {
+		return nil, errors.New("heartbeat session creation failed")
+	}
+	se := &closeCountingSession{}
+	g.sessions = append(g.sessions, se)
+	return se, nil
+}
+
+type closeCountingSession struct {
+	glue.Session
+	closed int
+}
+
+func (s *closeCountingSession) Close() { s.closed++ }
 
 func TestNormalizeRegistrationRoutes(t *testing.T) {
 	first := RegistrationInfo{RouteStrings: []string{"b.t:z.t", "a:b"}}
@@ -186,6 +214,14 @@ func TestRestoreRegistryRouteSchemaReadiness(t *testing.T) {
 	index.Unique = true
 	tableInfo.Columns[4].State = model.StateWriteOnly
 	require.False(t, hasRestoreRegistryRouteSchema(tableInfo))
+
+	t.Run("closes the first session when the heartbeat session fails", func(t *testing.T) {
+		g := &closeCountingGlue{}
+		_, err := NewRestoreRegistry(context.Background(), g, domain.NewMockDomain())
+		require.ErrorContains(t, err, "heartbeat session creation failed")
+		require.Len(t, g.sessions, 1)
+		require.Equal(t, 1, g.sessions[0].closed)
+	})
 }
 
 func TestPiTRRegistrationsConflictAtRoutedTargetSchema(t *testing.T) {

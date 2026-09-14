@@ -318,8 +318,20 @@ func NewRestoreRegistry(ctx context.Context, g glue.Glue, dom *domain.Domain) (*
 	}
 	heartbeatSession, err := g.CreateSession(dom.Store())
 	if err != nil {
+		se.Close()
 		return nil, errors.Trace(err)
 	}
+
+	// Close both sessions if the registry is not constructed successfully, so an
+	// error path does not leak them.
+	success := false
+	defer func() {
+		if !success {
+			se.Close()
+			heartbeatSession.Close()
+		}
+	}()
+
 	tableExists := true
 	tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr(RestoreRegistryDBName), ast.NewCIStr(RestoreRegistryTableName))
 	if err != nil {
@@ -330,6 +342,7 @@ func NewRestoreRegistry(ctx context.Context, g glue.Glue, dom *domain.Domain) (*
 	}
 	routeSchemaReady := tableExists && hasRestoreRegistryRouteSchema(tbl.Meta())
 
+	success = true
 	return &Registry{
 		se:               se,
 		heartbeatSession: heartbeatSession,

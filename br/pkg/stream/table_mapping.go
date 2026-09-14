@@ -987,39 +987,6 @@ type TableRoute struct {
 	TargetTableID   DownstreamID
 }
 
-// LookupTableRoute finds the route for an upstream table ID across all source
-// database buckets. It returns an error if history merging left inconsistent
-// routes for the same stable table ID.
-func (tm *TableMappingManager) LookupTableRoute(upstreamTableID UpstreamID) (TableRoute, bool, error) {
-	var result TableRoute
-	found := false
-	for _, dbReplace := range tm.DBReplaceMap {
-		tableReplace, exists := dbReplace.TableMap[upstreamTableID]
-		if !exists || tableReplace.FilteredOut {
-			continue
-		}
-		candidate := TableRoute{
-			TargetDBName:    tableReplace.EffectiveDBName(dbReplace),
-			TargetDBID:      tableReplace.EffectiveDBID(dbReplace),
-			TargetTableName: tableReplace.Name,
-			TargetTableID:   tableReplace.TableID,
-		}
-		if !found {
-			result = candidate
-			found = true
-			continue
-		}
-		if ast.NewCIStr(result.TargetDBName).L != ast.NewCIStr(candidate.TargetDBName).L ||
-			ast.NewCIStr(result.TargetTableName).L != ast.NewCIStr(candidate.TargetTableName).L ||
-			result.TargetDBID != candidate.TargetDBID || result.TargetTableID != candidate.TargetTableID {
-			return TableRoute{}, false, errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
-				"upstream table %d has inconsistent downstream routes %+v and %+v",
-				upstreamTableID, result, candidate)
-		}
-	}
-	return result, found, nil
-}
-
 // ValidateRoutedDependencies preserves the conservative behavior for persisted
 // mappings that do not carry source FK reference names. The flags are
 // accumulated while scanning log metadata and persisted in the PiTR ID map so

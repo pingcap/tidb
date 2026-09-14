@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -805,44 +804,6 @@ func TestMergeBaseDBReplace(t *testing.T) {
 			return nil, nil
 		})
 		require.ErrorContains(t, err, "conflicting downstream IDs")
-	})
-
-	t.Run("lookup stable route across source database history", func(t *testing.T) {
-		tm := NewTableMappingManager()
-		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
-			1: {
-				Name: "old_source_db",
-				DbID: 101,
-				TableMap: map[UpstreamID]*TableReplace{
-					11: {
-						Name:         "target_table",
-						TableID:      111,
-						TargetDBName: "target_db",
-						TargetDBID:   201,
-					},
-				},
-			},
-			2: {
-				Name: "latest_source_db",
-				DbID: 102,
-				TableMap: map[UpstreamID]*TableReplace{
-					11: {
-						Name:         "TARGET_TABLE",
-						TableID:      111,
-						TargetDBName: "TARGET_DB",
-						TargetDBID:   201,
-					},
-				},
-			},
-		}
-
-		route, exists, err := tm.LookupTableRoute(11)
-		require.NoError(t, err)
-		require.True(t, exists)
-		require.Equal(t, int64(201), route.TargetDBID)
-		require.Equal(t, int64(111), route.TargetTableID)
-		require.True(t, strings.EqualFold("target_db", route.TargetDBName))
-		require.True(t, strings.EqualFold("target_table", route.TargetTableName))
 	})
 
 	t.Run("reject routed dependency objects", func(t *testing.T) {

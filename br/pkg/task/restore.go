@@ -1007,15 +1007,26 @@ func collectLogRestoreBlocklistIDs(manager *stream.TableMappingManager) ([]int64
 		if dbReplace.FilteredOut {
 			continue
 		}
-		dbIDs[dbReplace.DbID] = struct{}{}
+		// Only record downstream IDs this restore actually created. A source
+		// schema whose tables are all routed elsewhere is not created, and
+		// unresolved temporary IDs must not leak into the blocklist.
+		if dbReplace.RestoresDatabaseMetadata() && dbReplace.DbID > 0 {
+			dbIDs[dbReplace.DbID] = struct{}{}
+		}
 		for _, tableReplace := range dbReplace.TableMap {
 			if tableReplace.FilteredOut {
 				continue
 			}
-			dbIDs[tableReplace.EffectiveDBID(dbReplace)] = struct{}{}
-			tableIDs[tableReplace.TableID] = struct{}{}
+			if dbID := tableReplace.EffectiveDBID(dbReplace); dbID > 0 {
+				dbIDs[dbID] = struct{}{}
+			}
+			if tableReplace.TableID > 0 {
+				tableIDs[tableReplace.TableID] = struct{}{}
+			}
 			for _, partitionID := range tableReplace.PartitionMap {
-				tableIDs[partitionID] = struct{}{}
+				if partitionID > 0 {
+					tableIDs[partitionID] = struct{}{}
+				}
 			}
 		}
 	}
@@ -1611,9 +1622,18 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if isPiTR {
 		nameSources = buildPiTRRestoreNameSources(cfg.logTableHistoryManager, cfg.PiTRTableTracker, dbs, tables)
 	}
-	namePlan, err := buildRestoreNamePlan(nameRouter, dbs, tables, nameSources)
-	if err != nil {
-		return errors.Trace(err)
+	// The optional target-existence check needs the effective target names before
+	// AllocTableIDs/PreCheck run. Without routing the target names are identical
+	// to the source names, so only build a plan when a route is configured; the
+	// plan is rebuilt below because those steps can change the table metadata.
+	var namePlan *restoreNamePlan
+	targetTablesForCheck := tables
+	if cfg.hasNameRouting() {
+		namePlan, err = buildRestoreNamePlan(nameRouter, dbs, tables, nameSources)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		targetTablesForCheck = namePlan.targetTables
 	}
 	if isPiTR {
 		// Route dependency flags are collected from every TableInfo version in
@@ -1646,7 +1666,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	cfg.snapshotRestoreDataSize = archiveSize
 	// some more checks once we get tables and files information
 	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr,
-		tables, namePlan.targetTables, archiveSize, isPiTR, nameSources); err != nil {
+		tables, targetTablesForCheck, archiveSize, isPiTR, nameSources); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2536,6 +2556,11 @@ func readColumnarStorageEnabledForLog(dom *domain.Domain) string {
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
 // columnarStorageEnabled is diagnostic-only for Next-Gen warn logs.
+//
+// It intentionally mutates the passed table metadata in place (clearing or
+// downgrading TiFlashReplica). The caller builds the target metadata from these
+// objects afterwards, while source-only consumers (backup files, checksums,
+// statistics) do not read TiFlashReplica.
 func PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	pdClient pd.Client,
