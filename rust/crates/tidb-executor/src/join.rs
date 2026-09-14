@@ -3975,17 +3975,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let mut home_slots = Vec::new();
             table.probe_exact_int_many(&keys, &mut home_slots, &mut exact_found);
         }
+        let mut batch_ptrs = Vec::with_capacity(input.num_rows());
+        batch_ptrs.extend(
+            exact_found
+                .iter()
+                .filter_map(|found| found.and_then(|index| table.exact_int_single_at(index))),
+        );
         if input.num_rows() > 0 {
-            let mut batch_ptrs = Vec::with_capacity(input.num_rows());
-            let mut all_matched = true;
-            for &found in &exact_found {
-                let Some(ptr) = found.and_then(|index| table.exact_int_single_at(index)) else {
-                    all_matched = false;
-                    break;
-                };
-                batch_ptrs.push(ptr);
-            }
-            if all_matched {
+            if batch_ptrs.len() == input.num_rows() {
                 // Semi/anti have no joined row to assemble: a preserved
                 // build side only records the matches for the post-probe
                 // scan, and a probe-side semi join emits each preserved row
@@ -4095,14 +4092,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 });
             }
         }
-        for (probe_index, &found) in exact_found.iter().enumerate() {
-            let probe_row = input.get_row(probe_index);
-            let candidates = table.exact_int_chain(found);
-            debug_assert!(candidates.single().is_some() || candidates.is_empty());
-            // Semi/anti emit the preserved LEFT row once per match decision;
-            // with the preserved side built they only collect matches for the
-            // post-probe scan.
-            if preserved_only {
+        // Semi/anti need only the match decision, not the build row's cells.
+        if preserved_only {
+            for (probe_index, &found) in exact_found.iter().enumerate() {
+                let probe_row = input.get_row(probe_index);
+                let candidates = table.exact_int_chain(found);
                 let matched = !candidates.is_empty();
                 if matches!(kind, JoinKind::Semi) && matched && !builds_preserved {
                     output_layout.preserved(&mut output, probe_row);
@@ -4115,42 +4109,83 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 if matches!(kind, JoinKind::AntiSemi) && !matched && !builds_preserved {
                     output_layout.preserved(&mut output, probe_row);
                 }
-                continue;
             }
-            let mut matched = false;
-            for ptr in candidates {
-                let emitted = table
-                    .with_row(ptr, &mut build_buf, |build_row| {
-                        if !residual_conditions.is_empty() {
-                            let (left, right, left_width, right_width) = if probe_is_left {
-                                (probe_row, build_row, probe_types.len(), build_types.len())
-                            } else {
-                                (build_row, probe_row, build_types.len(), probe_types.len())
-                            };
-                            if !Self::matches_chunk_rows(
-                                ctx,
-                                residual_conditions,
-                                &condition_evals,
-                                &mut condition_chunk,
-                                left,
-                                right,
-                                left_width,
-                                right_width,
-                            )? {
-                                return Ok::<bool, ExecError>(false);
+        } else {
+            // Go's probe loop collects matches across misses before assembling
+            // the result. A missing key must not make every other row in this
+            // chunk reacquire the build-container lock. Walk the matched rows
+            // in one batch, retaining probe order for outer-join padding.
+            let preserve_probe =
+                !builds_preserved && matches!(kind, JoinKind::Left | JoinKind::Right);
+            let mut probe_rows = exact_found.iter().enumerate();
+            let mut match_index = 0;
+            if !batch_ptrs.is_empty() {
+                table
+                    .with_rows(&batch_ptrs, &mut build_buf, |build_row| {
+                        let probe_index = loop {
+                            let (index, found) =
+                                probe_rows.next().expect("one probe per build match");
+                            if found.is_some() {
+                                break index;
                             }
+                            if preserve_probe {
+                                output_layout.unmatched(
+                                    &mut output,
+                                    probe_is_left,
+                                    input.get_row(index),
+                                    build_types.len(),
+                                );
+                            }
+                        };
+                        let probe_row = input.get_row(probe_index);
+                        let matched = (|| {
+                            if !residual_conditions.is_empty() {
+                                let (left, right, left_width, right_width) = if probe_is_left {
+                                    (probe_row, build_row, probe_types.len(), build_types.len())
+                                } else {
+                                    (build_row, probe_row, build_types.len(), probe_types.len())
+                                };
+                                if !Self::matches_chunk_rows(
+                                    ctx,
+                                    residual_conditions,
+                                    &condition_evals,
+                                    &mut condition_chunk,
+                                    left,
+                                    right,
+                                    left_width,
+                                    right_width,
+                                )? {
+                                    return Ok::<bool, ExecError>(false);
+                                }
+                            }
+                            output_layout.chunks(&mut output, probe_is_left, probe_row, build_row);
+                            Ok::<bool, ExecError>(true)
+                        })()?;
+                        if matched && builds_preserved {
+                            matched_build_rows.push(batch_ptrs[match_index]);
                         }
-                        output_layout.chunks(&mut output, probe_is_left, probe_row, build_row);
-                        Ok::<bool, ExecError>(true)
+                        if !matched && preserve_probe {
+                            output_layout.unmatched(
+                                &mut output,
+                                probe_is_left,
+                                probe_row,
+                                build_types.len(),
+                            );
+                        }
+                        match_index += 1;
+                        Ok::<(), ExecError>(())
                     })
                     .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
-                matched |= emitted;
-                if emitted && builds_preserved {
-                    matched_build_rows.push(ptr);
-                }
             }
-            if !matched && !builds_preserved && matches!(kind, JoinKind::Left | JoinKind::Right) {
-                output_layout.unmatched(&mut output, probe_is_left, probe_row, build_types.len());
+            if preserve_probe {
+                for (index, _) in probe_rows {
+                    output_layout.unmatched(
+                        &mut output,
+                        probe_is_left,
+                        input.get_row(index),
+                        build_types.len(),
+                    );
+                }
             }
         }
         drop(probe_key_values);
