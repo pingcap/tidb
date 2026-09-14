@@ -58,6 +58,7 @@ func pdUnary(ctx context.Context, method string, req, reply any, cc *grpc.Client
 		"/keyspacepb.Keyspace/LoadKeyspaceByID",
 		"/keyspacepb.Keyspace/GetAllKeyspaces",
 		"/meta_storagepb.MetaStorage/Get",
+		"/resource_manager.ResourceManager/GetResourceGroup",
 		"/pdpb.PD/GetGCState",
 		"/pdpb.PD/GetAllKeyspacesGCStates",
 		"/tsopb.TSO/FindGroupByKeyspaceID",
@@ -68,7 +69,10 @@ func pdUnary(ctx context.Context, method string, req, reply any, cc *grpc.Client
 }
 func pdStream(ctx context.Context, d *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	switch method {
-	case "/pdpb.PD/WatchGlobalConfig",
+	// TSO is required for store initialization and MVCC reads.
+	case "/pdpb.PD/Tso",
+		"/tsopb.TSO/Tso",
+		"/pdpb.PD/WatchGlobalConfig",
 		"/pdpb.PD/QueryRegion",
 		"/routerpb.Router/QueryRegion",
 		"/meta_storagepb.MetaStorage/Watch":
