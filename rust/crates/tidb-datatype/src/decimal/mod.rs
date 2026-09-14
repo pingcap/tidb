@@ -578,6 +578,21 @@ impl Decimal {
 
     /// Returns the signed coefficient and retained fractional scale when the
     /// coefficient fits in an i128.
+    /// The coefficient of a value whose visible scale IS its storage scale,
+    /// for seeding a fixed-scale accumulator.
+    ///
+    /// [`Self::coefficient_i128`] reports `storage_scale`, which a division
+    /// result can carry more of than `scale` prints. Rebuilding from the
+    /// coefficient alone (`from_scaled_i128`) would then publish those hidden
+    /// digits, so a value whose two scales differ keeps the exact path.
+    #[must_use]
+    pub fn fold_coefficient_i128(&self) -> Option<(i128, u32)> {
+        if self.scale != self.storage_scale {
+            return None;
+        }
+        self.coefficient_i128()
+    }
+
     pub fn coefficient_i128(&self) -> Option<(i128, u32)> {
         let magnitude = self.digits.as_str().parse::<i128>().ok()?;
         let value = if self.negative {

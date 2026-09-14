@@ -505,6 +505,22 @@ struct DistinctInput {
     sort_key: Vec<Datum>,
 }
 
+/// The fixed-scale coefficient a SUM accumulator can be seeded with, or
+/// `None` for an input that must keep the exact `Decimal` path.
+///
+/// The scales here are the ones [`Partial::SumDecimalFast`] already folds and
+/// finalizes: an integer contributes at scale 0, and a decimal only when its
+/// visible scale is its storage scale, so rebuilding the result from the
+/// coefficient cannot publish hidden division digits.
+fn sum_seed_coefficient(input: &Datum) -> Option<(i128, u32)> {
+    match input {
+        Datum::Int(v) => Some((i128::from(*v), 0)),
+        Datum::UInt(v) => i128::try_from(*v).ok().map(|value| (value, 0)),
+        Datum::Decimal(d) => d.fold_coefficient_i128(),
+        _ => None,
+    }
+}
+
 /// The collation an aggregate's state works under: its argument's derived
 /// collation (Go `aggfuncs/builder.go` reads it off `AggFuncDesc.RetTp`
 /// once when the function is built).
@@ -1429,6 +1445,32 @@ impl Partial {
                 // Go's `calculateSum` selects DOUBLE for every
                 // non-integer/non-decimal input.
                 *this = Partial::SumReal(Some(real_aggregate_value(&input, "SUM")?));
+            }
+            // Go's `sum4Decimal` accumulates into a `MyDecimal` and adds its
+            // base-1e9 words; the fixed-scale i128 coefficient plays that role
+            // here, and [`Partial::SumDecimalFast`] already folds every later
+            // row of the group that way. Only the SEEDING reached this arm, so
+            // a SUM that got here built a `Decimal` per row and added it --
+            // and a `Decimal`'s coefficient is an ASCII digit string, so that
+            // add parsed one string and formatted another, per row.
+            //
+            // What gets here is an INTEGER sum. A decimal input already
+            // carries a coefficient off `eval_agg_input`, so it seeds through
+            // `update_with_coefficient` before this match; that is why this
+            // arm does not move TPC-H, whose decimal aggregates are also
+            // largely pushed to the coprocessor. `SUM` over a BIGINT has no
+            // such coefficient and fell here for every row of the group.
+            (this @ Partial::SumDecimal(None), Some(ref input))
+                if sum_seed_coefficient(input).is_some() =>
+            {
+                // Recomputed rather than carried out of the guard: a match
+                // guard cannot bind. It costs one extra coefficient read on
+                // the FIRST row of a group only, and every decimal that
+                // reaches here already failed to produce a coefficient
+                // upstream (`eval_agg_input`), so in practice this re-reads an
+                // integer.
+                let (sum, scale) = sum_seed_coefficient(input).expect("checked by the guard");
+                *this = Partial::SumDecimalFast { sum, scale };
             }
             (Partial::SumDecimal(acc), Some(input)) => {
                 let addend = match input {
@@ -4670,6 +4712,86 @@ mod tests {
                 ],
             ],
         );
+    }
+
+    /// The coefficient accumulator must publish exactly what the exact
+    /// `Decimal` chain publishes -- value AND visible scale -- for every input
+    /// shape that can seed it, and must hand back the shapes it cannot take.
+    #[test]
+    fn a_sum_folds_the_same_whether_it_seeds_fast_or_exact() {
+        fn exact(inputs: &[Datum]) -> Option<Decimal> {
+            let mut acc: Option<Decimal> = None;
+            for input in inputs {
+                let addend = match input {
+                    Datum::Int(v) => Decimal::from_int(*v),
+                    Datum::UInt(v) => Decimal::from_uint(*v),
+                    Datum::Decimal(d) => d.clone(),
+                    other => panic!("unexpected SUM input {other:?}"),
+                };
+                acc = Some(match acc.take() {
+                    Some(sum) => sum.add(&addend),
+                    None => addend,
+                });
+            }
+            acc
+        }
+
+        let decimal = |text: &str| Datum::Decimal(Decimal::parse_mysql(text).0);
+        // The last case exceeds i128 twice over, so it both declines the seed
+        // and, once seeded by its smaller neighbours, overflows the fold and
+        // has to materialize and replay.
+        let cases: Vec<Vec<Datum>> = vec![
+            vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)],
+            vec![Datum::Int(-5), Datum::Int(5), Datum::Int(-7)],
+            vec![Datum::UInt(u64::MAX), Datum::UInt(u64::MAX)],
+            vec![Datum::Int(i64::MIN), Datum::Int(i64::MAX)],
+            vec![decimal("1.25"), decimal("2.75"), decimal("-4.00")],
+            vec![decimal("0.001"), decimal("0.002")],
+            // Mixed scales: the fold declines a differing scale and the exact
+            // path takes the row.
+            vec![decimal("1.5"), decimal("2.25"), Datum::Int(3)],
+            vec![
+                decimal("170141183460469231731687303715884105727"),
+                decimal("170141183460469231731687303715884105727"),
+            ],
+        ];
+
+        for inputs in cases {
+            let mut state = AggState::new(&AggFunc::new(AggKind::Sum, None));
+            for input in &inputs {
+                state
+                    .update(Some(input.clone()), &[], Vec::new(), None)
+                    .expect("SUM accepts the input");
+            }
+            let folded = state.partial.finish(&[], 4).expect("SUM finishes");
+            let expected = exact(&inputs).expect("a non-empty group sums");
+            let Datum::Decimal(folded) = folded else {
+                panic!("SUM must finish as a DECIMAL, got {folded:?}");
+            };
+            assert_eq!(
+                folded.to_string(),
+                expected.to_string(),
+                "SUM over {inputs:?} must publish the exact chain's value and scale"
+            );
+        }
+
+        // An empty group is still NULL, and a NULL input still contributes
+        // nothing -- neither may be swallowed by the seeding arm.
+        let mut state = AggState::new(&AggFunc::new(AggKind::Sum, None));
+        assert!(matches!(
+            state.partial.finish(&[], 4).expect("an empty SUM finishes"),
+            Datum::Null
+        ));
+        state
+            .update(Some(Datum::Null), &[], Vec::new(), None)
+            .expect("SUM accepts NULL");
+        assert!(matches!(
+            state
+                .partial
+                .finish(&[], 4)
+                .expect("an all-NULL SUM finishes"),
+            Datum::Null
+        ));
     }
 
     #[test]

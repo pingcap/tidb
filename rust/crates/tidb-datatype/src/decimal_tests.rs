@@ -2239,3 +2239,27 @@ fn to_bin_keeps_low_81_integer_digits_on_word_overflow() {
     let (zero, _) = Decimal::from_literal("0").to_bin(81, 0).unwrap();
     assert_eq!(encoded, zero);
 }
+
+/// A division result keeps more fractional digits for later arithmetic than
+/// it prints. Seeding a fixed-scale accumulator from its coefficient would
+/// publish those hidden digits, so the fold must decline such a value and
+/// leave it on the exact path.
+#[test]
+fn the_fold_coefficient_declines_hidden_division_digits() {
+    let hidden = Decimal::from_test_parts(false, "1500", 1, 3);
+    assert_eq!(hidden.to_string(), "1.5");
+    assert_eq!(
+        hidden.coefficient_i128(),
+        Some((1500, 3)),
+        "the raw coefficient still reports the storage scale"
+    );
+    assert_eq!(
+        hidden.fold_coefficient_i128(),
+        None,
+        "a value whose visible scale is not its storage scale cannot seed a fold"
+    );
+
+    // The ordinary case, where the two scales agree, still seeds.
+    let plain = Decimal::parse_mysql("1.500").0;
+    assert_eq!(plain.fold_coefficient_i128(), Some((1500, 3)));
+}
