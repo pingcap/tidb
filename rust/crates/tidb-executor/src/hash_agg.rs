@@ -545,6 +545,45 @@ fn count_distinct_int(func: &AggFunc) -> bool {
             .is_some_and(|ty| ty.eval_type() == EvalType::Int)
 }
 
+/// The partial count a FINAL `COUNT` can add straight from the row, or `None`
+/// when the row must go through the complete path.
+///
+/// `Some(None)` is a NULL partial count, which contributes nothing --
+/// `Partial::update`'s `(FinalCount, Null)` arm -- and `Some(Some(n))` the
+/// count itself. An unsigned column past `i64` yields `None` so the complete
+/// path can raise Go's "partial COUNT exceeds i64".
+fn read_final_count_cell(f: &AggFunc, row: tidb_chunk::row::Row<'_>) -> Option<Option<i64>> {
+    if !matches!(f.kind, AggKind::FinalCount)
+        || f.distinct
+        || !f.extra_args.is_empty()
+        || !f.order_by.is_empty()
+    {
+        return None;
+    }
+    let column = f.arg.as_ref().and_then(Expression::as_column)?;
+    let field_type = column.get_static_type()?;
+    if !matches!(
+        field_type.code(),
+        tidb_datatype::FieldTypeCode::Tiny
+            | tidb_datatype::FieldTypeCode::Short
+            | tidb_datatype::FieldTypeCode::Int24
+            | tidb_datatype::FieldTypeCode::Long
+            | tidb_datatype::FieldTypeCode::LongLong
+    ) {
+        return None;
+    }
+    let index = usize::try_from(column.index).ok()?;
+    if row.is_null(index) {
+        return Some(None);
+    }
+    let bits = row.get_int64(index);
+    if field_type.is_unsigned() {
+        i64::try_from(bits as u64).ok().map(Some)
+    } else {
+        Some(Some(bits))
+    }
+}
+
 /// The chunk column a typed integer `COUNT(DISTINCT)` reads directly, when
 /// its argument is a bare column.
 fn count_distinct_int_column(func: &AggFunc) -> Option<usize> {
@@ -753,6 +792,26 @@ impl AggState {
             return None;
         };
         Some(value.map_or(0, |value| set.insert(value)))
+    }
+
+    /// Go `countPartial4Int.UpdatePartialResult`: a FINAL `COUNT` adds the
+    /// partial count it is handed, read straight from its integer column.
+    ///
+    /// Returns `false` when this state cannot take the value (a DISTINCT set,
+    /// or a partial count past `i64`) and the caller must use the complete
+    /// path.
+    fn update_final_count_fast(&mut self, value: i64) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        let Partial::FinalCount(total) = &mut self.partial else {
+            return false;
+        };
+        let Some(sum) = total.checked_add(value) else {
+            return false;
+        };
+        *total = sum;
+        true
     }
 
     fn update_count_fast(&mut self, input_is_non_null: bool) -> bool {
@@ -2960,6 +3019,18 @@ impl<C: HashAggContext> HashAggExec<C> {
                     continue;
                 }
             }
+            // The same read for a FINAL COUNT, which carries its partial
+            // count in an integer column rather than a NULL bit.
+            if let Some(cell) = read_final_count_cell(f, row) {
+                match cell {
+                    None => continue,
+                    Some(value) => {
+                        if state.update_final_count_fast(value) {
+                            continue;
+                        }
+                    }
+                }
+            }
             // Go's FIRST_ROW returns before evaluating its argument once the
             // group owns a value. This matters for the second q13 aggregation,
             // where nearly every input row revisits an existing group.
@@ -4850,6 +4921,73 @@ mod tests {
                 .expect("an all-NULL SUM finishes"),
             Datum::Null
         ));
+    }
+
+    /// The FINAL COUNT cell read must add exactly what the datum path adds,
+    /// for every shape the column can take.
+    #[test]
+    fn a_final_count_adds_the_same_cell_the_datum_path_would() {
+        use tidb_datatype::{FieldType, FieldTypeCode};
+
+        let signed = FieldType::new(FieldTypeCode::LongLong);
+        let unsigned = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
+        let text = FieldType::new(FieldTypeCode::Varchar);
+
+        for (label, field_type, values) in [
+            ("signed", signed.clone(), vec![Some(3_i64), None, Some(4)]),
+            ("unsigned", unsigned.clone(), vec![Some(7_i64), Some(0)]),
+            ("all null", signed.clone(), vec![None, None]),
+        ] {
+            let mut chunk = Chunk::new_with_capacity(&[field_type.clone()], values.len());
+            for value in &values {
+                match value {
+                    Some(value) => chunk.append_int64(0, *value),
+                    None => chunk.append_null(0),
+                }
+            }
+
+            let func = AggFunc::new(AggKind::FinalCount, Some(typed_col(0, field_type.clone())));
+            let mut fast = AggState::new(&func);
+            let mut exact = AggState::new(&func);
+            for index in 0..chunk.num_rows() {
+                let row = chunk.get_row(index);
+                let cell = read_final_count_cell(&func, row)
+                    .unwrap_or_else(|| panic!("{label}: an integer column must be readable"));
+                match cell {
+                    None => {}
+                    Some(value) => assert!(
+                        fast.update_final_count_fast(value),
+                        "{label}: the fast path must take an integer partial count"
+                    ),
+                }
+                // The datum path, as `Partial::update` sees it.
+                let datum = if row.is_null(0) {
+                    Datum::Null
+                } else if field_type.is_unsigned() {
+                    Datum::UInt(row.get_int64(0) as u64)
+                } else {
+                    Datum::Int(row.get_int64(0))
+                };
+                exact
+                    .update(Some(datum), &[], Vec::new(), None)
+                    .expect("the datum path accepts the cell");
+            }
+            assert_eq!(
+                fast.partial.finish(&[], 4).unwrap(),
+                exact.partial.finish(&[], 4).unwrap(),
+                "{label}: the two paths must agree"
+            );
+        }
+
+        // A non-integer column keeps the complete path, so the unsupported
+        // partial-result error is still raised rather than silently skipped.
+        let func = AggFunc::new(AggKind::FinalCount, Some(typed_col(0, text.clone())));
+        let mut chunk = Chunk::new_with_capacity(&[text], 1);
+        chunk.append_bytes(0, b"3");
+        assert!(
+            read_final_count_cell(&func, chunk.get_row(0)).is_none(),
+            "a non-integer partial count must not be read as a cell"
+        );
     }
 
     #[test]

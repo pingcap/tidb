@@ -1910,6 +1910,25 @@ fn update_group<C: Columns>(
         if matches!(func.kind, AggKind::FirstRow) && state.has_first_row() {
             continue;
         }
+        // A FINAL COUNT adds the partial count in its integer column (Go
+        // `countPartial4Int.UpdatePartialResult`). The COUNT fast path above
+        // matches `AggKind::Count` only, and `physical_builder` rewrites a
+        // final one to `AggKind::FinalCount`, so every row of a two-stage
+        // COUNT fell through to the datum path: an `eval_agg_input` with its
+        // `Vec` for extra values, an `Expression::eval`, and a `Datum` per
+        // row. A `GROUP BY` whose aggregate is pushed to the coprocessor
+        // sends one partial row per group PER REGION, so this is the busiest
+        // fold in the node -- 5.3 million rows for one TPC-H Q17 subquery.
+        if let Some(cell) = super::read_final_count_cell(func, row) {
+            match cell {
+                None => continue,
+                Some(value) => {
+                    if state.update_final_count_fast(value) {
+                        continue;
+                    }
+                }
+            }
+        }
         // A fixed-scale DECIMAL AVG folds the raw cells (Go
         // `avgOriginal4Decimal` / `avgPartial4Decimal.UpdatePartialResult`:
         // `DecimalAdd` on the MyDecimal, `p.count += inputCount`), as the
