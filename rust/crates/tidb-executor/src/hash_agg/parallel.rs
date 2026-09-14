@@ -3360,3 +3360,44 @@ mod tests {
         assert_eq!(exec.pipeline_eligibility(), None);
     }
 }
+
+#[cfg(test)]
+mod bucket_spread_tests {
+    use super::*;
+
+    /// The integer bucket must spread groups across the final workers.
+    ///
+    /// It chooses which final worker owns a group, so a hash that clustered
+    /// would quietly serialize the final stage while still producing the right
+    /// answer -- a performance bug no correctness test would catch. TPC-H's
+    /// `l_partkey` is a dense run from 1, the shape most likely to cluster, so
+    /// pin it on exactly that, at the final-worker count and at the spill
+    /// partition count.
+    #[test]
+    fn the_integer_bucket_spreads_a_dense_key_range() {
+        for bucket_count in [5_usize, SPILLED_PARTITION_NUM] {
+            let keys = 200_000_i64;
+            let mut counts = vec![0usize; bucket_count];
+            for key in 1..=keys {
+                counts[map_key_bucket(PipelineMapKeyRef::Int(Some(key)), bucket_count)] += 1;
+            }
+            let ideal = (keys as usize / bucket_count) as f64;
+            // Four standard deviations of the binomial an even hash produces,
+            // so the bound tightens with the share rather than becoming a
+            // flaky assertion about ordinary spread: about 2% at five buckets,
+            // about 14% at 256, where an even share is only 781 keys.
+            let tolerance = 4.0 * ideal.sqrt() / ideal;
+            for (bucket, count) in counts.iter().enumerate() {
+                let drift = (*count as f64 - ideal).abs() / ideal;
+                assert!(
+                    drift < tolerance,
+                    "bucket {bucket} of {bucket_count} holds {count} of {keys} keys \
+                     ({:.1}% off an even share, tolerance {:.1}%); a clustering \
+                     bucket serializes the final stage",
+                    drift * 100.0,
+                    tolerance * 100.0
+                );
+            }
+        }
+    }
+}
