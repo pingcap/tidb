@@ -193,31 +193,66 @@ fn hash_join_pricing_reads_the_sessions_concurrency() {
         where t1.b = dt.doubled_b and dt.key_a = t5.a";
     // Refreshed against the LIVE oracle (SELECT tidb_version() =>
     // fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85) on this exact fixture.
-    // Go's concurrency leverage here is the HASH-JOIN BUILD/PROBE re-selection,
-    // not an index join: at `tidb_hash_join_concurrency = 1` the divided probe
-    // cost flips the top join's sides and Go prints
-    // `inner join, equal:[eq(test.t5.a, test.t2.a)]` with an IndexReader over
-    // `t5, index:b(b)` as the build; at 5 the division shrinks, the sides
-    // flip back, and the same join prints `equal:[eq(test.t2.a, test.t5.a)]`.
-    // No IndexJoin/`range: decided by` appears at either setting -- an earlier
-    // receipt naming one does not reproduce.
+    // Refreshed against the LIVE oracle (SELECT tidb_version() =>
+    // fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85), probe database `probe_jrc4`,
+    // the exact fixture DML followed immediately by both EXPLAINs. In that
+    // deterministic scenario -- the stats delta not yet flushed, so
+    // `GetStatsTable` answers from the 10000-pseudo fallback -- Go prints the
+    // SAME plan at `tidb_hash_join_concurrency = 1` and at 5: the top
+    // all-hash join keeps `equal:[eq(test.t5.a, test.t2.a)]` with the
+    // IndexReader over `t5, index:b(b)` as the build, and the dt subtree
+    // joins t2/t3 over a MergeJoin. A byte diff of the two captures (plan IDs
+    // aside) is EMPTY. Go's concurrency leverage for this statement only
+    // appears AFTER the delta flush publishes the real row counts (3/2.4),
+    // where the INNER hash join's build moves from t3 to t2 between the two
+    // settings (probe database `probe_jrc2`); that scenario needs the
+    // stats-delta flush port and is not pinned here.
     session.run("set tidb_hash_join_concurrency = 1").unwrap();
     let recorded = plan(&mut session, sql).join("\n");
     assert!(
         recorded.contains("inner join, equal:[eq(test.t5.a, test.t2.a)]"),
-        "at concurrency 1 the probe cost division flips the top join's build \
-         side to t5 first:\n{recorded}"
+        "at concurrency 1 the top join keeps the t5 build with the\
+         IndexReader over t5 index b(b):\n{recorded}"
+    );
+    assert!(
+        recorded.contains("MergeJoin") && recorded.contains("left key:test.t2.a"),
+        "at concurrency 1 the dt subtree must still merge over the \
+         ordered t2/t3 scans:\n{recorded}"
     );
     session.run("set tidb_hash_join_concurrency = 5").unwrap();
     let plain = plan(&mut session, sql).join("\n");
     assert!(
-        plain.contains("inner join, equal:[eq(test.t2.a, test.t5.a)]"),
-        "at 5 the probe terms are shared by five workers and the sides flip \
-         back:\n{plain}"
+        plain.contains("inner join, equal:[eq(test.t5.a, test.t2.a)]"),
+        "at 5 the plan keeps the t5 build, matching the live capture \
+         (probe_jrc4):\n{plain}"
     );
-    assert_ne!(
-        recorded, plain,
-        "if these became equal the chooser stopped reading the session"
+    let strip_ids = |text: &str| {
+        let mut out = String::with_capacity(text.len());
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '_' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    j += 1;
+                }
+                let boundary =
+                    j == chars.len() || !(chars[j].is_ascii_alphanumeric() || chars[j] == '_');
+                if boundary {
+                    i = j;
+                    continue;
+                }
+            }
+            out.push(chars[i]);
+            i += 1;
+        }
+        out
+    };
+    assert_eq!(
+        strip_ids(&recorded),
+        strip_ids(&plain),
+        "the live oracle prints the SAME plan at both settings (the probe \
+         captures diff empty modulo plan IDs)"
     );
 }
 

@@ -24,6 +24,7 @@
 
 use super::*;
 use crate::kv_table::TableCharset;
+use std::collections::BTreeMap;
 use tidb_hack::GoToLower;
 
 /// The folded schema/table identity, corresponding to Go's two `CIStr.L`
@@ -2192,6 +2193,57 @@ impl Catalog {
         // path; DML reaches the deliberately narrower `get_mut_in` instead.
         self.bump_metadata_version();
         self.get_mut_in(database, name)
+    }
+
+    /// Go's session stats-delta flush (`DumpStatsDeltaToKV` on the stats
+    /// lease): rows written but never ANALYZEd still reach
+    /// `mysql.stats_meta`, and `GetStatsTable` (`pkg/planner/core/stats/stats.go`)
+    /// then plans from that real count with the pseudo distribution — rule 3
+    /// marks the unloaded table `Pseudo` while keeping `RealtimeCount`. The
+    /// embedded tier reads the count from the table's key range at flush
+    /// time. Tables that already carry statistics (ANALYZEd) are left alone,
+    /// and empty tables stay on the pure pseudo fallback (rule 2), which is
+    /// also where Go lands when the delta has not been flushed yet.
+    pub fn flush_stats_delta(&mut self) {
+        let mut targets: Vec<(String, String)> = Vec::new();
+        for database in self.database_names() {
+            for name in self.table_names(&database).unwrap_or_default() {
+                targets.push((database.clone(), name));
+            }
+        }
+        let mut flushed: Vec<(i64, i64)> = Vec::new();
+        for (database, name) in targets {
+            if let Some(TableEntry::Kv(table)) = self.get_mut_in(&database, &name) {
+                if table.partition().is_some() {
+                    continue;
+                }
+                if let Ok(count) = table.stats_row_count() {
+                    flushed.push((table.table_id, count));
+                }
+            }
+        }
+        if flushed.is_empty() {
+            return;
+        }
+        let mut values = self
+            .statistics
+            .values
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (table_id, count) in flushed {
+            if count <= 0 || values.contains_key(&table_id) {
+                continue;
+            }
+            values.insert(
+                table_id,
+                Arc::new(crate::access_cost::TableStatistics::new(
+                    count,
+                    0,
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                )),
+            );
+        }
     }
 
     /// A table of `database`, for the metadata statements.

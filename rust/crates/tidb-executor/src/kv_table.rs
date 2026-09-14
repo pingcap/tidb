@@ -1284,6 +1284,31 @@ impl KvTable {
         Ok(counts)
     }
 
+    /// The table's record-row count: the embedded-tier equivalent of the
+    /// row count Go's session stats-delta flush maintains in
+    /// `mysql.stats_meta`. A table written but never ANALYZEd plans from
+    /// this real count with the pseudo distribution (Go
+    /// `GetStatsTable` rule 3), so the planner needs the same number the
+    /// flushed delta would have produced.
+    pub fn stats_row_count(&mut self) -> Result<i64, KvTableError> {
+        let (low, high) = get_table_handle_key_range(self.table_id);
+        let mut upper = high;
+        upper.push(0);
+        let mut iterator = self
+            .store
+            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let mut rows = 0i64;
+        while iterator.valid() {
+            rows += 1;
+            iterator
+                .next()
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        }
+        iterator.close();
+        Ok(rows)
+    }
+
     /// The physical table id `row`'s record key is written under: the
     /// partition it routes into, or the table itself.
     ///
