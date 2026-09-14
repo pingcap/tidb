@@ -265,10 +265,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 			}
 
 			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
-			if err != nil {
-				return false
-			}
-			return true
+			return err == nil
 		})
 		recordWriteCPUWork(e.writeStats, e.tblID2Table[id], processedRows)
 		if err != nil {
