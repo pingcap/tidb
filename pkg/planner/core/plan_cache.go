@@ -157,12 +157,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// schema version like prepared plan cache key
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
-		// Rebuild the schema-dependent statement metadata after preprocessing.
-		// A rename keeps the table ID but changes the name resolved by the AST.
+		// The statement is re-resolved below, so the table dependencies cached in
+		// the statement must be collected again: a rename keeps the table ID but
+		// changes the name the AST points to, and re-creating the old name
+		// introduces a new table ID.
 		vars.StmtCtx.RelatedTableIDs = make(map[int64]struct{})
-		stmt.limits = nil
-		stmt.hasSubquery = false
-		stmt.tables = nil
 
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
@@ -178,26 +177,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		}
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
-		CollectPlanCacheStmtInfo(ctx, is, stmt, stmtAst.Stmt)
-		stmt.dbName = stmt.dbName[:0]
-		stmt.tbls = stmt.tbls[:0]
-		stmt.RelateVersion = make(map[int64]uint64, len(stmt.tables))
-		seenTableIDs := make(map[int64]struct{}, len(stmt.tables))
-		for _, tbl := range stmt.tables {
-			id := tbl.Meta().ID
-			if _, seen := seenTableIDs[id]; seen {
-				continue
-			}
-			db, ok := is.SchemaByID(tbl.Meta().DBID)
-			if !ok {
-				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: database ID %d not found", tbl.Meta().DBID)
-			}
-			seenTableIDs[id] = struct{}{}
-			stmt.dbName = append(stmt.dbName, db.Name)
-			stmt.tbls = append(stmt.tbls, tbl)
-			stmt.RelateVersion[id] = tbl.Meta().Revision
+		stmt.dbName, stmt.tbls, stmt.RelateVersion, err = collectPlanCacheTableInfo(ctx, is, vars.StmtCtx.RelatedTableIDs)
+		if err != nil {
+			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
-
 	}
 
 	// step 5: handle expiration
