@@ -2343,7 +2343,12 @@ mod tests {
         let mut join = tidb_planner::physical::PhysicalHashJoin::default();
         join.join_type = tidb_planner::find_best_task::LogicalJoinType::Inner;
         assert_eq!(
-            physical_operator_info(&PhysicalPlan::HashJoin(join), &Catalog::default(), true, None),
+            physical_operator_info(
+                &PhysicalPlan::HashJoin(join),
+                &Catalog::default(),
+                true,
+                None
+            ),
             "CARTESIAN inner join"
         );
     }

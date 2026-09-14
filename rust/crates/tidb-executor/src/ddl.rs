@@ -315,12 +315,12 @@ pub fn is_retryable_ddl_cancel_err(error: &(dyn std::error::Error + 'static)) ->
 
 mod alter_metadata;
 mod alter_table;
-mod generated_modify;
 /// AUTO_RANDOM declaration validation shared by local and cluster DDL.
 pub mod auto_random;
 pub mod check_constraint;
 pub mod column_field_type;
 mod column_types;
+mod generated_modify;
 pub mod index_prefix;
 mod indexes;
 pub mod mview_helpers;

@@ -438,9 +438,14 @@ impl SessionMemory {
     /// Whether statements register with the process memory arbitrator
     /// (Go: `GlobalMemArbitrator() != nil && mode != disable`).
     pub fn arbitrator_enabled(&self) -> bool {
-        self.config.lock().unwrap().arbitrator.as_ref().is_some_and(|arbitrator| {
-            arbitrator.work_mode() != tidb_util::memory::ArbitratorWorkMode::Disable
-        })
+        self.config
+            .lock()
+            .unwrap()
+            .arbitrator
+            .as_ref()
+            .is_some_and(|arbitrator| {
+                arbitrator.work_mode() != tidb_util::memory::ArbitratorWorkMode::Disable
+            })
     }
 
     #[must_use]

@@ -1292,7 +1292,10 @@ mod tests {
         let stats = statistics_table_from_json(
             &schema,
             42,
-            &JsonTable { count: 2000, ..Default::default() },
+            &JsonTable {
+                count: 2000,
+                ..Default::default()
+            },
         )
         .unwrap();
         stats.hist_coll.set_index(
@@ -1304,7 +1307,10 @@ mod tests {
                     columns: vec!["a".to_owned()],
                     ..Default::default()
                 }),
-                histogram: Histogram { id: 7, ..Default::default() },
+                histogram: Histogram {
+                    id: 7,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         );

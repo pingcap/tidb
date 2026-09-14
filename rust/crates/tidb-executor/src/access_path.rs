@@ -2341,20 +2341,16 @@ impl IndexRangeSourceExec {
         snapshot: &(TableHandle, Vec<Datum>),
         added: &(TableHandle, Vec<Datum>),
     ) -> Result<std::cmp::Ordering, ExecError> {
-        for (position, collation) in self
-            .dirty_used_index
-            .iter()
-            .zip(&self.dirty_collations)
-        {
+        for (position, collation) in self.dirty_used_index.iter().zip(&self.dirty_collations) {
             let ordering = match (snapshot.1.get(*position), added.1.get(*position)) {
-                (Some(left), Some(right)) => {
-                    tidb_expr::compare_datums_with_collation(left, right, *collation)
-                        .map_err(|error| {
-                            ExecError::unsupported(format!(
-                                "union scan merge cannot compare index columns: {error:?}"
-                            ))
-                        })?
-                }
+                (Some(left), Some(right)) => tidb_expr::compare_datums_with_collation(
+                    left, right, *collation,
+                )
+                .map_err(|error| {
+                    ExecError::unsupported(format!(
+                        "union scan merge cannot compare index columns: {error:?}"
+                    ))
+                })?,
                 _ => std::cmp::Ordering::Equal,
             };
             if ordering != std::cmp::Ordering::Equal {

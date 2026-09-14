@@ -2607,7 +2607,10 @@ impl KvTable {
         // Existing rows contain no value for this column; future reads bind
         // the new expression. Evaluating or casting the old value here can
         // fail on data that the new expression no longer reads.
-        if self.columns[offset].generated.as_ref().is_some_and(|g| !g.stored)
+        if self.columns[offset]
+            .generated
+            .as_ref()
+            .is_some_and(|g| !g.stored)
             && new_column.generated.as_ref().is_some_and(|g| !g.stored)
         {
             self.columns_mut()[offset] = new_column;

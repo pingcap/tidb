@@ -6319,7 +6319,12 @@ mod remote_cursor_tests {
         let text = FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         let source_types = vec![long.clone(), text.clone(), long.clone()];
         let mut batch = Chunk::new_with_capacity(&source_types, 4);
-        for (id, name) in [(7, Some("seven")), (8, None), (9, Some("")), (10, Some("ten"))] {
+        for (id, name) in [
+            (7, Some("seven")),
+            (8, None),
+            (9, Some("")),
+            (10, Some("ten")),
+        ] {
             batch.append_int64(0, id);
             match name {
                 Some(name) => batch.append_bytes(1, name.as_bytes()),

@@ -173,12 +173,17 @@ fn reject_multi_schema_same_column_or_index(
     // Go builds each index sub-job against the original table before
     // checkOperateSameColAndIdx. An ADD COLUMN in this statement does not
     // make its name available to buildIndexColumns (ddl/index.go).
-    let subjob_count: usize = actions.iter().map(|action| match action {
-        tidb_ast::AlterTableAction::AddColumns { columns, constraints, .. } => {
-            columns.len() + constraints.len()
-        }
-        _ => 1,
-    }).sum();
+    let subjob_count: usize = actions
+        .iter()
+        .map(|action| match action {
+            tidb_ast::AlterTableAction::AddColumns {
+                columns,
+                constraints,
+                ..
+            } => columns.len() + constraints.len(),
+            _ => 1,
+        })
+        .sum();
     if let Some(table) = table.filter(|_| subjob_count > 1) {
         for action in actions {
             let indexes: Vec<_> = match action {
@@ -196,17 +201,20 @@ fn reject_multi_schema_same_column_or_index(
                 // Existing-index diagnostics and IF NOT EXISTS are handled
                 // before column validation by the normal index builder.
                 if index.name.as_ref().is_some_and(|name| {
-                    table.indexes().iter().any(|existing| {
-                        existing.name.go_to_lower() == name.go_to_lower()
-                    })
+                    table
+                        .indexes()
+                        .iter()
+                        .any(|existing| existing.name.go_to_lower() == name.go_to_lower())
                 }) {
                     continue;
                 }
                 for part in &index.parts {
                     if let tidb_ast::IndexPart::Column { name, .. } = part {
-                        if !table.columns().iter().any(|column| {
-                            column.name.go_to_lower() == name.go_to_lower()
-                        }) {
+                        if !table
+                            .columns()
+                            .iter()
+                            .any(|column| column.name.go_to_lower() == name.go_to_lower())
+                        {
                             return Err(DriverError::DdlCoded {
                                 errno: 1072,
                                 message: format!("column does not exist: {name}"),
@@ -3593,9 +3601,8 @@ fn modify_column_action(
             Some(if target > offset { target } else { target + 1 })
         }
     };
-    let generated = super::generated_modify::build(
-        table, offset, def, &field_type, new_position, ctx,
-    )?;
+    let generated =
+        super::generated_modify::build(table, offset, def, &field_type, new_position, ctx)?;
     if let Some(dependent) = dependent {
         return Err(DriverError::UnsupportedOnGeneratedColumn(
             super::column_dependent_error_text(dependent, old_name),

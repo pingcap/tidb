@@ -276,18 +276,37 @@ struct ParallelProbeShared<C> {
 /// runs its own pipeline on the same pool.
 struct ParallelProbePipeline<C> {
     shared: Arc<ParallelProbeShared<C>>,
-    result_tx: std::sync::mpsc::Sender<(u64, Result<ParallelProbeResult, ExecError>)>,
-    result_rx: std::sync::mpsc::Receiver<(u64, Result<ParallelProbeResult, ExecError>)>,
+    result_tx: std::sync::mpsc::Sender<(u64, Result<ParallelProbeBatch, ExecError>)>,
+    result_rx: std::sync::mpsc::Receiver<(u64, Result<ParallelProbeBatch, ExecError>)>,
+    /// Probe chunks dispatched but not yet collected, counted in chunks so
+    /// the fetcher's "never wait while nothing is in flight" rule is the same
+    /// whatever the run length is.
     in_flight: usize,
     inputs_allocated: usize,
     outputs_allocated: usize,
     next_seq: u64,
     next_release: u64,
-    /// Finished chunks waiting for an earlier source chunk still in flight.
-    reorder: BTreeMap<u64, ParallelProbeResult>,
+    /// Probe chunks the next run takes. It starts at one and doubles to
+    /// [`PARALLEL_PROBE_MAX_BATCH`], the ramp Go gives a paging coprocessor
+    /// request (`pkg/util/paging/paging.go`: `MinPagingSize` grown by
+    /// `pagingSizeGrow`, "paging request allows early access of data"), for
+    /// the same reason: the first rows must reach the parent as soon as a
+    /// serial probe would produce them, and only a query that keeps asking
+    /// pays -- and profits by -- a longer run.
+    batch_target: usize,
+    /// Finished runs waiting for an earlier run still in flight.
+    reorder: BTreeMap<u64, ParallelProbeBatch>,
 }
 
-/// One worker's complete result for one source chunk. Pure equality over a
+/// The most probe chunks one pool task takes in a run. Each run costs one
+/// pool dispatch and one result handoff, both of which are futex wakes; the
+/// cap bounds how many probe chunks a query buffers ahead of the parent
+/// (`Concurrency * PARALLEL_PROBE_MAX_BATCH`) in exchange for that
+/// amortisation. Four is where a cap sweep stopped buying syscalls cheaply
+/// (the measurements are in `TPCH_GO_PERF_PARITY_EXECPLAN.md`).
+const PARALLEL_PROBE_MAX_BATCH: usize = 4;
+
+/// One worker's complete result for one probe chunk. Pure equality over a
 /// unique build key produces at most one joined row per probe row, so this
 /// stays bounded to one input and one output chunk like Go's worker channel.
 struct ParallelProbeResult {
@@ -298,6 +317,20 @@ struct ParallelProbeResult {
     /// sends each full `joinResult` on and continues with the same probe
     /// chunk (`probeAndSendResult`).
     extra_outputs: Vec<Chunk>,
+    matched_build_rows: Vec<RowPtr>,
+    condition_evals: u64,
+}
+
+/// One pool task's whole run: the probe chunks it took, and the result chunks
+/// it filled across them. Go's `runJoinWorker` keeps one `joinResult` chunk
+/// across every probe chunk it takes from its channel and sends it on only
+/// when `chk.IsFull()`; a run here does the same, so the parent receives full
+/// chunks from a selective probe instead of one nearly empty chunk per probe
+/// chunk, and the whole run costs one dispatch and one handoff.
+struct ParallelProbeBatch {
+    inputs: Vec<Chunk>,
+    /// Result chunks in fill order; only the last may be partial.
+    outputs: Vec<Chunk>,
     matched_build_rows: Vec<RowPtr>,
     condition_evals: u64,
 }
@@ -3331,10 +3364,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             return Ok(());
         }
         let probe_done = self.hash.as_ref().is_some_and(|hash| hash.probe_done);
-        if !probe_done {
-            if let Some((input, output)) = self.take_parallel_probe_chunks() {
-                return self.fetch_and_dispatch_parallel_probe_chunk(input, output);
-            }
+        if !probe_done && self.fetch_and_dispatch_parallel_probe_batch()? {
+            return Ok(());
         }
         let in_flight = self
             .parallel_probe
@@ -3396,16 +3427,53 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             outputs_allocated: 0,
             next_seq: 0,
             next_release: 0,
+            batch_target: 1,
             reorder: BTreeMap::new(),
         });
     }
 
-    /// A free probe chunk and a free result chunk, or `None` when Go's
-    /// fetcher would block: every one of the `Concurrency` probe chunks, or
-    /// every worker result chunk, is with a worker or the parent. Nothing is
+    /// A free probe chunk, or `None` where Go's fetcher would block: every
+    /// one of the probe chunks is with a worker or the parent. Nothing is
     /// ever waited on while nothing is in flight.
-    fn take_parallel_probe_chunks(&mut self) -> Option<(Chunk, Chunk)> {
+    fn take_parallel_probe_input(&mut self) -> Option<Chunk> {
         let probe_is_left = !self.hash_build_is_left();
+        let concurrency = self.concurrency;
+        let (in_flight, budget) = self
+            .parallel_probe
+            .as_ref()
+            .map_or((0, concurrency), |pipeline| {
+                (pipeline.in_flight, concurrency * pipeline.batch_target)
+            });
+        if let Some(input) = self
+            .hash
+            .as_mut()
+            .expect("parallel probe requires hash state")
+            .parallel_probe_input_reuse
+            .pop()
+        {
+            return Some(input);
+        }
+        {
+            let pipeline = self
+                .parallel_probe
+                .as_mut()
+                .expect("parallel probe pipeline is created before dispatch");
+            if pipeline.inputs_allocated >= budget && in_flight > 0 {
+                return None;
+            }
+            pipeline.inputs_allocated += 1;
+        }
+        Some(if probe_is_left {
+            self.left_exec().new_chunk()
+        } else {
+            self.right_exec().new_chunk()
+        })
+    }
+
+    /// A free result chunk for one run, or `None` where Go's fetcher would
+    /// block on `joinChkResourceCh`: one per in-flight run plus the one the
+    /// parent holds.
+    fn take_parallel_probe_worker_output(&mut self) -> Option<Chunk> {
         let concurrency = self.concurrency;
         let in_flight = self
             .parallel_probe
@@ -3413,93 +3481,141 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             .map_or(0, |pipeline| pipeline.in_flight);
         let output_types = self.meta.ret_field_types().to_vec();
         let (init_cap, max_chunk_size) = (self.meta.init_cap(), self.meta.max_chunk_size());
-        let hash = self
-            .hash
-            .as_mut()
-            .expect("parallel probe requires hash state");
+        let reused = {
+            let hash = self
+                .hash
+                .as_mut()
+                .expect("parallel probe requires hash state");
+            hash.parallel_probe_output_reuse
+                .iter()
+                .rposition(|output| output.num_cols() == output_types.len())
+                .map(|at| hash.parallel_probe_output_reuse.swap_remove(at))
+        };
+        if let Some(output) = reused {
+            return Some(output);
+        }
         let pipeline = self
             .parallel_probe
             .as_mut()
             .expect("parallel probe pipeline is created before dispatch");
-        let input = match hash.parallel_probe_input_reuse.pop() {
-            Some(input) => Some(input),
-            None if pipeline.inputs_allocated < concurrency || in_flight == 0 => {
-                pipeline.inputs_allocated += 1;
-                None
-            }
-            None => return None,
-        };
-        let output = match hash
-            .parallel_probe_output_reuse
-            .iter()
-            .rposition(|output| output.num_cols() == output_types.len())
-        {
-            Some(at) => Some(hash.parallel_probe_output_reuse.swap_remove(at)),
-            None if pipeline.outputs_allocated < concurrency + 1 || in_flight == 0 => {
-                pipeline.outputs_allocated += 1;
-                None
-            }
-            None => {
-                if let Some(input) = input {
-                    hash.parallel_probe_input_reuse.push(input);
-                } else {
-                    pipeline.inputs_allocated -= 1;
-                }
-                return None;
-            }
-        };
-        let input = input.unwrap_or_else(|| {
-            if probe_is_left {
-                self.left_exec().new_chunk()
-            } else {
-                self.right_exec().new_chunk()
-            }
-        });
-        let output = output.unwrap_or_else(|| Chunk::new(&output_types, init_cap, max_chunk_size));
-        Some((input, output))
+        if pipeline.outputs_allocated >= concurrency + 1 && in_flight > 0 {
+            return None;
+        }
+        pipeline.outputs_allocated += 1;
+        Some(Chunk::new(&output_types, init_cap, max_chunk_size))
     }
 
-    /// Go `fetchProbeSideChunks` for one chunk: pull it from the probe child,
-    /// end the probe on an empty chunk, otherwise hand it to a pool worker.
-    fn fetch_and_dispatch_parallel_probe_chunk(
-        &mut self,
-        mut input: Chunk,
-        output: Chunk,
-    ) -> Result<(), ExecError> {
+    /// Go `fetchProbeSideChunks`, one run at a time: pull up to
+    /// `batch_target` probe chunks from the child, end the probe on the first
+    /// empty one, and hand whatever was pulled to a single pool worker. One
+    /// run is one pool dispatch and one result handoff however many chunks it
+    /// carries, which is what makes the fetcher's cost per probe chunk fall
+    /// as the query proves long-running.
+    ///
+    /// Returns whether a run was dispatched; the caller waits on a worker
+    /// when no run could be started.
+    fn fetch_and_dispatch_parallel_probe_batch(&mut self) -> Result<bool, ExecError> {
         let probe_is_left = !self.hash_build_is_left();
-        let fetched = if probe_is_left {
-            self.left_exec_mut().next(&mut input)
-        } else {
-            self.right_exec_mut().next(&mut input)
+        let target = self
+            .parallel_probe
+            .as_ref()
+            .map_or(1, |pipeline| pipeline.batch_target);
+        let Some(output) = self.take_parallel_probe_worker_output() else {
+            return Ok(false);
         };
-        let hash = self
-            .hash
-            .as_mut()
-            .expect("parallel probe requires hash state");
-        if let Err(error) = fetched {
-            input.reset();
-            hash.parallel_probe_input_reuse.push(input);
-            hash.parallel_probe_output_reuse.push(output);
-            return Err(error);
+        let mut inputs: Vec<Chunk> = Vec::with_capacity(target);
+        let mut failure: Option<ExecError> = None;
+        while inputs.len() < target {
+            let Some(mut input) = self.take_parallel_probe_input() else {
+                break;
+            };
+            let fetched = if probe_is_left {
+                self.left_exec_mut().next(&mut input)
+            } else {
+                self.right_exec_mut().next(&mut input)
+            };
+            let hash = self
+                .hash
+                .as_mut()
+                .expect("parallel probe requires hash state");
+            if let Err(error) = fetched {
+                input.reset();
+                hash.parallel_probe_input_reuse.push(input);
+                failure = Some(error);
+                break;
+            }
+            if input.num_rows() == 0 {
+                input.reset();
+                hash.parallel_probe_input_reuse.push(input);
+                hash.probe_done = true;
+                break;
+            }
+            hash.parallel_probe_windows = hash.parallel_probe_windows.saturating_add(1);
+            inputs.push(input);
         }
-        if input.num_rows() == 0 {
-            input.reset();
-            hash.parallel_probe_input_reuse.push(input);
+        if inputs.is_empty() || failure.is_some() {
+            let mut output = output;
+            output.reset();
+            let hash = self
+                .hash
+                .as_mut()
+                .expect("parallel probe requires hash state");
+            for mut input in inputs {
+                input.reset();
+                hash.parallel_probe_input_reuse.push(input);
+            }
             hash.parallel_probe_output_reuse.push(output);
-            hash.probe_done = true;
-            return Ok(());
+            return match failure {
+                Some(error) => Err(error),
+                None => Ok(false),
+            };
         }
-        hash.parallel_probe_windows = hash.parallel_probe_windows.saturating_add(1);
         let pipeline = self
             .parallel_probe
             .as_mut()
             .expect("parallel probe pipeline is created before dispatch");
         let seq = pipeline.next_seq;
         pipeline.next_seq += 1;
-        pipeline.in_flight += 1;
+        pipeline.in_flight += inputs.len();
+        pipeline.batch_target = (pipeline.batch_target * 2).min(PARALLEL_PROBE_MAX_BATCH);
         let shared = Arc::clone(&pipeline.shared);
         let result_tx = pipeline.result_tx.clone();
         crate::worker_pool::enqueue_public(Box::new(move || {
+            // A dropped receiver means the join is already closed or failed.
+            let _ = result_tx.send((seq, Self::probe_batch(&shared, inputs, output)));
+        }));
+        Ok(true)
+    }
+
+    /// One pool task's run: every probe chunk of the batch against the same
+    /// build table, filling one result chunk across the whole run and
+    /// starting a fresh one when it fills, as Go's `runJoinWorker` keeps its
+    /// `joinResult` across probe chunks and sends it only when full.
+    fn probe_batch(
+        shared: &ParallelProbeShared<C>,
+        inputs: Vec<Chunk>,
+        mut carried: Chunk,
+    ) -> Result<ParallelProbeBatch, ExecError> {
+        carried.reset();
+        let mut done_inputs = Vec::with_capacity(inputs.len());
+        let mut outputs: Vec<Chunk> = Vec::new();
+        let mut matched_build_rows: Vec<RowPtr> = Vec::new();
+        let mut condition_evals = 0u64;
+        for input in inputs {
+            // The unique exact-integer worker appends a whole probe chunk's
+            // matches as one range, without a per-row fullness check, because
+            // a unique build yields at most one joined row per probe row; the
+            // carried chunk is rotated here before that range could take it
+            // past `max_chunk_size`. The general worker checks fullness per
+            // appended row and needs no rotation.
+            if shared.unique_exact_int
+                && carried.num_rows() > 0
+                && carried.num_rows() + input.num_rows() > shared.max_chunk_size
+            {
+                let fresh =
+                    Chunk::new(&shared.output_types, shared.init_cap, shared.max_chunk_size);
+                outputs.push(std::mem::replace(&mut carried, fresh));
+            }
             let result = if shared.unique_exact_int {
                 Self::probe_unique_exact_int_chunk(
                     &shared.output_layout,
@@ -3507,7 +3623,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     &shared.build_types,
                     &shared.probe_types,
                     input,
-                    output,
+                    carried,
                     shared.key_offset,
                     shared.probe_is_left,
                     shared.kind,
@@ -3515,14 +3631,29 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     &shared.ctx,
                     shared.residual_conditions.as_slice(),
                     shared.condition_types.as_slice(),
-                )
+                )?
             } else {
-                Self::probe_hashed_chunk(&shared, input, output)
+                Self::probe_hashed_chunk(shared, input, carried)?
             };
-            // A dropped receiver means the join is already closed or failed.
-            let _ = result_tx.send((seq, result));
-        }));
-        Ok(())
+            done_inputs.push(result.input);
+            // The set-aside chunks filled before the one the worker still
+            // holds, so they precede it in the run's fill order.
+            outputs.extend(result.extra_outputs);
+            carried = result.output;
+            if matched_build_rows.is_empty() {
+                matched_build_rows = result.matched_build_rows;
+            } else {
+                matched_build_rows.extend(result.matched_build_rows);
+            }
+            condition_evals = condition_evals.saturating_add(result.condition_evals);
+        }
+        outputs.push(carried);
+        Ok(ParallelProbeBatch {
+            inputs: done_inputs,
+            outputs,
+            matched_build_rows,
+            condition_evals,
+        })
     }
 
     /// Go `Next` on `joinResultCh`: takes every finished result (one of them
@@ -3543,8 +3674,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let Ok((seq, result)) = message else {
                 break;
             };
-            pipeline.in_flight = pipeline.in_flight.saturating_sub(1);
-            pipeline.reorder.insert(seq, result?);
+            let batch = result?;
+            pipeline.in_flight = pipeline.in_flight.saturating_sub(batch.inputs.len());
+            pipeline.reorder.insert(seq, batch);
         }
         let mut released = Vec::new();
         while let Some(result) = pipeline.reorder.remove(&pipeline.next_release) {
@@ -3560,18 +3692,21 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             .hash
             .as_mut()
             .expect("parallel probe requires hash state");
-        for mut result in released {
-            result.input.reset();
-            hash.parallel_probe_input_reuse.push(result.input);
-            hash.table.mark_matched_all(&result.matched_build_rows);
-            // The set-aside chunks were filled before the one the worker
-            // still held, so they are released first.
-            hash.parallel_probe_pending.extend(result.extra_outputs);
-            if result.output.num_rows() == 0 {
-                result.output.reset();
-                hash.parallel_probe_output_reuse.push(result.output);
-            } else {
-                hash.parallel_probe_pending.push_back(result.output);
+        for batch in released {
+            for mut input in batch.inputs {
+                input.reset();
+                hash.parallel_probe_input_reuse.push(input);
+            }
+            hash.table.mark_matched_all(&batch.matched_build_rows);
+            // `outputs` is already in fill order, so releasing it in order
+            // keeps the run's rows in probe-chunk order.
+            for mut output in batch.outputs {
+                if output.num_rows() == 0 {
+                    output.reset();
+                    hash.parallel_probe_output_reuse.push(output);
+                } else {
+                    hash.parallel_probe_pending.push_back(output);
+                }
             }
         }
         Ok(())
@@ -3589,7 +3724,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         input: Chunk,
         mut output: Chunk,
     ) -> Result<ParallelProbeResult, ExecError> {
-        output.reset();
+        // `output` carries rows from the earlier probe chunks of this run;
+        // only [`Self::probe_batch`] resets or rotates it.
         let output_layout = &shared.output_layout;
         let table = &shared.table;
         let build_types = shared.build_types.as_slice();
@@ -3772,7 +3908,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         residual_conditions: &[Expression],
         condition_types: &[FieldType],
     ) -> Result<ParallelProbeResult, ExecError> {
-        output.reset();
+        // `output` carries rows from the earlier probe chunks of this run;
+        // only [`Self::probe_batch`] resets or rotates it.
         // A semi/anti join emits only the preserved LEFT columns; the other
         // two-column families emit the joined left-then-right row.
         let preserved_only = matches!(kind, JoinKind::Semi | JoinKind::AntiSemi);
