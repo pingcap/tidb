@@ -1107,7 +1107,8 @@ func (m *JobManager) updateInfoSchemaCache(se session.Session) error {
 func (m *JobManager) updateTableStatusCache(se session.Session) error {
 	cacheUpdateCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
 	defer cancel()
-	return m.tableStatusCache.Update(cacheUpdateCtx, se)
+	// This refresh scans all table statuses, even when triggered by a concrete job.
+	return m.tableStatusCache.Update(cacheUpdateCtx, session.WithJob(se, ""))
 }
 
 func (m *JobManager) removeJob(finishedJob *ttlJob) {

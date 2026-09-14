@@ -480,12 +480,17 @@ func TestTTLJobRUAttribution(t *testing.T) {
 	const jobID = "ttl-ru-job"
 	expectedJobID := ""
 	defer func() { expectedJobID = "" }()
-	globalCounts, jobCommits := 0, 0
+	globalCounts, globalRefreshes, jobCommits := 0, 0, 0
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest", func(stmt *executor.ExecStmt) {
 		if stmt.Ctx.GetSessionVars() != vars {
 			return
 		}
 		sql := stmt.GetTextToLog(false)
+		if strings.HasPrefix(sql, "SELECT LOW_PRIORITY ") && strings.HasSuffix(sql, " FROM mysql.tidb_ttl_table_status") {
+			require.Empty(t, vars.TTLJobID, sql)
+			globalRefreshes++
+			return
+		}
 		if strings.EqualFold(sql, "SELECT count(1) FROM mysql.tidb_ttl_task WHERE status = 'running'") {
 			require.Empty(t, vars.TTLJobID, sql)
 			globalCounts++
@@ -511,6 +516,7 @@ func TestTTLJobRUAttribution(t *testing.T) {
 	now := se.Now()
 	job, err := manager.LockJob(ctx, se, tbl, now, jobID, false)
 	require.NoError(t, err)
+	require.Equal(t, 1, globalRefreshes, "job creation refreshes the global table-status cache")
 	require.NoError(t, manager.UpdateHeartBeatForJob(ctx, se, now.Add(time.Minute), job))
 	taskManager := ttlworker.NewTaskManager(ctx, nil, manager.InfoSchemaCache(), "ttl-ru-owner", store)
 	task, err := taskManager.LockScanTask(se, &cache.TTLTask{JobID: jobID, ScanID: 0, TableID: tbl.ID}, se.Now())
@@ -518,9 +524,14 @@ func TestTTLJobRUAttribution(t *testing.T) {
 	require.NoError(t, taskManager.UpdateHeartBeatForTask(ctx, se, now.Add(time.Minute), task))
 	task.SetResult(nil)
 	require.NoError(t, taskManager.ReportTaskFinished(se, se.Now(), task))
+	// The scheduler passes a job-scoped session when taking over an expired owner.
+	takeoverManager := ttlworker.NewJobManager("ttl-ru-takeover", nil, store, nil, nil)
+	job, err = takeoverManager.LockJob(ctx, session.WithJob(se, jobID), tbl, now.Add(time.Hour), "", false)
+	require.NoError(t, err)
+	require.Equal(t, 2, globalRefreshes, "takeover also refreshes the global table-status cache")
 	require.NoError(t, job.Finish(se, se.Now(), &ttlworker.TTLSummary{}))
 	require.Equal(t, 1, globalCounts)
-	require.Equal(t, 3, jobCommits, "creation, task claim and job completion")
+	require.Equal(t, 4, jobCommits, "creation, task claim, takeover and job completion")
 	require.Greater(t, testutil.ToFloat64(rumetrics.RUV3TTLTotal), before)
 	require.Empty(t, vars.TTLJobID)
 
