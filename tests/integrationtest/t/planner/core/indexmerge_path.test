@@ -99,12 +99,12 @@ index i_int((cast(j->'$.int' as signed array))));
 explain format='plan_tree' select (j->'$.int') from t where (1 member of (j->'$.int'));
 explain format='plan_tree' select * from t where (1 member of (j->'$.int'));
 explain format='plan_tree' select * from t where (1 member of (j->'$.int')) and a<10;
-explain format='plan_tree' select /*+ use_index_merge(t, i_int) */ (j->'$.int') from t where json_contains((j->'$.int'), '[1, 2, 3]');
-explain format='plan_tree' select /*+ use_index_merge(t, i_int) */ * from t where json_contains((j->'$.int'), '[1, 2, 3]');
-explain format='plan_tree' select /*+ use_index_merge(t, i_int) */ * from t where json_contains((j->'$.int'), '[1, 2, 3]') and a<10;
+explain format='plan_tree' select (j->'$.int') from t where json_contains((j->'$.int'), '[1, 2, 3]');
+explain format='plan_tree' select * from t where json_contains((j->'$.int'), '[1, 2, 3]');
+explain format='plan_tree' select * from t where json_contains((j->'$.int'), '[1, 2, 3]') and a<10;
 explain format='plan_tree' select (j->'$.int') from t where json_overlaps((j->'$.int'), '[1, 2, 3]');
 explain format='plan_tree' select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]');
-explain format='plan_tree' select /*+ use_index_merge(t, i_int) */ * from t where json_overlaps((j->'$.int'), '[1, 2, 3]') and a<10;
+explain format='plan_tree' select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]') and a<10;
 
 
 # TestMVIndexIndexMergePlanCache

@@ -281,9 +281,8 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 }
 
 // getPlanCostVer24PhysicalIndexReader returns the plan-cost of this sub-plan, which is:
-// plan-cost = (child-cost + net-cost + request-cost) / concurrency
+// plan-cost = (child-cost + net-cost) / concurrency
 // net-cost = rows * row-size * net-factor
-// request-cost = num-ranges * request-factor
 func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalIndexReader)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -293,18 +292,16 @@ func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property
 	rows := getCardinality(p.IndexPlan, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
-	requestFactor := getTaskRequestFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
-	requestCost := copRequestCostVer2(option, float64(getNumberOfRanges(p.IndexPlan)), requestFactor)
 
 	childCost, err := p.IndexPlan.GetPlanCostVer2(property.CopSingleReadTaskType, option)
 	if err != nil {
 		return costusage.ZeroCostVer2, err
 	}
 
-	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost, requestCost), concurrency)
+	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
@@ -313,9 +310,8 @@ func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-// plan-cost = (child-cost + net-cost + request-cost) / concurrency
+// plan-cost = (child-cost + net-cost) / concurrency
 // net-cost = rows * row-size * net-factor
-// request-cost = num-ranges * request-factor # TiKV only
 func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalTableReader)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -327,12 +323,8 @@ func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 	childType := property.CopSingleReadTaskType
-	requestCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))
 	if p.StoreType == kv.TiFlash { // mpp protocol
 		childType = property.MppTaskType
-	} else if p.StoreType == kv.TiKV {
-		requestFactor := getTaskRequestFactorVer2(p, taskType)
-		requestCost = copRequestCostVer2(option, float64(getNumberOfRanges(p.TablePlan)), requestFactor)
 	}
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
@@ -342,7 +334,7 @@ func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property
 		return costusage.ZeroCostVer2, err
 	}
 
-	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost, requestCost), concurrency)
+	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
 	p.PlanCostInit = true
 
 	// consider tidb_enforce_mpp
@@ -358,7 +350,7 @@ func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property
 
 // getPlanCostVer24PhysicalIndexLookUpReader returns the plan-cost of this sub-plan, which is:
 // plan-cost = index-side-cost + (table-side-cost + double-read-cost) / double-read-concurrency
-// index-side-cost = (index-child-cost + index-net-cost + index-request-cost) / dist-concurrency # same with IndexReader
+// index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
 // double-read-cost = double-read-request-cost + double-read-cpu-cost
 // double-read-request-cost = double-read-tasks * request-factor
@@ -388,12 +380,11 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 
 	// index-side
 	indexNetCost := netCostVer2(option, indexRows, indexRowSize, netFactor)
-	indexRequestCost := copRequestCostVer2(option, float64(getNumberOfRanges(p.IndexPlan)), requestFactor)
 	indexChildCost, err := p.IndexPlan.GetPlanCostVer2(property.CopMultiReadTaskType, option)
 	if err != nil {
 		return costusage.ZeroCostVer2, err
 	}
-	indexSideCost := costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost, indexRequestCost), distConcurrency)
+	indexSideCost := costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost), distConcurrency)
 
 	// table-side
 	tableNetCost := netCostVer2(option, tableRows, tableRowSize, netFactor)
@@ -435,7 +426,7 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 
 // GetPlanCostVer24PhysicalIndexMergeReader returns the plan-cost of this sub-plan, which is:
 // plan-cost = table-side-cost + table-lookup-request-cost + sum(index-side-cost)
-// index-side-cost = (index-child-cost + index-net-cost + index-request-cost) / dist-concurrency # same with IndexReader
+// index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
 // table-lookup-request-cost = double-read-tasks * request-factor / double-read-concurrency
 func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
@@ -478,13 +469,12 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 		}
 
 		indexNetCost := netCostVer2(option, rows, rowSize, netFactor)
-		indexRequestCost := copRequestCostVer2(option, float64(getNumberOfRanges(indexPath)), requestFactor)
 		indexChildCost, err := indexPath.GetPlanCostVer2(taskType, option)
 		if err != nil {
 			return costusage.ZeroCostVer2, err
 		}
 		indexSideCost = append(indexSideCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost, indexRequestCost), distConcurrency))
+			costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost), distConcurrency))
 	}
 	sumIndexSideCost := costusage.SumCostVer2(indexSideCost...)
 
@@ -1235,15 +1225,6 @@ func doubleReadRequestCostVer2(
 	requestFactor costusage.CostVer2Factor,
 ) costusage.CostVer2 {
 	return doubleReadCostVer2(option, estimatedRows/batchSize*tasksPerBatch, requestFactor)
-}
-
-func copRequestCostVer2(option *costusage.PlanCostOption, numRanges float64, requestFactor costusage.CostVer2Factor) costusage.CostVer2 {
-	if numRanges <= 0 || requestFactor.Value <= 0 {
-		return costusage.NewZeroCostVer2(costusage.TraceCost(option))
-	}
-	return costusage.NewCostVer2(option, requestFactor,
-		numRanges*requestFactor.Value,
-		func() string { return fmt.Sprintf("cop-request(ranges(%v)*%v)", numRanges, requestFactor) })
 }
 
 func getTableScanPenalty(p *physicalop.PhysicalTableScan, rows float64) (rowPenalty float64) {

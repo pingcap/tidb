@@ -917,25 +917,32 @@ func TestReaderCopRequestCost(t *testing.T) {
 		return ""
 	}
 
-	indexReaderTrace := traceFor("select b from t force index(idx_b) where b in (1, 2, 3)", "IndexReader")
-	require.Contains(t, indexReaderTrace, "cop-request(ranges(3)*tidb_request_factor",
-		"an IndexReader execution should account for one cop request per access range")
-
-	tableReaderTrace := traceFor("select * from t ignore index(idx_b, idx_c) where a > 1", "TableReader")
-	require.Contains(t, tableReaderTrace, "cop-request(ranges(1)*tidb_request_factor",
-		"a TiKV TableReader execution should account for its cop request")
+	indexSQL := "select b from t force index(idx_b) where b in (1, 11, 21)"
+	indexReaderTrace := traceFor(indexSQL, "IndexReader")
+	require.NotContains(t, indexReaderTrace, "tidb_request_factor")
+	tableSQL := "select * from t ignore index(idx_b, idx_c) where a > 1"
+	tableReaderTrace := traceFor(tableSQL, "TableReader")
+	require.NotContains(t, tableReaderTrace, "tidb_request_factor")
 
 	indexLookupTrace := traceFor("select c from t force index(idx_b) where b in (1, 2, 3)", "IndexLookUp")
-	require.Contains(t, indexLookupTrace, "cop-request(ranges(3)*tidb_request_factor",
-		"an IndexLookUp execution should account for its index-side cop requests")
-	require.Equal(t, 1, strings.Count(indexLookupTrace, "doubleRead("),
-		"the table-side handle lookup request must not be charged twice")
+	require.NotContains(t, indexLookupTrace, "cop-request(")
+	require.Equal(t, 1, strings.Count(indexLookupTrace, "doubleRead("))
+	require.Equal(t, 1, strings.Count(indexLookupTrace, "tidb_request_factor"),
+		"only the table-side handle lookup should charge requests")
 
 	indexMergeTrace := traceFor("select /*+ use_index_merge(t, idx_b, idx_c) */ * from t where b = 1 or c = 2", "IndexMerge")
-	require.Equal(t, 2, strings.Count(indexMergeTrace, "cop-request(ranges(1)*tidb_request_factor"),
-		"an IndexMerge execution should account for every partial cop request")
-	require.Equal(t, 1, strings.Count(indexMergeTrace, "doubleRead("),
-		"an IndexMerge table lookup should account for its batched handle requests once")
+	require.NotContains(t, indexMergeTrace, "cop-request(")
+	require.Equal(t, 1, strings.Count(indexMergeTrace, "doubleRead("))
+	require.Equal(t, 1, strings.Count(indexMergeTrace, "tidb_request_factor"),
+		"IndexMerge should charge its table lookup once, without partial scan requests")
+
+	// Physical splits and warmed Region metadata must not change reader cost.
+	tk.MustQuery("split table t index idx_b by (10), (20)")
+	tk.MustQuery("select b from t force index(idx_b) where b >= 0 and b < 30").Check(testkit.Rows())
+	require.Equal(t, indexReaderTrace, traceFor(indexSQL, "IndexReader"))
+	tk.MustQuery("split table t by (10), (20)")
+	tk.MustQuery("select * from t ignore index(idx_b, idx_c) where a >= 0 and a < 30").Check(testkit.Rows())
+	require.Equal(t, tableReaderTrace, traceFor(tableSQL, "TableReader"))
 
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 	tiFlashTrace := traceFor("select /*+ read_from_storage(tiflash[t]) */ * from t where a > 1", "TableReader")
@@ -1054,14 +1061,13 @@ func TestLookupRequestFanoutPlanChoice(t *testing.T) {
 		 and subR.referenced_object_id = o.id
 		where o.workspace_id = 1`)
 	require.Contains(t, indexJoinPlan, "IndexHashJoin", "the forced issue:69392 lookup candidate must remain available:\n%s", indexJoinPlan)
-	require.Contains(t, indexJoinPlan, "cop-request(", "the IndexReader probe should expose request startup cost:\n%s", indexJoinPlan)
+	require.NotContains(t, indexJoinPlan, "cop-request(", "covering index probes should not charge scan requests:\n%s", indexJoinPlan)
 	require.Contains(t, mppPlan, "tiflash", "the forced issue:69392 MPP candidate must remain available:\n%s", mppPlan)
 	require.Greater(t, indexJoinCost, 2*mppCost,
-		"request fanout should make IndexHashJoin materially more expensive than MPP: index=%v mpp=%v", indexJoinCost, mppCost)
+		"the existing index join cost should retain the MPP preference: index=%v mpp=%v", indexJoinCost, mppCost)
 
-	// issue:69092. Keep both EXISTS levels correlated to retain the problematic
-	// nested Apply shape and verify that request cost is owned by the Readers and
-	// naturally multiplied by the existing Apply cost formula.
+	// Retain the nested Apply shape while checking that only handle lookups
+	// contribute request cost; covering reader probes no longer do so.
 	tk.MustExec("set @@session.tidb_opt_enable_alternative_logical_plans = off")
 	nestedApplySQL := `select o.sequential_id, o.label
 		from obj_38m o
@@ -1100,11 +1106,9 @@ func TestLookupRequestFanoutPlanChoice(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, nestedApplyTrace, "the forced issue:69092 regression must retain an Apply plan")
-	require.GreaterOrEqual(t, strings.Count(nestedApplyTrace, "cop-request("), 2,
-		"nested Apply should naturally amplify Reader-owned request costs: %s", nestedApplyTrace)
-	firstRequest := strings.Index(nestedApplyTrace, "cop-request(")
-	require.Contains(t, nestedApplyTrace[firstRequest:], ")*",
-		"the existing Apply multiplier should wrap the Reader-owned request cost: %s", nestedApplyTrace)
+	require.NotContains(t, nestedApplyTrace, "cop-request(")
+	require.Contains(t, nestedApplyTrace, "doubleRead(",
+		"nested Apply should retain handle lookup costs")
 
 	// The same SQL without NO_DECORRELATE should prefer the already-enumerated
 	// MPP alternative once the nested lookup requests are priced.
@@ -1115,13 +1119,14 @@ func TestLookupRequestFanoutPlanChoice(t *testing.T) {
 	require.Contains(t, nestedDefaultPlan, "tiflash", "the nested fanout case should use the available MPP alternative:\n%s", nestedDefaultPlan)
 	require.NotContains(t, nestedDefaultPlan, "Apply", "the lookup-heavy nested Apply should not win:\n%s", nestedDefaultPlan)
 
-	// A genuinely tiny build side should still be able to use an index join; the
-	// request term is a cost component, not a blanket rejection rule.
+	// Without a scan request surcharge, the tiny case can use an ordered
+	// index range scan and merge join instead of repeated probes.
 	tk.MustExec("create table tiny_outer (k int primary key)")
 	tk.MustExec("create table tiny_inner (k int, payload int, key idx_k(k))")
 	tk.MustExec("insert into tiny_outer values (1)")
 	tk.MustExec("insert into tiny_inner values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8)")
 	tk.MustExec("analyze table tiny_outer, tiny_inner")
 	tinyPlan := planText("select count(*) from tiny_outer o join tiny_inner i on i.k = o.k where o.k = 1")
-	require.Contains(t, tinyPlan, "IndexJoin", "a selective one-row probe should retain the index-join option:\n%s", tinyPlan)
+	require.Contains(t, tinyPlan, "MergeJoin", "the tiny case should use the cheaper ordered scan:\n%s", tinyPlan)
+	require.Contains(t, tinyPlan, "IndexRangeScan")
 }
