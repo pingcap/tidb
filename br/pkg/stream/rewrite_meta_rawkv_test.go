@@ -95,16 +95,17 @@ func TestRewriteKeyForDB(t *testing.T) {
 
 func TestRewriteDBInfo(t *testing.T) {
 	var (
-		dbID   int64 = 1
-		dbName       = "db1"
-		DBInfo model.DBInfo
+		dbID         int64 = 1
+		dbName             = "db1"
+		targetDBName       = "db1_copy"
+		DBInfo       model.DBInfo
 	)
 
 	value, err := produceDBInfoValue(dbName, dbID)
 	require.Nil(t, err)
 
 	dbMap := make(map[UpstreamID]*DBReplace)
-	dbMap[dbID] = NewDBReplace(dbName, dbID+100)
+	dbMap[dbID] = NewDBReplace(targetDBName, dbID+100)
 
 	// create schemasReplace.
 	sr := MockEmptySchemasReplace(nil, dbMap)
@@ -115,6 +116,7 @@ func TestRewriteDBInfo(t *testing.T) {
 	err = json.Unmarshal(newValue, &DBInfo)
 	require.Nil(t, err)
 	require.Equal(t, DBInfo.ID, sr.DbReplaceMap[dbID].DbID)
+	require.Equal(t, targetDBName, DBInfo.Name.O)
 
 	// rewrite again, and get the same result.
 	newId := sr.DbReplaceMap[dbID].DbID
@@ -136,6 +138,85 @@ func TestRewriteDBInfo(t *testing.T) {
 	rewrittenWriteValue := new(RawWriteCFValue)
 	require.Nil(t, rewrittenWriteValue.ParseFrom(result.NewValue))
 	require.Equal(t, rewrittenWriteValue.txnSource, uint64(7)|kv.LightningPhysicalImportTxnSource)
+
+	t.Run("exact cross-schema routes do not restore the source database", func(t *testing.T) {
+		sourceDB := NewDBReplace("source_db", 101)
+		sourceDB.TableMap[11] = &TableReplace{
+			Name:         "copy",
+			TableID:      111,
+			TargetDBName: "target_db",
+			TargetDBID:   201,
+		}
+		routed := MockEmptySchemasReplace(nil, map[UpstreamID]*DBReplace{dbID: sourceDB})
+
+		newValue, err := routed.rewriteDBInfo(value)
+		require.NoError(t, err)
+		require.Nil(t, newValue)
+		require.False(t, sourceDB.RestoresDatabaseMetadata())
+	})
+
+	t.Run("source DB delete cannot remove a table-route target schema", func(t *testing.T) {
+		const targetDBID int64 = 200
+		targetDB := NewDBReplace("target_db", targetDBID)
+		sourceDB := NewDBReplace("source_db", 201)
+		sourceDB.TableMap[11] = &TableReplace{
+			Name:         "target_table",
+			TableID:      211,
+			TargetDBName: "target_db",
+			TargetDBID:   targetDBID,
+		}
+		sr := MockEmptySchemasReplace(nil, map[UpstreamID]*DBReplace{
+			1: targetDB,
+			2: sourceDB,
+		})
+		entry := &kv.Entry{
+			Key: utils.EncodeTxnMetaKey([]byte("DBs"), meta.DBkey(1), 1234),
+			Value: (&RawWriteCFValue{
+				t:       WriteTypeDelete,
+				startTs: 400036290571534337,
+			}).EncodeTo(),
+		}
+
+		rewritten, err := sr.RewriteMetaKvEntry(entry, consts.WriteCF)
+		require.NoError(t, err)
+		require.Nil(t, rewritten)
+		require.NotContains(t, sr.GetDeletedTables(), UpstreamID(1))
+	})
+
+	t.Run("source DB delete cannot remove a shared schema-route target", func(t *testing.T) {
+		const targetDBID int64 = 200
+		sr := MockEmptySchemasReplace(nil, map[UpstreamID]*DBReplace{
+			1: NewDBReplace("target_db", targetDBID),
+			2: NewDBReplace("target_db", targetDBID),
+		})
+		entry := &kv.Entry{
+			Key: utils.EncodeTxnMetaKey([]byte("DBs"), meta.DBkey(1), 1234),
+			Value: (&RawWriteCFValue{
+				t:       WriteTypeDelete,
+				startTs: 400036290571534337,
+			}).EncodeTo(),
+		}
+
+		rewritten, err := sr.RewriteMetaKvEntry(entry, consts.WriteCF)
+		require.NoError(t, err)
+		require.Nil(t, rewritten)
+		require.NotContains(t, sr.GetDeletedTables(), UpstreamID(1))
+	})
+
+	t.Run("missing database delete from PiTR ID map is skipped", func(t *testing.T) {
+		sr := NewSchemasReplace(map[UpstreamID]*DBReplace{}, true, nil, 9527, nil, false)
+		entry := &kv.Entry{
+			Key: utils.EncodeTxnMetaKey([]byte("DBs"), meta.DBkey(999), 1234),
+			Value: (&RawWriteCFValue{
+				t:       WriteTypeDelete,
+				startTs: 400036290571534337,
+			}).EncodeTo(),
+		}
+
+		rewritten, err := sr.RewriteMetaKvEntry(entry, consts.WriteCF)
+		require.NoError(t, err)
+		require.Nil(t, rewritten)
+	})
 }
 
 func TestRewriteKeyForTable(t *testing.T) {
@@ -180,6 +261,8 @@ func TestRewriteKeyForTable(t *testing.T) {
 		dbMap[dbID] = NewDBReplace(dbName, downStreamDbID)
 		downStreamTblID := tableID + 100
 		dbMap[dbID].TableMap[tableID] = NewTableReplace(tableName, downStreamTblID)
+		dbMap[dbID].TableMap[tableID].TargetDBName = "db_copy"
+		dbMap[dbID].TableMap[tableID].TargetDBID = dbID + 200
 
 		// create schemasReplace.
 		sr := MockEmptySchemasReplace(nil, dbMap)
@@ -193,7 +276,7 @@ func TestRewriteKeyForTable(t *testing.T) {
 
 		newDbID, err := meta.ParseDBKey(decodedKey.Key)
 		require.Nil(t, err)
-		require.Equal(t, newDbID, downStreamDbID)
+		require.Equal(t, newDbID, dbID+200)
 		newTblID, err := ca.decodeTableFn(decodedKey.Field)
 		require.Nil(t, err)
 		require.Equal(t, newTblID, downStreamTblID)
@@ -207,11 +290,27 @@ func TestRewriteKeyForTable(t *testing.T) {
 
 		newDbID, err = meta.ParseDBKey(decodedKey.Key)
 		require.Nil(t, err)
-		require.Equal(t, newDbID, downStreamDbID)
+		require.Equal(t, newDbID, dbID+200)
 		newTblID, err = ca.decodeTableFn(decodedKey.Field)
 		require.Nil(t, err)
 		require.Equal(t, newTblID, downStreamTblID)
 	}
+
+	t.Run("parent database fallback", func(t *testing.T) {
+		encodedKey := utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts)
+		dbReplace := NewDBReplace(dbName, dbID+100)
+		tableReplace := NewTableReplace(tableName, tableID+100)
+		dbReplace.TableMap[tableID] = tableReplace
+		sr := MockEmptySchemasReplace(nil, map[UpstreamID]*DBReplace{dbID: dbReplace})
+
+		newKey, err := sr.rewriteKeyForTable(encodedKey, consts.DefaultCF, meta.ParseTableKey, meta.TableKey)
+		require.NoError(t, err)
+		decodedKey, err := ParseTxnMetaKeyFrom(newKey)
+		require.NoError(t, err)
+		newDBID, err := meta.ParseDBKey(decodedKey.Key)
+		require.NoError(t, err)
+		require.Equal(t, dbReplace.DbID, newDBID)
+	})
 }
 
 func TestRewriteTableInfo(t *testing.T) {
@@ -229,12 +328,16 @@ func TestRewriteTableInfo(t *testing.T) {
 	dbMap := make(map[UpstreamID]*DBReplace)
 	dbMap[dbId] = NewDBReplace(dbName, dbId+100)
 	dbMap[dbId].TableMap[tableID] = NewTableReplace(tableName, tableID+100)
+	dbMap[dbId].TableMap[tableID].TargetDBName = "db_copy"
+	dbMap[dbId].TableMap[tableID].TargetDBID = dbId + 200
 
 	// create schemasReplace.
 	sr := MockEmptySchemasReplace(nil, dbMap)
 	tableCount := 0
+	var callbackDBID int64
 	sr.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		tableCount++
+		callbackDBID = tableInfo.DBID
 		tableInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count: 1,
 		}
@@ -246,6 +349,7 @@ func TestRewriteTableInfo(t *testing.T) {
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.ID, sr.DbReplaceMap[dbId].TableMap[tableID].TableID)
+	require.Equal(t, dbId+200, callbackDBID)
 	require.EqualValues(t, tableInfo.TiFlashReplica.Count, 1)
 
 	// rewrite it again and get the same result.
