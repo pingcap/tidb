@@ -767,6 +767,12 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	addTempIDIfNeeded := func(downID DownstreamID, owner tempIDOwner) error {
 		if downID < 0 {
 			if previous, exists := usedTempIDs[downID]; exists {
+				// The same upstream object can legitimately appear in more than one
+				// DBReplace after an upstream RENAME/EXCHANGE and they share one
+				// downstream ID (see getOrCreateTableReplace/globalIdMap).
+				if previous.kind == owner.kind && previous.id == owner.id {
+					return nil
+				}
 				// A DBReplace and a table-level target database can be two
 				// references to the same canonical schema alias.
 				previousIsDatabase := previous.kind == "database" || previous.kind == "target database"

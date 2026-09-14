@@ -629,6 +629,37 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, int64(901), tm.DBReplaceMap[2].TableMap[12].TargetDBID)
 	})
 
+	t.Run("share one temporary ID for the same upstream table across history buckets", func(t *testing.T) {
+		// An upstream RENAME TABLE/EXCHANGE PARTITION can leave the same table ID
+		// under two DBReplace buckets; they intentionally share one downstream ID.
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "old_db",
+				DbID: 101,
+				TableMap: map[UpstreamID]*TableReplace{
+					100: {Name: "t", TableID: -3},
+				},
+			},
+			2: {
+				Name: "new_db",
+				DbID: 102,
+				TableMap: map[UpstreamID]*TableReplace{
+					100: {Name: "t", TableID: -3},
+				},
+			},
+		}
+		var requested int
+		err := tm.ReplaceTemporaryIDs(context.Background(), func(_ context.Context, n int) ([]int64, error) {
+			requested = n
+			return []int64{900}, nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, requested)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].TableMap[100].TableID)
+		require.Equal(t, int64(900), tm.DBReplaceMap[2].TableMap[100].TableID)
+	})
+
 	t.Run("carry source metadata into a table-route target database", func(t *testing.T) {
 		tm := NewTableMappingManager()
 		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
