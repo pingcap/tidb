@@ -470,7 +470,7 @@ func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedSt
 	return true, err
 }
 
-func (cc *clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.CursorRUV2Tracker {
+func (*clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.CursorRUV2Tracker {
 	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
 	ruDetails, _ := ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
 	return resultset.NewCursorRUV2Tracker(ruv2Metrics, ruDetails)
