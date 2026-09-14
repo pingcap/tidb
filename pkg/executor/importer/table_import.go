@@ -722,13 +722,14 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 					err = ingestctrl.ConvertToErrFoundConflictRecords(err, ti.encTable)
 				}
 				importErr = multierr.Append(importErr, err)
+				continue
 			}
+			failpoint.InjectCall("afterDiskQuotaImport")
 		}
 		if importErr != nil {
 			// discuss: should we return the error and cancel the import?
 			ti.logger.Error("import large engines failed, check again later", log.ShortError(importErr))
 		}
-		failpoint.InjectCall("afterDiskQuotaImport")
 		unlockDiskQuota()
 	}
 }

@@ -1310,18 +1310,26 @@ func (s *mockGCSSuite) TestDiskQuotaFromSelect() {
 		importer.CheckDiskQuotaInterval = backup
 	}()
 
-	// Track that disk quota actually triggered UnsafeImportAndReset.
-	diskQuotaTriggered := atomic.NewBool(false)
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/afterDiskQuotaImport", func() {
-		diskQuotaTriggered.Store(true)
-	})
+	for _, failImport := range []bool{true, false} {
+		s.Run(fmt.Sprintf("failImport=%t", failImport), func() {
+			s.tk.MustExec("TRUNCATE TABLE dst")
+			if failImport {
+				testfailpoint.Enable(s.T(),
+					"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockUnsafeImportAndResetError", "return")
+			}
 
-	// Use a tiny disk_quota to force partial flushes to TiKV via UnsafeImportAndReset.
-	s.tk.MustExec("IMPORT INTO dst FROM SELECT * FROM src WITH disk_quota='819B'")
-	s.tk.MustQuery("SELECT count(1) FROM dst").Check(testkit.Rows(
-		strconv.Itoa(lineCount),
-	))
-	s.True(diskQuotaTriggered.Load(), "disk quota should have triggered UnsafeImportAndReset")
+			// Only successful quota imports should trigger the hook. A final engine
+			// import can still populate dst even if every quota import failed.
+			diskQuotaImported := atomic.NewBool(false)
+			testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/afterDiskQuotaImport", func() {
+				diskQuotaImported.Store(true)
+			})
+
+			s.tk.MustExec("IMPORT INTO dst FROM SELECT * FROM src WITH disk_quota='819B'")
+			s.tk.MustQuery("SELECT count(1) FROM dst").Check(testkit.Rows(strconv.Itoa(lineCount)))
+			s.Equal(!failImport, diskQuotaImported.Load(), "only successful quota imports should trigger the hook")
+		})
+	}
 }
 
 func (s *mockGCSSuite) TestAnalyze() {
