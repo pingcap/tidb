@@ -88,21 +88,32 @@ def capture(root, repositories, binaries, snapshots):
     (root / "SHA256.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
-if __name__ == "__main__":
-    os.umask(0o077)
+def component_paths(parser, values):
+    """Parse explicit component identities without depending on a local layout."""
+    paths = {}
+    for value in values:
+        name, separator, path = value.partition("=")
+        if not separator or not name or not path or Path(name).name != name or name in (".", ".."):
+            parser.error("components must be NAME=PATH with a simple, nonempty name")
+        if name in paths:
+            parser.error(f"duplicate component name: {name}")
+        paths[name] = str(Path(path).expanduser().resolve())
+    return paths
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root")
     parser.add_argument("--snapshots", action="store_true")
-    args = parser.parse_args()
-    capture(Path(args.root).resolve(), {
-        "br": "/home/hanzhen/tidb",
-        "cse": "/home/hanzhen/cloud-storage-engine-converter",
-        "docs": "/home/hanzhen/cloud-storage-engine",
-        "kvproto-r3": "/tmp/classic-restore-r3-kvproto",
-    }, {
-        "source-br": "/home/hanzhen/tidb/bin/br",
-        "source-tidb": "/home/hanzhen/tidb/bin/tidb-server",
-        "source-tikv": "/home/hanzhen/tidb/bin/tikv-server",
-        "source-pd": "/home/hanzhen/tidb/bin/pd-server",
-        "restore-br": os.environ["RESTORE_BR_BINARY"],
-    }, args.snapshots)
+    parser.add_argument("--repository", action="append", required=True, metavar="NAME=PATH",
+                        help="Git worktree to capture; repeat for each repository")
+    parser.add_argument("--binary", action="append", required=True, metavar="NAME=PATH",
+                        help="binary to capture; use names such as source-br or restore-br")
+    args = parser.parse_args(argv)
+    capture(Path(args.root).resolve(), component_paths(parser, args.repository),
+            component_paths(parser, args.binary), args.snapshots)
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    main()
