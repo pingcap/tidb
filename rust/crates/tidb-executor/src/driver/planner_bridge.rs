@@ -925,6 +925,35 @@ fn is_constant_literal(expr: &tidb_ast::Expr) -> bool {
     )
 }
 
+/// Go `StmtCtx.SetIndexForce()`'s statement-wide reach (`stats.go:165` →
+/// `plan_cost_ver2.go:1234`): every risky full table scan of the statement
+/// pays the penalty, hinted or not.
+fn stamp_statement_index_force(plan: LogicalPlan, forced: bool) -> LogicalPlan {
+    let mut visitor = StampIndexForce { forced };
+    fold_owned(&mut visitor, plan, ()).0
+}
+
+/// The stamping visitor behind [`stamp_statement_index_force`].
+struct StampIndexForce {
+    forced: bool,
+}
+
+impl OwnedRewrite for StampIndexForce {
+    type Down = ();
+    type Up = ();
+
+    fn descend(&mut self, node: &mut LogicalPlan, (): Self::Down) -> Descend<Self::Down, Self::Up> {
+        if let LogicalPlan::DataSource(source) = node {
+            source.table_scan_penalty.has_index_force = self.forced;
+        }
+        Descend::Children(vec![(); node.children().len()])
+    }
+
+    fn ascend(&mut self, node: LogicalPlan, _child_ups: Vec<()>) -> (LogicalPlan, ()) {
+        (node, ())
+    }
+}
+
 struct InitStats<'a> {
     range_context: crate::index_range::RangeContext<'a>,
     catalog: &'a Catalog,
@@ -1422,6 +1451,12 @@ impl OwnedRewrite for InitStats<'_> {
             has_partition_scan: false,
             has_index_force: false,
         };
+        // Go `deriveStats`' `StmtCtx.SetIndexForce()` (`stats.go:165`): the
+        // flag is statement-wide, so a hint on ANY occurrence records it here
+        // and the pass below stamps every source once the walk completes.
+        if !source.forced_index_ids.is_empty() {
+            self.context.set_index_force();
+        }
         tidb_planner::logical::rule_collect_plan_stats::refresh_source_group_ndvs(source);
         Descend::Stop(())
     }
@@ -2173,7 +2208,7 @@ fn optimize_built_logical(
         }
 
         fn initialize(&self, plan: LogicalPlan) -> LogicalPlan {
-            fold_owned(
+            let plan = fold_owned(
                 &mut InitStats {
                     range_context: crate::index_range::RangeContext {
                         max_size: self.context.range_max_size(),
@@ -2193,7 +2228,14 @@ fn optimize_built_logical(
                 plan,
                 (),
             )
-            .0
+            .0;
+            // Go reads `StmtCtx.GetIndexForce()` at PHYSICAL cost time
+            // (`plan_cost_ver2.go:1234`), after every source's deriveStats
+            // has run -- so a USE/FORCE on one occurrence surcharges every
+            // risky full scan of the statement. The walk above collected the
+            // flag; stamp the final value onto every source now.
+            let plan = stamp_statement_index_force(plan, self.context.get_index_force());
+            plan
         }
     }
 

@@ -407,6 +407,11 @@ pub struct StmtContextData {
     /// `beforeExecutorFirstRun` only for the initial executor; pessimistic
     /// lock retries use their separate after-retry breakpoint.
     before_executor_first_run: Arc<AtomicBool>,
+    /// Go `StatementContext.indexForce` (`stmtctx.go:1010`): a USE/FORCE
+    /// INDEX hint matched a path somewhere in the statement, so
+    /// `getTableScanPenalty` surcharges EVERY risky full table scan, hinted
+    /// or not. An atomic because parallel stats/agg workers share the ctx.
+    index_force: Arc<AtomicBool>,
     /// The exact Go `func(string)` value copied from the session context.
     breakpoint_notify_func: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
     division_by_zero: ErrorLevel,
@@ -897,6 +902,7 @@ impl StmtContext {
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
             before_executor_first_run: session.before_executor_first_run,
+            index_force: Arc::default(),
             breakpoint_notify_func: session.breakpoint_notify_func,
             division_by_zero,
             bad_null: if strict {
@@ -2274,6 +2280,18 @@ impl StmtContext {
         self.before_executor_first_run = latch;
         self.breakpoint_notify_func = notify;
         self
+    }
+
+    /// Go `StatementContext.SetIndexForce` (`stmtctx.go:1034`): the statement
+    /// carries a hint-forced access path somewhere.
+    pub(crate) fn set_index_force(&self) {
+        self.0.index_force.store(true, Ordering::Release);
+    }
+
+    /// Go `StatementContext.GetIndexForce` (`stmtctx.go:1011`).
+    #[must_use]
+    pub(crate) fn get_index_force(&self) -> bool {
+        self.0.index_force.load(Ordering::Acquire)
     }
 
     /// Go `ExecStmt.Exec` immediately after `buildExecutor` and before
