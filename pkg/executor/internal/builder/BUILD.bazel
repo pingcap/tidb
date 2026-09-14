@@ -2,12 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "builder",
-    srcs = ["builder_utils.go"],
+    srcs = [
+        "builder_utils.go",
+        "spill_options.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/builder",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/distsql",
         "//pkg/kv",
+        "//pkg/objstore/storeapi",
         "//pkg/planner/core/base",
         "//pkg/planner/planctx",
         "//pkg/sessionctx",

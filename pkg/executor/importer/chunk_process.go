@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -578,12 +579,24 @@ type QueryChunk struct {
 	RowIDOffset int64
 }
 
+// QueryRuntime supplies resources owned by the task, not by the source session.
+type QueryRuntime struct {
+	// TotalMemoryLimit covers query readers and operators together.
+	TotalMemoryLimit int64
+	// Session is exclusively owned by this attempt. The caller must close or
+	// destroy it on every exit path after RunImportQuery returns.
+	Session     sessionctx.Context
+	Storage     storeapi.Storage
+	Prefix      string
+	MemoryLimit int64
+}
+
 // RunImportQuery executes a complete query attempt and streams owned chunks to
 // output. The caller owns the channel and session; the function closes its executor
 // before returning. Registration by executor avoids a package import cycle.
 // TODO: Separate IMPORT task submission, status APIs and TaskMeta from the DXF
 // worker package, so workers can call executor directly without this registration.
-var RunImportQuery func(context.Context, sessionctx.Context, *QueryPlan, int64, chan<- QueryChunk) error
+var RunImportQuery func(context.Context, *QueryPlan, QueryRuntime, chan<- QueryChunk) error
 
 func newQueryChunkProcessor(
 	chunkCh chan QueryChunk,

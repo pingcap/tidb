@@ -478,7 +478,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	if executor == nil {
-		b := newExecutorBuilder(ctx, a.Ctx, a.InfoSchema, a.Ti)
+		b := newExecutorBuilder(ctx, a.Ctx, a.InfoSchema, a.Ti, nil)
 		executor = b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -1531,7 +1531,7 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (exec.Executor, error) {
 		sctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, sctx, a.InfoSchema, a.Ti)
+	b := newExecutorBuilder(ctx, sctx, a.InfoSchema, a.Ti, nil)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

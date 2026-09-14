@@ -342,7 +342,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		s.tableImporter.SetSelectedChunkCh(selected)
 		chunks = []importer.Chunk{{Timestamp: query.Timestamp}}
 		eg.Go(func() error {
-			err := s.readQuery(wctx, selected)
+			err := s.readQuery(wctx, subtask, objStore, selected)
 			if err != nil {
 				wctx.OnError(err)
 			}
@@ -382,7 +382,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 }
 
 func (s *importStepExecutor) readQuery(
-	ctx context.Context,
+	ctx context.Context, subtask *proto.Subtask, objStore storeapi.Storage,
 	selected chan<- importer.QueryChunk,
 ) error {
 	defer close(selected)
@@ -394,9 +394,11 @@ func (s *importStepExecutor) readQuery(
 
 	defer pool.Destroy(resource)
 	se := resource.(sessionctx.Context)
-	return importer.RunImportQuery(
-		ctx, se, s.taskMeta.Plan.Query,
-		s.GetResource().Mem.Capacity()/2, selected)
+	return importer.RunImportQuery(ctx, s.taskMeta.Plan.Query, importer.QueryRuntime{
+		TotalMemoryLimit: s.GetResource().Mem.Capacity() / 2,
+		Session:          se, Storage: objStore, Prefix: subtaskPrefix(s.taskID, subtask.ID),
+		MemoryLimit: s.GetResource().Mem.Capacity() / 4,
+	}, selected)
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
