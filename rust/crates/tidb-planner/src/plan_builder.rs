@@ -1754,13 +1754,6 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     self.error = Some(PlanError::internal("subquery lowering lost its outer plan"));
                     return true;
                 };
-                let inner = match self.builder.build_expression_subquery(&outer, &query) {
-                    Ok(inner) => inner,
-                    Err(error) => {
-                        self.error = Some(error);
-                        return true;
-                    }
-                };
                 // The comparison/IN handlers take their left operand already
                 // rewritten, so build it before the rewriter borrows the
                 // builder.
@@ -1779,7 +1772,22 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     }
                     Form::Scalar | Form::Exists { .. } => None,
                 };
-                let hint_flags = self.builder.sub_query_hint_flags;
+                let subquery_ctx = match &form {
+                    Form::Scalar => SubQueryCtx::Scalar,
+                    Form::Compare { .. } => SubQueryCtx::Compare,
+                    Form::In { .. } => SubQueryCtx::In,
+                    Form::Exists { .. } => SubQueryCtx::Exists,
+                };
+                let (inner, hint_flags) = match self
+                    .builder
+                    .build_expression_subquery(&outer, &query, subquery_ctx)
+                {
+                    Ok((inner, hint_flags)) => (inner, hint_flags),
+                    Err(error) => {
+                        self.error = Some(error);
+                        return true;
+                    }
+                };
                 let mut rewriter = self.builder.expression_rewriter();
                 rewriter.as_scalar = true;
                 let lowered = match form {
@@ -1928,7 +1936,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         &mut self,
         outer: &LogicalPlan,
         query: &tidb_ast::QueryStmt,
-    ) -> Result<LogicalPlan, PlanError> {
+        subquery_ctx: SubQueryCtx,
+    ) -> Result<(LogicalPlan, u64), PlanError> {
         // Go `buildApply` (`logical_plan_builder.go:1000`) turns on these four
         // rules whenever it builds a `LogicalApply`. The subquery handlers are
         // the other Apply producer, and a query whose FROM has no join (so
@@ -1942,12 +1951,25 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         self.outer_names.push(outer_names);
         let parent_clause = self.cur_clause;
         let modified_ctes = self.prepare_cte_check_for_subquery();
+        // Go `buildSubquery` (`expression_rewriter.go:498-507`): enter the
+        // subquery's own ctx and CLEAR the accumulated hint flags, so the
+        // inner block's `NO_DECORRELATE`/`SEMI_JOIN_REWRITE` parse against
+        // THIS form; the handler then receives exactly the inner block's
+        // accumulation.
+        let old_sub_query_ctx = self.sub_query_ctx;
+        self.sub_query_ctx = subquery_ctx;
+        let old_hint_flags = self.sub_query_hint_flags;
+        self.sub_query_hint_flags = 0;
         let inner = self.build_query_stmt(query, false);
+        let hint_flags = self.sub_query_hint_flags;
+        self.sub_query_hint_flags = old_hint_flags;
+        self.sub_query_ctx = old_sub_query_ctx;
         self.reset_cte_check_for_subquery(&modified_ctes);
         self.outer_schemas.pop();
         self.outer_names.pop();
         self.cur_clause = parent_clause;
-        inner
+        let inner = inner?;
+        Ok((inner, hint_flags))
     }
 
     /// Go's filter-context arms of `expressionRewriter.Enter`: a direct
@@ -1969,7 +1991,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 subquery,
             } => {
                 let left = self.rewrite_scalar(left, &schema, &names, markers)?;
-                let inner = self.build_expression_subquery(&outer, subquery)?;
+                let (inner, hint_flags) =
+                    self.build_expression_subquery(&outer, subquery, SubQueryCtx::Compare)?;
                 let op = match op {
                     tidb_ast::BinaryOp::Eq => CompareOp::Eq,
                     tidb_ast::BinaryOp::NullEq => CompareOp::NullEq,
@@ -2011,7 +2034,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 not,
             } => {
                 let left = self.rewrite_scalar(expr, &schema, &names, markers)?;
-                let inner = self.build_expression_subquery(&outer, subquery)?;
+                let (inner, hint_flags) =
+                    self.build_expression_subquery(&outer, subquery, SubQueryCtx::In)?;
                 let mut rewriter = self.expression_rewriter();
                 rewriter.ctx_stack_append(left.clone(), FieldName::default());
                 let plan = rewriter.handle_in_subquery(
@@ -2020,22 +2044,18 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     inner,
                     *not,
                     false,
-                    self.sub_query_hint_flags,
+                    hint_flags,
                     true,
                     true,
                 )?;
                 Ok((plan, true))
             }
             Expr::Exists { subquery, not } => {
-                let inner = self.build_expression_subquery(&outer, subquery)?;
+                let (inner, hint_flags) =
+                    self.build_expression_subquery(&outer, subquery, SubQueryCtx::Exists)?;
                 let mut rewriter = self.expression_rewriter();
                 rewriter.as_scalar = false;
-                match rewriter.handle_exist_subquery(
-                    outer,
-                    inner,
-                    *not,
-                    self.sub_query_hint_flags,
-                )? {
+                match rewriter.handle_exist_subquery(outer, inner, *not, hint_flags)? {
                     ScalarSubqueryOutcome::Applied(plan) => Ok((plan, true)),
                     ScalarSubqueryOutcome::EvaluateSeparately { outer, inner } => {
                         // Go `buildSelection`'s constant fold
