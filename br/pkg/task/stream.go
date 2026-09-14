@@ -1787,7 +1787,11 @@ func restoreStream(
 	var rp *logclient.RestoreMetaKVProcessor
 	if err = glue.WithProgress(ctx, g, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress, func(p glue.Progress) error {
 		rp = logclient.NewRestoreMetaKVProcessor(client, schemasReplace, updateStats, p.Inc)
-		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.isPartialRestore(), ddlFiles, schemasReplace)
+		// The metadata refresh granularity follows --filter: an unfiltered (full)
+		// restore uses a single global reload, while a filtered/partial restore
+		// refreshes only the affected tables. Routing alone does not make the
+		// restore a subset, so keep using ExplicitFilter here.
+		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.ExplicitFilter, ddlFiles, schemasReplace)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
