@@ -406,6 +406,58 @@ impl LogicalJoin {
     /// is classified into `other` rather than dropped.
     #[must_use]
     #[allow(clippy::too_many_lines)]
+    /// Go `DeriveOtherConditions` (`logical_join.go:2164`): scan the join's
+    /// OWN `OtherConditions` -- the ON-clause leftovers that build time
+    /// classified with the derive flags off -- and derive per-child pushed
+    /// conditions for every side the caller names: the per-side DNF
+    /// relaxation plus, for a col-op-col condition whose null-rejection the
+    /// side's schema implies, `not(isnull(col))`. Outer-semi joins skip the
+    /// not-null half on the right: the `in (subq)` rewrite parks its
+    /// column-equal condition there and deriving would break it (#9051).
+    fn derive_other_conditions(
+        &self,
+        left_schema: &Schema,
+        right_schema: &Schema,
+        derive_left: bool,
+        derive_right: bool,
+        opts: &SubstituteOptions<'_>,
+    ) -> (Vec<Expression>, Vec<Expression>) {
+        let is_outer_semi = matches!(
+            self.join_type,
+            LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+        );
+        let mut left_cond = Vec::new();
+        let mut right_cond = Vec::new();
+        for expr in &self.other_conditions {
+            if is_mutable_effects_expr(expr) {
+                continue;
+            }
+            if derive_left {
+                if let Some(relaxed) = derive_relaxed_filters_from_dnf(expr, left_schema) {
+                    left_cond.push(relaxed);
+                }
+                if let Some(not_null) =
+                    derive_not_null_for_schema(expr, left_schema, opts)
+                {
+                    left_cond.push(not_null);
+                }
+            }
+            if derive_right {
+                if let Some(relaxed) = derive_relaxed_filters_from_dnf(expr, right_schema) {
+                    right_cond.push(relaxed);
+                }
+                if !is_outer_semi {
+                    if let Some(not_null) =
+                        derive_not_null_for_schema(expr, right_schema, opts)
+                    {
+                        right_cond.push(not_null);
+                    }
+                }
+            }
+        }
+        (left_cond, right_cond)
+    }
+
     pub fn extract_on_condition(
         &mut self,
         conditions: &[Expression],
@@ -723,7 +775,18 @@ impl LogicalJoin {
                     false,
                     opts,
                 );
-                let right_cond = std::mem::take(&mut self.right_conditions);
+                // Go `DeriveOtherConditions(p, left, right, false, true)`:
+                // the ON clause's own non-equality conditions still yield the
+                // null-supplying side's relaxed and not-null filters.
+                let (_, derived_right) = self.derive_other_conditions(
+                    left_schema,
+                    right_schema,
+                    false,
+                    true,
+                    opts,
+                );
+                let mut right_cond = std::mem::take(&mut self.right_conditions);
+                right_cond.extend(derived_right);
                 result.left_cond = split.left;
                 result.right_cond = right_cond;
                 result.ret = scalar_funcs_to_exprs(&split.equal);
@@ -766,7 +829,18 @@ impl LogicalJoin {
                     true,
                     opts,
                 );
-                let left_cond = std::mem::take(&mut self.left_conditions);
+                // Go `DeriveOtherConditions(p, left, right, true, false)`: the
+                // ON clause's own non-equality conditions still yield the
+                // null-supplying (left) side's relaxed and not-null filters.
+                let (derived_left, _) = self.derive_other_conditions(
+                    left_schema,
+                    right_schema,
+                    true,
+                    false,
+                    opts,
+                );
+                let mut left_cond = std::mem::take(&mut self.left_conditions);
+                left_cond.extend(derived_left);
                 result.right_cond = split.right;
                 result.left_cond = left_cond;
                 result.ret = scalar_funcs_to_exprs(&split.equal);
@@ -1241,6 +1315,30 @@ fn derive_not_null(
         return None;
     }
     build_not_null_expr(Expression::Column(column.clone()), opts).ok()
+}
+
+/// Go `deriveNotNullExpr` (`logical_join.go:2206`): `not(isnull(col))` from a
+/// col-op-col condition whose null-rejection `schema` implies, where `col` is
+/// whichever operand the schema names. `DeriveOtherConditions`' per-side arm.
+fn derive_not_null_for_schema(
+    expr: &Expression,
+    schema: &Schema,
+    opts: &SubstituteOptions<'_>,
+) -> Option<Expression> {
+    let Expression::ScalarFunction(binop) = expr else {
+        return None;
+    };
+    let args = binop.get_args();
+    if args.len() != 2 {
+        return None;
+    }
+    let (Expression::Column(arg0), Expression::Column(arg1)) = (&args[0], &args[1]) else {
+        return None;
+    };
+    let child_col = schema
+        .retrieve_column(arg0)
+        .or_else(|| schema.retrieve_column(arg1))?;
+    derive_not_null(child_col, schema, expr, opts)
 }
 
 /// The `checkColumnsMatchPKOrUK` closure of `LogicalJoin.BuildKeyInfo`: some
