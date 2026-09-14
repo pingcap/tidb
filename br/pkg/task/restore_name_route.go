@@ -66,6 +66,15 @@ func (cfg *RestoreConfig) hasNameRouting() bool {
 	return len(cfg.Rename) > 0
 }
 
+// isPartialRestore reports whether the restore only covers part of the target
+// cluster and therefore needs the same protections as an explicit filter:
+// table restore mode during restore and fine-grained scheduler pausing. A
+// name-routed restore is partial even when the user did not pass --filter,
+// because routing is allowed to target a non-empty cluster.
+func (cfg *RestoreConfig) isPartialRestore() bool {
+	return cfg.ExplicitFilter || cfg.hasNameRouting()
+}
+
 func (cfg *RestoreConfig) nameRouteFingerprint() (string, error) {
 	if !cfg.hasNameRouting() {
 		return "", nil

@@ -2933,7 +2933,7 @@ func createDBsAndTables(
 
 func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool,
 	isIncremental bool) {
-	if cfg.ExplicitFilter && isPiTR && !isIncremental {
+	if cfg.isPartialRestore() && isPiTR && !isIncremental {
 		for i, table := range tables {
 			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
 			if table.Info.IsSequence() {

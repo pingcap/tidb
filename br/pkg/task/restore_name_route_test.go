@@ -192,8 +192,8 @@ func TestBuildRestoreNamePlanRejectsSnapshotDependencies(t *testing.T) {
 	require.NoError(t, err)
 	db := &metautil.Database{Info: &model.DBInfo{ID: 1, Name: ast.NewCIStr("source")}}
 	table := &metautil.Table{DB: db.Info, Info: &model.TableInfo{
-		ID:          10,
-		Name:        ast.NewCIStr("t"),
+		ID:   10,
+		Name: ast.NewCIStr("t"),
 		ForeignKeys: []*model.FKInfo{{
 			Name:      ast.NewCIStr("fk"),
 			RefSchema: ast.NewCIStr("source"),
@@ -501,5 +501,30 @@ func TestRestoreConfigNameRoutingValidationAndHash(t *testing.T) {
 		require.NoError(t, err)
 		legacyHash := sha256.Sum256(legacyJSON)
 		require.Equal(t, legacyHash[:], actual)
+	})
+
+	t.Run("partial restore covers filter and rename", func(t *testing.T) {
+		require.False(t, (&RestoreConfig{}).isPartialRestore())
+		require.True(t, (&RestoreConfig{Config: Config{ExplicitFilter: true}}).isPartialRestore())
+		require.True(t, (&RestoreConfig{Rename: []string{"source:target"}}).isPartialRestore())
+		require.True(t, (&RestoreConfig{
+			Config: Config{ExplicitFilter: true},
+			Rename: []string{"source:target"},
+		}).isPartialRestore())
+	})
+
+	t.Run("route-only PiTR sets tables to restore mode", func(t *testing.T) {
+		cfg := &SnapshotRestoreConfig{RestoreConfig: &RestoreConfig{Rename: []string{"source:target"}}}
+		tables := []*metautil.Table{{
+			DB:   &model.DBInfo{Name: ast.NewCIStr("source")},
+			Info: &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")},
+		}}
+		setTablesRestoreModeIfNeeded(tables, cfg, true, false)
+		require.Equal(t, model.TableModeRestore, tables[0].Info.Mode)
+
+		// A full (non-partial) restore keeps the table mode unchanged.
+		tables[0].Info.Mode = model.TableModeNormal
+		setTablesRestoreModeIfNeeded(tables, &SnapshotRestoreConfig{RestoreConfig: &RestoreConfig{}}, true, false)
+		require.Equal(t, model.TableModeNormal, tables[0].Info.Mode)
 	})
 }

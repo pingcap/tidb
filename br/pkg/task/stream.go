@@ -1728,7 +1728,7 @@ func restoreStream(
 	var restoreSchedulersFunc pdutil.UndoFunc
 
 	// use fine-grained scheduler pausing if we have specific tables to restore (not full restore)
-	if cfg.ExplicitFilter {
+	if cfg.isPartialRestore() {
 		keyRanges := buildKeyRangesFromSchemasReplace(schemasReplace, cfg)
 		if len(keyRanges) > 0 {
 			log.Info("using fine-grained scheduler pausing for log restore",
@@ -1787,7 +1787,7 @@ func restoreStream(
 	var rp *logclient.RestoreMetaKVProcessor
 	if err = glue.WithProgress(ctx, g, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress, func(p glue.Progress) error {
 		rp = logclient.NewRestoreMetaKVProcessor(client, schemasReplace, updateStats, p.Inc)
-		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.ExplicitFilter, ddlFiles, schemasReplace)
+		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.isPartialRestore(), ddlFiles, schemasReplace)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1954,7 +1954,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
-	if cfg.ExplicitFilter {
+	if cfg.isPartialRestore() {
 		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("fail before setting table mode to normal"))
 		})
@@ -2464,7 +2464,7 @@ func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) b
 
 func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*stream.SchemasReplace, error) {
 	schemasReplace := stream.NewSchemasReplace(cfg.tableMappingManager.DBReplaceMap, cfg.tableMappingManager.IsFromPiTRIDMap(), cfg.tiflashRecorder,
-		client.CurrentTS(), client.RecordDeleteRange, cfg.ExplicitFilter)
+		client.CurrentTS(), client.RecordDeleteRange, cfg.isPartialRestore())
 	schemasReplace.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.
