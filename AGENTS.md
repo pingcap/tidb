@@ -33,6 +33,7 @@ When writing complex features or significant refactors, use an ExecPlan from des
 
 | Task | Required action |
 | --- | --- |
+| Creating any git commit | MUST create it with `--signoff` (for example `git commit --signoff` / `git commit --amend --signoff`) so the commit message carries a `Signed-off-by:` trailer. |
 | Added/moved/renamed/removed Go files, changed the import section of an existing Go file, added a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | MUST run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
 | Running package unit tests | SHOULD run targeted tests and avoid full-package runs unless needed (see `docs/agents/testing-flow.md` -> `Unit tests`). |
 | Unit tests in a package that uses failpoints | MUST enable failpoints before tests and disable afterward (see `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`). |
