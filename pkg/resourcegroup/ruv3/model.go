@@ -15,7 +15,10 @@
 // Package ruv3 defines the raw units and weighting model used to calculate RU v3.
 package ruv3
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // StmtUnits contains the raw work measured for one RU v3 calculation.
 type StmtUnits struct {
@@ -60,7 +63,7 @@ type StmtWeights struct {
 	WriteByte           float64
 }
 
-// DDLWeights contains the coefficient for each DDL RU v3 byte unit.
+// DDLWeights contains the coefficient for each DDL RU v2 byte unit.
 type DDLWeights struct {
 	TxnKVBytes    float64 `toml:"txn-kv-bytes" json:"txn-kv-bytes"`
 	IngestKVBytes float64 `toml:"ingest-kv-bytes" json:"ingest-kv-bytes"`
@@ -89,12 +92,28 @@ func DefaultWeights() StmtWeights {
 }
 
 // DefaultDDLWeights returns the deliberately uncalibrated DDL weights used by
-// the current RU v3 model. They are placeholders, not billing values.
+// the current RU v2 model. They are placeholders, not billing values.
 func DefaultDDLWeights() DDLWeights {
 	return DDLWeights{
 		TxnKVBytes:    1,
 		IngestKVBytes: 1,
 	}
+}
+
+// Validate checks that every DDL weight is finite and nonnegative.
+func (weights DDLWeights) Validate() error {
+	for _, weight := range []struct {
+		name  string
+		value float64
+	}{
+		{"txn-kv-bytes", weights.TxnKVBytes},
+		{"ingest-kv-bytes", weights.IngestKVBytes},
+	} {
+		if !validValues(weight.value) {
+			return fmt.Errorf("%s must be finite and non-negative, got %v", weight.name, weight.value)
+		}
+	}
+	return nil
 }
 
 // Valid reports whether every raw unit is finite and nonnegative.

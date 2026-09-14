@@ -457,6 +457,12 @@ allow-enable-foreign-key-check-in-shared-lock = false
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
 
+# DDL RU v2 weights. Values must be finite and non-negative; zero disables the
+# corresponding charge. These defaults are uncalibrated placeholders, not billing values.
+[ru-v2.ddl-weights]
+txn-kv-bytes = 1.0
+ingest-kv-bytes = 1.0
+
 # error-msg-extension appends configured messages to SQL errors matching regexps. TiDB joins
 # the original error and suffix as "error, suffix.". When multiple regexps match the same
 # error, TiDB uses the longest regexp pattern first. Prefer anchored, specific patterns to

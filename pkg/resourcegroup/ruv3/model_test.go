@@ -39,6 +39,26 @@ func TestDefaultDDLWeights(t *testing.T) {
 	if got := DefaultDDLWeights(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("DefaultDDLWeights() = %+v, want %+v", got, want)
 	}
+	if err := DefaultDDLWeights().Validate(); err != nil {
+		t.Fatalf("DefaultDDLWeights().Validate() returned error: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		weights DDLWeights
+		wantErr string
+	}{
+		{name: "negative txn KV bytes", weights: DDLWeights{TxnKVBytes: -1}, wantErr: "txn-kv-bytes must be finite and non-negative, got -1"},
+		{name: "NaN ingest KV bytes", weights: DDLWeights{IngestKVBytes: math.NaN()}, wantErr: "ingest-kv-bytes must be finite and non-negative, got NaN"},
+		{name: "infinite ingest KV bytes", weights: DDLWeights{IngestKVBytes: math.Inf(1)}, wantErr: "ingest-kv-bytes must be finite and non-negative, got +Inf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.weights.Validate(); err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("DDLWeights.Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
 }
 
 func TestCalculate(t *testing.T) {

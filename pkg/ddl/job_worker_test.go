@@ -93,7 +93,7 @@ func TestDDLJobRU(t *testing.T) {
 			testutil.ToFloat64(metrics.RUV3ByEngineTiKV)-tikvRUBefore, 1e-9)
 	})
 
-	t.Run("reorg job accounts transaction RU", func(t *testing.T) {
+	t.Run("reorg job accounts transaction RU v2", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")

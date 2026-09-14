@@ -96,7 +96,7 @@ func TestAccountDistTaskRU(t *testing.T) {
 		})
 	}
 
-	t.Run("failed reorg does not stage collected RU", func(t *testing.T) {
+	t.Run("failed reorg does not stage collected RU v2", func(t *testing.T) {
 		jobCtx := &jobContext{}
 		job := &model.Job{RU: 7}
 		stageReorgResultRU(jobCtx, reorgFnResult{ru: 42, err: errors.New("reorg failed")})
@@ -104,7 +104,7 @@ func TestAccountDistTaskRU(t *testing.T) {
 		require.Equal(t, float64(7), job.RU)
 	})
 
-	t.Run("failed metadata transition does not account collected RU", func(t *testing.T) {
+	t.Run("failed metadata transition does not account collected RU v2", func(t *testing.T) {
 		jobCtx := &jobContext{}
 		job := &model.Job{RU: 7}
 		stageReorgResultRU(jobCtx, reorgFnResult{ru: 42})
@@ -113,7 +113,7 @@ func TestAccountDistTaskRU(t *testing.T) {
 		require.Zero(t, jobCtx.pendingReorgRU)
 	})
 
-	t.Run("multi-schema proxy preserves accounted RU", func(t *testing.T) {
+	t.Run("multi-schema proxy preserves accounted RU v2", func(t *testing.T) {
 		parentJob := &model.Job{RU: 7}
 		proxyJob := (&model.SubJob{}).ToProxyJob(parentJob, 0)
 		require.Equal(t, parentJob.RU, proxyJob.RU)

@@ -130,7 +130,7 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
-	// DXF propagates add-index reorganization RU through:
+	// DXF propagates add-index reorganization RU v2 through:
 	// BackfillTaskMeta.Summary.IndexKVSize -> recordDistTaskRU -> reorgCtx.ru ->
 	// reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
 	// accountPendingReorgRU -> Job.RU. It is persisted only after the matching
@@ -666,7 +666,7 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	}
 	// For reorganization jobs, only distributed add-index currently accounts
 	// the reorganization workload itself. Other reorganization jobs account the
-	// DDL transaction below, but their reorganization RU is not fully accounted.
+	// DDL transaction below, but their reorganization RU v2 is not fully accounted.
 	txn, err := w.sess.Txn()
 	if err != nil {
 		return errors.Trace(err)

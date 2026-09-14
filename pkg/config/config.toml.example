@@ -469,11 +469,6 @@ write-keys = 0.330760861554226
 session-parser-total = 0.19230499
 txn-cnt = 0.03013709
 
-# DDL RU v3 weights. Zero disables the corresponding charge.
-[ru-v2.ddl-weights]
-txn-kv-bytes = 1.0
-ingest-kv-bytes = 1.0
-
 # RU v2 TiKV-side weights for TiKV RU value calculation (handled in client-go).
 [tikv-client.ru-v2]
 # ru-scale is the scale factor used to convert RU v2 float values into scaled integer values.

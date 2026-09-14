@@ -401,9 +401,9 @@ const (
 	RUReportModeFull   = "full"
 )
 
-// RUV2Config configures legacy RU v2 and RU v3 weights and reporting.
+// RUV2Config configures RU v2 weights and reporting.
 // Legacy RU v2 defaults are experimentally fitted to remain aligned with RU v1.
-// RU v3 reuses this config section while replacing the legacy model.
+// The current RU v2 model reuses this config section while replacing the legacy model.
 type RUV2Config struct {
 	// ReportMode controls RU v3 metrics. Full additionally reports raw units and
 	// calculation outcomes; result reports total, SQL-type and per-engine RU consumption.
@@ -451,11 +451,11 @@ type RUV2Config struct {
 	StatementWriteKeys            float64 `toml:"statement-write-keys" json:"statement-write-keys"`
 	StatementWriteBytes           float64 `toml:"statement-write-bytes" json:"statement-write-bytes"`
 
-	// DDLWeights convert DDL RU v3 byte units to RU.
+	// DDLWeights convert DDL RU v2 byte units to RU.
 	DDLWeights ruv3.DDLWeights `toml:"ddl-weights" json:"ddl-weights"`
 }
 
-// DefaultRUV2Config returns the default legacy RU v2 and RU v3 configuration.
+// DefaultRUV2Config returns the default RU v2 configuration.
 func DefaultRUV2Config() RUV2Config {
 	return RUV2Config{
 		ReportMode: RUReportModeResult,
@@ -489,7 +489,7 @@ func DefaultRUV2Config() RUV2Config {
 	}
 }
 
-func (c *RUV2Config) validWeights() error {
+func (c *RUV2Config) validStatementWeights() error {
 	for _, weight := range []struct {
 		name  string
 		value float64
@@ -504,8 +504,6 @@ func (c *RUV2Config) validWeights() error {
 		{"statement-operator-num", c.StatementOperatorNum},
 		{"statement-write-keys", c.StatementWriteKeys},
 		{"statement-write-bytes", c.StatementWriteBytes},
-		{"ddl-weights.txn-kv-bytes", c.DDLWeights.TxnKVBytes},
-		{"ddl-weights.ingest-kv-bytes", c.DDLWeights.IngestKVBytes},
 	} {
 		if weight.value < 0 || math.IsNaN(weight.value) || math.IsInf(weight.value, 0) {
 			return fmt.Errorf("ru-v2.%s must be finite and non-negative, got %v", weight.name, weight.value)
@@ -1801,8 +1799,11 @@ func (c *Config) Valid() error {
 	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
 	}
-	if err := c.RUV2.validWeights(); err != nil {
+	if err := c.RUV2.validStatementWeights(); err != nil {
 		return err
+	}
+	if err := c.RUV2.DDLWeights.Validate(); err != nil {
+		return fmt.Errorf("ru-v2.ddl-weights.%w", err)
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
