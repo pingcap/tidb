@@ -513,6 +513,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/statistics",
+        "//pkg/statistics/asyncload",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/util",
         "//pkg/store/copr",
