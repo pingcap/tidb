@@ -3483,6 +3483,10 @@ func (w *worker) recordDistTaskRU(jobID int64, task *proto.Task) error {
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Trace(err)
 	}
+	// TODO: Include scan bytes in this estimate. For partial indexes, the
+	// ingested KV size can be much smaller than the scanned bytes. Also account
+	// for the add-index temporary-index merge phase. For now, only ingest KV size
+	// is considered because normal and multi-valued indexes are more common.
 	if taskMeta.Summary != nil {
 		if rc := w.getReorgCtx(jobID); rc != nil {
 			rc.setRU(float64(taskMeta.Summary.IndexKVSize) * currentDDLRUWeights().IngestKVBytes)
