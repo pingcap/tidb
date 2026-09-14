@@ -1691,6 +1691,40 @@ impl Partial {
         i64::try_from(payload + size_of::<Datum>()).unwrap_or(i64::MAX)
     }
 
+    /// [`Partial::finish`] for a state that is about to be dropped: the
+    /// retained value is MOVED into the result instead of copied.
+    ///
+    /// Go's `AppendFinalResult2Chunk` writes the partial result's own value
+    /// into the output chunk -- `chk.AppendBytes(p.val)` -- because the
+    /// partial result dies with the group and has nothing to protect. Here
+    /// `finish` takes `&self` and had to clone, which on a group-by carrying
+    /// wide text is the copy itself: finalizing TPC-H Q10, whose `FirstRow`
+    /// partials hold `c_name`, `c_address` and `c_comment` (25, 40 and 117
+    /// bytes a group), spent 3.0% of the node's samples in `Datum::clone`
+    /// under this call, the single largest `memmove` caller in the query.
+    ///
+    /// Only a caller that owns the state and drops it may claim: a claimed
+    /// state reads as an empty one. `finalize_map` qualifies -- it takes each
+    /// group by value out of the map and drops it at the end of the iteration
+    /// -- and passes `claim: true` for that reason; every other finalize path
+    /// passes `false` and keeps the copy.
+    fn finish_claiming(
+        &mut self,
+        order_by: &[(Expression, bool)],
+        div_precision_increment: u32,
+    ) -> Result<Datum, ExecError> {
+        match self {
+            Partial::FirstRow(value) | Partial::MaxMin { value, .. } => {
+                Ok(value.take().unwrap_or(Datum::Null))
+            }
+            Partial::SumDecimal(value) => Ok(value.take().map_or(Datum::Null, Datum::Decimal)),
+            // Every other state either finishes into a fresh value already
+            // (the counts, the fixed-scale coefficients) or needs the whole
+            // collection to produce one.
+            other => other.finish(order_by, div_precision_increment),
+        }
+    }
+
     fn finish(
         &self,
         order_by: &[(Expression, bool)],
@@ -1929,11 +1963,18 @@ fn finish_agg_value<C: Columns>(
     ctx: &C,
     truncated: &mut bool,
 ) -> Result<Datum, ExecError> {
-    finish_agg_value_claiming(state, func, output_type, ctx, &mut || {
-        let first = !*truncated;
-        *truncated = true;
-        first
-    })
+    finish_agg_value_claiming(
+        state,
+        func,
+        output_type,
+        ctx,
+        &mut || {
+            let first = !*truncated;
+            *truncated = true;
+            first
+        },
+        false,
+    )
 }
 
 /// [`finish_agg_value`] with the GROUP_CONCAT "warn once" sentinel behind
@@ -1947,10 +1988,17 @@ fn finish_agg_value_claiming<C: Columns>(
     output_type: &FieldType,
     ctx: &C,
     claim_truncation: &mut dyn FnMut() -> bool,
+    claim_value: bool,
 ) -> Result<Datum, ExecError> {
-    let mut value = state
-        .partial
-        .finish(&func.order_by, ctx.div_precision_increment())?;
+    let mut value = if claim_value {
+        state
+            .partial
+            .finish_claiming(&func.order_by, ctx.div_precision_increment())?
+    } else {
+        state
+            .partial
+            .finish(&func.order_by, ctx.div_precision_increment())?
+    };
     value = round_avg_result(&func.kind, output_type, value);
     if let Datum::Bytes(joined) = &mut value {
         if matches!(func.kind, AggKind::GroupConcat { .. }) {
@@ -1983,6 +2031,7 @@ fn append_finished_agg_value_claiming<C: Columns>(
     output_type: &FieldType,
     ctx: &C,
     claim_truncation: &mut dyn FnMut() -> bool,
+    claim_value: bool,
     req: &mut Chunk,
     column: usize,
 ) -> Result<(), ExecError> {
@@ -2013,7 +2062,8 @@ fn append_finished_agg_value_claiming<C: Columns>(
             }
         }
     }
-    let value = finish_agg_value_claiming(state, func, output_type, ctx, claim_truncation)?;
+    let value =
+        finish_agg_value_claiming(state, func, output_type, ctx, claim_truncation, claim_value)?;
     req.append_datum(column, &value);
     Ok(())
 }
@@ -2038,6 +2088,7 @@ fn append_finished_agg_value<C: Columns>(
             *truncated = true;
             first
         },
+        false,
         req,
         column,
     )

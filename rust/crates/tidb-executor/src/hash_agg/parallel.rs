@@ -1697,6 +1697,10 @@ fn finalize_map<C: Columns + Send + Sync + Clone + 'static>(
                         )
                         .is_ok()
                 },
+                // `map.into_values()` hands this group over by value and drops
+                // it below, so the retained value is moved into the chunk
+                // rather than copied into it.
+                true,
                 &mut current,
                 column,
             )?;
