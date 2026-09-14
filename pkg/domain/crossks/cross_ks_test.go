@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -40,7 +41,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -464,7 +468,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	)
 
 	targetKS := "ks-runtime-domain"
-	targetStore, _ := testkit.CreateMockStoreAndDomainForKS(t, targetKS)
+	targetStore, targetDom := testkit.CreateMockStoreAndDomainForKS(t, targetKS)
 	storeMap[targetKS] = targetStore
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = keyspace.System
@@ -485,16 +489,40 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	require.Same(t, sessMgr.Store(), handle.Store())
 	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
 
-	t.Run("execute query in target keyspace", func(t *testing.T) {
+	t.Run("optimize query with target keyspace statistics", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, targetStore)
 		tk.MustExec("use test")
 		tk.MustExec("create table query_source(id bigint auto_increment primary key, g bigint not null, v bigint not null) auto_id_cache=1")
 		tk.MustExec("insert into query_source(g,v) values (1,10),(1,20),(2,30)")
+		tk.MustExec("analyze table query_source all columns")
 		tk.MustExec("set tidb_isolation_read_engines='tikv'")
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 		sql := "import into unused_target from select /*+ HASH_AGG() */ g,count(*) from query_source where v >= 10 group by g"
 		captured, err := executor.CaptureImportQuery(tk.Session(), sql)
 		require.NoError(t, err)
+		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
+		require.True(t, ok)
+		meta := captured.Tables[db.ID][0]
+		// A same-ID entry in SYSTEM and a cold tenant cache must not affect the worker.
+		shadow := statistics.PseudoTable(meta, false, true)
+		shadow.RealtimeCount = 999999
+		sysKSDom.StatsHandle().UpdateStatsCache(statstypes.CacheUpdate{Updated: []*statistics.Table{shadow}})
+		targetDom.StatsHandle().Clear()
+		var optimized bool
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
+			queryDomain := domain.GetDomain(p.SCtx())
+			require.NotNil(t, queryDomain)
+			require.NotSame(t, sysKSDom, queryDomain)
+			require.NotSame(t, targetDom, queryDomain)
+			require.Same(t, targetStore, queryDomain.Store())
+			require.Equal(t, sysKSDom.ServerID(), queryDomain.ServerID())
+			stats := queryDomain.StatsHandle().GetPhysicalTableStats(meta.ID, meta)
+			require.False(t, stats.Pseudo)
+			require.True(t, stats.CanNotTriggerLoad)
+			require.EqualValues(t, 3, stats.RealtimeCount)
+
+			optimized = true
+		})
 
 		mgr := storage.NewTaskManager(handle.SysSessionPool())
 		require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
@@ -510,9 +538,10 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		defer pool.Destroy(resource)
 		output := make(chan importer.QueryChunk, 4)
 		err = importer.RunImportQuery(ctx, captured, importer.QueryRuntime{
-			Session: resource.(sessionctx.Context), Storage: objstore.NewMemStorage(), Prefix: "query-prototype", TotalMemoryLimit: 1 << 20, MemoryLimit: 1 << 19,
+			Session: resource.(sessionctx.Context), SessionPool: pool, Storage: objstore.NewMemStorage(), Prefix: "query-prototype", TotalMemoryLimit: 1 << 20, MemoryLimit: 1 << 19,
 		}, output)
 		require.NoError(t, err)
+		require.True(t, optimized)
 		close(output)
 		result := make(map[int64]int64)
 		for batch := range output {
@@ -526,7 +555,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		}
 		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
 	})
-	t.Run("MPP server ID without a query Domain", func(t *testing.T) {
+	t.Run("MPP server ID from the query Domain", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, targetStore)
 		tk.MustExec("use test")
 		q, err := executor.CaptureImportQuery(tk.Session(),
@@ -551,7 +580,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		})
 		require.PanicsWithValue(t, "stop before MPP dispatch", func() {
 			_ = importer.RunImportQuery(context.Background(), q, importer.QueryRuntime{
-				Session: se, Storage: objstore.NewMemStorage(), Prefix: "mpp-identity", TotalMemoryLimit: 1 << 20, MemoryLimit: 1 << 19,
+				Session: se, SessionPool: handle.SysSessionPool(), Storage: objstore.NewMemStorage(), Prefix: "mpp-identity", TotalMemoryLimit: 1 << 20, MemoryLimit: 1 << 19,
 			}, nil)
 		})
 		require.True(t, checked)

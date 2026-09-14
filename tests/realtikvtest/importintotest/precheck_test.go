@@ -112,6 +112,7 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 
 	// test import from select
 	if kerneltype.IsNextGen() {
+		s.tk.MustExec("analyze table t all columns")
 		previousURI := vardef.CloudStorageURI.Load()
 		vardef.CloudStorageURI.Store(realtikvtest.GetNextGenObjStoreURI("precheck-import-query"))
 		s.T().Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })

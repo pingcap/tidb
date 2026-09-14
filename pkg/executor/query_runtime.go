@@ -159,10 +159,11 @@ func runImportQuery(
 	ctx context.Context, q *importer.QueryPlan, runtime importer.QueryRuntime,
 	output chan<- importer.QueryChunk,
 ) (err error) {
-	workerSession, node, err := newImportQuerySession(ctx, runtime.Session, q, runtime.TotalMemoryLimit)
+	workerSession, node, err := newImportQuerySession(ctx, runtime.Session, q, runtime.TotalMemoryLimit, runtime.SessionPool)
 	if err != nil {
 		return err
 	}
+	defer workerSession.domain.Close()
 
 	vars := workerSession.GetSessionVars()
 	stmt, err := (&Compiler{Ctx: workerSession}).Compile(ctx, node)

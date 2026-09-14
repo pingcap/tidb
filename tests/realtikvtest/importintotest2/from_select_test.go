@@ -45,6 +45,7 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 	s.tk.MustExec("create table src(id int, v varchar(64))")
 	s.tk.MustExec("create table dst(id int, v varchar(64))")
 	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
+	s.tk.MustExec("analyze table src all columns")
 
 	s.ErrorIs(s.tk.ExecToErr(`import into dst FROM select id from src`), plannererrors.ErrWrongValueCountOnRow)
 	s.ErrorIs(s.tk.ExecToErr(`import into dst(id) FROM select * from src`), plannererrors.ErrWrongValueCountOnRow)
@@ -77,6 +78,7 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 	}
 	slices.Sort(queryResult)
 	s.tk.MustExec("insert into src values " + strings.Join(values, ","))
+	s.tk.MustExec("analyze table src all columns")
 	s.tk.MustExec(`import into dst FROM select * from src with thread = 8`)
 	s.Equal(uint64(count), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.Contains(s.tk.Session().LastMessage(), fmt.Sprintf("Records: %d,", count))
@@ -92,6 +94,7 @@ func (s *mockGCSSuite) TestImportFromSelectColumnList() {
 	s.tk.MustExec("create table src(id int, a varchar(64))")
 	s.tk.MustExec("create table dst(id int auto_increment primary key, a varchar(64), b int default 10, c int)")
 	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
+	s.tk.MustExec("analyze table src all columns")
 	if vardef.CloudStorageURI.Load() != "" {
 		s.ErrorContains(s.tk.ExecToErr(`import into dst(c, a) FROM select * from src order by id`), "does not support ORDER BY")
 		s.tk.MustExec(`import into dst(c, a) FROM select * from src`)
@@ -106,6 +109,7 @@ func (s *mockGCSSuite) TestImportFromSelectColumnList() {
 	s.tk.MustExec("truncate table dst")
 	s.tk.MustExec("create table src2(id int, a varchar(64))")
 	s.tk.MustExec("insert into src2 values(4, 'four'), (5, 'five')")
+	s.tk.MustExec("analyze table src2 all columns")
 	if vardef.CloudStorageURI.Load() != "" {
 		s.ErrorContains(s.tk.ExecToErr(`import into dst(c, a) FROM select y.id, y.a from src x join src2 y on x.id = y.id`), "does not support JOIN")
 	} else {
@@ -118,6 +122,7 @@ func (s *mockGCSSuite) TestWriteAfterImportFromSelect() {
 	s.prepareImportFromSelect()
 	s.tk.MustExec("create table dt(id int, v varchar(64))")
 	s.tk.MustExec("insert into dt values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
+	s.tk.MustExec("analyze table dt all columns")
 	s.testWriteAfterImport(`import into t FROM select * from from_select.dt`, importer.DataSourceTypeQuery)
 }
 
