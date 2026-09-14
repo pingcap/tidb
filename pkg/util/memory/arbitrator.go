@@ -2503,10 +2503,6 @@ func (m *MemArbitrator) approxAwaitFreePoolUsed() memPoolQuotaUsage {
 }
 
 func (m *MemArbitrator) executeTick(utimeMilli int64) bool { // exec batch tasks every 1s
-	if m.atMemRisk() { // skip if oom check is running because mem state is not safe
-		return false
-	}
-
 	if m.tickTask.lastTickUtimeMilli.Load()+defTickDurMilli > utimeMilli {
 		return false
 	}
@@ -2581,8 +2577,12 @@ type memStats struct {
 	HeapAlloc, HeapInuse, TotalFree, MemOffHeap, LastGC int64
 }
 
-// HandleRuntimeStats handles the runtime memory statistics
-func (m *MemArbitrator) HandleRuntimeStats(s memStats) {
+// handleRuntimeStats handles the runtime memory statistics
+func (m *MemArbitrator) handleRuntimeStats(s memStats) {
+	if m.atMemRisk() { // skip if oom check is running because mem state is not safe
+		return
+	}
+
 	// shrink fast alloc pool
 	m.tryShrinkAwaitFreePool(defPoolReservedQuota, nowUnixMilli())
 	// update tracked mem stats
