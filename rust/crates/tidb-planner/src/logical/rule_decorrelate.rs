@@ -477,14 +477,7 @@ impl DecorrelateSolver {
         if apply.join.join_type != LogicalJoinType::LeftOuter {
             return Ok(PullUpAggregation::NotFired);
         }
-        if aggregation.agg_funcs.iter().any(|func| {
-            matches!(
-                func.name().to_ascii_lowercase().as_str(),
-                "count" | "bit_and" | "bit_or" | "bit_xor"
-            )
-        }) {
-            return Ok(PullUpAggregation::NotFired);
-        }
+
         let Some(LogicalPlan::Selection(mut selection)) =
             aggregation.base.children().first().cloned()
         else {
@@ -530,6 +523,53 @@ impl DecorrelateSolver {
                     outer_schema,
                 );
             return Ok(PullUpAggregation::NotFired);
+        }
+        // Go's `aggDefaultValueMap` arm: a scalar COUNT whose join key's
+        // inner column is the inner source's unique key collapses the count
+        // to the per-match constant (the uniqueness bounds the count to
+        // {0,1}). Without the uniqueness the count stays an aggregation (a
+        // valid correlated plan).
+        let count_present = aggregation
+            .agg_funcs
+            .iter()
+            .any(|func| matches!(func.name().to_ascii_lowercase().as_str(), "count"));
+        if count_present {
+            let key_unique = {
+                let mut current = aggregation.base.children().first().cloned();
+                let mut found = false;
+                while let Some(plan) = current {
+                    if let LogicalPlan::DataSource(ds) = &plan {
+                        found = ds.pk_is_handle
+                            && ds.handle_cols.first().is_some_and(|handle| {
+                                eq_cond_with_cor_col.iter().any(|eq| {
+                                    eq.get_args().iter().any(|arg| {
+                                        matches!(arg, Expression::Column(column)
+                                            if column.unique_id == handle.unique_id)
+                                    })
+                                })
+                            });
+                        break;
+                    }
+                    current = plan.children().first().cloned();
+                }
+                found
+            };
+            if !key_unique {
+                if let Some(LogicalPlan::Selection(mut restored)) =
+                    aggregation.base.children().first().cloned()
+                {
+                    restored.conditions = original;
+                    aggregation
+                        .base
+                        .set_children(vec![LogicalPlan::Selection(restored)]);
+                }
+                apply.cor_cols =
+                    super::super::expression_rewriter::extract_cor_columns_by_schema_4_logical_plan(
+                        &mut LogicalPlan::Aggregation(aggregation.clone()),
+                        outer_schema,
+                    );
+                return Ok(PullUpAggregation::NotFired);
+            }
         }
         let mut group_by_cols = Schema::new(aggregation.get_group_by_cols());
         let mut schema = aggregation.base.base.schema().cloned().unwrap_or_default();
