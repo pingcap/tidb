@@ -190,6 +190,27 @@ func TestTransaction(t *testing.T) {
 	require.Len(t, warnings, 1)
 	require.EqualError(t, warnings[0].Err, "[expression:1235]function AND CHAIN has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
 
+	tk.MustExec("begin")
+	tk.MustExec("rollback and chain")
+	require.False(t, inTxn(ctx))
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.EqualError(t, warnings[0].Err, "[expression:1235]function AND CHAIN has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+
+	tk.MustExec("begin")
+	tk.MustExec("commit release")
+	require.False(t, inTxn(ctx))
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.EqualError(t, warnings[0].Err, "[expression:1235]function RELEASE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+
+	tk.MustExec("begin")
+	tk.MustExec("rollback release")
+	require.False(t, inTxn(ctx))
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.EqualError(t, warnings[0].Err, "[expression:1235]function RELEASE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+
 	// With noop functions on, AND CHAIN/RELEASE are accepted without error
 	// or warning, matching how READ ONLY is treated.
 	tk.MustExec("set tidb_enable_noop_functions = 1")
@@ -197,6 +218,22 @@ func TestTransaction(t *testing.T) {
 	tk.MustExec("commit and chain")
 	require.False(t, inTxn(ctx))
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
+
+	tk.MustExec("begin")
+	tk.MustExec("rollback and chain")
+	require.False(t, inTxn(ctx))
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
+
+	tk.MustExec("begin")
+	tk.MustExec("commit release")
+	require.False(t, inTxn(ctx))
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
+
+	tk.MustExec("begin")
+	tk.MustExec("rollback release")
+	require.False(t, inTxn(ctx))
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
+
 	tk.MustExec("set tidb_enable_noop_functions = 0")
 }
 
