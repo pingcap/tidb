@@ -452,10 +452,6 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 			require.False(t, invalid.Valid(), field)
 		}
 		m := execdetails.NewRUV2Metrics()
-		m.AddWriteKeys(2)
-		m.AddWriteSize(100)
-		before := testutil.ToFloat64(metrics.RUV2WriteKeys)
-		bytesBefore := testutil.ToFloat64(metrics.RUV2WriteSize)
 		details := &util.CommitDetails{WriteKeys: 3, WriteSize: 150}
 		writes := snapshotStatementRUWrites(details)
 		require.Equal(t, statementRUWriteSnapshot{keys: 3, bytes: 150}, writes)
@@ -468,17 +464,13 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		coll := execdetails.NewRuntimeStatsColl(nil)
 		coll.RegisterStats(plan.ID(), &execdetails.WriteRuntimeStats{})
 		flat := plannercore.FlattenPhysicalPlan(plan, false)
-		// RUv2's different payload must not affect RUv3, including when RUv2 is absent.
+		// Committed writes come from the snapshot even when RUv2 metrics are absent.
 		for _, metricsInput := range []*execdetails.RUV2Metrics{m, nil} {
 			result, ok := calculateStatementRU(flat, coll, metricsInput, writes, statementRUCalculationSetup{}, true)
 			require.True(t, ok)
 			require.Equal(t, float64(3), result.units.WriteKeys)
 			require.Equal(t, float64(150), result.units.WriteBytes)
 		}
-		require.Equal(t, int64(2), m.WriteKeys())
-		require.Equal(t, int64(100), m.WriteSize())
-		require.Equal(t, before, testutil.ToFloat64(metrics.RUV2WriteKeys))
-		require.Equal(t, bytesBefore, testutil.ToFloat64(metrics.RUV2WriteSize))
 		writeBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("commit"))
 		tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
 		calculator := statementRUCalculator{units: units, report: new(statementRUFullReport)}

@@ -408,34 +408,6 @@ type RUV2Config struct {
 	// calculation outcomes; result reports total, SQL-type and per-engine RU consumption.
 	ReportMode string `toml:"report-mode" json:"report-mode"`
 
-	// RUScale is the scale factor used to convert RU v2 float values into scaled integer values.
-	// It is intentionally chosen to match legacy RU values for compatibility.
-	RUScale float64 `toml:"ru-scale" json:"ru-scale"`
-
-	// ResultChunkCells is the weight for cells materialized into result chunks.
-	ResultChunkCells float64 `toml:"result-chunk-cells" json:"result-chunk-cells"`
-	// ExecutorL1 is the weight for fast-path executors that scale by cells:
-	// BatchPointGet, PointGet, and Limit.
-	ExecutorL1 float64 `toml:"executor-l1" json:"executor-l1"`
-	// ExecutorL2 is the weight for general executors, including Expand, HashAgg,
-	// HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
-	// MemTableReaderExec, MergeJoin, Projection, SelectionExec, SelectLockExec,
-	// TableDualExec, TableReaderExecutor, TopN, UnionScanExec, and Window.
-	ExecutorL2 float64 `toml:"executor-l2" json:"executor-l2"`
-	// ExecutorL3 is the weight for heavier operators: Sort and StreamAgg.
-	ExecutorL3 float64 `toml:"executor-l3" json:"executor-l3"`
-	// ExecutorL5InsertRows is the weight for insert rows multiplied by inserted
-	// column count. Level 4 is intentionally unused today because only L1/L2/L3
-	// executor groups and this insert-specific tier are currently modeled.
-	ExecutorL5InsertRows    float64 `toml:"executor-l5-insert-rows" json:"executor-l5-insert-rows"`
-	PlanCnt                 float64 `toml:"plan-cnt" json:"plan-cnt"`
-	PlanDeriveStatsPaths    float64 `toml:"plan-derive-stats-paths" json:"plan-derive-stats-paths"`
-	ResourceManagerReadCnt  float64 `toml:"resource-manager-read-cnt" json:"resource-manager-read-cnt"`
-	ResourceManagerWriteCnt float64 `toml:"resource-manager-write-cnt" json:"resource-manager-write-cnt"`
-	WriteKeys               float64 `toml:"write-keys" json:"write-keys"`
-	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
-	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
-
 	// Statement weights convert RU v3 raw work units to RU. They must be finite
 	// and non-negative; zero disables the corresponding charge. Their defaults
 	// are uncalibrated internal placeholders, not billing values.
@@ -455,20 +427,6 @@ type RUV2Config struct {
 func DefaultRUV2Config() RUV2Config {
 	return RUV2Config{
 		ReportMode: RUReportModeResult,
-		RUScale:    2.01,
-
-		ResultChunkCells:        0.00010000,
-		ExecutorL1:              0.00013278,
-		ExecutorL2:              0.00000383,
-		ExecutorL3:              0.00141739,
-		ExecutorL5InsertRows:    0.00472572,
-		PlanCnt:                 0.15392217,
-		PlanDeriveStatsPaths:    0.24968182,
-		ResourceManagerReadCnt:  0.02072003,
-		ResourceManagerWriteCnt: 0.07179779,
-		WriteKeys:               0.330760861554226,
-		SessionParserTotal:      0.19230499,
-		TxnCnt:                  0.03013709,
 
 		StatementCPUWork:              1.0,
 		StatementScanBytes:            1.0,
