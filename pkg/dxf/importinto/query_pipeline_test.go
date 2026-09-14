@@ -49,6 +49,7 @@ func TestImportQueryEncodeS3(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table query_src(g bigint not null,v bigint not null)")
 	tk.MustExec("insert into query_src values (1,10),(1,20),(2,30)")
+	tk.MustExec("analyze table query_src all columns")
 	tk.MustExec("create table query_dst(g bigint primary key,c bigint,s decimal(42,0))")
 	previousURI := vardef.CloudStorageURI.Load()
 	vardef.CloudStorageURI.Store(uri)
@@ -104,4 +105,9 @@ func TestImportQueryEncodeS3(t *testing.T) {
 	// Encoding alone must not ingest anything into the destination.
 	tk.MustQuery("select count(*) from query_dst").Check(testkit.Rows("0"))
 
+	// Statistics loading errors must abort the Query step before ingest.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", `return(true)`)
+	sub.Meta = subMeta
+	require.ErrorContains(t, step.RunSubtask(ctx, sub), "inject timeout error")
+	tk.MustQuery("select count(*) from query_dst").Check(testkit.Rows("0"))
 }

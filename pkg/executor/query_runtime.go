@@ -156,9 +156,13 @@ func runImportQuery(
 	ctx context.Context, q *importer.QueryPlan, runtime importer.QueryRuntime, output chan<- importer.QueryChunk,
 ) (err error) {
 	var opened exec.Executor
+	var querySession *importQuerySession
 	defer func() {
 		if r := recover(); r != nil {
 			err = tidbutil.GetRecoverError(r)
+		}
+		if querySession != nil {
+			defer querySession.domain.Close()
 		}
 		if opened != nil {
 			if closeErr := exec.Close(opened); err == nil {
@@ -170,17 +174,12 @@ func runImportQuery(
 	if err != nil {
 		return err
 	}
+	querySession = workerSession
 	vars := workerSession.GetSessionVars()
-	totalLimit := runtime.TotalMemoryLimit
 	stmt, err := (&Compiler{Ctx: workerSession}).Compile(ctx, node)
 	if err != nil {
 		return err
 	}
-	// SET_VAR hints must not enlarge the budget allocated by DXF.
-	if vars.MemQuotaQuery <= 0 || vars.MemQuotaQuery > totalLimit {
-		vars.MemQuotaQuery = totalLimit
-	}
-	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
 	p, ok := stmt.Plan.(base.PhysicalPlan)
 	if !ok {
 		return errors.New("import query did not produce a physical SELECT plan")

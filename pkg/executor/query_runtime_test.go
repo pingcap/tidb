@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -33,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -44,9 +47,11 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table query_src(g bigint, v decimal(20,2), i bigint, key idx_i(i))")
 	tk.MustExec("insert into query_src values (1,10,1),(1,20,2),(1,NULL,3),(2,7,4),(NULL,3,5),(NULL,NULL,6),(3,NULL,7)")
+	tk.MustExec("analyze table query_src all columns")
 	tk.MustExec("set collation_connection='utf8mb4_general_ci'")
 	tk.MustExec("set tidb_isolation_read_engines='tikv'")
 	queries := []string{
+		"select g from (select /*+ SET_VAR(tidb_distsql_scan_concurrency=9) */ g from query_src force index(idx_i)) x",
 		"select 'a' = 'A'",
 		"select /*+ SET_VAR(tidb_distsql_scan_concurrency=2) */ count(*) from query_src",
 		"select /*+ SET_VAR(tidb_mem_quota_query=1073741824) */ count(*) from query_src",
@@ -58,6 +63,14 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	}
 	for _, sql := range queries {
 		t.Run(sql, func(t *testing.T) {
+			expectedConcurrency := tk.Session().GetSessionVars().DistSQLScanConcurrency()
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
+				require.Equal(t, expectedConcurrency, p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+				require.Empty(t, p.SCtx().GetSessionVars().StmtCtx.StmtHints.SetVars)
+				if strings.Contains(sql, "force index") {
+					require.NotContains(t, core.ToString(p), "IndexLookUp")
+				}
+			})
 			captured, err := executor.CaptureImportQuery(tk.Session(), sql)
 			require.NoError(t, err)
 			data, err := json.Marshal(captured)
@@ -73,7 +86,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			defer se.Close()
 			output := make(chan importer.QueryChunk, len(expected)+1)
 			err = importer.RunImportQuery(context.Background(), captured, importer.QueryRuntime{
-				Session: se, Storage: objstore.NewMemStorage(), Prefix: "query-test", MemoryLimit: 1 << 20,
+				Session: se, SessionPool: domain.GetDomain(tk.Session()).SysSessionPool(), Storage: objstore.NewMemStorage(), Prefix: "query-test", MemoryLimit: 1 << 20,
 			}, output)
 			require.NoError(t, err)
 			close(output)
@@ -112,7 +125,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		defer se.Close()
 		output := make(chan importer.QueryChunk, 1)
 		err = importer.RunImportQuery(context.Background(), q, importer.QueryRuntime{
-			Session: se, Storage: objstore.NewMemStorage(), Prefix: "submitted-schema", MemoryLimit: 1 << 20,
+			Session: se, SessionPool: domain.GetDomain(tk.Session()).SysSessionPool(), Storage: objstore.NewMemStorage(), Prefix: "submitted-schema", MemoryLimit: 1 << 20,
 		}, output)
 		require.NoError(t, err)
 		close(output)
@@ -132,6 +145,7 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table query_flash(g int, v bigint)")
 	tk.MustExec("insert into query_flash values (1,10),(1,20),(2,30)")
+	tk.MustExec("analyze table query_flash all columns")
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("query_flash"))
 	require.NoError(t, err)
@@ -142,10 +156,47 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 		}))
 	tk.MustExec("set tidb_allow_mpp=1")
 	tk.MustExec("set tidb_enforce_mpp=1")
-	for _, hint := range []string{"MPP_1PHASE_AGG()", "MPP_2PHASE_AGG()"} {
-		t.Run(hint, func(t *testing.T) {
-			sql := "select /*+ " + hint + " READ_FROM_STORAGE(TIFLASH[query_flash]) */ g,count(*),sum(v) from query_flash group by g"
-			captured, err := executor.CaptureImportQuery(tk.Session(), sql)
+	tk.MustExec("set tidb_isolation_read_engines='tiflash'")
+
+	sql := "select g,count(*),sum(v) from query_flash group by g"
+	captured, err := executor.CaptureImportQuery(tk.Session(), sql)
+	require.NoError(t, err)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	var optimized bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
+		optimized = true
+		require.True(t, strings.Contains(core.ToString(p), "Send("), core.ToString(p))
+	})
+	// Validate the real optimizer output without dispatching to a TiFlash server.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/failAfterImportQueryOptimize", `return(true)`)
+	err = importer.RunImportQuery(context.Background(), captured, importer.QueryRuntime{
+		Session: se, SessionPool: domain.GetDomain(tk.Session()).SysSessionPool(), Storage: objstore.NewMemStorage(), Prefix: "query-flash", MemoryLimit: 1 << 20,
+	}, nil)
+	require.ErrorContains(t, err, "injected failure after import query optimization")
+	require.True(t, optimized)
+}
+
+func TestImportQueryPlanColdStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table query_stats(g int, i int, key idx_i(i))")
+	values := make([]string, 1000)
+	for i := range values {
+		values[i] = fmt.Sprintf("(%d,%d)", i/100, i)
+	}
+	tk.MustExec("insert into query_stats values " + strings.Join(values, ","))
+	tk.MustExec("analyze table query_stats all columns")
+	tk.MustExec("set tidb_isolation_read_engines='tikv'")
+	dom.StatsHandle().Clear()
+	for _, sql := range []string{
+		"select g from query_stats where g=7",
+		"select g from query_stats where i=7",
+	} {
+		t.Run(sql, func(t *testing.T) {
+			q, err := executor.CaptureImportQuery(tk.Session(), sql)
 			require.NoError(t, err)
 			se, err := session.CreateSession4Test(store)
 			require.NoError(t, err)
@@ -153,15 +204,139 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 			var optimized bool
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 				optimized = true
-				require.True(t, strings.Contains(core.ToString(p), "Send("), core.ToString(p))
+				if strings.Contains(sql, "g=7") {
+					// Pseudo selectivity would estimate approximately one row.
+					require.InDelta(t, 100, p.StatsInfo().RowCount, 1)
+				} else {
+					require.Contains(t, core.ToString(p), "IndexLookUp")
+				}
 			})
-			// Validate the real optimizer output without dispatching to a TiFlash server.
-			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/failAfterImportQueryOptimize", `return(true)`)
-			err = importer.RunImportQuery(context.Background(), captured, importer.QueryRuntime{
-				Session: se, Storage: objstore.NewMemStorage(), Prefix: "query-flash", MemoryLimit: 1 << 20,
-			}, nil)
-			require.ErrorContains(t, err, "injected failure after import query optimization")
+			output := make(chan importer.QueryChunk, 100)
+			err = importer.RunImportQuery(context.Background(), q, importer.QueryRuntime{
+				Session: se, SessionPool: domain.GetDomain(tk.Session()).SysSessionPool(), Storage: objstore.NewMemStorage(), Prefix: "cold-stats", MemoryLimit: 4 << 20,
+			}, output)
+			require.NoError(t, err)
 			require.True(t, optimized)
+			close(output)
+			rows := 0
+			for result := range output {
+				require.EqualValues(t, rows, result.RowIDOffset)
+				rows += result.Chk.NumRows()
+			}
+			if strings.Contains(sql, "g=7") {
+				require.Equal(t, 100, rows)
+			} else {
+				require.Equal(t, 1, rows)
+			}
+			_, cached := dom.StatsHandle().GetNonPseudoPhysicalTableStats(q.Tables[q.Databases[0].ID][0].ID)
+			require.False(t, cached, "task statistics must not warm the domain cache")
 		})
 	}
+
+	tk.MustExec("create table query_no_stats(g int)")
+	tk.MustExec("insert into query_no_stats values (1)")
+	q, err := executor.CaptureImportQuery(tk.Session(), "select count(*) from query_no_stats")
+	require.NoError(t, err)
+	run := func(ctx context.Context) error {
+		se, err := session.CreateSession4Test(store)
+		require.NoError(t, err)
+		defer se.Close()
+		runtime := importer.QueryRuntime{Session: se, SessionPool: domain.GetDomain(tk.Session()).SysSessionPool(), Storage: objstore.NewMemStorage(), Prefix: "missing-stats", MemoryLimit: 4 << 20}
+		return importer.RunImportQuery(ctx, q, runtime, make(chan importer.QueryChunk, 1))
+	}
+	err = run(context.Background())
+	require.ErrorContains(t, err, "ANALYZE TABLE")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = run(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", `return(true)`)
+	err = run(context.Background())
+	require.ErrorContains(t, err, "inject timeout error")
+}
+
+func TestImportQueryPlanDomain(t *testing.T) {
+	store, host := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table query_partition(id bigint primary key,v bigint) partition by range(id) (partition p0 values less than(10),partition p1 values less than(maxvalue))")
+	tk.MustExec("insert into query_partition values (1,10),(2,20),(11,30)")
+	tk.MustExec("analyze table query_partition all columns")
+	tk.MustExec("set tidb_isolation_read_engines='tikv'")
+	q, err := executor.CaptureImportQuery(tk.Session(), "select /*+ SET_VAR(TIDB_STATS_LOAD_SYNC_WAIT=0) */ sum(v) from query_partition where id>0")
+	require.NoError(t, err)
+	q.SessionVars[vardef.TiDBStatsLoadSyncWait] = "0"
+	sourceID := q.Tables[q.Databases[0].ID][0].ID
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		if item.TableID == sourceID {
+			asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+		}
+	}
+	host.StatsHandle().Clear()
+	quota := vardef.StatsCacheMemQuota.Load()
+	vardef.StatsCacheMemQuota.Store(1)
+	defer vardef.StatsCacheMemQuota.Store(quota)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	var observed *domain.Domain
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
+		observed = domain.GetDomain(p.SCtx())
+		require.False(t, p.SCtx().GetSessionVars().InRestrictedSQL)
+		require.Positive(t, p.SCtx().GetSessionVars().StatsLoadSyncWait.Load())
+		require.Empty(t, p.SCtx().GetSessionVars().StmtCtx.StatsLoad.NeededItems)
+		require.False(t, p.SCtx().GetSessionVars().EnableNonPreparedPlanCache)
+		require.NotNil(t, observed)
+		require.NotSame(t, host, observed)
+		require.Same(t, store, observed.Store())
+		require.Equal(t, host.ServerID(), observed.ServerID())
+		require.True(t, p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune())
+		source := q.Tables[q.Databases[0].ID][0]
+		tbl, ok := observed.InfoSchema().TableByID(context.Background(), source.ID)
+		require.True(t, ok)
+		require.Equal(t, source.Name, tbl.Meta().Name)
+		ids := []int64{source.ID}
+		for _, part := range source.Partition.Definitions {
+			ids = append(ids, part.ID)
+		}
+		for _, id := range ids {
+			stats := observed.StatsHandle().GetPhysicalTableStats(id, source)
+			require.False(t, stats.Pseudo)
+			require.True(t, stats.IsInitialized())
+			require.True(t, stats.CanNotTriggerLoad)
+		}
+		// A cache miss still has the submitted database schema available.
+		missing := source.Clone()
+		missing.ID += 100000
+		require.True(t, observed.StatsHandle().GetPhysicalTableStats(missing.ID, missing).Pseudo)
+	})
+	output := make(chan importer.QueryChunk, 1)
+	err = importer.RunImportQuery(context.Background(), q, importer.QueryRuntime{
+		Session: se, SessionPool: host.SysSessionPool(), Storage: objstore.NewMemStorage(), Prefix: "query-domain", MemoryLimit: 4 << 20,
+	}, output)
+	require.NoError(t, err)
+	require.NotNil(t, observed)
+	close(output)
+	var rows int
+	for batch := range output {
+		for i := range batch.Chk.NumRows() {
+			rows++
+			v, err := batch.Chk.GetRow(i).GetMyDecimal(0).ToInt()
+			require.NoError(t, err)
+			require.EqualValues(t, 60, v)
+		}
+	}
+	require.Equal(t, 1, rows)
+	// Query cleanup must leave the hosting domain, its pool and the store alive.
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		require.NotEqual(t, sourceID, item.TableID)
+	}
+	require.Same(t, host, domain.GetDomain(se))
+	resource, err := host.SysSessionPool().Get()
+	require.NoError(t, err)
+	host.SysSessionPool().Put(resource)
+	_, err = store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	_, cached := host.StatsHandle().GetNonPseudoPhysicalTableStats(q.Tables[q.Databases[0].ID][0].ID)
+	require.False(t, cached)
 }

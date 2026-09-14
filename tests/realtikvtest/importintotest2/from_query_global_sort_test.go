@@ -41,6 +41,7 @@ func TestImportFromQueryGlobalSortNextGen(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table query_import_src(g bigint, v decimal(20,2), i bigint)")
 	tk.MustExec("insert into query_import_src values (1,10,1),(1,20,2),(1,NULL,3),(2,7,4),(NULL,3,5),(NULL,NULL,6),(3,NULL,7)")
+	tk.MustExec("analyze table query_import_src all columns")
 	tk.MustExec("create table query_import_dst(g bigint, c bigint, cv bigint, s decimal(42,2), lo decimal(20,2), hi decimal(20,2), key(g))")
 	sortURI := realtikvtest.GetNextGenObjStoreURI("query-import-" + uuid.NewString())
 	previousURI := vardef.CloudStorageURI.Load()
