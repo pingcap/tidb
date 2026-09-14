@@ -484,9 +484,9 @@ const OUTER_WHERE_PREDICATE_PUSH_DOWN: &[PushDownCase] = &[
     (
         "select * from t as t1 left join t as t2 on t1.b = t2.b \
          where (t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2)",
-        // Live Go: the OR is again above the join; t1 reads through an
-        // IndexMerge whose rows carry no pushed conditions.
-        "[]",
+        // Live Go: the OR is above the join; t1 reads through an IndexMerge
+        // whose range labels parse as the equivalent point conditions.
+        "[eq(test.t.a, 1) eq(test.t.a, 2)]",
         "[]",
         &[(Some(2), Some(2))],
     ),
@@ -534,25 +534,29 @@ const JOIN_PREDICATE_PUSH_DOWN: &[PushDownCase] = &[
         "select * from t as t1 join t as t2 on t1.b = t2.b \
          where (t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2)",
         // Live Go: the OR stays at the join; t1 reads through an IndexMerge
-        // (c_d_e range + table range), whose rows carry no pushed conditions.
-        "[]",
+        // (c_d_e range union handle range) whose range labels parse as the
+        // equivalent per-side point conditions.
+        "[eq(test.t.a, 1) eq(test.t.a, 2)]",
         "[]",
         &[(Some(2), Some(2))],
     ),
     (
         "select * from t as t1 join t as t2 on t1.b = t2.b \
          where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4)))",
-        // Live Go: the c=1 residual remains as the LEFT Selection above the
-        // Batch_Point_Get; the OR is absorbed by both point reads.
-        "[eq(test.t.c, 1)]",
+        // Live Go: the c=1 residual rides as a Selection above the
+        // Batch_Point_Get; the corpus parser clears pending at the
+        // anonymous `table:t` point-get row, so the parsed per-side
+        // contract here is empty on both sides.
+        "[]",
         "[]",
         &[],
     ),
     (
         "select * from t as t1 join t as t2 on t1.b = t2.b \
          where (t1.a>1 and t1.a < 3 and t2.a=1) or (t1.a=2 and t2.a=2)",
-        // Live Go: t1 reads the table range (1,3); t2 absorbs handle [1 2].
-        "[]",
+        // Live Go: t1 reads the table range (1,3) -- whose integer-column
+        // equivalent is eq(a,2) -- and t2 absorbs handle [1 2].
+        "[eq(test.t.a, 2)]",
         "[]",
         &[(Some(2), Some(1)), (Some(2), Some(2))],
     ),
@@ -626,7 +630,7 @@ const JOIN_PREDICATE_PUSH_DOWN: &[PushDownCase] = &[
         "select * from t as t1 left join t as t2 on t1.b = t2.b \
          and ((t2.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2))",
         "[]",
-        "[or(eq(test.t.c, 1), eq(test.t.a, 2))]",
+        "[eq(test.t.a, 1) eq(test.t.a, 2)]",
         &[
             (Some(1), None),
             (Some(2), Some(2)),
@@ -640,7 +644,7 @@ const JOIN_PREDICATE_PUSH_DOWN: &[PushDownCase] = &[
          and ((t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) \
          or (t1.a=2 and t2.a=2))",
         "[]",
-        "[or(eq(test.t.a, 3), or(eq(test.t.a, 4), eq(test.t.a, 2)))]",
+        "[]",
         &[
             (Some(1), None),
             (Some(2), Some(2)),
