@@ -401,8 +401,7 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 		func() string { return fmt.Sprintf("double-read-cpu(%v*%v)", doubleReadRows, cpuFactor) })
 	batchSize := float64(p.SCtx().GetSessionVars().IndexLookupSize)
 	taskPerBatch := 32.0 // TODO: remove this magic number
-	doubleReadTasks := doubleReadRows / batchSize * taskPerBatch
-	doubleReadRequestCost := doubleReadCostVer2(option, doubleReadTasks, requestFactor)
+	doubleReadRequestCost := doubleReadRequestCostVer2(option, doubleReadRows, batchSize, taskPerBatch, requestFactor)
 	doubleReadCost := costusage.SumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
 
 	p.PlanCostVer2 = costusage.SumCostVer2(indexSideCost, costusage.DivCostVer2(costusage.SumCostVer2(tableSideCost, doubleReadCost), doubleReadConcurrency))
@@ -426,9 +425,10 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 }
 
 // GetPlanCostVer24PhysicalIndexMergeReader returns the plan-cost of this sub-plan, which is:
-// plan-cost = table-side-cost + sum(index-side-cost)
+// plan-cost = table-side-cost + table-lookup-request-cost + sum(index-side-cost)
 // index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
+// table-lookup-request-cost = double-read-tasks * request-factor / double-read-concurrency
 func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalIndexMergeReader)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -436,6 +436,7 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 	}
 
 	netFactor := getTaskNetFactorVer2(p, taskType)
+	requestFactor := getTaskRequestFactorVer2(p, taskType)
 	distConcurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 
 	var tableSideCost costusage.CostVer2
@@ -452,9 +453,20 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 	}
 
 	indexSideCost := make([]costusage.CostVer2, 0, len(p.PartialPlansRaw))
-	for _, indexPath := range p.PartialPlansRaw {
+	var tableLookupRows float64
+	for i, indexPath := range p.PartialPlansRaw {
 		rows := getCardinality(indexPath, option.CostFlag)
 		rowSize := getAvgRowSize(indexPath.StatsInfo(), indexPath.Schema().Columns)
+		// The exact number of distinct handles is unavailable here. The sum is an
+		// upper bound for a union; the smallest partial path is an upper bound for
+		// an intersection.
+		if i == 0 {
+			tableLookupRows = rows
+		} else if p.IsIntersectionType {
+			tableLookupRows = min(tableLookupRows, rows)
+		} else {
+			tableLookupRows += rows
+		}
 
 		indexNetCost := netCostVer2(option, rows, rowSize, netFactor)
 		indexChildCost, err := indexPath.GetPlanCostVer2(taskType, option)
@@ -466,7 +478,17 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 	}
 	sumIndexSideCost := costusage.SumCostVer2(indexSideCost...)
 
-	p.PlanCostVer2 = costusage.SumCostVer2(tableSideCost, sumIndexSideCost)
+	tableLookupRequestCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	if p.TablePlan != nil {
+		batchSize := float64(p.SCtx().GetSessionVars().IndexLookupSize)
+		taskPerBatch := 32.0 // TODO: remove this magic number
+		doubleReadConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupConcurrency())
+		tableLookupRequestCost = costusage.DivCostVer2(
+			doubleReadRequestCostVer2(option, tableLookupRows, batchSize, taskPerBatch, requestFactor),
+			doubleReadConcurrency)
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(tableSideCost, tableLookupRequestCost, sumIndexSideCost)
 	// give a bias to pushDown limit, since it will get the same cost with NON_PUSH_DOWN_LIMIT case via expect count.
 	// push down limit case may reduce cop request consumption if any in some cases.
 	//
@@ -1196,11 +1218,20 @@ func hashProbeCostVer2(option *costusage.PlanCostOption, probeRows, nKeys float6
 	return costusage.SumCostVer2(hashKeyCost, hashProbeCost)
 }
 
-// For simplicity and robust, only operators that need double-read like IndexLookup and IndexJoin consider this cost.
+// For simplicity and robustness, only operators that need double-read, such as
+// IndexLookup, IndexMerge, and IndexJoin, consider this cost.
 func doubleReadCostVer2(option *costusage.PlanCostOption, numTasks float64, requestFactor costusage.CostVer2Factor) costusage.CostVer2 {
 	return costusage.NewCostVer2(option, requestFactor,
 		numTasks*requestFactor.Value,
 		func() string { return fmt.Sprintf("doubleRead(tasks(%v)*%v)", numTasks, requestFactor) })
+}
+
+func doubleReadRequestCostVer2(
+	option *costusage.PlanCostOption,
+	estimatedRows, batchSize, tasksPerBatch float64,
+	requestFactor costusage.CostVer2Factor,
+) costusage.CostVer2 {
+	return doubleReadCostVer2(option, estimatedRows/batchSize*tasksPerBatch, requestFactor)
 }
 
 func getTableScanPenalty(p *physicalop.PhysicalTableScan, rows float64) (rowPenalty float64) {
