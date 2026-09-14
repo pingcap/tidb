@@ -457,7 +457,7 @@ allow-enable-foreign-key-check-in-shared-lock = false
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
 
-# RU v3 statement weights convert raw work units to RU. Values must be finite and
+# RU v2 statement weights convert raw work units to RU. Values must be finite and
 # non-negative; zero disables the corresponding charge. These defaults are
 # uncalibrated placeholders, not billing values.
 [ru-v2.stmt-weights]
