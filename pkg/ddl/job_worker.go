@@ -128,7 +128,11 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
-	// pendingReorgRU is persisted only after the matching table-state transition succeeds.
+	// DXF propagates add-index reorganization RU through:
+	// BackfillTaskMeta.Summary.IndexKVSize -> recordDistTaskRU -> reorgCtx.ru ->
+	// reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
+	// accountPendingReorgRU -> Job.RU. It is persisted only after the matching
+	// table-state transition succeeds.
 	pendingReorgRU float64
 	// Keep storage-class history changes pending until a batched multi-schema
 	// step is known to commit its TableInfo changes.
@@ -657,6 +661,9 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	if !kerneltype.IsNextGen() {
 		return nil
 	}
+	// For reorganization jobs, only distributed add-index currently accounts
+	// the reorganization workload itself. Other reorganization jobs account the
+	// DDL transaction below, but their reorganization RU is not fully accounted.
 	txn, err := w.sess.Txn()
 	if err != nil {
 		return errors.Trace(err)
