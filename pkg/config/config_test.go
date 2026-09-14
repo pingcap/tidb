@@ -960,7 +960,7 @@ engines = ["tikv", "tiflash", "tidb"]
 }
 
 func TestConfig(t *testing.T) {
-	t.Run("RU v3 statement weights", func(t *testing.T) {
+	t.Run("RU v2 statement weights", func(t *testing.T) {
 		field, ok := reflect.TypeOf(RUV2Config{}).FieldByName("StmtWeights")
 		require.True(t, ok)
 		require.True(t, field.Anonymous)

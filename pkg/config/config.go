@@ -401,11 +401,11 @@ const (
 	RUReportModeFull   = "full"
 )
 
-// RUV2Config configures legacy RU v2 and statement RU v3 weights and reporting.
+// RUV2Config configures legacy and statement RU v2 weights and reporting.
 // Legacy RU v2 defaults are experimentally fitted to remain aligned with RU v1.
-// Statement RU v3 reuses this config section while replacing the legacy model.
+// Statement RU v2 reuses this config section while replacing the legacy model.
 type RUV2Config struct {
-	// ReportMode controls RU v3 metrics. Full additionally reports raw units and
+	// ReportMode controls statement RU v2 metrics. Full additionally reports raw units and
 	// calculation outcomes; result reports total, SQL-type and per-engine RU consumption.
 	ReportMode string `toml:"report-mode" json:"report-mode"`
 
@@ -437,13 +437,13 @@ type RUV2Config struct {
 	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
 	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
 
-	// Statement weights convert RU v3 raw work units to RU. They must be finite
+	// Statement weights convert RU v2 raw work units to RU. They must be finite
 	// and non-negative; zero disables the corresponding charge. Their defaults
 	// are uncalibrated internal placeholders, not billing values.
 	ruv2.StmtWeights `toml:"stmt-weights" json:"stmt-weights"`
 }
 
-// DefaultRUV2Config returns the default legacy RU v2 and statement RU v3 configuration.
+// DefaultRUV2Config returns the default legacy and statement RU v2 configuration.
 func DefaultRUV2Config() RUV2Config {
 	return RUV2Config{
 		ReportMode: RUReportModeResult,
