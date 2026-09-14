@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
@@ -439,16 +440,7 @@ type RUV2Config struct {
 	// Statement weights convert RU v3 raw work units to RU. They must be finite
 	// and non-negative; zero disables the corresponding charge. Their defaults
 	// are uncalibrated internal placeholders, not billing values.
-	StatementCPUWork              float64 `toml:"statement-cpu-work" json:"statement-cpu-work"`
-	StatementScanBytes            float64 `toml:"statement-scan-bytes" json:"statement-scan-bytes"`
-	StatementNetBytes             float64 `toml:"statement-net-bytes" json:"statement-net-bytes"`
-	StatementFrontendCompileBytes float64 `toml:"statement-frontend-compile-bytes" json:"statement-frontend-compile-bytes"`
-	StatementHashStateRows        float64 `toml:"statement-hash-state-rows" json:"statement-hash-state-rows"`
-	StatementJoinOutputRows       float64 `toml:"statement-join-output-rows" json:"statement-join-output-rows"`
-	StatementWriteStatement       float64 `toml:"statement-write-statement" json:"statement-write-statement"`
-	StatementOperatorNum          float64 `toml:"statement-operator-num" json:"statement-operator-num"`
-	StatementWriteKeys            float64 `toml:"statement-write-keys" json:"statement-write-keys"`
-	StatementWriteBytes           float64 `toml:"statement-write-bytes" json:"statement-write-bytes"`
+	ruv3.StmtWeights `toml:"stmt-weights" json:"stmt-weights"`
 }
 
 // DefaultRUV2Config returns the default legacy RU v2 and statement RU v3 configuration.
@@ -470,40 +462,8 @@ func DefaultRUV2Config() RUV2Config {
 		SessionParserTotal:      0.19230499,
 		TxnCnt:                  0.03013709,
 
-		StatementCPUWork:              1.0,
-		StatementScanBytes:            1.0,
-		StatementNetBytes:             1.0,
-		StatementFrontendCompileBytes: 1.0,
-		StatementHashStateRows:        1.0,
-		StatementJoinOutputRows:       1.0,
-		StatementWriteStatement:       1.0,
-		StatementOperatorNum:          1.0,
-		StatementWriteKeys:            1.0,
-		StatementWriteBytes:           1.0,
+		StmtWeights: ruv3.DefaultWeights(),
 	}
-}
-
-func (c *RUV2Config) validStatementWeights() error {
-	for _, weight := range []struct {
-		name  string
-		value float64
-	}{
-		{"statement-cpu-work", c.StatementCPUWork},
-		{"statement-scan-bytes", c.StatementScanBytes},
-		{"statement-net-bytes", c.StatementNetBytes},
-		{"statement-frontend-compile-bytes", c.StatementFrontendCompileBytes},
-		{"statement-hash-state-rows", c.StatementHashStateRows},
-		{"statement-join-output-rows", c.StatementJoinOutputRows},
-		{"statement-write-statement", c.StatementWriteStatement},
-		{"statement-operator-num", c.StatementOperatorNum},
-		{"statement-write-keys", c.StatementWriteKeys},
-		{"statement-write-bytes", c.StatementWriteBytes},
-	} {
-		if weight.value < 0 || math.IsNaN(weight.value) || math.IsInf(weight.value, 0) {
-			return fmt.Errorf("ru-v2.%s must be finite and non-negative, got %v", weight.name, weight.value)
-		}
-	}
-	return nil
 }
 
 // CSE is the config collection for the cloud storage engine.
@@ -1793,8 +1753,8 @@ func (c *Config) Valid() error {
 	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
 	}
-	if err := c.RUV2.validStatementWeights(); err != nil {
-		return err
+	if err := c.RUV2.StmtWeights.Validate(); err != nil {
+		return fmt.Errorf("ru-v2.stmt-weights.%w", err)
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))

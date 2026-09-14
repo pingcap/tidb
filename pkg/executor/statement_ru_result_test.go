@@ -358,8 +358,8 @@ func TestStatementRUPublisherIsolation(t *testing.T) {
 func TestStatementRUUsesConfig(t *testing.T) {
 	t.Cleanup(config.RestoreFunc())
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.RUV2.StatementCPUWork = 2
-		cfg.RUV2.StatementScanBytes = 3
+		cfg.RUV2.StmtWeights.CPUWork = 2
+		cfg.RUV2.StmtWeights.ScanByte = 3
 	})
 
 	calculator := statementRUCalculator{units: ruv3.StmtUnits{CPUWork: 5, ScanBytes: 7}}
@@ -370,7 +370,7 @@ func TestStatementRUUsesConfig(t *testing.T) {
 	require.Equal(t, statementRUEngineResult{TiDB: 10, TiKV: 21}, finalized.engineRU)
 
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.RUV2.StatementCPUWork = 0
+		cfg.RUV2.StmtWeights.CPUWork = 0
 	})
 	finalized, ok = calculator.finalize()
 	require.True(t, ok)
@@ -378,16 +378,11 @@ func TestStatementRUUsesConfig(t *testing.T) {
 	require.Equal(t, statementRUEngineResult{TiKV: 21}, finalized.engineRU)
 
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.RUV2.StatementCPUWork = 2
-		cfg.RUV2.StatementScanBytes = 3
-		cfg.RUV2.StatementNetBytes = 5
-		cfg.RUV2.StatementFrontendCompileBytes = 7
-		cfg.RUV2.StatementHashStateRows = 11
-		cfg.RUV2.StatementJoinOutputRows = 13
-		cfg.RUV2.StatementWriteStatement = 17
-		cfg.RUV2.StatementOperatorNum = 19
-		cfg.RUV2.StatementWriteKeys = 23
-		cfg.RUV2.StatementWriteBytes = 29
+		cfg.RUV2.StmtWeights = ruv3.StmtWeights{
+			CPUWork: 2, ScanByte: 3, NetByte: 5, FrontendCompileByte: 7,
+			HashStateRow: 11, JoinOutputRow: 13, WriteStatement: 17,
+			OperatorNum: 19, WriteKey: 23, WriteByte: 29,
+		}
 	})
 	for _, full := range []bool{false, true} {
 		calculator := newStatementRUCalculator(statementRUCalculationSetup{frontendCompileBytes: 11, fullReport: full})

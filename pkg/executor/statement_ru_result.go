@@ -32,22 +32,11 @@ import (
 // package-initialization defaults. RU v3 shares the ru-v2 config section while
 // replacing the legacy model; its statement weights are not dynamically reloadable.
 func currentStatementRUWeights() ruv3.StmtWeights {
-	weights := config.DefaultRUV2Config()
+	weights := ruv3.DefaultWeights()
 	if cfg := config.GetGlobalConfig(); cfg != nil {
-		weights = cfg.RUV2
+		weights = cfg.RUV2.StmtWeights
 	}
-	return ruv3.StmtWeights{
-		CPUWork:             weights.StatementCPUWork,
-		ScanByte:            weights.StatementScanBytes,
-		NetByte:             weights.StatementNetBytes,
-		FrontendCompileByte: weights.StatementFrontendCompileBytes,
-		HashStateRow:        weights.StatementHashStateRows,
-		JoinOutputRow:       weights.StatementJoinOutputRows,
-		WriteStatement:      weights.StatementWriteStatement,
-		OperatorNum:         weights.StatementOperatorNum,
-		WriteKey:            weights.StatementWriteKeys,
-		WriteByte:           weights.StatementWriteBytes,
-	}
+	return weights
 }
 
 // The current producers cannot prove that all successful or canceled remote

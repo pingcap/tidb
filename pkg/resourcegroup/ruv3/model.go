@@ -15,7 +15,10 @@
 // Package ruv3 defines the raw units and weighting model used to calculate RU v3.
 package ruv3
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // StmtUnits contains the raw work measured for one RU v3 calculation.
 type StmtUnits struct {
@@ -48,16 +51,16 @@ type StmtUnits struct {
 
 // StmtWeights contains the coefficient for each RU v3 raw unit.
 type StmtWeights struct {
-	CPUWork             float64
-	ScanByte            float64
-	NetByte             float64
-	FrontendCompileByte float64
-	HashStateRow        float64
-	JoinOutputRow       float64
-	WriteStatement      float64
-	OperatorNum         float64
-	WriteKey            float64
-	WriteByte           float64
+	CPUWork             float64 `toml:"cpu-work" json:"cpu-work"`
+	ScanByte            float64 `toml:"scan-byte" json:"scan-byte"`
+	NetByte             float64 `toml:"net-byte" json:"net-byte"`
+	FrontendCompileByte float64 `toml:"frontend-compile-byte" json:"frontend-compile-byte"`
+	HashStateRow        float64 `toml:"hash-state-row" json:"hash-state-row"`
+	JoinOutputRow       float64 `toml:"join-output-row" json:"join-output-row"`
+	WriteStatement      float64 `toml:"write-statement" json:"write-statement"`
+	OperatorNum         float64 `toml:"operator-num" json:"operator-num"`
+	WriteKey            float64 `toml:"write-key" json:"write-key"`
+	WriteByte           float64 `toml:"write-byte" json:"write-byte"`
 }
 
 // StmtResult contains the weighted RU v3 total.
@@ -111,6 +114,30 @@ func (weights StmtWeights) valid() bool {
 		weights.WriteKey,
 		weights.WriteByte,
 	)
+}
+
+// Validate checks that every weight is finite and nonnegative.
+func (weights StmtWeights) Validate() error {
+	for _, weight := range []struct {
+		name  string
+		value float64
+	}{
+		{"cpu-work", weights.CPUWork},
+		{"scan-byte", weights.ScanByte},
+		{"net-byte", weights.NetByte},
+		{"frontend-compile-byte", weights.FrontendCompileByte},
+		{"hash-state-row", weights.HashStateRow},
+		{"join-output-row", weights.JoinOutputRow},
+		{"write-statement", weights.WriteStatement},
+		{"operator-num", weights.OperatorNum},
+		{"write-key", weights.WriteKey},
+		{"write-byte", weights.WriteByte},
+	} {
+		if !validValues(weight.value) {
+			return fmt.Errorf("%s must be finite and non-negative, got %v", weight.name, weight.value)
+		}
+	}
+	return nil
 }
 
 func validValues(values ...float64) bool {
