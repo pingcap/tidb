@@ -101,9 +101,15 @@ utf8	83	1
 utf8	33	1
 utf8	192	8
 utf8mb4	255	0
+utf8mb4	278	1
 utf8mb4	309	1
 utf8mb4	46	1
+utf8mb4	2049	1
+utf8mb4	2050	1
+utf8mb4	2051	1
+utf8mb4	2052	1
 utf8mb4	45	1
+utf8mb4	2053	1
 utf8mb4	224	8
 select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';
 COLLATION_NAME	CHARACTER_SET_NAME
@@ -130,9 +136,15 @@ utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 utf8_general_ci	utf8	33		Yes	1	PAD SPACE
 utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
 utf8mb4_0900_ai_ci	utf8mb4	255		Yes	0	NO PAD
+utf8mb4_0900_as_cs	utf8mb4	278		Yes	1	NO PAD
 utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
+utf8mb4_da_0900_as_ci_kn	utf8mb4	2049		Yes	1	NO PAD
+utf8mb4_de_0900_as_ci_kn	utf8mb4	2050		Yes	1	NO PAD
+utf8mb4_es_0900_as_ci_kn	utf8mb4	2051		Yes	1	NO PAD
+utf8mb4_fr_0900_as_ci_kn	utf8mb4	2052		Yes	1	NO PAD
 utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_sv_0900_as_ci_kn	utf8mb4	2053		Yes	1	NO PAD
 utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 create database if not exists cd_test_utf8mb4_0900_bin;
 use cd_test_utf8mb4_0900_bin;
