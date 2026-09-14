@@ -1080,12 +1080,14 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 		if !ok {
 			target = TargetDatabase{Name: displayName}
 		}
-		if target.ID != 0 && target.ID != id {
+		if target.ID != 0 && id != 0 && target.ID != id {
 			return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
 				"target database %s has conflicting downstream IDs %d and %d",
 				displayName, target.ID, id)
 		}
-		target.ID = id
+		if id != 0 {
+			target.ID = id
+		}
 		if err := mergeTargetDBSourceInfo(&target, sourceDBInfo); err != nil {
 			return err
 		}
