@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -75,9 +76,10 @@ func (m *PreparedMeta) Marshal() ([]byte, error) {
 type ImportStepMeta struct {
 	globalsort.BaseExternalMeta
 	// this is the engine ID, not the id in tidb_background_subtask table.
-	ID       int32
-	Chunks   []importer.Chunk   `external:"true"`
-	Checksum map[int64]Checksum // see KVGroupChecksum for definition of map key.
+	ID         int32
+	Chunks     []importer.Chunk   `external:"true"`
+	QueryRange *kv.KeyRange       `json:",omitempty"`
+	Checksum   map[int64]Checksum // see KVGroupChecksum for definition of map key.
 	// MaxIDs stores the max id that have been used during encoding for each allocator type.
 	// the max id is same among all allocator types for now, since we're using same base, see
 	// NewPanickingAllocators for more info.

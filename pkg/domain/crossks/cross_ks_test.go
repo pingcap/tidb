@@ -498,7 +498,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		tk.MustExec("set tidb_isolation_read_engines='tikv'")
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 		sql := "import into unused_target from select /*+ HASH_AGG() */ g,count(*) from query_source where v >= 10 group by g"
-		captured, err := executor.CaptureImportQuery(tk.Session(), sql)
+		captured, _, err := executor.CaptureImportQuery(tk.Session(), sql)
 		require.NoError(t, err)
 		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
 		require.True(t, ok)
@@ -558,7 +558,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	t.Run("MPP server ID from the query Domain", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, targetStore)
 		tk.MustExec("use test")
-		q, err := executor.CaptureImportQuery(tk.Session(),
+		q, _, err := executor.CaptureImportQuery(tk.Session(),
 			"import into unused_target from select g,count(*) from query_source group by g")
 		require.NoError(t, err)
 		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))

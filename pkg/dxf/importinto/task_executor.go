@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -342,7 +343,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		s.tableImporter.SetSelectedChunkCh(selected)
 		chunks = []importer.Chunk{{Timestamp: query.Timestamp}}
 		eg.Go(func() error {
-			err := s.readQuery(wctx, subtask, objStore, selected)
+			err := s.readQuery(wctx, subtask, subtaskMeta.QueryRange, objStore, selected, concurrency)
 			if err != nil {
 				wctx.OnError(err)
 			}
@@ -382,8 +383,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 }
 
 func (s *importStepExecutor) readQuery(
-	ctx context.Context, subtask *proto.Subtask, objStore storeapi.Storage,
-	selected chan<- importer.QueryChunk,
+	ctx context.Context, subtask *proto.Subtask, queryRange *tidbkv.KeyRange,
+	objStore storeapi.Storage, selected chan<- importer.QueryChunk, concurrency int,
 ) error {
 	defer close(selected)
 	pool := s.queryRuntime.SysSessionPool()
@@ -394,7 +395,16 @@ func (s *importStepExecutor) readQuery(
 
 	defer pool.Destroy(resource)
 	se := resource.(sessionctx.Context)
-	return importer.RunImportQuery(ctx, s.taskMeta.Plan.Query, importer.QueryRuntime{
+	query := s.taskMeta.Plan.Query
+	var rowIDAllocator autoid.Allocator
+	if query.Scan != nil {
+		plan := &s.taskMeta.Plan
+		rowIDAllocator = autoid.NewAllocator(se.GetInfoSchema().(infoschema.InfoSchema).GetAutoIDRequirement(),
+			plan.DBID, plan.TableInfo.ID, false, autoid.RowIDAllocType,
+			autoid.AllocOptionTableInfoVersion(plan.TableInfo.Version))
+	}
+	return importer.RunImportQuery(ctx, query, importer.QueryRuntime{
+		Range: queryRange, RowIDAllocator: rowIDAllocator, ScanConcurrency: concurrency,
 		TotalMemoryLimit: s.GetResource().Mem.Capacity() / 2,
 		Session:          se, SessionPool: pool, Storage: objStore, Prefix: subtaskPrefix(s.taskID, subtask.ID),
 		MemoryLimit: s.GetResource().Mem.Capacity() / 4,

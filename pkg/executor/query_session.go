@@ -155,11 +155,16 @@ func newImportQuerySession(
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	ver, err := sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return nil, nil, err
+	var readTS uint64
+	if q.Scan != nil {
+		readTS = q.Scan.ReadTS
+	} else {
+		ver, err := sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)
+		if err != nil {
+			return nil, nil, err
+		}
+		readTS = ver.Ver
 	}
-	readTS := ver.Ver
 	is, err := newImportQuerySchema(sctx, q, readTS)
 	if err != nil {
 		return nil, nil, err

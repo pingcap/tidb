@@ -178,6 +178,14 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		specs := []planner.PipelineSpec{
 			&ImportSpec{Plan: p.Plan, ImportStepMeta: &ImportStepMeta{ID: 1}},
 		}
+		if scan := p.Plan.Query.Scan; scan != nil {
+			specs = make([]planner.PipelineSpec, 0, len(scan.Ranges))
+			for i := range scan.Ranges {
+				specs = append(specs, &ImportSpec{Plan: p.Plan, ImportStepMeta: &ImportStepMeta{
+					ID: int32(i + 1), QueryRange: &scan.Ranges[i],
+				}})
+			}
+		}
 		if err := p.writeExternalPlanMeta(planCtx, specs); err != nil {
 			return nil, err
 		}
