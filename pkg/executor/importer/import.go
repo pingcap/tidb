@@ -261,6 +261,8 @@ type LoadDataReaderInfo struct {
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
+	// Query is present only for distributed IMPORT FROM SELECT.
+	Query  *QueryPlan `json:",omitempty"`
 	DBName string
 	DBID   int64
 	// TableInfo is the table info we used during import, we might change it
@@ -793,9 +795,6 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	if kerneltype.IsNextGen() && sem.IsEnabled() {
-		if p.DataSourceType == DataSourceTypeQuery {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
-		}
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -1269,6 +1268,11 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 
 // InitDataStore initializes the data store.
 func (e *LoadDataController) InitDataStore(ctx context.Context) error {
+	if e.Query != nil {
+		var err error
+		e.globalSortStore, err = GetSortStore(ctx, e.CloudStorageURI)
+		return err
+	}
 	u, err2 := objstore.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,

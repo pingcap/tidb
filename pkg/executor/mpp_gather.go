@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/mpp"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -40,6 +42,19 @@ func useMPPExecution(ctx sessionctx.Context, tr *physicalop.PhysicalTableReader)
 	}
 	_, ok := tr.GetTablePlan().(*physicalop.PhysicalExchangeSender)
 	return ok
+}
+
+func getMPPServerID(sctx sessionctx.Context) (uint64, error) {
+	if dom := domain.GetDomain(sctx); dom != nil {
+		return dom.ServerID(), nil
+	}
+	// Cross-keyspace sessions have no Domain. The process server-info getter
+	// is registered from the hosting Domain's ServerID method.
+	info, err := infosync.GetServerInfo()
+	if err != nil {
+		return 0, err
+	}
+	return info.ServerIDGetter(), nil
 }
 
 func getMPPQueryID(ctx sessionctx.Context) uint64 {

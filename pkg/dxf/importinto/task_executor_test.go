@@ -60,6 +60,7 @@ func TestImportTaskExecutor(t *testing.T) {
 	for _, step := range []proto.Step{
 		proto.ImportStepImport,
 		proto.ImportStepEncodeAndSort,
+		proto.ImportStepQuery,
 		proto.ImportStepMergeSort,
 		proto.ImportStepWriteAndIngest,
 		proto.ImportStepPostProcess,
@@ -69,6 +70,15 @@ func TestImportTaskExecutor(t *testing.T) {
 		exe, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: step}, Meta: taskMeta})
 		require.NoError(t, err)
 		require.NotNil(t, exe)
+		switch step {
+		case proto.ImportStepQuery:
+			queryExecutor, ok := exe.(*queryStepExecutor)
+			require.True(t, ok)
+			require.Same(t, param.TaskRuntime, queryExecutor.queryRuntime)
+			require.ErrorContains(t, queryExecutor.Init(ctx), "requires a query plan and global sort storage")
+		case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
+			require.IsType(t, &importStepExecutor{}, exe)
+		}
 	}
 	_, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.StepInit}, Meta: taskMeta})
 	require.Error(t, err)

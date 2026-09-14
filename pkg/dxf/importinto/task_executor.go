@@ -935,6 +935,14 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			store:        store,
 			indicesGenKV: indicesGenKV,
 		}, nil
+	case proto.ImportStepQuery:
+		return &queryStepExecutor{
+			importStepExecutor: importStepExecutor{
+				taskID: task.ID, taskMeta: &taskMeta, logger: logger,
+				store: store, indicesGenKV: indicesGenKV,
+			},
+			queryRuntime: e.TaskRuntime,
+		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
 			task:         &task.TaskBase,

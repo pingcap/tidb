@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	goerrors "errors"
 	"fmt"
 
@@ -115,6 +116,9 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 	e.controller = controller
 
+	if e.plan.SelectPlan != nil && kerneltype.IsNextGen() {
+		return e.importQuery(ctx)
+	}
 	if e.selectExec != nil {
 		// `import from select` doesn't return rows, so no need to set dataFilled.
 		return e.importFromSelect(ctx)
@@ -473,4 +477,62 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 		}
 		return nil
 	})
+}
+
+// importQuery submits the SELECT to a single DXF worker for optimization and execution.
+func (e *ImportIntoExec) importQuery(ctx context.Context) error {
+	e.dataFilled = true
+	if e.controller.IsLocalSort() {
+		return errors.New("IMPORT FROM SELECT on nextgen requires global sort storage")
+	}
+	if !vardef.EnableDistTask.Load() {
+		return errors.New("IMPORT FROM SELECT on nextgen requires distributed tasks")
+	}
+	query, err := CaptureImportQuery(e.userSctx, e.plan.Stmt)
+	if err != nil {
+		return err
+	}
+	e.controller.Plan.Query = query
+	// TODO: Parallelize I/O-bound queries such as clustered/nonclustered PK conversions.
+	// Start with a rule-based check for single-table Scan/Filter/Projection queries
+	// whose results can be concatenated across disjoint source ranges. Size range
+	// subtasks by estimated scan bytes and worker resources, similar to file imports.
+	// Each supported reader must enforce its assigned ranges; subtasks must share
+	// a read TS and allocate non-overlapping generated row IDs. Keep other queries,
+	// including compute-heavy MV construction with aggregation, as a whole query.
+	e.controller.Plan.MaxNodeCnt = 1
+	newSCtx, err := CreateSession(e.userSctx)
+	if err != nil {
+		return err
+	}
+	defer CloseSession(newSCtx)
+	if err := e.controller.CheckRequirements(ctx, newSCtx); err != nil {
+		return err
+	}
+	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
+		return err
+	}
+	jobID, task, err := importinto.SubmitTask(ctx, e.controller.Plan, e.stmt)
+	if err != nil {
+		return err
+	}
+	if err := e.waitTask(ctx, jobID, task); err != nil {
+		return err
+	}
+	mgr, err := dxfstorage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return err
+	}
+	finished, err := mgr.GetTaskByIDWithHistory(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	var meta importinto.TaskMeta
+	if err := json.Unmarshal(finished.Meta, &meta); err != nil {
+		return err
+	}
+	stmtCtx := e.userSctx.GetSessionVars().StmtCtx
+	stmtCtx.SetAffectedRows(uint64(meta.Summary.ImportedRows))
+	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %d", meta.Summary.ImportedRows, jobID))
+	return nil
 }

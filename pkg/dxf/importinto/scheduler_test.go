@@ -218,9 +218,10 @@ func (s *importIntoSuite) TestGetNextStep() {
 	}
 }
 
-func (s *importIntoSuite) TestGetStepOfEncode() {
-	s.Equal(proto.ImportStepImport, getStepOfEncode(false))
-	s.Equal(proto.ImportStepEncodeAndSort, getStepOfEncode(true))
+func (s *importIntoSuite) TestGetSourceStep() {
+	s.Equal(proto.ImportStepImport, getSourceStep(false, false))
+	s.Equal(proto.ImportStepEncodeAndSort, getSourceStep(true, false))
+	s.Equal(proto.ImportStepQuery, getSourceStep(true, true))
 }
 
 func (s *importIntoSuite) TestIsRetryable() {

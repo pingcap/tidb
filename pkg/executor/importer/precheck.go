@@ -74,7 +74,7 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 	}
 
 	conn := se.GetSQLExecutor()
-	if e.DataSourceType == DataSourceTypeFile {
+	if e.DataSourceType == DataSourceTypeFile || e.Query != nil {
 		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
 		if err != nil {
 			return errors.Trace(err)
@@ -82,7 +82,7 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 		if cnt > 0 {
 			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
 		}
-		if checkTotalFileSize {
+		if checkTotalFileSize && e.DataSourceType == DataSourceTypeFile {
 			if err := e.CheckImportDataSize(); err != nil {
 				return err
 			}

@@ -144,6 +144,7 @@ type importScheduler struct {
 	*scheduler.BaseScheduler
 
 	GlobalSort bool
+	fromQuery  bool
 	mu         sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
 	// task can be running at a time. but we might support task queuing in the future, leave it for now.
@@ -204,6 +205,7 @@ func (sch *importScheduler) Init() (err error) {
 	}
 
 	sch.GlobalSort = taskMeta.Plan.CloudStorageURI != ""
+	sch.fromQuery = taskMeta.Plan.Query != nil
 	sch.BaseScheduler.Extension = sch
 	return sch.BaseScheduler.Init()
 }
@@ -423,8 +425,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	}
 
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
+	sourceStep := getSourceStep(sch.GlobalSort, taskMeta.Plan.Query != nil)
 	switch nextStep {
-	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		if metrics, ok := metric.GetCommonMetric(ctx); ok {
 			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
 		}
@@ -445,18 +448,18 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventTooManyIdx).Inc()
 		}
 	case proto.ImportStepMergeSort:
-		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sourceStep)
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
+		previousSubtaskMetas[sourceStep] = sortAndEncodeMeta
 	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
 		})
 		// merge sort might be skipped for some kv groups, so we need to get all
-		// subtask metas of ImportStepEncodeAndSort step too.
-		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		// subtask metas of the source (encode or query) step too.
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sourceStep)
 		if err != nil {
 			return nil, err
 		}
@@ -464,13 +467,13 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[sourceStep] = encodeAndSortMetas
 		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
 		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
 	case proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution:
-		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sourceStep)
 		if err != nil {
 			return nil, err
 		}
@@ -482,7 +485,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[sourceStep] = encodeAndSortMetas
 		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
 		previousSubtaskMetas[proto.ImportStepWriteAndIngest] = ingestMetas
 		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepResolvingConflicts); err != nil {
@@ -499,7 +502,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
 		})
-		step := getStepOfEncode(sch.GlobalSort)
+		step := sourceStep
 		metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, step)
 		if err != nil {
 			return nil, err
@@ -622,11 +625,8 @@ func (*importScheduler) IsRetryableErr(err error) bool {
 func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit, proto.StepPrepared:
-		if sch.GlobalSort {
-			return proto.ImportStepEncodeAndSort
-		}
-		return proto.ImportStepImport
-	case proto.ImportStepEncodeAndSort:
+		return getSourceStep(sch.GlobalSort, sch.fromQuery)
+	case proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		return proto.ImportStepMergeSort
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
@@ -695,7 +695,10 @@ func updateMeta(task *proto.Task, taskMeta *TaskMeta) error {
 	return nil
 }
 
-func getStepOfEncode(globalSort bool) proto.Step {
+func getSourceStep(globalSort, fromQuery bool) proto.Step {
+	if fromQuery {
+		return proto.ImportStepQuery
+	}
 	if globalSort {
 		return proto.ImportStepEncodeAndSort
 	}
@@ -713,7 +716,7 @@ func updateTaskSummary(
 ) error {
 	// Process row count and data size
 	switch nextStep {
-	case proto.ImportStepEncodeAndSort, proto.ImportStepImport:
+	case proto.ImportStepEncodeAndSort, proto.ImportStepImport, proto.ImportStepQuery:
 		taskMeta.Summary.EncodeSummary = p.summary
 	case proto.ImportStepMergeSort:
 		taskMeta.Summary.MergeSummary = p.summary
@@ -724,7 +727,8 @@ func updateTaskSummary(
 	case proto.ImportStepConflictResolution:
 		taskMeta.Summary.ResolveConflictsSummary = p.summary
 	case proto.ImportStepPostProcess:
-		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
+		sourceStep := getSourceStep(taskMeta.Plan.IsGlobalSort(), taskMeta.Plan.Query != nil)
+		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, sourceStep)
 		if err != nil {
 			return errors.Trace(err)
 		}
