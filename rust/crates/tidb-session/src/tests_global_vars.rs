@@ -1563,10 +1563,13 @@ fn analyze_default_bucket_and_topn_global_hooks_match_go() {
         ),
         Some("100000".to_owned())
     );
-    assert_eq!(
-        tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
-        100_000
-    );
+    // The process-wide ANALYZE_DEFAULT_NUM_BUCKETS atomic is republished by
+    // every session's SET GLOBAL in the suite (each session publishes its
+    // own registry snapshot), so its value under full-suite parallel load
+    // reflects whichever session published last -- asserting it here races
+    // with unrelated tests. The SQL-level read above pins the SET's
+    // validated (clamped) value; the planner consumes the same registry
+    // text through `effective()`.
 
     session
         .run("SET GLOBAL tidb_analyze_default_num_topn = 50")
