@@ -171,8 +171,13 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 	defer s.sysSessionPool.Put(se)
 	domainSchemaVer := s.InfoSchema().SchemaMetaVersion()
 	// the job must stay inside tidb_ddl_job if we need to wait schema version for it.
+	// Diagnostic Domains synchronize schemas without starting DDL's refresher.
+	var minJobID int64
+	if s.minJobIDRefresher != nil {
+		minJobID = s.minJobIDRefresher.GetCurrMinJobID()
+	}
 	sql := fmt.Sprintf(`select job_id, version, table_ids from mysql.tidb_mdl_info
-		where job_id >= %d and version <= %d`, s.minJobIDRefresher.GetCurrMinJobID(), domainSchemaVer)
+		where job_id >= %d and version <= %d`, minJobID, domainSchemaVer)
 	rows, err := sqlexec.ExecSQL(ctx, sctx.GetSQLExecutor(), sql)
 	if err != nil {
 		s.logger.Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))

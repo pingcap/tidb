@@ -77,18 +77,54 @@ import (
 const defaultStatusPort = 10080
 
 func (s *Server) statusHTTPEnabled() bool {
-	return s.cfg.Status.ReportStatus && !diagnosticmode.Enabled()
+	return s.cfg.Status.ReportStatus
+}
+
+// fullStatusServerEnabled reports whether cluster HTTP APIs and gRPC are available.
+func (s *Server) fullStatusServerEnabled() bool {
+	return s.statusHTTPEnabled()
 }
 
 func (s *Server) startStatusHTTP() error {
 	if !s.statusHTTPEnabled() {
 		return nil
 	}
+	if diagnosticmode.Enabled() {
+		return s.startDiagnosticHTTP()
+	}
 	err := s.initHTTPListener()
 	if err != nil {
 		return err
 	}
 	go s.startHTTPServer()
+	return nil
+}
+
+// startDiagnosticHTTP exposes local diagnostics without starting cluster services.
+func (s *Server) startDiagnosticHTTP() error {
+	if err := s.listenStatusHTTPServer(); err != nil {
+		return err
+	}
+
+	// Keep this allowlist separate from the normal management API router.
+	router := mux.NewRouter()
+	router.HandleFunc("/status", s.handleStatus).Methods(http.MethodGet)
+	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/cmdline", withProfilingRequestLog(pprof.Cmdline)).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/profile", withProfilingRequestLog(cpuprofile.ProfileHTTPHandler)).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/symbol", withProfilingRequestLog(pprof.Symbol)).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/trace", withProfilingRequestLog(pprof.Trace)).Methods(http.MethodGet)
+	router.PathPrefix("/debug/pprof/").HandlerFunc(withProfilingRequestLog(pprof.Index)).Methods(http.MethodGet)
+
+	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(router, s.cfg)}
+	// Publish before Serve starts so closeListener also handles early shutdown.
+	s.statusServer.Store(statusServer)
+	listener := s.statusListener
+	go util.WithRecovery(func() {
+		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			logutil.BgLogger().Warn("diagnostic http server error", zap.Error(err))
+		}
+	}, nil)
 	return nil
 }
 
@@ -124,9 +160,11 @@ func (s *Server) listenStatusHTTPServer() error {
 	tlsConfig = s.SetCNChecker(tlsConfig)
 
 	if tlsConfig != nil {
-		// The protocols should be listed as the same order we dispatch the connection with cmux.
-		tlsConfig.NextProtos = []string{"http/1.1", "h2"}
-		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
+		tlsConfig.NextProtos = []string{"http/1.1"}
+		if !diagnosticmode.Enabled() {
+			// Match the order used by cmux to dispatch HTTP and gRPC connections.
+			tlsConfig.NextProtos = append(tlsConfig.NextProtos, "h2")
+		}
 		s.statusListener, err = tls.Listen("tcp", s.statusAddr, tlsConfig)
 	} else {
 		s.statusListener, err = net.Listen("tcp", s.statusAddr)
