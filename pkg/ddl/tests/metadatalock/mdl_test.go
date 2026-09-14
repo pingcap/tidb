@@ -1347,6 +1347,13 @@ func TestMDLCreateMaterializedViewLogBlockByBaseTableTxn(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
 
+	mdlWaitCh := make(chan struct{})
+	var mdlWaitOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, schemaVer int64) {
+		if job.Type == model.ActionCreateMaterializedViewLog && schemaVer != 0 {
+			mdlWaitOnce.Do(func() { close(mdlWaitCh) })
+		}
+	})
 	ddlDone := make(chan error, 1)
 	go func() {
 		ddlDone <- tkDDL.ExecToErr("create materialized view log on test.t (a)")
@@ -1354,8 +1361,10 @@ func TestMDLCreateMaterializedViewLogBlockByBaseTableTxn(t *testing.T) {
 
 	select {
 	case err := <-ddlDone:
-		require.FailNowf(t, "create materialized view log should be blocked by running transaction", "ddl finished before commit, err=%v", err)
-	case <-time.After(2 * time.Second):
+		require.FailNowf(t, "create materialized view log should be blocked by running transaction", "ddl finished before waiting for schema sync, err=%v", err)
+	case <-mdlWaitCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG to enter schema sync")
 	}
 	tk.MustExec("commit")
 
@@ -1388,6 +1397,13 @@ func TestMDLCreateMaterializedViewLogNewTxnWriteMLog(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
 
+	mdlWaitCh := make(chan struct{})
+	var mdlWaitOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, schemaVer int64) {
+		if job.Type == model.ActionCreateMaterializedViewLog && schemaVer != 0 {
+			mdlWaitOnce.Do(func() { close(mdlWaitCh) })
+		}
+	})
 	ddlDone := make(chan error, 1)
 	go func() {
 		ddlDone <- tkDDL.ExecToErr("create materialized view log on test.t (a)")
@@ -1395,8 +1411,10 @@ func TestMDLCreateMaterializedViewLogNewTxnWriteMLog(t *testing.T) {
 
 	select {
 	case err := <-ddlDone:
-		require.FailNowf(t, "create materialized view log should be blocked by running transaction", "ddl finished before commit, err=%v", err)
-	case <-time.After(2 * time.Second):
+		require.FailNowf(t, "create materialized view log should be blocked by running transaction", "ddl finished before waiting for schema sync, err=%v", err)
+	case <-mdlWaitCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG to enter schema sync")
 	}
 	tk.MustExec("commit")
 

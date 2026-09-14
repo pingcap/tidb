@@ -194,6 +194,13 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexesAgainstConcu
 
 	var pausedJobID atomic.Int64
 	pauseCh := make(chan struct{})
+	var resumeOnce sync.Once
+	resume := func() {
+		resumeOnce.Do(func() {
+			close(pauseCh)
+		})
+	}
+	defer resume()
 	blockedCh := make(chan struct{}, 1)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionDropIndex || job.TableName != "t_concurrent_drop_idx" || job.SchemaState != model.StatePublic {
@@ -241,7 +248,7 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexesAgainstConcu
 		return fmt.Sprint(tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Rows()[0][0]) == "2"
 	}, 5*time.Second, 50*time.Millisecond)
 
-	close(pauseCh)
+	resume()
 	wg.Wait()
 
 	require.NoError(t, err1)

@@ -56,9 +56,9 @@ func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *t
 	}()
 
 	dropErrCh := make(chan error, 1)
+	tkDrop := newMViewTestKit(t, store)
+	tkDrop.MustExec("use test")
 	go func() {
-		tkDrop := newMViewTestKit(t, store)
-		tkDrop.MustExec("use test")
 		dropErrCh <- tkDrop.ExecToErr("drop materialized view log on t_drop_recheck")
 	}()
 
