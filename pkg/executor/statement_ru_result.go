@@ -18,6 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -25,58 +26,19 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
-// These deliberately uncalibrated work weights keep the ResultOnly path
-// executable. They are internal placeholders, not billing values. Update them
-// only together with the external model documentation until a later PR adds a
-// configured model.
-const (
-	statementRUCPUWorkWeight             = 1.0
-	statementRUScanByteWeight            = 1.0
-	statementRUNetByteWeight             = 1.0
-	statementRUFrontendCompileByteWeight = 1.0
-	statementRUHashStateRowWeight        = 1.0
-	statementRUJoinOutputRowWeight       = 1.0
-	statementRUWriteStatementWeight      = 1.0
-	statementRUOperatorNumWeight         = 1.0
-	statementRUWriteKeyWeight            = 1.0
-	statementRUWriteByteWeight           = 1.0
-)
-
-type statementRURawUnits struct {
-	// WriteStatement is one for a write DML, including one affecting no rows.
-	WriteStatement float64
-	// OperatorNum counts final plan occurrences, including pushed operators.
-	OperatorNum float64
-	// WriteKeys and WriteBytes describe committed TiKV payload. Explicit
-	// transactions contribute these only on COMMIT, not on each DML.
-	WriteKeys  float64
-	WriteBytes float64
-	// CPUWork is the sum of occurrence-local operator work from the supported
-	// root and coprocessor operators in the flat plan.
-	CPUWork float64
-	// ScanBytes is the sum of physical-byte estimates from supported Reader
-	// request components. Each contribution is collected once from the pushed
-	// plan root recorded for that Reader.
-	ScanBytes float64
-	// NetBytes is statement transport evidence, not operator attribution. It is
-	// the TiKV coprocessor response-body byte count finalized in statement-local
-	// RUv2 metrics.
-	NetBytes float64
-	// FrontendCompileBytes is the UTF-8 byte length of the normalized SQL text.
-	FrontendCompileBytes float64
-	// HashStateRows counts entries admitted to completed, operator-owned hash
-	// lookup or group-state structures.
-	HashStateRows float64
-	// JoinOutputRows counts rows produced by supported Join occurrences after
-	// their join conditions and join-type semantics are applied.
-	JoinOutputRows float64
-}
-
-type statementRUResultOnly struct {
-	TotalRU float64
+// currentStatementRUWeights reads the loaded config rather than capturing
+// package-initialization defaults. RU v3 shares the ru-v2 config section while
+// replacing the legacy model; its statement weights are not dynamically reloadable.
+func currentStatementRUWeights() ruv2.StmtWeights {
+	weights := ruv2.DefaultWeights()
+	if cfg := config.GetGlobalConfig(); cfg != nil {
+		weights = cfg.RUV2.StmtWeights
+	}
+	return weights
 }
 
 // The current producers cannot prove that all successful or canceled remote
@@ -110,31 +72,42 @@ func (state statementRUCalibrationState) String() string {
 
 type statementRUCalibrationSnapshot struct {
 	State statementRUCalibrationState
-	Units statementRURawUnits
+	Units ruv2.StmtUnits
 }
 
 // statementRUCalculationSetup is installed once for an eligible statement
-// and cleared by the first terminal attempt. It contains no plan pointer,
-// topology state, publication mode, or consumer.
+// and cleared by the first terminal attempt. It snapshots the reporting mode
+// and contains no plan pointer, topology state, or consumer.
 type statementRUCalculationSetup struct {
 	frontendCompileBytes float64
+	fullReport           bool
 }
 
-// statementRUFinalizedSnapshot contains only values. It cannot retain an ExecStmt,
-// FlatOperator, Origin, flat plan, calculator, or ExecDetails pointer.
+// statementRUFinalizedSnapshot owns scalar results and an optional full-mode
+// report of numeric values. It retains no plan, executor, or runtime statistics.
 type statementRUFinalizedSnapshot struct {
-	units            statementRURawUnits
-	result           statementRUResultOnly
+	units            ruv2.StmtUnits
+	result           ruv2.StmtResult
 	calibrationState statementRUCalibrationState
-	writeSQL         bool
+	sqlType          string
+	engineRU         statementRUEngineResult
+	report           *statementRUFullReport
+	failure          statementRUFailureReason
 	ttlJob           bool
 }
 
 func installStatementRUOwner(stmt *ExecStmt) {
 	setup, ok := newStatementRUCalculationSetup(stmt)
+	fullReport := config.GetGlobalConfig().RUV2.ReportMode == config.RUReportModeFull
 	if !ok {
+		// Restricted work is outside the user-statement calibration population.
+		if fullReport && stmt != nil && stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil &&
+			!stmt.Ctx.GetSessionVars().InRestrictedSQL {
+			publishStatementRUFailureSafely(statementRUIneligible)
+		}
 		return
 	}
+	setup.fullReport = fullReport
 	owner := newStatementRUOwner(stmt)
 	owner.calculationSetup = setup
 	stmt.statementRUOwner = owner
@@ -228,15 +201,21 @@ func trimStatementRUExplainPrefix(normalizedSQL string) string {
 // statementRUCalculator is terminal-local. It accumulates only typed scalar
 // units; no plan or execution-detail pointer survives calculateStatementRU.
 type statementRUCalculator struct {
-	units statementRURawUnits
+	units   ruv2.StmtUnits
+	compute [statementRUEngineCount]statementRUComputeUnits
+	report  *statementRUFullReport
 }
 
 func newStatementRUCalculator(setup statementRUCalculationSetup) statementRUCalculator {
-	return statementRUCalculator{
-		units: statementRURawUnits{
+	calculator := statementRUCalculator{
+		units: ruv2.StmtUnits{
 			FrontendCompileBytes: setup.frontendCompileBytes,
 		},
 	}
+	if setup.fullReport {
+		calculator.report = new(statementRUFullReport)
+	}
+	return calculator
 }
 
 type statementRUScanEvidenceState uint8
@@ -281,109 +260,77 @@ func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes in
 }
 
 func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot, bool) {
-	if !validStatementRURawUnits(calculator.units) {
-		return statementRUFinalizedSnapshot{}, false
+	weights := currentStatementRUWeights()
+	result, ok := ruv2.Calculate(calculator.units, weights)
+	if !ok {
+		return statementRUFailed(statementRUOperatorInvalid), false
 	}
-	result := calculateStatementRUResultOnly(calculator.units)
-	if result.TotalRU < 0 || math.IsNaN(result.TotalRU) || math.IsInf(result.TotalRU, 0) {
-		return statementRUFinalizedSnapshot{}, false
+	engineRU := calculator.engineResult(weights)
+	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV} {
+		if ru < 0 || math.IsNaN(ru) || math.IsInf(ru, 0) {
+			return statementRUFailed(statementRUOperatorInvalid), false
+		}
+	}
+	if calculator.report != nil {
+		// Freeze full-mode details independently of the mutable accumulator.
+		report := *calculator.report
+		report.addStatementUnits(calculator.units)
+		calculator.report = &report
 	}
 	return statementRUFinalizedSnapshot{
 		units:            calculator.units,
 		result:           result,
+		engineRU:         engineRU,
+		report:           calculator.report,
 		calibrationState: statementRUCalibrationIncomplete,
-		writeSQL:         calculator.units.WriteStatement != 0 || calculator.units.WriteKeys != 0,
+		sqlType:          "select",
 	}, true
-}
-
-func validStatementRURawUnits(units statementRURawUnits) bool {
-	for _, unit := range []float64{
-		units.WriteStatement, units.OperatorNum, units.WriteKeys, units.WriteBytes,
-		units.CPUWork,
-		units.ScanBytes,
-		units.NetBytes,
-		units.FrontendCompileBytes,
-		units.HashStateRows,
-		units.JoinOutputRows,
-	} {
-		if unit < 0 || math.IsNaN(unit) || math.IsInf(unit, 0) {
-			return false
-		}
-	}
-	return true
-}
-
-func calculateStatementRUResultOnly(units statementRURawUnits) statementRUResultOnly {
-	return statementRUResultOnly{TotalRU: statementRUCPUWorkWeight*units.CPUWork +
-		statementRUScanByteWeight*units.ScanBytes +
-		statementRUNetByteWeight*units.NetBytes +
-		statementRUFrontendCompileByteWeight*units.FrontendCompileBytes +
-		statementRUHashStateRowWeight*units.HashStateRows +
-		statementRUJoinOutputRowWeight*units.JoinOutputRows +
-		statementRUWriteStatementWeight*units.WriteStatement +
-		statementRUOperatorNumWeight*units.OperatorNum +
-		statementRUWriteKeyWeight*units.WriteKeys +
-		statementRUWriteByteWeight*units.WriteBytes}
 }
 
 func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
 	finalized statementRUFinalizedSnapshot,
 ) {
-	reportStatementRUV3ConsumptionSafely(stmt, finalized.result.TotalRU)
+	reportStatementRUV3ConsumptionSafely(stmt, finalized.engineRU)
 	publishStatementRUMetricsSafely(finalized)
+	if finalized.report == nil {
+		return
+	}
 	publishStatementRUCalibrationSafely(stmt, statementRUCalibrationSnapshot{
 		State: finalized.calibrationState,
 		Units: finalized.units,
 	})
 }
 
-func reportStatementRUV3ConsumptionSafely(stmt *ExecStmt, totalRU float64) {
+func reportStatementRUV3ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
 	defer func() {
 		_ = recover()
 	}()
-	if stmt == nil || stmt.Ctx == nil || totalRU <= 0 {
+	if stmt == nil || stmt.Ctx == nil || (result.TiDB <= 0 && result.TiKV <= 0) {
 		return
 	}
 	dctx := stmt.Ctx.GetDistSQLCtx()
 	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
 		return
 	}
-	// TODO: distinguish TiDB/KV/Flash RU.
-	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, 0, totalRU, 0)
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, result.TiKV, result.TiDB, 0)
 }
 
-// publishStatementRUMetricsSafely projects one immutable finalized snapshot to
-// the existing RU v3 counters. ResultOnly retains aggregate CPUWork rather than
-// a site split, so publication preserves the producer-owned engine boundary:
-// TiKV receives scan, network and committed write work; Total and SQLType receive the
-// complete best-effort result.
+// publishStatementRUMetricsSafely publishes result metrics using cached counters.
+// All label lookup and calibration projections live behind the full-mode guard.
 func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 	defer func() {
-		_ = recover()
+		if recover() != nil && finalized.report != nil {
+			publishStatementRUFailureSafely(statementRUPanic)
+		}
 	}()
-	totalRU := finalized.result.TotalRU
-	metrics.RUV3Total.Add(totalRU)
 	if finalized.ttlJob {
-		metrics.RUV3TTLTotal.Add(totalRU)
+		metrics.RUV3TTLTotal.Add(finalized.result.TotalRU)
 	}
-	sqlType := metrics.LblSQLTypeRead
-	if finalized.writeSQL {
-		sqlType = metrics.LblSQLTypeWrite
+	metrics.AddRUV3Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.result.TotalRU, finalized.sqlType)
+	if finalized.report != nil {
+		publishStatementRUFullMetrics(finalized)
 	}
-	metrics.RUV3BySQLType.WithLabelValues(sqlType).Add(totalRU)
-	metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV).Add(
-		statementRUScanByteWeight*finalized.units.ScanBytes +
-			statementRUNetByteWeight*finalized.units.NetBytes +
-			statementRUWriteKeyWeight*finalized.units.WriteKeys +
-			statementRUWriteByteWeight*finalized.units.WriteBytes,
-	)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitCPUWork).Add(finalized.units.CPUWork)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitScanBytes).Add(finalized.units.ScanBytes)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitNetBytes).Add(finalized.units.NetBytes)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitFrontendCompileBytes).Add(finalized.units.FrontendCompileBytes)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitHashStateRows).Add(finalized.units.HashStateRows)
-	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitJoinOutputRows).Add(finalized.units.JoinOutputRows)
 }
 
 func publishStatementRUCalibrationSafely(
@@ -393,9 +340,8 @@ func publishStatementRUCalibrationSafely(
 	defer func() {
 		_ = recover()
 	}()
-	// The typed calibration boundary is intentionally dormant until a later PR
-	// installs the real consumer. This failpoint only observes the same production
-	// call; it does not select a test-only calculation or publication mode.
+	// Full-mode tests observe the same terminal units as the metrics consumer.
+	// Result mode never calls this calibration-only projection.
 	connectionID := uint64(0)
 	if stmt != nil && stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil {
 		connectionID = stmt.Ctx.GetSessionVars().ConnectionID

@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
@@ -394,10 +395,20 @@ type ErrorMessageExtension struct {
 	Regexp *regexp.Regexp `toml:"-" json:"-"`
 }
 
-// RUV2Config is the configuration for RU v2 weight calculation.
-// The default values are experimentally fitted so they stay stable under the
-// same workload while remaining numerically aligned with RU v1.
+// RU report modes separate production engine results from calibration metrics.
+const (
+	RUReportModeResult = "result"
+	RUReportModeFull   = "full"
+)
+
+// RUV2Config configures legacy and statement RU v2 weights and reporting.
+// Legacy RU v2 defaults are experimentally fitted to remain aligned with RU v1.
+// Statement RU v2 reuses this config section while replacing the legacy model.
 type RUV2Config struct {
+	// ReportMode controls statement RU v2 metrics. Full additionally reports raw units and
+	// calculation outcomes; result reports total, SQL-type and per-engine RU consumption.
+	ReportMode string `toml:"report-mode" json:"report-mode"`
+
 	// RUScale is the scale factor used to convert RU v2 float values into scaled integer values.
 	// It is intentionally chosen to match legacy RU values for compatibility.
 	RUScale float64 `toml:"ru-scale" json:"ru-scale"`
@@ -425,12 +436,18 @@ type RUV2Config struct {
 	WriteKeys               float64 `toml:"write-keys" json:"write-keys"`
 	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
 	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
+
+	// Statement weights convert RU v2 raw work units to RU. They must be finite
+	// and non-negative; zero disables the corresponding charge. Their defaults
+	// are uncalibrated internal placeholders, not billing values.
+	ruv2.StmtWeights `toml:"stmt-weights" json:"stmt-weights"`
 }
 
-// DefaultRUV2Config returns the default RU v2 configuration.
+// DefaultRUV2Config returns the default legacy and statement RU v2 configuration.
 func DefaultRUV2Config() RUV2Config {
 	return RUV2Config{
-		RUScale: 2.01,
+		ReportMode: RUReportModeResult,
+		RUScale:    2.01,
 
 		ResultChunkCells:        0.00010000,
 		ExecutorL1:              0.00013278,
@@ -444,6 +461,8 @@ func DefaultRUV2Config() RUV2Config {
 		WriteKeys:               0.330760861554226,
 		SessionParserTotal:      0.19230499,
 		TxnCnt:                  0.03013709,
+
+		StmtWeights: ruv2.DefaultWeights(),
 	}
 }
 
@@ -1726,8 +1745,16 @@ func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInv
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	switch c.RUV2.ReportMode {
+	case RUReportModeResult, RUReportModeFull:
+	default:
+		return fmt.Errorf("invalid ru-v2.report-mode %q, expected result or full", c.RUV2.ReportMode)
+	}
 	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
+	}
+	if err := c.RUV2.StmtWeights.Validate(); err != nil {
+		return fmt.Errorf("ru-v2.stmt-weights.%w", err)
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))

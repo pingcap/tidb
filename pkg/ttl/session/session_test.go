@@ -32,6 +32,8 @@ import (
 )
 
 func TestSessionTTLJobRU(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) { cfg.RUV2.ReportMode = config.RUReportModeFull })
 	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
 	t.Cleanup(func() { config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(original) })
 	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)

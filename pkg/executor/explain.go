@@ -97,7 +97,12 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	if e.explain.Analyze && e.analyzeExec != nil && !e.executed {
-		defer func() {
+		closed := false
+		closeAnalyzeExec := func() {
+			if closed {
+				return
+			}
+			closed = true
 			err1 := exec.Close(e.analyzeExec)
 			if err1 != nil {
 				if err != nil {
@@ -106,7 +111,8 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 					err = err1
 				}
 			}
-		}()
+		}
+		defer closeAnalyzeExec()
 		if minHeapInUse, alarmRatio := e.Ctx().GetSessionVars().MemoryDebugModeMinHeapInUse, e.Ctx().GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
 			memoryDebugModeCtx, cancel := context.WithCancel(ctx)
 			waitGroup := sync.WaitGroup{}
@@ -132,6 +138,11 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			if err != nil || chk.NumRows() == 0 {
 				break
 			}
+		}
+		if e.explain.Format == "ru" {
+			// Close waits for producers and collects unconsumed request statistics.
+			// The RU snapshot must include all work published during teardown.
+			closeAnalyzeExec()
 		}
 	}
 	// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.

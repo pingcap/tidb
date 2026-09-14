@@ -293,12 +293,30 @@ func (a *recordSet) Finish() error {
 }
 
 func (a *recordSet) Close() error {
+	return a.close(nil)
+}
+
+func (a *recordSet) close(lastErr error) error {
 	err := a.Finish()
 	if err != nil {
 		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
 	}
-	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(a.lastErrs...))
+	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(errors.Join(a.lastErrs...), lastErr))
 	return err
+}
+
+// CloseRecordSetWithError closes an executor-owned record set and passes the
+// execution error to statement completion, including slow logs and RU accounting.
+func CloseRecordSetWithError(rs sqlexec.RecordSet, lastErr error) error {
+	switch rs := rs.(type) {
+	case *recordSet:
+		return rs.close(lastErr)
+	case *chunkRowRecordSet:
+		rs.execStmt.CloseRecordSet(rs.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, lastErr)
+		return nil
+	default:
+		return rs.Close()
+	}
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -1907,6 +1925,7 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
+	failpoint.InjectCall("observeCloseRecordSetForTest", a, &lastErr)
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()

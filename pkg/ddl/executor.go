@@ -1275,12 +1275,14 @@ func (e *executor) createTableWithInfoPost(
 	schemaID int64,
 	scatterScope string,
 ) error {
-	preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
 	if e.startMode == BR {
+		// BR applies its own split strategy while restoring table data.
 		if err := handleAutoIncID(e.getAutoIDRequirement(), schemaID, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
+		return nil
 	}
+	preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
 	return nil
 }
 
@@ -1444,7 +1446,10 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 		return
 	}
 	sp, ok := store.(kv.SplittableStore)
-	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+	hasRegionSplitConfig := hasExplicitRegionSplitConfig(tbInfo)
+	// split-table controls only implicit table-boundary splitting. PRE_SPLIT_REGIONS,
+	// tidb_pre_split_regions, and Region split policies take precedence.
+	if !ok || (atomic.LoadUint32(&EnableSplitTableRegion) == 0 && !hasRegionSplitConfig) {
 		return
 	}
 	var preSplit func()
@@ -1946,6 +1951,23 @@ func checkAlterTableMaterializedViewConstraints(
 		}
 	}
 	return checkAlterTableBaseTableMLogColumnConstraints(ctx, is, tblInfo, specs, op)
+}
+
+func checkBaseTableMaterializedViewDependencyConstraints(tblInfo *model.TableInfo, op string) error {
+	if tblInfo.MaterializedViewBase == nil {
+		return nil
+	}
+	if len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s with materialized view dependencies", op),
+		)
+	}
+	if tblInfo.MaterializedViewBase.MLogID != 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s with materialized view log", op),
+		)
+	}
+	return nil
 }
 
 // CheckIndexOperationMaterializedViewConstraints checks whether an index operation is allowed on an MV-related table.
@@ -2817,6 +2839,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
 	}
+	if err = checkBaseTableMaterializedViewDependencyConstraints(t.Meta(), "ALTER TABLE ... PARTITION BY"); err != nil {
+		return err
+	}
 
 	meta := t.Meta().Clone()
 	if isReservedSchemaObjInNextGen(meta.ID) {
@@ -2964,6 +2989,9 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+	if err = checkBaseTableMaterializedViewDependencyConstraints(t.Meta(), "ALTER TABLE ... REMOVE PARTITIONING"); err != nil {
+		return err
 	}
 
 	meta := t.Meta().Clone()
@@ -3504,8 +3532,24 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 	if len(nt.ForeignKeys) > 0 {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
+	if err := checkExchangePartitionMaterializedViewConstraints(pt, "partitioned table"); err != nil {
+		return err
+	}
+	return checkExchangePartitionMaterializedViewConstraints(nt, "non-partitioned table")
+}
 
-	return nil
+func checkExchangePartitionMaterializedViewConstraints(tblInfo *model.TableInfo, tableRole string) error {
+	if tblInfo.MaterializedViewLog != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("EXCHANGE PARTITION on %s with materialized view log", tableRole),
+		)
+	}
+	if tblInfo.MaterializedView != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("EXCHANGE PARTITION on %s materialized view table", tableRole),
+		)
+	}
+	return checkBaseTableMaterializedViewDependencyConstraints(tblInfo, fmt.Sprintf("EXCHANGE PARTITION on %s", tableRole))
 }
 
 func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {

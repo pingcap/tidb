@@ -3118,6 +3118,11 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			if !sessVars.InTxn() {
 				se.StmtCommit(ctx)
 				if err := se.CommitTxn(ctx); err != nil {
+					s.(*executor.ExecStmt).RecordStatementRUFinalOutcome(false)
+					if closeErr := executor.CloseRecordSetWithError(rs, err); closeErr != nil {
+						logutil.Logger(ctx).Error("close EXPLAIN ANALYZE DML record set after commit error failed",
+							zap.Error(closeErr), zap.NamedError("commitError", err))
+					}
 					return nil, err
 				}
 			}

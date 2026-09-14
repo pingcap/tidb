@@ -87,14 +87,6 @@ type RuntimeStats interface {
 	Tp() int
 }
 
-type hashStateRowsState uint32
-
-const (
-	hashStateRowsIncomplete hashStateRowsState = iota
-	hashStateRowsComplete
-	hashStateRowsInvalid
-)
-
 // WriteRuntimeStats records processed DML work for one executor Open lifecycle.
 // The executor owns it until Close registers it; successful finalization consumes it.
 type WriteRuntimeStats struct {
@@ -117,65 +109,50 @@ func (s *WriteRuntimeStats) Merge(other RuntimeStats) {
 	}
 }
 
-// HashStateRowsSnapshot is a value-only snapshot of hash-backed operator
-// state. Rows counts entries admitted to lookup/group structures. Its state
-// distinguishes an observed zero from partially constructed or invalid
-// evidence across repeated executions without exposing lifecycle counters as
-// consumer API. RuntimeStatsColl's lookup result reports whether evidence is
-// present for the plan ID.
+// HashStateRowsSnapshot is a value-only snapshot of entries admitted to
+// lookup/group structures. Consumers read it after statement teardown so it
+// includes work from producers that stopped before emitting their results.
 type HashStateRowsSnapshot struct {
-	Rows  int64
-	state hashStateRowsState
+	Rows int64
 }
 
-// Complete reports whether every observed execution completed state
-// construction with a nonnegative row count.
-func (s HashStateRowsSnapshot) Complete() bool {
-	return s.state == hashStateRowsComplete && s.Rows >= 0
-}
-
-// Invalid reports whether the producer lifecycle or recorded row count is invalid.
+// Invalid reports an overflowed row count.
 func (s HashStateRowsSnapshot) Invalid() bool {
-	return s.state == hashStateRowsInvalid || s.Rows < 0
+	return s.Rows < 0
 }
 
-// HashStateRuntimeStats carries one root executor Open's hash-state evidence.
-// It is display-neutral and merges independently from an operator's existing
-// EXPLAIN runtime statistics.
+// HashStateRuntimeStats accumulates constructed hash entries for one root
+// executor Open. It is display-neutral and merges across repeated executions.
 type HashStateRuntimeStats struct {
-	rows  atomic.Int64
-	state atomic.Uint32
+	rows atomic.Int64
 }
 
-// NewHashStateRuntimeStats begins one hash-state construction lifecycle.
+// NewHashStateRuntimeStats initializes an empty construction counter.
 func NewHashStateRuntimeStats() *HashStateRuntimeStats {
 	return &HashStateRuntimeStats{}
 }
 
-// AddRows records rows admitted to a successfully constructed lookup or group
-// structure. Producers may call it for multiple spill/restore partitions.
+// AddRows records constructed lookup/group entries, including spill/restore
+// rounds. A negative sentinel preserves overflow through subsequent updates.
 func (s *HashStateRuntimeStats) AddRows(rows uint64) {
-	s.rows.Add(int64(rows))
-}
-
-// Complete marks the lifecycle complete after every state partition is built.
-// Duplicate completion is invalid.
-func (s *HashStateRuntimeStats) Complete() {
-	if !s.state.CompareAndSwap(uint32(hashStateRowsIncomplete), uint32(hashStateRowsComplete)) {
-		s.Invalidate()
+	for {
+		current := s.rows.Load()
+		if current < 0 {
+			return
+		}
+		next := int64(-1)
+		if rows <= uint64(math.MaxInt64-current) {
+			next = current + int64(rows)
+		}
+		if s.rows.CompareAndSwap(current, next) {
+			return
+		}
 	}
 }
 
-// Invalidate marks the lifecycle unusable after a producer error.
-func (s *HashStateRuntimeStats) Invalidate() {
-	s.state.Store(uint32(hashStateRowsInvalid))
-}
-
-// HashStateRowsSnapshot returns a scalar copy of the typed evidence.
+// HashStateRowsSnapshot returns a scalar copy of the construction counter.
 func (s *HashStateRuntimeStats) HashStateRowsSnapshot() HashStateRowsSnapshot {
-	// Complete is published after every AddRows call for the execution.
-	state := hashStateRowsState(s.state.Load())
-	return HashStateRowsSnapshot{Rows: s.rows.Load(), state: state}
+	return HashStateRowsSnapshot{Rows: s.rows.Load()}
 }
 
 // String keeps typed evidence out of EXPLAIN runtime-stat rendering.
@@ -186,39 +163,21 @@ func (*HashStateRuntimeStats) Tp() int { return TpHashStateRuntimeStats }
 
 // Clone implements RuntimeStats.
 func (s *HashStateRuntimeStats) Clone() RuntimeStats {
-	snapshot := s.HashStateRowsSnapshot()
 	cloned := &HashStateRuntimeStats{}
-	cloned.rows.Store(snapshot.Rows)
-	cloned.state.Store(uint32(snapshot.state))
+	cloned.rows.Store(s.rows.Load())
 	return cloned
 }
 
 // Merge implements RuntimeStats.
 func (s *HashStateRuntimeStats) Merge(other RuntimeStats) {
 	if other, ok := other.(*HashStateRuntimeStats); ok {
-		s.merge(other.HashStateRowsSnapshot())
+		snapshot := other.HashStateRowsSnapshot()
+		if snapshot.Invalid() {
+			s.rows.Store(-1)
+		} else {
+			s.AddRows(uint64(snapshot.Rows))
+		}
 	}
-}
-
-func (s *HashStateRuntimeStats) merge(snapshot HashStateRowsSnapshot) {
-	// RuntimeStatsColl serializes merges after each producer has stopped
-	// mutating its stat, so the incoming snapshot and the target state are stable.
-	current := hashStateRowsState(s.state.Load())
-	if current == hashStateRowsInvalid {
-		return
-	}
-	merged := snapshot.state
-	switch {
-	case snapshot.state >= hashStateRowsInvalid:
-		merged = hashStateRowsInvalid
-	case current == hashStateRowsIncomplete || snapshot.state == hashStateRowsIncomplete:
-		merged = hashStateRowsIncomplete
-	}
-	// Publish rows before state so a final-state snapshot cannot observe stale rows.
-	if snapshot.Rows >= 0 {
-		s.AddRows(uint64(snapshot.Rows))
-	}
-	s.state.Store(uint32(merged))
 }
 
 type basicCopRuntimeStats struct {

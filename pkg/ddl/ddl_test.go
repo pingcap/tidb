@@ -22,9 +22,12 @@ import (
 	"testing"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -36,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -66,6 +71,138 @@ func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
 // RemoveReorgCtx exports for testing.
 func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
+}
+
+type ddlJobRUReport struct {
+	resourceGroupName string
+	tikvRUV2          float64
+	tidbRUV2          float64
+	tiflashRUV2       float64
+}
+
+type ddlJobRUReporter struct {
+	reports []ddlJobRUReport
+	panic   bool
+}
+
+func (*ddlJobRUReporter) ReportConsumption(string, *rmpb.Consumption) {}
+
+func (r *ddlJobRUReporter) ReportRUV2Consumption(
+	resourceGroupName string,
+	tikvRUV2, tidbRUV2, tiflashRUV2 float64,
+) {
+	if r.panic {
+		panic("reporter panic")
+	}
+	r.reports = append(r.reports, ddlJobRUReport{
+		resourceGroupName: resourceGroupName,
+		tikvRUV2:          tikvRUV2,
+		tidbRUV2:          tidbRUV2,
+		tiflashRUV2:       tiflashRUV2,
+	})
+}
+
+type ddlJobRUReportingContext struct {
+	*mock.Context
+	dctx *distsqlctx.DistSQLContext
+}
+
+func (c *ddlJobRUReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	return c.dctx
+}
+
+func TestAccountJobRU(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	sessCtx := mock.NewContext()
+	sessCtx.Store = store
+	w := worker{tp: generalWorker, sess: sess.NewSession(sessCtx)}
+
+	require.NoError(t, w.sess.Begin(context.Background()))
+	discardedTxn, err := w.sess.Txn()
+	require.NoError(t, err)
+	require.NoError(t, discardedTxn.Set(kv.Key("discarded-key"), []byte("discarded-payload-is-longer")))
+	discardedSize := discardedTxn.Size()
+	w.sess.Rollback()
+
+	require.NoError(t, w.sess.Begin(context.Background()))
+	t.Cleanup(w.sess.Rollback)
+	activeTxn, err := w.sess.Txn()
+	require.NoError(t, err)
+	require.NoError(t, activeTxn.Set(kv.Key("active"), []byte("value")))
+	require.NotEqual(t, discardedSize, activeTxn.Size())
+
+	job := &model.Job{RU: 7}
+	require.NoError(t, w.accountJobRU(job))
+	expectedRU := float64(7)
+	if kerneltype.IsNextGen() {
+		expectedRU += float64(activeTxn.Size())
+	}
+	require.Equal(t, expectedRU, job.RU)
+
+	accountedRU := job.RU
+	w.tp = addIdxWorker
+	require.NoError(t, w.accountJobRU(job))
+	require.Equal(t, accountedRU, job.RU)
+
+	w.tp = backgroundWorker
+	require.NoError(t, w.accountJobRU(job))
+	require.Equal(t, accountedRU, job.RU)
+
+	t.Run("reports through the DDL session resource group", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUV3Consumption(42)
+
+		require.Equal(t, []ddlJobRUReport{{
+			resourceGroupName: resourcegroup.DefaultResourceGroupName,
+			tikvRUV2:          42,
+			tidbRUV2:          0,
+			tiflashRUV2:       0,
+		}}, reporter.reports)
+	})
+
+	t.Run("skips invalid reporting contexts", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUV3Consumption(42)
+		sessCtx.dctx = nil
+		w.reportJobRUV3Consumption(42)
+
+		require.Empty(t, reporter.reports)
+	})
+
+	t.Run("propagates reporter panics", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{panic: true}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		require.Panics(t, func() {
+			w.reportJobRUV3Consumption(42)
+		})
+	})
 }
 
 func NewJobSubmitterForTest() *JobSubmitter {

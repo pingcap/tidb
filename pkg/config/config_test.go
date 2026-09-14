@@ -34,6 +34,7 @@ import (
 	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -959,6 +960,78 @@ engines = ["tikv", "tiflash", "tidb"]
 }
 
 func TestConfig(t *testing.T) {
+	t.Run("RU v2 statement weights", func(t *testing.T) {
+		field, ok := reflect.TypeOf(RUV2Config{}).FieldByName("StmtWeights")
+		require.True(t, ok)
+		require.True(t, field.Anonymous)
+		require.Equal(t, reflect.TypeOf(ruv2.StmtWeights{}), field.Type)
+		require.Equal(t, "stmt-weights", field.Tag.Get("toml"))
+		require.Equal(t, "stmt-weights", field.Tag.Get("json"))
+
+		require.Equal(t, ruv2.DefaultWeights(), NewConfig().RUV2.StmtWeights)
+
+		want := ruv2.StmtWeights{
+			CPUWork: 2, ScanByte: 3, NetByte: 5, FrontendCompileByte: 7,
+			HashStateRow: 11, JoinOutputRow: 13, WriteStatement: 17,
+			OperatorNum: 19, WriteKey: 23, WriteByte: 29,
+		}
+		conf := NewConfig()
+		meta, err := toml.Decode(`
+[ru-v2.stmt-weights]
+cpu-work = 2
+scan-byte = 3
+net-byte = 5
+frontend-compile-byte = 7
+hash-state-row = 11
+join-output-row = 13
+write-statement = 17
+operator-num = 19
+write-key = 23
+write-byte = 29
+`, conf)
+		require.NoError(t, err)
+		require.Empty(t, meta.Undecoded())
+		require.Equal(t, want, conf.RUV2.StmtWeights)
+
+		conf = NewConfig()
+		require.NoError(t, json.Unmarshal([]byte(`{
+			"ru-v2": {
+				"stmt-weights": {
+					"cpu-work": 2,
+					"scan-byte": 3,
+					"net-byte": 5,
+					"frontend-compile-byte": 7,
+					"hash-state-row": 11,
+					"join-output-row": 13,
+					"write-statement": 17,
+					"operator-num": 19,
+					"write-key": 23,
+					"write-byte": 29
+				}
+			}
+		}`), conf))
+		require.Equal(t, want, conf.RUV2.StmtWeights)
+
+		conf.RUV2.StmtWeights.CPUWork = -1
+		require.EqualError(t, conf.Valid(), "ru-v2.stmt-weights.cpu-work must be finite and non-negative, got -1")
+	})
+
+	t.Run("RU report mode", func(t *testing.T) {
+		require.Equal(t, RUReportModeResult, NewConfig().RUV2.ReportMode)
+		for _, mode := range []string{RUReportModeResult, RUReportModeFull} {
+			conf := NewConfig()
+			path := filepath.Join(t.TempDir(), "ru.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[ru-v2]\nreport-mode = \""+mode+"\"\n"), 0600))
+			require.NoError(t, conf.Load(path))
+			require.NoError(t, conf.Valid())
+			require.Equal(t, mode, conf.RUV2.ReportMode)
+		}
+		for _, mode := range []string{"", "FULL", "invalid"} {
+			conf := NewConfig()
+			conf.RUV2.ReportMode = mode
+			require.ErrorContains(t, conf.Valid(), "invalid ru-v2.report-mode")
+		}
+	})
 	conf := new(Config)
 	conf.TempStoragePath = tempStorageDirName
 	conf.Performance.TxnTotalSizeLimit = 1000
@@ -1232,6 +1305,7 @@ grpc-keepalive-timeout = 0.01
 	}
 	require.NoError(t, conf.Load(configFile))
 
+	require.Equal(t, RUReportModeResult, conf.RUV2.ReportMode)
 	require.Equal(t, 2.01, conf.RUV2.RUScale)
 	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
 
