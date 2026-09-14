@@ -91,8 +91,8 @@ type DBReplace struct {
 	Reused      bool
 	// SchemaRouted reports that an explicit schema-level rename rule matched
 	// this source schema. The schema itself is then restored even when every
-	// selected table is overridden to another target schema. It is runtime-only
-	// (not persisted); on retry the target schema already exists.
+	// selected table is overridden to another target schema. It is persisted in
+	// the PiTR ID map so a retry keeps replaying the target schema's DBInfo.
 	SchemaRouted bool
 	// SourceDBInfo keeps the latest source DBInfo observed during the log scan.
 	// It is runtime-only (not persisted) and is used to create a table-route
