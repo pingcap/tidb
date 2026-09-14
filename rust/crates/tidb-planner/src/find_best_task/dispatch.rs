@@ -148,6 +148,10 @@ pub struct DispatchContext<'a> {
     /// cost is higher. The executor does not expose the session override yet,
     /// so callers use Go's default.
     pub prefer_range_scan: bool,
+    /// Go `SessionVars.EnableIndexMerge` (`tidb_enable_index_merge`, default
+    /// ON): an OR whose disjuncts each admit a non-full access path yields a
+    /// union index-merge candidate.
+    pub index_merge_enabled: bool,
     /// Go `BaseLogicalPlan.taskMap`, keyed by the logical plan object and
     /// property. Numeric plan IDs are explain identities and are deliberately
     /// shared by static-partition DataSource copies.
@@ -191,12 +195,13 @@ impl<'a> DispatchContext<'a> {
             mpp_allowed: true,
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
+            index_merge_enabled: false,
             task_map: HashMap::new(),
             column_ids: None,
         }
     }
 
-    fn detach_index_range(
+    pub(crate) fn detach_index_range(
         &self,
         conditions: &[tidb_expr::expression::Expression],
         columns: &[tidb_expr::column::Column],
@@ -277,6 +282,12 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_paging(mut self, enable: bool) -> Self {
         self.enable_paging = enable;
+        self
+    }
+
+    /// The same context with `tidb_enable_index_merge` resolved.
+    pub const fn with_index_merge_enabled(mut self, enabled: bool) -> Self {
+        self.index_merge_enabled = enabled;
         self
     }
 
@@ -2431,10 +2442,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             partition: (!ds.partition_definition_ids.is_empty()
                                 && ds.physical_table_id == ds.table_id
                                 && (ds.pk_is_handle || common_handle.is_some()))
-                                .then(|| crate::physical::PointGetPartition {
-                                    names: ds.partition_names.clone(),
-                                    physical_table_id: None,
-                                }),
+                            .then(|| crate::physical::PointGetPartition {
+                                names: ds.partition_names.clone(),
+                                physical_table_id: None,
+                            }),
                             index_id: None,
                             ranges,
                             range_rebuild: table_range_rebuild
@@ -2831,7 +2842,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 tidb_expr::simple_expr::extract_columns(condition)
                                     .into_iter()
                                     .filter_map(|column| {
-                                        index_cols.iter()
+                                        index_cols
+                                            .iter()
                                             .position(|index| index.unique_id == column.unique_id)
                                             .map(|index| (column.unique_id, index_lengths[index]))
                                     })
@@ -2878,7 +2890,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         .unwrap_or(ranges.len() as f64)
                         .min(ranges.len() as f64);
                     point_base.base.set_stats(
-                        ds.table_stats.as_ref()
+                        ds.table_stats
+                            .as_ref()
                             .or_else(|| ds.base.base.stats_info())
                             .map(|stats| stats.scale_by_expect_cnt(access_rows, ctx.skew_ratio)),
                     );
@@ -3357,7 +3370,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             .map(|candidate| candidate.4.clone())
             .collect::<Option<Vec<_>>>()
         {
-            if let Some(selected) = crate::find_best_task::candidate::choose_heuristic_path(&paths) {
+            if let Some(selected) = crate::find_best_task::candidate::choose_heuristic_path(&paths)
+            {
                 return Ok(ordinary_candidates.swap_remove(selected).0);
             }
         }
@@ -3390,6 +3404,27 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             best = cur;
             best_is_preferred_range = preferred;
             best_is_full_range = full_range;
+        }
+    }
+    // Go `generateIndexMergePath`: the OR-union candidate competes with the
+    // ordinary paths by cost (subject to `tidb_enable_index_merge`).
+    // Narrowing: this tier prices the union from pseudo-statistics
+    // estimates, so the candidate only fires on pseudo-stats sources —
+    // exactly the recorded fixtures. Analyzed tables keep the ordinary
+    // paths until per-partial histogram cardinality is ported.
+    if ctx.index_merge_enabled
+        && !ordered
+        && prop.task_tp == TaskType::Root
+        && prop.index_join_prop.is_none()
+        && ds.table_scan_penalty.pseudo_stats
+    {
+        if let Some(merge_task) =
+            crate::find_best_task::index_merge_union::build_union_index_merge_task(ds, ctx)?
+        {
+            if best.invalid() || compare_task_cost(ctx.coster, &merge_task, &best)? {
+                best = merge_task;
+                best_is_full_range = false;
+            }
         }
     }
     if prefer_range && best_is_full_range {

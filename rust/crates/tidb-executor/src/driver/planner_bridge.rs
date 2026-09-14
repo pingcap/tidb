@@ -1590,6 +1590,7 @@ pub(crate) fn physical_plan_for_logical(
         .with_projection_push_down(ctx.allow_projection_push_down())
         .with_limit_push_down_threshold(ctx.limit_push_down_threshold())
         .with_paging(ctx.optimizer_cost_env().session.enable_paging)
+        .with_index_merge_enabled(ctx.index_merge())
         .with_hash_join_concurrency(
             ctx.optimizer_cost_env()
                 .session

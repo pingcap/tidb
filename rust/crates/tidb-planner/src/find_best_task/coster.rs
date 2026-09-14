@@ -420,6 +420,33 @@ impl Ver2Coster {
                     self.session.distsql_scan_concurrency,
                 )
             }
+            // `getPlanCostVer24PhysicalIndexMergeReader`: every partial and
+            // the table side price as (net + child) / dist-concurrency.
+            PhysicalPlan::IndexMergeReader(reader) => {
+                let side = |plan: &PhysicalPlan| crate::plan_cost_ver2::IndexMergeSide {
+                    rows: Self::rows(plan).max(crate::plan_cost_ver2::MIN_NUM_ROWS),
+                    row_size: Self::row_size(plan),
+                    child_cost: self.price_with_scan_context(
+                        plan,
+                        TaskType::CopMultiRead,
+                        Some(false),
+                    ),
+                };
+                let index_sides: Vec<crate::plan_cost_ver2::IndexMergeSide> =
+                    reader.partial_plans_raw.iter().map(&side).collect();
+                let table_side = reader.table_plan.as_deref().map(&side);
+                crate::plan_cost_ver2::index_merge_reader_cost(
+                    None,
+                    table_side.as_ref(),
+                    &index_sides,
+                    &self.factors.tidb_to_kv_net,
+                    (
+                        self.session.distsql_scan_concurrency as f64,
+                        reader.pushed_limit.is_some(),
+                        &self.session_factors,
+                    ),
+                )
+            }
             // `getPlanCostVer24PhysicalLimit` is the child's cost: a limit
             // adds no work of its own in ver2.
             PhysicalPlan::Limit(_) => self.children_cost(plan, task_type, is_child_of_inl),
