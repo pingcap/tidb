@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -155,11 +156,10 @@ func (c *importQueryChecker) Leave(node ast.Node) bool {
 }
 
 func runImportQuery(
-	ctx context.Context, sctx sessionctx.Context,
-	q *importer.QueryPlan, memoryLimit int64,
+	ctx context.Context, q *importer.QueryPlan, runtime importer.QueryRuntime,
 	output chan<- importer.QueryChunk,
 ) (err error) {
-	workerSession, node, err := newImportQuerySession(ctx, sctx, q, memoryLimit)
+	workerSession, node, err := newImportQuerySession(ctx, runtime.Session, q, runtime.TotalMemoryLimit)
 	if err != nil {
 		return err
 	}
@@ -177,7 +177,10 @@ func runImportQuery(
 	failpoint.Inject("failAfterImportQueryOptimize", func() {
 		failpoint.Return(errors.New("injected failure after import query optimization"))
 	})
-	b := newExecutorBuilder(ctx, workerSession, workerSession.schema, nil)
+	spillOption := &builder.HashAggSpill{
+		Storage: runtime.Storage, Prefix: runtime.Prefix, MemoryLimit: runtime.MemoryLimit,
+	}
+	b := newExecutorBuilder(ctx, workerSession, workerSession.schema, nil, spillOption)
 	b.forDataReaderBuilder = true
 	b.dataReaderTS = vars.SnapshotTS
 	e := b.build(p)
