@@ -2456,6 +2456,44 @@ func (rc *LogClient) ValidateTableRouteTargetDatabases(
 	return rc.ensureTableRouteTargetDatabases(ctx, manager, false)
 }
 
+// ValidateTargetTableExistence rejects a log-only (or resumed) PiTR whose
+// effective target table name already exists in the downstream cluster with a
+// different table ID. A name match with the expected downstream ID is a
+// legitimate continuation of a previous PiTR run and is allowed.
+func (rc *LogClient) ValidateTargetTableExistence(
+	ctx context.Context,
+	manager *stream.TableMappingManager,
+) error {
+	infoSchema := rc.dom.InfoSchema()
+	for _, dbReplace := range manager.DBReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			dbName := tableReplace.EffectiveDBName(dbReplace)
+			if _, ok := infoSchema.SchemaByName(ast.NewCIStr(dbName)); !ok {
+				continue
+			}
+			tbl, err := infoSchema.TableByName(ctx, ast.NewCIStr(dbName), ast.NewCIStr(tableReplace.Name))
+			if err != nil {
+				if infoschema.ErrTableNotExists.Equal(err) {
+					continue
+				}
+				return errors.Trace(err)
+			}
+			if tbl.Meta().ID != tableReplace.TableID {
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"target table %s.%s already exists with table ID %d, but this restore maps it to table ID %d",
+					dbName, tableReplace.Name, tbl.Meta().ID, tableReplace.TableID)
+			}
+		}
+	}
+	return nil
+}
+
 func (rc *LogClient) ensureTableRouteTargetDatabases(
 	ctx context.Context,
 	manager *stream.TableMappingManager,

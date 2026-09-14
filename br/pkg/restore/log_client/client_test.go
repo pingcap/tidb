@@ -1612,6 +1612,45 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.Equal(t, "latin1_bin", dbInfo.Collate)
 		require.Equal(t, dbInfo.ID, manager.DBReplaceMap[10].TableMap[20].TargetDBID)
 	})
+
+	t.Run("reject routed target table that already exists with a different id", func(t *testing.T) {
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		tk := testkit.NewTestKit(t, s.Mock.Storage)
+		tk.MustExec("create database existing_db")
+		tk.MustExec("create table existing_db.t (id int)")
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+
+		existing, err := s.Mock.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("existing_db"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name: "source_db",
+			DbID: 110,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {
+					Name:         "t",
+					TableID:      existing.Meta().ID + 1,
+					TargetDBName: "existing_db",
+					TargetDBID:   210,
+				},
+			},
+		}
+		err = client.ValidateTargetTableExistence(ctx, manager)
+		require.ErrorContains(t, err, "already exists with table ID")
+
+		// The same ID is a legitimate continuation of a previous PiTR run.
+		manager.DBReplaceMap[10].TableMap[20].TableID = existing.Meta().ID
+		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
+
+		// A target that does not exist yet is allowed.
+		manager.DBReplaceMap[10].TableMap[20].Name = "not_created_yet"
+		manager.DBReplaceMap[10].TableMap[20].TableID = 999
+		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
+	})
 }
 
 func downstreamID(upstreamID int64) int64 {

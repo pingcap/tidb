@@ -2561,6 +2561,12 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if err := checkLogOnlyPiTRRegistryConflicts(ctx, cfg, cfg.RestoreRegistry); err != nil {
 		return errors.Trace(err)
 	}
+	// A routed target table must not silently collide with an existing table
+	// that has a different ID. Run this on the saved/resume path too so a table
+	// dropped and recreated between attempts is caught.
+	if err := client.ValidateTargetTableExistence(ctx, cfg.tableMappingManager); err != nil {
+		return errors.Trace(err)
+	}
 	if saved {
 		return client.ValidateTableRouteTargetDatabases(ctx, cfg.tableMappingManager)
 	}
