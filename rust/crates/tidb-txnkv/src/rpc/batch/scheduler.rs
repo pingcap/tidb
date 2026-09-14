@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
-use super::observability::{BatchRequestProgress, BatchRequestState};
+use super::observability::BatchRequestProgress;
 use super::priority_queue::{PriorityItem, PriorityQueue};
 
 /// Priority at which a request bypasses the normal concurrency limit.
@@ -201,7 +201,6 @@ where
     C: BatchEntryCompletion,
 {
     entries: Vec<ScheduledEntry<T, C>>,
-    state: BatchRequestState,
 }
 
 impl<T, C> Default for BatchGroup<T, C>
@@ -211,7 +210,6 @@ where
     fn default() -> Self {
         Self {
             entries: Vec::new(),
-            state: BatchRequestState::default(),
         }
     }
 }
@@ -235,24 +233,14 @@ where
         &self.entries
     }
 
-    /// Returns a handle to the group's shared request state.
-    pub fn state(&self) -> BatchRequestState {
-        self.state.clone()
-    }
-
     /// Consumes this group so the original completions can enter in-flight state.
     pub fn into_entries(self) -> Vec<ScheduledEntry<T, C>> {
         self.entries
     }
 
     fn push(&mut self, entry: ScheduledEntry<T, C>, selected_at: Instant) {
-        entry.entry.progress.record_batch_selected_at(
-            entry.request_id,
-            selected_at,
-            self.state.clone(),
-        );
+        entry.entry.progress.record_batch_selected_at(selected_at);
         self.entries.push(entry);
-        self.state.set_batch_size(self.entries.len());
     }
 }
 

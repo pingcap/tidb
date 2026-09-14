@@ -22,13 +22,14 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::client::PhysicalChannelIdentity;
 use crate::rpc::DirectUnaryClientError;
 
 use super::{
-    BatchCommandCompletion, BatchEntryCompletion, BatchRequestProgress, BatchStreamState,
-    ScheduledEntry,
+    BatchCommandCompletion, BatchEntryCompletion, BatchRequestProgress, BatchRequestState,
+    BatchStreamState, ScheduledEntry,
 };
 
 use super::wire::{BatchWireError, BatchWireResponse, OpaqueBatchCommand};
@@ -256,23 +257,17 @@ impl BatchInflightTable {
             return Err(error);
         }
 
-        let state = self.routes.entry(route.clone()).or_default();
-        for request in pending {
-            request.progress.record_publication(&route);
-            if let Some(batch_state) = request.progress.batch_state() {
-                batch_state.attach_stream_state(state.stream_state.clone());
-            }
-            state.pending.insert(request.request_id, request);
-        }
+        self.publish_validated(route, pending, Instant::now());
         Ok(())
     }
 
     /// Publishes consumed transport entries or fails their original completions.
-    pub(super) fn publish_or_fail(
+    fn publish_or_fail(
         &mut self,
         route: BatchRoute,
         pending: Vec<PendingBatchCommand>,
-    ) -> Result<(), BatchPublishError> {
+        send_started_at: Instant,
+    ) -> Result<BatchRequestState, BatchPublishError> {
         if let Some(error) = self.publication_error(&pending) {
             let failure = BatchInflightError::Transport(DirectUnaryClientError::InvalidRequest(
                 error.to_string(),
@@ -282,15 +277,26 @@ impl BatchInflightTable {
             }
             return Err(error);
         }
+        Ok(self.publish_validated(route, pending, send_started_at))
+    }
+
+    fn publish_validated(
+        &mut self,
+        route: BatchRoute,
+        pending: Vec<PendingBatchCommand>,
+        send_started_at: Instant,
+    ) -> BatchRequestState {
         let state = self.routes.entry(route.clone()).or_default();
+        let batch_state =
+            BatchRequestState::new(pending.len(), send_started_at, state.stream_state.clone());
         for request in pending {
+            request
+                .progress
+                .publish_batch(request.request_id, batch_state.clone());
             request.progress.record_publication(&route);
-            if let Some(batch_state) = request.progress.batch_state() {
-                batch_state.attach_stream_state(state.stream_state.clone());
-            }
             state.pending.insert(request.request_id, request);
         }
-        Ok(())
+        batch_state
     }
 
     /// Publishes through the shared sole table and binds pull cancellation to
@@ -303,14 +309,23 @@ impl BatchInflightTable {
         route: BatchRoute,
         pending: Vec<PendingBatchCommand>,
     ) -> Result<(), BatchPublishError> {
+        Self::publish_shared_at(table, route, pending, Instant::now()).map(|_| ())
+    }
+
+    pub(super) fn publish_shared_at(
+        table: &Arc<Mutex<Self>>,
+        route: BatchRoute,
+        pending: Vec<PendingBatchCommand>,
+        send_started_at: Instant,
+    ) -> Result<BatchRequestState, BatchPublishError> {
         let registrations = pending
             .iter()
             .map(|request| (request.request_id, request.completion.clone()))
             .collect::<Vec<_>>();
-        table
+        let batch_state = table
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .publish_or_fail(route.clone(), pending)?;
+            .publish_or_fail(route.clone(), pending, send_started_at)?;
 
         let weak_table = Arc::downgrade(table);
         for (request_id, completion) in registrations {
@@ -326,7 +341,7 @@ impl BatchInflightTable {
                     .cancel_request(&route, request_id);
             });
         }
-        Ok(())
+        Ok(batch_state)
     }
 
     fn cancel_request(&mut self, route: &BatchRoute, request_id: u64) -> bool {
@@ -405,6 +420,7 @@ impl BatchInflightTable {
         route: &BatchRoute,
         response: BatchWireResponse,
     ) -> BatchRetirementReport {
+        let received_at = Instant::now();
         let state = self.routes.entry(route.clone()).or_default();
         let mut report = BatchRetirementReport::default();
         for (request_id, response) in response.into_responses() {
@@ -413,6 +429,14 @@ impl BatchInflightTable {
                 report.outdated += 1;
                 continue;
             };
+            pending
+                .progress
+                .batch_state()
+                .expect("published batch state")
+                .record_response_at(received_at);
+            pending.progress.record_received_after_arrival(
+                received_at.saturating_duration_since(pending.progress.arrived_at()),
+            );
             if pending.completion.is_cancelled() {
                 report.canceled += 1;
             } else {

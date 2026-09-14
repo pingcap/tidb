@@ -16,7 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tidb_proto::tikvpb::{tikv_client::TikvClient, BatchCommandsRequest};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -383,6 +383,7 @@ impl BatchTransportState {
             pending,
         } = prepared;
         let receipt_ids = needs_receipts.then(|| request_ids.clone());
+        let send_started_at = Instant::now();
         let request =
             match BatchWireRequest::new(batch_commands, request_ids, client_send_time_ns()) {
                 Ok(request) => request,
@@ -400,16 +401,24 @@ impl BatchTransportState {
                     return None;
                 }
             };
-        if BatchInflightTable::publish_shared(&self.inflight, route.clone(), pending).is_err() {
-            let mut open_state = open_state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if open_state.waiting_for_headers {
-                open_state.packets_admitted = open_state.packets_admitted.saturating_sub(1);
+        let batch_state = match BatchInflightTable::publish_shared_at(
+            &self.inflight,
+            route.clone(),
+            pending,
+            send_started_at,
+        ) {
+            Ok(state) => state,
+            Err(_) => {
+                let mut open_state = open_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if open_state.waiting_for_headers {
+                    open_state.packets_admitted = open_state.packets_admitted.saturating_sub(1);
+                }
+                drop(terminal_guard);
+                return None;
             }
-            drop(terminal_guard);
-            return None;
-        }
+        };
         let send_error = outbound.send(request.into_proto()).err().map(|_| {
             BatchInflightError::Transport(stream_error(
                 route.physical_address(),
@@ -423,6 +432,8 @@ impl BatchTransportState {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .fail_route(&route, error.clone());
+        } else {
+            batch_state.record_sent();
         }
         drop(terminal_guard);
         let receipt = receipt_ids.map(|request_ids| BatchPublicationReceipt {

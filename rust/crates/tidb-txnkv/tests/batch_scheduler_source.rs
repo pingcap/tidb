@@ -78,15 +78,15 @@ fn test_batch_commands_builder() {
     for (index, item) in direct.entries().iter().enumerate() {
         assert_eq!(item.request_id(), (index + 1) as u64);
         assert_eq!(*item.entry().payload(), index);
-        assert_eq!(item.entry().progress().request_id(), item.request_id());
+        assert_eq!(item.entry().progress().request_id(), 0);
         assert!(item
             .entry()
             .progress()
             .batch_selected_after_arrival()
             .is_some_and(|duration| duration > Duration::ZERO));
-        let progress_state = item.entry().progress().batch_state().unwrap();
-        assert!(progress_state.shares_state_with(&direct.state()));
-        assert_eq!(progress_state.batch_size(), 10);
+        // Go exposes selection delay now, but publishes ID and complete shared
+        // batch state only after the send loop has selected a concrete stream.
+        assert!(item.entry().progress().batch_state().is_none());
     }
     assert_eq!(scheduler.id_alloc(), 10);
 
@@ -118,13 +118,10 @@ fn test_batch_commands_builder() {
             .entries()
             .iter()
             .all(|item| { item.entry().forwarded_host() == Some(host.expect("forwarded host")) }));
-        assert_eq!(group.state().batch_size(), index + 2);
-        assert!(group.entries().iter().all(|item| item
-            .entry()
-            .progress()
-            .batch_state()
-            .unwrap()
-            .shares_state_with(&group.state())));
+        assert!(group
+            .entries()
+            .iter()
+            .all(|item| item.entry().progress().batch_state().is_none()));
     }
     assert_eq!(scheduler.id_alloc(), 20);
 

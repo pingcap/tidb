@@ -15,7 +15,7 @@
 //! Source-shaped BatchCommands request observations.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -86,13 +86,13 @@ pub struct BatchRequestObservation {
     pub duration: Duration,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct BatchRequestStateInner {
-    batch_size: AtomicUsize,
-    send_started_at: Mutex<Option<Instant>>,
+    batch_size: usize,
+    send_started_at: Instant,
     sent_after_send_start_ns: AtomicU64,
     first_response_after_send_start_ns: AtomicU64,
-    stream_state: Mutex<Option<BatchStreamState>>,
+    stream_state: BatchStreamState,
 }
 
 #[derive(Debug, Default)]
@@ -126,12 +126,29 @@ impl BatchStreamState {
 }
 
 /// State shared by every entry in one concrete BatchCommands request.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct BatchRequestState {
     inner: Arc<BatchRequestStateInner>,
 }
 
 impl BatchRequestState {
+    /// Creates complete batch metadata before publishing it to any entry.
+    pub fn new(
+        batch_size: usize,
+        send_started_at: Instant,
+        stream_state: BatchStreamState,
+    ) -> Self {
+        Self {
+            inner: Arc::new(BatchRequestStateInner {
+                batch_size,
+                send_started_at,
+                stream_state,
+                sent_after_send_start_ns: AtomicU64::new(0),
+                first_response_after_send_start_ns: AtomicU64::new(0),
+            }),
+        }
+    }
+
     /// Whether two handles reference the same concrete batch state.
     pub fn shares_state_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
@@ -139,53 +156,45 @@ impl BatchRequestState {
 
     /// Returns the number of entries assigned to this batch.
     pub fn batch_size(&self) -> usize {
-        self.inner.batch_size.load(Ordering::Acquire)
+        self.inner.batch_size
     }
 
-    /// Records the final number of entries assigned to this batch.
-    pub fn set_batch_size(&self, batch_size: usize) {
-        self.inner.batch_size.store(batch_size, Ordering::Release);
-    }
-
-    /// Records the absolute instant at which sending began.
-    pub fn record_send_started_at(&self, send_started_at: Instant) {
-        *self
-            .inner
-            .send_started_at
-            .lock()
-            .expect("batch send start lock") = Some(send_started_at);
-    }
-
-    /// Records the delay from send start until packet writing completed.
+    /// Records the delay until the transport accepts the batch, not remote receipt.
     pub fn record_sent_after_send_start(&self, duration: Duration) {
-        self.inner
-            .sent_after_send_start_ns
-            .store(nonzero_duration_ns(duration), Ordering::Release);
+        let _ = self.inner.sent_after_send_start_ns.compare_exchange(
+            0,
+            nonzero_duration_ns(duration),
+            Ordering::Release,
+            Ordering::Relaxed,
+        );
     }
 
     /// Records the delay from send start until the first response arrived.
     pub fn record_first_response_after_send_start(&self, duration: Duration) {
-        self.inner
-            .first_response_after_send_start_ns
-            .store(nonzero_duration_ns(duration), Ordering::Release);
-    }
-
-    /// Attaches the concrete stream-wide response progress authority.
-    pub fn attach_stream_state(&self, stream_state: BatchStreamState) {
-        *self
+        let _ = self
             .inner
-            .stream_state
-            .lock()
-            .expect("batch stream state lock") = Some(stream_state);
+            .first_response_after_send_start_ns
+            .compare_exchange(
+                0,
+                nonzero_duration_ns(duration),
+                Ordering::Release,
+                Ordering::Relaxed,
+            );
     }
 
-    /// Returns the attached stream-wide response progress, if any.
-    pub fn stream_state(&self) -> Option<BatchStreamState> {
-        self.inner
-            .stream_state
-            .lock()
-            .expect("batch stream state lock")
-            .clone()
+    pub(super) fn record_sent(&self) {
+        self.record_sent_after_send_start(self.inner.send_started_at.elapsed());
+    }
+
+    pub(super) fn record_response_at(&self, received_at: Instant) {
+        self.record_first_response_after_send_start(
+            received_at.saturating_duration_since(self.inner.send_started_at),
+        );
+    }
+
+    /// Returns the concrete stream-wide response progress.
+    pub fn stream_state(&self) -> &BatchStreamState {
+        &self.inner.stream_state
     }
 }
 
@@ -195,7 +204,7 @@ pub struct BatchRequestProgress {
     arrived_at: Instant,
     request_id: AtomicU64,
     batch_selected_after_arrival_ns: AtomicU64,
-    batch_state: Mutex<Option<BatchRequestState>>,
+    batch_state: OnceLock<BatchRequestState>,
     received_after_arrival_ns: AtomicU64,
     forwarded_host: Mutex<Option<String>>,
     publication_route: OnceLock<super::BatchRoute>,
@@ -219,14 +228,14 @@ impl BatchRequestProgress {
             arrived_at,
             request_id: AtomicU64::new(0),
             batch_selected_after_arrival_ns: AtomicU64::new(0),
-            batch_state: Mutex::new(None),
+            batch_state: OnceLock::new(),
             received_after_arrival_ns: AtomicU64::new(0),
             forwarded_host: Mutex::new(forwarded_host),
             publication_route: OnceLock::new(),
         }
     }
 
-    /// Returns the request ID assigned during batch selection.
+    /// Returns the request ID published immediately before batch send.
     pub fn request_id(&self) -> u64 {
         self.request_id.load(Ordering::Acquire)
     }
@@ -252,46 +261,39 @@ impl BatchRequestProgress {
         load_optional_duration(&self.batch_selected_after_arrival_ns)
     }
 
-    /// Returns the shared state of the selected batch, if assigned.
-    pub fn batch_state(&self) -> Option<BatchRequestState> {
-        self.batch_state
-            .lock()
-            .expect("batch progress state lock")
-            .clone()
+    /// Returns complete shared metadata once the batch is ready to send.
+    pub fn batch_state(&self) -> Option<&BatchRequestState> {
+        self.batch_state.get()
     }
 
     /// Records batch selection using a caller-supplied relative delay.
-    pub fn record_batch_selected(
-        &self,
-        request_id: u64,
-        selected_after_arrival: Duration,
-        batch_state: BatchRequestState,
-    ) {
-        self.request_id.store(request_id, Ordering::Release);
+    pub fn record_batch_selected(&self, selected_after_arrival: Duration) {
         self.batch_selected_after_arrival_ns.store(
             nonzero_duration_ns(selected_after_arrival),
             Ordering::Release,
         );
-        *self.batch_state.lock().expect("batch progress state lock") = Some(batch_state);
+    }
+
+    /// Publishes one entry's complete batch state before its in-flight ID.
+    pub fn publish_batch(&self, request_id: u64, batch_state: BatchRequestState) {
+        self.batch_state
+            .set(batch_state)
+            .expect("entry published only once");
+        self.request_id.store(request_id, Ordering::Release);
     }
 
     /// Records the delay from arrival until this entry's response arrived.
     pub fn record_received_after_arrival(&self, duration: Duration) {
-        self.received_after_arrival_ns
-            .store(nonzero_duration_ns(duration), Ordering::Release);
+        let _ = self.received_after_arrival_ns.compare_exchange(
+            0,
+            nonzero_duration_ns(duration),
+            Ordering::Release,
+            Ordering::Relaxed,
+        );
     }
 
-    pub(crate) fn record_batch_selected_at(
-        &self,
-        request_id: u64,
-        selected_at: Instant,
-        batch_state: BatchRequestState,
-    ) {
-        self.record_batch_selected(
-            request_id,
-            selected_at.saturating_duration_since(self.arrived_at),
-            batch_state,
-        );
+    pub(crate) fn record_batch_selected_at(&self, selected_at: Instant) {
+        self.record_batch_selected(selected_at.saturating_duration_since(self.arrived_at));
     }
 
     pub(crate) fn set_forwarded_host(&self, forwarded_host: String) {
@@ -435,7 +437,7 @@ impl BatchRequestProgress {
         request_id > 0
             && self
                 .batch_state()
-                .and_then(|state| state.stream_state())
+                .map(|state| state.stream_state())
                 .is_some_and(|state| state.max_response_request_id() >= request_id)
     }
 
@@ -444,25 +446,19 @@ impl BatchRequestProgress {
         let mut sent_ns = 0;
         let mut first_response_ns = 0;
         if let Some(state) = self.batch_state() {
-            let send_started_at = *state
+            let send_started_at = state.inner.send_started_at;
+            let send_start_ns =
+                nonzero_duration_ns(send_started_at.saturating_duration_since(self.arrived_at));
+            let sent_after_start = state.inner.sent_after_send_start_ns.load(Ordering::Acquire);
+            if sent_after_start > 0 {
+                sent_ns = send_start_ns.saturating_add(sent_after_start);
+            }
+            let first_response_after_start = state
                 .inner
-                .send_started_at
-                .lock()
-                .expect("batch send start lock");
-            if let Some(send_started_at) = send_started_at {
-                let send_start_ns =
-                    nonzero_duration_ns(send_started_at.saturating_duration_since(self.arrived_at));
-                let sent_after_start = state.inner.sent_after_send_start_ns.load(Ordering::Acquire);
-                if sent_after_start > 0 {
-                    sent_ns = send_start_ns.saturating_add(sent_after_start);
-                }
-                let first_response_after_start = state
-                    .inner
-                    .first_response_after_send_start_ns
-                    .load(Ordering::Acquire);
-                if first_response_after_start > 0 {
-                    first_response_ns = send_start_ns.saturating_add(first_response_after_start);
-                }
+                .first_response_after_send_start_ns
+                .load(Ordering::Acquire);
+            if first_response_after_start > 0 {
+                first_response_ns = send_start_ns.saturating_add(first_response_after_start);
             }
         }
         let received_ns = self.received_after_arrival_ns.load(Ordering::Acquire);

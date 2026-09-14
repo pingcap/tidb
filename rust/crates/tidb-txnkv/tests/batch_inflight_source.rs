@@ -20,8 +20,8 @@ use std::time::Duration;
 
 use tidb_txnkv::rpc::batch::{
     BatchCommandTag, BatchEntry, BatchEnvelopeKind, BatchInflightError, BatchInflightTable,
-    BatchPublishError, BatchRequestProgress, BatchRequestState, BatchRetirementReport, BatchRoute,
-    BatchScheduler, BatchWireError, BatchWireResponse, OpaqueBatchCommand, PendingBatchCommand,
+    BatchPublishError, BatchRequestProgress, BatchRetirementReport, BatchRoute, BatchScheduler,
+    BatchWireError, BatchWireResponse, OpaqueBatchCommand, PendingBatchCommand,
 };
 use tidb_txnkv::rpc::{
     completion_pair, CompletionPull, CompletionRunLoop, DirectUnaryClientError,
@@ -33,9 +33,7 @@ type Pull = CompletionPull<OpaqueBatchCommand, BatchInflightError>;
 fn pending(request_id: u64) -> (PendingBatchCommand, Pull, Arc<BatchRequestProgress>) {
     let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
     let progress = Arc::new(BatchRequestProgress::new(None));
-    let batch_state = BatchRequestState::default();
-    batch_state.set_batch_size(1);
-    progress.record_batch_selected(request_id, Duration::from_millis(1), batch_state);
+    progress.record_batch_selected(Duration::from_millis(1));
     (
         PendingBatchCommand::new(request_id, completion, Arc::clone(&progress)),
         pull,
@@ -156,9 +154,7 @@ fn pull_cancellation_retires_exact_published_route_before_late_response() {
         hook_observed.store(true, Ordering::Release);
     });
     let progress = Arc::new(BatchRequestProgress::new(None));
-    let batch_state = BatchRequestState::default();
-    batch_state.set_batch_size(1);
-    progress.record_batch_selected(31, Duration::from_millis(1), batch_state);
+    progress.record_batch_selected(Duration::from_millis(1));
     let request = PendingBatchCommand::new(31, completion, progress);
     BatchInflightTable::publish_shared(&inflight, route.clone(), vec![request]).unwrap();
     assert_eq!(inflight.lock().unwrap().route_len(&route), 1);
@@ -199,11 +195,7 @@ fn outdated_ids_still_advance_the_monotonic_stream_acknowledgement() {
         }
     );
     assert!(pull.try_complete().unwrap().unwrap().is_ok());
-    let stream_state = progress
-        .batch_state()
-        .unwrap()
-        .stream_state()
-        .expect("publish attaches the route stream state");
+    let stream_state = progress.batch_state().unwrap().stream_state();
     assert_eq!(stream_state.max_response_request_id(), 11);
 
     let _ = inflight.receive(&route, response(vec![8]));

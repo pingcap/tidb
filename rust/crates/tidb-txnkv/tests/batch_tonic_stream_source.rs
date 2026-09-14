@@ -400,6 +400,8 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
 
     let (first, mut first_pull) = entry(b"first", None);
     let (second, mut second_pull) = entry(b"second", None);
+    let first_progress = first.progress();
+    let second_progress = second.progress();
     let first_receipts = client
         .submit_batch_commands(&server.address, vec![first, second])
         .unwrap();
@@ -415,6 +417,27 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
         wait_for_completion(&mut second_pull).unwrap().body(),
         b"second"
     );
+    let batch_state = first_progress.batch_state().unwrap();
+    assert_eq!(batch_state.batch_size(), 2);
+    assert!(batch_state.shares_state_with(&second_progress.batch_state().unwrap()));
+    for progress in [&first_progress, &second_progress] {
+        use tidb_txnkv::rpc::batch::{BatchRequestOutcome, BatchRequestStage};
+        let stages = progress
+            .observations(BatchRequestOutcome::Ok, Duration::from_secs(1))
+            .into_iter()
+            .map(|observation| observation.stage)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            stages,
+            [
+                BatchRequestStage::BatchWait,
+                BatchRequestStage::SendWait,
+                BatchRequestStage::ReceiveWait,
+                BatchRequestStage::Done
+            ]
+        );
+        assert!(progress.format(Duration::from_secs(1)).contains(", ack:"));
+    }
 
     // The public vector API is subject to the same packet bound as commands
     // gathered across callers, including high-priority scheduler entries.

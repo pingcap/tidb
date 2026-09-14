@@ -692,7 +692,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn queued_submissions_share_a_batch_without_crossing_lifecycle_barriers() {
+    fn invalid_endpoints_fail_selected_entries_without_publishing_batch_state() {
         use crate::rpc::batch::{BatchCommandTag, OpaqueBatchCommand};
         use crate::rpc::{completion_pair, CompletionRunLoop};
 
@@ -744,26 +744,13 @@ mod tests {
         )))
         .unwrap();
 
-        // Selection happens before the deliberately invalid endpoint fails.
-        // All commands were queued before dispatch, so no timing assumptions
-        // determine whether the first two callers can be coalesced.
-        assert_eq!(progress[0].batch_state().unwrap().batch_size(), 2);
-        assert_eq!(progress[1].batch_state().unwrap().batch_size(), 2);
-        assert_eq!(progress[3].batch_state().unwrap().batch_size(), 1);
-        // Go owns collection per store. Work for the other address is not a
-        // barrier between entries 2 and 4; either one or two entries per batch
-        // is valid depending on the adaptive interval. The explicit Inspect
-        // above remains a publication barrier for entries 0/1 versus 2/4.
-        for index in [2, 4] {
-            let state = progress[index].batch_state().unwrap();
-            assert!(matches!(state.batch_size(), 1 | 2));
-            assert!(!state.shares_state_with(&progress[0].batch_state().unwrap()));
-            assert!(!state.shares_state_with(&progress[3].batch_state().unwrap()));
+        // Like client-go send(), stream initialization failure leaves only
+        // selection delay visible: no concrete stream or request ID is published.
+        for progress in progress {
+            assert!(progress.batch_selected_after_arrival().is_some());
+            assert_eq!(progress.request_id(), 0);
+            assert!(progress.batch_state().is_none());
         }
-        assert!(progress[0]
-            .batch_state()
-            .unwrap()
-            .shares_state_with(&progress[1].batch_state().unwrap()));
         for receipt in receipts {
             assert!(wait(receipt).unwrap().is_empty());
         }
