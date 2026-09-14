@@ -349,20 +349,23 @@ on ab.user_id = mp.user_id
 and ab.site_code = mp.site_code
 where ab.regpkgid = 1;
 id	task	access object	operator info
-HashJoin	root		left outer join, left side:HashJoin, equal:[eq(planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ch.channel_id) eq(Column, planner__core__join_reorder_through_projection.jt_ch.pay_kind)]
-├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.jt_ab.user_id, planner__core__join_reorder_through_projection.jt_mp.user_id) eq(planner__core__join_reorder_through_projection.jt_ab.site_code, planner__core__join_reorder_through_projection.jt_mp.site_code)]
-│ ├─TableReader(Build)	root		data:Selection
-│ │ └─Selection	cop[tikv]		eq(planner__core__join_reorder_through_projection.jt_ab.regpkgid, 1), not(isnull(planner__core__join_reorder_through_projection.jt_ab.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_ab.user_id))
-│ │   └─TableFullScan	cop[tikv]	table:ab	keep order:false
-│ └─Projection(Probe)	root		planner__core__join_reorder_through_projection.jt_mp.id, planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_mp.site_code, planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ms.note, mul(planner__core__join_reorder_through_projection.jt_mp.payline_id, 100)->Column
-│   └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__join_reorder_through_projection.jt_mp.ms_id, planner__core__join_reorder_through_projection.jt_ms.id)]
-│     ├─TableReader(Build)	root		data:TableFullScan
-│     │ └─TableFullScan	cop[tikv]	table:ms	keep order:false
-│     └─TableReader(Probe)	root		data:Selection
-│       └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_mp.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_mp.user_id))
-│         └─TableFullScan	cop[tikv]	table:mp	keep order:false
-└─IndexReader(Probe)	root		index:IndexFullScan
-  └─IndexFullScan	cop[tikv]	table:ch, index:channel_id(channel_id, pay_kind)	keep order:false
+IndexJoin	root		left outer join, inner:IndexReader, left side:IndexJoin, outer key:planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, Column, inner key:planner__core__join_reorder_through_projection.jt_ch.channel_id, planner__core__join_reorder_through_projection.jt_ch.pay_kind, equal cond:eq(Column, planner__core__join_reorder_through_projection.jt_ch.pay_kind), eq(planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ch.channel_id)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_mp.site_code, inner key:planner__core__join_reorder_through_projection.jt_ab.user_id, planner__core__join_reorder_through_projection.jt_ab.site_code, equal cond:eq(planner__core__join_reorder_through_projection.jt_mp.site_code, planner__core__join_reorder_through_projection.jt_ab.site_code), eq(planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_ab.user_id)
+│ ├─Projection(Build)	root		planner__core__join_reorder_through_projection.jt_mp.id, planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_mp.site_code, planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ms.note, mul(planner__core__join_reorder_through_projection.jt_mp.payline_id, 100)->Column
+│ │ └─IndexJoin	root		left outer join, inner:TableReader, left side:TableReader, outer key:planner__core__join_reorder_through_projection.jt_mp.ms_id, inner key:planner__core__join_reorder_through_projection.jt_ms.id, equal cond:eq(planner__core__join_reorder_through_projection.jt_mp.ms_id, planner__core__join_reorder_through_projection.jt_ms.id)
+│ │   ├─TableReader(Build)	root		data:Selection
+│ │   │ └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_mp.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_mp.user_id))
+│ │   │   └─TableFullScan	cop[tikv]	table:mp	keep order:false
+│ │   └─TableReader(Probe)	root		data:TableRangeScan
+│ │     └─TableRangeScan	cop[tikv]	table:ms	range: decided by [planner__core__join_reorder_through_projection.jt_mp.ms_id], keep order:false
+│ └─IndexLookUp(Probe)	root		
+│   ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_ab.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_ab.user_id))
+│   │ └─IndexRangeScan	cop[tikv]	table:ab, index:user_id(user_id, site_code)	range: decided by [eq(planner__core__join_reorder_through_projection.jt_ab.user_id, planner__core__join_reorder_through_projection.jt_mp.user_id) eq(planner__core__join_reorder_through_projection.jt_ab.site_code, planner__core__join_reorder_through_projection.jt_mp.site_code)], keep order:false
+│   └─Selection(Probe)	cop[tikv]		eq(planner__core__join_reorder_through_projection.jt_ab.regpkgid, 1)
+│     └─TableRowIDScan	cop[tikv]	table:ab	keep order:false
+└─IndexReader(Probe)	root		index:Selection
+  └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_ch.channel_id))
+    └─IndexRangeScan	cop[tikv]	table:ch, index:channel_id(channel_id, pay_kind)	range: decided by [eq(planner__core__join_reorder_through_projection.jt_ch.channel_id, planner__core__join_reorder_through_projection.jt_mp.pay_receive_id) eq(planner__core__join_reorder_through_projection.jt_ch.pay_kind, Column)], keep order:false
 set tidb_opt_join_reorder_through_proj = on;
 explain format = 'plan_tree' select /*+ leading(ab) */ mp.id, ms.note
 from jt_mp mp
@@ -376,20 +379,23 @@ on ab.user_id = mp.user_id
 and ab.site_code = mp.site_code
 where ab.regpkgid = 1;
 id	task	access object	operator info
-HashJoin	root		left outer join, left side:HashJoin, equal:[eq(planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ch.channel_id) eq(Column, planner__core__join_reorder_through_projection.jt_ch.pay_kind)]
-├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.jt_ab.user_id, planner__core__join_reorder_through_projection.jt_mp.user_id) eq(planner__core__join_reorder_through_projection.jt_ab.site_code, planner__core__join_reorder_through_projection.jt_mp.site_code)]
-│ ├─TableReader(Build)	root		data:Selection
-│ │ └─Selection	cop[tikv]		eq(planner__core__join_reorder_through_projection.jt_ab.regpkgid, 1), not(isnull(planner__core__join_reorder_through_projection.jt_ab.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_ab.user_id))
-│ │   └─TableFullScan	cop[tikv]	table:ab	keep order:false
-│ └─Projection(Probe)	root		planner__core__join_reorder_through_projection.jt_mp.id, planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_mp.site_code, planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ms.note, mul(planner__core__join_reorder_through_projection.jt_mp.payline_id, 100)->Column
-│   └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__join_reorder_through_projection.jt_mp.ms_id, planner__core__join_reorder_through_projection.jt_ms.id)]
-│     ├─TableReader(Build)	root		data:TableFullScan
-│     │ └─TableFullScan	cop[tikv]	table:ms	keep order:false
-│     └─TableReader(Probe)	root		data:Selection
-│       └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_mp.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_mp.user_id))
-│         └─TableFullScan	cop[tikv]	table:mp	keep order:false
-└─IndexReader(Probe)	root		index:IndexFullScan
-  └─IndexFullScan	cop[tikv]	table:ch, index:channel_id(channel_id, pay_kind)	keep order:false
+IndexJoin	root		left outer join, inner:IndexReader, left side:IndexJoin, outer key:planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, Column, inner key:planner__core__join_reorder_through_projection.jt_ch.channel_id, planner__core__join_reorder_through_projection.jt_ch.pay_kind, equal cond:eq(Column, planner__core__join_reorder_through_projection.jt_ch.pay_kind), eq(planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ch.channel_id)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_mp.site_code, inner key:planner__core__join_reorder_through_projection.jt_ab.user_id, planner__core__join_reorder_through_projection.jt_ab.site_code, equal cond:eq(planner__core__join_reorder_through_projection.jt_mp.site_code, planner__core__join_reorder_through_projection.jt_ab.site_code), eq(planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_ab.user_id)
+│ ├─Projection(Build)	root		planner__core__join_reorder_through_projection.jt_mp.id, planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_mp.site_code, planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ms.note, mul(planner__core__join_reorder_through_projection.jt_mp.payline_id, 100)->Column
+│ │ └─IndexJoin	root		left outer join, inner:TableReader, left side:TableReader, outer key:planner__core__join_reorder_through_projection.jt_mp.ms_id, inner key:planner__core__join_reorder_through_projection.jt_ms.id, equal cond:eq(planner__core__join_reorder_through_projection.jt_mp.ms_id, planner__core__join_reorder_through_projection.jt_ms.id)
+│ │   ├─TableReader(Build)	root		data:Selection
+│ │   │ └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_mp.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_mp.user_id))
+│ │   │   └─TableFullScan	cop[tikv]	table:mp	keep order:false
+│ │   └─TableReader(Probe)	root		data:TableRangeScan
+│ │     └─TableRangeScan	cop[tikv]	table:ms	range: decided by [planner__core__join_reorder_through_projection.jt_mp.ms_id], keep order:false
+│ └─IndexLookUp(Probe)	root		
+│   ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_ab.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_ab.user_id))
+│   │ └─IndexRangeScan	cop[tikv]	table:ab, index:user_id(user_id, site_code)	range: decided by [eq(planner__core__join_reorder_through_projection.jt_ab.user_id, planner__core__join_reorder_through_projection.jt_mp.user_id) eq(planner__core__join_reorder_through_projection.jt_ab.site_code, planner__core__join_reorder_through_projection.jt_mp.site_code)], keep order:false
+│   └─Selection(Probe)	cop[tikv]		eq(planner__core__join_reorder_through_projection.jt_ab.regpkgid, 1)
+│     └─TableRowIDScan	cop[tikv]	table:ab	keep order:false
+└─IndexReader(Probe)	root		index:Selection
+  └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_ch.channel_id))
+    └─IndexRangeScan	cop[tikv]	table:ch, index:channel_id(channel_id, pay_kind)	range: decided by [eq(planner__core__join_reorder_through_projection.jt_ch.channel_id, planner__core__join_reorder_through_projection.jt_mp.pay_receive_id) eq(planner__core__join_reorder_through_projection.jt_ch.pay_kind, Column)], keep order:false
 set tidb_opt_join_reorder_through_proj = on;
 set tidb_opt_join_reorder_threshold = 3;
 select count(*) from (
@@ -689,15 +695,15 @@ left join oj_t5 on dt.key_a = oj_t5.a and dt.doubled_b > 0 and dt.shifted_b > 15
 order by dt.key_a;
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder_through_projection.oj_t2.a, ifnull(planner__core__join_reorder_through_projection.oj_t5.b, -1)->Column
-└─MergeJoin	root		left outer join, left side:Projection, left key:planner__core__join_reorder_through_projection.oj_t2.a, right key:planner__core__join_reorder_through_projection.oj_t5.a, left cond:gt(Column, 0), gt(Column, 150)
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:oj_t5	keep order:true
-  └─Projection(Probe)	root		planner__core__join_reorder_through_projection.oj_t2.a, mul(planner__core__join_reorder_through_projection.oj_t2.b, 2)->Column, plus(planner__core__join_reorder_through_projection.oj_t3.b, 100)->Column
-    └─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.oj_t2.a, right key:planner__core__join_reorder_through_projection.oj_t3.a
-      ├─TableReader(Build)	root		data:TableFullScan
-      │ └─TableFullScan	cop[tikv]	table:oj_t3	keep order:true
-      └─TableReader(Probe)	root		data:TableFullScan
-        └─TableFullScan	cop[tikv]	table:oj_t2	keep order:true
+└─IndexJoin	root		left outer join, inner:TableReader, left side:Projection, outer key:planner__core__join_reorder_through_projection.oj_t2.a, inner key:planner__core__join_reorder_through_projection.oj_t5.a, equal cond:eq(planner__core__join_reorder_through_projection.oj_t2.a, planner__core__join_reorder_through_projection.oj_t5.a), left cond:gt(Column, 0), gt(Column, 150)
+  ├─Projection(Build)	root		planner__core__join_reorder_through_projection.oj_t2.a, mul(planner__core__join_reorder_through_projection.oj_t2.b, 2)->Column, plus(planner__core__join_reorder_through_projection.oj_t3.b, 100)->Column
+  │ └─IndexJoin	root		inner join, inner:TableReader, outer key:planner__core__join_reorder_through_projection.oj_t2.a, inner key:planner__core__join_reorder_through_projection.oj_t3.a, equal cond:eq(planner__core__join_reorder_through_projection.oj_t2.a, planner__core__join_reorder_through_projection.oj_t3.a)
+  │   ├─TableReader(Build)	root		data:TableFullScan
+  │   │ └─TableFullScan	cop[tikv]	table:oj_t2	keep order:true
+  │   └─TableReader(Probe)	root		data:TableRangeScan
+  │     └─TableRangeScan	cop[tikv]	table:oj_t3	range: decided by [planner__core__join_reorder_through_projection.oj_t2.a], keep order:false
+  └─TableReader(Probe)	root		data:TableRangeScan
+    └─TableRangeScan	cop[tikv]	table:oj_t5	range: decided by [planner__core__join_reorder_through_projection.oj_t2.a], keep order:false
 select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
 (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
 from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
@@ -722,15 +728,15 @@ left join oj_t5 on dt.key_a = oj_t5.a and dt.doubled_b > 0 and dt.shifted_b > 15
 order by dt.key_a;
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder_through_projection.oj_t2.a, ifnull(planner__core__join_reorder_through_projection.oj_t5.b, -1)->Column
-└─MergeJoin	root		left outer join, left side:Projection, left key:planner__core__join_reorder_through_projection.oj_t2.a, right key:planner__core__join_reorder_through_projection.oj_t5.a, left cond:gt(Column, 0), gt(Column, 150)
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:oj_t5	keep order:true
-  └─Projection(Probe)	root		planner__core__join_reorder_through_projection.oj_t2.a, mul(planner__core__join_reorder_through_projection.oj_t2.b, 2)->Column, plus(planner__core__join_reorder_through_projection.oj_t3.b, 100)->Column
-    └─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.oj_t2.a, right key:planner__core__join_reorder_through_projection.oj_t3.a
-      ├─TableReader(Build)	root		data:TableFullScan
-      │ └─TableFullScan	cop[tikv]	table:oj_t3	keep order:true
-      └─TableReader(Probe)	root		data:TableFullScan
-        └─TableFullScan	cop[tikv]	table:oj_t2	keep order:true
+└─IndexJoin	root		left outer join, inner:TableReader, left side:Projection, outer key:planner__core__join_reorder_through_projection.oj_t2.a, inner key:planner__core__join_reorder_through_projection.oj_t5.a, equal cond:eq(planner__core__join_reorder_through_projection.oj_t2.a, planner__core__join_reorder_through_projection.oj_t5.a), left cond:gt(Column, 0), gt(Column, 150)
+  ├─Projection(Build)	root		planner__core__join_reorder_through_projection.oj_t2.a, mul(planner__core__join_reorder_through_projection.oj_t2.b, 2)->Column, plus(planner__core__join_reorder_through_projection.oj_t3.b, 100)->Column
+  │ └─IndexJoin	root		inner join, inner:TableReader, outer key:planner__core__join_reorder_through_projection.oj_t2.a, inner key:planner__core__join_reorder_through_projection.oj_t3.a, equal cond:eq(planner__core__join_reorder_through_projection.oj_t2.a, planner__core__join_reorder_through_projection.oj_t3.a)
+  │   ├─TableReader(Build)	root		data:TableFullScan
+  │   │ └─TableFullScan	cop[tikv]	table:oj_t2	keep order:true
+  │   └─TableReader(Probe)	root		data:TableRangeScan
+  │     └─TableRangeScan	cop[tikv]	table:oj_t3	range: decided by [planner__core__join_reorder_through_projection.oj_t2.a], keep order:false
+  └─TableReader(Probe)	root		data:TableRangeScan
+    └─TableRangeScan	cop[tikv]	table:oj_t5	range: decided by [planner__core__join_reorder_through_projection.oj_t2.a], keep order:false
 select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
 (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
 from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
@@ -756,16 +762,16 @@ order by dt.key_a;
 id	task	access object	operator info
 Sort	root		planner__core__join_reorder_through_projection.oj_t2.a
 └─Projection	root		planner__core__join_reorder_through_projection.oj_t2.a, ifnull(planner__core__join_reorder_through_projection.oj_t5.b, -1)->Column
-  └─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.oj_t2.a, planner__core__join_reorder_through_projection.oj_t3.a)]
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:oj_t3	keep order:false
-    └─HashJoin(Probe)	root		left outer join, left side:Projection, equal:[eq(Column, planner__core__join_reorder_through_projection.oj_t5.b)]
-      ├─TableReader(Build)	root		data:Selection
-      │ └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.oj_t5.b))
-      │   └─TableFullScan	cop[tikv]	table:oj_t5	keep order:false
-      └─Projection(Probe)	root		planner__core__join_reorder_through_projection.oj_t2.a, mul(planner__core__join_reorder_through_projection.oj_t2.b, 2)->Column
-        └─TableReader	root		data:TableFullScan
-          └─TableFullScan	cop[tikv]	table:oj_t2	keep order:false
+  └─IndexJoin	root		inner join, inner:TableReader, outer key:planner__core__join_reorder_through_projection.oj_t2.a, inner key:planner__core__join_reorder_through_projection.oj_t3.a, equal cond:eq(planner__core__join_reorder_through_projection.oj_t2.a, planner__core__join_reorder_through_projection.oj_t3.a)
+    ├─HashJoin(Build)	root		left outer join, left side:Projection, equal:[eq(Column, planner__core__join_reorder_through_projection.oj_t5.b)]
+    │ ├─TableReader(Build)	root		data:Selection
+    │ │ └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.oj_t5.b))
+    │ │   └─TableFullScan	cop[tikv]	table:oj_t5	keep order:false
+    │ └─Projection(Probe)	root		planner__core__join_reorder_through_projection.oj_t2.a, mul(planner__core__join_reorder_through_projection.oj_t2.b, 2)->Column
+    │   └─TableReader	root		data:TableFullScan
+    │     └─TableFullScan	cop[tikv]	table:oj_t2	keep order:false
+    └─TableReader(Probe)	root		data:TableRangeScan
+      └─TableRangeScan	cop[tikv]	table:oj_t3	range: decided by [planner__core__join_reorder_through_projection.oj_t2.a], keep order:false
 select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
 (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b
 from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
@@ -799,11 +805,11 @@ on ne_t1.b = dt.coalesced_b;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.ne_t1.b, Column)]
 ├─Projection(Build)	root		planner__core__join_reorder_through_projection.ne_t2.a, coalesce(planner__core__join_reorder_through_projection.ne_t3.b, 0)->Column
-│ └─MergeJoin	root		left outer join, left side:TableReader, left key:planner__core__join_reorder_through_projection.ne_t2.a, right key:planner__core__join_reorder_through_projection.ne_t3.a
+│ └─IndexJoin	root		left outer join, inner:TableReader, left side:TableReader, outer key:planner__core__join_reorder_through_projection.ne_t2.a, inner key:planner__core__join_reorder_through_projection.ne_t3.a, equal cond:eq(planner__core__join_reorder_through_projection.ne_t2.a, planner__core__join_reorder_through_projection.ne_t3.a)
 │   ├─TableReader(Build)	root		data:TableFullScan
-│   │ └─TableFullScan	cop[tikv]	table:ne_t3	keep order:true
-│   └─TableReader(Probe)	root		data:TableFullScan
-│     └─TableFullScan	cop[tikv]	table:ne_t2	keep order:true
+│   │ └─TableFullScan	cop[tikv]	table:ne_t2	keep order:false
+│   └─TableReader(Probe)	root		data:TableRangeScan
+│     └─TableRangeScan	cop[tikv]	table:ne_t3	range: decided by [planner__core__join_reorder_through_projection.ne_t2.a], keep order:false
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.ne_t1.b))
     └─TableFullScan	cop[tikv]	table:ne_t1	keep order:false
@@ -824,11 +830,11 @@ on ne_t1.b = dt.coalesced_b;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.ne_t1.b, Column)]
 ├─Projection(Build)	root		planner__core__join_reorder_through_projection.ne_t2.a, coalesce(planner__core__join_reorder_through_projection.ne_t3.b, 0)->Column
-│ └─MergeJoin	root		left outer join, left side:TableReader, left key:planner__core__join_reorder_through_projection.ne_t2.a, right key:planner__core__join_reorder_through_projection.ne_t3.a
+│ └─IndexJoin	root		left outer join, inner:TableReader, left side:TableReader, outer key:planner__core__join_reorder_through_projection.ne_t2.a, inner key:planner__core__join_reorder_through_projection.ne_t3.a, equal cond:eq(planner__core__join_reorder_through_projection.ne_t2.a, planner__core__join_reorder_through_projection.ne_t3.a)
 │   ├─TableReader(Build)	root		data:TableFullScan
-│   │ └─TableFullScan	cop[tikv]	table:ne_t3	keep order:true
-│   └─TableReader(Probe)	root		data:TableFullScan
-│     └─TableFullScan	cop[tikv]	table:ne_t2	keep order:true
+│   │ └─TableFullScan	cop[tikv]	table:ne_t2	keep order:false
+│   └─TableReader(Probe)	root		data:TableRangeScan
+│     └─TableRangeScan	cop[tikv]	table:ne_t3	range: decided by [planner__core__join_reorder_through_projection.ne_t2.a], keep order:false
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.ne_t1.b))
     └─TableFullScan	cop[tikv]	table:ne_t1	keep order:false
@@ -1047,20 +1053,19 @@ join t4 on dt1.key_a = t4.a) dt2
 where outer_t.b = dt2.adjusted;
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder_through_projection.t1.a, planner__core__join_reorder_through_projection.t2.a, plus(mul(planner__core__join_reorder_through_projection.t2.b, 2), 10)->Column
-└─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t4.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
-  └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-    └─IndexHashJoin(Probe)	root		inner join, inner:IndexReader, outer key:Column, inner key:planner__core__join_reorder_through_projection.t1.b, equal cond:eq(Column, planner__core__join_reorder_through_projection.t1.b)
+└─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t4.a)]
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t4, index:b(b)	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t3.a)]
+    ├─IndexReader(Build)	root		index:IndexFullScan
+    │ └─IndexFullScan	cop[tikv]	table:t3, index:b(b)	keep order:false, stats:pseudo
+    └─HashJoin(Probe)	root		inner join, equal:[eq(Column, planner__core__join_reorder_through_projection.t1.b)]
       ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t2.b, plus(mul(planner__core__join_reorder_through_projection.t2.b, 2), 10)->Column
-      │ └─TableReader	root		data:Selection
+      │ └─IndexReader	root		index:Selection
       │   └─Selection	cop[tikv]		not(isnull(plus(mul(planner__core__join_reorder_through_projection.t2.b, 2), 10)))
-      │     └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-      └─IndexReader(Probe)	root		index:Selection
-        └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
-          └─IndexRangeScan	cop[tikv]	table:outer_t, index:b(b)	range: decided by [eq(planner__core__join_reorder_through_projection.t1.b, Column)], keep order:false, stats:pseudo
+      │     └─IndexFullScan	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
+      └─IndexReader(Probe)	root		index:IndexFullScan
+        └─IndexFullScan	cop[tikv]	table:outer_t, index:b(b)	keep order:false, stats:pseudo
 select outer_t.a, dt2.* from t1 outer_t,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1140,16 +1145,16 @@ explain format = 'plan_tree' select s.*, dt.* from expr_small s,
 (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
 where s.a = dt.expr_key;
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.expr_small.a, Column)]
-├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:s	keep order:false
-└─Projection(Probe)	root		planner__core__join_reorder_through_projection.expr_medium.a, plus(planner__core__join_reorder_through_projection.expr_medium.b, 1)->Column, planner__core__join_reorder_through_projection.expr_large.b
-  └─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.expr_medium.a, right key:planner__core__join_reorder_through_projection.expr_large.a
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:l	keep order:true
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(plus(planner__core__join_reorder_through_projection.expr_medium.b, 1)))
-        └─TableFullScan	cop[tikv]	table:m	keep order:true
+IndexJoin	root		inner join, inner:TableReader, outer key:Column, inner key:planner__core__join_reorder_through_projection.expr_small.a, equal cond:eq(Column, planner__core__join_reorder_through_projection.expr_small.a)
+├─Projection(Build)	root		planner__core__join_reorder_through_projection.expr_medium.a, plus(planner__core__join_reorder_through_projection.expr_medium.b, 1)->Column, planner__core__join_reorder_through_projection.expr_large.b
+│ └─IndexJoin	root		inner join, inner:TableReader, outer key:planner__core__join_reorder_through_projection.expr_medium.a, inner key:planner__core__join_reorder_through_projection.expr_large.a, equal cond:eq(planner__core__join_reorder_through_projection.expr_medium.a, planner__core__join_reorder_through_projection.expr_large.a)
+│   ├─TableReader(Build)	root		data:Selection
+│   │ └─Selection	cop[tikv]		not(isnull(plus(planner__core__join_reorder_through_projection.expr_medium.b, 1)))
+│   │   └─TableFullScan	cop[tikv]	table:m	keep order:false
+│   └─TableReader(Probe)	root		data:TableRangeScan
+│     └─TableRangeScan	cop[tikv]	table:l	range: decided by [planner__core__join_reorder_through_projection.expr_medium.a], keep order:false
+└─TableReader(Probe)	root		data:TableRangeScan
+  └─TableRangeScan	cop[tikv]	table:s	range: decided by [Column], keep order:false
 select s.*, dt.* from expr_small s,
 (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
 where s.a = dt.expr_key
@@ -1163,16 +1168,16 @@ explain format = 'plan_tree' select s.*, dt.* from expr_small s,
 where s.a = dt.expr_key;
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder_through_projection.expr_small.a, planner__core__join_reorder_through_projection.expr_small.b, planner__core__join_reorder_through_projection.expr_medium.a, plus(planner__core__join_reorder_through_projection.expr_medium.b, 1)->Column, planner__core__join_reorder_through_projection.expr_large.b
-└─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.expr_medium.a, right key:planner__core__join_reorder_through_projection.expr_large.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:l	keep order:true
-  └─IndexJoin(Probe)	root		inner join, inner:TableReader, outer key:Column, inner key:planner__core__join_reorder_through_projection.expr_small.a, equal cond:eq(Column, planner__core__join_reorder_through_projection.expr_small.a)
-    ├─Projection(Build)	root		planner__core__join_reorder_through_projection.expr_medium.a, planner__core__join_reorder_through_projection.expr_medium.b, plus(planner__core__join_reorder_through_projection.expr_medium.b, 1)->Column
-    │ └─TableReader	root		data:Selection
-    │   └─Selection	cop[tikv]		not(isnull(plus(planner__core__join_reorder_through_projection.expr_medium.b, 1)))
-    │     └─TableFullScan	cop[tikv]	table:m	keep order:true
-    └─TableReader(Probe)	root		data:TableRangeScan
-      └─TableRangeScan	cop[tikv]	table:s	range: decided by [Column], keep order:false
+└─IndexJoin	root		inner join, inner:TableReader, outer key:planner__core__join_reorder_through_projection.expr_medium.a, inner key:planner__core__join_reorder_through_projection.expr_large.a, equal cond:eq(planner__core__join_reorder_through_projection.expr_medium.a, planner__core__join_reorder_through_projection.expr_large.a)
+  ├─IndexJoin(Build)	root		inner join, inner:TableReader, outer key:Column, inner key:planner__core__join_reorder_through_projection.expr_small.a, equal cond:eq(Column, planner__core__join_reorder_through_projection.expr_small.a)
+  │ ├─Projection(Build)	root		planner__core__join_reorder_through_projection.expr_medium.a, planner__core__join_reorder_through_projection.expr_medium.b, plus(planner__core__join_reorder_through_projection.expr_medium.b, 1)->Column
+  │ │ └─TableReader	root		data:Selection
+  │ │   └─Selection	cop[tikv]		not(isnull(plus(planner__core__join_reorder_through_projection.expr_medium.b, 1)))
+  │ │     └─TableFullScan	cop[tikv]	table:m	keep order:false
+  │ └─TableReader(Probe)	root		data:TableRangeScan
+  │   └─TableRangeScan	cop[tikv]	table:s	range: decided by [Column], keep order:false
+  └─TableReader(Probe)	root		data:TableRangeScan
+    └─TableRangeScan	cop[tikv]	table:l	range: decided by [planner__core__join_reorder_through_projection.expr_medium.a], keep order:false
 select s.*, dt.* from expr_small s,
 (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
 where s.a = dt.expr_key
@@ -1196,17 +1201,17 @@ explain format = 'plan_tree' select s.*, dt.* from t_int_small s,
 from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
 where s.a = dt.key_a;
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t_int_small.a, planner__core__join_reorder_through_projection.t_int_large.a)]
+IndexHashJoin	root		inner join, inner:Projection, outer key:planner__core__join_reorder_through_projection.t_int_small.a, inner key:planner__core__join_reorder_through_projection.t_int_large.a, equal cond:eq(planner__core__join_reorder_through_projection.t_int_small.a, planner__core__join_reorder_through_projection.t_int_large.a)
 ├─TableReader(Build)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:s	keep order:false
 └─Projection(Probe)	root		planner__core__join_reorder_through_projection.t_int_large.a, mul(planner__core__join_reorder_through_projection.t_int_large.b, 2)->Column, planner__core__join_reorder_through_projection.t_double_medium.b
   └─Projection	root		planner__core__join_reorder_through_projection.t_int_large.a, planner__core__join_reorder_through_projection.t_int_large.b, planner__core__join_reorder_through_projection.t_double_medium.b
     └─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t_double_medium.a, Column)]
-      ├─TableReader(Build)	root		data:TableFullScan
-      │ └─TableFullScan	cop[tikv]	table:m	keep order:false
-      └─Projection(Probe)	root		planner__core__join_reorder_through_projection.t_int_large.a, planner__core__join_reorder_through_projection.t_int_large.b, cast(planner__core__join_reorder_through_projection.t_int_large.a, double BINARY)->Column
-        └─TableReader	root		data:TableFullScan
-          └─TableFullScan	cop[tikv]	table:l	keep order:false
+      ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t_int_large.a, planner__core__join_reorder_through_projection.t_int_large.b, cast(planner__core__join_reorder_through_projection.t_int_large.a, double BINARY)->Column
+      │ └─TableReader	root		data:TableRangeScan
+      │   └─TableRangeScan	cop[tikv]	table:l	range: decided by [planner__core__join_reorder_through_projection.t_int_small.a], keep order:false
+      └─TableReader(Probe)	root		data:TableFullScan
+        └─TableFullScan	cop[tikv]	table:m	keep order:false
 select s.*, dt.* from t_int_small s,
 (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb
 from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
@@ -1222,15 +1227,16 @@ from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
 where s.a = dt.key_a;
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder_through_projection.t_int_small.a, planner__core__join_reorder_through_projection.t_int_small.b, planner__core__join_reorder_through_projection.t_int_large.a, mul(planner__core__join_reorder_through_projection.t_int_large.b, 2)->Column, planner__core__join_reorder_through_projection.t_double_medium.b
-└─HashJoin	root		inner join, equal:[eq(Column, planner__core__join_reorder_through_projection.t_double_medium.a)]
-  ├─MergeJoin(Build)	root		inner join, left key:planner__core__join_reorder_through_projection.t_int_small.a, right key:planner__core__join_reorder_through_projection.t_int_large.a
-  │ ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t_int_large.a, planner__core__join_reorder_through_projection.t_int_large.b, cast(planner__core__join_reorder_through_projection.t_int_large.a, double BINARY)->Column
-  │ │ └─TableReader	root		data:TableFullScan
-  │ │   └─TableFullScan	cop[tikv]	table:l	keep order:true
-  │ └─TableReader(Probe)	root		data:TableFullScan
-  │   └─TableFullScan	cop[tikv]	table:s	keep order:true
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:m	keep order:false
+└─IndexJoin	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__join_reorder_through_projection.t_double_medium.a, equal cond:eq(Column, planner__core__join_reorder_through_projection.t_double_medium.a)
+  ├─IndexJoin(Build)	root		inner join, inner:Projection, outer key:planner__core__join_reorder_through_projection.t_int_small.a, inner key:planner__core__join_reorder_through_projection.t_int_large.a, equal cond:eq(planner__core__join_reorder_through_projection.t_int_small.a, planner__core__join_reorder_through_projection.t_int_large.a)
+  │ ├─TableReader(Build)	root		data:TableFullScan
+  │ │ └─TableFullScan	cop[tikv]	table:s	keep order:false
+  │ └─Projection(Probe)	root		planner__core__join_reorder_through_projection.t_int_large.a, planner__core__join_reorder_through_projection.t_int_large.b, cast(planner__core__join_reorder_through_projection.t_int_large.a, double BINARY)->Column
+  │   └─TableReader	root		data:TableRangeScan
+  │     └─TableRangeScan	cop[tikv]	table:l	range: decided by [planner__core__join_reorder_through_projection.t_int_small.a], keep order:false
+  └─IndexLookUp(Probe)	root		
+    ├─IndexRangeScan(Build)	cop[tikv]	table:m, index:a(a)	range: decided by [eq(planner__core__join_reorder_through_projection.t_double_medium.a, Column)], keep order:false
+    └─TableRowIDScan(Probe)	cop[tikv]	table:m	keep order:false
 select s.*, dt.* from t_int_small s,
 (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb
 from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
@@ -1320,20 +1326,19 @@ explain format = 'plan_tree' select t1.a, dt.key_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
 id	task	access object	operator info
-MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t5.a
-├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:t5	keep order:true, stats:pseudo
-└─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-  └─IndexHashJoin(Probe)	root		inner join, inner:IndexReader, outer key:Column, inner key:planner__core__join_reorder_through_projection.t1.b, equal cond:eq(Column, planner__core__join_reorder_through_projection.t1.b)
+HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t5.a)]
+├─IndexReader(Build)	root		index:IndexFullScan
+│ └─IndexFullScan	cop[tikv]	table:t5, index:b(b)	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t3.a)]
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t3, index:b(b)	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t1.b, Column)]
     ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column
-    │ └─TableReader	root		data:Selection
+    │ └─IndexReader	root		index:Selection
     │   └─Selection	cop[tikv]		not(isnull(mul(planner__core__join_reorder_through_projection.t2.b, 2)))
-    │     └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-    └─IndexReader(Probe)	root		index:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
-        └─IndexRangeScan	cop[tikv]	table:t1, index:b(b)	range: decided by [eq(planner__core__join_reorder_through_projection.t1.b, Column)], keep order:false, stats:pseudo
+    │     └─IndexFullScan	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
+    └─IndexReader(Probe)	root		index:IndexFullScan
+      └─IndexFullScan	cop[tikv]	table:t1, index:b(b)	keep order:false, stats:pseudo
 select t1.a, dt.key_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a
@@ -1370,22 +1375,20 @@ explain format = 'plan_tree' select t1.a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
 id	task	access object	operator info
-MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t5.a
-├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:t5	keep order:true, stats:pseudo
-└─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-  └─IndexHashJoin(Probe)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__join_reorder_through_projection.t1.b, equal cond:eq(Column, planner__core__join_reorder_through_projection.t1.b), eq(Column, planner__core__join_reorder_through_projection.t1.c)
-    ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column, upper(planner__core__join_reorder_through_projection.t2.c)->Column
-    │ └─TableReader	root		data:Selection
-    │   └─Selection	cop[tikv]		not(isnull(mul(planner__core__join_reorder_through_projection.t2.b, 2))), not(isnull(upper(planner__core__join_reorder_through_projection.t2.c)))
-    │     └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-    └─IndexLookUp(Probe)	root		
-      ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
-      │ └─IndexRangeScan	cop[tikv]	table:t1, index:b(b)	range: decided by [eq(planner__core__join_reorder_through_projection.t1.b, Column)], keep order:false, stats:pseudo
-      └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.c))
-        └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t5.a)]
+├─IndexReader(Build)	root		index:IndexFullScan
+│ └─IndexFullScan	cop[tikv]	table:t5, index:b(b)	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t3.a)]
+  ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t1.b, Column) eq(planner__core__join_reorder_through_projection.t1.c, Column)]
+  │ ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column, upper(planner__core__join_reorder_through_projection.t2.c)->Column
+  │ │ └─TableReader	root		data:Selection
+  │ │   └─Selection	cop[tikv]		not(isnull(mul(planner__core__join_reorder_through_projection.t2.b, 2))), not(isnull(upper(planner__core__join_reorder_through_projection.t2.c)))
+  │ │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b)), not(isnull(planner__core__join_reorder_through_projection.t1.c))
+  │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	root		index:IndexFullScan
+    └─IndexFullScan	cop[tikv]	table:t3, index:b(b)	keep order:false, stats:pseudo
 select t1.a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a
@@ -1479,23 +1482,22 @@ explain format = 'plan_tree' select t1.a, dt2.key_a from t1, t5,
 join t4 on dt1.key_a = t4.a) dt2
 where t1.b = dt2.adjusted and dt2.key_a = t5.a;
 id	task	access object	operator info
-MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t5.a
-├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:t5	keep order:true, stats:pseudo
-└─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t4.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
-  └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-    └─IndexHashJoin(Probe)	root		inner join, inner:IndexReader, outer key:Column, inner key:planner__core__join_reorder_through_projection.t1.b, equal cond:eq(Column, planner__core__join_reorder_through_projection.t1.b)
+HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t5.a)]
+├─IndexReader(Build)	root		index:IndexFullScan
+│ └─IndexFullScan	cop[tikv]	table:t5, index:b(b)	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t4.a)]
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t4, index:b(b)	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t3.a)]
+    ├─IndexReader(Build)	root		index:IndexFullScan
+    │ └─IndexFullScan	cop[tikv]	table:t3, index:b(b)	keep order:false, stats:pseudo
+    └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t1.b, Column)]
       ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, plus(mul(planner__core__join_reorder_through_projection.t2.b, 2), 10)->Column
-      │ └─TableReader	root		data:Selection
+      │ └─IndexReader	root		index:Selection
       │   └─Selection	cop[tikv]		not(isnull(plus(mul(planner__core__join_reorder_through_projection.t2.b, 2), 10)))
-      │     └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-      └─IndexReader(Probe)	root		index:Selection
-        └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
-          └─IndexRangeScan	cop[tikv]	table:t1, index:b(b)	range: decided by [eq(planner__core__join_reorder_through_projection.t1.b, Column)], keep order:false, stats:pseudo
+      │     └─IndexFullScan	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
+      └─IndexReader(Probe)	root		index:IndexFullScan
+        └─IndexFullScan	cop[tikv]	table:t1, index:b(b)	keep order:false, stats:pseudo
 select t1.a, dt2.key_a from t1, t5,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1651,19 +1653,17 @@ from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c;
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder_through_projection.t1.a, planner__core__join_reorder_through_projection.t1.b, planner__core__join_reorder_through_projection.t1.c, planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column, upper(planner__core__join_reorder_through_projection.t2.c)->Column
-└─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-  └─IndexHashJoin(Probe)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__join_reorder_through_projection.t1.b, equal cond:eq(Column, planner__core__join_reorder_through_projection.t1.b), eq(Column, planner__core__join_reorder_through_projection.t1.c)
+└─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t3.a)]
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t3, index:b(b)	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(Column, planner__core__join_reorder_through_projection.t1.b) eq(Column, planner__core__join_reorder_through_projection.t1.c)]
     ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t2.b, planner__core__join_reorder_through_projection.t2.c, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column, upper(planner__core__join_reorder_through_projection.t2.c)->Column
     │ └─TableReader	root		data:Selection
     │   └─Selection	cop[tikv]		not(isnull(mul(planner__core__join_reorder_through_projection.t2.b, 2))), not(isnull(upper(planner__core__join_reorder_through_projection.t2.c)))
-    │     └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-    └─IndexLookUp(Probe)	root		
-      ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
-      │ └─IndexRangeScan	cop[tikv]	table:t1, index:b(b)	range: decided by [eq(planner__core__join_reorder_through_projection.t1.b, Column)], keep order:false, stats:pseudo
-      └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.c))
-        └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b)), not(isnull(planner__core__join_reorder_through_projection.t1.c))
+        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select t1.*, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c
 from t2 join t3 on t2.a = t3.a) dt
@@ -1704,21 +1704,20 @@ where t1.b = dt.doubled_b and dt.key_a = t5.a;
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder_through_projection.t1.a, planner__core__join_reorder_through_projection.t1.b, planner__core__join_reorder_through_projection.t1.c, planner__core__join_reorder_through_projection.t2.a, Column, planner__core__join_reorder_through_projection.t5.a
 └─Projection	root		planner__core__join_reorder_through_projection.t1.a, planner__core__join_reorder_through_projection.t1.b, planner__core__join_reorder_through_projection.t1.c, planner__core__join_reorder_through_projection.t5.a, planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column
-  └─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-    └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t5.a
-      ├─TableReader(Build)	root		data:TableFullScan
-      │ └─TableFullScan	cop[tikv]	table:t5	keep order:true, stats:pseudo
-      └─IndexHashJoin(Probe)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__join_reorder_through_projection.t1.b, equal cond:eq(Column, planner__core__join_reorder_through_projection.t1.b)
+  └─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t3.a)]
+    ├─IndexReader(Build)	root		index:IndexFullScan
+    │ └─IndexFullScan	cop[tikv]	table:t3, index:b(b)	keep order:false, stats:pseudo
+    └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t5.a)]
+      ├─IndexReader(Build)	root		index:IndexFullScan
+      │ └─IndexFullScan	cop[tikv]	table:t5, index:b(b)	keep order:false, stats:pseudo
+      └─HashJoin(Probe)	root		inner join, equal:[eq(Column, planner__core__join_reorder_through_projection.t1.b)]
         ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t2.b, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column
-        │ └─TableReader	root		data:Selection
+        │ └─IndexReader	root		index:Selection
         │   └─Selection	cop[tikv]		not(isnull(mul(planner__core__join_reorder_through_projection.t2.b, 2)))
-        │     └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-        └─IndexLookUp(Probe)	root		
-          ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
-          │ └─IndexRangeScan	cop[tikv]	table:t1, index:b(b)	range: decided by [eq(planner__core__join_reorder_through_projection.t1.b, Column)], keep order:false, stats:pseudo
-          └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
+        │     └─IndexFullScan	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
+        └─TableReader(Probe)	root		data:Selection
+          └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
+            └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select t1.*, dt.*, t5.a as t5_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a
@@ -1762,21 +1761,20 @@ join t4 on dt1.key_a = t4.a) dt2
 where t1.b = dt2.adjusted;
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder_through_projection.t1.a, planner__core__join_reorder_through_projection.t1.b, planner__core__join_reorder_through_projection.t1.c, planner__core__join_reorder_through_projection.t2.a, plus(mul(planner__core__join_reorder_through_projection.t2.b, 2), 10)->Column
-└─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t4.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
-  └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-    └─IndexHashJoin(Probe)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__join_reorder_through_projection.t1.b, equal cond:eq(Column, planner__core__join_reorder_through_projection.t1.b)
+└─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t4.a)]
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t4, index:b(b)	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t3.a)]
+    ├─IndexReader(Build)	root		index:IndexFullScan
+    │ └─IndexFullScan	cop[tikv]	table:t3, index:b(b)	keep order:false, stats:pseudo
+    └─HashJoin(Probe)	root		inner join, equal:[eq(Column, planner__core__join_reorder_through_projection.t1.b)]
       ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t2.b, plus(mul(planner__core__join_reorder_through_projection.t2.b, 2), 10)->Column
-      │ └─TableReader	root		data:Selection
+      │ └─IndexReader	root		index:Selection
       │   └─Selection	cop[tikv]		not(isnull(plus(mul(planner__core__join_reorder_through_projection.t2.b, 2), 10)))
-      │     └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-      └─IndexLookUp(Probe)	root		
-        ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
-        │ └─IndexRangeScan	cop[tikv]	table:t1, index:b(b)	range: decided by [eq(planner__core__join_reorder_through_projection.t1.b, Column)], keep order:false, stats:pseudo
-        └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      │     └─IndexFullScan	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
+      └─TableReader(Probe)	root		data:Selection
+        └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
+          └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select t1.*, dt2.* from t1,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1

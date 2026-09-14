@@ -268,11 +268,11 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain format='plan_tree' select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
 id	task	access object	operator info
-MergeJoin	root		inner join, left key:planner__core__casetest__index__index.t.a, right key:planner__core__casetest__index__index.t.a
+IndexJoin	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)
 ├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:t2	keep order:true
-└─TableReader(Probe)	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t1	keep order:true
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false
+└─TableReader(Probe)	root		data:TableRangeScan
+  └─TableRangeScan	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)], keep order:false
 select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
 a	b	c	d	a	b	c	d
 1	111	1.1000000000	11	1	111	1.1000000000	11
@@ -319,12 +319,14 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain format='plan_tree' select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
 id	task	access object	operator info
-HashJoin	root		left outer join, left side:Projection, equal:[eq(Column, planner__core__casetest__index__index.t.c)]
+IndexHashJoin	root		left outer join, inner:Projection, left side:Projection, outer key:Column, inner key:planner__core__casetest__index__index.t.c, equal cond:eq(Column, planner__core__casetest__index__index.t.c)
 ├─Projection(Build)	root		cast(planner__core__casetest__index__index.t.a, decimal(10,0) BINARY)->Column
 │ └─IndexReader	root		index:IndexFullScan
 │   └─IndexFullScan	cop[tikv]	table:t1, index:c(c)	keep order:false
-└─TableReader(Probe)	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t2	keep order:false
+└─Projection(Probe)	root		planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.d
+  └─IndexLookUp	root		
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:c(c)	range: decided by [eq(planner__core__casetest__index__index.t.c, Column)], keep order:false
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false
 select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
 a	c	d
 NULL	NULL	NULL
@@ -764,7 +766,7 @@ a	b	c	d
 set tidb_enable_clustered_index=default;
 drop table if exists t;
 create table t(pk varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, fpi json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `fpi` ((cast(`fpi` as unsigned array))));
-explain format='plan_tree' SELECT pk FROM  t WHERE   "B2c32" member of (domains)   OR "2eoqyp6399" member of (image_signatures)   OR "E33EAdAc2Bee.com/s/link" member of (canonical_links)   OR json_contains(fpi, '[69236881]') LIMIT   10;
+explain format='plan_tree' SELECT /*+ use_index_merge(t, domains, image_signatures, canonical_links, fpi) */ pk FROM  t WHERE   "B2c32" member of (domains)   OR "2eoqyp6399" member of (image_signatures)   OR "E33EAdAc2Bee.com/s/link" member of (canonical_links)   OR json_contains(fpi, '[69236881]') LIMIT   10;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__index__index.t.pk
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:10)

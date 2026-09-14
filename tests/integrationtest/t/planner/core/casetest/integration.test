@@ -539,8 +539,8 @@ explain format='plan_tree' select * from pt partition (p0) where c > 8;
 explain format='plan_tree' select c from pt partition (p0, p2) where c > 8;
 explain format='plan_tree' select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5;
 --echo ## Index Merge
-explain format='plan_tree' select * from pt where id = 4 or c < 7;
-explain format='plan_tree' select * from pt where id > 4 or c = 7;
+explain format='plan_tree' select /*+ use_index_merge(pt, i_id, i_c) */ * from pt where id = 4 or c < 7;
+explain format='plan_tree' select /*+ use_index_merge(pt, i_id, i_c) */ * from pt where id > 4 or c = 7;
 set tidb_opt_fix_control=default;
 set @@tidb_enable_index_merge = default;
 

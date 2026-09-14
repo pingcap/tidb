@@ -25,11 +25,11 @@ set tidb_enable_index_merge=on;
 drop table if exists t;
 create table t(a int, b int, index idx_a(a), index idx_b(b));
 set @@session.sql_select_limit=3;
-explain format = 'plan_tree' select * from t where a = 1 or b = 1;
+explain format = 'plan_tree' select /*+ use_index_merge(t, idx_a, idx_b) */ * from t where a = 1 or b = 1;
 explain format = 'plan_tree' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;
 set @@session.sql_select_limit=18446744073709551615;
-explain format = 'plan_tree' select * from t where a = 1 or b = 1;
-explain format = 'plan_tree' select * from t where a = 1 or b = 1 limit 3;
+explain format = 'plan_tree' select /*+ use_index_merge(t, idx_a, idx_b) */ * from t where a = 1 or b = 1;
+explain format = 'plan_tree' select /*+ use_index_merge(t, idx_a, idx_b) */ * from t where a = 1 or b = 1 limit 3;
 
 # TestIssue44051
 drop table if exists t1, t2;

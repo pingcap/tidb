@@ -365,13 +365,13 @@ Projection	root		Column
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false
   └─StreamAgg(Probe)	root		funcs:count(1)->Column
-    └─MergeJoin	root		inner join, left key:explain_easy.t.a, right key:explain_easy.t.a
-      ├─TableReader(Build)	root		data:Selection
+    └─IndexJoin	root		inner join, inner:TableReader, outer key:explain_easy.t.a, inner key:explain_easy.t.a, equal cond:eq(explain_easy.t.a, explain_easy.t.a)
+      ├─IndexReader(Build)	root		index:Selection
       │ └─Selection	cop[tikv]		eq(explain_easy.t.a, 3)
-      │   └─TableFullScan	cop[tikv]	table:t1	keep order:true
-      └─IndexReader(Probe)	root		index:Selection
+      │   └─IndexRangeScan	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:false
+      └─TableReader(Probe)	root		data:Selection
         └─Selection	cop[tikv]		eq(explain_easy.t.a, 3)
-          └─IndexRangeScan	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:true
+          └─TableRangeScan	cop[tikv]	table:t1	range: decided by [explain_easy.t.a], keep order:false
 explain format = 'plan_tree' select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	task	access object	operator info
 Projection	root		Column

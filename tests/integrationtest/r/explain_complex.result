@@ -120,24 +120,26 @@ Projection	root		explain_complex.st.id, explain_complex.dd.id, explain_complex.s
 └─Limit	root		offset:0, count:2500
   └─HashAgg	root		group by:explain_complex.dd.dic, explain_complex.st.aid, funcs:firstrow(explain_complex.st.id)->explain_complex.st.id, funcs:firstrow(explain_complex.st.aid)->explain_complex.st.aid, funcs:firstrow(explain_complex.st.cm)->explain_complex.st.cm, funcs:firstrow(explain_complex.st.p1)->explain_complex.st.p1, funcs:firstrow(explain_complex.st.p2)->explain_complex.st.p2, funcs:firstrow(explain_complex.st.p3)->explain_complex.st.p3, funcs:firstrow(explain_complex.st.p4)->explain_complex.st.p4, funcs:firstrow(explain_complex.st.p5)->explain_complex.st.p5, funcs:firstrow(explain_complex.st.p6_md5)->explain_complex.st.p6_md5, funcs:firstrow(explain_complex.st.p7_md5)->explain_complex.st.p7_md5, funcs:firstrow(explain_complex.st.ext)->explain_complex.st.ext, funcs:firstrow(explain_complex.st.t)->explain_complex.st.t, funcs:firstrow(explain_complex.dd.id)->explain_complex.dd.id, funcs:firstrow(explain_complex.dd.dic)->explain_complex.dd.dic, funcs:firstrow(explain_complex.dd.ip)->explain_complex.dd.ip, funcs:firstrow(explain_complex.dd.t)->explain_complex.dd.t
     └─Projection	root		explain_complex.st.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext, explain_complex.st.t, explain_complex.dd.id, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t
-      └─HashJoin	root		inner join, equal:[eq(explain_complex.dd.aid, explain_complex.st.aid) eq(explain_complex.dd.ip, explain_complex.st.ip)], other cond:gt(explain_complex.dd.t, explain_complex.st.t)
+      └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:explain_complex.st.aid, inner key:explain_complex.dd.aid, equal cond:eq(explain_complex.st.aid, explain_complex.dd.aid), eq(explain_complex.st.ip, explain_complex.dd.ip), other cond:gt(explain_complex.dd.t, explain_complex.st.t)
         ├─TableReader(Build)	root		data:Selection
-        │ └─Selection	cop[tikv]		eq(explain_complex.dd.bm, 0), eq(explain_complex.dd.pt, "android"), gt(explain_complex.dd.t, 1478143908), not(isnull(explain_complex.dd.ip)), not(isnull(explain_complex.dd.t))
-        │   └─TableFullScan	cop[tikv]	table:dd	keep order:false, stats:pseudo
-        └─TableReader(Probe)	root		data:Selection
-          └─Selection	cop[tikv]		eq(explain_complex.st.pt, "android"), gt(explain_complex.st.t, 1478143908), not(isnull(explain_complex.st.ip))
-            └─TableFullScan	cop[tikv]	table:gad	keep order:false, stats:pseudo
+        │ └─Selection	cop[tikv]		eq(explain_complex.st.pt, "android"), gt(explain_complex.st.t, 1478143908), not(isnull(explain_complex.st.ip))
+        │   └─TableFullScan	cop[tikv]	table:gad	keep order:false, stats:pseudo
+        └─IndexLookUp(Probe)	root		
+          ├─IndexRangeScan(Build)	cop[tikv]	table:dd, index:aid(aid, dic)	range: decided by [eq(explain_complex.dd.aid, explain_complex.st.aid)], keep order:false, stats:pseudo
+          └─Selection(Probe)	cop[tikv]		eq(explain_complex.dd.bm, 0), eq(explain_complex.dd.pt, "android"), gt(explain_complex.dd.t, 1478143908), not(isnull(explain_complex.dd.ip)), not(isnull(explain_complex.dd.t))
+            └─TableRowIDScan	cop[tikv]	table:dd	keep order:false, stats:pseudo
 explain format = 'plan_tree' select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	task	access object	operator info
 Projection	root		explain_complex.st.id, explain_complex.dd.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext
 └─Limit	root		offset:0, count:3000
-  └─HashJoin	root		inner join, equal:[eq(explain_complex.st.aid, explain_complex.dd.aid) eq(explain_complex.st.dic, explain_complex.dd.mac)], other cond:lt(explain_complex.st.t, explain_complex.dd.t)
+  └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:explain_complex.st.aid, inner key:explain_complex.dd.aid, equal cond:eq(explain_complex.st.aid, explain_complex.dd.aid), eq(explain_complex.st.dic, explain_complex.dd.mac), other cond:lt(explain_complex.st.t, explain_complex.dd.t)
     ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		eq(explain_complex.dd.bm, 0), eq(explain_complex.dd.pt, "ios"), gt(explain_complex.dd.t, 1477971479), not(isnull(explain_complex.dd.mac)), not(isnull(explain_complex.dd.t))
-    │   └─TableFullScan	cop[tikv]	table:sdk	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		eq(explain_complex.st.bm, 0), eq(explain_complex.st.dit, "mac"), eq(explain_complex.st.pt, "ios"), gt(explain_complex.st.t, 1477971479), not(isnull(explain_complex.st.dic))
-        └─TableFullScan	cop[tikv]	table:gad	keep order:false, stats:pseudo
+    │ └─Selection	cop[tikv]		eq(explain_complex.st.bm, 0), eq(explain_complex.st.dit, "mac"), eq(explain_complex.st.pt, "ios"), gt(explain_complex.st.t, 1477971479), not(isnull(explain_complex.st.dic))
+    │   └─TableFullScan	cop[tikv]	table:gad	keep order:false, stats:pseudo
+    └─IndexLookUp(Probe)	root		
+      ├─IndexRangeScan(Build)	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(explain_complex.dd.aid, explain_complex.st.aid)], keep order:false, stats:pseudo
+      └─Selection(Probe)	cop[tikv]		eq(explain_complex.dd.bm, 0), eq(explain_complex.dd.pt, "ios"), gt(explain_complex.dd.t, 1477971479), not(isnull(explain_complex.dd.mac)), not(isnull(explain_complex.dd.t))
+        └─TableRowIDScan	cop[tikv]	table:sdk	keep order:false, stats:pseudo
 explain format = 'plan_tree' SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	task	access object	operator info
 Projection	root		explain_complex.st.cm, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, Column, Column
@@ -164,8 +166,8 @@ id	task	access object	operator info
 Projection	root		explain_complex.pp.pc, explain_complex.pp.cr, Column, Column, Column
 └─HashAgg	root		group by:explain_complex.pp.cr, explain_complex.pp.pc, funcs:count(distinct explain_complex.pp.uid)->Column, funcs:count(explain_complex.pp.oid)->Column, funcs:sum(explain_complex.pp.am)->Column, funcs:firstrow(explain_complex.pp.pc)->explain_complex.pp.pc, funcs:firstrow(explain_complex.pp.cr)->explain_complex.pp.cr
   └─IndexLookUp	root		
-    ├─IndexRangeScan(Build)	cop[tikv]	table:pp, index:sp(uid, pi)	range:[18089709 510017,18089709 510017], [18089709 520017,18089709 520017], [18090780 510017,18090780 510017], [18090780 520017,18090780 520017], keep order:false, stats:pseudo
-    └─Selection(Probe)	cop[tikv]		eq(explain_complex.pp.ps, 2), ge(explain_complex.pp.ppt, 1478188800), lt(explain_complex.pp.ppt, 1478275200)
+    ├─IndexRangeScan(Build)	cop[tikv]	table:pp, index:ps(ps)	range:[2,2], keep order:false, stats:pseudo
+    └─Selection(Probe)	cop[tikv]		ge(explain_complex.pp.ppt, 1478188800), in(explain_complex.pp.pi, 510017, 520017), in(explain_complex.pp.uid, 18089709, 18090780), lt(explain_complex.pp.ppt, 1478275200)
       └─TableRowIDScan	cop[tikv]	table:pp	keep order:false, stats:pseudo
 CREATE TABLE `tbl_001` (`a` int, `b` int);
 CREATE TABLE `tbl_002` (`a` int, `b` int);
