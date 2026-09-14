@@ -2774,8 +2774,8 @@ fn an_unqualified_name_resolves_against_the_sessions_default_schema() {
 /// The live bug this closes: `CREATE TABLE ... AUTO_INCREMENT` was accepted
 /// and written, and the catalog loader then refused the very table the
 /// statement had just created, so its creator answered `table not found in
-/// catalog` to both `INSERT` and `SELECT` (`sysbench-readiness.md`, blocker 3,
-/// from sysbench's own `sbtest1` shape). That was replaced by an honest
+/// catalog` to both `INSERT` and `SELECT` for sysbench's `sbtest1` shape.
+/// That was replaced by an honest
 /// refusal, and the refusal is now gone in turn: the counter has the meta-key
 /// home Go gives it (`tidb_exec::cluster_auto_id`), so the shape is admitted
 /// and served.
