@@ -34,7 +34,7 @@ import (
 	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -964,13 +964,13 @@ func TestConfig(t *testing.T) {
 		field, ok := reflect.TypeOf(RUV2Config{}).FieldByName("StmtWeights")
 		require.True(t, ok)
 		require.True(t, field.Anonymous)
-		require.Equal(t, reflect.TypeOf(ruv3.StmtWeights{}), field.Type)
+		require.Equal(t, reflect.TypeOf(ruv2.StmtWeights{}), field.Type)
 		require.Equal(t, "stmt-weights", field.Tag.Get("toml"))
 		require.Equal(t, "stmt-weights", field.Tag.Get("json"))
 
-		require.Equal(t, ruv3.DefaultWeights(), NewConfig().RUV2.StmtWeights)
+		require.Equal(t, ruv2.DefaultWeights(), NewConfig().RUV2.StmtWeights)
 
-		want := ruv3.StmtWeights{
+		want := ruv2.StmtWeights{
 			CPUWork: 2, ScanByte: 3, NetByte: 5, FrontendCompileByte: 7,
 			HashStateRow: 11, JoinOutputRow: 13, WriteStatement: 17,
 			OperatorNum: 19, WriteKey: 23, WriteByte: 29,

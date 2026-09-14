@@ -18,7 +18,7 @@ go_library(
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/parser/terror",
-        "//pkg/resourcegroup/ruv3",
+        "//pkg/resourcegroup/ruv2",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/naming",
@@ -52,7 +52,7 @@ go_test(
     deps = [
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
-        "//pkg/resourcegroup/ruv3",
+        "//pkg/resourcegroup/ruv2",
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",
         "@com_github_burntsushi_toml//:toml",

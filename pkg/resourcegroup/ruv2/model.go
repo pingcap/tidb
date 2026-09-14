@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package ruv3 defines the raw units and weighting model used to calculate RU v3.
-package ruv3
+// Package ruv2 defines the raw units and weighting model used to calculate RU v3.
+package ruv2
 
 import (
 	"fmt"

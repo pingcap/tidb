@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
-	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -33,12 +33,12 @@ import (
 func requireStatementRUReportConservation(t *testing.T, finalized statementRUFinalizedSnapshot) {
 	t.Helper()
 	require.NotNil(t, finalized.report)
-	var total ruv3.StmtUnits
+	var total ruv2.StmtUnits
 	var engineRU [statementRUEngineCount]float64
 	for engine, operators := range finalized.report.units {
 		for _, units := range operators {
 			total = total.Add(units)
-			result, ok := ruv3.Calculate(units, currentStatementRUWeights())
+			result, ok := ruv2.Calculate(units, currentStatementRUWeights())
 			require.True(t, ok)
 			engineRU[engine] += result.TotalRU
 		}
@@ -125,14 +125,14 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 	t.Run("skip zero-valued series", func(t *testing.T) {
 		original := metrics.RUV3Unit
 		metrics.RUV3Unit = prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tidb_ruv3_unit_total", Help: "RUv3 units under test.",
+			Name: "tidb_ruv2_unit_total", Help: "RUv3 units under test.",
 		}, []string{"engine", "opclass", "unit"})
 		t.Cleanup(func() { metrics.RUV3Unit = original })
 		registry := prometheus.NewRegistry()
 		registry.MustRegister(metrics.RUV3Unit)
 		report := &statementRUFullReport{}
-		report.add(statementRUTiDB, statementRUProjection, ruv3.StmtUnits{CPUWork: 3})
-		report.add(statementRUTiKV, statementRUReader, ruv3.StmtUnits{})
+		report.add(statementRUTiDB, statementRUProjection, ruv2.StmtUnits{CPUWork: 3})
+		report.add(statementRUTiKV, statementRUReader, ruv2.StmtUnits{})
 		finalized := statementRUFinalizedSnapshot{report: report, calibrationState: statementRUCalibrationIncomplete}
 		publishStatementRUFullMetrics(finalized)
 		families, err := registry.Gather()
@@ -147,16 +147,16 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 		}
 		require.Equal(t, map[string]string{"engine": "tidb", "opclass": "projection", "unit": "cpu_work"}, labels)
 		// A later zero contribution neither creates series nor removes accumulated work.
-		report.units[statementRUTiDB][statementRUProjection] = ruv3.StmtUnits{}
+		report.units[statementRUTiDB][statementRUProjection] = ruv2.StmtUnits{}
 		publishStatementRUFullMetrics(finalized)
 		after, err := registry.Gather()
 		require.NoError(t, err)
 		require.Equal(t, families, after)
 	})
 	calculator := newStatementRUCalculator(statementRUCalculationSetup{fullReport: true, frontendCompileBytes: 11})
-	local := ruv3.StmtUnits{CPUWork: 2, HashStateRows: 3, JoinOutputRows: 5, OperatorNum: 7}
-	remote := ruv3.StmtUnits{CPUWork: 13, HashStateRows: 17, OperatorNum: 19, ScanBytes: 23, NetBytes: 29}
-	for engine, units := range []ruv3.StmtUnits{local, remote} {
+	local := ruv2.StmtUnits{CPUWork: 2, HashStateRows: 3, JoinOutputRows: 5, OperatorNum: 7}
+	remote := ruv2.StmtUnits{CPUWork: 13, HashStateRows: 17, OperatorNum: 19, ScanBytes: 23, NetBytes: 29}
+	for engine, units := range []ruv2.StmtUnits{local, remote} {
 		calculator.units = calculator.units.Add(units)
 		calculator.recordOperatorUnits(statementRUEngine(engine), units)
 		calculator.report.addOperator(statementRUEngine(engine), statementRUHashAgg, units)
@@ -282,7 +282,7 @@ func (c *statementRUReportingContextForTest) GetDistSQLCtx() *distsqlctx.DistSQL
 	return ctx
 }
 
-func (calculator *statementRUCalculator) recordOperatorUnits(engine statementRUEngine, units ruv3.StmtUnits) {
+func (calculator *statementRUCalculator) recordOperatorUnits(engine statementRUEngine, units ruv2.StmtUnits) {
 	compute := &calculator.compute[engine]
 	compute.cpuWork += units.CPUWork
 	compute.hashStateRows += units.HashStateRows

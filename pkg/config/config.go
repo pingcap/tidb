@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
@@ -440,7 +440,7 @@ type RUV2Config struct {
 	// Statement weights convert RU v3 raw work units to RU. They must be finite
 	// and non-negative; zero disables the corresponding charge. Their defaults
 	// are uncalibrated internal placeholders, not billing values.
-	ruv3.StmtWeights `toml:"stmt-weights" json:"stmt-weights"`
+	ruv2.StmtWeights `toml:"stmt-weights" json:"stmt-weights"`
 }
 
 // DefaultRUV2Config returns the default legacy RU v2 and statement RU v3 configuration.
@@ -462,7 +462,7 @@ func DefaultRUV2Config() RUV2Config {
 		SessionParserTotal:      0.19230499,
 		TxnCnt:                  0.03013709,
 
-		StmtWeights: ruv3.DefaultWeights(),
+		StmtWeights: ruv2.DefaultWeights(),
 	}
 }
 
