@@ -9,8 +9,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/metaservice",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/diagnosticmode",
         "//pkg/keyspace",
         "//pkg/util",
+        "//pkg/util/diagnosticclient",
         "//pkg/util/etcd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
