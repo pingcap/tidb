@@ -474,14 +474,19 @@ const OUTER_WHERE_PREDICATE_PUSH_DOWN: &[PushDownCase] = &[
     (
         "select * from t as t1 left join t as t2 on t1.b = t2.b \
          where (t1.a=1 and t2.a is null) or (t1.a=2 and t2.a=2)",
-        "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
+        // Live Go (fdfadb96b2): the whole OR is a Selection ABOVE the join
+        // (kept, since t2.a is null must be tested post-join) and t1 absorbs
+        // handle [1 2] -- nothing is pushed below the join.
+        "[]",
         "[]",
         &[(Some(2), Some(2))],
     ),
     (
         "select * from t as t1 left join t as t2 on t1.b = t2.b \
          where (t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2)",
-        "[or(eq(test.t.c, 1), eq(test.t.a, 2))]",
+        // Live Go: the OR is again above the join; t1 reads through an
+        // IndexMerge whose rows carry no pushed conditions.
+        "[]",
         "[]",
         &[(Some(2), Some(2))],
     ),
@@ -489,6 +494,8 @@ const OUTER_WHERE_PREDICATE_PUSH_DOWN: &[PushDownCase] = &[
         "select * from t as t1 left join t as t2 on t1.b = t2.b \
          where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) \
          or (t1.a=2 and t2.a is null)",
+        // Live Go: the full OR stays above the join, AND the relaxed
+        // left-side filter is pushed below it over the Batch_Point_Get.
         "[or(and(eq(test.t.c, 1), or(eq(test.t.a, 3), eq(test.t.a, 4))), eq(test.t.a, 2))]",
         "[]",
         &[],
@@ -517,36 +524,44 @@ const JOIN_PREDICATE_PUSH_DOWN: &[PushDownCase] = &[
     (
         "select * from t as t1 join t as t2 on t1.b = t2.b \
          where (t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)",
-        "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
-        "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
+        // Live Go (fdfadb96b2): the relaxed per-side filters are absorbed by
+        // the Batch_Point_Get access paths -- no Selections remain.
+        "[]",
+        "[]",
         &[(Some(1), Some(1)), (Some(2), Some(2))],
     ),
     (
         "select * from t as t1 join t as t2 on t1.b = t2.b \
          where (t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2)",
-        "[or(eq(test.t.c, 1), eq(test.t.a, 2))]",
+        // Live Go: the OR stays at the join; t1 reads through an IndexMerge
+        // (c_d_e range + table range), whose rows carry no pushed conditions.
+        "[]",
         "[]",
         &[(Some(2), Some(2))],
     ),
     (
         "select * from t as t1 join t as t2 on t1.b = t2.b \
          where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4)))",
-        "[eq(test.t.c, 1) or(eq(test.t.a, 3), eq(test.t.a, 4))]",
-        "[or(eq(test.t.a, 3), eq(test.t.a, 4))]",
+        // Live Go: the c=1 residual remains as the LEFT Selection above the
+        // Batch_Point_Get; the OR is absorbed by both point reads.
+        "[eq(test.t.c, 1)]",
+        "[]",
         &[],
     ),
     (
         "select * from t as t1 join t as t2 on t1.b = t2.b \
          where (t1.a>1 and t1.a < 3 and t2.a=1) or (t1.a=2 and t2.a=2)",
-        "[or(and(gt(test.t.a, 1), lt(test.t.a, 3)), eq(test.t.a, 2))]",
-        "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
+        // Live Go: t1 reads the table range (1,3); t2 absorbs handle [1 2].
+        "[]",
+        "[]",
         &[(Some(2), Some(1)), (Some(2), Some(2))],
     ),
     (
         "select * from t as t1 join t as t2 on t1.b = t2.b \
          and ((t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2))",
-        "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
-        "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
+        // Live Go: both sides absorb handle [1 2]; the OR stays at the join.
+        "[]",
+        "[]",
         &[(Some(1), Some(1)), (Some(2), Some(2))],
     ),
     // From here the join is LEFT: the left side is preserved, so nothing may
@@ -554,8 +569,10 @@ const JOIN_PREDICATE_PUSH_DOWN: &[PushDownCase] = &[
     (
         "select * from t as t1 left join t as t2 on t1.b = t2.b \
          and ((t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2))",
+        // Live Go (fdfadb96b2): the OR stays at the join; the build side
+        // absorbs handle [1 2] and the probe reads a full scan.
         "[]",
-        "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
+        "[]",
         &[
             (Some(1), Some(1)),
             (Some(2), Some(2)),
@@ -942,7 +959,12 @@ fn conditions_by_side(session: &mut Session, sql: &str) -> (Vec<String>, Vec<Str
                 || info.starts_with("keep order:")
                 || info.starts_with("data:")
                 || info.starts_with("index:")
-                || info.starts_with("range:") =>
+                || info.starts_with("range:")
+                // Index-merge and point-get access labels: Go prints the
+                // union kind and the handle list on the operator row, not
+                // pushed conditions.
+                || info.starts_with("type:")
+                || info.starts_with("handle:") =>
             {
                 Vec::new()
             }
