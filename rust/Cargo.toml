@@ -270,3 +270,13 @@ debug = false
 
 [profile.release]
 lto = "thin"
+
+# Benchmarks are rebuilt on every edit while a measurement is in progress, and
+# `tidb-executor` alone is 114k lines: thin LTO with release's single codegen
+# unit costs about four minutes per edit, for cross-crate optimisation that an
+# A/B of the same code shape does not need. Keep release's `opt-level` and let
+# the crate compile in parallel.
+[profile.bench]
+inherits = "release"
+lto = false
+codegen-units = 16
