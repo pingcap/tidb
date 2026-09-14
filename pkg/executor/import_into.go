@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	goerrors "errors"
 	"fmt"
 
@@ -115,13 +116,17 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 	e.controller = controller
 
-	if e.selectExec != nil {
+	if e.plan.SelectPlan != nil && (kerneltype.IsNextGen() || e.controller.IsGlobalSort()) {
+		if err := e.prepareQuery(ctx); err != nil {
+			return err
+		}
+	} else if e.selectExec != nil {
 		// `import from select` doesn't return rows, so no need to set dataFilled.
 		return e.importFromSelect(ctx)
 	}
 
 	useAsyncPrepare := importinto.ShouldUseAsyncPrepare(e.controller.Plan)
-	if !useAsyncPrepare {
+	if e.controller.DataSourceType == importer.DataSourceTypeFile && !useAsyncPrepare {
 		if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 			return err2
 		}
@@ -163,6 +168,9 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		if err = e.waitTask(ctx, jobID, task); err != nil {
 			return err
 		}
+	}
+	if e.controller.DataSourceType == importer.DataSourceTypeQuery {
+		return e.fillQueryInfo(ctx, jobID, task.ID)
 	}
 	return e.fillJobInfo(ctx, jobID, req)
 }
@@ -232,19 +240,21 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 }
 
 func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase, error) {
-	importFromServer, err := objstore.IsLocalPath(e.controller.Path)
-	if err != nil {
-		// since we have checked this during creating controller, this should not happen.
-		return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
-	}
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
 		zap.Bool("dist-task-enabled", vardef.EnableDistTask.Load()))
-	if importFromServer {
-		chunkMap, err2 := e.controller.PopulateChunks(ctx)
-		if err2 != nil {
-			return 0, nil, err2
+	if e.controller.DataSourceType == importer.DataSourceTypeFile {
+		importFromServer, err := objstore.IsLocalPath(e.controller.Path)
+		if err != nil {
+			// The URI was checked while creating the controller.
+			return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
 		}
-		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
+		if importFromServer {
+			chunkMap, err := e.controller.PopulateChunks(ctx)
+			if err != nil {
+				return 0, nil, err
+			}
+			return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
+		}
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if vardef.EnableDistTask.Load() {
@@ -473,4 +483,46 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 		}
 		return nil
 	})
+}
+
+// prepareQuery captures source metadata for the Query step.
+func (e *ImportIntoExec) prepareQuery(_ context.Context) error {
+	if e.controller.IsLocalSort() {
+		return errors.New("IMPORT FROM SELECT requires global sort storage")
+	}
+	query, err := CaptureImportQuery(e.userSctx, e.plan.Stmt)
+	if err != nil {
+		return err
+	}
+	e.controller.Plan.Query = query
+	// TODO: Parallelize I/O-bound queries such as clustered/nonclustered PK conversions.
+	// Start with a rule-based check for single-table Scan/Filter/Projection queries
+	// whose results can be concatenated across disjoint source ranges. Size range
+	// subtasks by estimated scan bytes and worker resources, similar to file imports.
+	// Each supported reader must enforce its assigned ranges; subtasks must share
+	// a read TS and allocate non-overlapping generated row IDs. Keep other queries,
+	// including compute-heavy MV construction with aggregation, as a whole query.
+	e.controller.Plan.MaxNodeCnt = 1
+	return nil
+}
+
+// fillQueryInfo preserves the affected-row response of IMPORT FROM SELECT.
+func (e *ImportIntoExec) fillQueryInfo(ctx context.Context, jobID, taskID int64) error {
+	e.dataFilled = true
+	mgr, err := dxfstorage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return err
+	}
+	finished, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	var meta importinto.TaskMeta
+	if err := json.Unmarshal(finished.Meta, &meta); err != nil {
+		return err
+	}
+	stmtCtx := e.userSctx.GetSessionVars().StmtCtx
+	stmtCtx.SetAffectedRows(uint64(meta.Summary.ImportedRows))
+	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %d", meta.Summary.ImportedRows, jobID))
+	return nil
 }

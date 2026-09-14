@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	_ "github.com/pingcap/tidb/pkg/autoid_service" // Initialize the source mockstore's auto-ID service.
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -481,6 +483,71 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	require.True(t, ok)
 	require.Same(t, sessMgr.Store(), handle.Store())
 	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
+
+	t.Run("execute query in target keyspace", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, targetStore)
+		tk.MustExec("use test")
+		tk.MustExec("create table query_source(id bigint auto_increment primary key, g bigint not null, v bigint not null) auto_id_cache=1")
+		tk.MustExec("insert into query_source(g,v) values (1,10),(1,20),(2,30)")
+		tk.MustExec("set tidb_isolation_read_engines='tikv'")
+		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+		sql := "select /*+ HASH_AGG() */ g,count(*) from query_source where v >= 10 group by g"
+		captured, err := executor.CaptureImportQuery(tk.Session(), sql)
+		require.NoError(t, err)
+
+		mgr := storage.NewTaskManager(handle.SysSessionPool())
+		require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
+			require.True(t, se.IsCrossKS())
+			require.NotNil(t, se.GetInfoSchema().(infoschema.InfoSchema).GetAutoIDRequirement().AutoIDClient())
+			_, err := se.GetSQLExecutor().ExecuteInternal(ctx, "select * from test.query_source")
+			require.ErrorIs(t, err, infoschema.ErrTableNotExists)
+			return nil
+		}))
+		pool := handle.SysSessionPool()
+		resource, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Destroy(resource)
+		output := make(chan importer.QueryChunk, 4)
+		err = importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, 1<<20, output)
+		require.NoError(t, err)
+		close(output)
+		result := make(map[int64]int64)
+		for batch := range output {
+			chk := batch.Chk
+			for i := range chk.NumRows() {
+				row := chk.GetRow(i)
+				_, exists := result[row.GetInt64(0)]
+				require.False(t, exists)
+				result[row.GetInt64(0)] = row.GetInt64(1)
+			}
+		}
+		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
+	})
+	t.Run("MPP server ID without a query Domain", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, targetStore)
+		tk.MustExec("use test")
+		q, err := executor.CaptureImportQuery(tk.Session(),
+			"select g,count(*) from query_source group by g")
+		require.NoError(t, err)
+		q.Tables[q.Databases[0].ID][0].TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+		q.SessionVars["tidb_allow_mpp"] = "1"
+		q.SessionVars["tidb_enforce_mpp"] = "1"
+		q.SessionVars["tidb_isolation_read_engines"] = "tiflash"
+		resource, err := handle.SysSessionPool().Get()
+		require.NoError(t, err)
+		defer handle.SysSessionPool().Destroy(resource)
+		se := resource.(sessionctx.Context)
+		require.Nil(t, se.GetDomain())
+		var checked bool
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterGetMPPServerID", func(id uint64) {
+			require.Equal(t, sysKSDom.ServerID(), id)
+			checked = true
+			panic("stop before MPP dispatch")
+		})
+		err = importer.RunImportQuery(context.Background(), se, q, 1<<20, nil)
+		require.ErrorContains(t, err, "stop before MPP dispatch")
+		require.True(t, checked)
+	})
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {

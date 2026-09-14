@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -50,12 +51,14 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -78,6 +81,7 @@ type importStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
+	queryRuntime  sqlsvrapi.Runtime
 	store         tidbkv.Storage
 	sharedVars    sync.Map
 	logger        *zap.Logger
@@ -328,35 +332,62 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		s.estimateAndSetConcurrency(ctx, subtaskMeta.Chunks)
 	})
 
-	wctx := workerpool.NewContext(ctx)
-	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
-	for _, chunk := range subtaskMeta.Chunks {
-		tasks = append(tasks, &importStepMinimalTask{
-			Plan:       s.taskMeta.Plan,
-			Chunk:      chunk,
-			SharedVars: sharedVars,
-			logger:     logger,
-		})
+	group, groupCtx := errgroup.WithContext(ctx)
+	chunks := subtaskMeta.Chunks
+	concurrency := s.concurrency
+	if query := s.taskMeta.Plan.Query; query != nil {
+		selected := make(chan importer.QueryChunk, 1)
+		s.tableImporter.SetSelectedChunkCh(selected)
+		chunks = []importer.Chunk{{Timestamp: query.Timestamp}}
+		concurrency = max(1, min(s.taskMeta.Plan.ThreadCnt, concurrency))
+		group.Go(func() error { return s.readQuery(groupCtx, selected) })
 	}
+	group.Go(func() error {
+		wctx := workerpool.NewContext(groupCtx)
+		tasks := make([]*importStepMinimalTask, 0, len(chunks))
+		for _, chunk := range chunks {
+			tasks = append(tasks, &importStepMinimalTask{
+				Plan:       s.taskMeta.Plan,
+				Chunk:      chunk,
+				SharedVars: sharedVars,
+				logger:     logger,
+			})
+		}
 
-	sourceOp := operator.NewSimpleDataSource(wctx, tasks)
-	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, s.concurrency)
-	operator.Compose(sourceOp, op)
+		sourceOp := operator.NewSimpleDataSource(wctx, tasks)
+		op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, concurrency)
+		operator.Compose(sourceOp, op)
 
-	pipe := operator.NewAsyncPipeline(sourceOp, op)
-	if err := pipe.Execute(); err != nil {
+		pipe := operator.NewAsyncPipeline(sourceOp, op)
+		if err := pipe.Execute(); err != nil {
+			return err
+		}
+
+		err := pipe.Close()
+		if opErr := wctx.OperatorErr(); opErr != nil {
+			return opErr
+		}
 		return err
-	}
-
-	err = pipe.Close()
-	if opErr := wctx.OperatorErr(); opErr != nil {
-		return opErr
-	}
-	if err != nil {
+	})
+	if err := group.Wait(); err != nil {
 		return err
 	}
 
 	return s.onFinished(ctx, subtask, objStore)
+}
+
+// readQuery supplies rows to the shared encode-and-sort pipeline.
+func (s *importStepExecutor) readQuery(ctx context.Context, selected chan<- importer.QueryChunk) error {
+	defer close(selected)
+	pool := s.queryRuntime.SysSessionPool()
+	resource, err := pool.Get()
+	if err != nil {
+		return err
+	}
+	// Query execution mutates session state, so destroy this session after the attempt.
+	defer pool.Destroy(resource)
+	se := resource.(sessionctx.Context)
+	return importer.RunImportQuery(ctx, se, s.taskMeta.Plan.Query, s.GetResource().Mem.Capacity()/2, selected)
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -927,13 +958,14 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 
 	store := e.TaskRuntime.Store()
 	switch task.Step {
-	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		return &importStepExecutor{
 			taskID:       task.ID,
 			taskMeta:     &taskMeta,
 			logger:       logger,
 			store:        store,
 			indicesGenKV: indicesGenKV,
+			queryRuntime: e.TaskRuntime,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
