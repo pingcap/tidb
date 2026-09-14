@@ -297,41 +297,52 @@ func buildPiTRRestoreNameSources(
 		tables:    make(map[int64]nameroute.ObjectName),
 	}
 	snapshotDBs := make(map[int64]*metautil.Database, len(dbs))
+	// Seed from the selected snapshot objects first, so a selected empty schema
+	// (no tables and no log events) still participates in routing. Log history
+	// and the tracker only refine names or add log-created objects on top.
 	for _, db := range dbs {
 		snapshotDBs[db.Info.ID] = db
+		sources.databases[db.Info.ID] = db.Info.Name
 	}
-	snapshotTables := make(map[int64]*metautil.Table, len(tables))
 	for _, table := range tables {
-		snapshotTables[table.Info.ID] = table
+		sources.tables[table.Info.ID] = nameroute.ObjectName{Schema: table.DB.Name, Table: table.Info.Name}
 	}
 
+	// Add log-created databases, then override every name with the latest one
+	// observed in the log history.
 	for dbID := range tracker.DBIds {
+		if _, ok := sources.databases[dbID]; ok {
+			continue
+		}
 		if dbName, ok := history.GetDBNameByID(dbID); ok {
 			sources.databases[dbID] = ast.NewCIStr(dbName)
-		} else if db, ok := snapshotDBs[dbID]; ok {
-			sources.databases[dbID] = db.Info.Name
 		}
 	}
-	for tableID := range tracker.TableIdToDBIds {
-		if locations, ok := history.GetTableHistory()[tableID]; ok && !locations[1].IsPartition {
-			latest := locations[1]
-			if dbName, exists := history.GetDBNameByID(latest.DbID); exists {
-				sources.tables[tableID] = nameroute.ObjectName{
-					Schema: ast.NewCIStr(dbName),
-					Table:  ast.NewCIStr(latest.TableName),
-				}
-				continue
-			}
-			if db, exists := snapshotDBs[latest.DbID]; exists && db.Info != nil {
-				sources.tables[tableID] = nameroute.ObjectName{
-					Schema: db.Info.Name,
-					Table:  ast.NewCIStr(latest.TableName),
-				}
-				continue
-			}
+	for dbID := range sources.databases {
+		if dbName, ok := history.GetDBNameByID(dbID); ok {
+			sources.databases[dbID] = ast.NewCIStr(dbName)
 		}
-		if table, ok := snapshotTables[tableID]; ok {
-			sources.tables[tableID] = nameroute.ObjectName{Schema: table.DB.Name, Table: table.Info.Name}
+	}
+
+	tableHistory := history.GetTableHistory()
+	for tableID := range tracker.TableIdToDBIds {
+		locations, ok := tableHistory[tableID]
+		if !ok || locations[1].IsPartition {
+			continue
+		}
+		latest := locations[1]
+		if dbName, exists := history.GetDBNameByID(latest.DbID); exists {
+			sources.tables[tableID] = nameroute.ObjectName{
+				Schema: ast.NewCIStr(dbName),
+				Table:  ast.NewCIStr(latest.TableName),
+			}
+			continue
+		}
+		if db, exists := snapshotDBs[latest.DbID]; exists && db.Info != nil {
+			sources.tables[tableID] = nameroute.ObjectName{
+				Schema: db.Info.Name,
+				Table:  ast.NewCIStr(latest.TableName),
+			}
 		}
 	}
 

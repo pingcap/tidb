@@ -81,6 +81,23 @@ func TestBuildPiTRRestoreNameSourcesFallsBackToSnapshotDB(t *testing.T) {
 		Schema: ast.NewCIStr("snapshot_db"),
 		Table:  ast.NewCIStr("latest_table"),
 	}, sources.tables[10])
+
+	t.Run("includes a selected empty snapshot database", func(t *testing.T) {
+		router, err := nameroute.Parse([]string{"empty_src:empty_dst"})
+		require.NoError(t, err)
+		emptyDB := &metautil.Database{Info: &model.DBInfo{ID: 7, Name: ast.NewCIStr("empty_src")}}
+		// No log history and not tracked: the selected snapshot schema must still
+		// participate in routing.
+		sources := buildPiTRRestoreNameSources(
+			stream.NewTableHistoryManager(), brutils.NewPiTRIdTracker(),
+			[]*metautil.Database{emptyDB}, nil)
+		require.Equal(t, ast.NewCIStr("empty_src"), sources.databases[7])
+
+		plan, err := buildRestoreNamePlan(router, []*metautil.Database{emptyDB}, nil, sources)
+		require.NoError(t, err)
+		require.Len(t, plan.databases, 1)
+		require.Equal(t, "empty_dst", plan.databases[0].Target.Name.O)
+	})
 }
 
 func TestApplyNameRoutesDistinguishesSchemaAndExactTableRules(t *testing.T) {
