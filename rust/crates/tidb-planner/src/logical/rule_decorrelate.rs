@@ -52,7 +52,7 @@ use super::BaseLogicalPlan;
 use super::{LogicalPlan, PlanError};
 
 /// Which aggregation arm fired.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 enum PullUpAggregation {
     /// Go's `NoOptimize` tail: the apply is left correlated.
     NotFired,
@@ -60,8 +60,12 @@ enum PullUpAggregation {
     /// apply and makes it the aggregation's child.
     Above,
     /// The correlated equalities became join keys; the caller optimizes the
-    /// apply and keeps the aggregation as its inner child.
-    Equalities,
+    /// apply and keeps the aggregation as its inner child. The column is a
+    /// scalar COUNT's output for the `ifnull(count, 0)` default fold
+    /// (Go `aggDefaultValueMap`), absent for non-count aggregations.
+    Equalities {
+        count_default: Option<tidb_expr::column::Column>,
+    },
 }
 
 /// Go `DecorrelateSolver`.
@@ -256,7 +260,11 @@ impl DecorrelateSolver {
                             aggregation.base.set_children(vec![optimized]);
                             return Ok(LogicalPlan::Aggregation(aggregation));
                         }
-                        PullUpAggregation::Equalities => {
+                        PullUpAggregation::Equalities {
+                            count_default: count_default_col,
+                        } => {
+                            let query_block_offset =
+                                apply.base().base.query_block_offset();
                             let outer = apply
                                 .base_mut()
                                 .take_children()
@@ -266,7 +274,58 @@ impl DecorrelateSolver {
                             apply
                                 .base_mut()
                                 .set_children(vec![outer, LogicalPlan::Aggregation(aggregation)]);
-                            return Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column);
+                            let optimized =
+                                Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column)?;
+                            // Go :495-540: a scalar COUNT's empty-group default
+                            // 0 rides the `ifnull(count, 0)` projection above
+                            // the join — the count's value for an unmatched
+                            // outer row is 0, not NULL.
+                            let Some(count_col) = count_default_col.as_ref() else {
+                                return Ok(optimized);
+                            };
+                            let Some(join_schema) = optimized.schema().cloned() else {
+                                return Ok(optimized);
+                            };
+                            let zero = tidb_expr::constant::Constant::new_zero();
+                            let ifnull_expr = ctx
+                                .builder
+                                .new_function(
+                                    "ifnull",
+                                    count_col.ret_type.clone(),
+                                    vec![
+                                        tidb_expr::expression::Expression::Column(
+                                            count_col.clone(),
+                                        ),
+                                        tidb_expr::expression::Expression::Constant(zero),
+                                    ],
+                                )
+                                .map_err(|error| PlanError::internal(error.to_string()))?;
+                            let exprs: Vec<tidb_expr::expression::Expression> = join_schema
+                                .columns
+                                .iter()
+                                .map(|column| {
+                                    if column.unique_id == count_col.unique_id {
+                                        ifnull_expr.clone()
+                                    } else {
+                                        tidb_expr::expression::Expression::Column(
+                                            column.clone(),
+                                        )
+                                    }
+                                })
+                                .collect();
+                            let base = crate::logical::BaseLogicalPlan::new(
+                                ctx.allocator,
+                                LogicalProjection::TYPE,
+                                query_block_offset,
+                            );
+                            let mut projection =
+                                LogicalPlan::Projection(LogicalProjection::new(base, exprs));
+                            projection
+                                .base_mut()
+                                .base
+                                .set_schema(Some(join_schema.clone()));
+                            projection.base_mut().set_children(vec![optimized]);
+                            return Ok(projection);
                         }
                     }
                 }
@@ -512,7 +571,23 @@ impl DecorrelateSolver {
                 }
             }
         }
-        Ok(PullUpAggregation::Equalities)
+        // Go `aggDefaultValueMap` (`rule_decorrelate.go:122`): a scalar COUNT
+        // carries the empty-group default 0 — the count output column rides
+        // the `ifnull(count, 0)` projection above the join (:495-510). The
+        // fold projection is built by the caller over the converted join.
+        let count_default = aggregation
+            .base
+            .base
+            .schema()
+            .as_ref()
+            .and_then(|schema| schema.columns.first().cloned())
+            .filter(|_| {
+                aggregation
+                    .agg_funcs
+                    .first()
+                    .is_some_and(|func| func.name().to_ascii_lowercase() == "count")
+            });
+        Ok(PullUpAggregation::Equalities { count_default })
     }
 
     /// Go `DecorrelateSolver.optimize`'s projection arm
