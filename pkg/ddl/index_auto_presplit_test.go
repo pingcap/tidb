@@ -1031,3 +1031,147 @@ func TestPreSplitIndexRegionsManualValueListTimeZone(t *testing.T) {
 	require.NoError(t, err)
 	require.Subset(t, utcWorkerKeys, expectedKey[len(expectedKey)-1:])
 }
+
+// TestPlanAutoPreSplitIndexRegionsTimestampTimeZone pins the contract that the eval context in this
+// file exists for: for a TIMESTAMP leading column the auto pre-split boundaries must be a function
+// of the context the DDL carries, never of the DDL worker session that happens to run the job.
+// The TopN and the histogram branch reach the encoder by different routes, so both are covered.
+//
+// The two branches legitimately differ in how they react to the eval context itself. A TopN entry
+// is stored as comparable bytes, so decoding it in a zone and encoding it back in the same zone
+// cancels out and the boundary is the instant ANALYZE saw. A histogram bound arrives as a bare wall
+// clock with no zone attached (see #52429), so whichever zone the eval context carries is the one it
+// gets read in. This test fixes who interprets those values, not what they mean.
+func TestPlanAutoPreSplitIndexRegionsTimestampTimeZone(t *testing.T) {
+	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(
+		t, "create table t(a bigint, b timestamp, index idx(b))")
+	colInfo := tblInfo.Columns[1]
+
+	parseTime := func(t *testing.T, value string) types.Time {
+		t.Helper()
+		parsed, err := types.ParseTimestamp(types.DefaultStmtNoWarningContext, value)
+		require.NoError(t, err)
+		return parsed
+	}
+
+	// Stand-ins for what statistics hold: TopN keeps comparable bytes, the histogram keeps values.
+	topNBytes := func(t *testing.T, values ...string) *statistics.TopN {
+		t.Helper()
+		topN := statistics.NewTopN(len(values))
+		for i, value := range values {
+			encoded, err := codec.EncodeKey(time.UTC, nil, types.NewTimeDatum(parseTime(t, value)))
+			require.NoError(t, err)
+			topN.AppendTopN(encoded, uint64(50-i*10))
+		}
+		topN.Sort()
+		return topN
+	}
+
+	planWith := func(t *testing.T, evalLoc, workerLoc *time.Location, useTopN bool) [][]byte {
+		t.Helper()
+		sctx := mock.NewContext()
+		sctx.GetSessionVars().TimeZone = workerLoc
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(workerLoc)
+
+		cfg := newAutoPreSplitTestConfig()
+		cfg.boundaryRatioStep = 0.4
+
+		var statsTbl *statistics.Table
+		if useTopN {
+			statsTbl = buildAutoPreSplitTestStats(
+				tblInfo.ID, 90, 0, colInfo, topNBytes(t, "2024-04-08 02:00:00", "2024-04-08 06:00:00"))
+		} else {
+			statsTbl = buildAutoPreSplitTestStats(tblInfo.ID, 100, 0, colInfo, nil)
+			setAutoPreSplitTestHistogram(t, statsTbl.GetCol(colInfo.ID), colInfo, 0,
+				[]types.Datum{
+					types.NewTimeDatum(parseTime(t, "2024-04-08 02:00:00")),
+					types.NewTimeDatum(parseTime(t, "2024-04-08 06:00:00")),
+				},
+				[]int64{50, 50})
+		}
+
+		plan, err := planAutoPreSplitWithCache(
+			context.Background(), sctx,
+			exprstatic.NewEvalContext(exprstatic.WithLocation(evalLoc)),
+			&fakeAutoPreSplitStatsProvider{stats: statsTbl},
+			tblInfo, idxInfo, cfg, make(map[int64]autoPreSplitBoundaryCacheEntry))
+		require.NoError(t, err)
+		require.Equal(t, autoPreSplitPlanPlanned, plan.state)
+		require.NotEmpty(t, plan.splitKeys)
+		return plan.splitKeys
+	}
+
+	// Zones a DDL worker session could plausibly be running in. None of them may reach the keys.
+	workerZones := []*time.Location{
+		time.UTC,
+		time.FixedZone("-05:00", -5*60*60),
+		time.FixedZone("+09:30", 9*60*60+30*60),
+		mustLoadLocation(t, "Europe/Amsterdam"), // a zone with DST, which must not matter either
+	}
+	submitterZone := time.FixedZone("+08:00", 8*60*60)
+
+	for _, branch := range []struct {
+		name             string
+		useTopN          bool
+		evalZoneMovesKey bool
+	}{
+		{name: "histogram", useTopN: false, evalZoneMovesKey: true},
+		{name: "TopN", useTopN: true, evalZoneMovesKey: false},
+	} {
+		t.Run(branch.name, func(t *testing.T) {
+			want := planWith(t, submitterZone, workerZones[0], branch.useTopN)
+			for _, workerZone := range workerZones[1:] {
+				require.Equal(t, want, planWith(t, submitterZone, workerZone, branch.useTopN),
+					"the DDL worker session's time zone must not reach the split keys")
+			}
+
+			// And the eval context is what does decide them, for the branch that carries a bare
+			// wall clock. Verified failing if the auto path is switched back to the worker session.
+			inUTC := planWith(t, time.UTC, workerZones[0], branch.useTopN)
+			if branch.evalZoneMovesKey {
+				require.NotEqual(t, want, inUTC,
+					"a histogram bound is read in the eval context's zone, so the zone must move it")
+			} else {
+				require.Equal(t, want, inUTC,
+					"a TopN entry round-trips through the same zone, so the zone must cancel out")
+			}
+		})
+	}
+
+	// The TopN cancellation above holds because decoding and encoding apply the same zone, but that
+	// is not a general guarantee: in a DST zone the autumn fall-back makes one local wall clock
+	// cover two UTC instants, and re-encoding resolves the ambiguity to the later one. Two distinct
+	// statistics values then collapse onto a single boundary, so a boundary can sit an hour off for
+	// the length of that one repeated hour. This is pre-existing and not introduced by threading the
+	// eval context through; keeping statistics in UTC end to end removes it, see #52429.
+	t.Run("DST fall-back collapses the repeated hour", func(t *testing.T) {
+		amsterdam := mustLoadLocation(t, "Europe/Amsterdam")
+		// On 2024-10-27 Amsterdam goes back from 03:00 CEST to 02:00 CET, so local 02:30 is both
+		// 00:30 UTC (still CEST) and 01:30 UTC (already CET).
+		firstPass := topNBytes(t, "2024-10-27 00:30:00")
+		secondPass := topNBytes(t, "2024-10-27 01:30:00")
+
+		encodedIn := func(t *testing.T, topN *statistics.TopN, loc *time.Location) []byte {
+			t.Helper()
+			values, err := buildAutoPreSplitTopNValues(
+				exprstatic.NewEvalContext(exprstatic.WithLocation(loc)), topN, colInfo)
+			require.NoError(t, err)
+			require.Len(t, values, 1)
+			return values[0].encoded
+		}
+
+		require.NotEqual(t,
+			encodedIn(t, firstPass, time.UTC), encodedIn(t, secondPass, time.UTC),
+			"an hour apart, the two instants must stay distinct in a zone without transitions")
+		require.Equal(t,
+			encodedIn(t, firstPass, amsterdam), encodedIn(t, secondPass, amsterdam),
+			"in the repeated hour both instants resolve to the later one, so they collapse")
+	})
+}
+
+func mustLoadLocation(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	require.NoError(t, err)
+	return loc
+}
