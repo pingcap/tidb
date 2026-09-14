@@ -107,9 +107,6 @@ func New(rules []Rule) (*Router, error) {
 			router.schemaRules[rule.Source.Schema.L] = rule.Target
 		}
 	}
-	if err := router.validateRuleConflicts(); err != nil {
-		return nil, err
-	}
 	router.canonicalRules = canonicalize(normalized)
 	router.fingerprint = fingerprint(router.canonicalRules)
 	return router, nil
@@ -174,34 +171,6 @@ func (r *Router) Fingerprint() [sha256.Size]byte {
 	return r.fingerprint
 }
 
-func (r *Router) validateRuleConflicts() error {
-	for source, target := range r.tableRules {
-		schemaSource, ok := r.schemaSourceForTarget(target.Schema.L)
-		if !ok {
-			continue
-		}
-		implicitSource := objectKey{schema: schemaSource, table: target.Table.L}
-		if source == implicitSource {
-			continue
-		}
-		if _, overridden := r.tableRules[implicitSource]; overridden {
-			continue
-		}
-		return fmt.Errorf("table rule from %s conflicts with schema rule from %s at target %s",
-			formatKey(source), formatKey(objectKey{schema: schemaSource}), formatObject(target))
-	}
-	return nil
-}
-
-func (r *Router) schemaSourceForTarget(targetSchema string) (string, bool) {
-	for source, target := range r.schemaRules {
-		if target.Schema.L == targetSchema {
-			return source, true
-		}
-	}
-	return "", false
-}
-
 func normalizeRule(rule Rule) (Rule, error) {
 	source, err := normalizeObject(rule.Source)
 	if err != nil {
@@ -264,10 +233,6 @@ func formatObject(object ObjectName) string {
 		formatted += "." + quoteIdentifier(object.Table.O)
 	}
 	return formatted
-}
-
-func formatKey(key objectKey) string {
-	return formatObject(ObjectName{Schema: ast.NewCIStr(key.schema), Table: ast.NewCIStr(key.table)})
 }
 
 func quoteIdentifier(identifier string) string {

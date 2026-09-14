@@ -113,11 +113,6 @@ func TestNewRejectsDuplicatesAndConflicts(t *testing.T) {
 		{name: "duplicate source", specs: []string{"a:b", "A:c"}, message: "duplicate source"},
 		{name: "duplicate target", specs: []string{"a:x", "b:X"}, message: "duplicate target"},
 		{name: "identity", specs: []string{"a:A"}, message: "maps `a` to itself"},
-		{
-			name:    "table conflicts with schema output",
-			specs:   []string{"a:x", "b.t:x.u"},
-			message: "conflicts with schema rule",
-		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -139,6 +134,23 @@ func TestSchemaTableOverrideCanAvoidConflict(t *testing.T) {
 	require.True(t, matched)
 	require.Equal(t, "y", schema.O)
 	require.Equal(t, "u", table.O)
+
+	t.Run("concrete object set decides the conflict", func(t *testing.T) {
+		router, err := nameroute.Parse([]string{"a:x", "b.t:x.u"})
+		require.NoError(t, err)
+
+		// a.u is not selected, so the two actual targets are distinct.
+		require.NoError(t, router.ValidateTargets([]nameroute.ObjectName{
+			{Schema: ast.NewCIStr("a"), Table: ast.NewCIStr("v")},
+			{Schema: ast.NewCIStr("b"), Table: ast.NewCIStr("t")},
+		}))
+
+		// a.u is selected, so both objects route to x.u.
+		require.ErrorContains(t, router.ValidateTargets([]nameroute.ObjectName{
+			{Schema: ast.NewCIStr("a"), Table: ast.NewCIStr("u")},
+			{Schema: ast.NewCIStr("b"), Table: ast.NewCIStr("t")},
+		}), "conflict at target `x`.`u`")
+	})
 }
 
 func TestValidateTargets(t *testing.T) {
