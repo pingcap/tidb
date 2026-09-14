@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -211,12 +213,13 @@ const (
 	backgroundWorker workerType = 2
 )
 
-// TODO: Refactor these weights and the statement RU weights in
-// pkg/executor/statement_ru_result.go into a shared location, then make them configurable.
-const (
-	ddlTxnRUKVBytesWeight    = 1.0
-	ddlIngestRUKVBytesWeight = 1.0
-)
+func currentDDLRUWeights() ruv3.DDLWeights {
+	weights := ruv3.DefaultDDLWeights()
+	if cfg := config.GetGlobalConfig(); cfg != nil {
+		weights = cfg.RUV2.DDLWeights
+	}
+	return weights
+}
 
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
@@ -670,7 +673,7 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	}
 	// The DDL job-table update happens after this sample, and the history-table
 	// writes happen in the final transaction. These internal writes are excluded.
-	job.RU += float64(txn.Size()) * ddlTxnRUKVBytesWeight
+	job.RU += float64(txn.Size()) * currentDDLRUWeights().TxnKVBytes
 	return nil
 }
 

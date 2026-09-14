@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlmock "github.com/pingcap/tidb/pkg/ddl/mock"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -35,6 +36,11 @@ import (
 )
 
 func TestAccountDistTaskRU(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.DDLWeights.IngestKVBytes = 2
+	})
+
 	tests := []struct {
 		name string
 		task *proto.Task
@@ -75,7 +81,9 @@ func TestAccountDistTaskRU(t *testing.T) {
 			err := (&worker{ddlCtx: dc}).recordDistTaskRU(jobID, tt.task)
 			require.NoError(t, err)
 			want := tt.want
-			if !kerneltype.IsNextGen() {
+			if kerneltype.IsNextGen() {
+				want *= 2
+			} else {
 				want = 0
 			}
 			require.Equal(t, want, rc.getRU())

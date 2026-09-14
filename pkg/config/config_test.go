@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -973,6 +974,35 @@ func TestConfig(t *testing.T) {
 			conf := NewConfig()
 			conf.RUV2.ReportMode = mode
 			require.ErrorContains(t, conf.Valid(), "invalid ru-v2.report-mode")
+		}
+	})
+	t.Run("DDL RU weights", func(t *testing.T) {
+		conf := NewConfig()
+		require.Equal(t, float64(1), conf.RUV2.DDLWeights.TxnKVBytes)
+		require.Equal(t, float64(1), conf.RUV2.DDLWeights.IngestKVBytes)
+
+		path := filepath.Join(t.TempDir(), "ru.toml")
+		require.NoError(t, os.WriteFile(path, []byte(`[ru-v2.ddl-weights]
+txn-kv-bytes = 2
+ingest-kv-bytes = 3
+`), 0600))
+		require.NoError(t, conf.Load(path))
+		require.NoError(t, conf.Valid())
+		require.Equal(t, float64(2), conf.RUV2.DDLWeights.TxnKVBytes)
+		require.Equal(t, float64(3), conf.RUV2.DDLWeights.IngestKVBytes)
+
+		encoded, err := json.Marshal(conf.RUV2.DDLWeights)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"txn-kv-bytes":2,"ingest-kv-bytes":3}`, string(encoded))
+
+		for _, invalid := range []float64{-1, math.NaN(), math.Inf(1)} {
+			conf := NewConfig()
+			conf.RUV2.DDLWeights.TxnKVBytes = invalid
+			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.txn-kv-bytes")
+
+			conf = NewConfig()
+			conf.RUV2.DDLWeights.IngestKVBytes = invalid
+			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.ingest-kv-bytes")
 		}
 	})
 	conf := new(Config)

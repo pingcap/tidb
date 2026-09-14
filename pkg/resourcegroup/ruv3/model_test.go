@@ -31,6 +31,16 @@ func TestDefaultWeights(t *testing.T) {
 	}
 }
 
+func TestDefaultDDLWeights(t *testing.T) {
+	want := DDLWeights{
+		TxnKVBytes:    1,
+		IngestKVBytes: 1,
+	}
+	if got := DefaultDDLWeights(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("DefaultDDLWeights() = %+v, want %+v", got, want)
+	}
+}
+
 func TestCalculate(t *testing.T) {
 	units := StmtUnits{
 		CPUWork: 1, ScanBytes: 2, NetBytes: 3, FrontendCompileBytes: 4,

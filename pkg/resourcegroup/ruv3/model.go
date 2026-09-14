@@ -60,6 +60,12 @@ type StmtWeights struct {
 	WriteByte           float64
 }
 
+// DDLWeights contains the coefficient for each DDL RU v3 byte unit.
+type DDLWeights struct {
+	TxnKVBytes    float64 `toml:"txn-kv-bytes" json:"txn-kv-bytes"`
+	IngestKVBytes float64 `toml:"ingest-kv-bytes" json:"ingest-kv-bytes"`
+}
+
 // StmtResult contains the weighted RU v3 total.
 type StmtResult struct {
 	TotalRU float64
@@ -79,6 +85,15 @@ func DefaultWeights() StmtWeights {
 		OperatorNum:         1,
 		WriteKey:            1,
 		WriteByte:           1,
+	}
+}
+
+// DefaultDDLWeights returns the deliberately uncalibrated DDL weights used by
+// the current RU v3 model. They are placeholders, not billing values.
+func DefaultDDLWeights() DDLWeights {
+	return DDLWeights{
+		TxnKVBytes:    1,
+		IngestKVBytes: 1,
 	}
 }
 

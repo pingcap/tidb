@@ -23,6 +23,7 @@ import (
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -112,6 +113,11 @@ func (c *ddlJobRUReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 }
 
 func TestAccountJobRU(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.DDLWeights.TxnKVBytes = 2
+	})
+
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -137,7 +143,7 @@ func TestAccountJobRU(t *testing.T) {
 	require.NoError(t, w.accountJobRU(job))
 	expectedRU := float64(7)
 	if kerneltype.IsNextGen() {
-		expectedRU += float64(activeTxn.Size())
+		expectedRU += 2 * float64(activeTxn.Size())
 	}
 	require.Equal(t, expectedRU, job.RU)
 
@@ -145,14 +151,14 @@ func TestAccountJobRU(t *testing.T) {
 	w.tp = addIdxWorker
 	require.NoError(t, w.accountJobRU(job))
 	if kerneltype.IsNextGen() {
-		accountedRU += float64(activeTxn.Size())
+		accountedRU += 2 * float64(activeTxn.Size())
 	}
 	require.Equal(t, accountedRU, job.RU)
 
 	w.tp = backgroundWorker
 	require.NoError(t, w.accountJobRU(job))
 	if kerneltype.IsNextGen() {
-		accountedRU += float64(activeTxn.Size())
+		accountedRU += 2 * float64(activeTxn.Size())
 	}
 	require.Equal(t, accountedRU, job.RU)
 

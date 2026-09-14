@@ -3485,7 +3485,7 @@ func (w *worker) recordDistTaskRU(jobID int64, task *proto.Task) error {
 	}
 	if taskMeta.Summary != nil {
 		if rc := w.getReorgCtx(jobID); rc != nil {
-			rc.setRU(float64(taskMeta.Summary.IndexKVSize) * ddlIngestRUKVBytesWeight)
+			rc.setRU(float64(taskMeta.Summary.IndexKVSize) * currentDDLRUWeights().IngestKVBytes)
 		}
 	}
 	return nil

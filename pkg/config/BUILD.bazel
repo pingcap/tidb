@@ -18,6 +18,7 @@ go_library(
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/parser/terror",
+        "//pkg/resourcegroup/ruv3",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/naming",
