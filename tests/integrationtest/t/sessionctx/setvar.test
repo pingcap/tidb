@@ -63,6 +63,10 @@ select /*+ set_var(sql_mode="ONLY_FULL_GROUP_BY") */ @@sql_mode;
 select @@sql_mode;
 set @@sql_mode=default;
 select @@sql_mode;
+select /*+ set_var(tidb_request_source_type="lightning") */ @@tidb_request_source_type;
+select @@tidb_request_source_type;
+select /*+ set_var(tidb_low_resolution_tso="on") */ @@tidb_low_resolution_tso;
+select @@tidb_low_resolution_tso;
 
 # TestSetVarHintBreakCache
 CREATE TABLE t (a INT, b INT, KEY(b));
