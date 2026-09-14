@@ -902,10 +902,10 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	PlanDigestStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return ssbd.planDigest
 	},
-	PlanStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+	PlanStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		plan, err := plancodec.DecodePlan(ssStats.samplePlan)
 		if err != nil {
-			logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssStats.samplePlan), zap.String("query", ssStats.sampleSQL), zap.Error(err))
+			logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssStats.samplePlan), zap.String("query", ssbd.normalizedSQL), zap.Error(err))
 			plan = ""
 		}
 		return plan

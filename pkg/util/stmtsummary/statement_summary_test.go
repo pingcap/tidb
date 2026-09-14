@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -41,6 +42,8 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func fakePlanDigestGenerator() string {
@@ -93,7 +96,7 @@ func TestAddStatement(t *testing.T) {
 		beginTime: now + 60,
 		endTime:   now + 1860,
 		stmtSummaryStats: stmtSummaryStats{
-			sampleSQL:            stmtExecInfo1.LazyInfo.GetOriginalSQL(),
+			sampleSQL:            stmtExecInfo1.LazyInfo.GetOriginalSQL(false),
 			samplePlan:           samplePlan,
 			indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 			execCount:            1,
@@ -536,7 +539,7 @@ func TestAddStatement(t *testing.T) {
 	for i := range buf {
 		buf[i] = 'a'
 	}
-	originalSQL := stmtExecInfo1.LazyInfo.GetOriginalSQL()
+	originalSQL := stmtExecInfo1.LazyInfo.GetOriginalSQL(false)
 	stmtExecInfo7.LazyInfo = &mockLazyInfo{
 		originalSQL: originalSQL,
 		plan:        string(buf),
@@ -796,7 +799,7 @@ type mockLazyInfo struct {
 	bindingDigest string
 }
 
-func (a *mockLazyInfo) GetOriginalSQL() string {
+func (a *mockLazyInfo) GetOriginalSQL(_ bool) string {
 	return a.originalSQL
 }
 
@@ -1151,7 +1154,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.MemArbitration, stmtExecInfo1.MemArbitration, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
-		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
+		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(false), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
 		stmtExecInfo1.TotalRUV2, stmtExecInfo1.TotalRUV2,
 		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime),
@@ -2210,4 +2213,16 @@ func TestAddStatementPlanEncodeError(t *testing.T) {
 	require.Equal(t, plancodec.PlanDiscardedEncoded, elem.samplePlan)
 	require.Equal(t, int64(1), elem.execCount)
 	ssbd.Unlock()
+}
+
+func TestStatementSummaryDecodePlanLogUsesNormalizedSQL(t *testing.T) {
+	core, observed := observer.New(zap.ErrorLevel)
+	t.Cleanup(log.ReplaceGlobals(zap.New(core), &log.ZapProperties{}))
+	stats := &stmtSummaryStats{sampleSQL: "select 'secret'", samplePlan: "invalid plan"}
+	digest := &stmtSummaryByDigest{normalizedSQL: "select ?"}
+	require.Empty(t, columnValueFactoryMap[PlanStr](nil, nil, digest, stats))
+	require.Equal(t, "select 'secret'", stats.sampleSQL)
+	entries := observed.FilterMessage("decode plan in statement summary failed").All()
+	require.Len(t, entries, 1)
+	require.Equal(t, "select ?", entries[0].ContextMap()["query"])
 }

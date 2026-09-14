@@ -219,7 +219,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
 		BindingDigest: bindingDigest,
-		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL()),
+		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL(false)),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -757,7 +757,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 
 type mockLazyInfo struct{}
 
-func (*mockLazyInfo) GetOriginalSQL() string {
+func (*mockLazyInfo) GetOriginalSQL(_ bool) string {
 	return ""
 }
 

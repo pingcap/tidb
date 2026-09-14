@@ -8,11 +8,12 @@ go_test(
         "table_test.go",
     ],
     flaky = True,
-    shard_count = 16,
+    shard_count = 17,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/kv",
+        "//pkg/parser",
         "//pkg/parser/auth",
         "//pkg/planner/core",
         "//pkg/session",
