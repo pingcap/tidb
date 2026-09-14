@@ -420,7 +420,7 @@ impl CopReadTaskRuntime {
     ) -> Result<Self, CopReadTaskError> {
         validate_request(metadata)?;
         validate_topology(topology)?;
-        let mut envelopes =
+        let envelopes =
             build_region_tasks(metadata, topology).ok_or(CopReadTaskError::InvalidTopology)?;
         if envelopes
             .iter()
@@ -431,19 +431,19 @@ impl CopReadTaskRuntime {
 
         let ema = Arc::new(ReadBytesEma::new(seed_read_bytes));
         let tasks: Vec<LogicalCopReadTask> = envelopes
-            .iter_mut()
+            .into_iter()
             .enumerate()
-            .map(|(index, task)| {
+            .map(|(index, mut task)| {
                 task.task_id = u64::try_from(index + 1).unwrap_or(u64::MAX);
                 LogicalCopReadTask {
                     paging: CopPagingState::new_with_shared_ema(
-                        task,
+                        &task,
                         metadata.desc,
                         metadata.paging.max_size,
                         generation,
                         ema.clone(),
                     ),
-                    task: task.clone(),
+                    task,
                 }
             })
             .collect();

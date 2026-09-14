@@ -1869,3 +1869,45 @@ Each commit carries its own two-run warm A/B in the message; in order:
   node drives it, consistent with that extra CPU competing for the four
   cores. A spin-before-park pool was tried earlier and dropped; the
   correct version remains the open structural item.
+
+## 2026-09-14: borrow ranges during read-task setup
+
+Starting at `4746dbdbe4`, `build_region_tasks` copied the original range
+list into `KeyRanges`, copied it back out for splitting, and copied each
+fragment list into an envelope. `CopReadTaskRuntime::prepare` then copied
+the envelopes again. Keys own byte vectors, so these were deep copies.
+Go's `pkg/store/copr/key_ranges.go` retains its middle storage and uses
+`RefAt`; the Rust builder now follows that ownership pattern and moves
+the finished envelopes into the runtime. Routing, sorting, hint invalidation,
+paging, retries, and request validation are unchanged.
+
+The `pipeline` benchmark now measures region splitting and full read-task
+preparation for 1,024 and 20,000 disjoint ranges over eight regions/four
+buckets each. Local macOS, identical Cargo bench profile, preserved binaries,
+after/before/before/after order with no concurrent build. Median of two runs
+per binary, each run using the existing five measured blocks:
+
+| stage / ranges | before ns/range | after ns/range | reduction |
+| --- | ---: | ---: | ---: |
+| split / 1,024 | 172.05 | 92.15 | 46.4% |
+| prepare / 1,024 | 326.80 | 218.60 | 33.1% |
+| split / 20,000 | 168.25 | 90.45 | 46.2% |
+| prepare / 20,000 | 315.85 | 207.70 | 34.2% |
+
+Calibrated preparation cost falls 30.8% and 34.4% respectively. This is
+**setup-only evidence, not a sysbench/TPC-C/TPC-H latency or throughput win**.
+The first exploratory baseline overlapped compilation and is excluded above.
+Build with `cd rust && CARGO_BUILD_JOBS=12 cargo bench --offline --locked -j12
+-p tidb-executor --bench pipeline --no-run`, then run the printed executable
+for each preserved version. Temporary logs and binaries are in
+`/private/tmp/tidb-read-setup.APKpRf`; before SHA-256
+`1d874b7ed226f94ee3d0502f84ad72f29aa5062d558c18858a155964365c587c`, after
+`55e1bb844f63dffbdb812a12610b7979bd5f339157b3b435f3c55a3f663875c8`.
+
+Ready validation for this scoped change: `cd rust && CARGO_BUILD_JOBS=12 cargo test --offline --locked
+-j12 -p tidb-distsql`: 30 unit and 249 integration tests passed, two ignored.
+`git diff --check`, scoped `rustfmt --edition 2021 --check`, and
+`GOMAXPROCS=12 GOFLAGS=-p=12 make -j12 lint` passed. Cluster A/B and the
+user's updated overall **25% throughput and latency** goal remain unverified.
+The local `perfbench` cluster has `sbtest` but no TPC-H
+database; it belongs to an already-running session and was not restarted.

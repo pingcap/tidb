@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! In-process benchmarks for the two execution paths the TPC-H parity work
-//! measures most often, so a change can be judged without a cluster.
+//! In-process benchmarks for read-task setup and the execution paths the
+//! TPC-H parity work measures, so a change can be judged without a cluster.
 //!
 //! A run against the real node costs a release build of the whole server and
 //! a warm A/B over TiKV, and returns a wall-clock difference that TiKV noise
@@ -486,6 +486,81 @@ fn main() {
         elapsed.as_secs_f64() * 1e9 / CAL_OPS as f64
     );
     println!("calibration cal_per_op {:.4}", ratio / CAL_OPS as f64);
+    bench_read_task_setup();
     bench_row_copy();
     bench_aggregate();
+}
+
+/// Go `buildCopTasks`: prepare one lookup batch, including region/bucket
+/// splitting and paging attempts, without timing TiKV or the network.
+fn bench_read_task_setup() {
+    use tidb_distsql::{
+        CancelHandle, CopPagingState, KvRequestMetadata, ReadEngineGeneration, RegionTaskTopology,
+        RequestKeyRange, RequestKeyRanges, TransportRequest,
+    };
+    use tidb_txnkv::RequestType;
+
+    for count in [1024_u32, 20_000] {
+        let key = |index: u32| index.to_be_bytes().to_vec();
+        let mut metadata = KvRequestMetadata::default();
+        metadata.request_type = RequestType::Dag;
+        metadata.data = Some(b"dag".to_vec());
+        metadata.keep_order = true;
+        metadata.start_ts = 100;
+        metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(
+            (0..count)
+                .map(|index| RequestKeyRange {
+                    start_key: key(index * 2).into(),
+                    end_key: key(index * 2 + 1).into(),
+                })
+                .collect(),
+        ));
+        let topology: Vec<_> = (0..8_u32)
+            .map(|region| RegionTaskTopology {
+                region_id: u64::from(region + 1),
+                start_key: if region == 0 {
+                    Vec::new()
+                } else {
+                    key(region * count / 4)
+                },
+                end_key: if region == 7 {
+                    Vec::new()
+                } else {
+                    key((region + 1) * count / 4)
+                },
+                buckets_version: 1,
+                bucket_keys: (1..4)
+                    .map(|bucket| key(region * count / 4 + bucket * count / 16))
+                    .collect(),
+                ..RegionTaskTopology::default()
+            })
+            .collect();
+        let request = TransportRequest::new(metadata, std::sync::Arc::new(CancelHandle::default()));
+        let mut split = || {
+            black_box(request.build_region_tasks(&topology).unwrap());
+        };
+        let mut prepare = || {
+            black_box(
+                CopPagingState::prepare_read_tasks(
+                    request.metadata(),
+                    &topology,
+                    None,
+                    ReadEngineGeneration::Classic,
+                    0,
+                )
+                .unwrap(),
+            );
+        };
+        let measurements = best_of_blocks(&mut [("split", &mut split), ("prepare", &mut prepare)]);
+        for (stage, (elapsed, ratio)) in ["split", "prepare"].into_iter().zip(measurements) {
+            println!(
+                "read_task_{stage}_{count} ns_per_range {:.1}",
+                elapsed.as_secs_f64() * 1e9 / f64::from(count)
+            );
+            println!(
+                "read_task_{stage}_{count} cal_per_range {:.4}",
+                ratio / f64::from(count)
+            );
+        }
+    }
 }

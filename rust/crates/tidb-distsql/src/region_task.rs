@@ -284,14 +284,14 @@ pub(crate) fn build_region_tasks(
             .all(|(ranges, hints)| ranges.len() == hints.len());
     for (partition_index, partition) in key_ranges.partitions().iter().enumerate() {
         for (range_index, range) in partition.iter().enumerate() {
-            original_ranges.push(to_txn_range(range));
+            original_ranges.push(range.clone());
             if hints_shape_valid {
                 original_hints.push(key_ranges.row_count_hints()[partition_index][range_index]);
             }
         }
     }
 
-    let mut ranges = KeyRanges::new(original_ranges.clone());
+    let mut ranges = KeyRanges::new(original_ranges);
     let reordered = tidb_txnkv::ensure_monotonic_key_ranges(&mut ranges);
     let hints = (!reordered && hints_shape_valid).then_some(original_hints.as_slice());
     if ranges.is_empty() {
@@ -301,7 +301,8 @@ pub(crate) fn build_region_tasks(
         return None;
     }
 
-    let sorted_ranges = ranges.to_ranges();
+    // Go keeps the range storage behind KeyRanges and borrows it through
+    // RefAt. Do not deep-copy every key again for splitting and coverage.
     let mut tasks = Vec::new();
     // Both the request ranges and the region/bucket boundaries are monotonic.
     // Go's `SplitKeyRangesByLocations` walks them with one cursor; restarting
@@ -311,11 +312,10 @@ pub(crate) fn build_region_tasks(
     let mut hint_cursor = 0;
     for region in topology {
         for bucket in normalized_bucket_ranges(region)? {
-            let fragments = intersect_sorted_ranges(&sorted_ranges, &bucket, &mut range_cursor);
+            let fragments = intersect_sorted_ranges(&ranges, &bucket, &mut range_cursor);
             if fragments.is_empty() {
                 continue;
             }
-            let request_ranges: Vec<_> = fragments.iter().map(to_request_range).collect();
             let mut paging = metadata.paging.enabled;
             let mut paging_size = if paging { metadata.paging.min_size } else { 0 };
             if paging && metadata.limit_size != 0 && metadata.limit_size < paging_size {
@@ -335,14 +335,14 @@ pub(crate) fn build_region_tasks(
                 region_id: region.region_id,
                 region_epoch: region.region_epoch,
                 peer: region.peer,
-                ranges: request_ranges,
+                ranges: fragments,
                 task_id: 0,
                 versioned_ranges: Vec::new(),
                 buckets_version: region.buckets_version,
                 paging,
                 paging_size,
                 row_count_hint: hints.map_or(-1, |hints| {
-                    row_count_hint_for_bucket(&bucket, &original_ranges, hints, &mut hint_cursor)
+                    row_count_hint_for_bucket(&bucket, &ranges, hints, &mut hint_cursor)
                 }),
                 response_channel_capacity,
                 store_busy_threshold_ms: u64::try_from(metadata.store_busy_threshold_ns)
@@ -355,7 +355,7 @@ pub(crate) fn build_region_tasks(
         }
     }
 
-    if !all_ranges_covered(&sorted_ranges, &tasks) {
+    if !coverage_scan((0..ranges.len()).map(|index| ranges.ref_at(index)), &tasks).0 {
         return None;
     }
     if metadata.store_batch_size > 0 && (hints.is_some() || metadata.allow_batch_task_data_merge) {
@@ -426,14 +426,6 @@ fn normalized_bucket_ranges(region: &RegionTaskTopology) -> Option<Vec<RequestKe
     )
 }
 
-fn to_txn_range(range: &RequestKeyRange) -> KeyRange {
-    range.clone()
-}
-
-fn to_request_range(range: &KeyRange) -> RequestKeyRange {
-    range.clone()
-}
-
 fn intersect_range(range: &KeyRange, bucket: &RequestKeyRange) -> Option<KeyRange> {
     let start = range.start_key.as_bytes();
     let end = range.end_key.as_bytes();
@@ -459,16 +451,17 @@ fn intersect_range(range: &KeyRange, bucket: &RequestKeyRange) -> Option<KeyRang
 /// order Go gives to one region task. A point range (`start == end`) is kept
 /// only in the bucket that contains that point.
 fn intersect_sorted_ranges(
-    ranges: &[KeyRange],
+    ranges: &KeyRanges,
     bucket: &RequestKeyRange,
     cursor: &mut usize,
 ) -> Vec<KeyRange> {
-    while *cursor < ranges.len() && ends_before_bucket(&ranges[*cursor], bucket) {
+    while *cursor < ranges.len() && ends_before_bucket(ranges.ref_at(*cursor), bucket) {
         *cursor += 1;
     }
     let start = *cursor;
     let mut fragments = Vec::new();
-    for range in ranges.iter().skip(start) {
+    for index in start..ranges.len() {
+        let range = ranges.ref_at(index);
         if starts_at_or_after_bucket_end(range, bucket) {
             break;
         }
@@ -509,28 +502,26 @@ fn contains_key(range: &RequestKeyRange, key: &[u8]) -> bool {
 
 fn row_count_hint_for_bucket(
     bucket: &RequestKeyRange,
-    originals: &[KeyRange],
+    originals: &KeyRanges,
     hints: &[usize],
     cursor: &mut usize,
 ) -> i64 {
-    while *cursor < originals.len() && ends_before_bucket(&originals[*cursor], bucket) {
+    while *cursor < originals.len() && ends_before_bucket(originals.ref_at(*cursor), bucket) {
         *cursor += 1;
     }
     let start = *cursor;
-    originals
-        .iter()
-        .skip(start)
+    (start..originals.len())
+        .map(|index| originals.ref_at(index))
         .zip(hints.iter().skip(start))
         .take_while(|(original, _)| !starts_at_or_after_bucket_end(original, bucket))
         .map(|(_, hint)| i64::try_from(*hint).unwrap_or(i64::MAX))
         .sum()
 }
 
-fn all_ranges_covered(ranges: &[KeyRange], tasks: &[RegionTaskEnvelope]) -> bool {
-    coverage_scan(ranges, tasks).0
-}
-
-fn coverage_scan(ranges: &[KeyRange], tasks: &[RegionTaskEnvelope]) -> (bool, usize) {
+fn coverage_scan<'a>(
+    ranges: impl IntoIterator<Item = &'a KeyRange>,
+    tasks: &[RegionTaskEnvelope],
+) -> (bool, usize) {
     let mut fragments = tasks.iter().flat_map(|task| &task.ranges);
     let mut examined_fragments = 0;
     for range in ranges {
@@ -591,7 +582,7 @@ mod tests {
                 start_key: key.clone().into(),
                 end_key: key.into(),
             };
-            ranges.push(to_txn_range(&range));
+            ranges.push(range.clone());
             fragments.push(range);
         }
         let tasks = [RegionTaskEnvelope {
