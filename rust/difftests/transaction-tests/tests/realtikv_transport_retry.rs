@@ -70,7 +70,7 @@ impl RecordingClient {
         result: &Result<DirectUnaryResponse, DirectUnaryClientError>,
     ) {
         let usable_response = result.as_ref().ok().is_some_and(|response| {
-            CoprocessorResponse::decode(response.encoded_response.as_slice()).is_ok_and(|decoded| {
+            CoprocessorResponse::decode(response.encoded_response.as_ref()).is_ok_and(|decoded| {
                 decoded.region_error.is_none() && decoded.other_error.is_empty()
             })
         });

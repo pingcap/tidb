@@ -224,7 +224,7 @@ fn execute_live_empty_query(
         .expect("live route dispatch must complete")
         .expect("one live region must publish one result");
     assert_eq!(result.next_raw().expect("finish live response"), None);
-    let select = decode_select_response(&raw).expect("decode returned tipb SelectResponse");
+    let select = decode_select_response(raw).expect("decode returned tipb SelectResponse");
     assert!(
         select.error.is_none(),
         "live SelectResponse returned application error: {:?}",
@@ -330,7 +330,7 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
         .expect("live follower dispatch must complete")
         .expect("one live region must publish one result");
     assert_eq!(result.next_raw().expect("finish live response"), None);
-    let select = decode_select_response(&raw).expect("decode returned tipb SelectResponse");
+    let select = decode_select_response(raw).expect("decode returned tipb SelectResponse");
     assert!(
         select.error.is_none(),
         "live follower SelectResponse returned application error: {:?}",
@@ -913,7 +913,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         let retry_reason = match readiness_result {
             Ok(response) => {
                 let response =
-                    tidb_proto::CoprocessorResponse::decode(response.encoded_response.as_slice())
+                    tidb_proto::CoprocessorResponse::decode(response.encoded_response.as_ref())
                         .expect("decode restarted-peer readiness response");
                 if let Some(region_error) = response.region_error {
                     Some(format!("region not ready: {region_error:?}"))
@@ -983,7 +983,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
 fn assert_usable_campaign18_response(response: &DirectUnaryResponse) {
     use prost::Message;
 
-    let response = tidb_proto::CoprocessorResponse::decode(response.encoded_response.as_slice())
+    let response = tidb_proto::CoprocessorResponse::decode(response.encoded_response.as_ref())
         .expect("decode live BatchCommands Coprocessor response");
     assert!(response.region_error.is_none());
     assert!(response.other_error.is_empty());
