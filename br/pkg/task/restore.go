@@ -402,7 +402,8 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	flags.StringArray(FlagRename, nil, "rename an exact source schema or table during restore, in source:target form. "+
-		"Restores that write to the same target schema are treated as conflicting by the restore registry: run them serially and let each one finish before the next starts")
+		"Restores that write to the same target schema are treated as conflicting by the restore registry: run them serially and let each one finish before the next starts. "+
+		"A schema created for a rename is retained even if the restore ends up dropping every table in it")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
 	flags.Bool(flagFastLoadSysTables, true, "load system tables (including statistics) by renaming the temporary system tables")
 	// Do not expose this flag

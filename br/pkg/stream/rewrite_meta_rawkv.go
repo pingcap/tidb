@@ -179,6 +179,17 @@ func NewSchemasReplace(
 	setRestoreTableMode bool,
 ) *SchemasReplace {
 	globalTableIdMap := make(map[UpstreamID]DownstreamID)
+	// protectedTargetDBIDs holds target schemas that are shared by routed tables
+	// from more than one source schema. A DBInfo delete from one source schema
+	// must not drop a schema that other routed tables still depend on, so these
+	// target schemas are never deleted during log replay.
+	//
+	// This is intentionally static: a routed target schema created by this restore
+	// is retained even if every owner and routed table is dropped before the
+	// restore endpoint, so an otherwise empty target schema may remain. Reused
+	// (pre-existing) targets must never be dropped either. Garbage-collecting a
+	// restore-created target would require persisted ownership plus a dynamic
+	// reference count.
 	protectedTargetDBIDs := make(map[DownstreamID]struct{})
 	targetDBReferenceCounts := make(map[DownstreamID]int)
 	for _, dr := range dbReplaceMap {
