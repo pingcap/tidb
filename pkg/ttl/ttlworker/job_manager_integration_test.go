@@ -1699,6 +1699,14 @@ func (w *poolTestWrapper) WithSession(fn func(*syssession.Session) error) error 
 	})
 }
 
+func (w *poolTestWrapper) WithRegisteredSession(ctx context.Context, fn func(*syssession.Session) error) error {
+	return w.pool.WithRegisteredSession(ctx, func(s *syssession.Session) error {
+		w.inuse.Add(1)
+		defer w.inuse.Add(-1)
+		return fn(s)
+	})
+}
+
 func (w *poolTestWrapper) AssertNoSessionInUse(t *testing.T) {
 	require.Zero(t, w.inuse.Load())
 }

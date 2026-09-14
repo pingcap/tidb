@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -622,6 +623,28 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	succ = tc.DeleteSavepoint("s1")
 	require.True(t, succ)
 	require.Equal(t, 0, len(tc.Savepoints))
+}
+
+func TestRestrictedSQLParticipatesInMDL(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+	sessVars.InRestrictedSQL = true
+	sessVars.TxnCtx = &variable.TransactionContext{}
+	sessVars.GetRelatedTableForMDL().Store(int64(42), int64(100))
+
+	jobs := map[int64]*mdldef.JobMDL{
+		1: {
+			Ver:      101,
+			TableIDs: map[int64]struct{}{42: {}},
+		},
+		2: {
+			Ver:      100,
+			TableIDs: map[int64]struct{}{42: {}},
+		},
+	}
+
+	variable.RemoveLockDDLJobs(sessVars, jobs, false)
+	require.NotContains(t, jobs, int64(1))
+	require.Contains(t, jobs, int64(2))
 }
 
 func TestNonPreparedPlanCacheStmt(t *testing.T) {
