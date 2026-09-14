@@ -168,7 +168,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.BeginStmt:
 		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
-		e.executeCommit()
+		err = e.executeCommit(x)
 	case *ast.SavepointStmt:
 		err = e.executeSavepoint(x)
 	case *ast.ReleaseSavepointStmt:
@@ -788,11 +788,42 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(userList)
 }
 
-func (e *SimpleExec) executeCommit() {
+// checkCompletionTypeSupported reports an error or warning for an explicit
+// AND CHAIN or RELEASE modifier on COMMIT/ROLLBACK: TiDB parses both but
+// does not chain a new transaction or release the session, the same gap
+// tracked for completion_type by NoopFuncsMode.
+func (e *SimpleExec) checkCompletionTypeSupported(t ast.CompletionType) error {
+	if t == ast.CompletionTypeDefault {
+		return nil
+	}
+	noopFuncsMode := e.Ctx().GetSessionVars().NoopFuncsMode
+	if noopFuncsMode == variable.OnInt {
+		return nil
+	}
+	name := "RELEASE"
+	if t == ast.CompletionTypeChain {
+		name = "AND CHAIN"
+	}
+	err := expression.ErrFunctionsNoopImpl.FastGenByArgs(name)
+	if noopFuncsMode == variable.OffInt {
+		return errors.Trace(err)
+	}
+	e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
+	return nil
+}
+
+func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
+	if err := e.checkCompletionTypeSupported(s.CompletionType); err != nil {
+		return err
+	}
 	e.Ctx().GetSessionVars().SetInTxn(false)
+	return nil
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
+	if err := e.checkCompletionTypeSupported(s.CompletionType); err != nil {
+		return err
+	}
 	sessVars := e.Ctx().GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	txn, err := e.Ctx().Txn(false)
