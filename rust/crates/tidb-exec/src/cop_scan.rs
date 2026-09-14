@@ -104,6 +104,48 @@ enum LoweredAggregate {
 use crate::real_tikv_read::RealTiKvSessionTransportFactory;
 use crate::wide_scan_selection::{accepts, wide_scan_selection_conditions};
 
+/// The per-process wire receipt behind `cluster-session-smoke --cop`:
+/// how many rows the coprocessor actually sent over the wire for the
+/// current statement, and which executors the last admitted DAG carried.
+/// The smoke binary resets before a statement and prints the pair after
+/// it; the RealTiKV harness greps those lines as the pushdown receipt
+/// instead of trusting a claimed number.
+pub mod scan_receipt {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
+
+    static WIRE_ROWS: AtomicU64 = AtomicU64::new(0);
+    static SHAPE: Mutex<String> = Mutex::new(String::new());
+
+    /// Clears both halves for the next statement.
+    pub fn reset() {
+        WIRE_ROWS.store(0, Ordering::SeqCst);
+        *SHAPE.lock().unwrap_or_else(|poison| poison.into_inner()) = String::new();
+    }
+
+    /// Records the executor list the last opened DAG carried.
+    pub fn record_shape(shape: String) {
+        *SHAPE.lock().unwrap_or_else(|poison| poison.into_inner()) = shape;
+    }
+
+    /// Adds the rows one wire chunk carried.
+    pub fn add_wire_rows(rows: u64) {
+        WIRE_ROWS.fetch_add(rows, Ordering::SeqCst);
+    }
+
+    /// The (wire rows, DAG shape) observed since the last reset.
+    #[must_use]
+    pub fn snapshot() -> (u64, String) {
+        (
+            WIRE_ROWS.load(Ordering::SeqCst),
+            SHAPE
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .clone(),
+        )
+    }
+}
+
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: i32 = 1;
 /// Go `mysql.PriKeyFlag`.
@@ -539,6 +581,31 @@ where
         if aggregate.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
+        // The wire receipt's DAG shape: the executor list this request
+        // actually carries, with the Selection named when conjuncts
+        // travelled. The harness reads the presence of a pushed Selection
+        // off this string.
+        let receipt_shape = {
+            let mut shape = if request.index.is_some() {
+                "IndexScan".to_owned()
+            } else {
+                "TableScan".to_owned()
+            };
+            if !conditions.is_empty() {
+                shape.push_str(" Selection");
+            }
+            if remote_limit.is_some() {
+                shape.push_str(" Limit");
+            }
+            if request.topn.is_some() {
+                shape.push_str(" TopN");
+            }
+            if aggregate.is_some() {
+                shape.push_str(" Aggregate");
+            }
+            shape
+        };
+        scan_receipt::record_shape(receipt_shape);
         let mut cop_plan_ids = vec![0; dag.executors.len()];
         if let Some(scan_id) = cop_plan_ids.first_mut() {
             *scan_id = request.statement.plan_id;
@@ -758,6 +825,7 @@ impl CopRowStream {
             if batch.row.num_rows() == 0 {
                 continue;
             }
+            scan_receipt::add_wire_rows(batch.row.num_rows() as u64);
             return Ok(Some(batch.row));
         }
     }

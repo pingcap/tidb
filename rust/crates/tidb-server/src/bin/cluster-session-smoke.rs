@@ -304,6 +304,9 @@ fn run_statement(
     sql: &str,
     cop_scans: Option<&CopScans>,
 ) -> Result<u64, String> {
+    if cop_scans.is_some() {
+        tidb_exec::cop_scan::scan_receipt::reset();
+    }
     let (mut storage, snapshot) = statement_storage(Arc::clone(opener), buffer.clone(), TIMEOUT)
         .map_err(|error| error.to_string())?;
     if let Some(scans) = cop_scans {
@@ -342,5 +345,18 @@ fn run_statement(
         }
         other => println!("[start_ts {start_ts}] {sql} -> {other:?}"),
     }
+    if cop_scans.is_some() {
+        print_wire_receipt();
+    }
     finished.map(|()| start_ts)
+}
+
+/// The wire receipt the RealTiKV harness greps: how many rows the
+/// coprocessor actually sent for this statement, and which executors the
+/// admitted DAG carried. Emitted only when the statement ran with the
+/// coprocessor scanner attached.
+fn print_wire_receipt() {
+    let (wire_rows, shape) = tidb_exec::cop_scan::scan_receipt::snapshot();
+    println!("coprocessor request: {shape}");
+    println!("rows across the wire {wire_rows}");
 }
