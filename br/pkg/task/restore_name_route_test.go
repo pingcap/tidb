@@ -98,6 +98,31 @@ func TestBuildPiTRRestoreNameSourcesFallsBackToSnapshotDB(t *testing.T) {
 		require.Len(t, plan.databases, 1)
 		require.Equal(t, "empty_dst", plan.databases[0].Target.Name.O)
 	})
+
+	t.Run("existence precheck uses the latest routed target", func(t *testing.T) {
+		router, err := nameroute.Parse([]string{"a.new:b.copy"})
+		require.NoError(t, err)
+		history := stream.NewTableHistoryManager()
+		history.RecordDBIdToName(1, "a", 100)
+		history.AddTableHistory(10, "new", 1, 100)
+		tracker := brutils.NewPiTRIdTracker()
+		tracker.TrackTableId(1, 10)
+		snapshotDB := &metautil.Database{Info: &model.DBInfo{ID: 1, Name: ast.NewCIStr("a")}}
+		snapshotTable := &metautil.Table{
+			DB:   snapshotDB.Info,
+			Info: &model.TableInfo{ID: 10, Name: ast.NewCIStr("old")},
+		}
+		sources := buildPiTRRestoreNameSources(
+			history, tracker, []*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable})
+
+		// The table was renamed a.old -> a.new, so the only target to check is
+		// b.copy; the pre-rename a.old must not be checked as an identity target.
+		targets := routeLatestSourceTables(router, sources)
+		require.Len(t, targets, 1)
+		require.Equal(t, "b", targets[0].DB.Name.O)
+		require.Equal(t, "copy", targets[0].Info.Name.O)
+		require.Nil(t, routeLatestSourceTables(router, nil))
+	})
 }
 
 func TestApplyNameRoutesDistinguishesSchemaAndExactTableRules(t *testing.T) {

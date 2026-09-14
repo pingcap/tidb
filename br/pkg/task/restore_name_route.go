@@ -372,15 +372,28 @@ func formatRouteObject(object nameroute.ObjectName) string {
 	return brutils.EncloseName(object.Schema.O)
 }
 
-func routeTargetTables(router *nameroute.Router, tables []*metautil.Table) []*metautil.Table {
-	targets := make([]*metautil.Table, 0, len(tables))
-	for _, table := range tables {
-		targetSchema, targetTable, _ := router.Route(table.DB.Name, table.Info.Name)
-		targetDBInfo := table.DB.Clone()
-		targetDBInfo.Name = targetSchema
-		targetInfo := table.Info.Clone()
-		targetInfo.Name = targetTable
-		targets = append(targets, &metautil.Table{DB: targetDBInfo, Info: targetInfo})
+// routeLatestSourceTables routes the latest source name of every selected
+// table into its effective target. It is used by the PiTR target existence
+// precheck: using the name-only tracker (which also contains pre-rename
+// snapshot names) would falsely reject an otherwise legal restore.
+func routeLatestSourceTables(router *nameroute.Router, sources *restoreNameSources) []*metautil.Table {
+	if sources == nil {
+		return nil
+	}
+	tableIDs := make([]int64, 0, len(sources.tables))
+	for tableID := range sources.tables {
+		tableIDs = append(tableIDs, tableID)
+	}
+	sort.Slice(tableIDs, func(i, j int) bool { return tableIDs[i] < tableIDs[j] })
+
+	targets := make([]*metautil.Table, 0, len(tableIDs))
+	for _, tableID := range tableIDs {
+		source := sources.tables[tableID]
+		targetSchema, targetTable, _ := router.Route(source.Schema, source.Table)
+		targets = append(targets, &metautil.Table{
+			DB:   &model.DBInfo{Name: targetSchema},
+			Info: &model.TableInfo{Name: targetTable},
+		})
 	}
 	return targets
 }

@@ -1646,7 +1646,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	cfg.snapshotRestoreDataSize = archiveSize
 	// some more checks once we get tables and files information
 	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr,
-		tables, namePlan.targetTables, archiveSize, isPiTR); err != nil {
+		tables, namePlan.targetTables, archiveSize, isPiTR, nameSources); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2840,7 +2840,8 @@ func checkOptionalClusterRequirements(
 	sourceTables []*metautil.Table,
 	targetTables []*metautil.Table,
 	archiveSize uint64,
-	isPitr bool) error {
+	isPitr bool,
+	nameSources *restoreNameSources) error {
 	if cfg.CheckRequirements && !checkpointEnabledAndExists {
 		if err := checkDiskSpace(ctx, mgr, sourceTables, archiveSize); err != nil {
 			return errors.Trace(err)
@@ -2856,8 +2857,10 @@ func checkOptionalClusterRequirements(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			logTables := buildLogBackupMetaTables(cfg.PiTRTableTracker.DBNameToTableNames)
-			if err := checkTableExistence(ctx, mgr, routeTargetTables(router, logTables)); err != nil {
+			// Use the latest source name per table ID. The tracker's name-only set
+			// also contains pre-rename snapshot names, and checking those as
+			// identity targets would falsely reject a legal restore.
+			if err := checkTableExistence(ctx, mgr, routeLatestSourceTables(router, nameSources)); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -2875,25 +2878,6 @@ func shouldCheckRestoreTargetExistence(
 	// an optional environment requirement. Never allow --check-requirements to
 	// disable this check for a new routed restore.
 	return checkRequirements || hasNameRouting
-}
-
-func buildLogBackupMetaTables(dbNameToTableNames map[string]map[string]struct{}) []*metautil.Table {
-	tables := make([]*metautil.Table, 0)
-
-	for dbName, tableNames := range dbNameToTableNames {
-		for tableName := range tableNames {
-			table := &metautil.Table{
-				DB: &model.DBInfo{
-					Name: ast.NewCIStr(dbName),
-				},
-				Info: &model.TableInfo{
-					Name: ast.NewCIStr(tableName),
-				},
-			}
-			tables = append(tables, table)
-		}
-	}
-	return tables
 }
 
 func createDBsAndTables(
