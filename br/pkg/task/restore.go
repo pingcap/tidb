@@ -401,7 +401,8 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 // DefineRestoreFlags defines common flags for the restore tidb command.
 func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
-	flags.StringArray(FlagRename, nil, "rename an exact source schema or table during restore, in source:target form")
+	flags.StringArray(FlagRename, nil, "rename an exact source schema or table during restore, in source:target form. "+
+		"Restores that write to the same target schema are treated as conflicting by the restore registry: run them serially and let each one finish before the next starts")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
 	flags.Bool(flagFastLoadSysTables, true, "load system tables (including statistics) by renaming the temporary system tables")
 	// Do not expose this flag
