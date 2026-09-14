@@ -1827,6 +1827,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	if task.tikvClientReadTimeout > 0 {
 		timeout = time.Duration(task.tikvClientReadTimeout) * time.Millisecond
 	}
+	// TiKV runs a serial store batch as one unit under the top task's deadline,
+	// which client-go derives from this timeout. Multiply it by the number of
+	// tasks in the RPC so each task keeps the budget a standalone request gets;
+	// otherwise a batch can spend the whole deadline queued behind its siblings.
+	if worker.req.ExecuteBatchTasksSerially && len(task.batchTaskList) > 0 {
+		timeout *= time.Duration(len(task.batchTaskList) + 1)
+	}
 	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
 		//nolint:durationcheck
 		time.Sleep(time.Millisecond * time.Duration(v.(int)))
