@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -72,7 +73,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			defer se.Close()
 			output := make(chan importer.QueryChunk, len(expected)+1)
 			err = importer.RunImportQuery(context.Background(), captured, importer.QueryRuntime{
-				Session: se, TotalMemoryLimit: 1 << 20,
+				Session: se, Storage: objstore.NewMemStorage(), Prefix: "query-test", MemoryLimit: 1 << 20,
 			}, output)
 			require.NoError(t, err)
 			close(output)
@@ -111,7 +112,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		defer se.Close()
 		output := make(chan importer.QueryChunk, 1)
 		err = importer.RunImportQuery(context.Background(), q, importer.QueryRuntime{
-			Session: se, TotalMemoryLimit: 1 << 20,
+			Session: se, Storage: objstore.NewMemStorage(), Prefix: "submitted-schema", MemoryLimit: 1 << 20,
 		}, output)
 		require.NoError(t, err)
 		close(output)
@@ -157,7 +158,7 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 			// Validate the real optimizer output without dispatching to a TiFlash server.
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/failAfterImportQueryOptimize", `return(true)`)
 			err = importer.RunImportQuery(context.Background(), captured, importer.QueryRuntime{
-				Session: se, TotalMemoryLimit: 1 << 20,
+				Session: se, Storage: objstore.NewMemStorage(), Prefix: "query-flash", MemoryLimit: 1 << 20,
 			}, nil)
 			require.ErrorContains(t, err, "injected failure after import query optimization")
 			require.True(t, optimized)

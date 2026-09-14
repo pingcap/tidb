@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -188,7 +189,10 @@ func runImportQuery(
 	failpoint.Inject("failAfterImportQueryOptimize", func() {
 		failpoint.Return(errors.New("injected failure after import query optimization"))
 	})
-	b := newExecutorBuilder(ctx, workerSession, workerSession.schema, nil)
+	spillOption := &builder.HashAggSpill{
+		Storage: runtime.Storage, Prefix: runtime.Prefix, MemoryLimit: runtime.MemoryLimit,
+	}
+	b := newExecutorBuilder(ctx, workerSession, workerSession.schema, nil, spillOption)
 	b.forDataReaderBuilder, b.dataReaderTS = true, vars.SnapshotTS
 	e := b.build(p)
 	if b.err != nil {

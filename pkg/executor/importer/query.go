@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
@@ -43,7 +44,10 @@ type QueryRuntime struct {
 	TotalMemoryLimit int64
 	// Session is exclusively owned by this attempt. The caller must close or
 	// destroy it on every exit path after RunImportQuery returns.
-	Session sessionctx.Context
+	Session     sessionctx.Context
+	Storage     storeapi.Storage
+	Prefix      string
+	MemoryLimit int64
 }
 
 // RunImportQuery executes a complete query attempt and streams owned chunks to

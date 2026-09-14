@@ -101,6 +101,9 @@ func newImportQuerySession(
 		}
 	}
 	totalLimit := runtime.TotalMemoryLimit
+	if totalLimit <= 0 {
+		totalLimit = runtime.MemoryLimit
+	}
 	if q.MemoryQuota > 0 {
 		totalLimit = min(totalLimit, q.MemoryQuota)
 	}
@@ -108,6 +111,7 @@ func newImportQuerySession(
 		return nil, nil, errors.New("import query requires a memory budget")
 	}
 	runtime.TotalMemoryLimit = totalLimit
+	runtime.MemoryLimit = min(runtime.MemoryLimit, totalLimit/2)
 	vars.MemQuotaQuery = totalLimit
 	vars.MemTracker.SetBytesLimit(totalLimit)
 	vars.CurrentDB = q.CurrentDB

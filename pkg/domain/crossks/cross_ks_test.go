@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -525,7 +526,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 				defer pool.Destroy(resource)
 				output := make(chan importer.QueryChunk, 4)
 				err = importer.RunImportQuery(ctx, captured, importer.QueryRuntime{
-					Session: resource.(sessionctx.Context), TotalMemoryLimit: 1 << 20,
+					Session: resource.(sessionctx.Context), Storage: objstore.NewMemStorage(), Prefix: "query-prototype", MemoryLimit: 1 << 20,
 				}, output)
 				require.NoError(t, err)
 				require.True(t, optimized)
@@ -566,7 +567,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			panic("stop before MPP dispatch")
 		})
 		err = importer.RunImportQuery(context.Background(), q, importer.QueryRuntime{
-			Session: se, TotalMemoryLimit: 1 << 20,
+			Session: se, Storage: objstore.NewMemStorage(), Prefix: "mpp-identity", MemoryLimit: 1 << 20,
 		}, nil)
 		require.ErrorContains(t, err, "stop before MPP dispatch")
 		require.True(t, checked)

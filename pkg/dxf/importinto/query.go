@@ -111,7 +111,8 @@ func (s *queryStepExecutor) runQueryPipeline(
 		se := resource.(sessionctx.Context)
 		return importer.RunImportQuery(groupCtx, query, importer.QueryRuntime{
 			TotalMemoryLimit: s.GetResource().Mem.Capacity() / 2,
-			Session:          se,
+			Session:          se, Storage: objStore, Prefix: subtaskPrefix(s.taskID, subtask.ID),
+			MemoryLimit: s.GetResource().Mem.Capacity() / 4,
 		}, selected)
 	})
 	group.Go(func() error {
