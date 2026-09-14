@@ -1816,19 +1816,53 @@ fn fold_chunk<C: Columns>(
     // Go `GetGroupKey` reuses one buffer per row across chunks, sized to
     // ten bytes per group item; one scratch buffer serves every row here.
     let mut key_scratch: Vec<u8> = Vec::with_capacity(10 * group_by.len());
-    for row_index in 0..chunk.num_rows() {
-        let row = chunk.get_row(row_index);
-        let key = match integer_columns {
-            Some([index]) => {
-                let index = *index;
-                let value = if row.is_null(index) {
+    // Go `GetGroupKey` takes the evaluated column ONCE -- `i64s := col.Int64s()`
+    // inside `codec.HashGroupKey` -- and then indexes a plain slice per row.
+    // Reading the same cell through the row accessor rebuilds the column guard
+    // for every row (`Row::get_int64` -> `Chunk::column` -> `ColumnSlot::read`,
+    // which takes the slot's read lock when the chunk shares its columns, then
+    // `SharedBytes::read` again for the payload) in the busiest loop the node
+    // has: a pushed-down GROUP BY sends one partial row per group PER REGION,
+    // 5.3 million of them for one TPC-H Q17 subquery.
+    let single_integer_column = match integer_columns {
+        Some([index]) => Some(chunk.column(*index)),
+        _ => None,
+    };
+    let num_rows = chunk.num_rows();
+    // Go builds every row's group key in ONE pass over the evaluated column
+    // (`codec.HashGroupKey` walks `col.Int64s()` into the row buffers) and
+    // only then loops the rows to murmur3 each key and probe the map
+    // (`getPartialResultsOfEachRow`). Doing the encode inside the probe loop
+    // instead interleaves a sequential, branch-predictable few bytes of work
+    // with a cache-missing hash lookup, and it measures: this hash is 0.85% of
+    // Go's profile for this query and `map_key_bucket` was 12.5% of ours,
+    // 118 ms against 362 ms, for the same varint bytes and the same murmur3.
+    // The bucket VALUE is unchanged -- same encoding, same hash, so the same
+    // group lands on the same final worker as before and as in Go.
+    let single_integer_buckets: Option<Vec<usize>> = single_integer_column.as_ref().map(|column| {
+        (0..num_rows)
+            .map(|row_index| {
+                let value = if column.is_null(row_index) {
                     None
                 } else {
-                    Some(row.get_int64(index))
+                    Some(column.get_int64(row_index))
+                };
+                map_key_bucket(PipelineMapKeyRef::Int(value), bucket_count)
+            })
+            .collect()
+    });
+    for row_index in 0..num_rows {
+        let row = chunk.get_row(row_index);
+        let key = match &single_integer_column {
+            Some(column) => {
+                let value = if column.is_null(row_index) {
+                    None
+                } else {
+                    Some(column.get_int64(row_index))
                 };
                 PipelineMapKeyRef::Int(value)
             }
-            _ => {
+            None => {
                 key_scratch.clear();
                 match integer_columns {
                     Some(columns) => {
@@ -1851,7 +1885,11 @@ fn fold_chunk<C: Columns>(
                 PipelineMapKeyRef::Bytes(&key_scratch)
             }
         };
-        let map = &mut maps[map_key_bucket(key, bucket_count)];
+        let bucket = match &single_integer_buckets {
+            Some(buckets) => buckets[row_index],
+            None => map_key_bucket(key, bucket_count),
+        };
+        let map = &mut maps[bucket];
         let group = match map.entry_ref(&key) {
             EntryRef::Occupied(slot) => slot.into_mut(),
             EntryRef::Vacant(slot) => {
