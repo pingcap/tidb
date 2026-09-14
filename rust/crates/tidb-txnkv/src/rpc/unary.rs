@@ -23,7 +23,8 @@
 //! this transport authority.
 
 use std::fmt;
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use bytes::{Buf, BufMut};
@@ -50,9 +51,16 @@ const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
 /// synchronous caller is waiting for the worker reply.
 #[derive(Clone)]
 pub struct UnaryCancellation {
-    state: tokio::sync::watch::Sender<bool>,
-    blocking_wait: Arc<(Mutex<()>, Condvar)>,
-    completion_waiters: Arc<Mutex<Vec<RegisteredCancellationWaiter>>>,
+    inner: Arc<CancellationState>,
+}
+
+struct CancellationState {
+    cancelled: AtomicBool,
+    // Like Go cancelCtx.mu, this coordinates first cancellation with all
+    // waiter registrations. The flag can be read without taking this lock.
+    waiters: Mutex<Vec<RegisteredCancellationWaiter>>,
+    blocking_wait: OnceLock<Condvar>,
+    async_wait: OnceLock<tokio::sync::Notify>,
 }
 
 impl fmt::Debug for UnaryCancellation {
@@ -83,67 +91,77 @@ impl UnaryCancellation {
     /// Creates an active, not-yet-cancelled carrier.
     #[must_use]
     pub fn new() -> Self {
-        let (state, _) = tokio::sync::watch::channel(false);
         Self {
-            state,
-            blocking_wait: Arc::new((Mutex::new(()), Condvar::new())),
-            completion_waiters: Arc::new(Mutex::new(Vec::new())),
+            inner: Arc::new(CancellationState {
+                cancelled: AtomicBool::new(false),
+                waiters: Mutex::new(Vec::new()),
+                blocking_wait: OnceLock::new(),
+                async_wait: OnceLock::new(),
+            }),
         }
     }
 
     /// Makes cancellation visible to current and future calls.
     pub fn cancel(&self) {
-        let (lock, changed) = self.blocking_wait.as_ref();
-        let guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.state.send_replace(true);
-        drop(guard);
-        changed.notify_all();
+        if self.is_cancelled() {
+            return;
+        }
         let waiters = {
             let mut registered = self
-                .completion_waiters
+                .inner
+                .waiters
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let mut waiters = Vec::with_capacity(registered.len());
-            registered.retain(|waiting| {
-                if let Some(waiting) = waiting.waiter.upgrade() {
-                    waiters.push(waiting);
-                    true
-                } else {
-                    false
-                }
-            });
-            waiters
+            if self.is_cancelled() {
+                return;
+            }
+            self.inner.cancelled.store(true, Ordering::Release);
+            std::mem::take(&mut *registered)
         };
+        // New waiters now observe cancellation instead of registering. Do not
+        // initialize notification machinery when nobody ever waited on it.
+        if let Some(changed) = self.inner.blocking_wait.get() {
+            changed.notify_all();
+        }
+        if let Some(changed) = self.inner.async_wait.get() {
+            changed.notify_waiters();
+        }
         for waiting in waiters {
-            waiting.wake_all();
+            if let Some(waiting) = waiting.waiter.upgrade() {
+                waiting.wake_all();
+            }
         }
     }
 
     /// Whether the caller has already cancelled.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        *self.state.borrow()
+        self.inner.cancelled.load(Ordering::Acquire)
     }
 
     /// Whether both carriers observe and update the same cancellation state.
     #[must_use]
     pub fn shares_state_with(&self, other: &Self) -> bool {
-        self.state.same_channel(&other.state)
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 
     /// Waits until this carrier is cancelled or `timeout` elapses.
     ///
     /// Returns `true` only for caller cancellation. A `false` result means the
     /// full timeout elapsed. The condition variable is paired with the same
-    /// watch value used by in-flight tonic calls, so synchronous TTL waiting
+    /// cancellation flag used by in-flight tonic calls, so synchronous TTL waiting
     /// neither polls nor creates another cancellation authority.
     #[must_use]
     pub fn wait_timeout(&self, timeout: Duration) -> bool {
-        let (lock, changed) = self.blocking_wait.as_ref();
-        let guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .inner
+            .waiters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.is_cancelled() {
             return true;
         }
+        let changed = self.inner.blocking_wait.get_or_init(Condvar::new);
         let _ = changed
             .wait_timeout_while(guard, timeout, |_| !self.is_cancelled())
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -156,7 +174,8 @@ impl UnaryCancellation {
     {
         let identity = Arc::as_ptr(waiter).cast::<()>() as usize;
         let mut waiters = self
-            .completion_waiters
+            .inner
+            .waiters
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !self.is_cancelled()
@@ -177,7 +196,8 @@ impl UnaryCancellation {
         W: CancellationWaiter + 'static,
     {
         let identity = Arc::as_ptr(waiter).cast::<()>() as usize;
-        self.completion_waiters
+        self.inner
+            .waiters
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .retain(|registered| {
@@ -186,15 +206,27 @@ impl UnaryCancellation {
     }
 
     pub(super) async fn cancelled(&self) {
-        let mut receiver = self.state.subscribe();
-        if *receiver.borrow() {
+        if self.is_cancelled() {
             return;
         }
-        while receiver.changed().await.is_ok() {
-            if *receiver.borrow() {
+        let notified = {
+            let _guard = self
+                .inner
+                .waiters
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if self.is_cancelled() {
                 return;
             }
-        }
+            // Notify::notified observes notify_waiters from creation, even
+            // before its first poll. Construct under the cancellation lock so
+            // cancellation cannot fall between the check and registration.
+            self.inner
+                .async_wait
+                .get_or_init(tokio::sync::Notify::new)
+                .notified()
+        };
+        notified.await;
     }
 }
 
@@ -753,5 +785,52 @@ mod tests {
         let elapsed = UnaryCancellation::new();
         assert!(!elapsed.wait_timeout(Duration::from_millis(10)));
         assert!(!elapsed.is_cancelled());
+    }
+
+    #[test]
+    fn cancellation_notifies_once_and_late_waiters_observe_the_closed_state() {
+        use std::future::Future;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::task::{Context, Poll, Wake, Waker};
+
+        #[derive(Default)]
+        struct Observer(AtomicUsize);
+        impl super::CancellationWaiter for Observer {
+            fn wake_all(&self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        impl Wake for Observer {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        // Go cancelCtx.cancel closes Done and detaches children only once.
+        let cancellation = UnaryCancellation::new();
+        let clone = cancellation.clone();
+        let completion = Arc::new(Observer::default());
+        cancellation.register_completion_waiter(&completion);
+        clone.register_completion_waiter(&completion);
+        let wake = Arc::new(Observer::default());
+        let waker = Waker::from(wake.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut first = std::pin::pin!(cancellation.cancelled());
+        let mut second = std::pin::pin!(clone.cancelled());
+        assert_eq!(first.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(second.as_mut().poll(&mut cx), Poll::Pending);
+        cancellation.cancel();
+        clone.cancel();
+        assert_eq!(completion.0.load(Ordering::Relaxed), 1);
+        assert_eq!(first.as_mut().poll(&mut cx), Poll::Ready(()));
+        assert_eq!(second.as_mut().poll(&mut cx), Poll::Ready(()));
+        assert!(wake.0.load(Ordering::Relaxed) >= 1);
+
+        let mut late = std::pin::pin!(cancellation.cancelled());
+        assert_eq!(late.as_mut().poll(&mut cx), Poll::Ready(()));
+        assert!(clone.wait_timeout(Duration::from_secs(1)));
+        assert!(clone.shares_state_with(&cancellation));
+        assert!(!clone.shares_state_with(&UnaryCancellation::new()));
     }
 }
