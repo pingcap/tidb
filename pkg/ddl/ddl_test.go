@@ -173,10 +173,36 @@ func TestAccountJobRU(t *testing.T) {
 		}
 		w := worker{sess: sess.NewSession(sessCtx)}
 
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUConsumption(&model.Job{RU: 42})
 
 		require.Equal(t, []ddlJobRUReport{{
 			resourceGroupName: resourcegroup.DefaultResourceGroupName,
+			tikvRUV2:          42,
+			tidbRUV2:          0,
+			tiflashRUV2:       0,
+		}}, reporter.reports)
+	})
+
+	t.Run("reports reorganization jobs through the persisted resource group", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUConsumption(&model.Job{
+			RU: 42,
+			ReorgMeta: &model.DDLReorgMeta{
+				ResourceGroupName: "non-default-group",
+			},
+		})
+
+		require.Equal(t, []ddlJobRUReport{{
+			resourceGroupName: "non-default-group",
 			tikvRUV2:          42,
 			tidbRUV2:          0,
 			tiflashRUV2:       0,
@@ -193,9 +219,9 @@ func TestAccountJobRU(t *testing.T) {
 		}
 		w := worker{sess: sess.NewSession(sessCtx)}
 
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUConsumption(&model.Job{RU: 42})
 		sessCtx.dctx = nil
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUConsumption(&model.Job{RU: 42})
 
 		require.Empty(t, reporter.reports)
 	})
@@ -212,7 +238,7 @@ func TestAccountJobRU(t *testing.T) {
 		w := worker{sess: sess.NewSession(sessCtx)}
 
 		require.Panics(t, func() {
-			w.reportJobRUV3Consumption(42)
+			w.reportJobRUConsumption(&model.Job{RU: 42})
 		})
 	})
 }
