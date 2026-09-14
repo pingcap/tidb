@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -585,14 +587,17 @@ type QueryRuntime struct {
 	TotalMemoryLimit int64
 	// Session is exclusively owned by this attempt. The caller must close or
 	// destroy it on every exit path after RunImportQuery returns.
-	Session     sessionctx.Context
-	SessionPool util.DestroyableSessionPool
-	Storage     storeapi.Storage
-	Prefix      string
-	MemoryLimit int64
+	Session         sessionctx.Context
+	SessionPool     util.DestroyableSessionPool
+	Storage         storeapi.Storage
+	Prefix          string
+	Range           *tidbkv.KeyRange
+	RowIDAllocator  autoid.Allocator
+	ScanConcurrency int
+	MemoryLimit     int64
 }
 
-// RunImportQuery executes a complete query attempt and streams owned chunks to
+// RunImportQuery executes a whole query or an assigned source range and streams chunks to
 // output. The caller owns the channel and session; the function closes its executor
 // before returning. Registration by executor avoids a package import cycle.
 // TODO: Separate IMPORT task submission, status APIs and TaskMeta from the DXF
