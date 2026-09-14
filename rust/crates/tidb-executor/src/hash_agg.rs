@@ -4446,10 +4446,17 @@ mod tests {
         let (_, _, dispatched, workers) = exec.pipeline_run_info().expect("pipeline ran");
         assert!(dispatched > 0);
         assert!(workers > 1);
-        assert_eq!(
-            exec.pipeline_inline_folds(),
-            Some(0),
-            "a multi-chunk input keeps every chunk on the lanes"
+        // The fetcher folds a chunk itself only when the lane it is due to
+        // hand it to has no room, so on a multi-chunk input the lanes must
+        // still do the bulk of the folding. This used to require NO inline
+        // fold at all; that held only while the fetcher blocked on a full
+        // lane, which left its core idle. What matters is unchanged: the
+        // pipeline has not degenerated into a fold on the fetching thread.
+        let inline = exec.pipeline_inline_folds().expect("pipeline ran");
+        assert!(
+            inline < dispatched - inline,
+            "the lanes must fold most of a multi-chunk input, \
+             not the fetching thread ({inline} inline of {dispatched} chunks)"
         );
         exec.close().unwrap();
     }

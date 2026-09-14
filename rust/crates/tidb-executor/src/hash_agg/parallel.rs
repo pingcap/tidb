@@ -101,7 +101,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
-use std::sync::mpsc::sync_channel;
+use std::sync::mpsc::{sync_channel, TrySendError};
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::Mutex;
@@ -181,7 +181,10 @@ pub(super) struct PipelineStats {
     pub(super) final_concurrency: usize,
     /// Chunks successfully dispatched by the fetcher.
     pub(super) dispatched_chunks: AtomicUsize,
-    /// Single-chunk inputs folded on the fetching thread instead of a lane.
+    /// Chunks folded on the fetching thread instead of a lane: a
+    /// single-chunk input, which never reaches a lane at all, and any chunk
+    /// whose due lane had no room, which the fetcher folds rather than block
+    /// on it.
     pub(super) inline_folds: AtomicUsize,
     /// Ids of the partial-worker threads that actually ran.
     pub(super) partial_worker_threads: Mutex<Vec<std::thread::ThreadId>>,
@@ -1360,6 +1363,10 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
     // 0, the second to lane 1) and every fold still lands in the partial
     // maps the final stage adopts.
     let mut held: Option<(Chunk, i64)> = None;
+    // Groups folded on the fetching thread when a lane had no room. Absent
+    // until the first such chunk, so a pipeline that never backs up keeps the
+    // single-partial-map fast path below.
+    let mut inline_maps: Option<Vec<PipelineMap>> = None;
     loop {
         if abort.raised() || spill_requested.load(std::sync::atomic::Ordering::SeqCst) {
             break;
@@ -1413,14 +1420,66 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
                 ));
                 lane_txs[next_lane] = Some(lane_tx);
             }
-            if lane_txs[next_lane]
+            // Go's fetcher blocks on a full `partialInputChs[i]` and its
+            // runtime puts another goroutine on the thread, so the CPU keeps
+            // doing partial-worker work. A blocking send here parks an OS
+            // thread and leaves the core idle instead: a per-thread CPU
+            // timeline of Q13 shows the lanes holding about 2.5 of four cores
+            // while the fetcher and the pool add half a core between them.
+            // Fold the chunk on this thread instead of sleeping on it.
+            //
+            // The rotation, and with it the memory, is untouched. `next_lane`
+            // advances exactly as before, and the fetcher holds precisely the
+            // one chunk it would have blocked with, so the number of chunks in
+            // flight -- and therefore the charge on the tracker at any instant
+            // -- is what it was. That is the difference from the run-ahead
+            // this replaces, which dispatched to whichever lane had room and
+            // so let the fetcher fill further ahead; the extra chunks it
+            // charged moved with thread scheduling, and a query sitting on its
+            // quota began to pass or fail depending on it.
+            match lane_txs[next_lane]
                 .as_ref()
                 .expect("a dispatched lane has a sender")
-                .send(item)
-                .is_err()
+                .try_send(item)
             {
-                dispatched = false;
-                break;
+                Ok(()) => {}
+                Err(TrySendError::Full((chunk, chunk_charge))) => {
+                    let maps = inline_maps.get_or_insert_with(|| {
+                        #[cfg(test)]
+                        stats.record_partial_worker();
+                        (0..final_concurrency)
+                            .map(|_| PipelineMap::default())
+                            .collect()
+                    });
+                    #[cfg(test)]
+                    stats
+                        .inline_folds
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let fold = fold_chunk(
+                        FoldInputs {
+                            ctx: &plan.ctx,
+                            group_by: &plan.group_by,
+                            integer_columns: plan.integer_columns.as_deref(),
+                            agg_funcs: &plan.agg_funcs,
+                            collations: &plan.collations,
+                        },
+                        maps,
+                        final_concurrency,
+                        tracker,
+                        &chunk,
+                    );
+                    tracker.consume(-chunk_charge);
+                    if let Err(error) = fold {
+                        fetch_error = Some(error);
+                        abort.raise();
+                        dispatched = false;
+                        break;
+                    }
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    dispatched = false;
+                    break;
+                }
             }
             next_lane = (next_lane + 1) % partial_concurrency;
         }
@@ -1465,6 +1524,9 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
             }
         }
         tracker.consume(-chunk_charge);
+    }
+    if let Some(maps) = inline_maps.take() {
+        partial_maps.push(maps);
     }
     for handle in partial_handles.into_iter().flatten() {
         match handle.recv() {
