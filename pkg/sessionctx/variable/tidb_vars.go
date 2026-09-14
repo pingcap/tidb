@@ -528,6 +528,12 @@ const (
 	// tidb_hashagg_final_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
 
+	// TiDBHashAggUniqueLimitThreshold controls when HashAgg can use unique-limit optimization.
+	// If the optimization conditions are met and `offset+count` of parent Limit is less than or
+	// equal to this threshold, HashAgg can stop after collecting enough unique groups.
+	// Set 0 to disable this optimization.
+	TiDBHashAggUniqueLimitThreshold = "tidb_hashagg_unique_limit_threshold"
+
 	// TiDBWindowConcurrency is used for window parallel executor.
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
@@ -1442,6 +1448,7 @@ const (
 	DefTiDBEnableAutoIncrementInGenerated   = false
 	DefTiDBHashAggPartialConcurrency        = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency          = ConcurrencyUnset
+	DefTiDBHashAggUniqueLimitThreshold      = 0
 	DefTiDBWindowConcurrency                = ConcurrencyUnset
 	DefTiDBMergeJoinConcurrency             = 1 // disable optimization by default
 	DefTiDBStreamAggConcurrency             = 1
