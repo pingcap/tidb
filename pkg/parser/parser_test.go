@@ -1266,6 +1266,12 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show distribution job 1 where id > 0", false, ""},
 		{"show distribution job 1", true, "SHOW DISTRIBUTION JOB 1"},
 
+		// for active storage class transitions
+		{"show storage_class transitions", true, "SHOW STORAGE_CLASS TRANSITIONS"},
+		{"show storage_class transitions like 'orders%'", true, "SHOW STORAGE_CLASS TRANSITIONS LIKE _UTF8MB4'orders%'"},
+		{"show storage_class transitions where direction = 'TO_IA'", true, "SHOW STORAGE_CLASS TRANSITIONS WHERE `direction`=_UTF8MB4'TO_IA'"},
+		{"show storage class transitions", false, ""},
+
 		// for cancel distribution job JOBID
 		{"cancel distribution job", false, ""},
 		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
@@ -4437,6 +4443,55 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
 	}
 	RunTest(t, table, false, false)
+
+	t.Run("unsupported MySQL create table option", func(t *testing.T) {
+		const (
+			sql           = "CREATE TABLE `t` (`id` BIGINT NOT NULL) START TRANSACTION"
+			withEngineSQL = "CREATE TABLE t (a INT) ENGINE=InnoDB START TRANSACTION"
+		)
+
+		p := parser.New()
+		_, err := p.ParseOneStmt(sql, "", "")
+		require.Error(t, err)
+
+		p.SetParserConfig(parser.ParserConfig{
+			EnableWindowFunction:         true,
+			EnableStrictDoubleTypeCheck:  true,
+			EnableUnsupportedMySQLSyntax: true,
+		})
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		createStmt, ok := stmt.(*ast.CreateTableStmt)
+		require.True(t, ok)
+		require.Len(t, createStmt.Options, 1)
+		require.Equal(t, ast.TableOptionStartTransaction, createStmt.Options[0].Tp)
+
+		var sb strings.Builder
+		require.NoError(t, stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &sb)))
+		require.Equal(t, "CREATE TABLE `t` (`id` BIGINT NOT NULL) START TRANSACTION", sb.String())
+		restoredStmt, err := p.ParseOneStmt(sb.String(), "", "")
+		require.NoError(t, err)
+		CleanNodeText(stmt)
+		CleanNodeText(restoredStmt)
+		require.Equal(t, stmt, restoredStmt)
+
+		stmt, err = p.ParseOneStmt(withEngineSQL, "", "")
+		require.NoError(t, err)
+		createStmt, ok = stmt.(*ast.CreateTableStmt)
+		require.True(t, ok)
+		require.Len(t, createStmt.Options, 2)
+		require.Equal(t, ast.TableOptionEngine, createStmt.Options[0].Tp)
+		require.Equal(t, ast.TableOptionStartTransaction, createStmt.Options[1].Tp)
+
+		_, err = p.ParseOneStmt("ALTER TABLE t START TRANSACTION", "", "")
+		require.Error(t, err)
+		_, err = p.ParseOneStmt("CREATE SEQUENCE s START TRANSACTION", "", "")
+		require.Error(t, err)
+
+		p.Reset()
+		_, err = p.ParseOneStmt(sql, "", "")
+		require.Error(t, err)
+	})
 }
 
 func TestHintError(t *testing.T) {
@@ -5722,18 +5777,18 @@ type subqueryChecker struct {
 	t    *testing.T
 }
 
-// Enter implements ast.Visitor interface.
-func (sc *subqueryChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (sc *subqueryChecker) Enter(inNode ast.Node) bool {
 	if expr, ok := inNode.(*ast.SubqueryExpr); ok {
 		require.Equal(sc.t, sc.text, expr.Query.Text())
-		return inNode, true
+		return true
 	}
-	return inNode, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (sc *subqueryChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	return inNode, true
+// Leave implements ast.InPlaceVisitor interface.
+func (*subqueryChecker) Leave(ast.Node) bool {
+	return true
 }
 
 func TestSubquery(t *testing.T) {
@@ -5781,7 +5836,7 @@ func TestSubquery(t *testing.T) {
 	for _, tbl := range tests {
 		stmt, err := p.ParseOneStmt(tbl.input, "", "")
 		require.NoError(t, err)
-		stmt.Accept(&subqueryChecker{
+		ast.Walk(stmt, &subqueryChecker{
 			text: tbl.text,
 			t:    t,
 		})
@@ -7135,8 +7190,8 @@ type windowFrameBoundChecker struct {
 	t      *testing.T
 }
 
-// Enter implements ast.Visitor interface.
-func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) bool {
 	if _, ok := inNode.(*ast.FrameBound); ok {
 		wfc.fb = inNode.(*ast.FrameBound)
 		if wfc.fb.Unit != ast.TimeUnitInvalid {
@@ -7144,11 +7199,11 @@ func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, sk
 			require.False(wfc.t, ok)
 		}
 	}
-	return inNode, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+// Leave implements ast.InPlaceVisitor interface.
+func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) bool {
 	if _, ok := inNode.(*ast.FrameBound); ok {
 		wfc.fb = nil
 	}
@@ -7158,7 +7213,7 @@ func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bo
 		}
 		wfc.unit = wfc.fb.Unit
 	}
-	return inNode, true
+	return true
 }
 
 // For issue #51
@@ -7179,7 +7234,7 @@ func TestVisitFrameBound(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tbl.s, "", "")
 		require.NoError(t, err)
 		checker := windowFrameBoundChecker{t: t}
-		stmt.Accept(&checker)
+		ast.Walk(stmt, &checker)
 		require.Equal(t, tbl.exprRc, checker.exprRc)
 		require.Equal(t, tbl.unit, checker.unit)
 	}
@@ -7428,7 +7483,7 @@ func TestSignedInt64OutOfRange(t *testing.T) {
 // For test only.
 func CleanNodeText(node ast.Node) {
 	var cleaner nodeTextCleaner
-	node.Accept(&cleaner)
+	ast.Walk(node, &cleaner)
 }
 
 // nodeTextCleaner clean the text of a node and it's child node.
@@ -7442,19 +7497,19 @@ func cleanPartition(n ast.Node) {
 		if p.Interval != nil {
 			p.Interval.SetText(nil, "")
 			p.Interval.SetOriginTextPosition(0)
-			p.Interval.IntervalExpr.Expr.Accept(&tmpCleaner)
+			ast.Walk(p.Interval.IntervalExpr.Expr, &tmpCleaner)
 			if p.Interval.FirstRangeEnd != nil {
-				(*p.Interval.FirstRangeEnd).Accept(&tmpCleaner)
+				ast.Walk(*p.Interval.FirstRangeEnd, &tmpCleaner)
 			}
 			if p.Interval.LastRangeEnd != nil {
-				(*p.Interval.LastRangeEnd).Accept(&tmpCleaner)
+				ast.Walk(*p.Interval.LastRangeEnd, &tmpCleaner)
 			}
 		}
 	}
 }
 
-// Enter implements Visitor interface.
-func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Enter(in ast.Node) bool {
 	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	if v, ok := in.(ast.ValueExpr); ok && v != nil {
@@ -7538,12 +7593,12 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	case *ast.PartitionOptions:
 		cleanPartition(node)
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (checker *nodeTextCleaner) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+// Leave implements ast.InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Leave(in ast.Node) bool {
+	return true
 }
 
 // For BRIE
@@ -8040,14 +8095,14 @@ func TestGBKEncoding(t *testing.T) {
 	stmt, _, err := p.ParseSQL(sql)
 	require.NoError(t, err)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.NotEqual(t, "测试表", checker.tblName)
 	require.NotEqual(t, "测试列", checker.colName)
 
 	gbkOpt := parser.CharsetClient("gbk")
 	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	require.NoError(t, err)
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.Equal(t, "测试表", checker.tblName)
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GBK测试用例", checker.expr)
@@ -8088,14 +8143,14 @@ func TestGB18030Encoding(t *testing.T) {
 	stmt, _, err := p.ParseSQL(sql)
 	require.NoError(t, err)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.NotEqual(t, "测试表", checker.tblName)
 	require.NotEqual(t, "测试列", checker.colName)
 
 	gb18030Opt := parser.CharsetClient("gb18030")
 	stmt, _, err = p.ParseSQL(sql, gb18030Opt)
 	require.NoError(t, err)
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.Equal(t, "测试表", checker.tblName)
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GB18030测试用例", checker.expr)
@@ -8132,26 +8187,26 @@ type gbkEncodingChecker struct {
 	expr    string
 }
 
-func (g *gbkEncodingChecker) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+func (g *gbkEncodingChecker) Enter(n ast.Node) bool {
 	if tn, ok := n.(*ast.TableName); ok {
 		g.tblName = tn.Name.O
-		return n, false
+		return false
 	}
 	if cn, ok := n.(*ast.ColumnName); ok {
 		g.colName = cn.Name.O
-		return n, false
+		return false
 	}
 	if c, ok := n.(*ast.ColumnOption); ok {
 		if ve, ok := c.Expr.(ast.ValueExpr); ok {
 			g.expr = ve.GetString()
-			return n, false
+			return false
 		}
 	}
-	return n, false
+	return false
 }
 
-func (g *gbkEncodingChecker) Leave(n ast.Node) (node ast.Node, ok bool) {
-	return n, true
+func (*gbkEncodingChecker) Leave(ast.Node) bool {
+	return true
 }
 
 func TestInsertStatementMemoryAllocation(t *testing.T) {

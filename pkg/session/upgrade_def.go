@@ -531,8 +531,11 @@ const (
 	// version286 adds the OPERATE VIEW static privilege.
 	version286 = 286
 
-	// version287 adds restore name routing identity to mysql.tidb_restore_registry.
+	// version287 adds scan_index_id to mysql.tidb_ttl_task for index-ordered TTL scans.
 	version287 = 287
+
+	// version288 adds restore name routing identity to mysql.tidb_restore_registry.
+	version288 = 288
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -546,7 +549,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version287
+var currentBootstrapVersion int64 = version288
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -738,6 +741,7 @@ var (
 		{version: version285, fn: upgradeToVer285},
 		{version: version286, fn: upgradeToVer286},
 		{version: version287, fn: upgradeToVer287},
+		{version: version288, fn: upgradeToVer288},
 	}
 )
 
@@ -2349,6 +2353,10 @@ func upgradeToVer286(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer287(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS scan_index_id bigint DEFAULT NULL")
+}
+
+func upgradeToVer288(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER filter_hash", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER source_filter_strings", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_hash VARCHAR(64) NOT NULL DEFAULT '' AFTER route_strings", infoschema.ErrColumnExists)

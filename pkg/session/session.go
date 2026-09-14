@@ -2280,6 +2280,12 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 
 	preSkipStats := s.sessionVars.SkipMissingPartitionStats
 	se.sessionVars.SkipMissingPartitionStats = s.sessionVars.SkipMissingPartitionStats
+	restoreSessionVars := func() {}
+	if execOption.SessionVarsSetup != nil {
+		if restore := execOption.SessionVarsSetup(se.sessionVars); restore != nil {
+			restoreSessionVars = restore
+		}
+	}
 
 	if execOption.SnapshotTS != 0 {
 		if err := se.sessionVars.SetSystemVar(vardef.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
@@ -2325,6 +2331,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.SkipMissingPartitionStats = preSkipStats
 		se.sessionVars.InspectionTableCache = nil
 		se.sessionVars.MemTracker.Detach()
+		restoreSessionVars()
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
@@ -3111,6 +3118,11 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			if !sessVars.InTxn() {
 				se.StmtCommit(ctx)
 				if err := se.CommitTxn(ctx); err != nil {
+					s.(*executor.ExecStmt).RecordStatementRUFinalOutcome(false)
+					if closeErr := executor.CloseRecordSetWithError(rs, err); closeErr != nil {
+						logutil.Logger(ctx).Error("close EXPLAIN ANALYZE DML record set after commit error failed",
+							zap.Error(closeErr), zap.NamedError("commitError", err))
+					}
 					return nil, err
 				}
 			}

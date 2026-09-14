@@ -145,9 +145,9 @@ const (
 	SlowLogStorageFromKV = "Storage_from_kv"
 	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
 	SlowLogStorageFromMPP = "Storage_from_mpp"
-	// SlowLogRequestUnitV2 is the RU v2 total for the statement.
+	// SlowLogRequestUnitV2 is the legacy slow log key for statement RU.
 	SlowLogRequestUnitV2 = "Request_unit_v2"
-	// SlowLogRequestUnitV2Detail is the RU v2 detailed metrics for the statement.
+	// SlowLogRequestUnitV2Detail is the legacy slow log key for detailed statement RU metrics.
 	SlowLogRequestUnitV2Detail = "Request_unit_v2_detail"
 
 	// The following constants define the set of fields for SlowQueryLogItems
@@ -370,8 +370,12 @@ func kvExecDetailFormat(buf *bytes.Buffer, kvExecDetail *util.ExecDetails) {
 // # Succ: true
 // # Prev_stmt: begin;
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
+func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems, statementRUTotal ...float64) string {
 	var buf bytes.Buffer
+	totalRU := float64(0)
+	if len(statementRUTotal) > 0 {
+		totalRU = statementRUTotal[0]
+	}
 
 	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
 	if logItems.KeyspaceName != "" {
@@ -574,17 +578,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
 	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
-	var tiKVRU, tiFlashRU float64
-	if logItems.RUDetails != nil {
-		tiKVRU = logItems.RUDetails.TiKVRUV2()
-		tiFlashRU = logItems.RUDetails.TiflashRU()
-	}
-	total, formatted := execdetails.FormatRUV2Summary(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU)
-	if len(total) > 0 {
-		writeSlowLogItem(&buf, SlowLogRequestUnitV2, total)
-	}
-	if len(formatted) > 0 {
-		writeSlowLogItem(&buf, SlowLogRequestUnitV2Detail, formatted)
+	if totalRU > 0 {
+		writeSlowLogItem(&buf, SlowLogRequestUnitV2, strconv.FormatFloat(totalRU, 'f', 2, 64))
+		writeSlowLogItem(&buf, SlowLogRequestUnitV2Detail, "")
 	}
 	if len(logItems.SessionConnectAttrs) > 0 {
 		// Encode into a temporary buffer first so that a (practically impossible)

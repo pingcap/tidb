@@ -714,6 +714,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	traditional                "TRADITIONAL"
 	transaction                "TRANSACTION"
 	transactional              "TRANSACTIONAL"
+	transitions                "TRANSITIONS"
 	triggers                   "TRIGGERS"
 	truncate                   "TRUNCATE"
 	tsoType                    "TSO"
@@ -1231,6 +1232,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ConstraintColumnarIndex                "columnar index"
 	ConstraintWithColumnarIndex            "table constraint with columnar index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
+	CreateSequenceTableOptionListOpt       "create sequence table option list opt"
+	CreateTableOption                      "CREATE TABLE-specific option"
+	CreateTableOptionList                  "CREATE TABLE-specific option list"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
 	DatabaseOption                         "CREATE Database specification"
@@ -7743,6 +7747,7 @@ UnReservedKeyword:
 |	"ENGINE_ATTRIBUTE"
 |	"SECONDARY_ENGINE_ATTRIBUTE"
 |	"STORAGE_CLASS"
+|	"TRANSITIONS"
 |	"ENUM"
 |	"ERROR"
 |	"ERRORS"
@@ -12980,6 +12985,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowEngines}
 	}
+|	"STORAGE_CLASS" "TRANSITIONS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowStorageClassTransitions}
+	}
 |	"DATABASES"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
@@ -14056,7 +14065,32 @@ CreateTableOptionListOpt:
 	{
 		$$ = []*ast.TableOption{}
 	}
-|	TableOptionList %prec lowerThanComma
+|	CreateTableOptionList %prec lowerThanComma
+
+CreateTableOptionList:
+	CreateTableOption
+	{
+		$$ = []*ast.TableOption{$1.(*ast.TableOption)}
+	}
+|	CreateTableOptionList CreateTableOption
+	{
+		$$ = append($1.([]*ast.TableOption), $2.(*ast.TableOption))
+	}
+|	CreateTableOptionList ',' CreateTableOption
+	{
+		$$ = append($1.([]*ast.TableOption), $3.(*ast.TableOption))
+	}
+
+CreateTableOption:
+	TableOption
+|	"START" "TRANSACTION"
+	{
+		if !parser.enableUnsupportedMySQLSyntax {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionStartTransaction}
+	}
 
 TableOptionList:
 	TableOption
@@ -14071,6 +14105,13 @@ TableOptionList:
 	{
 		$$ = append($1.([]*ast.TableOption), $3.(*ast.TableOption))
 	}
+
+CreateSequenceTableOptionListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
+	{
+		$$ = []*ast.TableOption{}
+	}
+|	TableOptionList %prec lowerThanComma
 
 OptTable:
 	{}
@@ -17039,7 +17080,7 @@ AlterPolicyStmt:
  *	[table_options]
  ********************************************************************************************/
 CreateSequenceStmt:
-	"CREATE" "SEQUENCE" IfNotExists TableName CreateSequenceOptionListOpt CreateTableOptionListOpt
+	"CREATE" "SEQUENCE" IfNotExists TableName CreateSequenceOptionListOpt CreateSequenceTableOptionListOpt
 	{
 		$$ = &ast.CreateSequenceStmt{
 			IfNotExists: $3.(bool),

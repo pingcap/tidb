@@ -2136,6 +2136,15 @@ func TestTiDBEnableFullOuterJoin(t *testing.T) {
 	require.True(t, vars.EnableFullOuterJoin)
 }
 
+func TestTiDBMViewEnable(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, vardef.DefTiDBMViewEnable, vars.EnableMView)
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBMViewEnable, "on"))
+	require.True(t, vars.EnableMView)
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBMViewEnable, "off"))
+	require.False(t, vars.EnableMView)
+}
+
 func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	vars := NewSessionVars(nil)
 	sysVar := GetSysVar(vardef.TiDBAutoAnalyzeConcurrency)

@@ -24,19 +24,19 @@ import (
 
 type checkVisitor struct{}
 
-func (v checkVisitor) Enter(in Node) (Node, bool) {
+func (v checkVisitor) Enter(in Node) bool {
 	if e, ok := in.(*checkExpr); ok {
 		e.enterCnt++
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (v checkVisitor) Leave(in Node) (Node, bool) {
+func (v checkVisitor) Leave(in Node) bool {
 	if e, ok := in.(*checkExpr); ok {
 		e.leaveCnt++
 	}
-	return in, true
+	return true
 }
 
 type checkExpr struct {
@@ -98,10 +98,10 @@ func TestExpresionsVisitorCover(t *testing.T) {
 
 	for _, v := range stmts {
 		ce.reset()
-		v.node.Accept(checkVisitor{})
+		Walk(v.node, checkVisitor{})
 		require.Equal(t, v.expectedEnterCnt, ce.enterCnt)
 		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
-		v.node.Accept(visitor1{})
+		Walk(v.node, visitor1{})
 	}
 }
 

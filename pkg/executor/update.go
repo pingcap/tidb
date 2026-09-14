@@ -44,6 +44,9 @@ import (
 type UpdateExec struct {
 	exec.BaseExecutor
 
+	writeStats *execdetails.WriteRuntimeStats
+	writeRows  []int // First matched rows per target-table position, aggregated at Close.
+
 	OrderedList         []*expression.Assignment
 	assignmentsPerTable map[int][]*expression.Assignment
 
@@ -283,6 +286,9 @@ func (e *UpdateExec) exec(
 		if e.matches[i] {
 			// Row is matched for the first time, increment `matched` counter
 			e.matched++
+			if e.writeStats != nil {
+				e.writeRows[i]++
+			}
 		}
 		tbl := e.tblID2table[content.TblID]
 		handle := e.handles[i]
@@ -573,6 +579,12 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
+	if e.writeStats != nil {
+		for i, rows := range e.writeRows {
+			recordWriteCPUWork(e.writeStats, e.tblID2table[e.tblColPosInfos[i].TblID], rows)
+		}
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.writeStats)
+	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.setMessage()
 	if e.RuntimeStats() != nil && e.stats != nil {
@@ -587,6 +599,12 @@ func (e *UpdateExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *UpdateExec) Open(ctx context.Context) error {
+	e.writeStats = nil
+	e.writeRows = nil
+	if e.RuntimeStats() != nil {
+		e.writeStats = &execdetails.WriteRuntimeStats{}
+		e.writeRows = make([]int, len(e.tblColPosInfos))
+	}
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

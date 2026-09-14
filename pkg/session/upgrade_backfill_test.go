@@ -94,7 +94,7 @@ func TestUpgradeToVer279BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	require.NoError(t, res.Close())
 }
 
-func TestUpgradeToVer287AddsRestoreRouteIdentity(t *testing.T) {
+func TestUpgradeToVer288AddsRestoreRouteIdentity(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}

@@ -960,6 +960,10 @@ func TestCreateTableWithBR(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/handleAutoIncID", func() {
 		count++
 	})
+	preSplitCount := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(string) {
+		preSplitCount++
+	})
 
 	tblInfo := &model.TableInfo{
 		ID:   42043,
@@ -973,8 +977,10 @@ func TestCreateTableWithBR(t *testing.T) {
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 		},
-		State:     model.StatePublic,
-		AutoIncID: 1000,
+		State:           model.StatePublic,
+		AutoIncID:       1000,
+		ShardRowIDBits:  2,
+		PreSplitRegions: 2,
 	}
 
 	involvingRef := []model.InvolvingSchemaInfo{{
@@ -993,6 +999,20 @@ func TestCreateTableWithBR(t *testing.T) {
 
 	// For BR execution, rebase should be called twice. And this won't affect the rebase result.
 	require.Equal(t, 2, count)
+	require.Zero(t, preSplitCount)
 	rs := tk.MustQuery("show table test.t1 next_row_id").Rows()
 	require.Equal(t, "1000", rs[0][3])
+
+	preSplitCount = 0
+	batchTableInfos := make([]*model.TableInfo, 2)
+	for i := range batchTableInfos {
+		batchTableInfos[i] = tblInfo.Clone()
+		batchTableInfos[i].ID = int64(42044 + i)
+		batchTableInfos[i].Name = ast.NewCIStr(fmt.Sprintf("batch_t%d", i))
+	}
+	se.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, dom.DDLExecutor().BatchCreateTableWithInfo(
+		se, ast.NewCIStr("test"), batchTableInfos,
+		ddl.WithOnExist(ddl.OnExistError), ddl.WithIDAllocated(true)))
+	require.Zero(t, preSplitCount)
 }

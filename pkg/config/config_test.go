@@ -959,6 +959,22 @@ engines = ["tikv", "tiflash", "tidb"]
 }
 
 func TestConfig(t *testing.T) {
+	t.Run("RU report mode", func(t *testing.T) {
+		require.Equal(t, RUReportModeResult, NewConfig().RUV2.ReportMode)
+		for _, mode := range []string{RUReportModeResult, RUReportModeFull} {
+			conf := NewConfig()
+			path := filepath.Join(t.TempDir(), "ru.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[ru-v2]\nreport-mode = \""+mode+"\"\n"), 0600))
+			require.NoError(t, conf.Load(path))
+			require.NoError(t, conf.Valid())
+			require.Equal(t, mode, conf.RUV2.ReportMode)
+		}
+		for _, mode := range []string{"", "FULL", "invalid"} {
+			conf := NewConfig()
+			conf.RUV2.ReportMode = mode
+			require.ErrorContains(t, conf.Valid(), "invalid ru-v2.report-mode")
+		}
+	})
 	conf := new(Config)
 	conf.TempStoragePath = tempStorageDirName
 	conf.Performance.TxnTotalSizeLimit = 1000
@@ -1232,6 +1248,7 @@ grpc-keepalive-timeout = 0.01
 	}
 	require.NoError(t, conf.Load(configFile))
 
+	require.Equal(t, RUReportModeResult, conf.RUV2.ReportMode)
 	require.Equal(t, 2.01, conf.RUV2.RUScale)
 	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
 

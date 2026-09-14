@@ -49,11 +49,12 @@ go_test(
     ],
     embed = [":importsdk"],
     flaky = True,
-    shard_count = 21,
+    shard_count = 23,
     deps = [
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
+        "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/util/table-filter",

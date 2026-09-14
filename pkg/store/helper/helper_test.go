@@ -236,6 +236,109 @@ func TestGetPDRegionStatsKeyspaceEncoding(t *testing.T) {
 	require.Equal(t, expectedEnd, keys.end, "GetPDRegionStats must encode end key with the store's codec")
 }
 
+func TestCollectStorageClassStatusWithCtx(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		body  string
+		ready uint64
+		total uint64
+	}{
+		{name: "counters only", body: `{"ready":7,"total":9}`, ready: 7, total: 9},
+		{name: "all ready", body: `{"ready":1,"total":1}`, ready: 1, total: 1},
+		{name: "zero counters", body: `{"ready":0,"total":0}`},
+		{name: "zero ready", body: `{"ready":0,"total":1}`, total: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath string
+			var gotQuery string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotQuery = r.URL.RawQuery
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+
+			status, err := helper.CollectStorageClassStatusWithCtx(
+				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(42), 123, "STANDARD")
+			require.NoError(t, err)
+			require.Equal(t, helper.StorageClassStatusResp{Ready: tc.ready, Total: tc.total}, status)
+			require.Equal(t, "/kvengine/storage_class_status", gotPath)
+			require.Equal(t, "keyspace_id=42&table_id=123&target=STANDARD", gotQuery)
+		})
+	}
+}
+
+func TestCollectStorageClassStatusWithCtxRejectsBadResponse(t *testing.T) {
+	t.Run("http status", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.ErrorContains(t, err, "status 503")
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":`))
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.Error(t, err)
+	})
+
+	for _, body := range []string{
+		`{}`,
+		`null`,
+		`{"ready":0}`,
+		`{"total":0}`,
+		`{"ready":null,"total":0}`,
+		`{"ready":0,"total":null}`,
+	} {
+		t.Run("missing required field "+body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := helper.CollectStorageClassStatusWithCtx(
+				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+			require.ErrorContains(t, err, "must contain ready and total")
+		})
+	}
+
+	for _, body := range []string{
+		`{"ready":-1,"total":1}`,
+		`{"ready":0,"total":-1}`,
+		`{"ready":"1","total":1}`,
+		`{"ready":0,"total":"1"}`,
+		`{"ready":0.5,"total":1}`,
+		`{"ready":0,"total":1.5}`,
+	} {
+		t.Run("invalid counter "+body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := helper.CollectStorageClassStatusWithCtx(
+				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+			require.Error(t, err)
+		})
+	}
+
+	t.Run("ready greater than total", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":2,"total":1}`))
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.ErrorContains(t, err, "ready 2 greater than total 1")
+	})
+}
+
 func TestTiKVRegionsInfo(t *testing.T) {
 	store := createMockStore(t)
 

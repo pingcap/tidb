@@ -1121,9 +1121,6 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 
 		e.waiterWg.Wait()
 		if !e.ProbeSideTupleFetcher.buildSuccess {
-			if e.hashStateStats != nil {
-				e.hashStateStats.Invalidate()
-			}
 			return
 		}
 		e.collectSpillStats()
@@ -1139,9 +1136,6 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		restoredPartition := e.spillHelper.stack.pop()
 		if restoredPartition == nil {
 			// No more data to restore
-			if e.hashStateStats != nil {
-				e.hashStateStats.Complete()
-			}
 			return
 		}
 		e.spillHelper.round = restoredPartition.round

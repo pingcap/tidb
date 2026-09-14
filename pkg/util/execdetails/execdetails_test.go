@@ -1057,6 +1057,38 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 }
 
 func TestRootRuntimeStats(t *testing.T) {
+	t.Run("write CPU work snapshot", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		_, found := coll.GetRootWriteCPUWork(99)
+		require.False(t, found)
+		stats := &WriteRuntimeStats{}
+		coll.RegisterStats(99, stats)
+		work, found := coll.GetRootWriteCPUWork(99)
+		require.True(t, found)
+		require.Zero(t, work)
+		cloned := stats.Clone().(*WriteRuntimeStats)
+		cloned.CPUWork = 6
+		require.Zero(t, stats.CPUWork)
+		coll.RegisterStats(99, cloned)
+		coll.RegisterStats(99, &WriteRuntimeStats{CPUWork: 3})
+		work, found = coll.GetRootWriteCPUWork(99)
+		require.True(t, found)
+		require.Equal(t, float64(9), work)
+		require.Empty(t, stats.String())
+	})
+	t.Run("non-creating root lookup", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		root, ok := coll.GetRootStatsIfExists(1)
+		require.False(t, ok)
+		require.Nil(t, root)
+		require.False(t, coll.ExistsRootStats(1))
+
+		created := coll.GetRootStats(1)
+		root, ok = coll.GetRootStatsIfExists(1)
+		require.True(t, ok)
+		require.Same(t, created, root)
+	})
+
 	pid := 1
 	stmtStats := NewRuntimeStatsColl(nil)
 	basic1 := stmtStats.GetBasicRuntimeStats(pid, true)
@@ -1100,15 +1132,9 @@ func TestRootRuntimeStats(t *testing.T) {
 		require.Zero(t, zeroRows.Rows)
 	})
 
-	t.Run("checked hash state lifecycle", func(t *testing.T) {
-		zeroValue := (&HashStateRuntimeStats{}).HashStateRowsSnapshot()
-		require.False(t, zeroValue.Complete())
-		require.False(t, zeroValue.Invalid())
-
+	t.Run("accumulated hash construction", func(t *testing.T) {
 		state := NewHashStateRuntimeStats()
-		require.False(t, state.HashStateRowsSnapshot().Complete())
-		state.Complete()
-		require.True(t, state.HashStateRowsSnapshot().Complete())
+		require.False(t, state.HashStateRowsSnapshot().Invalid())
 		require.Zero(t, state.HashStateRowsSnapshot().Rows)
 		require.Empty(t, state.String())
 
@@ -1116,19 +1142,14 @@ func TestRootRuntimeStats(t *testing.T) {
 		second := NewHashStateRuntimeStats()
 		second.AddRows(3)
 		second.AddRows(2)
-		second.Complete()
 		merged.Merge(second)
-		require.True(t, merged.HashStateRowsSnapshot().Complete())
 		require.Equal(t, int64(5), merged.HashStateRowsSnapshot().Rows)
+		require.Zero(t, state.HashStateRowsSnapshot().Rows, "Clone must not share the counter")
 
-		partial := NewHashStateRuntimeStats()
-		merged.Merge(partial)
-		require.False(t, merged.HashStateRowsSnapshot().Complete())
+		// A later execution that builds nothing must retain earlier work.
+		merged.Merge(NewHashStateRuntimeStats())
+		require.Equal(t, int64(5), merged.HashStateRowsSnapshot().Rows)
 		require.False(t, merged.HashStateRowsSnapshot().Invalid())
-		invalid := NewHashStateRuntimeStats()
-		invalid.Invalidate()
-		merged.Merge(invalid)
-		require.True(t, merged.HashStateRowsSnapshot().Invalid())
 
 		concurrent := NewHashStateRuntimeStats()
 		var wg sync.WaitGroup
@@ -1140,12 +1161,21 @@ func TestRootRuntimeStats(t *testing.T) {
 			}()
 		}
 		wg.Wait()
-		concurrent.Complete()
-		concurrentSnapshot := concurrent.HashStateRowsSnapshot()
-		require.True(t, concurrentSnapshot.Complete())
-		require.Equal(t, int64(32), concurrentSnapshot.Rows)
-		concurrent.Complete()
+		require.Equal(t, int64(32), concurrent.HashStateRowsSnapshot().Rows)
+
+		// Overflow must stay invalid through further additions and merges.
+		concurrent.AddRows(1 << 63)
+		concurrent.AddRows(^uint64(0))
 		require.True(t, concurrent.HashStateRowsSnapshot().Invalid())
+		merged.Merge(concurrent)
+		merged.Merge(second)
+		require.True(t, merged.HashStateRowsSnapshot().Invalid())
+
+		maxRows := NewHashStateRuntimeStats()
+		maxRows.AddRows(1<<63 - 1)
+		require.False(t, maxRows.HashStateRowsSnapshot().Invalid())
+		maxRows.AddRows(1)
+		require.True(t, maxRows.HashStateRowsSnapshot().Invalid())
 	})
 }
 
