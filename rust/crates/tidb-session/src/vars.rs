@@ -621,6 +621,27 @@ impl GlobalSysvars {
         let check_constraint = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_CHECK_CONSTRAINT);
         let enable_check_constraint =
             check_constraint.eq_ignore_ascii_case("on") || check_constraint == "1";
+        // Process-wide atomics are republished only for variables this
+        // registry actually carries. Test registries are isolated per session;
+        // republishing defaults for never-SET variables would clobber values
+        // published by parallel registries. Production has a single registry
+        // where a never-SET variable keeps its atomic init (the same default).
+        let carries = |name: &str| {
+            let index = crate::sysvar::sys_var_index_lookup(name)
+                .expect("typed global policy names are registered");
+            slots[index].is_some()
+        };
+        let publish_oom_action = carries(tidb_vardef::tidb_vars::TIDB_MEM_OOM_ACTION);
+        let publish_memory_usage_alarm_ratio =
+            carries(tidb_vardef::tidb_vars::TIDB_MEMORY_USAGE_ALARM_RATIO);
+        let publish_memory_usage_alarm_keep_record_num =
+            carries(tidb_vardef::tidb_vars::TIDB_MEMORY_USAGE_ALARM_KEEP_RECORD_NUM);
+        let publish_analyze_default_num_buckets =
+            carries(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_BUCKETS);
+        let publish_analyze_default_num_top_n =
+            carries(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N);
+        let publish_stats_cache_mem_quota =
+            carries(tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA);
         let mut publish = self
             .resolved
             .write()
@@ -633,22 +654,34 @@ impl GlobalSysvars {
             enable_check_constraint,
         });
         if self.publishes_runtime_settings {
-            tidb_vardef::set_oom_action(&oom_action_text);
-            tidb_vardef::set_memory_usage_alarm_ratio(memory_usage_alarm_ratio);
-            tidb_vardef::MEMORY_USAGE_ALARM_KEEP_RECORD_NUM.store(
-                memory_usage_alarm_keep_record_num,
-                std::sync::atomic::Ordering::SeqCst,
-            );
-            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(
-                analyze_default_num_buckets,
-                std::sync::atomic::Ordering::SeqCst,
-            );
-            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(
-                analyze_default_num_top_n,
-                std::sync::atomic::Ordering::SeqCst,
-            );
-            tidb_vardef::STATS_CACHE_MEM_QUOTA
-                .store(stats_cache_mem_quota, std::sync::atomic::Ordering::SeqCst);
+            if publish_oom_action {
+                tidb_vardef::set_oom_action(&oom_action_text);
+            }
+            if publish_memory_usage_alarm_ratio {
+                tidb_vardef::set_memory_usage_alarm_ratio(memory_usage_alarm_ratio);
+            }
+            if publish_memory_usage_alarm_keep_record_num {
+                tidb_vardef::MEMORY_USAGE_ALARM_KEEP_RECORD_NUM.store(
+                    memory_usage_alarm_keep_record_num,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+            if publish_analyze_default_num_buckets {
+                tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(
+                    analyze_default_num_buckets,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+            if publish_analyze_default_num_top_n {
+                tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(
+                    analyze_default_num_top_n,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+            if publish_stats_cache_mem_quota {
+                tidb_vardef::STATS_CACHE_MEM_QUOTA
+                    .store(stats_cache_mem_quota, std::sync::atomic::Ordering::SeqCst);
+            }
         }
     }
 
@@ -874,7 +907,13 @@ impl GlobalSysvars {
         ];
         let values = self.values.lock().expect("global sysvar lock poisoned");
         for name in names {
-            crate::embedding::publish_global(name, values.get(name).map(String::as_str));
+            // Publish only values this registry actually carries: an absent
+            // entry means "never set here", and pushing the default for it
+            // would let isolated (test) registries clobber the process
+            // configuration published by a parallel registry that did set it.
+            if let Some(value) = values.get(name) {
+                crate::embedding::publish_global(name, Some(value));
+            }
         }
     }
 
@@ -1123,6 +1162,25 @@ impl GlobalSysvars {
         tidb_vardef::set_enable_mdl(enabled);
     }
 
+    /// Publishes the MDL process switch only when this registry actually
+    /// carries the value. `replace_from` uses this variant: falling back to
+    /// the default for a registry that never set the switch would let an
+    /// isolated (test) image clobber the process authority published by a
+    /// parallel registry that did set it.
+    fn publish_enable_mdl_if_carried(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        if let Some(value) = self
+            .values
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL)
+        {
+            tidb_vardef::set_enable_mdl(value.eq_ignore_ascii_case("ON") || value == "1");
+        }
+    }
+
     /// Publishes Go's `vardef.EnableTTLJob` process-wide switch from the
     /// live GLOBAL table. Scratch registries deliberately skip this hook and
     /// publish it only when their committed image replaces the live table.
@@ -1229,6 +1287,29 @@ impl GlobalSysvars {
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(tidb_vardef::defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO);
         tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(value);
+    }
+
+    /// Publishes the circuit-breaker ratio only when this registry actually
+    /// carries the value. `replace_from` uses this variant so an isolated
+    /// (test) registry that never set the ratio cannot clobber the process
+    /// authority published by a parallel registry that did.
+    fn publish_circuit_breaker_ratio_if_carried(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        if let Some(value) = get_sys_var(
+            tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO,
+        )
+        .and_then(|def| {
+            self.store(def)
+                .lock()
+                .ok()
+                .and_then(|values| values.get(def.name).cloned())
+        })
+        .and_then(|value| value.parse::<f64>().ok())
+        {
+            tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(value);
+        }
     }
 
     fn publish_resource_control_setting(&self, name: &str) {
@@ -1380,7 +1461,13 @@ impl GlobalSysvars {
             .lock()
             .expect("global sysvar lock poisoned")
             .remove(&key);
-        self.publish_embedding_settings();
+        // RESET restores the Go default in the process-wide embedding config
+        // even though the registry no longer carries an explicit value
+        // (`publish_embedding_settings` intentionally skips absent values so
+        // isolated registries cannot clobber the process configuration).
+        if crate::embedding::is_embedding_variable(&key) {
+            crate::embedding::publish_global(&key, None);
+        }
         if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
             self.publish_require_secure_transport();
         }
@@ -1412,12 +1499,42 @@ impl GlobalSysvars {
             self.publish_resource_control_setting(&key);
         }
         self.publish_stmt_summary_setting(&key, &crate::sysvar::effective_default(def));
+        // RESET restores the Go default in the process-wide authorities even
+        // though the registry no longer carries an explicit value (the
+        // resolved-image republish intentionally skips absent values so
+        // isolated registries cannot clobber the authorities).
+        if key == tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_BUCKETS {
+            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(
+                tidb_vardef::defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS as u64,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N {
+            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(
+                tidb_vardef::defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N as u64,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA {
+            tidb_vardef::STATS_CACHE_MEM_QUOTA.store(
+                tidb_vardef::defaults::DEF_TIDB_STATS_CACHE_MEM_QUOTA,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
         self.refresh_resolved();
         if !def.has_global_scope() {
             self.record_instance_mutation(InstanceMutation::Reset(key.clone()));
         }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY) {
-            self.publish_committer_concurrency();
+            // RESET restores the Go default to the process authority even
+            // though the registry no longer carries an explicit value
+            // (`publish_committer_concurrency` intentionally skips absent
+            // values so isolated registries cannot clobber the authority).
+            tidb_tikvutil::COMMITTER_CONCURRENCY.store(
+                i32::try_from(tidb_vardef::defaults::DEF_TIDB_COMMITTER_CONCURRENCY)
+                    .expect("committer concurrency default fits i32"),
+                std::sync::atomic::Ordering::SeqCst,
+            );
         }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_REDACT_LOG) {
             self.publish_redaction_mode();
@@ -1593,7 +1710,7 @@ impl GlobalSysvars {
         self.refresh_resolved();
         self.publish_require_secure_transport();
         self.publish_ttl_job_enable();
-        self.publish_enable_mdl();
+        self.publish_enable_mdl_if_carried();
         self.publish_plan_replayer_file_retention_time();
         if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
             self.publish_schema_cache_size(&value);
@@ -1605,7 +1722,7 @@ impl GlobalSysvars {
         ] {
             self.publish_auto_analyze_setting(name);
         }
-        self.publish_circuit_breaker_ratio();
+        self.publish_circuit_breaker_ratio_if_carried();
         self.publish_resource_control_setting(tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL);
         self.publish_resource_control_setting(
             tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE,
@@ -1700,17 +1817,18 @@ impl GlobalSysvars {
         if !self.publishes_runtime_settings {
             return;
         }
-        let value = self
+        // Publish only when this registry actually carries the value: falling
+        // back to the default here would clobber the process authority with
+        // stale defaults from isolated (test) registries.
+        if let Some(value) = self
             .values
             .lock()
             .expect("global sysvar lock poisoned")
             .get(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY)
             .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(
-                i32::try_from(tidb_vardef::defaults::DEF_TIDB_COMMITTER_CONCURRENCY)
-                    .expect("committer concurrency default fits i32"),
-            );
-        tidb_tikvutil::COMMITTER_CONCURRENCY.store(value, std::sync::atomic::Ordering::SeqCst);
+        {
+            tidb_tikvutil::COMMITTER_CONCURRENCY.store(value, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     fn publish_require_secure_transport(&self) {
