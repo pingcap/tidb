@@ -64,6 +64,7 @@ go_test(
         "//pkg/executor/internal/util",
         "//pkg/expression",
         "//pkg/expression/aggregation",
+        "//pkg/ingestor/globalsort",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
