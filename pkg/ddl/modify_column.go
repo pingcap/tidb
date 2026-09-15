@@ -61,18 +61,6 @@ func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
 }
 
-<<<<<<< HEAD
-=======
-func isColumnCommentOnlyChange(oldCol, newCol *model.ColumnInfo) bool {
-	if oldCol == nil || newCol == nil {
-		return false
-	}
-	oldClone := oldCol.Clone()
-	newClone := newCol.Clone()
-	newClone.Comment = oldClone.Comment
-	return reflect.DeepEqual(oldClone, newClone)
-}
-
 // clearModifyColumnTempFlags removes in-progress modify-column markers from col.
 func clearModifyColumnTempFlags(col *model.ColumnInfo) {
 	if !hasModifyFlag(col) {
@@ -82,7 +70,6 @@ func clearModifyColumnTempFlags(col *model.ColumnInfo) {
 	col.ChangingFieldType = nil
 }
 
->>>>>>> 3eee6459185 (ddl: keep original NOT NULL when rolling back failed MODIFY COLUMN (#70923))
 func isIntegerChange(from, to *model.ColumnInfo) bool {
 	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
 }
