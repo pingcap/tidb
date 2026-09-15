@@ -29,6 +29,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -362,6 +363,59 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.True(t, h.HandleAutoAnalyze())
+}
+
+func TestTTLClusteredPKScanPlannerContracts(t *testing.T) {
+	originLiteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	config.GetGlobalConfig().Performance.LiteInitStats = true
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originLiteInitStats
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	h := dom.StatsHandle()
+	h.SetLease(time.Millisecond)
+	defer h.SetLease(0)
+
+	t.Run("unsigned_integer_handle", func(t *testing.T) {
+		runTTLScanPlannerContract(t, tk, dom, "ttl_pk_plan_1",
+			"create table ttl_pk_plan_1 (k bigint unsigned primary key clustered, expired_at datetime not null) TTL=`expired_at` + interval 1 day")
+		runTTLScanPlannerContract(t, tk, dom, "ttl_pk_fallback_2",
+			"create table ttl_pk_fallback_2 (id bigint unsigned primary key clustered, expired_at datetime not null, index idx_ttl(expired_at)) TTL=`expired_at` + interval 1 day")
+	})
+}
+
+func runTTLScanPlannerContract(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, tableName string, createTableSQL string) {
+	tk.MustExec(createTableSQL)
+	tk.MustExec(fmt.Sprintf("insert into %s values (1, '2000-01-01'), (2, '2000-01-02'), (3, '2000-01-03')", tableName))
+	tk.MustExec(fmt.Sprintf("analyze table %s with 2 topn, 2 buckets", tableName))
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+	require.NoError(t, err)
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+
+	h := dom.StatsHandle()
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(context.Background(), is))
+
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	generator, err := sqlbuilder.NewScanQueryGenerator(ttlTbl, time.Unix(0, 0), nil, nil)
+	require.NoError(t, err)
+	scanSQL, err := generator.NextSQL(nil, 128)
+	require.NoError(t, err)
+
+	plan := tk.MustQuery("explain format = 'brief' " + scanSQL).Rows()
+	planText := fmt.Sprint(plan)
+	require.Contains(t, planText, "TableFullScan")
+	require.Contains(t, planText, "keep order:true")
+	require.NotContains(t, planText, "IndexLookUp")
+	require.NotContains(t, planText, "IndexReader")
 }
 
 func TestTriggerTTLJob(t *testing.T) {
