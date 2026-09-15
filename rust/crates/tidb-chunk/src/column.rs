@@ -1481,6 +1481,87 @@ impl Column {
     }
 
     /// Go `CopyRows`: append to this column the `src` rows named by `selected`.
+    pub(crate) fn copy_selected_rows(&mut self, src: &Column, selected: &[bool]) {
+        if std::ptr::eq(self, src) {
+            for (row, &is_selected) in selected.iter().enumerate() {
+                if is_selected {
+                    self.append_cell_from(src, row);
+                }
+            }
+            return;
+        }
+
+        let fixed = src.is_fixed();
+        debug_assert_eq!(self.is_fixed(), fixed);
+        let width = src.elem_buffer_len();
+        let (rows, data_len) = selected.iter().enumerate().fold(
+            (0usize, 0usize),
+            |(rows, data_len), (row, &is_selected)| {
+                if !is_selected {
+                    return (rows, data_len);
+                }
+                let cell_len = if fixed {
+                    width
+                } else {
+                    (src.offsets[row + 1] - src.offsets[row]) as usize
+                };
+                (rows + 1, data_len.saturating_add(cell_len))
+            },
+        );
+        if rows == 0 {
+            return;
+        }
+
+        let destination_end = self
+            .length
+            .checked_add(rows)
+            .expect("column row count overflow");
+        let null_bitmap_len = (destination_end + 7) >> 3;
+        self.null_bitmap
+            .reserve(null_bitmap_len.saturating_sub(self.null_bitmap.len()));
+        if !fixed {
+            self.offsets.reserve(rows);
+        }
+
+        let source_data = src.data.read();
+        let Self {
+            data,
+            null_bitmap,
+            offsets,
+            length,
+            ..
+        } = self;
+        let appended = data.append_owned(|data| {
+            data.reserve(data_len);
+            for (row, &is_selected) in selected.iter().enumerate() {
+                if !is_selected {
+                    continue;
+                }
+                append_null_bit(null_bitmap, *length, !src.is_null(row));
+                let (start, end) = if fixed {
+                    (row * width, (row + 1) * width)
+                } else {
+                    (src.offsets[row] as usize, src.offsets[row + 1] as usize)
+                };
+                data.extend_from_slice(&source_data[start..end]);
+                if !fixed {
+                    offsets.push(data.len() as i64);
+                }
+                *length += 1;
+            }
+        });
+        if appended {
+            return;
+        }
+
+        drop(source_data);
+        for (row, &is_selected) in selected.iter().enumerate() {
+            if is_selected {
+                self.append_cell_from(src, row);
+            }
+        }
+    }
+
     pub(crate) fn copy_rows_from(&mut self, src: &Column, selected: &[usize]) {
         for &row_id in selected {
             self.append_cell_from(src, row_id);

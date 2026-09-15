@@ -45,7 +45,7 @@ pub const MSG_ERR_SEL_NOT_NIL: &str =
 
 /// Go `CopySelectedRows`: append every `selected` row of `src` to `dst`.
 pub fn copy_selected_rows(dst: &mut Column, src: &Column, selected: &[bool]) {
-    dst.copy_expected_rows_with_row_id_func(src, selected, true, 0, selected.len(), |i| i);
+    dst.copy_selected_rows(src, selected);
 }
 
 /// Go `CopySelectedRowsWithRowIDFunc`.
