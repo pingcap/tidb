@@ -2276,6 +2276,37 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 	tk.MustQuery("select (a & 3) from t order by 1;").Check(testkit.Rows("1", "2"))
 	tk.MustExec("drop table if exists t;")
 
+	// Converting AUTO_INCREMENT to AUTO_RANDOM must migrate the separate
+	// auto-increment allocator used by AUTO_ID_CACHE=1.
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
+	tk.MustExec("create table t (id bigint primary key auto_increment, payload varchar(10)) auto_id_cache=1")
+	for range 64 {
+		tk.MustExec("insert into t(payload) values ('old')")
+	}
+	tbl := external.GetTableByName(t, tk, "auto_inc_force", "t")
+	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(ast.NewCIStr("auto_inc_force"))
+	require.True(t, ok)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	ids, err := meta.NewMutator(txn).GetAutoIDAccessors(db.ID, tbl.Meta().ID).Get()
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+	require.Equal(t, int64(0), ids.RowID)
+	require.GreaterOrEqual(t, ids.IncrementID, int64(64))
+	oldAutoIncBase := ids.IncrementID
+	tk.MustExec("alter table t modify column id bigint auto_random(1)")
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	ids, err = meta.NewMutator(txn).GetAutoIDAccessors(db.ID, tbl.Meta().ID).Get()
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+	require.Equal(t, int64(0), ids.IncrementID)
+	require.Equal(t, oldAutoIncBase+1, ids.RandomID)
+	tk.MustExec("insert into t(payload) values ('new')")
+	tk.MustQuery("select count(*) from t where payload = 'old'").Check(testkit.Rows("64"))
+	tk.MustQuery(fmt.Sprintf("select (id & 4611686018427387903) > %d from t where payload = 'new'", oldAutoIncBase)).Check(testkit.Rows("1"))
+	tk.MustExec("drop table t")
+
 	// Change next global ID.
 	tk.MustExec("create table t (a bigint primary key auto_increment) AUTO_ID_CACHE 1")
 	tk.MustExec("insert into t values (1);")
