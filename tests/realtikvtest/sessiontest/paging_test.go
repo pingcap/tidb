@@ -164,6 +164,9 @@ func TestPagingSizeBytesGlobalUpdate(t *testing.T) {
 	oldBudget := writer.MustQuery("select @@global.tidb_paging_size_bytes").Rows()[0][0].(string)
 	defer writer.MustExec("set global tidb_paging_size_bytes = " + oldBudget)
 	writer.MustExec("set global tidb_paging_size_bytes = 0")
+	oldResourceControl := writer.MustQuery("select @@global.tidb_enable_resource_control").Rows()[0][0].(string)
+	defer writer.MustExec("set global tidb_enable_resource_control = " + oldResourceControl)
+	writer.MustExec("set global tidb_enable_resource_control = on")
 	writer.MustExec("create resource group rg_paging_e2e ru_per_sec=100000 burstable=off")
 	defer writer.MustExec("drop resource group rg_paging_e2e")
 	writer.MustExec("create resource group rg_paging_e2e_unlimited ru_per_sec=100000 burstable=unlimited")
@@ -257,8 +260,8 @@ func TestPagingSizeBytesGlobalUpdate(t *testing.T) {
 	reader.MustExec("set resource group rg_paging_e2e_unlimited")
 	scan(0, "")
 	reader.MustExec("set resource group rg_paging_e2e")
-	oldResourceControl := writer.MustQuery("select @@global.tidb_enable_resource_control").Rows()[0][0].(string)
-	defer writer.MustExec("set global tidb_enable_resource_control = " + oldResourceControl)
+	// Resource groups must be dropped before restoring an initially disabled RC setting.
+	defer writer.MustExec("set global tidb_enable_resource_control = on")
 	writer.MustExec("set global tidb_enable_resource_control = off")
 	scan(0, "")
 }
