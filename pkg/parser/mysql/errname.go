@@ -554,7 +554,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrLimitedPartRange:                         Message("The %-.64s handler only supports 32 bit integers in VALUES", nil),
 	ErrPluginIsNotLoaded:                        Message("Plugin '%-.192s' is not loaded", nil),
 	ErrWrongValue:                               Message("Incorrect %-.32s value: '%-.128s'", nil),
-	ErrNoPartitionForGivenValue:                 Message("Table has no partition for value %-.64s", nil),
+	ErrNoPartitionForGivenValue:                 Message("Table has no partition for value %-.64s", []int{0}),
 	ErrFilegroupOptionOnlyOnce:                  Message("It is not allowed to specify %s more than once", nil),
 	ErrCreateFilegroupFailed:                    Message("Failed to create %s", nil),
 	ErrDropFilegroupFailed:                      Message("Failed to drop %s", nil),
