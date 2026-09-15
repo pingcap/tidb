@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -137,8 +138,15 @@ func TestExternalHashAgg(t *testing.T) {
 			rows = append(rows, []types.Datum{types.NewIntDatum(int64(group)), value})
 		}
 	}
+	// Change locality after dispersed repeats, including NULL-only groups.
+	// Both buffered states and later preaggregation must preserve group results.
+	for group := range 600 {
+		for repeat := range 8 {
+			rows = append(rows, []types.Datum{types.NewIntDatum(int64(group)), types.NewIntDatum(int64(repeat + 1))})
+		}
+	}
 	rows = append(rows, []types.Datum{{}, types.NewIntDatum(3)}, []types.Datum{{}, {}})
-	for _, mode := range []aggregation.AggFunctionMode{aggregation.CompleteMode, aggregation.FinalMode} {
+	for _, mode := range []aggregation.AggFunctionMode{aggregation.CompleteMode, aggregation.FinalMode, aggregation.Partial1Mode, aggregation.Partial2Mode} {
 		t.Run(fmt.Sprint(mode), func(t *testing.T) {
 			sctx, source, schema, descs, groups := externalAggTestInput(t, mode, rows)
 			baseline := &HashAggExec{
@@ -159,7 +167,14 @@ func TestExternalHashAgg(t *testing.T) {
 					require.Equal(t, want, got)
 					require.Equal(t, limit == 64<<10, e.spilled)
 					require.Zero(t, e.tracker.BytesConsumed())
+					require.LessOrEqual(t, e.tracker.MaxConsumed(), e.memoryLimit)
 					var files []string
+					require.NoError(t, store.WalkDir(context.Background(), nil, func(name string, _ int64) error { files = append(files, name); return nil }))
+					if e.spilled {
+						require.Greater(t, len(files), 1, "Close leaves spill files for task cleanup")
+					}
+					require.NoError(t, globalsort.CleanUpFiles(context.Background(), store, "task-1"))
+					files = nil
 					require.NoError(t, store.WalkDir(context.Background(), nil, func(name string, _ int64) error { files = append(files, name); return nil }))
 					require.Equal(t, []string{"another-task/keep"}, files)
 				})
@@ -317,6 +332,10 @@ func TestExternalHashAggObjectStorage(t *testing.T) {
 	}
 	var leftovers []string
 	require.NoError(t, store.WalkDir(context.Background(), &storeapi.WalkOption{SubDir: e.attemptPrefix}, func(name string, _ int64) error { leftovers = append(leftovers, name); return nil }))
+	require.NotEmpty(t, leftovers)
+	require.NoError(t, globalsort.CleanUpFiles(context.Background(), store, "s3-final-agg-integration"))
+	leftovers = nil
+	require.NoError(t, store.WalkDir(context.Background(), &storeapi.WalkOption{SubDir: e.attemptPrefix}, func(name string, _ int64) error { leftovers = append(leftovers, name); return nil }))
 	require.Empty(t, leftovers)
 }
 
@@ -417,7 +436,16 @@ func TestExternalHashAggCollationSpill(t *testing.T) {
 	output := expression.NewSchema(&expression.Column{Index: 0, UniqueID: 3, RetType: strType}, &expression.Column{Index: 1, UniqueID: 4, RetType: count.RetTp})
 	e, err := NewExternalHashAgg(sctx, output, 3, source, []*aggregation.AggFuncDesc{first, count}, []expression.Expression{input.Columns[0]}, objstore.NewMemStorage(), "collation-query", 64<<10)
 	require.NoError(t, err)
+	baseline := &HashAggExec{
+		BaseExecutor: exec.NewBaseExecutor(sctx, output, 2, source),
+		Sc:           sctx.GetSessionVars().StmtCtx, GroupByItems: []expression.Expression{input.Columns[0]}, IsUnparallelExec: true,
+		PartialAggFuncs: []aggfuncs.AggFunc{aggfuncs.Build(sctx.GetExprCtx(), first, 0), aggfuncs.Build(sctx.GetExprCtx(), count, 1)},
+	}
+	want := collectExternalAggRows(t, baseline)
 	result := collectExternalAggRows(t, e)
+	require.Equal(t, want, result)
+	require.Zero(t, e.tracker.BytesConsumed())
+	require.LessOrEqual(t, e.tracker.MaxConsumed(), e.memoryLimit)
 	require.True(t, e.spilled)
 	require.Len(t, result, 700)
 	for _, row := range result {

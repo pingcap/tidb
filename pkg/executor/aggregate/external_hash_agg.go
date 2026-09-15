@@ -22,7 +22,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -64,6 +63,10 @@ type ExternalHashAgg struct {
 	funcs         []aggfuncs.AggFunc
 	mergeFuncs    []aggfuncs.AggFunc
 	firstRows     []bool
+	fixedStates   bool
+	fixedFuncs    []bool
+	directChunks  [externalAggPartitions][]*chunk.Chunk
+	directState   []aggfuncs.PartialResult
 	groupBy       []expression.Expression
 	codec         *chunk.Codec
 	spillTypes    []*types.FieldType
@@ -114,6 +117,7 @@ func NewExternalHashAgg(
 		memoryLimit: memoryLimit, stateLimit: memoryLimit / 2,
 		batchLimit: min(memoryLimit/128, 256<<10),
 		groupBy:    groupBy, serializer: aggfuncs.NewSerializeHelper(),
+		fixedStates: true,
 	}
 	for i, desc := range descs {
 		if desc.HasDistinct || len(desc.OrderByItems) != 0 {
@@ -140,6 +144,14 @@ func NewExternalHashAgg(
 		if fn == nil || mergeFn == nil {
 			return nil, errors.Errorf("ExternalHashAgg cannot build aggregate %s", desc.Name)
 		}
+		fixed := true
+		switch desc.RetTp.EvalType() {
+		case types.ETInt, types.ETReal, types.ETDecimal, types.ETDatetime, types.ETTimestamp, types.ETDuration:
+		default:
+			fixed = false
+		}
+		e.fixedFuncs = append(e.fixedFuncs, fixed)
+		e.fixedStates = e.fixedStates && fixed
 		e.funcs = append(e.funcs, fn)
 		e.firstRows = append(e.firstRows, desc.Name == ast.AggFuncFirstRow)
 		e.mergeFuncs = append(e.mergeFuncs, mergeFn)
@@ -194,23 +206,30 @@ func (e *ExternalHashAgg) getState(key string) []aggfuncs.PartialResult {
 		return state
 	}
 	state := make([]aggfuncs.PartialResult, len(e.funcs))
-	delta := int64(len(key) + 8*len(state))
+	var delta int64
 	for i, fn := range e.funcs {
 		var n int64
 		state[i], n = fn.AllocPartialResult()
 		delta += n
 	}
+	e.addState(key, state, delta)
+	return state
+}
+
+func (e *ExternalHashAgg) addState(key string, state []aggfuncs.PartialResult, delta int64) {
+	delta += int64(len(key) + 8*len(state))
 	delta += e.states.Set(key, state)
 	oldCap := cap(e.keys)
 	e.keys = append(e.keys, key)
 	delta += int64(cap(e.keys)-oldCap) * 16
 	e.consumeState(delta)
-	return state
 }
 
 func (e *ExternalHashAgg) clearState() {
 	e.states = aggfuncs.NewAggPartialResultMapper()
 	e.keys = nil
+	e.directChunks = [externalAggPartitions][]*chunk.Chunk{}
+	e.directState = nil
 	e.tracker.Consume(-e.stateBytes)
 	e.stateBytes = 0
 	e.outputCursor = 0
@@ -305,7 +324,7 @@ func (e *ExternalHashAgg) spill(ctx context.Context) error {
 		payload = nil
 		return nil
 	}
-	writeBatch := func() error {
+	writeBatch := func(batch *chunk.Chunk) error {
 		if batch.NumRows() == 0 {
 			return nil
 		}
@@ -345,7 +364,6 @@ func (e *ExternalHashAgg) spill(ctx context.Context) error {
 		payload = binary.LittleEndian.AppendUint32(payload, uint32(len(data)))
 		payload = binary.LittleEndian.AppendUint32(payload, crc32.ChecksumIEEE(data))
 		payload = append(payload, data...)
-		batch.Reset()
 		return nil
 	}
 	for _, key := range e.keys {
@@ -354,9 +372,10 @@ func (e *ExternalHashAgg) spill(ctx context.Context) error {
 		}
 		p := externalAggPartition(key)
 		if partition != -1 && p != partition {
-			if err := writeBatch(); err != nil {
+			if err := writeBatch(batch); err != nil {
 				return err
 			}
+			batch.Reset()
 			if err := writeObject(); err != nil {
 				return err
 			}
@@ -370,16 +389,31 @@ func (e *ExternalHashAgg) spill(ctx context.Context) error {
 		e.tracker.Consume(nextBatchBytes - batchBytes)
 		batchBytes = nextBatchBytes
 		if batch.NumRows() >= e.MaxChunkSize() || batch.UsedMemoryUsage() >= e.batchLimit {
-			if err := writeBatch(); err != nil {
+			if err := writeBatch(batch); err != nil {
 				return err
 			}
+			batch.Reset()
 		}
 	}
-	if err := writeBatch(); err != nil {
+	if err := writeBatch(batch); err != nil {
 		return err
 	}
 	if err := writeObject(); err != nil {
 		return err
+	}
+	for p, chunks := range e.directChunks {
+		partition = p
+		for _, buffered := range chunks {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := writeBatch(buffered); err != nil {
+				return err
+			}
+		}
+		if err := writeObject(); err != nil {
+			return err
+		}
 	}
 	if err := flushObjects(); err != nil {
 		return err
@@ -388,8 +422,64 @@ func (e *ExternalHashAgg) spill(ctx context.Context) error {
 	return nil
 }
 
+// bufferRow reuses fixed-size states when preaggregation does not reduce rows.
+// Expressions still execute in input order; only their serialized states survive.
+func (e *ExternalHashAgg) bufferRow(rows []chunk.Row, key []byte) error {
+	if e.directState == nil {
+		e.directState = make([]aggfuncs.PartialResult, len(e.funcs))
+		e.consumeState(int64(len(e.directState)) * 8)
+		for i, fn := range e.funcs {
+			if e.fixedFuncs[i] {
+				state, delta := fn.AllocPartialResult()
+				e.directState[i] = state
+				e.consumeState(delta)
+			}
+		}
+	}
+	p := externalAggPartition(string(key))
+	chunks := e.directChunks[p]
+	var batch *chunk.Chunk
+	if len(chunks) > 0 {
+		batch = chunks[len(chunks)-1]
+	}
+	if batch == nil || batch.NumRows() >= e.MaxChunkSize() || batch.UsedMemoryUsage() >= e.batchLimit {
+		batch = chunk.New(e.spillTypes, 1, e.MaxChunkSize())
+		oldCap := cap(chunks)
+		e.directChunks[p] = append(chunks, batch)
+		e.consumeState(batch.MemoryUsage() + int64(cap(e.directChunks[p])-oldCap)*8)
+	}
+	before := batch.MemoryUsage()
+	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
+	for i, fn := range e.funcs {
+		state := e.directState[i]
+		var temporaryBytes int64
+		if e.fixedFuncs[i] {
+			fn.ResetPartialResult(state)
+		} else {
+			// ResetPartialResult can retain variable-size values. Use a fresh
+			// temporary state so retained data cannot escape memory accounting.
+			state, temporaryBytes = fn.AllocPartialResult()
+			e.consumeState(temporaryBytes)
+		}
+		delta, err := fn.UpdatePartialResult(evalCtx, rows, state)
+		e.consumeState(delta)
+		temporaryBytes += delta
+		if err != nil {
+			return err
+		}
+		fn.SerializePartialResult(state, batch, e.serializer)
+		e.consumeState(-temporaryBytes)
+	}
+	batch.AppendBytes(len(e.funcs), key)
+	e.consumeState(batch.MemoryUsage() - before)
+	return nil
+}
+
 func (e *ExternalHashAgg) readInput(ctx context.Context) error {
 	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
+	rows := make([]chunk.Row, 1)
+	inputRows, directSpills := 0, 0
+	direct := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -417,8 +507,28 @@ func (e *ExternalHashAgg) readInput(ctx context.Context) error {
 			return errors.New("ExternalHashAgg input buffer exceeds memory budget")
 		}
 		for i := range e.input.NumRows() {
-			state := e.getState(string(e.groupKeyBuf[i]))
-			rows := []chunk.Row{e.input.GetRow(i)}
+			rows[0] = e.input.GetRow(i)
+			if direct {
+				if err := e.bufferRow(rows, e.groupKeyBuf[i]); err != nil {
+					return err
+				}
+				if e.stateBytes >= e.stateLimit {
+					if err := e.spill(ctx); err != nil {
+						return err
+					}
+					directSpills++
+					// Periodically retry preaggregation if input locality changes.
+					if directSpills == 8 {
+						direct, directSpills = false, 0
+					}
+				}
+				continue
+			}
+			inputRows++
+			state, exists := e.states.M[string(e.groupKeyBuf[i])]
+			if !exists {
+				state = e.getState(string(e.groupKeyBuf[i]))
+			}
 			for j, fn := range e.funcs {
 				delta, err := fn.UpdatePartialResult(evalCtx, rows, state[j])
 				if err != nil {
@@ -427,6 +537,10 @@ func (e *ExternalHashAgg) readInput(ctx context.Context) error {
 				e.consumeState(delta)
 			}
 			if e.stateBytes >= e.stateLimit {
+				// Avoid allocating one set of states per input row when fewer
+				// than 10% of rows combine within an in-memory batch.
+				direct = len(e.keys)*10 > inputRows*9
+				inputRows = 0
 				if err := e.spill(ctx); err != nil {
 					return err
 				}
@@ -545,9 +659,11 @@ func (e *ExternalHashAgg) restoreBatch(data []byte) (err error) {
 	temporaryBytes = batch.MemoryUsage()
 	e.tracker.Consume(temporaryBytes)
 	partials := make([][]aggfuncs.PartialResult, len(e.funcs))
+	var partialBytes int64
 	for i, fn := range e.funcs {
 		var delta int64
 		partials[i], delta = fn.DeserializePartialResult(batch)
+		partialBytes += delta
 		temporaryBytes += delta + int64(cap(partials[i]))*8
 		e.tracker.Consume(delta + int64(cap(partials[i]))*8)
 		if len(partials[i]) != batch.NumRows() {
@@ -557,20 +673,38 @@ func (e *ExternalHashAgg) restoreBatch(data []byte) (err error) {
 	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
 	for i := range batch.NumRows() {
 		key := batch.GetRow(i).GetString(len(e.funcs))
-		_, existed := e.states.M[key]
-		state := e.getState(strings.Clone(key))
-		for j, fn := range e.mergeFuncs {
-			if partials[j][i] == nil {
-				return errors.New("invalid ExternalHashAgg aggregate state")
+		state, existed := e.states.M[key]
+		if !existed && e.fixedStates {
+			// Fixed-size deserialized states own their values. Adopt them instead
+			// of allocating empty states and merging every first occurrence.
+			state = make([]aggfuncs.PartialResult, len(e.funcs))
+			for j := range state {
+				if partials[j][i] == nil {
+					return errors.New("invalid ExternalHashAgg aggregate state")
+				}
+				state[j] = partials[j][i]
 			}
-			delta, err := fn.MergePartialResult(evalCtx, partials[j][i], state[j])
-			if err != nil {
-				return err
+			retained := partialBytes / int64(batch.NumRows())
+			temporaryBytes -= retained
+			e.tracker.Consume(-retained)
+			e.addState(strings.Clone(key), state, retained)
+		} else {
+			if !existed {
+				state = e.getState(strings.Clone(key))
 			}
-			e.consumeState(delta)
-			// FIRST_ROW transfers dynamic values without reporting their size.
-			if !existed && e.firstRows[j] {
-				e.consumeState(int64(len(batch.GetRow(i).GetBytes(j))))
+			for j, fn := range e.mergeFuncs {
+				if partials[j][i] == nil {
+					return errors.New("invalid ExternalHashAgg aggregate state")
+				}
+				delta, err := fn.MergePartialResult(evalCtx, partials[j][i], state[j])
+				if err != nil {
+					return err
+				}
+				e.consumeState(delta)
+				// FIRST_ROW transfers dynamic values without reporting their size.
+				if !existed && e.firstRows[j] {
+					e.consumeState(int64(len(batch.GetRow(i).GetBytes(j))))
+				}
 			}
 		}
 		if e.stateBytes > e.stateLimit || e.tracker.BytesConsumed() > e.memoryLimit {
@@ -636,7 +770,8 @@ func (e *ExternalHashAgg) Next(ctx context.Context, out *chunk.Chunk) (err error
 	return nil
 }
 
-// Close removes only this execution's state objects and releases its child.
+// Close releases execution resources. IMPORT INTO owns the task prefix and
+// removes spill objects together with its global-sort files during task cleanup.
 func (e *ExternalHashAgg) Close() error {
 	if e.cancel != nil {
 		e.cancel()
@@ -651,51 +786,10 @@ func (e *ExternalHashAgg) Close() error {
 		e.tracker.Consume(-int64(cap(data)))
 		e.readObjects[i] = nil
 	}
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	var firstErr error
-	files := make([]string, 0, 1000)
-	for partition, count := range e.fileCounts {
-		for seq := range count {
-			files = append(files, e.fileName(partition, seq))
-			if len(files) == cap(files) {
-				if err := e.deleteFiles(cleanupCtx, files); err != nil && firstErr == nil {
-					firstErr = err
-				}
-				files = files[:0]
-			}
-		}
-	}
-	if len(files) > 0 {
-		if err := e.deleteFiles(cleanupCtx, files); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
 	e.clearState()
 	e.tracker.Consume(-e.frameBytes)
 	e.frameBytes = 0
 	e.tracker.Detach()
 	e.input, e.groupKeyBuf = nil, nil
-	if err := e.BaseExecutor.Close(); firstErr == nil {
-		firstErr = err
-	}
-	return firstErr
-}
-
-func (e *ExternalHashAgg) deleteFiles(ctx context.Context, files []string) error {
-	if err := e.store.DeleteFiles(ctx, files); err == nil {
-		return nil
-	}
-	// Failed writes can leave missing keys. Some stores stop a batch at the first
-	// missing key, so still clean the remaining objects in that case.
-	var firstErr error
-	for _, name := range files {
-		if err := e.store.DeleteFile(ctx, name); err != nil && firstErr == nil {
-			exists, checkErr := e.store.FileExists(ctx, name)
-			if checkErr != nil || exists {
-				firstErr = err
-			}
-		}
-	}
-	return firstErr
+	return e.BaseExecutor.Close()
 }
