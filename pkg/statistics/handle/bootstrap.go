@@ -100,10 +100,17 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	}
 }
 
+<<<<<<< HEAD
 func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
+=======
+func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
+	sql := genInitStatsMetaSQL(tableIDs...)
+	rc, err := util.Exec(sctx, sql)
+>>>>>>> e3dc39fc8bb (statistics, executor, session: integrate analyze resource control (#69452))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -322,7 +329,7 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.S
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -348,7 +355,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -476,14 +483,74 @@ func genInitStatsTopNSQLForIndexes(isPaging bool) string {
 	return selectPrefix + " and table_id >= %? and table_id < %?" + orderSuffix
 }
 
+<<<<<<< HEAD
 func (h *Handle) initStatsTopN(cache statstypes.StatsCache, totalMemory uint64) error {
 	sql := genInitStatsTopNSQLForIndexes(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
+=======
+// getTablesWithBucketsInRange checks which tables in the given range have buckets.
+// Returns a map where keys are table IDs that have bucket entries.
+func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
+	// Query to find table_ids that have buckets in the given range
+	// Keep the USE_INDEX(tbl) hint for upgraded clusters; see genInitStatsHistogramsSQL.
+	sql := "select /*+ USE_INDEX(stats_buckets, tbl) */ HIGH_PRIORITY distinct table_id from mysql.stats_buckets" +
+		" where is_index = 1" +
+		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
+		" and table_id < " + strconv.FormatInt(tableRange[1], 10)
+
+	rc, err := util.Exec(sctx, sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
+	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	tablesWithBuckets := make(map[int64]struct{})
+
+	for {
+		err := rc.Next(ctx, req)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			tableID := row.GetInt64(0)
+			tablesWithBuckets[tableID] = struct{}{}
+		}
+	}
+
+	return tablesWithBuckets, nil
+}
+
+func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return h.initStatsTopNByPagingWithSCtx(sctx, cache, task, totalMemory)
+		})
+	})
+}
+
+// initStatsTopNByPagingWithSCtx contains the core business logic for initStatsTopNByPaging.
+// This method preserves git blame history by keeping the original logic intact.
+func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+	// First, get the tables with buckets in this range
+	tablesWithBuckets, err := getTablesWithBucketsInRange(sctx, [2]int64{task.StartTid, task.EndTid})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	sql := genInitStatsTopNSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
+	rc, err := util.Exec(sctx, sql)
+>>>>>>> e3dc39fc8bb (statistics, executor, session: integrate analyze resource control (#69452))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -735,7 +802,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
