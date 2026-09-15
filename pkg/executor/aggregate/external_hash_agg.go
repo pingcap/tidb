@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"path"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +43,7 @@ import (
 const (
 	externalAggPartitions           = 256
 	externalAggMinMemory            = 64 << 10
-	externalAggIOConcurrency        = 4
+	externalAggIOConcurrency        = 32
 	externalAggFileVersion   uint32 = 2
 )
 
@@ -76,6 +75,12 @@ type ExternalHashAgg struct {
 	frameBytes    int64
 	tracker       *memory.Tracker
 	fileCounts    [externalAggPartitions]int
+	maxFileSizes  [externalAggPartitions]int
+	readObjects   [externalAggIOConcurrency][]byte
+	readCursor    int
+	readCount     int
+	readPartition int
+	readSequence  int
 	nextPartition int
 	outputCursor  int
 	spilled       bool
@@ -166,6 +171,9 @@ func (e *ExternalHashAgg) OpenSelf(ctx context.Context) error {
 	e.terminalErr = nil
 	e.drained, e.spilled = false, false
 	e.fileCounts = [externalAggPartitions]int{}
+	e.maxFileSizes = [externalAggPartitions]int{}
+	e.readObjects = [externalAggIOConcurrency][]byte{}
+	e.readCursor, e.readCount, e.readPartition, e.readSequence = 0, 0, 0, 0
 	e.nextPartition, e.outputCursor = 0, 0
 	e.states = aggfuncs.NewAggPartialResultMapper()
 	e.keys = nil
@@ -216,38 +224,86 @@ func (e *ExternalHashAgg) fileName(partition, seq int) string {
 	return path.Join(e.attemptPrefix, fmt.Sprintf("%03d/%08d", partition, seq))
 }
 
-func (e *ExternalHashAgg) spill(ctx context.Context) (err error) {
-	e.spilled = true
-	sort.Slice(e.keys, func(i, j int) bool { return externalAggPartition(e.keys[i]) < externalAggPartition(e.keys[j]) })
-	// Reserve room for four uploads, the next object, and the chunk being encoded.
-	objectLimit := int(min(e.memoryLimit/32, 8<<20))
+type externalAggSpillObject struct {
+	name string
+	data []byte
+}
+
+// groupKeysByPartition uses fixed-size counting buckets. Each key is placed once;
+// keys within a partition need no ordering because the state map has unique keys.
+func (e *ExternalHashAgg) groupKeysByPartition() {
+	var ends, next [externalAggPartitions]int
+	for _, key := range e.keys {
+		ends[externalAggPartition(key)]++
+	}
+	total := 0
+	for p, count := range ends {
+		next[p] = total
+		total += count
+		ends[p] = total
+	}
+	for p, end := range ends {
+		for next[p] < end {
+			dst := externalAggPartition(e.keys[next[p]])
+			e.keys[next[p]], e.keys[next[dst]] = e.keys[next[dst]], e.keys[next[p]]
+			next[dst]++
+		}
+	}
+}
+
+func (e *ExternalHashAgg) writeObjects(ctx context.Context, objects []externalAggSpillObject) error {
 	group, writeCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	group.SetLimit(externalAggIOConcurrency)
+	for _, object := range objects {
+		group.Go(func() error {
+			return errors.Annotate(e.store.WriteFile(writeCtx, object.name, object.data), "write ExternalHashAgg state")
+		})
+	}
+	return group.Wait()
+}
+
+func (e *ExternalHashAgg) spill(ctx context.Context) error {
+	e.spilled = true
+	e.groupKeysByPartition()
+	objectLimit := int(min(e.memoryLimit/32, 8<<20))
+	uploadBudget := e.memoryLimit / 8
 	batch := chunk.New(e.spillTypes, 1, e.MaxChunkSize())
 	batchBytes := batch.MemoryUsage()
 	e.tracker.Consume(batchBytes)
 	var payload []byte
+	var objects [externalAggIOConcurrency]externalAggSpillObject
+	objectCount := 0
+	var uploadBytes int64
 	partition := -1
 	defer func() {
-		if writeErr := group.Wait(); writeErr != nil {
-			err = writeErr
-		}
-		e.tracker.Consume(-int64(cap(payload)) - batchBytes)
+		e.tracker.Consume(-int64(cap(payload)) - batchBytes - uploadBytes)
 	}()
-	writeObject := func() {
+	flushObjects := func() error {
+		err := e.writeObjects(ctx, objects[:objectCount])
+		clear(objects[:objectCount])
+		objectCount = 0
+		e.tracker.Consume(-uploadBytes)
+		uploadBytes = 0
+		return err
+	}
+	writeObject := func() error {
 		if len(payload) == 0 {
-			return
+			return nil
+		}
+		size := int64(cap(payload))
+		if objectCount > 0 && (objectCount == len(objects) || uploadBytes+size > uploadBudget) {
+			if err := flushObjects(); err != nil {
+				return err
+			}
 		}
 		seq := e.fileCounts[partition]
-		// Include ambiguous writes in Close's cleanup. Sequence reflects input order,
-		// so concurrent upload completion cannot change FIRST_ROW during restore.
+		// Sequence reflects input order, regardless of upload completion order.
 		e.fileCounts[partition]++
-		name, data := e.fileName(partition, seq), payload
+		e.maxFileSizes[partition] = max(e.maxFileSizes[partition], len(payload))
+		objects[objectCount] = externalAggSpillObject{name: e.fileName(partition, seq), data: payload}
+		objectCount++
+		uploadBytes += size
 		payload = nil
-		group.Go(func() error {
-			defer e.tracker.Consume(-int64(cap(data)))
-			return errors.Annotate(e.store.WriteFile(writeCtx, name, data), "write ExternalHashAgg state")
-		})
+		return nil
 	}
 	writeBatch := func() error {
 		if batch.NumRows() == 0 {
@@ -259,7 +315,9 @@ func (e *ExternalHashAgg) spill(ctx context.Context) (err error) {
 		// Each object has a version followed by length/checksum/chunk frames.
 		// SQL chunk size controls decoding work, not the number of S3 objects.
 		if len(payload)+8+len(data) > objectLimit {
-			writeObject()
+			if err := writeObject(); err != nil {
+				return err
+			}
 		}
 		required := len(payload) + 8 + len(data)
 		if payload == nil {
@@ -291,7 +349,7 @@ func (e *ExternalHashAgg) spill(ctx context.Context) (err error) {
 		return nil
 	}
 	for _, key := range e.keys {
-		if err := writeCtx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		p := externalAggPartition(key)
@@ -299,7 +357,9 @@ func (e *ExternalHashAgg) spill(ctx context.Context) (err error) {
 			if err := writeBatch(); err != nil {
 				return err
 			}
-			writeObject()
+			if err := writeObject(); err != nil {
+				return err
+			}
 		}
 		partition = p
 		for i, fn := range e.funcs {
@@ -318,7 +378,12 @@ func (e *ExternalHashAgg) spill(ctx context.Context) (err error) {
 	if err := writeBatch(); err != nil {
 		return err
 	}
-	writeObject()
+	if err := writeObject(); err != nil {
+		return err
+	}
+	if err := flushObjects(); err != nil {
+		return err
+	}
 	e.clearState()
 	return nil
 }
@@ -381,44 +446,58 @@ func (e *ExternalHashAgg) readInput(ctx context.Context) error {
 }
 
 func (e *ExternalHashAgg) restore(ctx context.Context, partition int) error {
-	for seq := 0; seq < e.fileCounts[partition]; seq += externalAggIOConcurrency {
-		end := min(seq+externalAggIOConcurrency, e.fileCounts[partition])
-		if err := e.restoreFiles(ctx, partition, seq, end); err != nil {
+	for range e.fileCounts[partition] {
+		if e.readCursor == e.readCount {
+			if err := e.prefetchObjects(ctx); err != nil {
+				return err
+			}
+		}
+		data := e.readObjects[e.readCursor]
+		err := e.restoreObject(ctx, data)
+		e.tracker.Consume(-int64(cap(data)))
+		e.readObjects[e.readCursor] = nil
+		e.readCursor++
+		if err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *ExternalHashAgg) restoreFiles(ctx context.Context, partition, start, end int) error {
-	var objects [externalAggIOConcurrency][]byte
-	defer func() {
-		for _, data := range objects {
-			e.tracker.Consume(-int64(cap(data)))
+// prefetchObjects spans partition boundaries so small partitions can share an
+// I/O batch. Unconsumed objects stay accounted until restore or Close releases them.
+func (e *ExternalHashAgg) prefetchObjects(ctx context.Context) error {
+	e.readCursor, e.readCount = 0, 0
+	var names [externalAggIOConcurrency]string
+	var reserved int64
+	for e.readPartition < externalAggPartitions && e.readCount < len(names) {
+		p := e.readPartition
+		if e.readSequence == e.fileCounts[p] {
+			e.readPartition++
+			e.readSequence = 0
+			continue
 		}
-	}()
+		// ReadFile may overallocate while growing its buffer. A per-partition
+		// maximum bounds prefetch without retaining metadata for every file.
+		size := max(512, 2*int64(e.maxFileSizes[p]))
+		if e.readCount > 0 && reserved+size > e.memoryLimit/4 {
+			break
+		}
+		names[e.readCount] = e.fileName(p, e.readSequence)
+		e.readCount++
+		e.readSequence++
+		reserved += size
+	}
 	group, readCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	for seq := start; seq < end; seq++ {
-		i := seq - start
+	for i := range e.readCount {
 		group.Go(func() error {
-			data, err := e.store.ReadFile(readCtx, e.fileName(partition, seq))
-			objects[i] = data
+			data, err := e.store.ReadFile(readCtx, names[i])
+			e.readObjects[i] = data
 			e.tracker.Consume(int64(cap(data)))
 			return errors.Annotate(err, "read ExternalHashAgg state")
 		})
 	}
-	if err := group.Wait(); err != nil {
-		return err
-	}
-	// Merge in sequence order even though the objects were fetched concurrently.
-	for i := range end - start {
-		if err := e.restoreObject(ctx, objects[i]); err != nil {
-			return err
-		}
-		e.tracker.Consume(-int64(cap(objects[i])))
-		objects[i] = nil
-	}
-	return nil
+	return group.Wait()
 }
 
 func (e *ExternalHashAgg) restoreObject(ctx context.Context, data []byte) error {
@@ -568,6 +647,10 @@ func (e *ExternalHashAgg) Close() error {
 		return nil
 	}
 	e.opened = false
+	for i, data := range e.readObjects {
+		e.tracker.Consume(-int64(cap(data)))
+		e.readObjects[i] = nil
+	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	var firstErr error
