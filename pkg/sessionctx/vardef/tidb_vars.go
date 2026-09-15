@@ -143,6 +143,14 @@ const (
 
 	// TiDBMemQuotaQuery controls the memory quota of a query.
 	TiDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TiDBMViewMaintainMemQuota controls the memory quota used by MV maintenance sessions.
+	TiDBMViewMaintainMemQuota = "tidb_mview_maintain_mem_quota"
+	// TiDBMViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance sessions.
+	TiDBMViewMaintainIsolationReadEngines = "tidb_mview_maintain_isolation_read_engines"
+	// TiDBMViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
+	TiDBMViewMaintainImportThreads = "tidb_mview_maintain_import_threads"
+	// TiDBMViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
+	TiDBMViewMaintainImportDiskQuota = "tidb_mview_maintain_import_disk_quota"
 	// TiDBMemQuotaApplyCache controls the memory quota of a query.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 
@@ -316,6 +324,10 @@ const (
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
+
+	// TiDBQueryCopStoreLimit is used to limit TiKV cop request concurrency for each store within a single query.
+	// A value of 0 disables the limit.
+	TiDBQueryCopStoreLimit = "tidb_query_cop_store_limit"
 
 	// TiDBAnalyzeDistSQLScanConcurrency is the number of concurrent workers to scan regions to collect statistics (FMSketch, Samples).
 	// For auto analyze, the value is controlled by tidb_sysproc_scan_concurrency variable.
@@ -725,6 +737,10 @@ const (
 	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
 	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
 
+	// TiDBStorageClassTransitionHistorySize limits the number of ended
+	// storage-class transitions retained in the system history table.
+	TiDBStorageClassTransitionHistorySize = "tidb_storage_class_transition_history_size"
+
 	// TiDBStmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
 	TiDBStmtSummaryMaxStmtCount = "tidb_stmt_summary_max_stmt_count"
 
@@ -796,6 +812,10 @@ const (
 
 	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
+
+	// TiDBColumnarStorageEnabled is the cluster-level gate for adding TiFlash replicas
+	// when cse.columnar-store-type = "columnar" / "both".
+	TiDBColumnarStorageEnabled = "tidb_columnar_storage_enabled"
 
 	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.
 	TiDBSuperReadOnly = "tidb_super_read_only"
@@ -1122,6 +1142,9 @@ const (
 	// TiDBEnableFullOuterJoin indicates whether to enable FULL OUTER JOIN.
 	TiDBEnableFullOuterJoin = "tidb_enable_full_outer_join"
 
+	// TiDBMViewEnable indicates whether to enable materialized view DDL.
+	TiDBMViewEnable = "tidb_mview_enable"
+
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
@@ -1148,12 +1171,21 @@ const (
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+	// TiDBEnableSharedLockUpgrade indicates whether shared locks are allowed to upgrade to exclusive locks
+	// during pessimistic locking.
+	TiDBEnableSharedLockUpgrade = "tidb_enable_shared_lock_upgrade"
 
 	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
 
 	// TiDBEnableCachePrepareStmt indicates whether to support cache prepare stmt in plan cache.
 	TiDBEnableCachePrepareStmt = "tidb_enable_cache_prepare_stmt"
+
+	// TiDBEnableTxnFile is used to control whether to enable file-based transaction feature.
+	TiDBEnableTxnFile = "tidb_enable_txn_file"
+
+	// TiDBTxnFileMinMutationSize is the minimum mutation size for using file-based transactions.
+	TiDBTxnFileMinMutationSize = "tidb_txn_file_min_mutation_size"
 )
 
 // TiDB vars that have only global scope
@@ -1336,6 +1368,8 @@ const (
 	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
 	// limitation, if the storage is not TiKV).
 	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
+	// TiDBTTLEnableIndexScan enables index-ordered TTL scans using suitable secondary or nonclustered primary indexes.
+	TiDBTTLEnableIndexScan = "tidb_ttl_enable_index_scan"
 	// AuthenticationLDAPSASLAuthMethodName defines the authentication method used by LDAP SASL authentication plugin
 	AuthenticationLDAPSASLAuthMethodName = "authentication_ldap_sasl_auth_method_name"
 	// AuthenticationLDAPSASLCAPath defines the ca certificate to verify LDAP connection in LDAP SASL authentication plugin
@@ -1477,6 +1511,7 @@ const (
 	DefIndexJoinBatchSize               = 25000
 	DefIndexLookupSize                  = 20000
 	DefDistSQLScanConcurrency           = 15
+	DefTiDBQueryCopStoreLimit           = 15
 	DefAnalyzeDistSQLScanConcurrency    = 4
 	DefTiDBAnalyzeStoreBatchSize        = 4
 	DefBuildStatsConcurrency            = 2
@@ -1649,6 +1684,7 @@ const (
 	DefTiDBRedactLog                        = Off
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
+	DefTiDBColumnarStorageEnabled           = true // missing rows keep historical SET TIFLASH REPLICA behavior
 	DefTiDBShardAllocateStep                = math.MaxInt64
 	DefTiDBPointGetCache                    = false
 	DefTiDBEnableTelemetry                  = true
@@ -1680,6 +1716,7 @@ const (
 	DefTiDBStmtSummaryInternalQuery                   = false
 	DefTiDBStmtSummaryRefreshInterval                 = 1800
 	DefTiDBStmtSummaryHistorySize                     = 24
+	DefTiDBStorageClassTransitionHistorySize          = 1000
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
 	DefTiDBStmtSummaryMaxSQLLength                    = 32768
 	DefTiDBStmtSummaryPersistEvicted                  = false
@@ -1710,6 +1747,9 @@ const (
 	DefMaxAllowedPacket                        uint64 = config.DefMaxAllowedPacket
 	DefTiDBEnableBatchDML                             = false
 	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
+	DefTiDBMViewMaintainMemQuota                      = int64(2 * size.GB)
+	DefTiDBMViewMaintainImportThreads                 = 0
+	DefTiDBMViewMaintainImportDiskQuota               = ""
 	DefTiDBStatsCacheMemQuota                         = 0
 	MaxTiDBStatsCacheMemQuota                         = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                             = 4096
@@ -1813,6 +1853,7 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                         = 4
 	DefTiDBTTLDeleteWorkerCount                       = 4
+	DefTiDBTTLEnableIndexScan                         = true
 	DefaultExchangeCompressionMode                    = ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                      = true
 	DefTiDBResourceControlStrictMode                  = true
@@ -1850,6 +1891,7 @@ const (
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBEnableFullOuterJoin                        = false
+	DefTiDBMViewEnable                                = false
 	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
 	DefTiDBOptIndexJoinBuild                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
@@ -1866,6 +1908,7 @@ const (
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
+	DefTiDBEnableSharedLockUpgrade                    = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 	DefTiDBAccelerateUserCreationUpdate               = false
@@ -1883,6 +1926,14 @@ const (
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
 	DefConnectAttrsSize             int64 = 4096
 	DefTiDBEnableConnectionEventLog       = false
+	// DefTiDBEnableTxnFile is the default value of `tidb_enable_txn_file`.
+	// Leaving `tikv-client.txn-chunk-writer-addr` empty disables file-based transactions for this TiDB instance.
+	// Apply it to every TiDB instance to disable the feature cluster-wide.
+	DefTiDBEnableTxnFile = false
+	// DefTiDBTxnFileMinMutationSize is 0, so the threshold defaults to `tikv-client.txn-file-min-mutation-size`.
+	DefTiDBTxnFileMinMutationSize = 0
+	// MinTiDBTxnFileMinMutationSize is the minimum valid nonzero value for `tidb_txn_file_min_mutation_size`.
+	MinTiDBTxnFileMinMutationSize = 1 << 20 // 1 MiB
 )
 
 const (
@@ -1992,6 +2043,7 @@ var (
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
 	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	TTLEnableIndexScan                 = atomic.NewBool(DefTiDBTTLEnableIndexScan)
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)

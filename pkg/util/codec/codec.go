@@ -619,6 +619,9 @@ func preAllocForSerializedKeyBuffer(
 				serializedKeyLens[j] += sizeByteNum + int(column.GetJSON(physicalRowindex).CalculateHashValueSize())
 			}
 		case mysql.TypeNull:
+			for _, physicalRowIndex := range usedRows {
+				canSkip(physicalRowIndex)
+			}
 		default:
 			return serializedKeysBuffer, errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
 		}
@@ -836,6 +839,7 @@ func serializeKeysImpl(
 				serializedKeys[logicalRowIndex] = append(serializedKeys[logicalRowIndex], jsonHashBuffer...)
 			}
 		case mysql.TypeNull:
+			// TODO: NULL-safe equal joins need to serialize TypeNull as a valid join key.
 		default:
 			return errors.Errorf("unsupport column type for encode %d", tp.GetType())
 		}

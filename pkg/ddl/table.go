@@ -78,7 +78,17 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 	case model.StatePublic:
 		// public -> write only
 		if job.Type == model.ActionDropTable {
+			if err = checkTableMaterializedViewConstraints(tblInfo, "DROP TABLE"); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 			err = checkDropTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, args)
+			if err != nil {
+				return ver, err
+			}
+		}
+		if job.Type == model.ActionDropTable || job.Type == model.ActionDropMaterializedViewLog {
+			err = checkDropMaterializedViewLogHasNoDependentMVs(jobCtx, job, tblInfo)
 			if err != nil {
 				return ver, err
 			}
@@ -106,7 +116,11 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		ruleIDs := append(getPartitionRuleIDs(jobCtx.store.GetCodec(), job.SchemaName, tblInfo), label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, ""))
 
 		args.OldPartitionIDs = oldIDs
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
+		extraInfos, extraErr := updateMaterializedViewBaseInfoOnDrop(jobCtx, job, tblInfo)
+		if extraErr != nil {
+			return ver, errors.Trace(extraErr)
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State, extraInfos...)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -127,6 +141,25 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 			if e != nil {
 				logutil.DDLLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+			}
+		}
+		if tblInfo.MaterializedView != nil {
+			if err = w.deleteCreateMaterializedViewRefreshInfo(jobCtx, job.TableID); err != nil {
+				return ver, newRollbackTxnError(errors.Trace(err))
+			}
+			if err = w.deleteCreateMaterializedViewRefreshAlert(jobCtx, job.TableID); err != nil {
+				logutil.DDLLogger().Warn(
+					"drop table/view: failed to delete materialized view refresh alert",
+					zap.String("schemaName", job.SchemaName),
+					zap.String("tableName", tblInfo.Name.O),
+					zap.Int64("mviewID", job.TableID),
+					zap.Error(err),
+				)
+			}
+		}
+		if tblInfo.MaterializedViewLog != nil {
+			if err = w.deleteMaterializedViewLogPurgeInfo(jobCtx, job.TableID); err != nil {
+				return ver, newRollbackTxnError(errors.Trace(err))
 			}
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
@@ -475,6 +508,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
+	}
+	if err = checkTableMaterializedViewConstraints(tblInfo, "TRUNCATE TABLE"); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 	// Copy the old tableInfo for later usage.
 	oldTblInfo := tblInfo.Clone()
@@ -1187,6 +1224,10 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 	}
 	replicaInfo := args.TiflashReplica
 
+	failpoint.Inject("forceSetTiFlashReplicaSkipColumnarStorageGate", func() {
+		args.SkipColumnarStorageGate = true
+	})
+
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1199,6 +1240,12 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 
 	// Check the validity of the replica count. For example, not exceeding the tiflash store count.
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = w.checkColumnarStorageEnabled(replicaInfo.Count, args.SkipColumnarStorageGate)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1270,6 +1317,36 @@ func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
 	defer w.sessPool.Put(ctx)
 
 	return checkTiFlashReplicaCount(ctx, replicaCount)
+}
+
+func (w *worker) checkColumnarStorageEnabled(replicaCount uint64, skipColumnarStorageGate bool) error {
+	// Removing TiFlash replica or skipping the gate (e.g. placement-rule repair)
+	// does not require tidb_columnar_storage_enabled to be enabled.
+	if replicaCount == 0 || skipColumnarStorageGate {
+		return nil
+	}
+	ctx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.Put(ctx)
+
+	return checkColumnarStorageEnabled(ctx)
+}
+
+func (w *worker) checkCreateTableColumnarStorage(job *model.Job, tbInfo *model.TableInfo) error {
+	if tbInfo.TiFlashReplica == nil {
+		return nil
+	}
+	err := w.checkColumnarStorageEnabled(tbInfo.TiFlashReplica.Count, false)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		if tableHasColumnarIndex(tbInfo) {
+			return wrapColumnarStorageGateForColumnarIndex(err)
+		}
+		return err
+	}
+	return nil
 }
 
 func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {

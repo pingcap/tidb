@@ -190,6 +190,11 @@ const (
 	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
 	// MaskingPolicyNextGenBootTableVersion adds mysql.tidb_masking_policy.
 	MaskingPolicyNextGenBootTableVersion NextGenBootTableVersion = 2
+	// MaterializedViewNextGenBootTableVersion adds materialized view maintenance metadata tables.
+	MaterializedViewNextGenBootTableVersion NextGenBootTableVersion = 3
+	// StorageClassTransitionNextGenBootTableVersion adds
+	// mysql.tidb_storage_class_transition_history.
+	StorageClassTransitionNextGenBootTableVersion NextGenBootTableVersion = 4
 )
 
 // DDLTableVersion is to display ddl related table versions

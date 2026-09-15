@@ -86,6 +86,7 @@ func TestShow(t *testing.T) {
 		ast.ShowMasterStatus,
 		ast.ShowBackups,
 		ast.ShowRestores,
+		ast.ShowStorageClassTransitions,
 	}
 	for _, tp := range tps {
 		node.Tp = tp
@@ -94,6 +95,20 @@ func TestShow(t *testing.T) {
 			require.Greater(t, col.RetType.GetFlen(), 0)
 		}
 	}
+
+	node.Tp = ast.ShowStorageClassTransitions
+	schema, names := buildShowSchema(node, false, false)
+	datetimeColumns := 0
+	for i, name := range names {
+		if name.ColName.O != "START_TIME" && name.ColName.O != "LAST_UPDATE_TIME" {
+			continue
+		}
+		datetimeColumns++
+		require.Equal(t, mysql.TypeDatetime, schema.Columns[i].RetType.GetType())
+		require.Equal(t, 26, schema.Columns[i].RetType.GetFlen())
+		require.Equal(t, types.MaxFsp, schema.Columns[i].RetType.GetDecimal())
+	}
+	require.Equal(t, 2, datetimeColumns)
 }
 
 func TestGetPathByIndexName(t *testing.T) {
@@ -992,7 +1007,7 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 
 			checker := newImportIntoCollAssignmentChecker()
 			checker.idx = i
-			expr.Accept(checker)
+			ast.Walk(expr, checker)
 			if c.error != "" {
 				require.EqualError(t, checker.err, fmt.Sprintf("%s, index %d", c.error, i), c.expr)
 			} else {

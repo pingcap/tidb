@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -209,6 +210,49 @@ func TestLogSlowLogIndex(t *testing.T) {
 	tk.MustQuery("select index_names from `information_schema`.`slow_query` " +
 		"where query like 'select%union%' limit 1").
 		Check(testkit.Rows("[t:idx]"))
+}
+
+func TestLogSlowLogRUV3(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = f.Name()
+	})
+	require.NoError(t, logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	tk.MustQuery("select /*+ test_tag */ * from t where a < 2222")
+	tk.MustExec("set tidb_slow_log_threshold=300;")
+	ruLogRows := tk.MustQuery("select Request_unit_v2 from `information_schema`.`slow_query` " +
+		"where query like '%test_tag%' limit 1").Rows()
+	require.Len(t, ruLogRows, 1)
+	require.Len(t, ruLogRows[0], 1)
+	ruLog, ok := ruLogRows[0][0].(string)
+	require.True(t, ok)
+
+	explainRows := tk.MustQuery("explain analyze format='ru' select * from t where a < 2222").Rows()
+	require.NotEmpty(t, explainRows)
+	require.Greater(t, len(explainRows[0]), 4)
+	ru, ok := explainRows[0][4].(string)
+	require.True(t, ok)
+
+	parseRU := func(value string) float64 {
+		t.Helper()
+		parsedRU, err := strconv.ParseFloat(value, 64)
+		require.NoError(t, err)
+		return parsedRU
+	}
+	require.Equal(t, parseRU(ru), parseRU(ruLog))
 }
 
 func TestSlowQuerySessionAlias(t *testing.T) {

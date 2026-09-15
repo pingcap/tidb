@@ -217,9 +217,6 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 			session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
 		}
 	}
-	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddTxnCnt(1)
-	}
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
@@ -318,6 +315,16 @@ func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql 
 	}
 }
 
+func shouldRollbackTxnOnError(txn kv.Transaction, err error) bool {
+	if !txn.Valid() {
+		return false
+	}
+	if kv.ErrSharedLockLost.Equal(err) {
+		return true
+	}
+	return txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(err)
+}
+
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	isInternal := false
 	if internal := se.txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
@@ -329,8 +336,16 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
-		} else if se.txn.Valid() && se.txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(meetsErr) {
-			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
+		} else if shouldRollbackTxnOnError(&se.txn, meetsErr) {
+			if kv.ErrSharedLockLost.Equal(meetsErr) {
+				logutil.BgLogger().Info(
+					"rollbackTxn for shared lock loss",
+					zap.Uint64("txn", se.txn.StartTS()),
+					zap.Error(meetsErr),
+				)
+			} else {
+				logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
+			}
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
 		}

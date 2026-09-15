@@ -52,6 +52,8 @@ go_library(
         "physical_utils.go",
         "physical_window.go",
         "plan_clone_generated.go",
+        "single_scan_index_join.go",
+        "storage_engine_usage.go",
         "task.go",
         "task_base.go",
         "tiflash_predicate_push_down.go",
@@ -137,7 +139,7 @@ go_test(
     ],
     embed = [":physicalop"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 8,
     deps = [
         "//pkg/expression",
         "//pkg/expression/aggregation",

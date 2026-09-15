@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
@@ -65,6 +66,29 @@ var (
 
 	mockDDLErrOnce = int64(0)
 )
+
+// rollbackTxnError marks an error that must roll back the whole DDL transaction
+// before the job error is persisted.
+type rollbackTxnError struct {
+	cause error
+}
+
+func (e *rollbackTxnError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *rollbackTxnError) Unwrap() error {
+	return e.cause
+}
+
+func newRollbackTxnError(err error) error {
+	return &rollbackTxnError{cause: err}
+}
+
+func isRollbackTxnError(err error) bool {
+	var target *rollbackTxnError
+	return goerrors.As(err, &target)
+}
 
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
 func GetWaitTimeWhenErrorOccurred() time.Duration {
@@ -104,6 +128,11 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
+	// Keep storage-class history changes pending until a batched multi-schema
+	// step is known to commit its TableInfo changes.
+	deferStorageClassTransitionStaging bool
+	pendingStorageClassTransitions     []pendingStorageClassTransition
+	sharedMultiSchemaVersion           int64
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -175,6 +204,10 @@ const (
 	// backgroundWorker is the worker that can use auto-scaled tidb-workers in next-gen.
 	backgroundWorker workerType = 2
 )
+
+// TODO: Refactor this weight and the statement RU weights in
+// pkg/executor/statement_ru_result.go into a shared location, then make them configurable.
+const ddlTxnRUKVBytesWeight = 1.0
 
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
@@ -370,6 +403,7 @@ func JobNeedGC(job *model.Job) bool {
 		}
 		switch job.Type {
 		case model.ActionDropSchema, model.ActionDropTable,
+			model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
 			model.ActionTruncateTable,
 			model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition,
@@ -378,6 +412,10 @@ func JobNeedGC(job *model.Job) bool {
 			model.ActionReorganizePartition, model.ActionRemovePartitioning,
 			model.ActionAlterTablePartitioning:
 			return true
+		case model.ActionCreateMaterializedView:
+			// CREATE MATERIALIZED VIEW may create a physical table before the initial
+			// build fails; only rollback cleanup needs delete-range GC.
+			return job.IsRollbackDone() && job.TableID != 0
 		case model.ActionDropIndex:
 			args, err := model.GetFinishedModifyIndexArgs(job)
 			if err != nil {
@@ -406,6 +444,11 @@ func JobNeedGC(job *model.Job) bool {
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
+	// Failed DDL jobs are not accounted for yet. Clear any RU accumulated by
+	// earlier steps before moving a cancelled or rolled-back job to history.
+	if job.IsCancelled() || job.IsRollbackDone() {
+		job.RU = 0
+	}
 	if JobNeedGC(job) {
 		err = w.delRangeManager.addDelRangeJob(w.workCtx, job)
 		if err != nil {
@@ -509,10 +552,11 @@ func (w *ReorgContext) attachTopProfilingInfo(jobQuery string) {
 
 // DDLBackfillers contains the DDL need backfill step.
 var DDLBackfillers = map[model.ActionType]string{
-	model.ActionAddIndex:            "add_index",
-	model.ActionModifyColumn:        "modify_column",
-	model.ActionDropIndex:           "drop_index",
-	model.ActionReorganizePartition: "reorganize_partition",
+	model.ActionAddIndex:               "add_index",
+	model.ActionModifyColumn:           "modify_column",
+	model.ActionDropIndex:              "drop_index",
+	model.ActionReorganizePartition:    "reorganize_partition",
+	model.ActionCreateMaterializedView: "create_materialized_view",
 }
 
 func getDDLRequestSource(jobType model.ActionType) string {
@@ -548,9 +592,29 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	if err != nil {
 		return err
 	}
+	if kerneltype.IsNextGen() && job.IsSynced() && job.RU > 0 {
+		metrics.RUV3Total.Add(job.RU)
+		metrics.RUV3BySQLTypeDDL.Add(job.RU)
+		metrics.RUV3ByEngineTiKV.Add(job.RU)
+		w.reportJobRUV3Consumption(job.RU)
+	}
 	cleanupDDLReorgHandles(job, w.sess)
 	jobCtx.notifyDone()
 	return nil
+}
+
+func (w *worker) reportJobRUV3Consumption(totalRU float64) {
+	if totalRU <= 0 {
+		return
+	}
+	dctx := w.sess.GetDistSQLCtx()
+	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
+		return
+	}
+	// General DDL jobs do not persist the submitter's resource group yet. The
+	// internal DDL worker session therefore reports them to its default group.
+	// DDL RU is derived from transaction KV bytes, so attribute it to TiKV.
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, totalRU, 0, 0)
 }
 
 func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
@@ -582,6 +646,21 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 	// set request source type to DDL type
 	txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
 	return txn, err
+}
+
+func (w *worker) accountJobRU(job *model.Job) error {
+	// Only general DDL jobs on NextGen calculate RU for now.
+	if !kerneltype.IsNextGen() || w.tp != generalWorker {
+		return nil
+	}
+	txn, err := w.sess.Txn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The DDL job-table update happens after this sample, and the history-table
+	// writes happen in the final transaction. These internal writes are excluded.
+	job.RU += float64(txn.Size()) * ddlTxnRUKVBytesWeight
+	return nil
 }
 
 // transitOneJobStep runs one step of the DDL job and persist the new job
@@ -648,7 +727,20 @@ func (w *worker) transitOneJobStep(
 	}()
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
+	restoreStorageClassTransitionStep := checkpointStorageClassTransitionStep(w.sess, txn, job)
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
+	if restoreStorageClassTransitionStep != nil {
+		var stagingErr *storageClassTransitionStagingError
+		if goerrors.As(runJobErr, &stagingErr) {
+			// History SQL can release earlier TableInfo and history writes from
+			// the statement buffer, so Reset alone cannot discard this step.
+			restoreStorageClassTransitionStep()
+			schemaVer = 0
+			// Preserve the saved raw arguments, not decoded args mutated by a
+			// sub-job whose metadata changes were just rolled back.
+			updateRawArgs = false
+		}
+	}
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
@@ -670,7 +762,17 @@ func (w *worker) transitOneJobStep(
 		// then shouldn't discard the KV modification.
 		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 		// Otherwise, we should discard the KV modification when running job.
-		w.sess.Reset()
+		if isRollbackTxnError(runJobErr) {
+			w.sess.Rollback()
+			txn, txnErr := w.prepareTxn(job)
+			if txnErr != nil {
+				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+				return 0, txnErr
+			}
+			jobCtx.metaMut = meta.NewMutator(txn)
+		} else {
+			w.sess.Reset()
+		}
 		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 		// Result in the retry duration is up to 2 * lease.
 		schemaVer = 0
@@ -678,6 +780,11 @@ func (w *worker) transitOneJobStep(
 
 	err = w.registerMDLInfo(job, schemaVer)
 	if err != nil {
+		w.sess.Rollback()
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+		return 0, err
+	}
+	if err = w.accountJobRU(job); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
@@ -972,13 +1079,18 @@ func (w *worker) runOneJobStep(
 		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
 	case model.ActionCreateTable:
 		ver, err = w.onCreateTable(jobCtx, job)
+	case model.ActionCreateMaterializedViewLog:
+		ver, err = w.onCreateMaterializedViewLog(jobCtx, job)
+	case model.ActionCreateMaterializedView:
+		ver, err = w.onCreateMaterializedView(jobCtx, job)
 	case model.ActionCreateTables:
 		ver, err = w.onCreateTables(jobCtx, job)
 	case model.ActionRepairTable:
 		ver, err = onRepairTable(jobCtx, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(jobCtx, job)
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
 		ver, err = w.onDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(jobCtx, job)
@@ -1001,7 +1113,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAddColumnarIndex:
 		ver, err = w.onCreateColumnarIndex(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		ver, err = onDropIndex(jobCtx, job)
+		ver, err = onDropIndex(w.sess.Session(), jobCtx, job)
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(jobCtx, job)
 	case model.ActionAddForeignKey:
@@ -1020,6 +1132,12 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onShardRowID(jobCtx, job)
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(jobCtx, job)
+	case model.ActionAlterMaterializedViewRefresh:
+		ver, err = onAlterMaterializedViewRefresh(jobCtx, job, w.sess)
+	case model.ActionAlterMaterializedViewAttributes:
+		ver, err = onAlterMaterializedViewAttributes(jobCtx, job, w.sess)
+	case model.ActionAlterMaterializedViewLogPurge:
+		ver, err = onAlterMaterializedViewLogPurge(jobCtx, job, w.sess)
 	case model.ActionModifyTableAutoIDCache:
 		ver, err = onModifyTableAutoIDCache(jobCtx, job)
 	case model.ActionAddTablePartition:
@@ -1041,7 +1159,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(jobCtx, job)
 	case model.ActionAlterIndexVisibility:
-		ver, err = onAlterIndexVisibility(jobCtx, job)
+		ver, err = onAlterIndexVisibility(w.sess.Session(), jobCtx, job)
 	case model.ActionAlterSequence:
 		ver, err = onAlterSequence(jobCtx, job)
 	case model.ActionRenameTables:
@@ -1094,7 +1212,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
 	case model.ActionModifyEngineAttribute:
-		ver, err = onModifyTableEngineAttribute(jobCtx, job)
+		ver, err = w.onModifyTableEngineAttribute(jobCtx, job)
 	case model.ActionRefreshMeta:
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:

@@ -19,6 +19,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,6 +30,7 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -320,6 +322,24 @@ func TestFileScanner(t *testing.T) {
 		require.Positive(t, tableEstimates["with_csv"].TiKVSize)
 	})
 
+	t.Run("EstimateAuroraDataOnly", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "export/db/db.users/a/part-a.parquet")
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte("data"), 0o644))
+		cfg := defaultSDKConfig()
+		cfg.estimateRealSize = false
+		scanner, err := NewFileScanner(ctx, "file://"+dir, nil, cfg)
+		require.NoError(t, err)
+		defer scanner.Close()
+		for _, skip := range []bool{false, true} {
+			cfg.skipInvalidFiles = skip
+			estimate, err := scanner.EstimateImportDataSize(ctx)
+			require.ErrorContains(t, err, "schema not found")
+			require.Nil(t, estimate)
+		}
+	})
+
 	t.Run("EstimateImportDataSizeSkipInvalidFiles", func(t *testing.T) {
 		estimateDir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
@@ -492,4 +512,117 @@ func TestFileScannerWithSkipInvalidFiles(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, metas2, 1)
 	require.Equal(t, "t2", metas2[0].Table)
+}
+
+func TestAuroraSourceSafety(t *testing.T) {
+	const first = "export-a/db/db.users/1/part-a.parquet"
+	for _, tc := range []struct {
+		name    string
+		paths   []string
+		options []SDKOption
+		want    string
+		err     string
+		count   int
+	}{
+		{name: "dotted table", paths: []string{"export/sales/sales.order.items/1/part-a.parquet"}, want: "sales/order.items"},
+		{name: "dotted database", paths: []string{"export/sales.v1/sales.v1.order.items/part-a.parquet"}, want: "sales.v1/order.items"},
+		{name: "regex metacharacters", paths: []string{"export+(v1)/db+$1/db+$1.order+(items)/part-a.parquet"}, want: "db+$1/order+(items)"},
+		{name: "glob export root brackets", paths: []string{"export[1]/db/db.users/a/part-a.parquet"}, err: "glob"},
+		{name: "glob export root star", paths: []string{"export*/db/db.users/a/part-a.parquet"}, err: "glob"},
+		{name: "glob file name", paths: []string{"export/db/db.users/a/part-*.parquet"}, err: "glob"},
+		{name: "literal percent", paths: []string{"export/db%20/db%20.order%2Eitems/1/part-a.parquet"}, want: "db%20/order%2Eitems"},
+		{name: "single export scoped URL", paths: []string{"db/db.users/1/part-a.parquet", "db/db.users/2/part-b.parquet"}, want: "db/users"},
+		{name: "alphanumeric partitions", paths: []string{"export/db/db.users/a/part-00000-id.gz.parquet", "export/db/db.users/A1/part-00000-id.gz.parquet"}, want: "db/users"},
+		{name: "uppercase suffix", paths: []string{"prefix.with.dots/export/db/db.users/00042/PART-a.GZ.PARQUET"}, want: "db/users"},
+		{name: "literal encoded slash", paths: []string{"export/db/db.order%2Fitems/part-a.parquet"}, want: "db/order%2Fitems"},
+		{name: "ambiguous table", paths: []string{"export/db/db.order_items/1/part-a.parquet"}, err: "ambiguous"},
+		{name: "ambiguous database", paths: []string{"export/my_db/my_db.users/1/part-a.parquet"}, err: "ambiguous"},
+		{name: "non-native space", paths: []string{"export/my db/my db.users/1/part-a.parquet"}, err: "ambiguous"},
+		{name: "two roots same table", paths: []string{first, "export-b/db/db.users/1/part-b.parquet"}, err: "multiple"},
+		{name: "two roots different tables", paths: []string{first, "export-b/other/other.orders/part-b.parquet"}, err: "multiple"},
+		{name: "root is full prefix", paths: []string{"prefix/a/export/db/db.users/part-a.parquet", "prefix/b/export/db/db.users/part-b.parquet"}, err: "multiple"},
+		{name: "empty and nonempty roots", paths: []string{"db/db.users/part-a.parquet", first}, err: "multiple"},
+		{name: "filter cannot hide root", paths: []string{first, "export-b/other/other.orders/part-b.parquet"}, options: []SDKOption{WithFilter([]string{"db.users"})}, err: "multiple"},
+		{name: "skip cannot hide mixed", paths: []string{first, "db.orders.1.csv"}, options: []SDKOption{WithSkipInvalidFiles(true)}, err: "mixed"},
+		{name: "unmatched parquet", paths: []string{first, "unmatched.parquet"}, err: "mixed"},
+		{name: "compressed parquet", paths: []string{first, "db.orders.1.parquet.gz"}, err: "parquet"},
+		{name: "inconsistent directory", paths: []string{"archive/customer/staging.users/1/part-a.parquet"}, err: "inconsistent"},
+		{name: "invalid batch", paths: []string{first, "export-a/db/db.orders/batch-1/part-b.parquet"}, err: "mixed"},
+		{name: "extra depth", paths: []string{first, "export-a/db/db.orders/1/extra/part-b.parquet"}, err: "mixed"},
+		{name: "non-parquet table object", paths: []string{first, "export-a/db/db.orders/1/part-b.csv"}, err: "mixed"},
+		{name: "truncated aurora", paths: []string{first, "export-a/db/db.users/2/part-b.parquet"}, options: []SDKOption{WithMaxScanFiles(1)}, err: "incomplete"},
+		{name: "truncated before aurora", paths: []string{"aaa.tbl.1.csv", first}, options: []SDKOption{WithMaxScanFiles(1)}, err: "incomplete"},
+		{name: "generic nested parquet", paths: []string{"backup/v1.0/db.users.0000.parquet"}, want: "db/users"},
+		{name: "generic part file", paths: []string{"backup.v1/part-db.users.0001.sql"}, want: "part-db/users"},
+		{name: "ignored backup", paths: []string{first, "backup.v1/part-old.parquet.bak"}, want: "db/users", count: 1},
+		{name: "generic basename wins", paths: []string{"backup/customer/customer.orders/1/db.users.0000.parquet"}, want: "db/users"},
+		{name: "existing table route", paths: []string{first}, options: []SDKOption{WithRoutes(config.Routes{{SchemaPattern: "db", TablePattern: "users", TargetSchema: "target", TargetTable: "people"}})}, want: "target/people"},
+		{name: "single root filter", paths: []string{first, "export-a/other/other.orders/part-b.parquet"}, options: []SDKOption{WithFilter([]string{"db.users"})}, want: "db/users", count: 1},
+		{name: "explicit file and table routes remain exclusive", paths: []string{first}, options: []SDKOption{WithFileRouters([]*config.FileRouteRule{{Pattern: `.*\.parquet$`, Schema: "db", Table: "users", Type: "parquet"}}), WithRoutes(config.Routes{{SchemaPattern: "db", TargetSchema: "other"}})}, err: "can't config both"},
+		{name: "explicit router overrides detection", paths: []string{"a/my_db/my_db.table_name/part-a.parquet", "b/my_db/my_db.table_name/part-b.parquet"}, options: []SDKOption{WithFileRouters([]*config.FileRouteRule{{Pattern: `.*\.parquet$`, Schema: "target", Table: "chosen", Type: "parquet"}})}, want: "target/chosen"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, path := range tc.paths {
+				full := filepath.Join(dir, path)
+				require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+				require.NoError(t, os.WriteFile(full, []byte("data"), 0o644))
+			}
+			cfg := defaultSDKConfig()
+			WithEstimateRealSize(false)(cfg)
+			for _, opt := range tc.options {
+				opt(cfg)
+			}
+			scanner, err := NewFileScanner(context.Background(), "file://"+dir, nil, cfg)
+			if scanner != nil {
+				t.Cleanup(func() { require.NoError(t, scanner.Close()) })
+			}
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				require.Nil(t, scanner)
+				return
+			}
+			require.NoError(t, err)
+			metas, err := scanner.GetTableMetas(context.Background())
+			require.NoError(t, err)
+			require.Len(t, metas, 1)
+			require.Equal(t, tc.want, metas[0].Database+"/"+metas[0].Table)
+			count := tc.count
+			if count == 0 {
+				count = len(tc.paths)
+			}
+			require.Len(t, metas[0].DataFiles, count)
+		})
+	}
+}
+
+type storageWithURI struct {
+	storeapi.Storage
+	uri string
+}
+
+func (s *storageWithURI) URI() string { return s.uri }
+
+func TestAuroraWildcardURIPreservesRawKey(t *testing.T) {
+	scanner := &fileScanner{
+		auroraSource: true,
+		store:        &storageWithURI{uri: "s3://bucket/prefix%2E/"},
+	}
+	key := "export/db/db.order%2Eitems/part-a.parquet"
+	file := mydump.FileInfo{FileMeta: mydump.SourceFileMeta{Path: key, Type: mydump.SourceTypeParquet}}
+	meta, err := scanner.buildTableMeta(&mydump.MDDatabaseMeta{Name: "db"},
+		&mydump.MDTableMeta{Name: "order%2Eitems", DataFiles: []mydump.FileInfo{file}},
+		map[string]mydump.FileInfo{key: file})
+	require.NoError(t, err)
+	u, err := url.Parse(meta.WildcardPath)
+	require.NoError(t, err)
+	require.Equal(t, "/prefix%2E/"+key, u.Path)
+	for _, prefix := range []string{"tenant[1]", "tenant*", "tenant?", "tenant\\"} {
+		scanner.store = &storageWithURI{uri: "s3://bucket/" + prefix + "/"}
+		meta, err = scanner.buildTableMeta(&mydump.MDDatabaseMeta{Name: "db"},
+			&mydump.MDTableMeta{Name: "order%2Eitems", DataFiles: []mydump.FileInfo{file}},
+			map[string]mydump.FileInfo{key: file})
+		require.ErrorContains(t, err, "glob")
+		require.Nil(t, meta)
+	}
 }

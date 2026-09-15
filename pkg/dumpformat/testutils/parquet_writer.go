@@ -64,6 +64,9 @@ func writeParquetColumnBatch(cw file.ColumnChunkWriter, vals any, defLevels []in
 	case *file.Int64ColumnChunkWriter:
 		buf, _ := vals.([]int64)
 		_, err = w.WriteBatch(buf, defLevels, nil)
+	case *file.Float32ColumnChunkWriter:
+		buf, _ := vals.([]float32)
+		_, err = w.WriteBatch(buf, defLevels, nil)
 	case *file.Float64ColumnChunkWriter:
 		buf, _ := vals.([]float64)
 		_, err = w.WriteBatch(buf, defLevels, nil)
@@ -100,6 +103,8 @@ func sliceColumnData(col parquetColumnData, rowStart, rowEnd int) (any, []int16,
 	case []parquet.Int96:
 		return typedVals[valueStart:valueEnd], rowDefLevels, nil
 	case []int64:
+		return typedVals[valueStart:valueEnd], rowDefLevels, nil
+	case []float32:
 		return typedVals[valueStart:valueEnd], rowDefLevels, nil
 	case []float64:
 		return typedVals[valueStart:valueEnd], rowDefLevels, nil

@@ -45,6 +45,13 @@ const (
 	BackfillTaskMetaVersion1
 )
 
+// BackfillTaskSummary is the execution summary of a backfill task.
+type BackfillTaskSummary struct {
+	// IndexKVSize is currently collected only for global-sort backfills and is
+	// primarily used for NextGen resource accounting.
+	IndexKVSize uint64 `json:"index_kv_size"`
+}
+
 // BackfillTaskMeta is the dist task meta for backfilling index.
 type BackfillTaskMeta struct {
 	Job model.Job `json:"job"`
@@ -57,6 +64,8 @@ type BackfillTaskMeta struct {
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
 	MergeTempIndex  bool   `json:"merge_temp_index"`
+
+	Summary *BackfillTaskSummary `json:"summary,omitempty"`
 
 	Version int `json:"version,omitempty"`
 }
@@ -168,7 +177,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.attachTopProfilingInfo(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(
+			store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize,
+			s.GetExecID(), s.GetTaskBase().GetRuntimeSlots())
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(&s.task.TaskBase, store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
