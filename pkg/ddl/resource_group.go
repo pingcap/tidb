@@ -113,6 +113,10 @@ func onAlterResourceGroup(jobCtx *jobContext, job *model.Job) (ver int64, _ erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	oldProtoGroup, err := resourcegroup.NewGroupFromOptions(oldGroup.Name.L, oldGroup.ResourceGroupSettings)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	newGroup := *oldGroup
 	newGroup.ResourceGroupSettings = alterGroupInfo.ResourceGroupSettings
@@ -129,6 +133,13 @@ func onAlterResourceGroup(jobCtx *jobContext, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.rollbackResourceGroupAlter = func() {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultInfosyncTimeout)
+		defer cancel()
+		if err := infosync.ModifyResourceGroup(ctx, oldProtoGroup); err != nil {
+			logutil.DDLLogger().Error("restore resource group after failed DDL transaction", zap.String("group-name", oldProtoGroup.Name), zap.Error(err))
+		}
+	}
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -137,6 +148,14 @@ func onAlterResourceGroup(jobCtx *jobContext, job *model.Job) (ver int64, _ erro
 	// Finish this job.
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, nil)
 	return ver, nil
+}
+
+func (c *jobContext) compensateResourceGroupAlter() {
+	compensate := c.rollbackResourceGroupAlter
+	c.rollbackResourceGroupAlter = nil
+	if compensate != nil {
+		compensate()
+	}
 }
 
 func checkResourceGroupExist(t *meta.Mutator, job *model.Job, groupID int64) (*model.ResourceGroupInfo, error) {
