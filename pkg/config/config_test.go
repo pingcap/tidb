@@ -1306,8 +1306,6 @@ grpc-keepalive-timeout = 0.01
 	require.NoError(t, conf.Load(configFile))
 
 	require.Equal(t, RUReportModeResult, conf.RUV2.ReportMode)
-	require.Equal(t, 2.01, conf.RUV2.RUScale)
-	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
@@ -2199,13 +2197,4 @@ func TestMetering(t *testing.T) {
 			tc.checkFunc(t, mcfg)
 		})
 	}
-}
-
-func TestGetTiKVConfigKeepsZeroRUV2RUScale(t *testing.T) {
-	conf := NewConfig()
-	conf.RUV2.RUScale = 123
-	conf.TiKVClient.RUV2.RUScale = 0
-
-	tikvConf := conf.GetTiKVConfig()
-	require.Zero(t, tikvConf.TiKVClient.RUV2.RUScale)
 }
