@@ -26,21 +26,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHashJoinEmptyBuildMPPProbeEarlyCloseShape reproduces the plan shape of the
-// production issue (TCOC-5973 style):
+// TestHashJoinEmptyBuildMPPProbeSkipsFirstNext verifies that when HashJoin can skip
+// probing on an empty build side, the probe fetcher waits for build before the first
+// probe Next(). Otherwise a slow MPP probe Next() can block and Close before TiFlash's
+// trailing execution-summary packet is consumed.
+//
+// Plan shape:
 //
 //	HashJoin (LEFT OUTER) @ root
-//	  ├─ IndexLookUp / Selection on TiKV  (build, actRows=0 after filter)
-//	  └─ TableReader -> ExchangeSender    (probe, MPP on TiFlash)
-//
-// HashJoinV2 canSkipProbeIfHashTableIsEmpty still performs one probe Next() before
-// skipping. That early close can drop TiFlash's trailing execution-summary packet.
-//
-// Note: unistore MPP currently does not emit ExecutorId summary packets like real
-// TiFlash, so this test asserts the plan/runtime shape (empty build + probe Next
-// happened) rather than EXPLAIN ANALYZE summary text. The packet-loss mechanism is
-// covered by distsql.TestMPPExecutionSummaryLostOnEarlyClose.
-func TestHashJoinEmptyBuildMPPProbeEarlyCloseShape(t *testing.T) {
+//	  ├─ Selection on TiKV build (actRows=0 after filter)
+//	  └─ TableReader -> ExchangeSender mpp[tiflash] probe (should not Next when build empty)
+func TestHashJoinEmptyBuildMPPProbeSkipsFirstNext(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -101,14 +97,14 @@ func TestHashJoinEmptyBuildMPPProbeEarlyCloseShape(t *testing.T) {
 	require.Contains(t, plan, "mpp[tiflash]", "probe side should be MPP on TiFlash")
 	require.Contains(t, plan, "ExchangeSender", "probe side should include ExchangeSender")
 
-	// Build side filtered to empty (same as IndexLookUp+Selection -> 0 in the incident).
+	// Build side filtered to empty.
 	require.True(t, hasOperatorWithActRows(rows, "Selection", 0) || hasOperatorWithActRows(rows, "TableReader", 0),
 		"build/filter side should show actRows=0, plan:\n%s", plan)
 
-	// Probe TableReader should have done at least one Next (actRows>0) even though
-	// join result is empty — this is the early-close prerequisite for summary loss.
-	require.True(t, hasMPPTableReaderWithPositiveActRows(rows),
-		"probe TableReader reading MPP should have actRows>0 after one Next before skipProbe, plan:\n%s", plan)
+	// After the probe-fetcher fix, empty build should skip without calling Next on the
+	// MPP TableReader, so probe actRows stay 0 (no wasted first-chunk wait / early close).
+	require.True(t, hasMPPTableReaderWithActRows(rows, 0),
+		"probe TableReader should not Next when empty build can skip probe, plan:\n%s", plan)
 }
 
 func formatExplainRows(rows [][]any) string {
@@ -145,7 +141,7 @@ func hasOperatorWithActRows(rows [][]any, opSubstring string, wantActRows int64)
 	return false
 }
 
-func hasMPPTableReaderWithPositiveActRows(rows [][]any) bool {
+func hasMPPTableReaderWithActRows(rows [][]any, wantActRows int64) bool {
 	for i, row := range rows {
 		if len(row) < 5 {
 			continue
@@ -156,10 +152,9 @@ func hasMPPTableReaderWithPositiveActRows(rows [][]any) bool {
 			continue
 		}
 		var actRows int64
-		if _, err := fmt.Sscan(fmt.Sprint(row[2]), &actRows); err != nil || actRows <= 0 {
+		if _, err := fmt.Sscan(fmt.Sprint(row[2]), &actRows); err != nil || actRows != wantActRows {
 			continue
 		}
-		// Child line should be mpp ExchangeSender / similar.
 		if i+1 < len(rows) {
 			child := fmt.Sprint(rows[i+1][0])
 			childTask := ""
