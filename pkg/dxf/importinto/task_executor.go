@@ -332,7 +332,9 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		s.estimateAndSetConcurrency(ctx, subtaskMeta.Chunks)
 	})
 
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	wctx := workerpool.NewContext(ctx)
+	defer wctx.Cancel()
+	eg := util.NewErrorGroupWithRecover()
 	chunks := subtaskMeta.Chunks
 	concurrency := s.concurrency
 	if query := s.taskMeta.Plan.Query; query != nil {
@@ -340,40 +342,41 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		s.tableImporter.SetSelectedChunkCh(selected)
 		chunks = []importer.Chunk{{Timestamp: query.Timestamp}}
 		eg.Go(func() error {
-			return s.readQuery(egCtx, selected)
+			err := s.readQuery(wctx, selected)
+			if err != nil {
+				wctx.OnError(err)
+			}
+			return err
 		})
 	}
 
-	eg.Go(func() error {
-		wctx := workerpool.NewContext(egCtx)
-		tasks := make([]*importStepMinimalTask, 0, len(chunks))
-		for _, chunk := range chunks {
-			tasks = append(tasks, &importStepMinimalTask{
-				Plan:       s.taskMeta.Plan,
-				Chunk:      chunk,
-				SharedVars: sharedVars,
-				logger:     logger,
-			})
-		}
+	tasks := make([]*importStepMinimalTask, 0, len(chunks))
+	for _, chunk := range chunks {
+		tasks = append(tasks, &importStepMinimalTask{
+			Plan:       s.taskMeta.Plan,
+			Chunk:      chunk,
+			SharedVars: sharedVars,
+			logger:     logger,
+		})
+	}
 
-		sourceOp := operator.NewSimpleDataSource(wctx, tasks)
-		op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, concurrency)
-		operator.Compose(sourceOp, op)
+	sourceOp := operator.NewSimpleDataSource(wctx, tasks)
+	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, concurrency)
+	operator.Compose(sourceOp, op)
 
-		pipe := operator.NewAsyncPipeline(sourceOp, op)
-		if err := pipe.Execute(); err != nil {
-			return err
-		}
-
-		err := pipe.Close()
-		if opErr := wctx.OperatorErr(); opErr != nil {
-			return opErr
-		}
-		return err
-	})
-
-	if err := eg.Wait(); err != nil {
-		return err
+	pipe := operator.NewAsyncPipeline(sourceOp, op)
+	if err = pipe.Execute(); err == nil {
+		err = pipe.Close()
+	}
+	if err != nil {
+		wctx.OnError(err)
+	}
+	queryErr := eg.Wait()
+	if opErr := wctx.OperatorErr(); opErr != nil {
+		return opErr
+	}
+	if queryErr != nil {
+		return queryErr
 	}
 	return s.onFinished(ctx, subtask, objStore)
 }
