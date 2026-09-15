@@ -297,6 +297,10 @@ benchraw:
 benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 
+.PHONY: build_credential
+build_credential: ## Build tidb-credential tool
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/tidb-credential ./cmd/pkdb/tidb-credential
+
 .PHONY: importer
 importer:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
@@ -425,7 +429,7 @@ build_for_lightning_integration_test:
 	@make failpoint-disable
 
 .PHONY: lightning_integration_test
-lightning_integration_test: build_lightning build_for_lightning_integration_test
+lightning_integration_test: build_lightning build_credential build_for_lightning_integration_test
 	lightning/tests/run.sh
 
 .PHONY: lightning_integration_test_debug
@@ -555,7 +559,7 @@ dumpling_unit_test_in_verify_ci: failpoint-enable tools/bin/gotestsum
 	@make failpoint-disable
 
 .PHONY: dumpling_integration_test
-dumpling_integration_test: dumpling_bins failpoint-enable
+dumpling_integration_test: dumpling_bins build_credential failpoint-enable
 	@make build_dumpling
 	@make failpoint-disable
 	./dumpling/tests/run.sh $(CASE)

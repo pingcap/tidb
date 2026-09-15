@@ -80,7 +80,8 @@ driver = "file"
 # The data source name (DSN) indicating the location of the checkpoint storage.
 # For "file" driver, the DSN is a path. If not specified, Lightning would default to "/tmp/CHKPTSCHEMA.pb".
 # For "mysql" driver, the DSN is a URL in the form "USER:PASS@tcp(HOST:PORT)/".
-# If not specified, the TiDB server from the [tidb] section will be used to store the checkpoints.
+# If not specified, the TiDB server and resolved password from the [tidb] section will be used to store the checkpoints.
+# An explicitly configured DSN is used as-is and is not protected by the encrypted password files.
 #dsn = "/tmp/tidb_lightning_checkpoint.pb"
 # Whether to keep the checkpoints after all data are imported.
 # valid options:
@@ -292,6 +293,11 @@ host = "127.0.0.1"
 port = 4000
 user = "root"
 password = ""
+# Alternatively, read an encrypted database password from these two files.
+# These options cannot be used together with a non-empty password.
+# Relative paths are resolved from the tidb-lightning process working directory.
+# password-encrypted-file = "/path/to/db-password.enc"
+# password-key-file = "/path/to/credential.key"
 # table schema information is fetched from tidb via this status-port.
 status-port = 10080
 pd-addr = "127.0.0.1:2379"

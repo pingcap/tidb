@@ -61,6 +61,7 @@ import (
 	_ "github.com/pingcap/tidb/pkg/planner/core" // init expression.EvalSimpleAst related function
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/pkdbcredential"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/prometheus/client_golang/prometheus"
@@ -308,6 +309,15 @@ func (l *Lightning) RunServer() error {
 //   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
 //     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
 func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
+	password, err := pkdbcredential.ResolvePassword(
+		taskCfg.TiDB.Psw,
+		taskCfg.TiDB.PasswordEncryptedFile,
+		taskCfg.TiDB.PasswordKeyFile,
+	)
+	if err != nil {
+		return err
+	}
+	taskCfg.TiDB.Psw = password
 	o := &options{
 		promFactory:  l.promFactory,
 		promRegistry: l.promRegistry,
@@ -782,6 +792,16 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot parse task (must be TOML)", err)
 		return
 	}
+	password, err := pkdbcredential.ResolvePassword(
+		cfg.TiDB.Psw,
+		cfg.TiDB.PasswordEncryptedFile,
+		cfg.TiDB.PasswordKeyFile,
+	)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid task configuration", err)
+		return
+	}
+	cfg.TiDB.Psw = password
 	if err = cfg.Adjust(l.ctx); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid task configuration", err)
 		return

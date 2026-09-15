@@ -147,11 +147,15 @@ type Config struct {
 	PosAfterConnect          bool
 	CompressType             storage.CompressType
 
-	Host     string
-	Port     int
-	Threads  int
-	User     string
-	Password string `json:"-"`
+	Host    string
+	Port    int
+	Threads int
+	User    string
+
+	Password              string `json:"-"`
+	PasswordEncryptedFile string
+	PasswordKeyFile       string
+
 	Security struct {
 		TLS          *tls.Config `json:"-"`
 		CAPath       string
@@ -326,6 +330,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagUser, "u", "root", "Username with privileges to run the dump")
 	flags.IntP(flagPort, "P", 4000, "TCP/IP port to connect to")
 	flags.StringP(flagPassword, "p", "", "User password")
+	defineCredentialFlags(flags)
 	flags.Bool(flagAllowCleartextPasswords, false, "Allow passwords to be sent in cleartext (warning: don't use without TLS)")
 	flags.IntP(flagThreads, "t", 4, "Number of goroutines to use, default 4")
 	flags.StringP(flagFilesize, "F", "", "The approximate size of output file")
@@ -399,6 +404,9 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	conf.Password, err = flags.GetString(flagPassword)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if err = conf.parseCredentialFlags(flags); err != nil {
+		return err
 	}
 	conf.AllowCleartextPasswords, err = flags.GetBool(flagAllowCleartextPasswords)
 	if err != nil {

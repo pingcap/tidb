@@ -1,0 +1,4 @@
+CREATE TABLE t (
+    id BIGINT PRIMARY KEY,
+    value VARCHAR(32) NOT NULL
+);

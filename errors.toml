@@ -331,6 +331,76 @@ error = '''
 stream task has no storage
 '''
 
+["Credential:Config:ErrIncompleteEncryptedSource"]
+error = '''
+password-encrypted-file and password-key-file must be configured together
+'''
+
+["Credential:Config:ErrPasswordSourceConflict"]
+error = '''
+plaintext password and encrypted password file settings cannot be used together; remove either the plaintext password setting or both password-encrypted-file and password-key-file
+'''
+
+["Credential:Envelope:ErrAuthenticationFailed"]
+error = '''
+encrypted password authentication failed for '%s'
+'''
+
+["Credential:Envelope:ErrEncryptedFileAccess"]
+error = '''
+cannot access encrypted password file '%s'
+'''
+
+["Credential:Envelope:ErrInvalidEnvelope"]
+error = '''
+invalid encrypted password file '%s'
+'''
+
+["Credential:Envelope:ErrUnsupportedAlgorithm"]
+error = '''
+unsupported encrypted password file algorithm %d in '%s'
+'''
+
+["Credential:Envelope:ErrUnsupportedVersion"]
+error = '''
+unsupported encrypted password file version %d in '%s'
+'''
+
+["Credential:Input:ErrPasswordInput"]
+error = '''
+invalid database password input
+'''
+
+["Credential:Input:ErrPasswordMismatch"]
+error = '''
+database passwords do not match
+'''
+
+["Credential:KeyFile:ErrInsecureKeyFilePermissions"]
+error = '''
+insecure password key file permissions for '%s': expected mode 0400 or 0600, got %04o
+'''
+
+["Credential:KeyFile:ErrInvalidKeyFormat"]
+error = '''
+invalid password key file '%s': expected 32 hexadecimal characters with an optional trailing LF
+'''
+
+["Credential:KeyFile:ErrKeyFileAccess"]
+error = '''
+cannot access password key file '%s'
+'''
+
+["Credential:Output:ErrOutputExists"]
+error = '''
+encrypted password file '%s' already exists; no file was changed
+'''
+
+["Credential:Output:ErrOutputWrite"]
+error = '''
+cannot create encrypted password file '%s'
+'''
+
 ["Lighting:Restore:ErrChecksumMismatch"]
 error = '''
 checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)

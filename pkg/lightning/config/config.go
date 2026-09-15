@@ -128,15 +128,17 @@ func GetDefaultFilter() []string {
 
 // DBStore is the database connection information.
 type DBStore struct {
-	Host       string    `toml:"host" json:"host"`
-	Port       int       `toml:"port" json:"port"`
-	User       string    `toml:"user" json:"user"`
-	Psw        string    `toml:"password" json:"-"`
-	StatusPort int       `toml:"status-port" json:"status-port"`
-	PdAddr     string    `toml:"pd-addr" json:"pd-addr"`
-	StrSQLMode string    `toml:"sql-mode" json:"sql-mode"`
-	TLS        string    `toml:"tls" json:"tls"`
-	Security   *Security `toml:"security" json:"security"`
+	Host                  string    `toml:"host" json:"host"`
+	Port                  int       `toml:"port" json:"port"`
+	User                  string    `toml:"user" json:"user"`
+	Psw                   string    `toml:"password" json:"-"`
+	PasswordEncryptedFile string    `toml:"password-encrypted-file" json:"password-encrypted-file"`
+	PasswordKeyFile       string    `toml:"password-key-file" json:"password-key-file"`
+	StatusPort            int       `toml:"status-port" json:"status-port"`
+	PdAddr                string    `toml:"pd-addr" json:"pd-addr"`
+	StrSQLMode            string    `toml:"sql-mode" json:"sql-mode"`
+	TLS                   string    `toml:"tls" json:"tls"`
+	Security              *Security `toml:"security" json:"security"`
 
 	SQLMode          mysql.SQLMode `toml:"-" json:"-"`
 	MaxAllowedPacket uint64        `toml:"max-allowed-packet" json:"max-allowed-packet"`
@@ -1537,6 +1539,8 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.TiDB.Port = global.TiDB.Port
 	cfg.TiDB.User = global.TiDB.User
 	cfg.TiDB.Psw = global.TiDB.Psw
+	cfg.TiDB.PasswordEncryptedFile = global.TiDB.PasswordEncryptedFile
+	cfg.TiDB.PasswordKeyFile = global.TiDB.PasswordKeyFile
 	cfg.TiDB.StatusPort = global.TiDB.StatusPort
 	cfg.TiDB.PdAddr = global.TiDB.PdAddr
 	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
