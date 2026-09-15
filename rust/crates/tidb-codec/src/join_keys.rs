@@ -72,6 +72,11 @@ pub struct SerializedJoinKeys {
     bytes: Vec<u8>,
     rows: Vec<Range<usize>>,
     limits: Vec<usize>,
+    /// Logical/physical pairs that survive the probe filter and NULL-key
+    /// check.  Go's serializer evaluates the same `canSkip` closure in every
+    /// column loop; retain the result of the sizing pass so the encoding pass
+    /// can stay column-wide without repeating those branches.
+    active_rows: Vec<(usize, usize)>,
 }
 
 impl SerializedJoinKeys {
@@ -122,12 +127,14 @@ impl SerializedJoinKeys {
         self.bytes.capacity()
             + self.rows.capacity() * std::mem::size_of::<Range<usize>>()
             + self.limits.capacity() * std::mem::size_of::<usize>()
+            + self.active_rows.capacity() * std::mem::size_of::<(usize, usize)>()
     }
     fn reset(&mut self, rows: usize) {
         self.rows.resize(rows, 0..0);
         self.rows.fill(0..0);
         self.limits.resize(rows, 0);
         self.limits.fill(0);
+        self.active_rows.clear();
     }
     fn allocate(&mut self) -> Result<(), CodecError> {
         let mut offset = 0usize;
@@ -316,6 +323,33 @@ impl JoinKeyColumns {
                 }
             })?;
         }
+
+        // The first pass has now populated the complete physical-row NULL
+        // vector.  Cache the rows that the second pass is allowed to encode;
+        // this is especially useful for multi-column joins, where the same
+        // filter/null branch otherwise runs once per key column.
+        if !TRACK_NULLS && filter.is_none() {
+            keys.active_rows.extend(
+                used_rows
+                    .iter()
+                    .enumerate()
+                    .map(|(logical, &physical)| (logical, physical)),
+            );
+        } else {
+            keys.active_rows.extend(
+                used_rows
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &physical)| {
+                        !skip::<TRACK_NULLS>(
+                            physical,
+                            filter,
+                            nulls.as_ref().map(|nulls| nulls.as_slice()),
+                        )
+                    })
+                    .map(|(logical, &physical)| (logical, physical)),
+            );
+        }
         keys.allocate()?;
         for ((&column, field_type), &mode) in self.indices.iter().zip(&self.types).zip(&self.modes)
         {
@@ -330,14 +364,8 @@ impl JoinKeyColumns {
                     | FieldTypeCode::LongLong
                     | FieldTypeCode::Year
                     | FieldTypeCode::Duration => column.with_raw(|raws| {
-                        for (logical, &physical) in used_rows.iter().enumerate() {
-                            if skip::<TRACK_NULLS>(
-                                physical,
-                                filter,
-                                nulls.as_ref().map(|nulls| nulls.as_slice()),
-                            ) {
-                                continue;
-                            }
+                        for active in 0..keys.active_rows.len() {
+                            let (logical, physical) = keys.active_rows[active];
                             let raw = raws.row(physical);
                             let word: [u8; 8] = raw.try_into().map_err(|_| {
                                 CodecError::InvalidEncoding("invalid integer key width")
@@ -354,14 +382,8 @@ impl JoinKeyColumns {
                         Ok::<(), CodecError>(())
                     })?,
                     FieldTypeCode::Float | FieldTypeCode::Double => column.with_raw(|raws| {
-                        for (logical, &physical) in used_rows.iter().enumerate() {
-                            if skip::<TRACK_NULLS>(
-                                physical,
-                                filter,
-                                nulls.as_ref().map(|nulls| nulls.as_slice()),
-                            ) {
-                                continue;
-                            }
+                        for active in 0..keys.active_rows.len() {
+                            let (logical, physical) = keys.active_rows[active];
                             let raw = raws.row(physical);
                             let value = if code == FieldTypeCode::Float {
                                 f64::from(f32::from_le_bytes(raw.try_into().map_err(|_| {
@@ -385,14 +407,8 @@ impl JoinKeyColumns {
                     | FieldTypeCode::MediumBlob
                     | FieldTypeCode::LongBlob => column.with_raw(|raws| {
                         let collator = field_type.runtime_collator();
-                        for (logical, &physical) in used_rows.iter().enumerate() {
-                            if skip::<TRACK_NULLS>(
-                                physical,
-                                filter,
-                                nulls.as_ref().map(|nulls| nulls.as_slice()),
-                            ) {
-                                continue;
-                            }
+                        for active in 0..keys.active_rows.len() {
+                            let (logical, physical) = keys.active_rows[active];
                             let raw = raws.row(physical);
                             let bytes = collator.immutable_key(raw);
                             if mode == SerializeMode::KeepVarColumnLength {
@@ -404,14 +420,8 @@ impl JoinKeyColumns {
                     })?,
                     FieldTypeCode::Null => {}
                     _ => {
-                        for (logical, &physical) in used_rows.iter().enumerate() {
-                            if skip::<TRACK_NULLS>(
-                                physical,
-                                filter,
-                                nulls.as_ref().map(|nulls| nulls.as_slice()),
-                            ) {
-                                continue;
-                            }
+                        for active in 0..keys.active_rows.len() {
+                            let (logical, physical) = keys.active_rows[active];
                             let value = column.datum(physical, field_type)?;
                             let (_, bytes) = encode_hash_datum(&value, field_type)?;
                             match prefix_size(field_type, mode) {

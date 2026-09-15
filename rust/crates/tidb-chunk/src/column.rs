@@ -392,6 +392,25 @@ impl Column {
         I: Iterator<Item = (bool, &'a [u8])> + Clone,
     {
         let fixed = self.is_fixed();
+        // Build-row reconstruction already knows the complete batch.  Sum
+        // the borrowed cell widths once and reserve the destination vector
+        // before copying, so an owned column never grows (and moves) between
+        // rows.  Keep the reserve inside `append_owned`: shallow/frozen views
+        // must retain their copy-on-write fallback semantics.
+        let (cell_count, data_len) = cells
+            .clone()
+            .fold((0usize, 0usize), |(count, bytes), (_, cell)| {
+                (count + 1, bytes.saturating_add(cell.len()))
+            });
+        if cell_count == 0 {
+            return;
+        }
+        let null_bytes = (self.length + cell_count + 7) >> 3;
+        self.null_bitmap
+            .reserve(null_bytes.saturating_sub(self.null_bitmap.len()));
+        if !fixed {
+            self.offsets.reserve(cell_count);
+        }
         let Self {
             data,
             null_bitmap,
@@ -400,6 +419,7 @@ impl Column {
             ..
         } = self;
         let appended = data.append_owned(|data| {
+            data.reserve(data_len);
             for (not_null, cell) in cells.clone() {
                 append_null_bit(null_bitmap, *length, not_null);
                 data.extend_from_slice(cell);
