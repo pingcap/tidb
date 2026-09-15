@@ -895,14 +895,3 @@ fn analyze_stored_generated_column_from_json_with_unique_index() {
         "the stored generated column is analyzed"
     );
 }
-
-/// Go `analyze_bench_test.go:29::BenchmarkAnalyzePartition`: a 1000-partition
-/// RANGE table of 100000 rows analyzed repeatedly.
-///
-/// No behavior to pin: it is a BENCHMARK (the assigned gate filters
-/// `/bench/`), and the 1000-partition × 100k-row scale is out of this tier's
-/// in-process scope.
-#[test]
-fn benchmark_analyze_partition_is_out_of_scope_scale() {
-    // skipped-reason: benchmark + out-of-scope scale.
-}

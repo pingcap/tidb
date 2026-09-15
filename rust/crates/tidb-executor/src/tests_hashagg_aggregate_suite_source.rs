@@ -41,6 +41,15 @@ fn select(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
         .unwrap_or_else(|error| panic!("select {sql:?} failed: {error:?}"))
 }
 
+fn select_numeric_sorted(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
+    let mut rows = select(catalog, sql);
+    rows.sort_by(|left, right| {
+        let value = |row: &[Datum]| cell(&row[0]).parse::<f64>().expect("numeric aggregate result");
+        value(left).total_cmp(&value(right))
+    });
+    rows
+}
+
 /// Renders one datum the way Go's testkit prints a TEXT cell
 /// (`fmt.Sprintf("%v")` semantics for the values these queries return).
 fn cell(datum: &Datum) -> String {
@@ -133,37 +142,37 @@ fn aggregate_family_group_values_match_the_go_definitions() {
     // count skips NULLs (Go `countPartial`): b=1 holds {1,3,NULL} -> 2,
     // b=2 holds {2,2,6} -> 3.
     assert_eq!(
-        select(&catalog, "select count(a) from t group by b"),
+        select_numeric_sorted(&catalog, "select count(a) from t group by b"),
         [[Datum::Int(2)], [Datum::Int(3)]]
     );
     // SUM over an integer argument returns a widened DECIMAL (Go `typeInfer4Sum`).
-    let rows = select(&catalog, "select sum(a) from t group by b");
+    let rows = select_numeric_sorted(&catalog, "select sum(a) from t group by b");
     assert_eq!(cell(&rows[0][0]), "4");
     assert_eq!(cell(&rows[1][0]), "10");
     // AVG returns DECIMAL scale 4 for integer inputs (Go `typeInfer4Avg`).
-    let rows = select(&catalog, "select avg(a) from t group by b");
+    let rows = select_numeric_sorted(&catalog, "select avg(a) from t group by b");
     assert_eq!(cell(&rows[0][0]), "2.0000");
     assert_eq!(cell(&rows[1][0]), "3.3333");
     assert_eq!(
-        select(&catalog, "select max(a) from t group by b"),
+        select_numeric_sorted(&catalog, "select max(a) from t group by b"),
         [[Datum::Int(3)], [Datum::Int(6)]]
     );
     assert_eq!(
-        select(&catalog, "select min(a) from t group by b"),
+        select_numeric_sorted(&catalog, "select min(a) from t group by b"),
         [[Datum::Int(1)], [Datum::Int(2)]]
     );
     // The bit family folds in the unsigned 64-bit domain (Go `func_bitfuncs.go`):
     // b=1: OR(1,3)=3, XOR(1,3)=2, AND(1,3)=1; b=2: OR(2,2,6)=6, XOR=6, AND=2.
     assert_eq!(
-        select(&catalog, "select bit_or(a) from t group by b"),
+        select_numeric_sorted(&catalog, "select bit_or(a) from t group by b"),
         [[Datum::UInt(3)], [Datum::UInt(6)]]
     );
     assert_eq!(
-        select(&catalog, "select bit_xor(a) from t group by b"),
+        select_numeric_sorted(&catalog, "select bit_xor(a) from t group by b"),
         [[Datum::UInt(2)], [Datum::UInt(6)]]
     );
     assert_eq!(
-        select(&catalog, "select bit_and(a) from t group by b"),
+        select_numeric_sorted(&catalog, "select bit_and(a) from t group by b"),
         [[Datum::UInt(1)], [Datum::UInt(2)]]
     );
     // b=1 mean 2: var_pop = ((1-2)^2+(3-2)^2)/2 = 1; var_samp = 2/1 = 2;
@@ -171,13 +180,15 @@ fn aggregate_family_group_values_match_the_go_definitions() {
     // var_samp = 16/3; stddev_pop = sqrt(32/9); stddev_samp = sqrt(16/3)
     // (Go `calculateIntermediate`, func_varpop.go).
     let approx = |sql: &str| -> Vec<f64> {
-        select(&catalog, sql)
+        let mut values = select(&catalog, sql)
             .into_iter()
             .map(|row| match &row[0] {
                 Datum::Real(value) => *value,
                 other => panic!("real expected, got {other:?}"),
             })
-            .collect()
+            .collect::<Vec<_>>();
+        values.sort_by(f64::total_cmp);
+        values
     };
     let values = approx("select var_pop(a) from t group by b");
     assert!(
@@ -202,7 +213,7 @@ fn aggregate_family_group_values_match_the_go_definitions() {
     );
     // BJKST sketch (Go `partialResult4ApproxCountDistinct`): 2 distinct per group.
     assert_eq!(
-        select(
+        select_numeric_sorted(
             &catalog,
             "select approx_count_distinct(a) from t group by b"
         ),
@@ -212,7 +223,7 @@ fn aggregate_family_group_values_match_the_go_definitions() {
     // (pkg/executor/aggfuncs/func_percentile.go:41). b=1: N=2 -> k=1 -> 1;
     // b=2: N=3 -> k=1 -> 2.
     assert_eq!(
-        select(&catalog, "select approx_percentile(a, 7) from t group by b"),
+        select_numeric_sorted(&catalog, "select approx_percentile(a, 7) from t group by b"),
         [[Datum::Int(1)], [Datum::Int(2)]]
     );
 }

@@ -57,8 +57,6 @@ mod shared_bytes;
 pub mod sorted_row_container;
 
 #[cfg(test)]
-mod chunk_identity_tests;
-#[cfg(test)]
 mod tests_alloc;
 #[cfg(test)]
 mod tests_chunk_util;

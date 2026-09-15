@@ -7,9 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "TiDB util/chunk: the columnar row container for execution (Rust rewrite)."
 
-autotests = false
-build = "../../scripts/aggregate-tests.rs"
-
 [dependencies]
 bytes.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
@@ -22,7 +19,3 @@ tidb-util = { path = "../tidb-util", features = ["testexport"] }
 
 [lints]
 workspace = true
-
-[[test]]
-name = "all"
-path = "tests/all.rs"
