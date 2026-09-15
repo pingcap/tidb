@@ -1816,11 +1816,19 @@ func (local *Backend) SetTSBeforeImportEngine(ctx context.Context, engineUUID uu
 			if err == nil {
 				break
 			}
+			if ctx.Err() != nil {
+				return errors.Trace(ctx.Err())
+			}
 			if common.IsContextCanceledError(err) {
 				return errors.Trace(err)
 			}
 			if !common.IsRetryableError(err) {
 				break
+			}
+			select {
+			case <-time.After(100 * time.Millisecond):
+			case <-ctx.Done():
+				return errors.Trace(ctx.Err())
 			}
 		}
 		if err != nil {

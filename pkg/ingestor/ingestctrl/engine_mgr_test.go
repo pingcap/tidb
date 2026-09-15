@@ -105,6 +105,12 @@ func TestEngineManager(t *testing.T) {
 	err = local.SetTSBeforeImportEngine(ctx, engine1ID, 0)
 	require.ErrorIs(t, err, errdef.ErrSetTSBeforeImport)
 	require.Equal(t, int64(maxRetryTimes), persistentPDCli.tsCalls.Load())
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	local.pdCli = &mockPdClient{tsErrors: []error{context.DeadlineExceeded}}
+	err = local.SetTSBeforeImportEngine(canceledCtx, engine1ID, 0)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, errdef.ErrSetTSBeforeImport)
 	// close non-existent engine
 	require.ErrorContains(t, em.closeEngine(ctx, &backend.EngineConfig{}, uuid.New()), "does not exist")
 
