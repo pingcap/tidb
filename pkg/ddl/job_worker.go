@@ -605,9 +605,9 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 		return err
 	}
 	if kerneltype.IsNextGen() && job.IsSynced() && job.RU > 0 {
-		metrics.RUV3Total.Add(job.RU)
-		metrics.RUV3BySQLTypeDDL.Add(job.RU)
-		metrics.RUV3ByEngineTiKV.Add(job.RU)
+		metrics.RUV2Total.Add(job.RU)
+		metrics.RUV2BySQLTypeDDL.Add(job.RU)
+		metrics.RUV2ByEngineTiKV.Add(job.RU)
 		w.reportJobRUConsumption(job)
 	}
 	cleanupDDLReorgHandles(job, w.sess)
