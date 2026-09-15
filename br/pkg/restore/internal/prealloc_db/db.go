@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -15,6 +16,7 @@ import (
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -271,7 +273,6 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 		return errors.New("preallocedIDs is nil")
 	}
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
-		clonedInfos := make(map[string][]*model.TableInfo)
 		for _, table := range tables {
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
@@ -286,14 +287,19 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
 				ttlInfo.Enable = false
 			}
-			infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			clonedInfos[table.DB.Name.L] = append(clonedInfos[table.DB.Name.L], infoClone)
 		}
-		if len(clonedInfos) > 0 {
-			if err := batchSession.CreateTables(ctx, clonedInfos, ddl.WithIDAllocated(true)); err != nil {
+		if len(tables) > 0 {
+			if err := retryCreateTableOnSchemaExpired(ctx, func() error {
+				clonedInfos := make(map[string][]*model.TableInfo)
+				for _, table := range tables {
+					infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					clonedInfos[table.DB.Name.L] = append(clonedInfos[table.DB.Name.L], infoClone)
+				}
+				return batchSession.CreateTables(ctx, clonedInfos, ddl.WithIDAllocated(true))
+			}); err != nil {
 				return err
 			}
 		}
@@ -325,11 +331,13 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		ttlInfo.Enable = false
 	}
 
-	infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = db.se.CreateTable(ctx, table.DB.Name, infoClone, ddl.WithIDAllocated(true))
+	err := retryCreateTableOnSchemaExpired(ctx, func() error {
+		infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return db.se.CreateTable(ctx, table.DB.Name, infoClone, ddl.WithIDAllocated(true))
+	})
 	if err != nil {
 		log.Error("create table failed",
 			zap.Stringer("db", table.DB.Name),
@@ -344,6 +352,39 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 	}
 
 	return err
+}
+
+// retryCreateTableOnSchemaExpired retries at the restore caller, where the table
+// definitions come from the backup rather than a particular target schema version.
+// Each attempt must rebuild its inputs because DDL can modify the TableInfo values.
+func retryCreateTableOnSchemaExpired(ctx context.Context, create func() error) error {
+	backoff := &createTableBackoff{RetryState: utils.InitialRetryState(1, time.Second, 5*time.Second)}
+	err := utils.WithRetryReturnLastErr(ctx, func() error {
+		if err := ctx.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		return create()
+	}, backoff)
+	// WithRetryReturnLastErr returns the last operation error when canceled
+	// during backoff. Report cancellation to the restore caller instead.
+	if domain.ErrInfoSchemaExpired.Equal(err) && ctx.Err() != nil {
+		return errors.Trace(ctx.Err())
+	}
+	return err
+}
+
+type createTableBackoff struct {
+	utils.RetryState
+}
+
+func (b *createTableBackoff) NextBackoff(err error) time.Duration {
+	if !domain.ErrInfoSchemaExpired.Equal(err) {
+		b.GiveUp()
+		return 0
+	}
+	// Keep the retry budget unchanged while still advancing exponential backoff.
+	b.ReduceRetry()
+	return b.ExponentialBackoff()
 }
 
 // Close closes the connection.

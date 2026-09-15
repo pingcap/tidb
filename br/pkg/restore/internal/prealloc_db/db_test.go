@@ -9,13 +9,17 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	preallocdb "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db"
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -680,4 +684,136 @@ func TestCreateTableConsistent(t *testing.T) {
 
 	require.Equal(t, r11, r21)
 	require.Equal(t, r12, r22)
+}
+
+// retryTestSession injects failures at the BR DDL call boundary.
+type retryTestSession struct {
+	glue.Session
+	create func(*model.TableInfo) error
+	post   func() error
+}
+
+func (s *retryTestSession) Execute(_ context.Context, sql string) error {
+	if sql == "set @@sql_mode=''" {
+		return nil
+	}
+	return s.post()
+}
+
+func (s *retryTestSession) CreateTable(_ context.Context, _ ast.CIStr, info *model.TableInfo, _ ...ddl.CreateTableOption) error {
+	return s.create(info)
+}
+
+func (s *retryTestSession) CreateTables(_ context.Context, infos map[string][]*model.TableInfo, _ ...ddl.CreateTableOption) error {
+	return s.create(infos["test"][0])
+}
+
+type retryTestGlue struct {
+	glue.Glue
+	session *retryTestSession
+}
+
+func (g retryTestGlue) CreateSession(kv.Storage) (glue.Session, error) {
+	return g.session, nil
+}
+
+func TestCreateTableSchemaLeaseRetry(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		for _, scenario := range []string{"recover", "other error", "cancel before call", "cancel after error", "cancel during backoff", "post restore error"} {
+			t.Run(fmt.Sprintf("batch=%t/%s", batch, scenario), func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				table := &metautil.Table{
+					DB: &model.DBInfo{Name: ast.NewCIStr("test")},
+					Info: &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Sequence: &model.SequenceInfo{},
+						Columns: []*model.ColumnInfo{{Name: ast.NewCIStr("original")}}},
+				}
+				tables := []*metautil.Table{table}
+				allocator := testAllocator(100)
+				ids, err := prealloctableid.NewAndPrealloc(tables, &allocator)
+				require.NoError(t, err)
+				expected, err := ids.RewriteTableInfo(table.Info)
+				require.NoError(t, err)
+				attempts, posts := 0, 0
+				expired := errors.Trace(domain.ErrInfoSchemaExpired)
+				permanent := errors.New("cannot create table")
+				entered := make(chan struct{})
+				session := &retryTestSession{
+					create: func(info *model.TableInfo) error {
+						attempts++
+						require.Equal(t, expected, info, "each attempt must rebuild its input")
+						info.ID = -1
+						info.Columns[0].Name = ast.NewCIStr("mutated")
+						switch scenario {
+						case "recover":
+							if attempts <= 2 {
+								return expired
+							}
+						case "other error":
+							return permanent
+						case "cancel after error":
+							cancel()
+							return expired
+						case "cancel during backoff":
+							close(entered)
+							return expired
+						}
+						return nil
+					},
+					post: func() error {
+						posts++
+						if scenario == "post restore error" {
+							return expired
+						}
+						return nil
+					},
+				}
+				db, _, err := preallocdb.NewDB(retryTestGlue{session: session}, nil, "")
+				require.NoError(t, err)
+				db.RegisterPreallocatedIDs(ids)
+				if scenario == "cancel before call" {
+					cancel()
+				}
+				if scenario == "cancel during backoff" {
+					go func() {
+						select {
+						case <-entered:
+							time.Sleep(20 * time.Millisecond)
+							cancel()
+						case <-ctx.Done():
+						}
+					}()
+				}
+				if batch {
+					err = db.CreateTables(ctx, tables, nil, false, nil)
+				} else {
+					err = db.CreateTable(ctx, table, nil, false, nil)
+				}
+				switch scenario {
+				case "recover":
+					require.NoError(t, err)
+					require.Equal(t, 3, attempts)
+					require.Equal(t, 1, posts)
+				case "other error":
+					require.ErrorIs(t, err, permanent)
+					require.Equal(t, 1, attempts)
+					require.Zero(t, posts)
+				case "cancel before call":
+					require.ErrorIs(t, err, context.Canceled)
+					require.Zero(t, attempts)
+					require.Zero(t, posts)
+				case "cancel after error", "cancel during backoff":
+					require.ErrorIs(t, err, context.Canceled)
+					require.Equal(t, 1, attempts)
+					require.Zero(t, posts)
+				case "post restore error":
+					require.True(t, domain.ErrInfoSchemaExpired.Equal(err))
+					require.Equal(t, 1, attempts)
+					require.Equal(t, 1, posts)
+				}
+				require.Equal(t, int64(1), table.Info.ID)
+				require.Equal(t, "original", table.Info.Columns[0].Name.O)
+			})
+		}
+	}
 }
