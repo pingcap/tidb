@@ -813,6 +813,60 @@ struct IndexProbePlan {
     probe_keys: Vec<usize>,
     probe_key_domains: Vec<IndexProbeKeyDomain>,
     probe_bounds: Vec<crate::access_path::LookupProbeBound>,
+    /// Immutable encodings used to sort and deduplicate every outer batch.
+    /// Go constructs these from the worker's lookup shape once and reuses the
+    /// shape for each task; keeping them in the shared plan avoids rebuilding
+    /// the same classes and offsets on every task.
+    probe_encoding: Vec<EquiKey>,
+    bound_encoding: Vec<EquiKey>,
+}
+
+impl IndexProbePlan {
+    fn new(
+        keys: &[EquiKey],
+        probe_keys: Vec<usize>,
+        probe_key_domains: Vec<IndexProbeKeyDomain>,
+        probe_bounds: Vec<crate::access_path::LookupProbeBound>,
+    ) -> Result<Self, ExecError> {
+        let probe_encoding = probe_keys
+            .iter()
+            .enumerate()
+            .map(|(at, key)| EquiKey {
+                left: at,
+                right: at,
+                class: keys[*key].class,
+                null_safe: keys[*key].null_safe,
+            })
+            .collect();
+        let mut bound_encoding = Vec::with_capacity(probe_bounds.len());
+        for (at, bound) in probe_bounds.iter().enumerate() {
+            let Some(field_type) = bound.arg.static_type() else {
+                return Err(ExecError::unsupported(
+                    "a lookup probe bound has no comparable encoding",
+                ));
+            };
+            let Some(class) =
+                KeyClass::of(field_type, field_type, tidb_datatype::Collation::Binary)
+            else {
+                return Err(ExecError::unsupported(
+                    "a lookup probe bound has no comparable encoding",
+                ));
+            };
+            bound_encoding.push(EquiKey {
+                left: at,
+                right: at,
+                class,
+                null_safe: false,
+            });
+        }
+        Ok(Self {
+            probe_keys,
+            probe_key_domains,
+            probe_bounds,
+            probe_encoding,
+            bound_encoding,
+        })
+    }
 }
 
 /// The lookup-key and inner-reader context shared by bounded task workers.
@@ -952,42 +1006,6 @@ fn index_task_probes<C: Columns>(
     outer_is_left: bool,
 ) -> Result<Vec<IndexTaskProbe>, ExecError> {
     let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
-    let probe_encoding: Vec<EquiKey> = plan
-        .probe_keys
-        .iter()
-        .enumerate()
-        .map(|(at, key)| EquiKey {
-            left: at,
-            right: at,
-            class: keys[*key].class,
-            null_safe: keys[*key].null_safe,
-        })
-        .collect();
-    // Go's `ColWithCmpFuncManager` dedup: lookup contents compare equal
-    // only when their keys AND their affected-column values match
-    // (`CompareRow`). Encode the evaluated bounds into the dedup key so
-    // two outer rows sharing a prefix but not a window stay two probes.
-    let bound_encoding: Vec<EquiKey> = plan
-        .probe_bounds
-        .iter()
-        .enumerate()
-        .filter_map(|(at, bound)| {
-            let field_type = bound.arg.static_type()?.clone();
-            use crate::hash_join::KeyClass;
-            let class = KeyClass::of(&field_type, &field_type, tidb_datatype::Collation::Binary)?;
-            Some(EquiKey {
-                left: at,
-                right: at,
-                class,
-                null_safe: false,
-            })
-        })
-        .collect();
-    if bound_encoding.len() != plan.probe_bounds.len() {
-        return Err(ExecError::unsupported(
-            "a lookup probe bound has no comparable encoding",
-        ));
-    }
     // Go constructLookupContent appends the whole batch, then
     // sortAndDedupLookUpContents sorts once and removes adjacent equal keys.
     // A tree insertion for every row allocates a node and performs a log-N
@@ -1065,17 +1083,19 @@ fn index_task_probes<C: Columns>(
             }
             evaluated
         };
-        let encoded = row_key(&probe_encoding, &probe, |key| key.left).map_err(|_: KeyError| {
-            ExecError::unsupported("a join key column has no comparable encoding")
-        })?;
+        let encoded =
+            row_key(&plan.probe_encoding, &probe, |key| key.left).map_err(|_: KeyError| {
+                ExecError::unsupported("a join key column has no comparable encoding")
+            })?;
         let mut encoded = match encoded {
             Some(encoded) => encoded,
             None => continue,
         };
-        if !bound_encoding.is_empty() {
-            let bound_bytes = row_key_by(&bound_encoding, |key| bounds[key.left].clone()).map_err(
-                |_: KeyError| ExecError::unsupported("a lookup probe bound is not encodable"),
-            )?;
+        if !plan.bound_encoding.is_empty() {
+            let bound_bytes = row_key_by(&plan.bound_encoding, |key| bounds[key.left].clone())
+                .map_err(|_: KeyError| {
+                    ExecError::unsupported("a lookup probe bound is not encodable")
+                })?;
             match bound_bytes {
                 Some(bytes) => encoded.extend_from_slice(&bytes),
                 None => continue,
@@ -2085,11 +2105,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             self.index_task_shared = Some(Arc::new(IndexTaskShared {
                 hash_output: self.index_hash_output(),
                 template,
-                probe_plan: IndexProbePlan {
-                    probe_keys: plan.probe_keys.clone(),
-                    probe_key_domains: plan.probe_key_domains.clone(),
-                    probe_bounds: plan.probe_bounds.clone(),
-                },
+                probe_plan: IndexProbePlan::new(
+                    &self.keys,
+                    plan.probe_keys.clone(),
+                    plan.probe_key_domains.clone(),
+                    plan.probe_bounds.clone(),
+                )?,
                 outer_is_left: self.outer_is_left(),
                 keys: self.keys.clone(),
                 ctx: self.ctx.clone(),

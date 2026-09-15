@@ -322,11 +322,7 @@ fn index_lookup_probe_collection_batches_sort_and_dedup() {
         class: KeyClass::Int,
         null_safe: false,
     }];
-    let plan = IndexProbePlan {
-        probe_keys: vec![0],
-        probe_key_domains: Vec::new(),
-        probe_bounds: Vec::new(),
-    };
+    let plan = IndexProbePlan::new(&keys, vec![0], Vec::new(), Vec::new()).unwrap();
     let probes = index_task_probes(&NoColumns, &keys, &plan, &outer, &types, true).unwrap();
     assert_eq!(
         probes
@@ -797,14 +793,19 @@ fn index_worker_preparation_does_not_evaluate_join_residuals() {
     let bytes = outer.settle_bytes();
     join.tracker.consume(bytes);
     let mut invalid = index_task_shared_for_test(&join);
-    invalid.probe_plan.probe_keys = vec![0];
-    invalid.probe_plan.probe_key_domains = vec![
-        IndexProbeKeyDomain {
-            field_type: long(),
-            prefix_length: -1,
-        };
-        2
-    ];
+    invalid.probe_plan = IndexProbePlan::new(
+        &invalid.keys,
+        vec![0],
+        vec![
+            IndexProbeKeyDomain {
+                field_type: long(),
+                prefix_length: -1,
+            };
+            2
+        ],
+        Vec::new(),
+    )
+    .unwrap();
     match run_index_task(&invalid, outer) {
         IndexTaskOutcome::Failed { outer, .. } => {
             assert_eq!(outer.bytes, bytes);
@@ -820,11 +821,7 @@ fn index_task_shared_for_test(join: &JoinExec<NoColumns>) -> IndexTaskShared<NoC
     IndexTaskShared {
         hash_output: join.index_hash_output(),
         template: None,
-        probe_plan: IndexProbePlan {
-            probe_keys: vec![],
-            probe_key_domains: vec![],
-            probe_bounds: vec![],
-        },
+        probe_plan: IndexProbePlan::new(&join.keys, vec![], vec![], vec![]).unwrap(),
         outer_is_left: join.outer_is_left(),
         keys: join.keys.clone(),
         ctx: NoColumns,
