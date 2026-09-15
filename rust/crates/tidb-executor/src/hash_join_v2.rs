@@ -820,18 +820,28 @@ impl ProbeV2 for OuterJoinProbe<'_> {
         }
         let (_, remain_cap) = self.base.prepare_for_probe(&self.ctx, output);
         let start = self.base.current_probe_row();
+        let outer_side_build = self.outer_side_build;
         if let Some(condition) = &mut self.other_condition {
             condition.chunk.reset();
-            collect_outer_join_candidates(
-                &mut self.base,
-                &self.ctx,
-                &mut self.is_not_matched,
-                self.outer_side_build,
-                &mut condition.chunk,
-                remain_cap,
-                true,
-                killer,
-            )?;
+            if outer_side_build {
+                collect_outer_join_candidates::<true, true>(
+                    &mut self.base,
+                    &self.ctx,
+                    &mut self.is_not_matched,
+                    &mut condition.chunk,
+                    remain_cap,
+                    killer,
+                )?;
+            } else {
+                collect_outer_join_candidates::<false, true>(
+                    &mut self.base,
+                    &self.ctx,
+                    &mut self.is_not_matched,
+                    &mut condition.chunk,
+                    remain_cap,
+                    killer,
+                )?;
+            }
             if condition.chunk.num_rows() > 0 {
                 let selected = std::mem::take(self.base.selected_mut());
                 *self.base.selected_mut() =
@@ -855,19 +865,26 @@ impl ProbeV2 for OuterJoinProbe<'_> {
                     &condition.chunk,
                 );
             }
-        } else {
-            collect_outer_join_candidates(
+        } else if outer_side_build {
+            collect_outer_join_candidates::<true, false>(
                 &mut self.base,
                 &self.ctx,
                 &mut self.is_not_matched,
-                self.outer_side_build,
                 output,
                 remain_cap,
-                false,
+                killer,
+            )?;
+        } else {
+            collect_outer_join_candidates::<false, false>(
+                &mut self.base,
+                &self.ctx,
+                &mut self.is_not_matched,
+                output,
+                remain_cap,
                 killer,
             )?;
         }
-        if !self.outer_side_build {
+        if !outer_side_build {
             self.append_unmatched_probe_rows(output, start);
         }
         Ok(())
@@ -955,14 +972,15 @@ impl ProbeV2 for OuterJoinProbe<'_> {
 
 // Go budgets every lookup/advance on a preserved probe side, but only matches
 // when the preserved side is built. That leaves room for deferred NULL rows.
-fn collect_outer_join_candidates(
+// Const-specialize the two Go probe methods and their residual/no-residual
+// callers so those mode checks do not run for every chain candidate.
+#[inline(always)]
+fn collect_outer_join_candidates<const OUTER_SIDE_BUILD: bool, const RESIDUAL: bool>(
     base: &mut BaseJoinProbe,
     ctx: &ProbeContext<'_>,
     is_not_matched: &mut [bool],
-    outer_side_build: bool,
     output: &mut Chunk,
     mut remain_cap: usize,
-    residual: bool,
     killer: &SqlKiller,
 ) -> Result<(), ProbeError> {
     let was_incomplete = output.is_incomplete_chunk();
@@ -1000,17 +1018,17 @@ fn collect_outer_join_candidates(
                     address,
                     output,
                     0,
-                    residual,
+                    RESIDUAL,
                 );
-                if !residual {
-                    if outer_side_build {
+                if !RESIDUAL {
+                    if OUTER_SIDE_BUILD {
                         ctx.hash_table.mark_build_row_matched(address);
                     } else {
                         is_not_matched[probe_row] = false;
                     }
                 }
                 base.record_matched_row_for_current_probe_row();
-                if outer_side_build {
+                if OUTER_SIDE_BUILD {
                     remain_cap -= 1;
                 }
             } else {
@@ -1018,7 +1036,7 @@ fn collect_outer_join_candidates(
             }
             base.set_matched_rows_header(probe_row, next);
         }
-        if !outer_side_build {
+        if !OUTER_SIDE_BUILD {
             remain_cap -= 1;
         }
     }
