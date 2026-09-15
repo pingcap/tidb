@@ -134,6 +134,8 @@ func TestManageTaskExecutor(t *testing.T) {
 func TestHandleExecutableTasks(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ClearTaskExecutors()
+	t.Cleanup(ClearTaskExecutors)
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
 	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
 	ctx := context.Background()
@@ -190,8 +192,8 @@ func TestHandleExecutableTasks(t *testing.T) {
 	}, 5*time.Second, 100*time.Millisecond)
 	require.Equal(t, 10, m.slotManager.availableSlots())
 	require.True(t, m.isExecutorStarted(taskID))
-	close(ch)
 	mockInternalExecutor.EXPECT().Close()
+	close(ch)
 	m.executorWG.Wait()
 	require.True(t, ctrl.Satisfied())
 	require.Equal(t, 16, m.slotManager.availableSlots())

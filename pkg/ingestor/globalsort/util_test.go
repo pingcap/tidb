@@ -19,13 +19,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
+
+type walkCountingStorage struct {
+	storeapi.Storage
+	count atomic.Int32
+}
+
+func (s *walkCountingStorage) WalkDir(
+	ctx context.Context,
+	opt *storeapi.WalkOption,
+	fn func(path string, size int64) error,
+) error {
+	s.count.Add(1)
+	return s.Storage.WalkDir(ctx, opt, fn)
+}
 
 func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
@@ -91,15 +109,13 @@ func TestGetAllFileNames(t *testing.T) {
 	}, filenames)
 }
 
-func TestCleanUpFiles(t *testing.T) {
-	ctx := context.Background()
-	store := objstore.NewMemStorage()
+func writeCleanupTestFiles(ctx context.Context, t *testing.T, store storeapi.Storage, dir string) {
 	w := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
 		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", "0")
+		Build(store, dir, "0")
 	keys := make([][]byte, 0, 30)
 	values := make([][]byte, 0, 30)
 	for i := range 30 {
@@ -110,22 +126,38 @@ func TestCleanUpFiles(t *testing.T) {
 		err := w.WriteRow(ctx, key, values[i], nil)
 		require.NoError(t, err)
 	}
-	err := w.Close(ctx)
-	require.NoError(t, err)
+	require.NoError(t, w.Close(ctx))
+}
 
-	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask")
+func TestCleanUpFiles(t *testing.T) {
+	ctx := context.Background()
+	baseStore := objstore.NewMemStorage()
+	store := &walkCountingStorage{Storage: baseStore}
+	writeCleanupTestFiles(ctx, t, store, "/subtask")
+	writeCleanupTestFiles(ctx, t, store, "/subtask2")
+	writeCleanupTestFiles(ctx, t, store, "/kept")
+
+	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask", "subtask2")
 	require.NoError(t, err)
 	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+		"/subtask2/0/0", "/subtask2/0/1", "/subtask2/0/2",
+		"/subtask2/0_stat/0", "/subtask2/0_stat/1", "/subtask2/0_stat/2",
 	}, filenames)
+	require.Equal(t, int32(1), store.count.Load())
 
-	require.NoError(t, CleanUpFiles(ctx, store, "subtask"))
+	store.count.Store(0)
+	require.NoError(t, CleanUpFiles(ctx, store, "subtask", "subtask2"))
+	require.Equal(t, int32(1), store.count.Load())
 
-	filenames, err = simplesst.GetAllFileNames(ctx, store, "subtask")
+	filenames, err = simplesst.GetAllFileNames(ctx, baseStore, "subtask", "subtask2")
 	require.NoError(t, err)
 	require.Equal(t, []string(nil), filenames)
+	filenames, err = simplesst.GetAllFileNames(ctx, baseStore, "kept")
+	require.NoError(t, err)
+	require.Len(t, filenames, 6)
 }
 
 func TestSortedKVMeta(t *testing.T) {
@@ -383,6 +415,15 @@ func TestExternalMetaPath(t *testing.T) {
 }
 
 func TestDivideMergeSortDataFilesBasic(t *testing.T) {
+	require.Equal(t, errors.RFCErrorCode("GlobalSort:TooManyDataFiles"), errdef.ErrTooManyDataFiles.RFCCode())
+
+	requireTooManyDataFiles := func(t *testing.T, err error, dataFileCnt, concurrency, threshold int) {
+		t.Helper()
+		expected := errdef.ErrTooManyDataFiles.GenWithStackByArgs(dataFileCnt, concurrency, threshold)
+		require.True(t, errors.ErrorEqual(err, expected))
+		require.EqualError(t, err, expected.Error())
+	}
+
 	testCases := []struct {
 		fileCnt       int
 		nodeCnt       int
@@ -413,6 +454,92 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 			require.EqualValues(t, tc.expectedSizes, actualSizes)
 		})
 	}
+
+	t.Run("exact target file count", func(t *testing.T) {
+		items := make([]string, 4580)
+		result, err := DivideMergeSortDataFiles(items, 8, 1)
+		require.NoError(t, err)
+		require.Len(t, result, 24)
+		expectedSizes := append(slices.Repeat([]int{250}, 16), 73, 73, 73, 73, 72, 72, 72, 72)
+		totalTargetFileCount := 0
+		for i, group := range result {
+			require.Len(t, group, expectedSizes[i])
+			totalTargetFileCount += len(splitDataFiles(group, 1))
+		}
+		require.Equal(t, 24, totalTargetFileCount)
+		require.LessOrEqual(t, totalTargetFileCount, 250)
+	})
+
+	t.Run("at target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62500), 10, 1)
+		require.NoError(t, err)
+		totalTargetFileCount := 0
+		for _, group := range result {
+			totalTargetFileCount += len(splitDataFiles(group, 1))
+		}
+		require.Equal(t, 250, totalTargetFileCount)
+	})
+
+	t.Run("remainder exceeds target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62501), 10, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62501, 1, 250)
+	})
+
+	t.Run("full groups exceed target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62750), 1, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62750, 1, 250)
+	})
+
+	t.Run("fixed targets and remainder exceed target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62751), 1, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62751, 1, 250)
+	})
+
+	t.Run("non-monotonic target file count exceeds threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 248128), 62, 64)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 248128, 64, 4000)
+	})
+
+	t.Run("preserves maximum input files per subtask", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 940000), 2, 17)
+		require.NoError(t, err)
+		totalTargetFileCount := 0
+		for _, group := range result {
+			require.LessOrEqual(t, len(group), 4000)
+			totalTargetFileCount += len(splitDataFiles(group, 17))
+		}
+		require.LessOrEqual(t, totalTargetFileCount, 4000)
+
+		result, err = DivideMergeSortDataFiles(make([]string, 940001), 2, 17)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 940001, 17, 4000)
+	})
+
+	t.Run("large node count", func(t *testing.T) {
+		var result [][]string
+		var err error
+		allocs := testing.AllocsPerRun(1, func() {
+			result, err = DivideMergeSortDataFiles(make([]string, 32000), 32000, 16)
+		})
+		require.NoError(t, err)
+		require.Less(t, allocs, float64(100))
+
+		result, err = DivideMergeSortDataFiles(make([]string, 1000000), 1000000, 16)
+		require.NoError(t, err)
+		require.Len(t, result, 250)
+		totalTargetFileCount := 0
+		maxFiles := simplesst.GetAdjustedMergeSortFileCountStep(16)
+		for _, group := range result {
+			require.Len(t, group, 4000)
+			require.LessOrEqual(t, len(group), maxFiles)
+			totalTargetFileCount += len(splitDataFiles(group, 16))
+		}
+		require.Equal(t, 4000, totalTargetFileCount)
+	})
 }
 
 func TestDivideMergeSortDataFilesSubtaskCount(t *testing.T) {

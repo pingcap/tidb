@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
@@ -762,10 +761,13 @@ func findSchemasForTables(
 	schemaSlice := make([]ast.CIStr, 0, len(tableSlice))
 	for i, tbl := range tableSlice {
 		dbInfo, ok := is.SchemaByID(tbl.DBID)
-		intest.Assert(ok)
 		if !ok {
 			logutil.BgLogger().Warn("schema not found for table info",
 				zap.Int64("tableID", tbl.ID), zap.Int64("dbID", tbl.DBID))
+			// Drop this table so schemaSlice and the compacted tableSlice stay
+			// the same length; leaving it in would desync the parallel slices
+			// and make every consumer index out of range.
+			tableSlice[i] = nil
 			continue
 		}
 		if unspecified { // all schemas should be included.
@@ -786,22 +788,34 @@ func findSchemasForTables(
 		}
 	}
 	// Remove nil elements in tableSlice.
-	remains := tableSlice[:0]
-	for _, tbl := range tableSlice {
-		if tbl != nil {
-			remains = append(remains, tbl)
-		}
-	}
-	sort.Slice(schemaSlice, func(i, j int) bool {
-		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
-		less := iSchema < jSchema ||
-			(iSchema == jSchema && remains[i].Name.L < remains[j].Name.L)
-		if less {
-			remains[i], remains[j] = remains[j], remains[i]
-		}
-		return less
-	})
+	remains := slices.DeleteFunc(tableSlice, func(tbl *model.TableInfo) bool { return tbl == nil })
+	// Sort schema/table pairs together, keeping the two slices aligned. The
+	// comparator must stay side-effect free, so swap both slices via sort.Sort
+	// rather than mutating inside a sort.Slice less func.
+	sort.Sort(&schemaTableSorter{schemas: schemaSlice, tables: remains})
 	return schemaSlice, remains, nil
+}
+
+// schemaTableSorter sorts a parallel pair of schema names and table infos
+// together, ordering by schema name and then table name, so that
+// schemas[i] stays paired with tables[i] after sorting.
+type schemaTableSorter struct {
+	schemas []ast.CIStr
+	tables  []*model.TableInfo
+}
+
+func (s *schemaTableSorter) Len() int { return len(s.schemas) }
+
+func (s *schemaTableSorter) Less(i, j int) bool {
+	if s.schemas[i].L != s.schemas[j].L {
+		return s.schemas[i].L < s.schemas[j].L
+	}
+	return s.tables[i].Name.L < s.tables[j].Name.L
+}
+
+func (s *schemaTableSorter) Swap(i, j int) {
+	s.schemas[i], s.schemas[j] = s.schemas[j], s.schemas[i]
+	s.tables[i], s.tables[j] = s.tables[j], s.tables[i]
 }
 
 func parseIDs(ids []ast.CIStr) []int64 {

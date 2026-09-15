@@ -246,6 +246,42 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 }
 
+func TestTTLJobEnableExternalWorkloadUpdateOnlyOnSetGlobal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originalEnable := vardef.EnableTTLJob.Load()
+	originalHook := variable.UpdateExternalWorkloadTTLJobEnable
+	t.Cleanup(func() {
+		vardef.EnableTTLJob.Store(originalEnable)
+		variable.UpdateExternalWorkloadTTLJobEnable = originalHook
+	})
+
+	updateCount := 0
+	variable.UpdateExternalWorkloadTTLJobEnable = func(context.Context, bool) error {
+		updateCount++
+		return nil
+	}
+
+	tk.MustExec("SET GLOBAL tidb_ttl_job_enable = OFF")
+	require.Equal(t, 1, updateCount)
+	require.False(t, vardef.EnableTTLJob.Load())
+
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
+	require.Equal(t, 1, updateCount)
+	require.False(t, vardef.EnableTTLJob.Load())
+
+	boom := fmt.Errorf("boom")
+	variable.UpdateExternalWorkloadTTLJobEnable = func(context.Context, bool) error {
+		updateCount++
+		return boom
+	}
+	_, err := tk.Exec("SET GLOBAL tidb_ttl_job_enable = ON")
+	require.ErrorContains(t, err, "boom")
+	require.Equal(t, 2, updateCount)
+	require.False(t, vardef.EnableTTLJob.Load())
+}
+
 func TestTimeZone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

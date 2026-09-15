@@ -830,10 +830,10 @@ func TestGetLogBackupFlushIntervalFromTiKVConfig(t *testing.T) {
 	flushInterval, err := streamhelper.GetLogBackupFlushIntervalFromTiKVConfig(
 		context.Background(),
 		func(_ context.Context, collect func([]byte) error) error {
-			if err := collect([]byte(`{"log-backup":{"flush-interval":"20s"}}`)); err != nil {
+			if err := collect([]byte(`{"log-backup":{"max-flush-interval":"20s"}}`)); err != nil {
 				return err
 			}
-			return collect([]byte(`{"log-backup":{"flush-interval":"30s"}}`))
+			return collect([]byte(`{"log-backup":{"max-flush-interval":"30s"}}`))
 		})
 	require.NoError(t, err)
 	require.Equal(t, 30*time.Second, flushInterval)
@@ -843,7 +843,7 @@ func TestGetLogBackupFlushIntervalFromTiKVConfig(t *testing.T) {
 		func(_ context.Context, collect func([]byte) error) error {
 			return collect([]byte(`{"log-backup":{"enable":true}}`))
 		})
-	require.ErrorContains(t, err, "log-backup.flush-interval is not found")
+	require.ErrorContains(t, err, "log-backup.max-flush-interval is not found")
 
 	_, err = streamhelper.GetLogBackupFlushIntervalFromTiKVConfig(
 		context.Background(),

@@ -224,7 +224,7 @@ func WithCurrentKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) MockTiKVStor
 		if keyspaceMeta != nil {
 			enableKeyspaceLevelGCIfNotSet(keyspaceMeta)
 			c.clusterKeyspaces = []*keyspacepb.KeyspaceMeta{keyspaceMeta}
-			c.currentKeyspaceID = keyspaceMeta.Id
+			c.currentKeyspaceID = keyspaceMeta.GetId()
 		} else {
 			c.clusterKeyspaces = nil
 			c.currentKeyspaceID = constants.NullKeyspaceID
@@ -251,7 +251,7 @@ func WithKeyspacesAndCurrentKeyspaceID(clusterKeyspaces []*keyspacepb.KeyspaceMe
 func (o *mockOptions) currentKeyspaceMeta() *keyspacepb.KeyspaceMeta {
 	if o.currentKeyspaceID != constants.NullKeyspaceID {
 		for _, meta := range o.clusterKeyspaces {
-			if meta.Id == o.currentKeyspaceID {
+			if meta.GetId() == o.currentKeyspaceID {
 				return meta
 			}
 		}
@@ -283,8 +283,8 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		// manually specified for special test purposes.
 		if !opt.keyspaceSpecified {
 			meta := &keyspacepb.KeyspaceMeta{
-				Id:   constants.MaxKeyspaceID - 1,
-				Name: keyspace.System,
+				Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: constants.MaxKeyspaceID - 1},
+				Name:     keyspace.System,
 			}
 			WithCurrentKeyspaceMeta(meta)(&opt)
 		}

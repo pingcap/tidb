@@ -368,6 +368,10 @@ func (fakeImportCli FakeImporterClient) CheckMultiIngestSupport(ctx context.Cont
 	return nil
 }
 
+func (fakeImportCli FakeImporterClient) IsBatchDownloadLatestMVCCSupported(ctx context.Context, stores []uint64) (bool, error) {
+	return true, nil
+}
+
 func TestSetSpeedLimit(t *testing.T) {
 	mockStores := []*metapb.Store{
 		{Id: 1},

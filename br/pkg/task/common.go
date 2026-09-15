@@ -31,6 +31,7 @@ import (
 	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -39,12 +40,15 @@ import (
 	"github.com/spf13/pflag"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
+
+var newPDClientWithAPIContext = pd.NewClientWithAPIContext
 
 const (
 	// flagSendCreds specify whether to send credentials to tikv
@@ -186,21 +190,17 @@ func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 }
 
 func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) {
-	var (
-		tlsConfig *tls.Config
-		err       error
-	)
-
+	var tlsConfig *tls.Config
+	var err error
 	if cfg.TLS.IsEnabled() {
 		tlsConfig, err = cfg.TLS.ToTLSConfig()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	log.Info("trying to connect to etcd", zap.Strings("addr", cfg.PD))
-	etcdCLI, err := clientv3.New(clientv3.Config{
+
+	etcdCfg := clientv3.Config{
 		TLS:              tlsConfig,
-		Endpoints:        cfg.PD,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -212,11 +212,15 @@ func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) 
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
-		Context: ctx,
-	})
-	if err != nil {
-		return nil, err
 	}
+	etcdCLI, err := metaservice.DialEtcdClient(
+		ctx, cfg.KeyspaceName, cfg.PD, cfg.TLS.ToPDSecurityOption(),
+		newPDClientWithAPIContext, caller.GetComponent(1), nil, etcdCfg,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	log.Info("connected to etcd", zap.Strings("addr", etcdCLI.Endpoints()))
 	return etcdCLI, nil
 }
 

@@ -145,6 +145,8 @@ const (
 	TypePhysicalCTESink = "PhysicalCTESink"
 	// TypePhysicalCTESource is the type of CTE source.
 	TypePhysicalCTESource = "PhysicalCTESource"
+	// TypeAnalyze is the type of Analyze.
+	TypeAnalyze = "Analyze"
 )
 
 // plan id.
@@ -213,6 +215,7 @@ const (
 	typeLocalIndexLookUpID    int = 61
 	typePhysicalCTESinkID     int = 62
 	typePhysicalCTESourceID   int = 63
+	typeAnalyzeID             int = 64
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -344,6 +347,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typePhysicalCTESinkID
 	case TypePhysicalCTESource:
 		return typePhysicalCTESourceID
+	case TypeAnalyze:
+		return typeAnalyzeID
 	}
 	// Should never reach here.
 	return 0
@@ -478,6 +483,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypePhysicalCTESink
 	case typePhysicalCTESourceID:
 		return TypePhysicalCTESource
+	case typeAnalyzeID:
+		return TypeAnalyze
 	}
 
 	// Should never reach here.

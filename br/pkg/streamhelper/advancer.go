@@ -268,14 +268,14 @@ func (c *CheckpointAdvancer) refreshLogBackupFlushInterval(ctx context.Context) 
 	defer cancel()
 	flushInterval, err := c.env.GetLogBackupFlushInterval(fetchCtx)
 	if err != nil {
-		log.Warn("failed to refresh TiKV log-backup.flush-interval; keep previous advancer intervals",
+		log.Warn("failed to refresh TiKV log-backup.max-flush-interval; keep previous advancer intervals",
 			zap.Duration("current-resolve-lock-interval", c.getResolveLockInterval()),
 			zap.Duration("current-try-advance-threshold", c.getDefaultStartPollThreshold()),
 			logutil.ShortError(err))
 		return
 	}
 	if flushInterval <= 0 {
-		log.Warn("ignore invalid TiKV log-backup.flush-interval; keep previous advancer intervals",
+		log.Warn("ignore invalid TiKV log-backup.max-flush-interval; keep previous advancer intervals",
 			zap.Duration("flush-interval", flushInterval),
 			zap.Duration("current-resolve-lock-interval", c.getResolveLockInterval()),
 			zap.Duration("current-try-advance-threshold", c.getDefaultStartPollThreshold()))
@@ -287,7 +287,7 @@ func (c *CheckpointAdvancer) refreshLogBackupFlushInterval(ctx context.Context) 
 	tryAdvanceThreshold := flushInterval * 4 / 3
 	c.tryAdvanceThreshold.Store(int64(tryAdvanceThreshold))
 	if previous != flushInterval || previousTryAdvanceThreshold != tryAdvanceThreshold {
-		log.Info("refreshed TiKV log-backup.flush-interval for advancer intervals",
+		log.Info("refreshed TiKV log-backup.max-flush-interval for advancer intervals",
 			zap.Duration("previous-resolve-lock-interval", previous),
 			zap.Duration("resolve-lock-interval", flushInterval),
 			zap.Duration("previous-try-advance-threshold", previousTryAdvanceThreshold),

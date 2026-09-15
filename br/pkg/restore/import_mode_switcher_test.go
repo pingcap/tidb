@@ -35,16 +35,27 @@ import (
 type mockImportServer struct {
 	import_sstpb.ImportSSTServer
 
+	mu    sync.Mutex
+	modes []import_sstpb.SwitchMode
 	count int
 	ch    chan struct{}
 }
 
 func (s *mockImportServer) SwitchMode(_ context.Context, req *import_sstpb.SwitchModeRequest) (*import_sstpb.SwitchModeResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.modes = append(s.modes, req.GetMode())
 	s.count -= 1
-	if s.count == 0 {
+	if s.count == 0 && s.ch != nil {
 		s.ch <- struct{}{}
 	}
 	return &import_sstpb.SwitchModeResponse{}, nil
+}
+
+func (s *mockImportServer) Modes() []import_sstpb.SwitchMode {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]import_sstpb.SwitchMode(nil), s.modes...)
 }
 
 func TestRestorePreWork(t *testing.T) {
@@ -62,7 +73,9 @@ func TestRestorePreWork(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		err := s.Serve(lis)
-		require.NoError(t, err)
+		if err != nil && err != grpc.ErrServerStopped {
+			require.NoError(t, err)
+		}
 	}()
 
 	pdClient := split.NewFakePDClient([]*metapb.Store{
@@ -109,7 +122,7 @@ func TestRestorePreWork(t *testing.T) {
 		}
 	}
 	<-ch
-	restore.RestorePostWork(ctx, switcher, undo)
+	restore.RestorePostWork(ctx, switcher, undo, false)
 	// check the cfg done
 	{
 		cfgs, err := pdHTTPCli.GetConfig(context.TODO())
@@ -126,4 +139,53 @@ func TestRestorePreWork(t *testing.T) {
 
 	s.Stop()
 	lis.Close()
+	wg.Wait()
+}
+
+func TestRestorePostWorkOnlineSkipsNormalMode(t *testing.T) {
+	ctx := context.Background()
+	lis, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	addr := lis.Addr().String()
+
+	s := grpc.NewServer()
+	importServer := &mockImportServer{}
+	import_sstpb.RegisterImportSSTServer(s, importServer)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := s.Serve(lis)
+		if err != nil && err != grpc.ErrServerStopped {
+			require.NoError(t, err)
+		}
+	}()
+	defer func() {
+		s.Stop()
+		lis.Close()
+		wg.Wait()
+	}()
+
+	pdClient := split.NewFakePDClient([]*metapb.Store{
+		{
+			Id:      1,
+			Address: addr,
+		},
+	}, false, nil)
+	switcher := restore.NewImportModeSwitcher(pdClient, time.Hour, nil)
+	require.NoError(t, switcher.GoSwitchToImportMode(ctx))
+	defer func() {
+		require.NoError(t, switcher.SwitchToNormalMode(ctx))
+	}()
+	require.Equal(t, []import_sstpb.SwitchMode{import_sstpb.SwitchMode_Import}, importServer.Modes())
+
+	restoredSchedulers := false
+	restore.RestorePostWork(ctx, switcher, func(context.Context) error {
+		restoredSchedulers = true
+		return nil
+	}, true)
+
+	require.True(t, restoredSchedulers)
+	require.Equal(t, []import_sstpb.SwitchMode{import_sstpb.SwitchMode_Import}, importServer.Modes())
 }

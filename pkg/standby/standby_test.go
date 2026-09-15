@@ -21,7 +21,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -35,6 +37,16 @@ type mockManagerClient struct {
 	calls     int
 	failures  int
 	gotReason string
+}
+
+type mockReadyServer struct {
+	called bool
+	err    error
+}
+
+func (s *mockReadyServer) InitTiDBListener() error {
+	s.called = true
+	return s.err
 }
 
 func (c *mockManagerClient) Free(_ context.Context, exitReason string) error {
@@ -52,14 +64,20 @@ func resetStandbyTestState(t *testing.T) {
 	mu.Lock()
 	oldState := state
 	oldActivateRequest := activateRequest
+	oldActivationTimeout := activationTimeout
+	oldActivateCh := activateCh
 	state = standbyState
 	activateRequest = ActivateRequest{}
+	activationTimeout = 0
+	activateCh = make(chan struct{}, 1)
 	mu.Unlock()
 
 	t.Cleanup(func() {
 		mu.Lock()
 		state = oldState
 		activateRequest = oldActivateRequest
+		activationTimeout = oldActivationTimeout
+		activateCh = oldActivateCh
 		mu.Unlock()
 	})
 }
@@ -99,6 +117,42 @@ func TestActivateRequiresKeyspaceName(t *testing.T) {
 	mux.ServeHTTP(resp, req)
 
 	require.Equal(t, http.StatusBadRequest, resp.Code)
+}
+
+func TestActivateWaitsUntilServerReady(t *testing.T) {
+	resetStandbyTestState(t)
+	controller := NewLoadKeyspaceController(nil)
+	_, mux := controller.Handler(nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{"keyspace_name":"ks"}`))
+	resp := httptest.NewRecorder()
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(done)
+		mux.ServeHTTP(resp, req)
+	}()
+
+	require.Eventually(t, func() bool {
+		mu.RLock()
+		defer mu.RUnlock()
+		return state == activatedState
+	}, time.Second, time.Millisecond*10)
+	select {
+	case <-done:
+		require.Fail(t, "activate request returned before server ready")
+	default:
+	}
+
+	readyServer := &mockReadyServer{}
+	require.NoError(t, controller.PrepareForActivation(readyServer))
+	wg.Wait()
+
+	require.True(t, readyServer.called)
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.JSONEq(t, `{"state":"activated","keyspace_name":"ks"}`, resp.Body.String())
 }
 
 func TestOnServerShutdownNoopOutsideStarter(t *testing.T) {

@@ -250,11 +250,30 @@ func (h subscriber) handle(
 		return errors.Trace(storage.UpdateStatsVersion(ctx, sctx))
 	case model.ActionAddIndex:
 		// No need to update the stats meta for the adding index event.
+	case model.ActionAlterMaterializedViewRefresh,
+		model.ActionAlterMaterializedViewAttributes,
+		model.ActionAlterMaterializedViewLogPurge,
+		model.ActionCreateMaterializedViewLog,
+		model.ActionCreateMaterializedView:
+		// MV DDL updates metadata only and does not change table data or partition topology.
 	case model.ActionDropSchema:
 		miniDBInfo := change.GetDropSchemaInfo()
 		intest.Assert(miniDBInfo != nil)
 		for _, table := range miniDBInfo.Tables {
-			// Try best effort to update the stats meta version for gc.
+			// Partition stats are keyed by partition physical IDs, so update them separately for stats GC.
+			for _, partition := range table.Partitions {
+				if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, partition.ID); err != nil {
+					logutil.StatsLogger().Error(
+						"Failed to update stats meta version for gc",
+						zap.Int64("partitionID", partition.ID),
+						zap.Int64("tableID", table.ID),
+						zap.Error(err),
+					)
+				}
+			}
+			// Best effort: update the table stats meta version for GC.
+			// In static partition pruning mode, the underlying UPDATE is a no-op if
+			// the global table stats record does not exist.
 			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, table.ID); err != nil {
 				logutil.StatsLogger().Error(
 					"Failed to update stats meta version for gc",

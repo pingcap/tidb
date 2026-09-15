@@ -105,6 +105,26 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, 5, plan.ThreadCnt)
 }
 
+func TestPlanUseNewCollate(t *testing.T) {
+	plan := &Plan{}
+	require.True(t, plan.GetUseNewCollateOrDefault(true))
+	require.False(t, plan.GetUseNewCollateOrDefault(false))
+
+	plan.setUseNewCollate(false)
+	require.False(t, plan.GetUseNewCollateOrDefault(true))
+
+	data, err := json.Marshal(plan)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"use_new_collate":false`)
+
+	var decoded Plan
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.False(t, decoded.GetUseNewCollateOrDefault(true))
+
+	decoded.setUseNewCollate(true)
+	require.True(t, decoded.GetUseNewCollateOrDefault(false))
+}
+
 // for negative case see TestImportIntoOptionsNegativeCase
 func TestInitOptionsPositiveCase(t *testing.T) {
 	sctx := mock.NewContext()
@@ -254,6 +274,124 @@ func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
 	require.ErrorContains(t, err, onDupKeyOption)
 	require.ErrorContains(t, err, "local sort")
+}
+
+func TestInitOptionsFromQueryPositiveCase(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
+
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+		options := []*plannercore.LoadDataOpt{}
+		var err error
+		for _, opt := range inOptions {
+			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			if opt.Value != nil {
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				require.NoError(t, err)
+			}
+			options = append(options, &loadDataOpt)
+		}
+		return options
+	}
+
+	p := parser.New()
+
+	// all allowed options for import from query: thread, disable_precheck, disk_quota
+	sql := "import into t from select * from t2 with " +
+		threadOption + "=4, " +
+		disablePrecheckOption + ", " +
+		diskQuotaOption + "='100gib'"
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	plan := &Plan{DataSourceType: DataSourceTypeQuery}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql)
+	require.Equal(t, 4, plan.ThreadCnt, sql)
+	require.True(t, plan.DisablePrecheck, sql)
+	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
+
+	// disk_quota alone should work
+	sql = "import into t from select * from t2 with " + diskQuotaOption + "='50gib'"
+	stmt, err = p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	plan = &Plan{DataSourceType: DataSourceTypeQuery}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql)
+	require.Equal(t, config.ByteSize(50<<30), plan.DiskQuota, sql)
+}
+
+func TestInitOptionsFromQueryNegativeCase(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
+
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+		options := []*plannercore.LoadDataOpt{}
+		var err error
+		for _, opt := range inOptions {
+			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			if opt.Value != nil {
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				require.NoError(t, err)
+			}
+			options = append(options, &loadDataOpt)
+		}
+		return options
+	}
+
+	p := parser.New()
+
+	// options not allowed for import from query
+	disallowedOptions := []string{
+		characterSetOption + "='utf8'",
+		fieldsTerminatedByOption + "='aaa'",
+		fieldsEnclosedByOption + "='|'",
+		fieldsEscapedByOption + "='\\\\'",
+		fieldsDefinedNullByOption + "='N'",
+		linesTerminatedByOption + "='\\n'",
+		skipRowsOption + "=1",
+		splitFileOption,
+		checksumTableOption + "='optional'",
+		maxWriteSpeedOption + "='200mib'",
+		recordErrorsOption + "=123",
+		detachedOption,
+		disableTiKVImportModeOption,
+		maxEngineSizeOption + "='100gib'",
+		cloudStorageURIOption + "='s3://bucket/path'",
+	}
+	for _, opt := range disallowedOptions {
+		sql := "import into t from select * from t2 with " + opt
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, sql)
+		plan := &Plan{DataSourceType: DataSourceTypeQuery}
+		err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+		require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption, sql)
+	}
+
+	// invalid disk_quota values for query source
+	invalidDiskQuotaCases := []string{
+		diskQuotaOption + "='aa'",
+		diskQuotaOption + "='220MiBxxx'",
+		diskQuotaOption + "=1",
+		diskQuotaOption + "=false",
+	}
+	for _, opt := range invalidDiskQuotaCases {
+		sql := "import into t from select * from t2 with " + opt
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, sql)
+		plan := &Plan{DataSourceType: DataSourceTypeQuery}
+		err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+		require.Error(t, err, sql)
+	}
+
+	// duplicate options
+	sql := "import into t from select * from t2 with " + diskQuotaOption + "='100gib', " + diskQuotaOption + "='200gib'"
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	plan := &Plan{DataSourceType: DataSourceTypeQuery}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.ErrorIs(t, err, exeerrors.ErrDuplicateOption, sql)
 }
 
 func TestAdjustOptions(t *testing.T) {

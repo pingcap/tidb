@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,9 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -52,12 +56,15 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
+	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -960,12 +967,18 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	// /status HTTP endpoint
 	server.health.Store(true)
 	defer server.Close()
+	conn, peerConn := net.Pipe()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+		require.NoError(t, peerConn.Close())
+	})
 
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
 		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		bufReadConn:  serverutil.NewBufferedReadConn(conn),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		alloc:        arena.NewAllocator(512),
@@ -973,6 +986,10 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		capability:   capability,
 	}
 	cc.SetCtx(tc)
+	originalEnableConnectionEventLog := vardef.EnableConnectionEventLog.Swap(true)
+	t.Cleanup(func() {
+		vardef.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
+	})
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
@@ -1302,6 +1319,52 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
+
+	t.Run("scalar followed by a prebuilt PointGet", func(t *testing.T) {
+		tk.MustExec("insert into prefetch values (1, 1, 10), (2, 2, 20)")
+		tk.MustExec("begin optimistic")
+		defer tk.MustExec("rollback")
+		tk.MustQuery("select c from prefetch where a = 1 and b = 1").Check(testkit.Rows("10"))
+		var response bytes.Buffer
+		cc.pkt = internal.NewPacketIOForTest(bufio.NewWriter(&response))
+		var registrySizes, scalarTreeCounts []int
+		tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+			vars := tk.Session().GetSessionVars()
+			plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+			require.True(t, ok)
+			prebuilt, ok := tk.Session().Value(plannercore.PointPlanKey).(plannercore.PointPlanVal)
+			require.True(t, ok, "handleQuery must supply the prefetched plan entry")
+			if len(registrySizes) == 0 {
+				require.Nil(t, prebuilt.Plan)
+			} else {
+				require.IsType(t, &physicalop.PointGetPlan{}, plan)
+				require.Same(t, prebuilt.Plan, plan, "the second statement must use the prebuilt plan")
+			}
+			registrySizes = append(registrySizes, len(vars.MapScalarSubQ))
+			scalarTreeCounts = append(scalarTreeCounts, len(plannercore.FlattenPhysicalPlan(plan, true).ScalarSubQueries))
+		})
+		defer tk.Session().ClearValue(breakpoint.NotifyBreakPointFuncKey)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+		err := cc.handleQuery(ctx, "select (select sum(c) from prefetch);select c from prefetch where a = 2 and b = 2;")
+		require.NoError(t, err)
+		t.Logf("multi-statement registry sizes=%v flattened scalar trees=%v", registrySizes, scalarTreeCounts)
+
+		// Each one-column result has a header, column definition, EOF, row and EOF.
+		packets := internal.NewPacketIO(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: response}))
+		for _, expected := range []string{"30", "20"} {
+			for range 3 {
+				_, err = packets.ReadPacket()
+				require.NoError(t, err)
+			}
+			row, err := packets.ReadPacket()
+			require.NoError(t, err)
+			require.Equal(t, append([]byte{byte(len(expected))}, expected...), row)
+			_, err = packets.ReadPacket()
+			require.NoError(t, err)
+		}
+		require.Equal(t, []int{1, 0}, scalarTreeCounts)
+		require.Equal(t, []int{1, 0}, registrySizes)
+	})
 }
 
 func TestPrefetchBatchPointGet(t *testing.T) {
@@ -1922,6 +1985,56 @@ func TestChangeUserAuth(t *testing.T) {
 	err = cc.handleChangeUser(ctx, data)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/ChangeUserAuthSwitch"))
 	require.EqualError(t, err, t.Name())
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+}
+
+func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		peerHost:     "localhost",
+		collation:    mysql.DefaultCollationID,
+		capability:   mysql.ClientProtocol41,
+		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		server:       srv,
+		user:         "root",
+		dbname:       "old_db",
+	}
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.SetCtx(tc)
+
+	data := []byte{}
+	data = append(data, "missing_user"...)
+	data = append(data, 0)
+	data = append(data, 0)
+	data = append(data, "new_db"...)
+	data = append(data, 0)
+	data = append(data, 0, 0)
+	err = cc.handleChangeUser(context.Background(), data)
+	require.Error(t, err)
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "old_db", cc.dbname)
+	require.Equal(t, "root", cc.ctx.GetSessionVars().User.Username)
 }
 
 func TestAuthPlugin2(t *testing.T) {

@@ -21,42 +21,29 @@ import (
 	"encoding/binary"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	clientutil "github.com/tikv/client-go/v2/util"
 )
-
-type mockCursorRUV2ConsumptionReporter struct {
-	group     string
-	tikvRUV2  float64
-	tidbRUV2  float64
-	tiflashRU float64
-}
-
-func (*mockCursorRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
-
-func (m *mockCursorRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
-	m.group = resourceGroupName
-	m.tikvRUV2 += tikvRUV2
-	m.tidbRUV2 += tidbRUV2
-	m.tiflashRU += tiflashRUV2
-}
 
 type mockCursorTrackerRecordSet struct{}
 
@@ -70,6 +57,37 @@ func (*mockCursorTrackerRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
 func (*mockCursorTrackerRecordSet) Close() error { return nil }
 
 var _ sqlexec.RecordSet = &mockCursorTrackerRecordSet{}
+
+type executeStmtRecordSetSession struct {
+	sessionapi.Session
+	recordSet sqlexec.RecordSet
+}
+
+func (s *executeStmtRecordSetSession) ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error) {
+	return s.recordSet, nil
+}
+
+type connectionAliveCheckRecordSet struct {
+	check      func()
+	nextCalled bool
+}
+
+func (*connectionAliveCheckRecordSet) Fields() []*resolve.ResultField { return nil }
+
+func (rs *connectionAliveCheckRecordSet) Next(_ context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	rs.check()
+	rs.nextCalled = true
+	return nil
+}
+
+func (*connectionAliveCheckRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+
+func (*connectionAliveCheckRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &connectionAliveCheckRecordSet{}
 
 type firstNextErrRecordSet struct{}
 
@@ -89,34 +107,20 @@ func (*firstNextErrRecordSet) Close() error { return nil }
 
 var _ sqlexec.RecordSet = &firstNextErrRecordSet{}
 
-type singleRowCursorRecordSet struct {
-	returned bool
+type failedWriteResponseWriter struct {
+	delay       time.Duration
+	failOnWrite int
+	writes      int
 }
 
-func (*singleRowCursorRecordSet) Fields() []*resolve.ResultField {
-	return []*resolve.ResultField{{
-		Column:       &model.ColumnInfo{Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
-		ColumnAsName: ast.NewCIStr("a"),
-	}}
-}
-
-func (rs *singleRowCursorRecordSet) Next(_ context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	if rs.returned {
-		return nil
+func (w *failedWriteResponseWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == w.failOnWrite {
+		time.Sleep(w.delay)
+		return 0, mysql.ErrBadConn
 	}
-	chk.AppendInt64(0, 1)
-	rs.returned = true
-	return nil
+	return len(p), nil
 }
-
-func (*singleRowCursorRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
-	return chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
-}
-
-func (*singleRowCursorRecordSet) Close() error { return nil }
-
-var _ sqlexec.RecordSet = &singleRowCursorRecordSet{}
 
 func TestCursorExistsFlag(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -187,81 +191,58 @@ func TestCursorExistsFlag(t *testing.T) {
 	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
 }
 
+func TestResultSetWriteSQLRespDurationIncludesFailedRowWrite(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability &^= mysql.ClientDeprecateEOF
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1)")
+
+	const delay = 50 * time.Millisecond
+	c.pkt.SetBufWriter(bufio.NewWriterSize(&failedWriteResponseWriter{
+		delay:       delay,
+		failOnWrite: 4,
+	}, 1))
+	require.Error(t, c.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select * from t"...)))
+
+	require.GreaterOrEqual(t, c.Context().GetSessionVars().CacheStmtExecInfo.WriteSQLRespDuration, delay)
+}
+
 func TestCursorWithParams(t *testing.T) {
 	t.Run("cursor ruv2 delta reporting", func(t *testing.T) {
-		original := config.GetGlobalConfig()
-		t.Cleanup(func() {
-			if original != nil {
-				config.StoreGlobalConfig(original)
-			}
-		})
-		cfg := config.NewConfig()
-		cfg.RUV2 = config.DefaultRUV2Config()
-		config.StoreGlobalConfig(cfg)
-
-		reporter := &mockCursorRUV2ConsumptionReporter{}
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
 		ruv2Metrics := execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ruv2Metrics)
-		ruv2Metrics.AddPlanCnt(2)
 		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
-		ruDetails.AddTiKVRUV2(11)
-		ruDetails.AddRUV2(&kvrpcpb.RUV2{ReadRpcCount: 3})
-		weights := execdetails.RUV2Weights{
-			RUScale:                 cfg.RUV2.RUScale,
-			ResultChunkCells:        cfg.RUV2.ResultChunkCells,
-			ExecutorL1:              cfg.RUV2.ExecutorL1,
-			ExecutorL2:              cfg.RUV2.ExecutorL2,
-			ExecutorL3:              cfg.RUV2.ExecutorL3,
-			ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
-			PlanCnt:                 cfg.RUV2.PlanCnt,
-			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
-			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
-			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
-			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
-			TxnCnt:                  cfg.RUV2.TxnCnt,
-		}
-		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights)
-		require.Equal(t, int64(3), ruv2Metrics.ResourceManagerReadCnt())
-		baselineTiDBRU := ruv2Metrics.CalculateRUValues(weights)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{CoprocessorResponseBytes: 3})
+		tracker := resultset.NewCursorRUV2Tracker(ruv2Metrics, ruDetails)
+		require.Equal(t, int64(3), ruv2Metrics.TiKVCoprocessorResponseBytes())
 		resultsetRS := resultset.New(&mockCursorTrackerRecordSet{}, nil)
 		resultset.AttachCursorRUV2Tracker(resultsetRS, tracker)
-		resultset.ReportCursorRUV2Delta(resultsetRS, 6)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{CoprocessorResponseBytes: 6})
+		resultset.ReportCursorRUV2Delta(resultsetRS)
 
-		require.Equal(t, "rg1", reporter.group)
-		expectedCursorDelta := ruv2Metrics.CalculateRUValues(weights) - baselineTiDBRU
-		require.Equal(t, expectedCursorDelta, reporter.tidbRUV2)
-		require.Equal(t, 0.0, reporter.tikvRUV2)
-		require.Equal(t, 0.0, reporter.tiflashRU)
+		require.Equal(t, int64(9), ruv2Metrics.TiKVCoprocessorResponseBytes())
 
-		postBaselineTiDBRU := ruv2Metrics.CalculateRUValues(weights)
-		ruDetails.AddRUV2(&kvrpcpb.RUV2{WriteRpcCount: 4})
-		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
-		expectedPendingRawDelta := ruv2Metrics.CalculateRUValues(weights) - postBaselineTiDBRU
-		require.Equal(t, expectedCursorDelta+expectedPendingRawDelta, reporter.tidbRUV2)
-
-		ruDetails.AddTiKVRUV2(7)
-		ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 5, WRU: 8})
-		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
-		require.Equal(t, "rg1", reporter.group)
-		require.Equal(t, float64(7), reporter.tikvRUV2)
-		require.Equal(t, float64(13), reporter.tiflashRU)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{CoprocessorResponseBytes: 4})
+		resultset.ReportCursorRUV2Delta(resultsetRS)
+		require.Equal(t, int64(13), ruv2Metrics.TiKVCoprocessorResponseBytes())
 	})
 
 	t.Run("cursor ruv2 bypass skips tracker creation", func(t *testing.T) {
-		reporter := &mockCursorRUV2ConsumptionReporter{}
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
 		ruv2Metrics := execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ruv2Metrics)
 		ruv2Metrics.SetBypass(true)
 		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
-		ruDetails.AddTiKVRUV2(11)
-		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, execdetails.RUV2Weights{})
+		tracker := resultset.NewCursorRUV2Tracker(ruv2Metrics, ruDetails)
 		require.Nil(t, tracker)
-		require.Empty(t, reporter.group)
-		require.Zero(t, reporter.tikvRUV2)
-		require.Zero(t, reporter.tidbRUV2)
-		require.Zero(t, reporter.tiflashRU)
 	})
 
 	t.Run("write chunks skips column access on first next error", func(t *testing.T) {
@@ -277,28 +258,6 @@ func TestCursorWithParams(t *testing.T) {
 		retryable, err := c.writeChunks(ctx, rs, false, mysql.ServerStatusAutocommit)
 		require.True(t, retryable)
 		require.ErrorContains(t, err, "first next failed")
-		require.Zero(t, execdetails.RUV2MetricsFromContext(ctx).ResultChunkCells())
-	})
-
-	t.Run("write chunks with fetch size records result chunk cells once", func(t *testing.T) {
-		store, dom := testkit.CreateMockStoreAndDomain(t)
-		srv := CreateMockServer(t, store)
-		srv.SetDomain(dom)
-		defer srv.Close()
-
-		c := CreateMockConn(t, srv).(*mockConn)
-		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
-		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-		require.NotNil(t, ruv2Metrics)
-
-		rs := resultset.New(&singleRowCursorRecordSet{}, nil)
-		cursorRS := resultset.WrapWithLazyCursor(rs, 1, 1)
-		tracker := resultset.NewCursorRUV2Tracker(nil, "", ruv2Metrics, nil, execdetails.RUV2Weights{})
-		resultset.AttachCursorRUV2Tracker(cursorRS, tracker)
-
-		err := c.writeChunksWithFetchSize(ctx, cursorRS, mysql.ServerStatusAutocommit, 1)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), ruv2Metrics.ResultChunkCells())
 	})
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -438,6 +397,84 @@ func TestMemoryTrackForPrepareBinaryProtocol(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
 }
 
+func TestShouldInstallConnectionAlive(t *testing.T) {
+	tests := []struct {
+		name       string
+		stmt       ast.StmtNode
+		autocommit bool
+		inTxn      bool
+		expected   bool
+	}{
+		{name: "autocommit DML", stmt: &ast.UpdateStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction DML", stmt: &ast.UpdateStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit select", stmt: &ast.SelectStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction select", stmt: &ast.SelectStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit do", stmt: &ast.DoStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction do", stmt: &ast.DoStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit off do", stmt: &ast.DoStmt{}, expected: true},
+		{name: "set", stmt: &ast.SetStmt{}, autocommit: true, expected: true},
+		{name: "begin", stmt: &ast.BeginStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction DDL", stmt: &ast.CreateTableStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "autocommit off DDL", stmt: &ast.CreateTableStmt{}, expected: false},
+		{name: "analyze", stmt: &ast.AnalyzeTableStmt{}, autocommit: true, expected: false},
+		{name: "load data", stmt: &ast.LoadDataStmt{}, autocommit: true, expected: false},
+		{name: "import into", stmt: &ast.ImportIntoStmt{}, autocommit: true, expected: false},
+		{name: "backup", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindBackup}, autocommit: true, expected: false},
+		{name: "restore", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindRestore}, autocommit: true, expected: false},
+		{name: "show BR job", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindShowJob}, autocommit: true, expected: true},
+		{name: "commit", stmt: &ast.CommitStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "rollback", stmt: &ast.RollbackStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "trace select", stmt: &ast.TraceStmt{Stmt: &ast.SelectStmt{}}, autocommit: true, expected: true},
+		{name: "trace analyze", stmt: &ast.TraceStmt{Stmt: &ast.AnalyzeTableStmt{}}, autocommit: true, expected: false},
+		{name: "trace load data", stmt: &ast.TraceStmt{Stmt: &ast.LoadDataStmt{}}, autocommit: true, expected: false},
+		{name: "trace commit", stmt: &ast.TraceStmt{Stmt: &ast.CommitStmt{}}, autocommit: true, inTxn: true, expected: false},
+		{name: "trace rollback", stmt: &ast.TraceStmt{Stmt: &ast.RollbackStmt{}}, autocommit: true, inTxn: true, expected: false},
+		{name: "explain DDL", stmt: &ast.ExplainStmt{Stmt: &ast.AlterTableStmt{}}, autocommit: true, expected: true},
+		{name: "explain import into", stmt: &ast.ExplainStmt{Stmt: &ast.ImportIntoStmt{}}, autocommit: true, expected: true},
+		{name: "explain analyze select", stmt: &ast.ExplainStmt{Stmt: &ast.SelectStmt{}, Analyze: true}, autocommit: true, expected: true},
+		{name: "explain analyze DDL", stmt: &ast.ExplainStmt{Stmt: &ast.AlterTableStmt{}, Analyze: true}, autocommit: true, expected: false},
+		{name: "explain analyze import into", stmt: &ast.ExplainStmt{Stmt: &ast.ImportIntoStmt{}, Analyze: true}, autocommit: true, expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessVars := variable.NewSessionVars(nil)
+			sessVars.SetStatusFlag(mysql.ServerStatusAutocommit, tt.autocommit)
+			sessVars.SetInTxn(tt.inTxn)
+			require.Equal(t, tt.expected, shouldInstallConnectionAlive(tt.stmt, sessVars))
+		})
+	}
+
+	t.Run("denylisted lazy result set", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		srv := CreateMockServer(t, store)
+		srv.SetDomain(dom)
+		defer srv.Close()
+
+		conn := CreateMockConn(t, srv).(*mockConn)
+		defer conn.Close()
+		sessVars := conn.Context().GetSessionVars()
+		rs := &connectionAliveCheckRecordSet{
+			check: func() {
+				require.Nil(t, sessVars.SQLKiller.IsConnectionAlive.Load())
+			},
+		}
+		conn.Context().Session = &executeStmtRecordSetSession{
+			Session:   conn.Context().Session,
+			recordSet: rs,
+		}
+
+		_, err := conn.clientConn.handleStmt(
+			context.Background(),
+			&ast.BRIEStmt{Kind: ast.BRIEKindBackup},
+			nil,
+			true,
+		)
+		require.NoError(t, err)
+		require.True(t, rs.nextCalled)
+	})
+}
+
 func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *clientConn)) []byte {
 	buf := bytes.NewBuffer([]byte{})
 	conn := &clientConn{
@@ -575,6 +612,93 @@ func dispatchSendLongData(c *mockConn, stmtID int, paramIndex uint16, parameter 
 			parameter..., // the parameter
 		),
 	)
+}
+
+func TestStmtSendLongDataMaxAllowedPacket(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+
+	stmt, _, _, err := c.Context().Prepare("select ?, ?")
+	require.NoError(t, err)
+
+	c.Context().GetSessionVars().MaxAllowedPacket = 1024
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'a'}, 1024)))
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 1, bytes.Repeat([]byte{'b'}, 1024)))
+	require.NoError(t, stmt.CheckLongDataSize())
+
+	err = dispatchSendLongData(c, stmt.ID(), 0, []byte{'c'})
+	require.NoError(t, err)
+	require.Len(t, stmt.BoundParams()[0], 1024)
+	require.Len(t, stmt.BoundParams()[1], 1024)
+
+	err = c.Dispatch(context.Background(), append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x0,
+	))
+	require.ErrorIs(t, err, servererr.ErrNetPacketTooLarge)
+	require.Nil(t, stmt.BoundParams()[0])
+	require.Nil(t, stmt.BoundParams()[1])
+	require.NoError(t, stmt.CheckLongDataSize())
+}
+
+func TestStmtSendLongDataMemQuotaQuery(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+
+	stmt, _, _, err := c.Context().Prepare("select ?")
+	require.NoError(t, err)
+
+	vars := c.Context().GetSessionVars()
+	vars.MaxAllowedPacket = 64 << 20
+	require.NoError(t, vars.SetSystemVar("tidb_mem_quota_query", "1024"))
+	require.Equal(t, int64(1024), vars.MemQuotaQuery)
+	require.Equal(t, int64(1024), vars.MemTracker.GetBytesLimit())
+
+	base := vars.MemTracker.BytesConsumed()
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'a'}, 600)))
+	require.Equal(t, base+600, vars.MemTracker.BytesConsumed())
+	require.Equal(t, int64(1024), vars.MemTracker.GetBytesLimit())
+	require.NoError(t, stmt.CheckLongDataSize())
+
+	// Further long-data that would reach/exceed tidb_mem_quota_query is refused.
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'b'}, 500)))
+	require.Equal(t, int64(1024), vars.MemTracker.GetBytesLimit())
+	require.Len(t, stmt.BoundParams()[0], 600)
+	require.Equal(t, base+600, vars.MemTracker.BytesConsumed())
+
+	err = c.Dispatch(context.Background(), append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x0,
+	))
+	require.Error(t, err)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err) ||
+		exeerrors.ErrMemoryExceedForQuery.Equal(errors.Cause(err)))
+	require.Equal(t, base, vars.MemTracker.BytesConsumed())
+
+	// After release, the session can accept long-data again within the quota.
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'c'}, 1023)))
+	require.Len(t, stmt.BoundParams()[0], 1023)
+	require.Equal(t, base+1023, vars.MemTracker.BytesConsumed())
+	require.NoError(t, stmt.Close())
+	require.Equal(t, base, vars.MemTracker.BytesConsumed())
 }
 
 func TestCursorFetchSendLongData(t *testing.T) {

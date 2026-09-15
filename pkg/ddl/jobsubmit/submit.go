@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -89,11 +90,15 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) erro
 
 	for _, spec := range specs {
 		job := spec.Job
+		job.NormalizeInvolvingSchemaInfo()
 		if err = job.CheckInvolvingSchemaInfo(); err != nil {
 			return err
 		}
 		intest.Assert(job.Version != 0, "Job version should not be zero")
-
+		if job.TraceInfo == nil {
+			// job scheduler expects TraceInfo to be non-nil.
+			job.TraceInfo = &tracing.TraceInfo{}
+		}
 		job.StartTS = startTS
 		job.BDRRole = bdrRole
 
@@ -248,6 +253,12 @@ func getRequiredGIDCount(specs []*JobSpec) int {
 			continue
 		}
 		switch spec.Job.Type {
+		case model.ActionCreateMaterializedViewLog:
+			args := spec.Args.(*model.CreateMaterializedViewLogArgs)
+			count += idCountForTable(args.TableInfo)
+		case model.ActionCreateMaterializedView:
+			args := spec.Args.(*model.CreateMaterializedViewArgs)
+			count += idCountForTable(args.TableInfo)
 		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
 			args := spec.Args.(*model.CreateTableArgs)
 			count += idCountForTable(args.TableInfo)
@@ -283,6 +294,18 @@ func assignGIDsForJobs(specs []*JobSpec, ids []int64) {
 	alloc := &gidAllocator{ids: ids}
 	for _, spec := range specs {
 		switch spec.Job.Type {
+		case model.ActionCreateMaterializedViewLog:
+			args := spec.Args.(*model.CreateMaterializedViewLogArgs)
+			if !spec.IDAllocated {
+				alloc.assignIDsForTable(args.TableInfo)
+			}
+			spec.Job.TableID = args.TableInfo.ID
+		case model.ActionCreateMaterializedView:
+			args := spec.Args.(*model.CreateMaterializedViewArgs)
+			if !spec.IDAllocated {
+				alloc.assignIDsForTable(args.TableInfo)
+			}
+			spec.Job.TableID = args.TableInfo.ID
 		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
 			args := spec.Args.(*model.CreateTableArgs)
 			if !spec.IDAllocated {
@@ -474,6 +497,24 @@ func job2TableIDs(spec *JobSpec) string {
 	case model.ActionTruncateTable:
 		newTableID := spec.Args.(*model.TruncateTableArgs).NewTableID
 		return strconv.FormatInt(spec.Job.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
+	case model.ActionCreateMaterializedView:
+		args := spec.Args.(*model.CreateMaterializedViewArgs)
+		if args != nil && len(args.MLogTableIDs) > 0 {
+			ids := make([]int64, 0, len(args.MLogTableIDs)+1)
+			ids = append(ids, spec.Job.TableID)
+			ids = append(ids, args.MLogTableIDs...)
+			return makeStringForIDs(ids)
+		}
+		return strconv.FormatInt(spec.Job.TableID, 10)
+	case model.ActionCreateMaterializedViewLog:
+		args := spec.Args.(*model.CreateMaterializedViewLogArgs)
+		if args != nil && args.TableInfo != nil && args.TableInfo.MaterializedViewLog != nil {
+			baseTableID := args.TableInfo.MaterializedViewLog.BaseTableID
+			if baseTableID > 0 {
+				return makeStringForIDs([]int64{spec.Job.TableID, baseTableID})
+			}
+		}
+		return strconv.FormatInt(spec.Job.TableID, 10)
 	default:
 		return strconv.FormatInt(spec.Job.TableID, 10)
 	}

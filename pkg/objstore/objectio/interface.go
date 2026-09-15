@@ -33,3 +33,18 @@ type Writer interface {
 	// Close writes final chunk and completes the upload
 	Close(ctx context.Context) error
 }
+
+// NewIOWriter adapts a context-carrying Writer to io.Writer, binding ctx once so
+// it can be handed to writers that expect the standard io.Writer interface.
+func NewIOWriter(ctx context.Context, w Writer) io.Writer {
+	return &ioWriter{ctx: ctx, w: w}
+}
+
+type ioWriter struct {
+	ctx context.Context
+	w   Writer
+}
+
+func (a *ioWriter) Write(p []byte) (int, error) {
+	return a.w.Write(a.ctx, p)
+}

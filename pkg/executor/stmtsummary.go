@@ -241,6 +241,11 @@ func (r *stmtSummaryRetrieverV2) initEvictedRowsReader(sctx sessionctx.Context) 
 }
 
 func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx sessionctx.Context) (*rowsReader, error) {
+	if isCumulativeTable(r.table.Name.O) {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"cumulative statement summary table with persistent mode (v2)")
+	}
+
 	vars := sctx.GetSessionVars()
 	user := vars.User
 	tz := vars.StmtCtx.TimeZone()

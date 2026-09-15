@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/httputil"
@@ -196,7 +195,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
 	flags.String(flagGranularity, string(restore.CoarseGrained), "(deprecated) Whether split & scatter regions using fine-grained way during restore")
-	flags.Uint(flagConcurrencyPerStore, 128, "The size of thread pool on each store that executes tasks")
+	flags.Uint(flagConcurrencyPerStore, conn.DefaultImportNumGoroutines, "The size of thread pool on each store that executes tasks")
 	flags.Uint32(flagConcurrency, 128, "(deprecated) The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
@@ -329,6 +328,8 @@ type RestoreConfig struct {
 	RestoreRegistry               *registry.Registry              `json:"-" toml:"-"`
 
 	WaitTiflashReady bool `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
+	// snapshotRestoreDataSize records the filtered snapshot files restored before PITR log restore.
+	snapshotRestoreDataSize uint64
 
 	// PITR-related fields for blocklist creation
 	// RestoreStartTS is the timestamp when the restore operation began (before any table creation).
@@ -420,7 +421,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 		" default is true, the incremental restore will not perform rewrite on the incremental data"+
 		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
 		" these ddl jobs are Add index, Modify column and Reorganize partition")
-	flags.Bool(FlagSysCheckCollation, false, "whether check the privileges table rows to permit to restore the privilege data"+
+	flags.Bool(FlagSysCheckCollation, true, "whether check the privileges table rows to permit to restore the privilege data"+
 		" from utf8mb4_bin collate column to utf8mb4_general_ci collate column")
 	flags.Uint(FlagSplitRegionIndexStep, restoresplit.DefaultRegionIndexStep,
 		"number of split-key indexes between two rough split keys during snapshot restore.")
@@ -999,6 +1000,17 @@ func printRestoreMetrics() {
 	log.Info("Metric: upload_sst_meta_for_pitr_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreUploadSSTMetaForPiTRSeconds)))
 }
 
+func checkSnapshotRestoreMode(ctx context.Context, cfg *RestoreConfig) error {
+	_, _, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
+		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
+	}
+	return nil
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
 	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
@@ -1029,6 +1041,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = cfg.KeyspaceName
 	})
+
+	// Perform this check early (before NewMgr and the main restore flow) so we fail
+	// fast instead of running heavier logic first and checking afterward.
+	if !IsStreamRestore(cmdName) {
+		if err := checkSnapshotRestoreMode(c, cfg); err != nil {
+			return err
+		}
+	}
 
 	// TODO: remove version checker from `NewMgr`
 	mgr, err := NewMgr(c, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NormalVersionChecker)
@@ -1614,6 +1634,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR, client.IsIncremental())
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
+	cfg.snapshotRestoreDataSize = archiveSize
 	// some more checks once we get tables and files information
 	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr, tables, archiveSize, isPiTR); err != nil {
 		return errors.Trace(err)
@@ -1666,7 +1687,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if isPiTR && cfg.tableMappingManager != nil {
 			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
 		}
-		keyRange := rewriteKeyRanges(preAllocRange)
+		keyRange := rewriteKeyRanges(mgr.GetStorage().GetCodec(), preAllocRange)
 		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
 			ctx, mgr, importModeSwitcher, keyRange, !cfg.Online)
 	}
@@ -1685,7 +1706,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to restore pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 		log.Info("finish restoring pd scheduler")
 	}()
 
@@ -1768,7 +1789,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder, isNextGenRestore)
+	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder, isNextGenRestore,
+		readColumnarStorageEnabledForLog(mgr.GetDomain()))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1978,6 +2000,26 @@ func checkPreallocIDReusable(ctx context.Context, cfg *SnapshotRestoreConfig, ha
 		return nil, errors.Trace(errors.Annotatef(berrors.ErrRestoreCheckpointMismatch, "checkpoint hash mismatch, please use the same setting as the previous restore"))
 	}
 	return checkpointMeta.PreallocIDs, nil
+}
+
+func adjustRestoreConcurrencyPerStoreFromTiKV(ctx context.Context, mgr *conn.Mgr, cfg *RestoreConfig) {
+	kvConfigs := &pconfig.KVConfig{
+		ImportGoroutines: cfg.ConcurrencyPerStore,
+		MergeRegionSize: pconfig.ConfigTerm[uint64]{
+			Modified: true,
+		},
+		MergeRegionKeyCount: pconfig.ConfigTerm[uint64]{
+			Modified: true,
+		},
+	}
+	httpCli := httputil.NewClient(mgr.GetTLSConfig())
+	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
+	cfg.ConcurrencyPerStore = markRestoreConcurrencyPerStoreAdjusted(kvConfigs.ImportGoroutines)
+}
+
+func markRestoreConcurrencyPerStoreAdjusted(concurrency pconfig.ConfigTerm[uint]) pconfig.ConfigTerm[uint] {
+	concurrency.Modified = true
+	return concurrency
 }
 
 func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
@@ -2454,16 +2496,33 @@ func getTiFlashNodeCount(ctx context.Context, pdClient pd.Client) (uint64, error
 	return uint64(len(tiFlashStores)), nil
 }
 
+// readColumnarStorageEnabledForLog reads tidb_columnar_storage_enabled for diagnostic logs.
+// The value is loaded via the BR-embedded Domain sysvar cache (cluster storage). Failures
+// are reported as "unavailable".
+func readColumnarStorageEnabledForLog(dom *domain.Domain) string {
+	if dom == nil {
+		return "unavailable"
+	}
+	val, err := dom.GetGlobalVar(vardef.TiDBColumnarStorageEnabled)
+	if err != nil {
+		return "unavailable"
+	}
+	return val
+}
+
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
+// columnarStorageEnabled is diagnostic-only for Next-Gen warn logs.
 func PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	pdClient pd.Client,
 	tables []*metautil.Table,
 	recorder *tiflashrec.TiFlashRecorder,
 	isNextGenRestore bool,
+	columnarStorageEnabled string,
 ) error {
 	if isNextGenRestore {
-		log.Warn("Restoring to NextGen TiFlash is experimental. TiFlash replicas are disabled; please reset them manually after restore.")
+		log.Warn("Restoring to NextGen TiFlash is experimental. TiFlash replicas are disabled; please reset them manually after restore.",
+			zap.String("tidb_columnar_storage_enabled", columnarStorageEnabled))
 		for _, tbl := range tables {
 			if tbl == nil || tbl.Info == nil {
 				// unreachable
@@ -2654,12 +2713,14 @@ func encodeCompactAndCheckKey(codec tikv.Codec, preAlloced [2]int64) ([]byte, []
 	return codec.EncodeRange(checkStartKey, checkEndKey)
 }
 
-func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {
+func rewriteKeyRanges(codec tikv.Codec, preAlloced [2]int64) [][2]kv.Key {
 	if preAlloced == [2]int64{} {
 		return nil
 	}
-	startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[0]))
-	endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[1]))
+	startKey, endKey := codec.EncodeRegionRange(
+		tablecodec.EncodeTablePrefix(preAlloced[0]),
+		tablecodec.EncodeTablePrefix(preAlloced[1]),
+	)
 
 	return [][2]kv.Key{{startKey, endKey}}
 }

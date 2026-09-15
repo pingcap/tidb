@@ -11,6 +11,7 @@ go_library(
         "optional.go",
         "priv.go",
         "sequence.go",
+        "sessioncontext.go",
         "sessionvars.go",
         "sqlexec.go",
     ],

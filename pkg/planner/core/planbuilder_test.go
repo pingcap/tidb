@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -85,6 +86,7 @@ func TestShow(t *testing.T) {
 		ast.ShowMasterStatus,
 		ast.ShowBackups,
 		ast.ShowRestores,
+		ast.ShowStorageClassTransitions,
 	}
 	for _, tp := range tps {
 		node.Tp = tp
@@ -93,6 +95,20 @@ func TestShow(t *testing.T) {
 			require.Greater(t, col.RetType.GetFlen(), 0)
 		}
 	}
+
+	node.Tp = ast.ShowStorageClassTransitions
+	schema, names := buildShowSchema(node, false, false)
+	datetimeColumns := 0
+	for i, name := range names {
+		if name.ColName.O != "START_TIME" && name.ColName.O != "LAST_UPDATE_TIME" {
+			continue
+		}
+		datetimeColumns++
+		require.Equal(t, mysql.TypeDatetime, schema.Columns[i].RetType.GetType())
+		require.Equal(t, 26, schema.Columns[i].RetType.GetFlen())
+		require.Equal(t, types.MaxFsp, schema.Columns[i].RetType.GetDecimal())
+	}
+	require.Equal(t, 2, datetimeColumns)
 }
 
 func TestGetPathByIndexName(t *testing.T) {
@@ -710,6 +726,41 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
+	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
+	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
+	defer func() {
+		vardef.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		vardef.AnalyzeDefaultNumTopN.Store(origTopN)
+	}()
+
+	vardef.AnalyzeDefaultNumBuckets.Store(512)
+	vardef.AnalyzeDefaultNumTopN.Store(150)
+
+	optMap, err := handleAnalyzeOptions(nil)
+	require.NoError(t, err)
+	require.Empty(t, optMap)
+
+	filledMap := fillAnalyzeOptions(optMap)
+	require.Equal(t, uint64(512), filledMap[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
+
+	testDefaults := AnalyzeOptionDefault()
+	require.Equal(t, uint64(512), testDefaults[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), testDefaults[ast.AnalyzeOptNumTopN])
+
+	optMap, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{
+			Type:  ast.AnalyzeOptNumBuckets,
+			Value: ast.NewValueExpr(1024, "", ""),
+		},
+	})
+	require.NoError(t, err)
+	filledMap = fillAnalyzeOptions(optMap)
+	require.Equal(t, uint64(1024), filledMap[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
+}
+
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer func() {
@@ -956,7 +1007,7 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 
 			checker := newImportIntoCollAssignmentChecker()
 			checker.idx = i
-			expr.Accept(checker)
+			ast.Walk(expr, checker)
 			if c.error != "" {
 				require.EqualError(t, checker.err, fmt.Sprintf("%s, index %d", c.error, i), c.expr)
 			} else {

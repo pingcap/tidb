@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -71,8 +72,6 @@ import (
 )
 
 const (
-	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey             = "/tidb/ddl/fg/owner"
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
@@ -172,9 +171,9 @@ const (
 )
 
 var (
-	// EnableSplitTableRegion is a flag to decide whether to split a new region for
-	// a newly created table. It takes effect only if the Storage supports split
-	// region.
+	// EnableSplitTableRegion controls whether to split a new Region for a newly
+	// created table without pre-split configuration or Region split policies. It
+	// takes effect only if the Storage supports splitting Regions.
 	EnableSplitTableRegion = uint32(0)
 )
 
@@ -201,6 +200,8 @@ type DDL interface {
 	GetID() string
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
+	// StorageClassTransitionStatuses returns active explicit storage-class operation statuses.
+	StorageClassTransitionStatuses() []StorageClassTransitionStatus
 }
 
 type jobSubmitResult struct {
@@ -266,12 +267,13 @@ type ddl struct {
 	wg tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 
 	*ddlCtx
-	sessPool          *sess.Pool
-	delRangeMgr       delRangeManager
-	enableTiFlashPoll *atomicutil.Bool
-	sysTblMgr         systable.Manager
-	minJobIDRefresher *systable.MinJobIDRefresher
-	eventPublishStore notifier.Store
+	sessPool                      *sess.Pool
+	delRangeMgr                   delRangeManager
+	enableTiFlashPoll             *atomicutil.Bool
+	sysTblMgr                     systable.Manager
+	minJobIDRefresher             *systable.MinJobIDRefresher
+	eventPublishStore             notifier.Store
+	storageClassTransitionManager *storageClassTransitionManager
 
 	executor     *executor
 	jobSubmitter *JobSubmitter
@@ -350,6 +352,7 @@ type ddlCtx struct {
 	etcdCli      *clientv3.Client
 	autoidCli    *autoid.ClientDiscover
 	schemaLoader SchemaLoader
+	extWorkload  extworkload.Manager
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
@@ -749,7 +752,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		id = uuid.New().String()
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and memSyncer.
-		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
+		manager = owner.NewMockManager(ctx, id, opt.Store, util.DDLOwnerKey)
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
@@ -782,6 +785,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		etcdCli:           opt.EtcdCli,
 		autoidCli:         opt.AutoIDClient,
 		schemaLoader:      opt.SchemaLoader,
+		extWorkload:       opt.ExtWorkloadMgr,
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*ReorgContext)
@@ -793,6 +797,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		eventPublishStore: opt.EventPublishStore,
 	}
+	d.storageClassTransitionManager = newStorageClassTransitionManager(d)
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
@@ -804,7 +809,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			return newLitBackfillScheduler(ctx, d, task, param)
 		})
-	scheduler.RegisterSchedulerCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
+	scheduler.RegisterCleanerFactory(proto.Backfill, newBackfillCleaner)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
@@ -1478,16 +1483,39 @@ func resumePausedJob(job *model.Job,
 			job.State, job.SchemaState)
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
-	// The Paused job should only be resumed by who paused it
-	if job.AdminOperator != byWho {
+	// The Paused job should only be resumed by who paused it, except system
+	// pauses with a reason that explicitly allows end-user recovery.
+	if job.AdminOperator != byWho && !canEndUserResumeSystemPausedJob(job, byWho) {
 		errMsg := fmt.Sprintf("job has been paused by [%s], should not resumed by [%s]",
 			job.AdminOperator.String(), byWho.String())
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
 
+	resumeFromKVDiskFullByEndUser := byWho == model.AdminCommandByEndUser && job.IsPausedBySystemForKVDiskFull()
 	job.State = model.JobStateQueueing
+	job.ClearPauseReason()
+	job.Error = nil
+	if resumeFromKVDiskFullByEndUser {
+		job.SetResumeReason(model.JobResumeReasonKVDiskFull)
+	} else {
+		job.ClearResumeReason()
+	}
 
 	return nil
+}
+
+// resumePausedJobForUpgradeFinish resumes jobs paused for upgrade, but leaves
+// resource-protection pauses for explicit user recovery.
+func resumePausedJobForUpgradeFinish(job *model.Job,
+	byWho model.AdminCommandOperator) error {
+	if job.IsPausedBySystemForKVDiskFull() {
+		return nil
+	}
+	return resumePausedJob(job, byWho)
+}
+
+func canEndUserResumeSystemPausedJob(job *model.Job, byWho model.AdminCommandOperator) bool {
+	return byWho == model.AdminCommandByEndUser && job.IsPausedBySystemForKVDiskFull()
 }
 
 // processJobs command on the Job according to the process
@@ -1679,7 +1707,7 @@ func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
 
 // ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.
 func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(context.Background(), resumePausedJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), resumePausedJobForUpgradeFinish, se, model.AdminCommandBySystem)
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.

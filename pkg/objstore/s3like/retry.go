@@ -50,6 +50,7 @@ var (
 // Retryer implements aws.Retryer for TiDB-specific retry logic
 type Retryer struct {
 	standardRetryer StandardRetryer
+	suppressLog     func(error) bool
 }
 
 var (
@@ -64,14 +65,24 @@ func NewRetryer(inner StandardRetryer) *Retryer {
 	}
 }
 
+// WithLogSuppressor configures the Retryer to skip retryability warnings for
+// errors matched by suppressLog.
+func (tr *Retryer) WithLogSuppressor(suppressLog func(error) bool) *Retryer {
+	tr.suppressLog = suppressLog
+	return tr
+}
+
 // IsErrorRetryable implements the aws.Retryer interface.
 func (tr *Retryer) IsErrorRetryable(err error) bool {
 	var isRetryable bool
 	defer func() {
-		log.Warn("failed to request s3, checking whether we can retry", zap.Error(err), zap.Bool("retry", isRetryable))
 		if isRetryable {
 			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		}
+		if err != nil && tr.suppressLog != nil && tr.suppressLog(err) {
+			return
+		}
+		log.Warn("failed to request s3, checking whether we can retry", zap.Error(err), zap.Bool("retry", isRetryable))
 	}()
 
 	// for unit test

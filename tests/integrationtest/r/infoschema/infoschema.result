@@ -183,8 +183,7 @@ select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table
 TABLE_NAME	PARTITION_NAME
 explain format='brief' select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
-Projection	10000.00	root		Column#3, Column#4
-└─MemTableScan	10000.00	root	table:PARTITIONS	table_schema:["infoschema__infoschema"], table_name_pattern:[pt0]
+MemTableScan	10000.00	root	table:PARTITIONS	table_schema:["infoschema__infoschema"], table_name_pattern:[pt0]
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 TABLE_NAME	PARTITION_NAME
 drop table pt1;

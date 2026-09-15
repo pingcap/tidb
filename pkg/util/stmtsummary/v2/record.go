@@ -15,7 +15,6 @@
 package stmtsummary
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"strings"
@@ -77,26 +76,33 @@ type StmtRecord struct {
 	MaxCopWaitTime       time.Duration `json:"max_cop_wait_time"`
 	MaxCopWaitAddress    string        `json:"max_cop_wait_address"`
 	// TiKV
-	SumProcessTime               time.Duration `json:"sum_process_time"`
-	MaxProcessTime               time.Duration `json:"max_process_time"`
-	SumWaitTime                  time.Duration `json:"sum_wait_time"`
-	MaxWaitTime                  time.Duration `json:"max_wait_time"`
-	SumBackoffTime               time.Duration `json:"sum_backoff_time"`
-	MaxBackoffTime               time.Duration `json:"max_backoff_time"`
-	SumTotalKeys                 int64         `json:"sum_total_keys"`
-	MaxTotalKeys                 int64         `json:"max_total_keys"`
-	SumProcessedKeys             int64         `json:"sum_processed_keys"`
-	MaxProcessedKeys             int64         `json:"max_processed_keys"`
-	SumRocksdbDeleteSkippedCount uint64        `json:"sum_rocksdb_delete_skipped_count"`
-	MaxRocksdbDeleteSkippedCount uint64        `json:"max_rocksdb_delete_skipped_count"`
-	SumRocksdbKeySkippedCount    uint64        `json:"sum_rocksdb_key_skipped_count"`
-	MaxRocksdbKeySkippedCount    uint64        `json:"max_rocksdb_key_skipped_count"`
-	SumRocksdbBlockCacheHitCount uint64        `json:"sum_rocksdb_block_cache_hit_count"`
-	MaxRocksdbBlockCacheHitCount uint64        `json:"max_rocksdb_block_cache_hit_count"`
-	SumRocksdbBlockReadCount     uint64        `json:"sum_rocksdb_block_read_count"`
-	MaxRocksdbBlockReadCount     uint64        `json:"max_rocksdb_block_read_count"`
-	SumRocksdbBlockReadByte      uint64        `json:"sum_rocksdb_block_read_byte"`
-	MaxRocksdbBlockReadByte      uint64        `json:"max_rocksdb_block_read_byte"`
+	SumProcessTime                 time.Duration `json:"sum_process_time"`
+	MaxProcessTime                 time.Duration `json:"max_process_time"`
+	SumWaitTime                    time.Duration `json:"sum_wait_time"`
+	MaxWaitTime                    time.Duration `json:"max_wait_time"`
+	SumBackoffTime                 time.Duration `json:"sum_backoff_time"`
+	MaxBackoffTime                 time.Duration `json:"max_backoff_time"`
+	SumTotalKeys                   int64         `json:"sum_total_keys"`
+	MaxTotalKeys                   int64         `json:"max_total_keys"`
+	SumProcessedKeys               int64         `json:"sum_processed_keys"`
+	MaxProcessedKeys               int64         `json:"max_processed_keys"`
+	SumRocksdbDeleteSkippedCount   uint64        `json:"sum_rocksdb_delete_skipped_count"`
+	MaxRocksdbDeleteSkippedCount   uint64        `json:"max_rocksdb_delete_skipped_count"`
+	SumRocksdbKeySkippedCount      uint64        `json:"sum_rocksdb_key_skipped_count"`
+	MaxRocksdbKeySkippedCount      uint64        `json:"max_rocksdb_key_skipped_count"`
+	SumRocksdbBlockCacheHitCount   uint64        `json:"sum_rocksdb_block_cache_hit_count"`
+	MaxRocksdbBlockCacheHitCount   uint64        `json:"max_rocksdb_block_cache_hit_count"`
+	SumRocksdbBlockReadCount       uint64        `json:"sum_rocksdb_block_read_count"`
+	MaxRocksdbBlockReadCount       uint64        `json:"max_rocksdb_block_read_count"`
+	SumRocksdbBlockReadByte        uint64        `json:"sum_rocksdb_block_read_byte"`
+	MaxRocksdbBlockReadByte        uint64        `json:"max_rocksdb_block_read_byte"`
+	IAExecCount                    int64         `json:"ia_remote_exec_count"`
+	SumIARemoteReadSegmentCount    uint64        `json:"sum_ia_remote_read_segment_count"`
+	MaxIARemoteReadSegmentCount    uint64        `json:"max_ia_remote_read_segment_count"`
+	SumIARemoteReadSegmentSize     uint64        `json:"sum_ia_remote_read_segment_size"`
+	MaxIARemoteReadSegmentSize     uint64        `json:"max_ia_remote_read_segment_size"`
+	SumIARemoteReadSegmentWaitTime time.Duration `json:"sum_ia_remote_read_segment_wait_time"`
+	MaxIARemoteReadSegmentWaitTime time.Duration `json:"max_ia_remote_read_segment_wait_time"`
 	// Txn
 	CommitCount          int64               `json:"commit_count"`
 	SumGetCommitTsTime   time.Duration       `json:"sum_get_commit_ts_time"`
@@ -174,20 +180,19 @@ type StmtRecord struct {
 // statistics of the StmtExecInfo into the StmtRecord.
 func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	// Use "," to separate table names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range info.StmtCtx.Tables {
+	var tableNames strings.Builder
+	for _, value := range info.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		buffer.WriteString(strings.ToLower(value.DB))
-		buffer.WriteString(".")
-		buffer.WriteString(strings.ToLower(value.Table))
-		if i < len(info.StmtCtx.Tables)-1 {
-			buffer.WriteString(",")
+		if tableNames.Len() > 0 {
+			tableNames.WriteByte(',')
 		}
+		tableNames.WriteString(strings.ToLower(value.DB))
+		tableNames.WriteByte('.')
+		tableNames.WriteString(strings.ToLower(value.Table))
 	}
-	tableNames := buffer.String()
 	planDigest := info.PlanDigest
 	if len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
@@ -209,8 +214,8 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		Digest:        info.Digest,
 		PlanDigest:    planDigest,
 		StmtType:      info.StmtCtx.StmtType,
-		NormalizedSQL: info.NormalizedSQL,
-		TableNames:    tableNames,
+		NormalizedSQL: formatSQL(info.NormalizedSQL),
+		TableNames:    tableNames.String(),
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
 		BindingDigest: bindingDigest,
@@ -319,6 +324,22 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		r.SumRocksdbBlockReadByte += info.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		if info.ExecDetail.ScanDetail.RocksdbBlockReadByte > r.MaxRocksdbBlockReadByte {
 			r.MaxRocksdbBlockReadByte = info.ExecDetail.ScanDetail.RocksdbBlockReadByte
+		}
+		iaStats := execdetails.GetIARemoteReadSegmentStats(info.ExecDetail.ScanDetail)
+		if iaStats.Count > 0 {
+			r.IAExecCount++
+		}
+		r.SumIARemoteReadSegmentCount += iaStats.Count
+		if iaStats.Count > r.MaxIARemoteReadSegmentCount {
+			r.MaxIARemoteReadSegmentCount = iaStats.Count
+		}
+		r.SumIARemoteReadSegmentSize += iaStats.Bytes
+		if iaStats.Bytes > r.MaxIARemoteReadSegmentSize {
+			r.MaxIARemoteReadSegmentSize = iaStats.Bytes
+		}
+		r.SumIARemoteReadSegmentWaitTime += iaStats.WaitTime
+		if iaStats.WaitTime > r.MaxIARemoteReadSegmentWaitTime {
+			r.MaxIARemoteReadSegmentWaitTime = iaStats.WaitTime
 		}
 	}
 	// Txn
@@ -524,6 +545,19 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumRocksdbBlockReadByte += other.SumRocksdbBlockReadByte
 	if r.MaxRocksdbBlockReadByte < other.MaxRocksdbBlockReadByte {
 		r.MaxRocksdbBlockReadByte = other.MaxRocksdbBlockReadByte
+	}
+	r.IAExecCount += other.IAExecCount
+	r.SumIARemoteReadSegmentCount += other.SumIARemoteReadSegmentCount
+	if r.MaxIARemoteReadSegmentCount < other.MaxIARemoteReadSegmentCount {
+		r.MaxIARemoteReadSegmentCount = other.MaxIARemoteReadSegmentCount
+	}
+	r.SumIARemoteReadSegmentSize += other.SumIARemoteReadSegmentSize
+	if r.MaxIARemoteReadSegmentSize < other.MaxIARemoteReadSegmentSize {
+		r.MaxIARemoteReadSegmentSize = other.MaxIARemoteReadSegmentSize
+	}
+	r.SumIARemoteReadSegmentWaitTime += other.SumIARemoteReadSegmentWaitTime
+	if r.MaxIARemoteReadSegmentWaitTime < other.MaxIARemoteReadSegmentWaitTime {
+		r.MaxIARemoteReadSegmentWaitTime = other.MaxIARemoteReadSegmentWaitTime
 	}
 	// Txn
 	r.CommitCount += other.CommitCount

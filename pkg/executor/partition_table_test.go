@@ -1502,6 +1502,42 @@ func TestSplitRegion(t *testing.T) {
 	tk.MustPartition(`select * from thash where a in (1, 10001, 20001)`, "p1").Sort().Check(result)
 }
 
+func TestParallelApplyWithLimitOnRangeColumnsPartition(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_enable_parallel_apply = 1")
+	tk.MustExec("set @@tidb_executor_concurrency = 2")
+	tk.MustExec(`create table t_outer (
+		join_id varchar(32) not null,
+		part_col int not null,
+		payload varchar(32),
+		key idx_outer_join(join_id)
+	)`)
+	tk.MustExec(`create table t_part (
+		part_col int not null,
+		join_id varchar(32) not null,
+		filter_col varchar(32) not null,
+		metric decimal(35,15),
+		seq_id bigint not null,
+		row_key varchar(32) not null,
+		primary key (part_col, seq_id, row_key, filter_col, join_id) nonclustered,
+		key idx_join_filter_part(join_id, filter_col, part_col)
+	) partition by range columns (part_col) (partition p0 values less than (100))`)
+	tk.MustExec("insert into t_outer values ('key1', 10, 'payload1')")
+	tk.MustExec("insert into t_part values (10, 'key1', 'flag1', 0.001, 1, 'row1')")
+
+	sql := `select payload from t_outer o where ifnull((
+		select s.metric from t_part s use index(idx_join_filter_part)
+		where s.join_id = o.join_id and s.part_col = o.part_col and s.filter_col = 'flag1'
+		limit 1), 0) < 0.01`
+	tk.MustHavePlan(sql, "IndexLookUp")
+	tk.MustQuery(sql).Check(testkit.Rows("payload1"))
+}
+
 func TestParallelApply(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 

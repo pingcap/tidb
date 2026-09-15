@@ -307,6 +307,7 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	clonedScan.AccessCondition = util.CloneExprs(p.AccessCondition)
 	clonedScan.FilterCondition = util.CloneExprs(p.FilterCondition)
 	clonedScan.LateMaterializationFilterCondition = util.CloneExprs(p.LateMaterializationFilterCondition)
+	clonedScan.PlanPartInfo = p.PlanPartInfo.Clone()
 	if p.Table != nil {
 		clonedScan.Table = p.Table.Clone()
 	}

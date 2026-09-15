@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -343,7 +344,23 @@ func CastColumnValueWithStrictMode(val types.Datum, tp *types.FieldType) (casted
 // CastColumnValue casts a value based on column type with expression BuildContext
 func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	evalCtx := ctx.GetEvalCtx()
-	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, &col.FieldType, col.Name.O, ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
+	ft := &col.FieldType
+	needsLegacyEnumSetCollationOverride := (ft.GetType() == mysql.TypeEnum || ft.GetType() == mysql.TypeSet) &&
+		!ctx.NewCollationEnabled() && collate.NewCollationEnabled()
+	if needsLegacyEnumSetCollationOverride {
+		// The conversion layer reads the process-global mode, so override the collation when a legacy task
+		// runs on a new-collation executor. Legacy ENUM/SET element matching is binary.
+		ft = ft.Clone()
+		ft.SetCollate(charset.CollationBin)
+	}
+	casted, err = castColumnValue(
+		evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, ft,
+		col.Name.O, ctx.ConnectionID(), returnErr, forceIgnoreTruncate,
+	)
+	if needsLegacyEnumSetCollationOverride {
+		casted.SetCollation(col.GetCollate())
+	}
+	return casted, err
 }
 
 // castColumnValue casts a value based on column type.

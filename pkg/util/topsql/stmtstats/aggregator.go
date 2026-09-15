@@ -177,10 +177,15 @@ func (m *aggregator) drainAndPushRU() {
 // register binds StatementStats to aggregator.
 // register is thread-safe.
 func (m *aggregator) register(stats *StatementStats) {
-	if m.statsLen.Load() > maxStmtStatsSize {
-		return
+	for {
+		current := m.statsLen.Load()
+		if current >= maxStmtStatsSize {
+			return
+		}
+		if m.statsLen.CompareAndSwap(current, current+1) {
+			break
+		}
 	}
-	m.statsLen.Inc()
 	m.statsSet.Store(stats, struct{}{})
 }
 
