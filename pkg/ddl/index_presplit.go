@@ -81,8 +81,8 @@ func preSplitIndexRegions(
 		var skipReason string
 		if idxArg.AutoPreSplit {
 			splitResult, skipReason, err = autoPreSplitIndexRegion(
-				autoPreSplitCtx, sctx, store, tblInfo, idxInfo, statsProvider,
-				autoPreSplitBoundaryCache, splitOnTempIdx)
+				autoPreSplitCtx, sctx, exprCtx.GetEvalCtx(), store, tblInfo, idxInfo,
+				statsProvider, autoPreSplitBoundaryCache, splitOnTempIdx)
 		} else {
 			splitArgs, evalErr := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
 			if evalErr != nil {
@@ -91,7 +91,11 @@ func preSplitIndexRegions(
 			if splitArgs == nil {
 				continue
 			}
-			splitKeys, buildErr := getSplitIdxKeys(sctx, tblInfo, idxInfo, splitArgs)
+			// Encode with the context that evaluated the values, so the time zone and the
+			// error levels are the submitting session's, from the reorg meta, and not the
+			// DDL worker session's.
+			splitKeys, buildErr := getSplitIdxKeys(
+				exprCtx.GetEvalCtx(), tblInfo, idxInfo, splitArgs)
 			if buildErr != nil {
 				return errors.Trace(buildErr)
 			}
@@ -135,6 +139,7 @@ func preSplitIndexRegions(
 func autoPreSplitIndexRegion(
 	ctx context.Context,
 	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	store kv.Storage,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
@@ -143,7 +148,7 @@ func autoPreSplitIndexRegion(
 	splitOnTempIdx bool,
 ) (splitResult splitIndexRegionResult, skipReason string, err error) {
 	plan, err := planAutoPreSplitWithCache(
-		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPreSplitConfig(), boundaryCache)
+		ctx, sctx, evalCtx, statsProvider, tblInfo, idxInfo, getAutoPreSplitConfig(), boundaryCache)
 	if err != nil {
 		return splitIndexRegionResult{}, "", err
 	}
@@ -188,23 +193,29 @@ type splitArgs struct {
 	regionsCnt   int
 }
 
+// getSplitIdxKeys builds the index keys to split at, encoding with evalCtx;
+// see getSplitIdxKeysFromValueList.
 func getSplitIdxKeys(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	args *splitArgs,
 ) ([][]byte, error) {
 	// Split index regions by user specified value lists.
 	if len(args.byRows) > 0 {
-		return getSplitIdxKeysFromValueList(sctx, tblInfo, idxInfo, args.byRows)
+		return getSplitIdxKeysFromValueList(evalCtx, tblInfo, idxInfo, args.byRows)
 	}
 
 	return getSplitIdxKeysFromBound(
-		sctx, tblInfo, idxInfo, args.betweenLower, args.betweenUpper, args.regionsCnt)
+		evalCtx, tblInfo, idxInfo, args.betweenLower, args.betweenUpper, args.regionsCnt)
 }
 
+// getSplitIdxKeysFromValueList encodes byRows into index keys. An index key holds a TIMESTAMP in
+// UTC, so evalCtx has to be the context the values were produced in for GenIndexKey to normalize
+// them: the context that evaluated the statement's values for a manual `SPLIT ... BY`, and the
+// reorg context for auto pre-split, whose values were interpreted in that same context.
 func getSplitIdxKeysFromValueList(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	byRows [][]types.Datum,
@@ -212,17 +223,17 @@ func getSplitIdxKeysFromValueList(
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		destKeys = make([][]byte, 0, len(byRows)+1)
-		return getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, tblInfo.ID, byRows, destKeys)
+		return getSplitIdxPhysicalKeysFromValueList(evalCtx, tblInfo, idxInfo, tblInfo.ID, byRows, destKeys)
 	}
 
 	if idxInfo.Global {
 		destKeys = make([][]byte, 0, len(byRows)+1)
-		return getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, tblInfo.ID, byRows, destKeys)
+		return getSplitIdxPhysicalKeysFromValueList(evalCtx, tblInfo, idxInfo, tblInfo.ID, byRows, destKeys)
 	}
 
 	destKeys = make([][]byte, 0, (len(byRows)+1)*len(pi.Definitions))
 	for _, p := range pi.Definitions {
-		destKeys, err = getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, p.ID, byRows, destKeys)
+		destKeys, err = getSplitIdxPhysicalKeysFromValueList(evalCtx, tblInfo, idxInfo, p.ID, byRows, destKeys)
 		if err != nil {
 			return nil, err
 		}
@@ -231,7 +242,7 @@ func getSplitIdxKeysFromValueList(
 }
 
 func getSplitIdxPhysicalKeysFromValueList(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	physicalID int64,
@@ -243,9 +254,9 @@ func getSplitIdxPhysicalKeysFromValueList(
 	if err != nil {
 		return nil, err
 	}
-	sc := sctx.GetSessionVars().StmtCtx
+	ec, loc := evalCtx.ErrCtx(), evalCtx.Location()
 	for _, v := range splitDatum {
-		idxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), v, kv.IntHandle(math.MinInt64), nil)
+		idxKey, _, err := index.GenIndexKey(ec, loc, v, kv.IntHandle(math.MinInt64), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -274,7 +285,7 @@ func getSplitIdxPhysicalStartAndOtherIdxKeys(
 }
 
 func getSplitIdxKeysFromBound(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	lower, upper []types.Datum,
@@ -284,12 +295,12 @@ func getSplitIdxKeysFromBound(
 	if pi == nil {
 		keys = make([][]byte, 0, splitNum)
 		return getSplitIdxPhysicalKeysFromBound(
-			sctx, tblInfo, idxInfo, tblInfo.ID, lower, upper, splitNum, keys)
+			evalCtx, tblInfo, idxInfo, tblInfo.ID, lower, upper, splitNum, keys)
 	}
 	keys = make([][]byte, 0, splitNum*len(pi.Definitions))
 	for _, p := range pi.Definitions {
 		keys, err = getSplitIdxPhysicalKeysFromBound(
-			sctx, tblInfo, idxInfo, p.ID, lower, upper, splitNum, keys)
+			evalCtx, tblInfo, idxInfo, p.ID, lower, upper, splitNum, keys)
 		if err != nil {
 			return nil, err
 		}
@@ -298,7 +309,7 @@ func getSplitIdxKeysFromBound(
 }
 
 func getSplitIdxPhysicalKeysFromBound(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	physicalID int64,
@@ -312,14 +323,14 @@ func getSplitIdxPhysicalKeysFromBound(
 		return nil, err
 	}
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
-	sc := sctx.GetSessionVars().StmtCtx
-	lowerIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), lower, kv.IntHandle(math.MinInt64), nil)
+	ec, loc := evalCtx.ErrCtx(), evalCtx.Location()
+	lowerIdxKey, _, err := index.GenIndexKey(ec, loc, lower, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}
 	// Use math.MinInt64 as handle_id for the upper index key to avoid affecting calculate split point.
 	// If use math.MaxInt64 here, test of `TestSplitIndex` will report error.
-	upperIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), upper, kv.IntHandle(math.MinInt64), nil)
+	upperIdxKey, _, err := index.GenIndexKey(ec, loc, upper, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}

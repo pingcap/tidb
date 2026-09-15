@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -130,6 +131,7 @@ func getAutoPreSplitConfig() autoPreSplitConfig {
 func planAutoPreSplitWithCache(
 	ctx context.Context,
 	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	statsProvider autoPreSplitStatsProvider,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
@@ -144,7 +146,7 @@ func planAutoPreSplitWithCache(
 
 	if _, ok := boundaryCache[leadingCol.ID]; !ok {
 		boundaryCache[leadingCol.ID] = planAutoPreSplitBoundaries(
-			ctx, sctx, statsProvider, tblInfo.ID, statsTbl, leadingCol, cfg)
+			ctx, sctx, evalCtx, statsProvider, tblInfo.ID, statsTbl, leadingCol, cfg)
 	}
 	boundaryResult := boundaryCache[leadingCol.ID]
 	switch boundaryResult.state {
@@ -157,16 +159,19 @@ func planAutoPreSplitWithCache(
 	}
 
 	splitKeys, err := buildAutoPreSplitIndexKeys(
-		sctx, tblInfo, idxInfo, boundaryResult.boundaryRows)
+		evalCtx, tblInfo, idxInfo, boundaryResult.boundaryRows)
 	if err != nil {
 		return autoPreSplitPlanResult{}, err
 	}
 	return plannedAutoPreSplitResult(splitKeys)
 }
 
+// planAutoPreSplitBoundaries reads the leading column's statistics and turns them into boundary
+// rows. sctx is only used to read the statistics; everything that interprets a value uses evalCtx.
 func planAutoPreSplitBoundaries(
 	ctx context.Context,
 	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	statsProvider autoPreSplitStatsProvider,
 	physicalTableID int64,
 	statsTbl *statistics.Table,
@@ -218,7 +223,7 @@ func planAutoPreSplitBoundaries(
 	values := make([]autoPreSplitValue, 0, loaded.TopN.Num()+loaded.Histogram.Len()+1)
 	if loaded.NullCount > 0 {
 		nullValue, err := newAutoPreSplitValue(
-			sctx, types.NewDatum(nil), uint64(loaded.NullCount), leadingCol)
+			evalCtx, types.NewDatum(nil), uint64(loaded.NullCount), leadingCol)
 		if err != nil {
 			return failedBoundary(fmt.Errorf(
 				"failed to build NullCount auto pre-split value: %w", err))
@@ -226,7 +231,7 @@ func planAutoPreSplitBoundaries(
 		values = append(values, nullValue)
 	}
 
-	topNValues, err := buildAutoPreSplitTopNValues(sctx, loaded.TopN, leadingCol)
+	topNValues, err := buildAutoPreSplitTopNValues(evalCtx, loaded.TopN, leadingCol)
 	if err != nil {
 		return failedBoundary(fmt.Errorf(
 			"failed to build TopN auto pre-split values: %w", err))
@@ -234,7 +239,7 @@ func planAutoPreSplitBoundaries(
 	values = append(values, topNValues...)
 
 	histogramValues, err := buildAutoPreSplitHistogramValues(
-		sctx, &loaded.Histogram, leadingCol)
+		evalCtx, &loaded.Histogram, leadingCol)
 	if err != nil {
 		return failedBoundary(fmt.Errorf(
 			"failed to build Histogram auto pre-split values: %w", err))
@@ -303,7 +308,7 @@ func checkAutoPreSplitEligibility(
 }
 
 func buildAutoPreSplitIndexKeys(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	boundaryRows [][]types.Datum,
@@ -312,7 +317,7 @@ func buildAutoPreSplitIndexKeys(
 	for i := range boundaryRows {
 		rows[i] = types.CloneRow(boundaryRows[i])
 	}
-	splitKeys, err := getSplitIdxKeysFromValueList(sctx, tblInfo, idxInfo, rows)
+	splitKeys, err := getSplitIdxKeysFromValueList(evalCtx, tblInfo, idxInfo, rows)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build auto presplit keys: %w", err)
 	}
@@ -328,16 +333,16 @@ type autoPreSplitValue struct {
 }
 
 func newAutoPreSplitValue(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	value types.Datum,
 	count uint64,
 	colInfo *model.ColumnInfo,
 ) (autoPreSplitValue, error) {
-	splitValue, err := normalizeAutoPreSplitDatum(sctx, value, colInfo)
+	splitValue, err := normalizeAutoPreSplitDatum(evalCtx, value, colInfo)
 	if err != nil {
 		return autoPreSplitValue{}, err
 	}
-	encoded, err := codec.EncodeKey(sctx.GetSessionVars().Location(), nil, splitValue)
+	encoded, err := codec.EncodeKey(evalCtx.Location(), nil, splitValue)
 	if err != nil {
 		return autoPreSplitValue{}, err
 	}
@@ -345,7 +350,7 @@ func newAutoPreSplitValue(
 }
 
 func normalizeAutoPreSplitDatum(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	value types.Datum,
 	colInfo *model.ColumnInfo,
 ) (types.Datum, error) {
@@ -357,11 +362,11 @@ func normalizeAutoPreSplitDatum(
 		// comparison bytes. Keep bytes so index encoding does not apply collation twice.
 		return types.NewBytesDatum(value.GetBytes()), nil
 	}
-	return value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
+	return value.ConvertTo(evalCtx.TypeCtx(), &colInfo.FieldType)
 }
 
 func buildAutoPreSplitTopNValues(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	topN *statistics.TopN,
 	colInfo *model.ColumnInfo,
 ) ([]autoPreSplitValue, error) {
@@ -373,7 +378,7 @@ func buildAutoPreSplitTopNValues(
 	for i := range num {
 		item := topN.TopN[i]
 		datum, err := statistics.DecodeColumnTopNValue(
-			item.Encoded, &colInfo.FieldType, sctx.GetSessionVars().Location())
+			item.Encoded, &colInfo.FieldType, evalCtx.Location())
 		if err != nil {
 			return nil, err
 		}
@@ -382,7 +387,7 @@ func buildAutoPreSplitTopNValues(
 			// kind means the stored statistics and column type do not match.
 			return nil, fmt.Errorf("unexpected string TopN datum kind %d", datum.Kind())
 		}
-		value, err := newAutoPreSplitValue(sctx, datum, item.Count, colInfo)
+		value, err := newAutoPreSplitValue(evalCtx, datum, item.Count, colInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -392,7 +397,7 @@ func buildAutoPreSplitTopNValues(
 }
 
 func buildAutoPreSplitHistogramValues(
-	sctx sessionctx.Context,
+	evalCtx exprctx.EvalContext,
 	histogram *statistics.Histogram,
 	colInfo *model.ColumnInfo,
 ) ([]autoPreSplitValue, error) {
@@ -418,7 +423,7 @@ func buildAutoPreSplitHistogramValues(
 			// GetUpper returns KindString, so restore bytes before index encoding.
 			upper = types.NewBytesDatum(upper.GetBytes())
 		}
-		value, err := newAutoPreSplitValue(sctx, upper, uint64(delta), colInfo)
+		value, err := newAutoPreSplitValue(evalCtx, upper, uint64(delta), colInfo)
 		if err != nil {
 			return nil, err
 		}
