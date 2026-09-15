@@ -1764,6 +1764,8 @@ func (rc *LogClient) PreSplitRegions(
 	splitSize uint64,
 	splitKeys int64,
 ) (bool, error) {
+	// debug only
+	return true, nil
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
 	splitter := split.NewPipelineRegionsSplitter(client, splitSize, splitKeys)
 	strategy := split.NewBaseSplitStrategy(rules)
