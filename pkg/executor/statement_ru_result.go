@@ -320,7 +320,7 @@ func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
 	finalized statementRUFinalizedSnapshot,
 ) {
-	reportStatementRUV3ConsumptionSafely(stmt, finalized.engineRU)
+	reportStatementRUV2ConsumptionSafely(stmt, finalized.engineRU)
 	publishStatementRUMetricsSafely(finalized)
 	if finalized.report == nil {
 		return
@@ -331,7 +331,7 @@ func publishStatementRUFinalizedSnapshot(
 	})
 }
 
-func reportStatementRUV3ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
+func reportStatementRUV2ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
 	defer func() {
 		_ = recover()
 	}()

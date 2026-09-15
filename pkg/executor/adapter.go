@@ -1830,7 +1830,7 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 }
 
 // finalizeStatementRUV2Metrics transfers pending TiKV coprocessor response bytes
-// into statement metrics before RUv3 calculation.
+// into statement metrics before RUv2 calculation.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {

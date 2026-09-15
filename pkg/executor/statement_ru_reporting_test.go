@@ -125,7 +125,7 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 	t.Run("skip zero-valued series", func(t *testing.T) {
 		original := metrics.RUV2Unit
 		metrics.RUV2Unit = prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tidb_ruv2_unit_total", Help: "RUv3 units under test.",
+			Name: "tidb_ruv2_unit_total", Help: "RUv2 units under test.",
 		}, []string{"engine", "opclass", "unit"})
 		t.Cleanup(func() { metrics.RUV2Unit = original })
 		registry := prometheus.NewRegistry()

@@ -828,7 +828,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		})
 		t.Run("injected commit error", func(t *testing.T) {
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942", "return(true)")
-			before := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("update"))
+			before := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("update"))
 			rs, err := tk.Exec("explain analyze update commit_failure set b = b + 1 where a = 1")
 			require.Error(t, err)
 			require.Nil(t, rs)
@@ -838,7 +838,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			require.NotNil(t, observation.owner)
 			require.True(t, observation.owner.ConsumedForTest())
 			require.False(t, observation.owner.RecordedSuccessForTest())
-			require.Equal(t, before, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("update")))
+			require.Equal(t, before, testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("update")))
 			vars := tk.Session().GetSessionVars()
 			require.Nil(t, vars.StmtCtx.CTEStorageMap)
 			require.Nil(t, vars.MemTracker.SearchTrackerWithoutLock(vars.StmtCtx.MemTracker.Label()))

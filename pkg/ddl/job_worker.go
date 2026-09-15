@@ -596,14 +596,14 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 		metrics.RUV2Total.Add(job.RU)
 		metrics.RUV2BySQLTypeDDL.Add(job.RU)
 		metrics.RUV2ByEngineTiKV.Add(job.RU)
-		w.reportJobRUV3Consumption(job.RU)
+		w.reportJobRUV2Consumption(job.RU)
 	}
 	cleanupDDLReorgHandles(job, w.sess)
 	jobCtx.notifyDone()
 	return nil
 }
 
-func (w *worker) reportJobRUV3Consumption(totalRU float64) {
+func (w *worker) reportJobRUV2Consumption(totalRU float64) {
 	if totalRU <= 0 {
 		return
 	}
