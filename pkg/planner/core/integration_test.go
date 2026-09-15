@@ -1568,6 +1568,27 @@ func TestPlanCacheForIndexRangeCountFallback(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Range count limit of 8 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 		tk.MustQuery(query + " order by a").Check(testkit.Rows("10 40 70", "20 50 75", "30 60 80"))
 
+		// A single IN predicate exceeding the limit falls back to an index full scan plus a selection.
+		tk.MustExec("set @@tidb_opt_range_max_count=4")
+		singleINQuery := "select /*+ use_index(t, idx) */ * from t where a in (10, 20, 30, 40, 50, 60)"
+		plan = fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + singleINQuery).Rows())
+		require.Contains(t, plan, "IndexFullScan")
+		require.Contains(t, plan, "Selection")
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Range count limit of 4 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+		tk.MustQuery(singleINQuery + " order by a, b").Check(testkit.Rows("10 40 70", "10 99 70", "20 50 75", "30 60 80"))
+
+		// The same fallback applies when ranges are built for a clustered primary key table scan.
+		tk.MustExec("drop table if exists t_clustered")
+		tk.MustExec("create table t_clustered (a int, b int, c int, primary key (a, b) clustered)")
+		tk.MustExec("insert into t_clustered values (10, 1, 70), (20, 1, 75), (30, 1, 80), (70, 1, 90)")
+		tableScanQuery := "select * from t_clustered where a in (10, 20, 30, 40, 50, 60)"
+		plan = fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + tableScanQuery).Rows())
+		require.Contains(t, plan, "TableFullScan")
+		require.Contains(t, plan, "Selection")
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Range count limit of 4 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+		tk.MustQuery(tableScanQuery + " order by a").Check(testkit.Rows("10 1 70", "20 1 75", "30 1 80"))
+		tk.MustExec("set @@tidb_opt_range_max_count=8")
+
 		// SET_VAR should be able to enable the range-count guardrail for a single statement.
 		tk.MustExec("set @@tidb_opt_range_max_count=0")
 		hintedQuery := "select /*+ set_var(tidb_opt_range_max_count=8) use_index(t, idx) */ * from t where a in (10, 20, 30) and b in (40, 50, 60) and c between 70 and 80"
