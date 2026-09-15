@@ -324,24 +324,10 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
-
-<<<<<<< HEAD
-=======
 	// MatchSQLBindingCacheKey is the AST node used to match the SQL binding.
 	MatchSQLBindingCacheKey ast.StmtNode
 	// MatchSQLBindingCache caches the binding match result for the current statement.
 	MatchSQLBindingCache any
-
-	// ExecRetryCount records the number of retries for executing the statement.
-	// It is set after ExecStmt execution and currently only used in the Slow Log phase
-	// after LogSlowQuery is called.
-	ExecRetryCount uint64
-	// ExecSuccess indicates whether the statement execution succeeded.
-	// It is set after ExecStmt execution and currently only used in the Slow Log phase
-	// after LogSlowQuery is called.
-	ExecSuccess bool
-
->>>>>>> dbf71f58d57 (planner: fix the global binding is not working when using Prepared Statement with "select ... as col ... group by col" (#69766) (#69964))
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
 	// Note:
