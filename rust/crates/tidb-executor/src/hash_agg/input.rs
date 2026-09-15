@@ -17,7 +17,7 @@
 //! row/function order as `HashAggPartialWorker.updatePartialResult` does.
 
 use super::*;
-use tidb_chunk::{ColumnRead, ColumnRef};
+use tidb_chunk::ColumnRead;
 
 #[derive(Clone, Copy)]
 pub(super) enum AggInputMode<T = usize> {
@@ -91,31 +91,31 @@ impl AggInputMode {
         }
     }
 
-    pub(super) fn bind<'a>(&self, chunk: &'a Chunk) -> AggInputMode<ColumnRef<'a>> {
-        // Type/offset checks belong to the plan, and slot indexing belongs to
-        // this chunk boundary. Neither repeats for each row or group.
+    pub(super) fn bind<'a>(&self, chunk: &'a Chunk) -> AggInputMode<ColumnRead<'a>> {
+        // Type/offset checks belong to the plan, and both slot indexing and
+        // the immutable column read view belong to this chunk boundary.
+        // Holding the view matches Go's direct column pointer and avoids
+        // reacquiring a shared read handle for every row.
         match *self {
             Self::Expression => AggInputMode::Expression,
             Self::FirstRow => AggInputMode::FirstRow,
             Self::CountAll => AggInputMode::CountAll,
-            Self::Count(index) => AggInputMode::Count(chunk.column_ref(index)),
-            Self::CountDistinctInt(index) => {
-                AggInputMode::CountDistinctInt(chunk.column_ref(index))
-            }
+            Self::Count(index) => AggInputMode::Count(chunk.column(index)),
+            Self::CountDistinctInt(index) => AggInputMode::CountDistinctInt(chunk.column(index)),
             Self::FinalCount { column, unsigned } => AggInputMode::FinalCount {
-                column: chunk.column_ref(column),
+                column: chunk.column(column),
                 unsigned,
             },
-            Self::Decimal(index) => AggInputMode::Decimal(chunk.column_ref(index)),
+            Self::Decimal(index) => AggInputMode::Decimal(chunk.column(index)),
             Self::AvgDecimal { sum, count } => AggInputMode::AvgDecimal {
-                sum: chunk.column_ref(sum),
-                count: count.map(|(index, unsigned)| (chunk.column_ref(index), unsigned)),
+                sum: chunk.column(sum),
+                count: count.map(|(index, unsigned)| (chunk.column(index), unsigned)),
             },
         }
     }
 }
 
-impl AggInputMode<ColumnRef<'_>> {
+impl AggInputMode<ColumnRead<'_>> {
     /// `None` leaves the exact expression path in charge: non-column input,
     /// decimal scale/width changes, or a count outside the scalar domain.
     fn update_cell(&self, state: &mut AggState, row: usize) -> Option<i64> {
@@ -123,22 +123,16 @@ impl AggInputMode<ColumnRef<'_>> {
             Self::Expression => None,
             Self::FirstRow => state.has_first_row().then_some(0),
             Self::CountAll => state.update_count_fast(true).then_some(0),
-            Self::Count(column) => state
-                .update_count_fast(!column.read().is_null(row))
-                .then_some(0),
+            Self::Count(column) => state.update_count_fast(!column.is_null(row)).then_some(0),
             Self::CountDistinctInt(column) => {
-                let column = column.read();
                 let value = (!column.is_null(row)).then(|| column.get_int64(row));
                 state.update_count_distinct_int_fast(value)
             }
-            Self::FinalCount { column, unsigned } => {
-                match read_count(&column.read(), row, *unsigned)? {
-                    None => Some(0),
-                    Some(value) => state.update_final_count_fast(value).then_some(0),
-                }
-            }
+            Self::FinalCount { column, unsigned } => match read_count(column, row, *unsigned)? {
+                None => Some(0),
+                Some(value) => state.update_final_count_fast(value).then_some(0),
+            },
             Self::Decimal(column) => {
-                let column = column.read();
                 if column.is_null(row) {
                     return Some(0);
                 }
@@ -148,18 +142,16 @@ impl AggInputMode<ColumnRef<'_>> {
                     .then_some(0)
             }
             Self::AvgDecimal { sum, count } => {
-                // Go avgPartial4Decimal evaluates sum before count. Release
-                // each read before acquiring another: the columns may alias.
-                let coefficient = {
-                    let sum = sum.read();
-                    if sum.is_null(row) {
-                        return Some(0);
-                    }
-                    sum.get_my_decimal_i128_scaled(row)?
-                };
+                // Go avgPartial4Decimal evaluates sum before count. Both
+                // immutable views were bound at the chunk boundary, so an
+                // aliased sum/count column remains safe to read in that order.
+                if sum.is_null(row) {
+                    return Some(0);
+                }
+                let coefficient = sum.get_my_decimal_i128_scaled(row)?;
                 let count = match count {
                     None => 1,
-                    Some((column, unsigned)) => match read_count(&column.read(), row, *unsigned)? {
+                    Some((column, unsigned)) => match read_count(column, row, *unsigned)? {
                         None => return Some(0),
                         Some(count) if count >= 0 => count,
                         Some(_) => return None,
@@ -210,12 +202,12 @@ fn read_count(column: &ColumnRead<'_>, row: usize, unsigned: bool) -> Option<Opt
 pub(super) fn bind_inputs<'a>(
     modes: &[AggInputMode],
     chunk: &'a Chunk,
-) -> smallvec::SmallVec<[AggInputMode<ColumnRef<'a>>; 4]> {
+) -> smallvec::SmallVec<[AggInputMode<ColumnRead<'a>>; 4]> {
     modes.iter().map(|mode| mode.bind(chunk)).collect()
 }
 
 pub(super) fn update_row<C: Columns>(
-    modes: &[AggInputMode<ColumnRef<'_>>],
+    modes: &[AggInputMode<ColumnRead<'_>>],
     funcs: &[AggFunc],
     ctx: &C,
     states: &mut [AggState],
