@@ -826,7 +826,6 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
-
 	do.isSyncer.SetMinJobIDRefresher(do.minJobIDRefresher)
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {

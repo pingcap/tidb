@@ -18,8 +18,12 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+// ErrDDLNotAllowed is returned when a diagnostic instance is asked to run DDL.
+var ErrDDLNotAllowed = errors.New("DDL operations are not allowed in diagnostic mode")
 
 type modeState uint32
 

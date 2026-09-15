@@ -46,9 +46,6 @@ func (do *Domain) StartDiagnostic() error {
 	do.wg.Run(func() {
 		do.isSyncer.SyncLoop(do.ctx)
 	}, "loadSchemaInLoop")
-	do.wg.Run(func() {
-		do.isSyncer.MDLCheckLoop(do.ctx)
-	}, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	if kv.IsUserKS(do.store) {
 		if err := do.loadSysKSInfoSchema(); err != nil {

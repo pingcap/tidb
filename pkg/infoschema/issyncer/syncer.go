@@ -26,6 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -218,6 +219,9 @@ func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
 
 // MDLCheckLoop is a loop that checks the MDL locks periodically.
 func (s *Syncer) MDLCheckLoop(ctx context.Context) {
+	if diagnosticmode.Enabled() {
+		return
+	}
 	ticker := time.Tick(mdlCheckLookDuration)
 	var lastCheckedVersion int64
 	haveJobToCheck := false
@@ -358,10 +362,12 @@ func (s *Syncer) SyncLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		}
-		s.refreshMDLCheckTableInfo(ctx)
-		select {
-		case s.mdlCheckCh <- struct{}{}:
-		default:
+		if !diagnosticmode.Enabled() {
+			s.refreshMDLCheckTableInfo(ctx)
+			select {
+			case s.mdlCheckCh <- struct{}{}:
+			default:
+			}
 		}
 	}
 }

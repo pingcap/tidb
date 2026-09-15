@@ -18,4 +18,16 @@
 // Diagnostic mode is initialized from a command-line flag during startup and
 // cannot be changed afterward. Code that needs to select diagnostic behavior
 // should call Enabled.
+//
+// In this mode, the Domain continues loading existing schema metadata with the
+// ordinary schema syncer, but skips MDL checks and server/topology registration.
+// Diagnostic startup requires an already bootstrapped keyspace and reads startup
+// settings without writing them back. DDL.Start does not start DDL execution
+// resources for normal startup; bootstrap, upgrade, and BR startup modes return
+// ErrDDLNotAllowed. EnableDDL and SwitchMDL also return ErrDDLNotAllowed, while
+// DisableDDL is a no-op. The independent server ID lease, timestamp acquisition,
+// and regular min-start-ts reporting remain enabled.
+//
+// Diagnostic mode is not a general read-only mode: this package does not by
+// itself reject every SQL submission or disable every background service.
 package diagnosticmode

@@ -44,13 +44,12 @@ func TestTiDBServerGoroutinesInDiagnosticMode(t *testing.T) {
 		t.Skip("diagnosticmode.SetForTest requires the intest build tag")
 	}
 	testsetup.SetupForCommonTest()
-	restoreMode := diagnosticmode.SetForTest(true)
+	restoreMode := diagnosticmode.SetForTest(false)
 	t.Cleanup(restoreMode)
 	enableServerRunInGoTest(t)
 
-	require.True(t, diagnosticmode.Enabled())
-
 	server, cfg := startTiDBServer(t)
+	require.True(t, diagnosticmode.Enabled())
 	require.True(t, cfg.Status.ReportStatus)
 	statusOn, statusAddr := server.GetStatusServerAddr()
 	require.True(t, statusOn)
@@ -119,6 +118,28 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		"server.(*Server).startNetworkListener",
 		"server.(*Server).startDiagnosticHTTP.func1",
 	}
+	backgroundGoroutines := []struct {
+		taskName   string
+		goroutines []string
+	}{
+		{
+			taskName: "DDL and registration",
+			goroutines: []string{
+				"github.com/pingcap/tidb/pkg/ddl.(*JobSubmitter).submitLoop",
+				"github.com/pingcap/tidb/pkg/ddl/systable.(*MinJobIDRefresher).Start",
+				"github.com/pingcap/tidb/pkg/infoschema/issyncer.(*Syncer).MDLCheckLoop",
+				"github.com/pingcap/tidb/pkg/domain/serverinfo.(*Syncer).ServerInfoSyncLoop",
+				"github.com/pingcap/tidb/pkg/domain/serverinfo.(*Syncer).TopologySyncLoop",
+			},
+		},
+		{
+			taskName: "HTTPServer",
+			goroutines: []string{
+				"github.com/pingcap/tidb/pkg/server.(*Server).startHTTPServer",
+				"github.com/pingcap/tidb/pkg/server.(*Server).startStatusServerAndRPCServer",
+			},
+		},
+	}
 
 	header, stacks, ok := bytes.Cut(bytes.TrimSpace(dump), []byte("\n"))
 	require.True(t, ok, "missing goroutine profile header or stacks")
@@ -171,6 +192,7 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 	t.Cleanup(view.Stop)
 
 	session.DisableStats4Test()
+
 	// Diagnostic startup requires an existing bootstrap version and system tables.
 	func() {
 		restoreMode := diagnosticmode.SetForTest(false)
@@ -184,6 +206,7 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 	}()
 
 	require.True(t, diagnosticmode.Enabled())
+
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	t.Cleanup(dom.Close)
