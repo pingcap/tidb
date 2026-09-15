@@ -366,10 +366,8 @@ func (s *mockGCSSuite) TestScanLimitation() {
 	db, _, err := sqlmock.New()
 	s.NoError(err)
 	defer db.Close()
-	importSDK, err := NewImportSDK(
-		context.Background(),
-		fmt.Sprintf("gs://limitation?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
-		db,
+	source := fmt.Sprintf("gs://limitation?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	options := []SDKOption{
 		WithCharset("utf8"),
 		WithConcurrency(8),
 		WithFilter([]string{"*.*"}),
@@ -377,8 +375,18 @@ func (s *mockGCSSuite) TestScanLimitation() {
 		WithLogger(log.L()),
 		WithSkipInvalidFiles(true),
 		WithMaxScanFiles(1),
-	)
-	s.NoError(err)
+	}
+	importSDK, err := NewImportSDK(context.Background(), source, db, options...)
+	s.ErrorContains(err, "incomplete")
+	s.Nil(importSDK)
+
+	// Explicit routing retains its legacy partial-scan behavior, without
+	// attempting to infer a source layout from an incomplete listing.
+	options = append(options, WithFileRouters([]*config.FileRouteRule{{
+		Pattern: `.*\.csv$`, Schema: "db2", Table: "tb2", Type: "csv",
+	}}))
+	importSDK, err = NewImportSDK(context.Background(), source, db, options...)
+	s.Require().NoError(err)
 	defer importSDK.Close()
 	metas, err := importSDK.GetTableMetas(context.Background())
 	s.NoError(err)

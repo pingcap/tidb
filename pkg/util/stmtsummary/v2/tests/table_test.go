@@ -268,7 +268,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
 }
 
-func TestStmtSummaryRUV3(t *testing.T) {
+func TestStmtSummaryRUV2(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
 

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	parsermysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -512,11 +513,8 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 }
 
 func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
-	tableCount := 0
-	for _, tables := range conf.Tables {
-		tableCount += len(tables)
-	}
-	conf.columnProjection = make(map[tableName]columnProjection, tableCount)
+	conf.columnProjection = make(map[tableName]columnProjection, calculateTableCount(conf.Tables))
+	anyFilteredColumns := false
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
 			projection, err := buildColumnProjection(tctx, conf, conn, dbName, table)
@@ -524,6 +522,89 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
+			anyFilteredColumns = anyFilteredColumns || projection.hasFilteredColumns()
+		}
+	}
+	if conf.NoSchemas || !anyFilteredColumns {
+		return nil
+	}
+
+	for _, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type == TableTypeView {
+				return errors.New("schema output with an active column filter is not supported when the dump includes views")
+			}
+		}
+	}
+
+	schemaParser := parser.New()
+	if value, ok := conf.SessionParams["sql_mode"]; ok {
+		sqlMode, err := parsermysql.GetSQLMode(parsermysql.FormatSQLModeStr(fmt.Sprint(value)))
+		if err != nil {
+			return errors.Annotate(err, "failed to parse session sql_mode")
+		}
+		schemaParser.SetSQLMode(sqlMode)
+	}
+	schemas := make(projectedTableSchemas, calculateTableCount(conf.Tables))
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			projection := conf.columnProjection[key]
+			createTableSQL, err := ShowCreateTable(tctx, conn, dbName, table.Name)
+			if err != nil {
+				return err
+			}
+			if projection.hasFilteredColumns() {
+				schemas[key], err = buildProjectedTableSchema(
+					schemaParser,
+					createTableSQL,
+					columnNames(projection.selectedTypes),
+				)
+			} else {
+				schemas[key], err = parseTableSchema(schemaParser, createTableSQL)
+			}
+			if err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to analyze schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+			projection.schemaSQL = createTableSQL
+			if projection.hasFilteredColumns() {
+				projection.schemaSQL, err = restoreProjectedSchema(schemas[key].createTable)
+				if err != nil {
+					return errors.Annotatef(
+						err,
+						"failed to restore schema projection for table `%s`.`%s`",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
+			}
+			conf.columnProjection[key] = projection
+		}
+	}
+
+	// Runs after all schemas are built: map order is random, and an unbuilt parent is treated as "outside the dump" (skipped), so merging into the loop above would drop FK validation nondeterministically.
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			if err := validateForeignKeyParents(dbName, schemas[key], schemas); err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to validate schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
 		}
 	}
 	return nil
@@ -1487,9 +1568,12 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return meta, nil
 	}
 
-	createTableSQL, err := ShowCreateTable(tctx, conn, db, tbl)
-	if err != nil {
-		return nil, err
+	createTableSQL := projection.schemaSQL
+	if createTableSQL == "" {
+		createTableSQL, err = ShowCreateTable(tctx, conn, db, tbl)
+		if err != nil {
+			return nil, err
+		}
 	}
 	meta.showCreateTable = createTableSQL
 	return meta, nil

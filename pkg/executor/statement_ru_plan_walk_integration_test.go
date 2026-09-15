@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -118,6 +120,8 @@ func drainStatementRURecordSet(t *testing.T, rs sqlexec.RecordSet) error {
 
 func enableStatementRUExecutionInfo(t *testing.T) {
 	t.Helper()
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) { cfg.RUV2.ReportMode = config.RUReportModeFull })
 	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
 	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
 	t.Cleanup(func() {
@@ -151,6 +155,7 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, _, _, _, _ float64,
+		_, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -204,8 +209,394 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 	require.Contains(t, decodedBySQL, "cop_task:")
 }
 
+func TestStatementRUWrappedStatements(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_wrapped(id int primary key, v int)")
+	tk.MustExec("insert into ru_wrapped values (1, 10), (2, 20)")
+
+	// UniStore Get responses need explicit scan details for point RU accounting.
+	responseHook := func(_ *tikvrpc.Request, resp *tikvrpc.Response) {
+		if get, ok := resp.Resp.(*kvrpcpb.GetResponse); ok {
+			get.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{ScanDetailV2: &kvrpcpb.ScanDetailV2{
+				TotalVersions: 2, ProcessedVersions: 1, ProcessedVersionsSize: 37,
+			}}
+		}
+	}
+	unistore.UnistoreRPCClientResponseHook.Store(&responseHook)
+	t.Cleanup(func() { unistore.UnistoreRPCClientResponseHook.Store(nil) })
+	testfailpoint.Enable(t,
+		"github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook", "return(true)")
+
+	var observation *statementRUObservation
+	testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+		if stmt.Ctx == tk.Session() {
+			observation = observeInstalledStatementRUOwner(stmt)
+		}
+	})
+	var count int
+	var writeStatement, writeKeys, writeBytes, scanBytes, operatorNum float64
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedID uint64, _ string, _, scan, _, _, _, _, ws, operators, keys, bytes float64,
+	) {
+		if observedID == connectionID {
+			count++
+			writeStatement, writeKeys, writeBytes, scanBytes, operatorNum = ws, keys, bytes, scan, operators
+		}
+	})
+
+	for _, binary := range []bool{false, true} {
+		t.Run(fmt.Sprintf("prepared analyze binary=%v", binary), func(t *testing.T) {
+			var run func()
+			if binary {
+				id, _, _, err := tk.Session().PrepareStmt("analyze table ru_wrapped")
+				require.NoError(t, err)
+				run = func() {
+					rs, err := tk.Session().ExecutePreparedStmt(context.Background(), id, nil)
+					require.NoError(t, err)
+					require.Nil(t, rs)
+				}
+				defer func() { require.NoError(t, tk.Session().DropPreparedStmt(id)) }()
+			} else {
+				tk.MustExec("prepare ru_analyze from 'analyze table ru_wrapped'")
+				defer tk.MustExec("deallocate prepare ru_analyze")
+				run = func() { tk.MustExec("execute ru_analyze") }
+			}
+			for range 2 {
+				before := count
+				run()
+				require.NotNil(t, observation.owner)
+				require.True(t, observation.owner.ConsumedForTest())
+				require.Equal(t, before+1, count)
+				require.Positive(t, operatorNum)
+				require.Zero(t, writeStatement)
+			}
+		})
+	}
+
+	for _, format := range []string{"", "format='brief' ", "format='ru' "} {
+		for _, explicitTxn := range []bool{false, true} {
+			for _, tc := range []struct {
+				sql   string
+				write bool
+			}{
+				{"select sum(v) from ru_wrapped", false},
+				{"select v from ru_wrapped where id=1", false},
+				{"insert into ru_wrapped values (3, 30)", true},
+				{"replace into ru_wrapped values (1, 11)", true},
+				{"update ru_wrapped set v=v+1 where id=1", true},
+				{"delete from ru_wrapped where id=2", true},
+			} {
+				t.Run(fmt.Sprintf("%s%s explicitTxn=%v", format, tc.sql, explicitTxn), func(t *testing.T) {
+					tk.MustExec("delete from ru_wrapped")
+					tk.MustExec("insert into ru_wrapped values (1, 10), (2, 20)")
+					if explicitTxn {
+						tk.MustExec("begin")
+						defer tk.MustExec("rollback")
+					}
+					before := count
+					tk.MustQuery("explain analyze " + format + tc.sql)
+					require.NotNil(t, observation.owner)
+					require.True(t, observation.owner.ConsumedForTest())
+					require.Equal(t, before+1, count)
+					require.Positive(t, operatorNum)
+					if tc.write {
+						require.Equal(t, float64(1), writeStatement)
+					} else {
+						require.Zero(t, writeStatement)
+						require.Positive(t, scanBytes)
+					}
+					if tc.write && !explicitTxn {
+						require.Positive(t, writeKeys)
+						require.Positive(t, writeBytes)
+					} else {
+						require.Zero(t, writeKeys)
+						require.Zero(t, writeBytes)
+					}
+					if tc.write && explicitTxn {
+						tk.MustExec("commit")
+						require.Equal(t, before+2, count)
+						require.Zero(t, writeStatement)
+						require.Positive(t, writeKeys)
+						require.Positive(t, writeBytes)
+					}
+				})
+			}
+		}
+	}
+
+	for _, binary := range []bool{false, true} {
+		for _, sql := range []string{
+			"explain analyze select sum(v) from ru_wrapped",
+			"explain analyze update ru_wrapped set v=v+1 where id=1",
+		} {
+			t.Run(fmt.Sprintf("prepared %s binary=%v", sql, binary), func(t *testing.T) {
+				var run func()
+				if binary {
+					id, _, _, err := tk.Session().PrepareStmt(sql)
+					require.NoError(t, err)
+					defer func() { require.NoError(t, tk.Session().DropPreparedStmt(id)) }()
+					run = func() {
+						rs, err := tk.Session().ExecutePreparedStmt(context.Background(), id, nil)
+						require.NoError(t, err)
+						require.NoError(t, drainStatementRURecordSet(t, rs))
+						require.NoError(t, rs.Close())
+					}
+				} else {
+					tk.MustExec("prepare ru_explain from '" + sql + "'")
+					defer tk.MustExec("deallocate prepare ru_explain")
+					run = func() { tk.MustQuery("execute ru_explain") }
+				}
+				for range 2 {
+					before := count
+					run()
+					require.NotNil(t, observation.owner)
+					require.True(t, observation.owner.ConsumedForTest())
+					require.Equal(t, before+1, count)
+					require.Positive(t, operatorNum)
+				}
+			})
+		}
+	}
+
+	t.Run("failed explain analyze does not publish", func(t *testing.T) {
+		before := count
+		require.Error(t, tk.ExecToErr("explain analyze insert into ru_wrapped values (1, 99)"))
+		require.Equal(t, before, count)
+	})
+
+	t.Run("unexecuted explain analyze does not publish", func(t *testing.T) {
+		before := count
+		rs, err := tk.Exec("explain analyze select sum(v) from ru_wrapped")
+		require.NoError(t, err)
+		require.NoError(t, rs.Close())
+		require.Equal(t, before, count)
+	})
+
+	t.Run("plain explain does not bill its target", func(t *testing.T) {
+		before := count
+		tk.MustQuery("explain insert into ru_wrapped values (99, 99)")
+		require.Equal(t, before, count)
+		tk.MustQuery("select count(*) from ru_wrapped where id=99").Check(testkit.Rows("0"))
+	})
+}
+
 func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 	enableStatementRUExecutionInfo(t)
+
+	t.Run("normal early termination", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table empty_outer(a int primary key, b int)")
+		tk.MustExec("create table populated_inner(a int primary key, b int, key(b))")
+		tk.MustExec("insert into populated_inner values (1,1),(2,2)")
+		tk.MustExec("create table unsigned_inner(a bigint unsigned primary key, b int)")
+		tk.MustExec("insert into unsigned_inner values(1,1)")
+		tk.MustExec("create table range_outer(a int)")
+		tk.MustExec("insert into range_outer values(-1)")
+		tk.MustExec("create table repeat_outer(a int,b int)")
+		tk.MustExec("insert into repeat_outer values(1,1),(2,1),(3,2)")
+		var count atomic.Int64
+		var hashRows atomic.Int64
+		var scanBytes atomic.Int64
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			id uint64, state string, _, observedScanBytes, _, _, observedHashRows, _ float64,
+			_, _, _, _ float64,
+		) {
+			if id == connectionID {
+				require.Equal(t, "incomplete", state)
+				hashRows.Store(int64(observedHashRows))
+				scanBytes.Store(int64(observedScanBytes))
+				count.Add(1)
+			}
+		})
+		tk.MustExec("set cte_max_recursion_depth=3000")
+		tk.MustExec("create table many_groups(a int primary key, b int)")
+		tk.MustExec("insert into many_groups with recursive c as (select 1 as n union all select n+1 from c where n<2000) select n,n from c")
+		for _, tc := range []struct{ hint, operator string }{
+			{"INL_JOIN(i)", "IndexJoin"},
+			{"INL_HASH_JOIN(i)", "IndexHashJoin"},
+		} {
+			t.Run(tc.hint, func(t *testing.T) {
+				query := "select /*+ " + tc.hint + " */ o.a from empty_outer o join populated_inner i on o.a=i.a"
+				require.Contains(t, fmt.Sprint(tk.MustQuery("explain "+query).Rows()), tc.operator)
+				count.Store(0)
+				tk.MustQuery(query).Check(testkit.Rows())
+				require.Equal(t, int64(1), count.Load(), "normal empty result must publish RU")
+			})
+		}
+		for _, tc := range []struct{ name, operator, query string }{
+			{"hash join limit", "HashJoin", "select /*+ HASH_JOIN(o,i) */ o.a from many_groups o join many_groups i on o.a=i.a limit 1"},
+			{"lookup filtered outer", "IndexJoin", "select /*+ INL_JOIN(i) */ o.a,i.b from populated_inner o left join populated_inner i on o.a=i.a and o.b>100"},
+			{"apply empty request", "Apply", "select o.a,(select /*+ NO_DECORRELATE() */ sum(i.b) from unsigned_inner i where i.a<o.a) from range_outer o"},
+			{"apply synthetic outer row", "Apply", "select count(*),(select /*+ NO_DECORRELATE() */ sum(i.b) from populated_inner i where i.a>o.a) from empty_outer o where o.b=1"},
+			{"cte empty seed", "CTE", "with recursive c as (select a from empty_outer union all select c.a+1 from c join populated_inner i on c.a=i.a where c.a<10) select * from c"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				require.Contains(t, fmt.Sprint(tk.MustQuery("explain "+tc.query).Rows()), tc.operator)
+				count.Store(0)
+				tk.MustQuery(tc.query)
+				require.Equal(t, int64(1), count.Load(), "normal completion must publish RU")
+			})
+		}
+
+		t.Run("Readers with empty scan results", func(t *testing.T) {
+			tk.MustExec("create table reader_data(a int primary key, b int, c int, d int, key idx_b(b), key idx_c(c))")
+			tk.MustExec("insert into reader_data values(1,1,1,1),(2,2,2,2)")
+			var stmt *executor.ExecStmt
+			testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(current *executor.ExecStmt) {
+				if current.Ctx == tk.Session() {
+					stmt = current
+				}
+			})
+			for _, tc := range []struct {
+				name, query string
+				matches     func(base.Plan) bool
+			}{
+				{"TableReader", "select d from reader_data ignore index(idx_b,idx_c) where a>10", isStatementRUPlanType[*physicalop.PhysicalTableReader]},
+				{"IndexReader", "select b from reader_data use index(idx_b) where b>10", isStatementRUPlanType[*physicalop.PhysicalIndexReader]},
+				{"IndexLookUpReader", "select d from reader_data use index(idx_b) where b>10", isStatementRUPlanType[*physicalop.PhysicalIndexLookUpReader]},
+				{"IndexMergeReader", "select /*+ USE_INDEX_MERGE(reader_data,idx_b,idx_c) */ d from reader_data where b>10 or c>10", isStatementRUPlanType[*physicalop.PhysicalIndexMergeReader]},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					count.Store(0)
+					tk.MustQuery(tc.query).Check(testkit.Rows())
+					require.Equal(t, int64(1), count.Load(), "empty scan results must publish RU")
+					flat := requireStatementRUTerminalFlatPlan(t, stmt)
+					var reader base.Plan
+					for _, op := range flat.Main {
+						if op.IsRoot && tc.matches(op.Origin) {
+							reader = op.Origin
+						}
+					}
+					require.NotNil(t, reader, "query must use %s", tc.name)
+					coll := tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl
+					require.Zero(t, coll.GetRootRowsSnapshot(reader.ID()).Rows)
+					var scans []base.PhysicalPlan
+					var skippedTable base.PhysicalPlan
+					switch reader := reader.(type) {
+					case *physicalop.PhysicalTableReader:
+						scans = append(scans, reader.TablePlan)
+					case *physicalop.PhysicalIndexReader:
+						scans = append(scans, reader.IndexPlan)
+					case *physicalop.PhysicalIndexLookUpReader:
+						scans = append(scans, reader.IndexPlan)
+						skippedTable = reader.TablePlan
+						require.NotNil(t, skippedTable)
+					case *physicalop.PhysicalIndexMergeReader:
+						require.Len(t, reader.PartialPlansRaw, 2)
+						scans = append(scans, reader.PartialPlansRaw...)
+						skippedTable = reader.TablePlan
+						require.NotNil(t, skippedTable)
+					}
+					for _, scan := range scans {
+						rows := coll.GetCopRowsSnapshot(scan.ID())
+						require.True(t, rows.Observed(), "the scan must execute and report an empty result")
+						require.Zero(t, rows.Rows)
+					}
+					if skippedTable != nil {
+						for _, op := range physicalop.FlattenListPushDownPlan(skippedTable) {
+							require.False(t, coll.GetCopRowsSnapshot(op.ID()).Observed(), "empty index results must not execute the table side")
+							_, found := coll.GetCopScanDetail(op.ID())
+							require.False(t, found, "the skipped table side must have no scan details")
+						}
+					}
+				})
+			}
+		})
+
+		for _, version := range []string{"legacy", "optimized"} {
+			t.Run("empty hash build "+version, func(t *testing.T) {
+				tk.MustExec("set tidb_hash_join_version='" + version + "'")
+				count.Store(0)
+				tk.MustQuery("select /*+ HASH_JOIN(o,i) HASH_JOIN_BUILD(i) */ o.a from many_groups o join empty_outer i on o.a=i.a").Check(testkit.Rows())
+				require.Equal(t, int64(1), count.Load())
+				require.Zero(t, hashRows.Load())
+				require.Positive(t, scanBytes.Load(), "the first probe fetch must remain chargeable")
+			})
+		}
+
+		t.Run("union limit with deferred aggregation", func(t *testing.T) {
+			tk.MustExec("set tidb_executor_concurrency=1")
+			count.Store(0)
+			rows := tk.MustQuery("select a from many_groups union all select sum(b) from populated_inner limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, int64(1), count.Load())
+			require.Positive(t, scanBytes.Load())
+		})
+
+		t.Run("shared CTE with skipped consumers", func(t *testing.T) {
+			var stmt *executor.ExecStmt
+			testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(current *executor.ExecStmt) {
+				if current.Ctx == tk.Session() {
+					stmt = current
+				}
+			})
+			cte := "with c as (select /*+ HASH_AGG() */ b,sum(a) total from populated_inner group by b) "
+			count.Store(0)
+			tk.MustQuery(cte + "select o.a,(select /*+ NO_DECORRELATE() */ sum(total) from c where c.b<o.b),(select /*+ NO_DECORRELATE() */ sum(total) from c where c.b>o.b) from empty_outer o").Check(testkit.Rows())
+			require.Equal(t, int64(1), count.Load())
+			require.Len(t, plannercore.FlattenPhysicalPlan(stmt.Plan, false).CTEs, 1)
+			require.Zero(t, hashRows.Load(), "an unopened producer constructs no groups")
+
+			tk.MustQuery(cte + "select total from c union all select total from c").Sort().Check(testkit.Rows("1", "1", "2", "2"))
+			wantHashRows, wantScanBytes := hashRows.Load(), scanBytes.Load()
+			require.Positive(t, wantHashRows)
+			count.Store(0)
+			tk.MustQuery(cte + "select total from c union all select (select /*+ NO_DECORRELATE() */ sum(total) from c where c.b<o.b) from empty_outer o").Sort().Check(testkit.Rows("1", "2"))
+			require.Equal(t, int64(1), count.Load())
+			require.Len(t, plannercore.FlattenPhysicalPlan(stmt.Plan, false).CTEs, 1)
+			require.Equal(t, wantHashRows, hashRows.Load())
+			require.Equal(t, wantScanBytes, scanBytes.Load(), "a skipped consumer must not erase or duplicate producer scans")
+		})
+
+		for _, concurrency := range []string{"1", "4"} {
+			t.Run("hash agg partial output concurrency "+concurrency, func(t *testing.T) {
+				tk.MustExec("set tidb_hashagg_partial_concurrency=" + concurrency)
+				tk.MustExec("set tidb_hashagg_final_concurrency=" + concurrency)
+				count.Store(0)
+				rows := tk.MustQuery("select /*+ HASH_AGG() */ b,count(*) from many_groups group by b limit 1").Rows()
+				require.Len(t, rows, 1)
+				require.Equal(t, "1", rows[0][1])
+				require.Equal(t, int64(1), count.Load())
+				if concurrency == "1" {
+					// Both the TiKV partial aggregate and root aggregate build 2000 groups.
+					require.Equal(t, int64(4000), hashRows.Load(), "all serial groups were built before the first output")
+				} else {
+					require.Greater(t, hashRows.Load(), int64(2000))
+					require.LessOrEqual(t, hashRows.Load(), int64(4000))
+				}
+			})
+		}
+
+		for _, parallel := range []string{"off", "on"} {
+			t.Run("deferred apply parallel "+parallel, func(t *testing.T) {
+				tk.MustExec("set tidb_enable_parallel_apply=" + parallel)
+				tk.MustExec("set tidb_executor_concurrency=4")
+				count.Store(0)
+				tk.MustQuery("select o.a,(select /*+ NO_DECORRELATE() */ sum(i.b) from populated_inner i where i.b<o.b) from empty_outer o").Check(testkit.Rows())
+				require.Equal(t, int64(1), count.Load(), "an unopened inner must publish known zero")
+				if parallel == "on" {
+					checkApplyPlan(t, tk, "select o.a,(select /*+ NO_DECORRELATE() */ sum(i.b) from populated_inner i where i.b<o.b) from empty_outer o", 4)
+				}
+				count.Store(0)
+				tk.MustQuery("select o.a,(select /*+ NO_DECORRELATE() */ sum(i.b) from populated_inner i where i.b<o.b) from repeat_outer o").Sort().Check(testkit.Rows("1 <nil>", "2 <nil>", "3 1"))
+				require.Equal(t, int64(1), count.Load(), "repeated keys and inner opens must retain actual work")
+			})
+		}
+
+		t.Run("explain freezes after producer close", func(t *testing.T) {
+			rows := tk.MustQuery("explain analyze format='ru' select /*+ HASH_AGG() */ b,count(*) from many_groups group by b limit 1").Rows()
+			for _, row := range rows {
+				require.NotEmpty(t, row[3], "missing RU after normal stop: %v", rows)
+			}
+		})
+	})
 
 	t.Run("producer plans publish only supported operator trees", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
@@ -244,6 +635,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -275,6 +667,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			wantJoinOutput bool
 			wantRootAndCop bool
 		}{
+			{name: "MemTable", query: "select concat(table_name, '') from information_schema.tables where table_schema = 'test' and table_name = 't'", rows: testkit.Rows("t"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalMemTable], wantPublish: true, wantCPUWork: true},
 			{name: "Selection", query: "select * from t ignore index (idx_b) where b > 10", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSelection], sortRows: true, wantPublish: true, wantCPUWork: true},
 			{name: "Sort", query: "select * from t ignore index (idx_b) order by b desc", rows: testkit.Rows("3 30 300", "2 20 200", "1 10 100"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSort], wantPublish: true, wantCPUWork: true},
 			{name: "TopN", query: "select * from t ignore index (idx_b) order by b desc limit 2", rows: testkit.Rows("3 30 300", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalTopN], wantPublish: true, wantCPUWork: true},
@@ -311,7 +704,8 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				calibrationMu.Lock()
 				calibration = calibrationObservation{}
 				calibrationMu.Unlock()
-				result := tk.MustQuery(tc.query)
+				// Execute once: MustQuery replays information_schema queries to test extractors.
+				result := tk.MustQueryWithContext(context.Background(), tc.query)
 				if tc.sortRows {
 					result = result.Sort()
 				}
@@ -370,7 +764,9 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				}
 				require.Equal(t, 1, published.count, "flat plan: %v", planSummary)
 				require.Equal(t, "incomplete", published.state)
-				require.Equal(t, float64(len(tc.query)), published.frontendBytes)
+				normalizedSQL, _ := observation.stmt.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+				require.NotEmpty(t, normalizedSQL)
+				require.Equal(t, float64(len(normalizedSQL)), published.frontendBytes)
 				require.GreaterOrEqual(t, published.scanBytes, float64(0))
 				require.GreaterOrEqual(t, published.netBytes, float64(0))
 				if tc.wantCPUWork {
@@ -387,6 +783,68 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				}
 			})
 		}
+	})
+
+	t.Run("Lock supports RU explain without changing statement eligibility", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table lock_ru(a int primary key, b int)")
+		tk.MustExec("insert into lock_ru values (1, 10), (2, 20)")
+		for _, mode := range []string{"optimistic", "pessimistic"} {
+			t.Run(mode, func(t *testing.T) {
+				tk.MustExec("begin " + mode)
+				defer tk.MustExec("rollback")
+				rows := tk.MustQuery("explain analyze format='ru' select * from lock_ru where a >= 1 for update").Rows()
+				require.NotEmpty(t, rows)
+				require.Contains(t, rows[0][0], "SelectLock")
+				for _, row := range rows {
+					require.NotEmpty(t, row[3], "missing RU for Lock tree: %v", rows)
+				}
+			})
+		}
+	})
+
+	t.Run("explain analyze commit failure closes record set", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table commit_failure(a int primary key, b int)")
+		tk.MustExec("insert into commit_failure values (1, 10)")
+		tk.MustExec("set tidb_retry_limit = 0")
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		var closeCount int
+		var terminalErr error
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeCloseRecordSetForTest", func(stmt *executor.ExecStmt, err *error) {
+			if stmt.Ctx == tk.Session() {
+				closeCount++
+				terminalErr = *err
+			}
+		})
+		t.Run("injected commit error", func(t *testing.T) {
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942", "return(true)")
+			before := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("update"))
+			rs, err := tk.Exec("explain analyze update commit_failure set b = b + 1 where a = 1")
+			require.Error(t, err)
+			require.Nil(t, rs)
+			require.Equal(t, 1, closeCount)
+			require.EqualError(t, terminalErr, err.Error())
+			require.NotNil(t, observation)
+			require.NotNil(t, observation.owner)
+			require.True(t, observation.owner.ConsumedForTest())
+			require.False(t, observation.owner.RecordedSuccessForTest())
+			require.Equal(t, before, testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("update")))
+			vars := tk.Session().GetSessionVars()
+			require.Nil(t, vars.StmtCtx.CTEStorageMap)
+			require.Nil(t, vars.MemTracker.SearchTrackerWithoutLock(vars.StmtCtx.MemTracker.Label()))
+			require.Nil(t, vars.DiskTracker.SearchTrackerWithoutLock(vars.StmtCtx.DiskTracker.Label()))
+		})
+		tk.MustQuery("select b from commit_failure where a = 1").Check(testkit.Rows("10"))
 	})
 
 	t.Run("post-compile panic consumes owner", func(t *testing.T) {
@@ -503,6 +961,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 
 		require.Error(t, drainStatementRURecordSet(t, rs))
 		require.NoError(t, rs.Close())
+		require.NotNil(t, observation)
 		require.True(t, observation.owner.ConsumedForTest())
 	})
 
@@ -777,6 +1236,7 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, netBytes, _, _, _ float64,
+		_, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -821,6 +1281,36 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 	require.Equal(t, "incomplete", calibrations[1].state)
 	require.Equal(t, float64(185), calibrations[1].scanBytes)
 	require.Positive(t, calibrations[1].netBytes)
+
+	t.Run("locking point reads", func(t *testing.T) {
+		tk.MustExec("prepare ru_lock from 'select v from t where id = ? for update'")
+		defer tk.MustExec("deallocate prepare ru_lock")
+		tk.MustExec("set @ru_id = 1")
+		for _, sql := range []string{
+			"select v from t where id = 1 for update",
+			"execute ru_lock using @ru_id",
+		} {
+			for _, begin := range []string{"begin optimistic", "begin pessimistic"} {
+				t.Run(begin+" "+sql, func(t *testing.T) {
+					tk.MustExec(begin)
+					defer tk.MustExec("rollback")
+					before := len(calibrations)
+					tk.MustQuery(sql).Check(testkit.Rows("1"))
+					require.False(t, tk.Session().GetSessionVars().StmtCtx.IsReadOnly)
+					require.Len(t, calibrations, before+1)
+					if begin == "begin optimistic" {
+						require.Equal(t, float64(74), calibrations[before].scanBytes)
+						require.Positive(t, calibrations[before].netBytes)
+					} else {
+						// Pessimistic locking returns the value in the lock response,
+						// so this case sends no Get RPC and has no point-read evidence.
+						require.Zero(t, calibrations[before].scanBytes)
+						require.Zero(t, calibrations[before].netBytes)
+					}
+				})
+			}
+		}
+	})
 
 	t.Run("post-execution panic consumes owner", func(t *testing.T) {
 		observation = nil
@@ -885,6 +1375,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -930,6 +1421,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -980,6 +1472,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1013,6 +1506,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			observedCPUWork, _, _, _, _, _ float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1221,7 +1715,7 @@ func TestStatementRUCursorExclusion(t *testing.T) {
 func TestStatementRURetryAndReplay(t *testing.T) {
 	enableStatementRUExecutionInfo(t)
 
-	t.Run("pessimistic retry keeps production owner disabled", func(t *testing.T) {
+	t.Run("pessimistic retry publishes once", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		writer := testkit.NewTestKit(t, store)
 		writer.MustExec("use test")
@@ -1249,6 +1743,26 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 			observedOwner.Store(executor.ObserveStatementRUOwnerForTest(stmt))
 		})
 
+		// UniStore does not supply scan details for point responses.
+		responseHook := func(_ *tikvrpc.Request, resp *tikvrpc.Response) {
+			if get, ok := resp.Resp.(*kvrpcpb.GetResponse); ok {
+				get.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{}
+			}
+		}
+		unistore.UnistoreRPCClientResponseHook.Store(&responseHook)
+		t.Cleanup(func() { unistore.UnistoreRPCClientResponseHook.Store(nil) })
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook", "return(true)")
+
+		var publications atomic.Int64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			connectionID uint64, _ string, _, _, _, _, _, _, _, _, _, _ float64,
+		) {
+			if fmt.Sprint(connectionID) == retryingConnectionID {
+				publications.Add(1)
+			}
+		})
+
 		retrying.SetBreakPoints(
 			sessiontxn.BreakPointBeforeExecutorFirstRun,
 			sessiontxn.BreakPointOnStmtRetryAfterLockError,
@@ -1262,7 +1776,9 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 		stmt := observedStmt.Load()
 		require.NotNil(t, stmt)
 		require.NotEmpty(t, requireStatementRUTerminalFlatPlan(t, stmt).Main)
-		require.Nil(t, observedOwner.Load(), "select for update must not install the production statement RU owner")
+		require.NotNil(t, observedOwner.Load())
+		require.True(t, observedOwner.Load().ConsumedForTest())
+		require.Equal(t, int64(1), publications.Load())
 	})
 
 	t.Run("optimistic replay is not a second terminal", func(t *testing.T) {
@@ -1293,18 +1809,245 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 			installs.Add(1)
 		})
 
+		var chargedWrites atomic.Int64
+		connectionID := tk1.Session().GetSessionVars().ConnectionID
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64, _ string, _, _, _, _, _, _ float64,
+			writeStatement, _, _, _ float64,
+		) {
+			if observedConnectionID == connectionID {
+				chargedWrites.Add(int64(writeStatement))
+			}
+		})
+
 		tk1.MustExec("begin optimistic")
 		tk1.MustExec(query)
 		stmt := observedStmt.Load()
 		require.NotNil(t, stmt)
 		require.NotEmpty(t, requireStatementRUTerminalFlatPlan(t, stmt).Main)
-		require.Nil(t, observedOwner.Load(), "DML must not install the production statement RU owner")
+		require.NotNil(t, observedOwner.Load())
+		require.True(t, observedOwner.Load().ConsumedForTest())
 		installsAfterOriginalTerminal := installs.Load()
 
 		tk2.MustExec(query)
 		tk1.MustExec("commit")
 		require.Equal(t, installsAfterOriginalTerminal, installs.Load())
-		require.Nil(t, observedOwner.Load())
+		require.True(t, observedOwner.Load().ConsumedForTest())
+		require.Equal(t, int64(1), chargedWrites.Load(), "history replay must not bill the DML again")
 		tk2.MustQuery("select v from t where id = 1").Check(testkit.Rows("2"))
 	})
+}
+
+func TestStatementRUWriteLifecycle(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_write(id int primary key, v int)")
+	var count int
+	var writeStatement, operatorNum, writeKeys, writeBytes, cpuWork float64
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64, _ string, cpu, _, _, _, _, _ float64,
+		ws, operators, keys, bytes float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		count++
+		cpuWork = cpu
+		writeStatement, operatorNum, writeKeys, writeBytes = ws, operators, keys, bytes
+	})
+	check := func(sql string, wantStatement float64, committed bool) {
+		t.Helper()
+		before := count
+		tk.MustExecWithContext(context.Background(), sql)
+		require.Equal(t, before+1, count, sql)
+		require.Equal(t, wantStatement, writeStatement, sql)
+		if sql == "commit" || sql == "execute ru_commit" {
+			require.Zero(t, operatorNum, sql)
+		} else {
+			require.Positive(t, operatorNum, sql)
+		}
+		if committed {
+			require.Positive(t, writeKeys, sql)
+			require.Positive(t, writeBytes, sql)
+		} else {
+			require.Zero(t, writeKeys, sql)
+			require.Zero(t, writeBytes, sql)
+		}
+	}
+	check("insert into ru_write values (1, 10)", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	require.Equal(t, float64(1), operatorNum)
+	check("replace into ru_write values (1, 20)", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	// Pessimistic autocommit commits lock mutations even when no row changes.
+	pessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+	check("insert ignore into ru_write values (1, 99)", 1, pessimisticAutoCommit)
+	require.Equal(t, float64(1), cpuWork)
+	check("insert into ru_write values (1, 25) on duplicate key update v = values(v)", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	check("update ru_write set v = 30 where id = 1", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	check("delete from ru_write where id = 1", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	check("update ru_write set v = 40 where id = 99", 1, pessimisticAutoCommit)
+	require.Equal(t, float64(0), cpuWork)
+	tk.MustExec("prepare ru_insert from 'insert into ru_write values (?, ?)'")
+	tk.MustExec("set @id = 5, @v = 50")
+	check("execute ru_insert using @id, @v", 1, true)
+	tk.MustExec("set @id = 6")
+	check("execute ru_insert using @id, @v", 1, true)
+	check("delete from ru_write where id = 6", 1, true)
+	check("delete from ru_write where id = 5", 1, true)
+	tk.MustExec("deallocate prepare ru_insert")
+
+	tk.MustExec("begin")
+	check("insert into ru_write values (2, 20)", 1, false)
+	check("insert into ru_write values (3, 30)", 1, false)
+	check("commit", 0, true)
+	require.Equal(t, float64(2), writeKeys)
+	require.Zero(t, cpuWork)
+	tk.MustExec("prepare ru_commit from 'commit'")
+	tk.MustExec("begin")
+	check("update ru_write set v = v + 1 where id in (2, 3)", 1, false)
+	check("execute ru_commit", 0, true)
+	require.Equal(t, float64(2), writeKeys)
+	require.Zero(t, cpuWork)
+	tk.MustQuery("select * from ru_write order by id").Check(testkit.Rows("2 21", "3 31"))
+	check("update ru_write set v = v - 1 where id in (2, 3)", 1, true)
+	tk.MustExec("deallocate prepare ru_commit")
+	tk.MustExec("begin")
+	check("insert into ru_write values (4, 40)", 1, false)
+	before := count
+	tk.MustExec("rollback")
+	require.Equal(t, before, count)
+	require.Error(t, tk.ExecToErr("insert into ru_write values (2, 99)"))
+	require.Equal(t, before, count)
+	tk.MustQuery("select * from ru_write where v > 0").Check(testkit.Rows("2 20", "3 30"))
+	require.Equal(t, before+1, count)
+	require.Zero(t, writeStatement)
+	require.Zero(t, writeKeys)
+	require.Zero(t, writeBytes)
+	t.Run("processed rows and target indexes", func(t *testing.T) {
+		tk.MustExec("create table ru_idx(id int primary key, v int, w int, unique key(v), key(w))")
+		tk.MustExec("create table ru_common(id varchar(10), v int, primary key(id) clustered, key(v))")
+		tk.MustExec("create table ru_noncluster(id int primary key nonclustered, v int)")
+		checkWork := func(sql string, want float64) {
+			t.Helper()
+			tk.MustExecWithContext(context.Background(), sql)
+			sc := tk.Session().GetSessionVars().StmtCtx
+			plan, ok := sc.GetPlan().(base.Plan)
+			require.True(t, ok, sql)
+			work, found := sc.RuntimeStatsColl.GetRootWriteCPUWork(plan.ID())
+			require.True(t, found, sql)
+			require.Equal(t, want, work, sql)
+		}
+		checkWork("insert into ru_idx values (1, 10, 20), (2, 11, 21)", 6)
+		checkWork("insert ignore into ru_idx values (1, 10, 20), (3, 12, 22)", 6)
+		checkWork("update ru_idx set v=v where id=1", 3)
+		checkWork("update ignore ru_idx set v=10 where id=2", 3)
+		checkWork("insert into ru_idx values (1, 10, 20) on duplicate key update v=v", 3)
+		checkWork("replace into ru_idx values (1, 11, 23)", 3)
+		checkWork("insert into ru_common values ('1', 1), ('2', 2)", 4)
+		checkWork("insert into ru_noncluster values (1, 1)", 2)
+		checkWork("update ru_idx a join ru_common b on a.id=b.id set a.w=a.w, b.v=b.v", 5)
+		checkWork("delete a,b from ru_idx a join ru_common b on a.id=b.id", 5)
+		checkWork("delete from ru_idx where id=3", 3)
+		checkWork("insert into ru_idx select 4, 14, 24 where false", 0)
+		checkWork("delete from ru_idx where id=99", 0)
+		for id := 2; id <= 65; id++ {
+			tk.MustExec(fmt.Sprintf("insert into ru_noncluster values (%d, %d)", id, id))
+		}
+		tk.MustExec("set tidb_init_chunk_size=2, tidb_max_chunk_size=32")
+		checkWork("update ru_noncluster set v=v", 130)
+		checkWork("delete from ru_noncluster", 130)
+	})
+}
+
+func TestStatementRUReportModesSQL(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_report_modes (id int primary key, v int)")
+	tk.MustExec("insert into ru_report_modes values (1, 2)")
+	for _, mode := range []string{config.RUReportModeResult, config.RUReportModeFull} {
+		t.Run(mode, func(t *testing.T) {
+			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
+			var observed atomic.Int64
+			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(_ uint64, _ string,
+				_, _, _, _, _, _, _, _, _, _ float64) {
+				observed.Add(1)
+			})
+			totalBefore := testutil.ToFloat64(metrics.RUV2Total)
+			tidbBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))
+			tikvBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tikv"))
+			tk.MustQuery("select * from ru_report_modes where id > 0").Check(testkit.Rows("1 2"))
+			tk.MustExec("begin")
+			tk.MustExec("update ru_report_modes set v = v + 1 where id = 1")
+			tk.MustExec("commit")
+			tidbDelta := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb")) - tidbBefore
+			tikvDelta := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tikv")) - tikvBefore
+			totalDelta := testutil.ToFloat64(metrics.RUV2Total) - totalBefore
+			require.Positive(t, tidbDelta)
+			require.Positive(t, tikvDelta)
+			require.InDelta(t, tidbDelta+tikvDelta, totalDelta, 1e-9)
+			if mode == config.RUReportModeResult {
+				require.Zero(t, observed.Load())
+			} else {
+				require.Equal(t, int64(3), observed.Load())
+			}
+			checkType := func(sql, stmtType string) {
+				t.Helper()
+				labels := []string{"select", "insert", "replace", "update", "delete", "commit", "analyze", "other"}
+				before := make([]float64, len(labels))
+				for i, label := range labels {
+					before[i] = testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues(label))
+				}
+				totalBefore := testutil.ToFloat64(metrics.RUV2Total)
+				if stmtType == "select" {
+					tk.MustQuery(sql)
+				} else {
+					tk.MustExec(sql)
+				}
+				total := testutil.ToFloat64(metrics.RUV2Total) - totalBefore
+				require.Positive(t, total, sql)
+				for i, label := range labels {
+					delta := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues(label)) - before[i]
+					if label == stmtType {
+						require.InDelta(t, total, delta, 1e-9, sql)
+					} else {
+						require.Zero(t, delta, sql)
+					}
+				}
+			}
+			checkType("select * from ru_report_modes where id > 0", "select")
+			checkType("insert into ru_report_modes values (2, 3)", "insert")
+			checkType("replace into ru_report_modes values (2, 4)", "replace")
+			checkType("update ru_report_modes set v = 5 where id = 99", "update")
+			checkType("delete from ru_report_modes where id = 99", "delete")
+			tk.MustExec("begin")
+			checkType("insert into ru_report_modes values (3, 4)", "insert")
+			checkType("commit", "commit")
+			tk.MustExec("begin")
+			checkType("commit", "commit")
+			checkType("analyze table ru_report_modes", "analyze")
+			tk.MustExec("set @@tidb_enable_prepared_plan_cache = on")
+			tk.MustExec("prepare ru_report_insert from 'insert into ru_report_modes values (?, ?)'")
+			tk.MustExec("set @ru_id = 4, @ru_v = 5")
+			checkType("execute ru_report_insert using @ru_id, @ru_v", "insert")
+			tk.MustExec("set @ru_id = 5")
+			checkType("execute ru_report_insert using @ru_id, @ru_v", "insert")
+			tk.MustExec("deallocate prepare ru_report_insert")
+			tk.MustExec("prepare ru_report_select from 'select * from ru_report_modes where id > ?'")
+			tk.MustExec("set @ru_id = 0")
+			checkType("execute ru_report_select using @ru_id", "select")
+			checkType("execute ru_report_select using @ru_id", "select")
+			tk.MustExec("deallocate prepare ru_report_select")
+			checkType("delete from ru_report_modes where id > 1", "delete")
+			tk.MustExec("update ru_report_modes set v = 2 where id = 1")
+		})
+	}
 }
