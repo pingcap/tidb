@@ -1185,6 +1185,35 @@ func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
 	tk.MustExec("drop table th2")
 }
 
+func TestDropColumnWithFullTextIndex(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	enableMockTiCIBackfill(t)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table fts_func_029_drop_column (
+		id int not null,
+		category int,
+		body text,
+		primary key (id) clustered,
+		fulltext index ft_body(body) with parser standard
+	)`)
+
+	tk.MustExec("alter table fts_func_029_drop_column drop column body")
+	tk.MustQuery("show create table fts_func_029_drop_column").
+		CheckNotContain("`body`").
+		CheckNotContain("FULLTEXT INDEX `ft_body`")
+	tbl := external.GetTableByName(t, tk, "test", "fts_func_029_drop_column")
+	require.Nil(t, model.FindColumnInfo(tbl.Meta().Columns, "body"))
+	require.Nil(t, tbl.Meta().FindIndexByName("ft_body"))
+
+	tk.MustExec("create table fts_multi(a text, b text, fulltext index ft_ab(a, b))")
+	tk.MustContainErrMsg("alter table fts_multi drop column a", "with non-KV index covered now")
+}
+
 func TestAnonymousIndex(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
