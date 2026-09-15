@@ -212,14 +212,24 @@ impl HashTableSlots<'_> {
         }
     }
 
-    /// Reads one bucket.
+    /// Reads one bucket after the build publication barrier.
+    ///
+    /// Go reads its post-build bucket slice directly. Rust keeps atomic
+    /// buckets because build workers update them concurrently, but every
+    /// probe worker is spawned only after those workers have joined. That
+    /// join is the publication barrier for the completed table, so an
+    /// acquire load on every probe row is unnecessary; relaxed preserves the
+    /// atomic representation for the build path while matching Go's read
+    /// cost and ordering.
     #[must_use]
+    #[inline]
     pub fn slot(&self, index: usize) -> usize {
-        self.slots[index].load(Ordering::Acquire)
+        self.slots[index].load(Ordering::Relaxed)
     }
 
     /// `lookup`: the bucket head for `hash_value`, or `0` when its tag misses.
     #[must_use]
+    #[inline]
     pub fn lookup(&self, hash_value: u64, tag_helper: &TagPtrHelper) -> usize {
         let ret = self.slot((hash_value & self.pos_mask) as usize);
         let hash_tag_value = tag_helper.get_tagged_value(hash_value);
@@ -352,6 +362,7 @@ impl SubTable {
 
     /// `lookup`: the bucket head for `hash_value`, or `0` when its tag misses.
     #[must_use]
+    #[inline]
     pub fn lookup(&self, hash_value: u64, tag_helper: &TagPtrHelper) -> usize {
         self.slots().lookup(hash_value, tag_helper)
     }

@@ -44,6 +44,7 @@ Reduce synchronization and fragmented batching on the generic RPC-to-query respo
 - [x] Batch contiguous chunk range appends with exact capacity reservation and aligned NULL-bitmap copying; keep alias-overlap and arbitrary bitmap offsets on the source-equivalent safe path.
 - [x] Replace per-key index-hash `Vec` allocations with a contiguous linked outer-entry slab; retain the probe cursor across residual/output batches and validate grouped executor/distsql checks.
 - [x] Replace per-row index-lookup `BTreeMap` insertion with Go's batch slice sort/dedup shape; preserve encoded-key ordering and validate the full executor index matrix.
+- [x] Match Go's post-build hash-bucket read path with relaxed atomic loads after the build-join publication barrier; retain atomic build updates and validate the hash-join matrix.
 
 ## Context and Source Evidence
 
@@ -261,6 +262,16 @@ The wider failures from the setup-cost milestone are resolved by the follow-up a
 
 ## Outcomes & Retrospective
 
+
+Post-build hash-bucket reads (2026-09-16): Go's `subTable.lookup` reads its
+completed bucket slice directly, while Rust's concurrent-build representation
+was paying an acquire atomic load for every probe row. Rust now retains atomic
+CAS/store updates during concurrent linking but uses a relaxed load for lookup;
+the build workers are joined before `ProbeStage` creates any probe worker, so
+that join publishes the completed bucket and row links. This removes an
+unnecessary per-row acquire barrier without changing the table shape, tag
+check, collision walk or build synchronization. No workload benchmark or 25%
+gain is claimed.
 
 Index-lookup probe batching (2026-09-16): `index_task_probes` now collects the complete outer batch in contiguous storage, sorts encoded lookup keys once and removes adjacent duplicates, matching Go's `constructLookupContent` plus `sortAndDedupLookUpContents`. The prior per-row `BTreeMap` path allocated a tree node and performed a logarithmic walk for every probe; the replacement keeps one sort/dedup pass and preserves the existing encoded-key order, probe values, bound values and empty-range handling. No workload benchmark or 25% gain is claimed.
 
