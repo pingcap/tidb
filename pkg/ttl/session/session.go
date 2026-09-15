@@ -166,7 +166,9 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 			// For now, the "ROLLBACK" can execute successfully even when the context has already been cancelled.
 			// Using another timeout context to avoid that this behavior will be changed in the future.
 			jobID, _ := ctx.Value(jobContextKey{}).(string)
-			rollbackCtx, cancel := context.WithTimeout(context.WithValue(context.Background(), jobContextKey{}, jobID), time.Second)
+			rollbackCtx, cancel := context.WithTimeout(
+				context.WithValue(context.Background(), jobContextKey{}, jobID), time.Second,
+			)
 			_, rollbackErr := s.ExecuteSQL(rollbackCtx, "ROLLBACK")
 			terror.Log(rollbackErr)
 			cancel()
