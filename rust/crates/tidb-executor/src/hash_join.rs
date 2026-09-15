@@ -1608,6 +1608,19 @@ impl BuildTable {
         self.rows.with_rows(ptrs, buf, f)
     }
 
+    /// Visits one stored build chunk while retaining its in-memory read
+    /// guard. Batch join output uses this to copy selected rows directly from
+    /// the source columns; callers only use the fast path for an unselected,
+    /// in-memory chunk and keep the row callback path for spilled data.
+    pub(crate) fn with_chunk<T>(
+        &self,
+        chunk_index: usize,
+        f: impl FnOnce(&Chunk) -> T,
+    ) -> Result<T, DiskError> {
+        let chunk = self.rows.get_chunk(chunk_index)?;
+        Ok(f(&chunk))
+    }
+
     /// Go `hashRowContainer.GetMemTracker`, which the build worker attaches
     /// to the join's own tracker under `LabelForBuildSideResult`.
     pub(crate) fn mem_tracker(&self) -> &Arc<Tracker> {

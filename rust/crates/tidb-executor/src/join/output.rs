@@ -15,7 +15,7 @@
 //! Go `markChildrenUsedCols` / `baseJoiner`: output selection never changes
 //! the input layout used by hash keys and residual expressions.
 
-use tidb_chunk::{chunk::Chunk, row::Row};
+use tidb_chunk::{chunk::Chunk, chunk_util::copy_selected_rows, row::Row};
 use tidb_datatype::Datum;
 
 use super::JoinKind;
@@ -165,6 +165,52 @@ impl JoinOutput {
         self.chunk_side(req, probe_left, probe);
         self.chunk_side(req, !probe_left, build);
         Self::finish(req, 1);
+    }
+
+    /// Go `AppendCellNTimes` plus `CopySelectedRows` for one probe row's
+    /// candidate chain. The probe row is identical for every accepted build
+    /// row, so append that side once as a repeated column and copy the build
+    /// side column-wise from its source chunk. `selected` is in physical
+    /// source-row order and contains only candidates from that chunk.
+    pub(super) fn selected_chunk_matches(
+        &self,
+        req: &mut Chunk,
+        probe_left: bool,
+        probe: Row<'_>,
+        build: &Chunk,
+        selected: &[bool],
+    ) -> usize {
+        let rows = selected.iter().filter(|selected| **selected).count();
+        if rows == 0 {
+            return 0;
+        }
+        let probe_chunk = probe
+            .chunk()
+            .expect("cannot append a match from the empty Row sentinel");
+        for (destination, source) in self.left.iter().copied().enumerate() {
+            if probe_left {
+                let source = probe_chunk.column(source);
+                req.column_mut(destination)
+                    .append_cell_n_times(&source, probe.idx(), rows);
+            } else {
+                let source = build.column(source);
+                copy_selected_rows(&mut req.column_mut(destination), &source, selected);
+            }
+        }
+        let right_offset = self.left.len();
+        for (index, source) in self.right.iter().copied().enumerate() {
+            let destination = right_offset + index;
+            if probe_left {
+                let source = build.column(source);
+                copy_selected_rows(&mut req.column_mut(destination), &source, selected);
+            } else {
+                let source = probe_chunk.column(source);
+                req.column_mut(destination)
+                    .append_cell_n_times(&source, probe.idx(), rows);
+            }
+        }
+        Self::finish(req, rows);
+        rows
     }
 
     /// Go CopySelectedJoinRowsDirect: copy candidate column ranges, with

@@ -224,6 +224,10 @@ struct HashState {
     probe_candidates: Vec<RowPtr>,
     probe_candidate_idx: usize,
     probe_matched: bool,
+    /// Reused physical-row selection for a candidate run that comes from one
+    /// in-memory build chunk. This is the direct counterpart to Go's
+    /// `CopySelectedJoinRowsWithSameOuterRows` selection bitmap.
+    probe_batch_selected: Vec<bool>,
     probe_done: bool,
     /// Cursor for Go hash join's post-probe scan when the preserved side was
     /// built. `None` means the scan is complete (or was never needed).
@@ -343,6 +347,7 @@ struct ProbeBatchScratch {
     exact_found: Vec<Option<usize>>,
     batch_ptrs: Vec<RowPtr>,
     candidates: Vec<RowPtr>,
+    selected: Vec<bool>,
 }
 
 impl ProbeBatchScratch {
@@ -355,6 +360,7 @@ impl ProbeBatchScratch {
             exact_found: Vec::new(),
             batch_ptrs: Vec::new(),
             candidates: Vec::new(),
+            selected: Vec::new(),
         }
     }
 
@@ -366,6 +372,7 @@ impl ProbeBatchScratch {
         self.exact_found.clear();
         self.batch_ptrs.clear();
         self.candidates.clear();
+        self.selected.clear();
     }
 }
 
@@ -4000,94 +4007,190 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let mut matched = false;
             let mut stop_after_match = false;
             let mut candidate_index = 0;
-            table
-                .with_rows(candidates.as_slice(), build_buf, |build_row| {
-                    let ptr = candidates[candidate_index];
-                    candidate_index += 1;
-                    // A semi/anti probe stops after its first accepted row.
-                    // The batch reader still visits the remaining pointers,
-                    // but this guard avoids decoding, evaluating, or emitting
-                    // them after the source loop would have broken.
-                    if stop_after_match {
-                        return Ok(());
+            // The worker follows the same Go batch boundary as the serial
+            // path: one probe row and a physical selection over a contiguous
+            // in-memory build-chunk run. Residual conditions and semi/anti
+            // joins retain the row callback because they stop or evaluate per
+            // candidate.
+            let batch_result = if matches!(kind, JoinKind::Inner | JoinKind::Left | JoinKind::Right)
+                && residual_conditions.is_empty()
+                && output.sel().is_none()
+                && !table_spilled
+                && !candidates.is_empty()
+            {
+                let remaining = output.required_rows().saturating_sub(output.num_rows());
+                let first = candidates[0];
+                if remaining == 0 {
+                    None
+                } else {
+                    let mut end = 1;
+                    while end < candidates.len()
+                        && end < remaining
+                        && candidates[end].chk_idx == first.chk_idx
+                        && candidates[end].row_idx > candidates[end - 1].row_idx
+                    {
+                        end += 1;
                     }
-                    let accepted = (|| {
-                        let (left, left_types, right, right_types) = if probe_is_left {
-                            (probe_row, probe_types, build_row, build_types)
-                        } else {
-                            (build_row, build_types, probe_row, probe_types)
-                        };
-                        if exact_int.is_none()
-                            && !equi_keys_equal_chunk_rows(
-                                keys,
-                                left,
-                                left_types,
-                                right,
-                                right_types,
-                            )
-                            .map_err(key_error)?
-                        {
-                            return Ok::<bool, ExecError>(false);
-                        }
-                        if !residual_conditions.is_empty()
-                            && !Self::matches_chunk_rows(
-                                &shared.ctx,
-                                residual_conditions,
-                                &condition_evals,
-                                condition_chunk,
-                                left,
-                                right,
-                                left_types.len(),
-                                right_types.len(),
-                            )?
-                        {
-                            return Ok(false);
-                        }
-                        match kind {
-                            JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
-                                output_layout.chunks(
+                    if end != candidates.len() {
+                        None
+                    } else {
+                        let ptrs = &candidates[..end];
+                        let batch = table
+                            .with_chunk(first.chk_idx as usize, |build| -> Result<_, ExecError> {
+                                if build.sel().is_some() {
+                                    return Ok(None);
+                                }
+                                scratch.selected.resize(build.num_rows(), false);
+                                for selected in &mut scratch.selected {
+                                    *selected = false;
+                                }
+                                for &candidate in ptrs {
+                                    scratch.selected[candidate.row_idx as usize] = true;
+                                }
+                                if exact_int.is_none() {
+                                    for &candidate in ptrs {
+                                        let build_row = build.get_row(candidate.row_idx as usize);
+                                        let (left, left_types, right, right_types) =
+                                            if probe_is_left {
+                                                (probe_row, probe_types, build_row, build_types)
+                                            } else {
+                                                (build_row, build_types, probe_row, probe_types)
+                                            };
+                                        if !equi_keys_equal_chunk_rows(
+                                            keys,
+                                            left,
+                                            left_types,
+                                            right,
+                                            right_types,
+                                        )
+                                        .map_err(key_error)?
+                                        {
+                                            scratch.selected[candidate.row_idx as usize] = false;
+                                        }
+                                    }
+                                }
+                                Ok(Some(output_layout.selected_chunk_matches(
                                     &mut output,
                                     probe_is_left,
                                     probe_row,
-                                    build_row,
+                                    build,
+                                    &scratch.selected,
+                                )))
+                            })
+                            .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+                        if let Some(accepted) = batch {
+                            if builds_preserved {
+                                matched_build_rows.extend(ptrs.iter().copied().filter(
+                                    |candidate| scratch.selected[candidate.row_idx as usize],
+                                ));
+                            }
+                            matched = accepted != 0;
+                            candidate_index = end;
+                            if output.is_full() {
+                                let fresh = Chunk::new(
+                                    &shared.output_types,
+                                    shared.init_cap,
+                                    shared.max_chunk_size,
                                 );
+                                extra_outputs.push(std::mem::replace(&mut output, fresh));
                             }
-                            JoinKind::Semi if !builds_preserved => {
-                                output_layout.preserved(&mut output, probe_row);
-                            }
-                            JoinKind::LeftOuterSemi if !builds_preserved => {
-                                output_layout.preserved(&mut output, probe_row);
-                                output.append_datum(output_layout.width(), &Datum::Int(1));
-                            }
-                            JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
                         }
-                        Ok(true)
-                    })()?;
-                    if accepted {
-                        if builds_preserved {
-                            matched_build_rows.push(ptr);
-                        }
-                        matched = true;
-                        if output.is_full() {
-                            let fresh = Chunk::new(
-                                &shared.output_types,
-                                shared.init_cap,
-                                shared.max_chunk_size,
-                            );
-                            extra_outputs.push(std::mem::replace(&mut output, fresh));
-                        }
-                        if !builds_preserved
-                            && matches!(
-                                kind,
-                                JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
-                            )
-                        {
-                            stop_after_match = true;
-                        }
+                        batch
                     }
-                    Ok::<(), ExecError>(())
-                })
-                .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+                }
+            } else {
+                None
+            };
+            if batch_result.is_none() {
+                table
+                    .with_rows(candidates.as_slice(), build_buf, |build_row| {
+                        let ptr = candidates[candidate_index];
+                        candidate_index += 1;
+                        // A semi/anti probe stops after its first accepted row.
+                        // The batch reader still visits the remaining pointers,
+                        // but this guard avoids decoding, evaluating, or emitting
+                        // them after the source loop would have broken.
+                        if stop_after_match {
+                            return Ok(());
+                        }
+                        let accepted = (|| {
+                            let (left, left_types, right, right_types) = if probe_is_left {
+                                (probe_row, probe_types, build_row, build_types)
+                            } else {
+                                (build_row, build_types, probe_row, probe_types)
+                            };
+                            if exact_int.is_none()
+                                && !equi_keys_equal_chunk_rows(
+                                    keys,
+                                    left,
+                                    left_types,
+                                    right,
+                                    right_types,
+                                )
+                                .map_err(key_error)?
+                            {
+                                return Ok::<bool, ExecError>(false);
+                            }
+                            if !residual_conditions.is_empty()
+                                && !Self::matches_chunk_rows(
+                                    &shared.ctx,
+                                    residual_conditions,
+                                    &condition_evals,
+                                    condition_chunk,
+                                    left,
+                                    right,
+                                    left_types.len(),
+                                    right_types.len(),
+                                )?
+                            {
+                                return Ok(false);
+                            }
+                            match kind {
+                                JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                                    output_layout.chunks(
+                                        &mut output,
+                                        probe_is_left,
+                                        probe_row,
+                                        build_row,
+                                    );
+                                }
+                                JoinKind::Semi if !builds_preserved => {
+                                    output_layout.preserved(&mut output, probe_row);
+                                }
+                                JoinKind::LeftOuterSemi if !builds_preserved => {
+                                    output_layout.preserved(&mut output, probe_row);
+                                    output.append_datum(output_layout.width(), &Datum::Int(1));
+                                }
+                                JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
+                            }
+                            Ok(true)
+                        })()?;
+                        if accepted {
+                            if builds_preserved {
+                                matched_build_rows.push(ptr);
+                            }
+                            matched = true;
+                            if output.is_full() {
+                                let fresh = Chunk::new(
+                                    &shared.output_types,
+                                    shared.init_cap,
+                                    shared.max_chunk_size,
+                                );
+                                extra_outputs.push(std::mem::replace(&mut output, fresh));
+                            }
+                            if !builds_preserved
+                                && matches!(
+                                    kind,
+                                    JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
+                                )
+                            {
+                                stop_after_match = true;
+                            }
+                        }
+                        Ok::<(), ExecError>(())
+                    })
+                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+            }
             if !matched && !builds_preserved {
                 match kind {
                     JoinKind::Left | JoinKind::Right => output_layout.unmatched(
@@ -4556,6 +4659,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             probe_candidates: Vec::new(),
             probe_candidate_idx: 0,
             probe_matched: false,
+            probe_batch_selected: Vec::new(),
             probe_done: false,
             unmatched_build_scan,
             parallel_probe_pending: VecDeque::new(),
@@ -4868,65 +4972,154 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 hash.probe_matched = false;
             }
             if let Some(&ptr) = hash.probe_candidates.get(hash.probe_candidate_idx) {
-                let accepted = hash
-                    .table
-                    .with_row(ptr, &mut hash.build_buf, |build_row| {
-                        let (left, left_types, right, right_types) = if probe_is_left {
-                            (
-                                probe_row,
-                                probe_types,
-                                build_row,
-                                hash.build_types.as_slice(),
-                            )
-                        } else {
-                            (
-                                build_row,
-                                hash.build_types.as_slice(),
-                                probe_row,
-                                probe_types,
-                            )
-                        };
-                        if exact_int.is_none()
-                            && !equi_keys_equal_chunk_rows(
-                                keys,
-                                left,
-                                left_types,
-                                right,
-                                right_types,
-                            )?
+                // Go's ordinary hash join keeps one probe row beside a batch
+                // of build matches, then copies the result column-wise. The
+                // candidate chain is in build order, so a run that stays in
+                // one unselected in-memory chunk can use the same primitive
+                // without changing output order. Spilled or selected chunks
+                // retain the guarded row path below because their RowPtr
+                // indexes are logical rows, not direct physical indexes.
+                let batch_result =
+                    if matches!(kind, JoinKind::Inner | JoinKind::Left | JoinKind::Right)
+                        && req.sel().is_none()
+                        && !hash.table.already_spilled()
+                    {
+                        let start = hash.probe_candidate_idx;
+                        let remaining = req.required_rows().saturating_sub(req.num_rows());
+                        let first = hash.probe_candidates[start];
+                        let mut end = start + 1;
+                        while end < hash.probe_candidates.len()
+                            && end - start < remaining
+                            && hash.probe_candidates[end].chk_idx == first.chk_idx
+                            && hash.probe_candidates[end].row_idx
+                                > hash.probe_candidates[end - 1].row_idx
                         {
-                            return Ok(false);
+                            end += 1;
                         }
-                        match kind {
-                            JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
-                                self.output.chunks(req, probe_is_left, probe_row, build_row);
+                        let ptrs = &hash.probe_candidates[start..end];
+                        let build_types = hash.build_types.as_slice();
+                        let batch = hash
+                            .table
+                            .with_chunk(first.chk_idx as usize, |build| -> Result<_, ExecError> {
+                                if build.sel().is_some() {
+                                    return Ok(None);
+                                }
+                                hash.probe_batch_selected.resize(build.num_rows(), false);
+                                for selected in &mut hash.probe_batch_selected {
+                                    *selected = false;
+                                }
+                                for &candidate in ptrs {
+                                    hash.probe_batch_selected[candidate.row_idx as usize] = true;
+                                }
+                                if exact_int.is_none() {
+                                    for &candidate in ptrs {
+                                        let build_row = build.get_row(candidate.row_idx as usize);
+                                        let (left, left_types, right, right_types) =
+                                            if probe_is_left {
+                                                (probe_row, probe_types, build_row, build_types)
+                                            } else {
+                                                (build_row, build_types, probe_row, probe_types)
+                                            };
+                                        if !equi_keys_equal_chunk_rows(
+                                            keys,
+                                            left,
+                                            left_types,
+                                            right,
+                                            right_types,
+                                        )
+                                        .map_err(key_error)?
+                                        {
+                                            hash.probe_batch_selected[candidate.row_idx as usize] =
+                                                false;
+                                        }
+                                    }
+                                }
+                                let accepted = self.output.selected_chunk_matches(
+                                    req,
+                                    probe_is_left,
+                                    probe_row,
+                                    build,
+                                    &hash.probe_batch_selected,
+                                );
+                                Ok(Some(accepted))
+                            })
+                            .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+                        if let Some(accepted) = batch {
+                            for &candidate in ptrs {
+                                if hash.probe_batch_selected[candidate.row_idx as usize]
+                                    && builds_preserved
+                                {
+                                    hash.table.mark_matched(candidate);
+                                }
                             }
-                            JoinKind::Semi if !builds_preserved => {
-                                self.output.preserved(req, probe_row)
-                            }
-                            JoinKind::LeftOuterSemi if !builds_preserved => {
-                                self.output.preserved(req, probe_row);
-                                req.append_datum(self.output.width(), &Datum::Int(1));
-                            }
-                            JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
+                            hash.probe_matched |= accepted != 0;
+                            hash.probe_candidate_idx = end;
                         }
-                        Ok(true)
-                    })
-                    .map_err(|error| ExecError::SpillFailed(error.to_string()))?
-                    .map_err(key_error)?;
-                if builds_preserved && accepted {
-                    hash.table.mark_matched(ptr);
-                }
-                hash.probe_matched |= accepted;
-                hash.probe_candidate_idx += 1;
-                if accepted
-                    && !builds_preserved
-                    && matches!(
-                        kind,
-                        JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
-                    )
-                {
-                    hash.probe_candidate_idx = hash.probe_candidates.len();
+                        batch
+                    } else {
+                        None
+                    };
+                if batch_result.is_none() {
+                    let accepted = hash
+                        .table
+                        .with_row(ptr, &mut hash.build_buf, |build_row| {
+                            let (left, left_types, right, right_types) = if probe_is_left {
+                                (
+                                    probe_row,
+                                    probe_types,
+                                    build_row,
+                                    hash.build_types.as_slice(),
+                                )
+                            } else {
+                                (
+                                    build_row,
+                                    hash.build_types.as_slice(),
+                                    probe_row,
+                                    probe_types,
+                                )
+                            };
+                            if exact_int.is_none()
+                                && !equi_keys_equal_chunk_rows(
+                                    keys,
+                                    left,
+                                    left_types,
+                                    right,
+                                    right_types,
+                                )?
+                            {
+                                return Ok(false);
+                            }
+                            match kind {
+                                JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                                    self.output.chunks(req, probe_is_left, probe_row, build_row);
+                                }
+                                JoinKind::Semi if !builds_preserved => {
+                                    self.output.preserved(req, probe_row)
+                                }
+                                JoinKind::LeftOuterSemi if !builds_preserved => {
+                                    self.output.preserved(req, probe_row);
+                                    req.append_datum(self.output.width(), &Datum::Int(1));
+                                }
+                                JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
+                            }
+                            Ok(true)
+                        })
+                        .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                        .map_err(key_error)?;
+                    if builds_preserved && accepted {
+                        hash.table.mark_matched(ptr);
+                    }
+                    hash.probe_matched |= accepted;
+                    hash.probe_candidate_idx += 1;
+                    if accepted
+                        && !builds_preserved
+                        && matches!(
+                            kind,
+                            JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
+                        )
+                    {
+                        hash.probe_candidate_idx = hash.probe_candidates.len();
+                    }
                 }
             }
             if hash.probe_candidate_idx == hash.probe_candidates.len() {
