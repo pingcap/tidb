@@ -113,9 +113,9 @@
 //! * Partitioning is modelled as an opaque `partition_index` on a batch, not
 //!   as Go's `kv.PartitionHandle` wrapper. The dedup/count key is
 //!   `(partition_index, handle)`, which is what wrapping achieves. Global
-//!   indexes (`hasGlobalIndex`, which remap a handle's partition through
-//!   `partitionIDMap`) are NOT ported: a partial source must already report
-//!   the partition its handles belong to.
+//!   indexes remap their encoded physical IDs in the storage cursor; the
+//!   partial worker maps its pruned ordinals to the reader's partition map.
+//!   Final row lookup retains that physical identity.
 //! * `IndexMergeRuntimeStat` (:2060), the `memory.Tracker` accounting, the
 //!   `failpoint` injections, `handleWorkerPanic` (:939), `syncErr` (:1734),
 //!   correlated-column range rebuilding (`rebuildRangeForCorCol` :201) have
@@ -290,6 +290,177 @@ pub(crate) enum PartialHandleColumns {
     Common(Vec<usize>),
 }
 
+/// Several partition results belong to ONE partial access path. Keeping that
+/// boundary matters for intersection's per-path membership counting.
+pub(crate) struct PartitionedHandleSource {
+    sources: Vec<Box<dyn PartialHandleSource>>,
+    current: usize,
+    opened: Vec<bool>,
+    rows: crate::executor::RowCount,
+    by_items: Vec<MergeByItem>,
+    batches: Vec<VecDeque<(HandleRef, Vec<Datum>)>>,
+    heap: Vec<usize>,
+    initialized: bool,
+    batch_size: usize,
+}
+
+impl PartitionedHandleSource {
+    pub(crate) fn new(sources: Vec<Box<dyn PartialHandleSource>>) -> Self {
+        let count = sources.len();
+        Self {
+            sources,
+            current: 0,
+            opened: vec![false; count],
+            rows: crate::executor::RowCount::default(),
+            by_items: Vec::new(),
+            batches: Vec::new(),
+            heap: Vec::new(),
+            initialized: false,
+            batch_size: 1024,
+        }
+    }
+
+    pub(crate) fn with_order(mut self, by_items: Vec<MergeByItem>, batch_size: usize) -> Self {
+        self.by_items = by_items;
+        self.batch_size = batch_size.max(1);
+        if !self.by_items.is_empty() {
+            self.batches.resize_with(self.sources.len(), VecDeque::new);
+        }
+        self
+    }
+
+    pub(crate) fn produced_rows(&self) -> crate::executor::RowCount {
+        self.rows.clone()
+    }
+
+    fn refill(&mut self, index: usize) -> Result<bool, ExecError> {
+        if !self.opened[index] {
+            self.opened[index] = true;
+            self.sources[index].open()?;
+        }
+        if let Some(batch) = self.sources[index].next_batch()? {
+            if batch.handles.len() != batch.sort_keys.len() {
+                return Err(ExecError::internal(
+                    "ordered partition needs one sort key per handle",
+                ));
+            }
+            self.batches[index] = batch.handles.into_iter().zip(batch.sort_keys).collect();
+        }
+        if self.batches[index].is_empty() {
+            self.opened[index] = false;
+            self.sources[index].close()?;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    fn less_partition(&self, left: usize, right: usize) -> Result<bool, ExecError> {
+        compare_merge_keys(
+            &self.by_items,
+            &self.batches[left].front().expect("heap head").1,
+            &self.batches[right].front().expect("heap head").1,
+        )
+        .map(|order| order.is_lt())
+    }
+
+    fn sift_down(&mut self, mut parent: usize) -> Result<(), ExecError> {
+        loop {
+            let mut child = parent * 2 + 1;
+            if child >= self.heap.len() {
+                return Ok(());
+            }
+            if child + 1 < self.heap.len()
+                && self.less_partition(self.heap[child + 1], self.heap[child])?
+            {
+                child += 1;
+            }
+            if !self.less_partition(self.heap[child], self.heap[parent])? {
+                return Ok(());
+            }
+            self.heap.swap(parent, child);
+            parent = child;
+        }
+    }
+
+    /// Go sortedSelectResults: retain one batch per partition and a heap of
+    /// their first rows. A partial path must be globally sorted before the
+    /// top-N worker can safely stop reading it early.
+    fn next_ordered_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError> {
+        if !self.initialized {
+            self.initialized = true;
+            for index in 0..self.sources.len() {
+                if self.refill(index)? {
+                    self.heap.push(index);
+                }
+            }
+            for parent in (0..self.heap.len() / 2).rev() {
+                self.sift_down(parent)?;
+            }
+        }
+        let mut result = PartialHandleBatch::default();
+        while result.handles.len() < self.batch_size {
+            let Some(&index) = self.heap.first() else {
+                break;
+            };
+            let (handle, key) = self.batches[index].pop_front().expect("heap head");
+            result.handles.push(handle);
+            result.sort_keys.push(key);
+            if self.batches[index].is_empty() && !self.refill(index)? {
+                self.heap.swap_remove(0);
+            }
+            self.sift_down(0)?;
+        }
+        self.rows.set(self.rows.get() + result.handles.len() as u64);
+        Ok((!result.handles.is_empty()).then_some(result))
+    }
+}
+
+impl PartialHandleSource for PartitionedHandleSource {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.current = 0;
+        self.opened.fill(false);
+        self.initialized = false;
+        self.heap.clear();
+        self.batches.iter_mut().for_each(VecDeque::clear);
+        self.rows.set(0);
+        Ok(())
+    }
+
+    fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError> {
+        if !self.by_items.is_empty() {
+            return self.next_ordered_batch();
+        }
+        while let Some(source) = self.sources.get_mut(self.current) {
+            if !self.opened[self.current] {
+                self.opened[self.current] = true;
+                source.open()?;
+            }
+            if let Some(batch) = source.next_batch()? {
+                self.rows.set(self.rows.get() + batch.handles.len() as u64);
+                return Ok(Some(batch));
+            }
+            self.opened[self.current] = false;
+            source.close()?;
+            self.current += 1;
+        }
+        Ok(None)
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        let mut error = None;
+        for (source, opened) in self.sources.iter_mut().zip(&mut self.opened) {
+            if std::mem::take(opened) {
+                if let Err(err) = source.close() {
+                    error.get_or_insert(err);
+                }
+            }
+        }
+        self.heap.clear();
+        self.batches.iter_mut().for_each(VecDeque::clear);
+        error.map_or(Ok(()), Err)
+    }
+}
+
 /// A retained physical partial plan reduced to the handle batches consumed by
 /// Go's index-merge process worker.
 pub(crate) struct ExecutorPartialHandleSource {
@@ -300,6 +471,7 @@ pub(crate) struct ExecutorPartialHandleSource {
     handle_columns: PartialHandleColumns,
     sort_key_columns: Vec<usize>,
     batch_size: usize,
+    partition_index: usize,
 }
 
 impl ExecutorPartialHandleSource {
@@ -323,7 +495,13 @@ impl ExecutorPartialHandleSource {
             handle_columns,
             sort_key_columns,
             batch_size,
+            partition_index: 0,
         }
+    }
+
+    pub(crate) fn with_partition_index(mut self, partition_index: usize) -> Self {
+        self.partition_index = partition_index;
+        self
     }
 
     fn handle_of(&self, row: tidb_chunk::row::Row<'_>) -> Result<TableHandle, ExecError> {
@@ -375,7 +553,10 @@ impl PartialHandleSource for ExecutorPartialHandleSource {
         };
         for row_index in 0..chunk.num_rows() {
             let row = chunk.get_row(row_index);
-            handles.push(HandleRef::new(self.handle_of(row)?));
+            handles.push(HandleRef {
+                handle: self.handle_of(row)?,
+                partition_index: self.partition_index,
+            });
             if !self.sort_key_columns.is_empty() {
                 sort_keys.push(
                     self.sort_key_columns
@@ -402,6 +583,28 @@ pub struct MergeByItem {
     pub collation: Collation,
     /// Go `ByItems.Desc`.
     pub desc: bool,
+}
+
+fn compare_merge_keys(
+    by_items: &[MergeByItem],
+    a: &[Datum],
+    b: &[Datum],
+) -> Result<std::cmp::Ordering, ExecError> {
+    for (i, item) in by_items.iter().enumerate() {
+        let (Some(left), Some(right)) = (a.get(i), b.get(i)) else {
+            return Err(ExecError::internal(
+                "index merge by-item key is shorter than the by-item list",
+            ));
+        };
+        let mut order = tidb_expr::compare_datums_with_collation(left, right, item.collation)?;
+        if item.desc {
+            order = order.reverse();
+        }
+        if !order.is_eq() {
+            return Ok(order);
+        }
+    }
+    Ok(std::cmp::Ordering::Equal)
 }
 
 /// Go `handleHeap` (:1016).
@@ -440,23 +643,7 @@ impl HandleHeap {
     /// comparison is negated for an ASCENDING item, so "less" means "sorts
     /// later".
     fn less(&self, a: &[Datum], b: &[Datum]) -> Result<bool, ExecError> {
-        for (i, item) in self.by_items.iter().enumerate() {
-            let (Some(left), Some(right)) = (a.get(i), b.get(i)) else {
-                return Err(ExecError::internal(
-                    "index merge by-item key is shorter than the by-item list",
-                ));
-            };
-            let mut cmp = tidb_expr::compare_datums_with_collation(left, right, item.collation)?;
-            if !item.desc {
-                cmp = cmp.reverse();
-            }
-            match cmp {
-                std::cmp::Ordering::Less => return Ok(true),
-                std::cmp::Ordering::Greater => return Ok(false),
-                std::cmp::Ordering::Equal => {}
-            }
-        }
-        Ok(false)
+        compare_merge_keys(&self.by_items, a, b).map(|order| order.is_gt())
     }
 
     /// Go `heap.Push` followed by the `Len() > requiredCnt` eviction (:1150).
@@ -465,7 +652,7 @@ impl HandleHeap {
     /// `top == the row just pushed` test, which is what lets it mark a partial
     /// path `useless`. The eviction itself is what matters; the `uselessMap`
     /// early-exit is a scan-shortening optimization over an already-sorted
-    /// path and cannot change the retained set, so it is not ported.
+    /// path and cannot change the retained set.
     fn push(&mut self, key: Vec<Datum>, handle: HandleRef) -> Result<bool, ExecError> {
         self.entries.push((key, handle));
         if self.required_cnt == 0 || self.entries.len() <= self.required_cnt {
@@ -545,6 +732,8 @@ pub struct IndexMergeReaderExec {
     decode_context: RowDecodeContext,
     /// Go `partialPlans`, reduced to their handle output.
     partials: Vec<Box<dyn PartialHandleSource>>,
+    /// Prefix whose Open was attempted and still needs teardown.
+    opened_partials: usize,
     /// Go `isIntersection`.
     is_intersection: bool,
     /// Go `byItems`. Empty selects `fetchLoopUnion`; non-empty selects
@@ -594,6 +783,7 @@ impl IndexMergeReaderExec {
             table,
             decode_context,
             partials,
+            opened_partials: 0,
             is_intersection,
             by_items: Vec::new(),
             pushed_limit: None,
@@ -648,32 +838,46 @@ impl IndexMergeReaderExec {
 
     /// Go `startWorkers` (:317) plus the process worker running to completion.
     fn start_workers(&mut self) -> Result<(), ExecError> {
-        for partial in &mut self.partials {
-            partial.open()?;
-        }
-        let handles = if self.is_intersection {
-            if !self.by_items.is_empty() {
-                // Go `fetchLoopIntersectionWithOrderBy` (:1569) is an empty
-                // body with a `todo`, so no plan reaches it. Refusing is the
-                // same behavior stated instead of silently ignoring the order.
-                return Err(ExecError::unsupported(
+        self.started = true;
+        let result = (|| {
+            for partial in &mut self.partials {
+                self.opened_partials += 1;
+                partial.open()?;
+            }
+            if self.is_intersection {
+                if !self.by_items.is_empty() {
+                    // Go `fetchLoopIntersectionWithOrderBy` (:1569) is an empty
+                    // body with a `todo`, so no plan reaches it. Refusing is the
+                    // same behavior stated instead of silently ignoring the order.
+                    return Err(ExecError::unsupported(
                     "index merge intersection with an order-by is not implemented (Go: fetchLoopIntersectionWithOrderBy)",
                 ));
+                }
+                self.fetch_loop_intersection()
+            } else if self.by_items.is_empty() {
+                self.fetch_loop_union()
+            } else {
+                self.fetch_loop_union_with_order_by()
             }
-            self.fetch_loop_intersection()?
-        } else if self.by_items.is_empty() {
-            self.fetch_loop_union()?
-        } else {
-            self.fetch_loop_union_with_order_by()?
-        };
-        for batch in handles {
-            self.tasks.push_back(batch);
-        }
-        for partial in &mut self.partials {
-            partial.close()?;
-        }
-        self.started = true;
+        })();
+        // Go partial workers defer closing every result, including error
+        // exits. Preserve the operation error over any teardown error.
+        let closed = self.close_partials();
+        let handles = result?;
+        closed?;
+        self.tasks.extend(handles);
         Ok(())
+    }
+
+    fn close_partials(&mut self) -> Result<(), ExecError> {
+        let mut error = None;
+        let opened = std::mem::take(&mut self.opened_partials);
+        for partial in &mut self.partials[..opened] {
+            if let Err(err) = partial.close() {
+                error.get_or_insert(err);
+            }
+        }
+        error.map_or(Ok(()), Err)
     }
 
     /// Go `indexMergeProcessWorker.fetchLoopUnion` (:1245).
@@ -824,13 +1028,28 @@ impl IndexMergeReaderExec {
 
     /// Go `buildFinalTableReader` (:854) + `executeTask` (:1988): the reader
     /// over one task's handles.
-    fn build_final_table_reader(&self, handles: Vec<HandleRef>) -> Box<dyn Executor> {
+    fn build_final_table_reader(
+        &self,
+        handles: Vec<HandleRef>,
+    ) -> Result<Box<dyn Executor>, ExecError> {
         let meta = ExecutorMeta::new(
             self.meta.schema().clone(),
             self.meta.id(),
             self.meta.init_cap(),
             self.meta.max_chunk_size(),
         );
+        let physical_ids = self.table.record_physical_ids();
+        let partition_ids = handles
+            .iter()
+            .map(|handle| {
+                physical_ids
+                    .get(handle.partition_index)
+                    .copied()
+                    .ok_or_else(|| {
+                        ExecError::internal("index-merge task references an unknown partition")
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let handles = handles.into_iter().map(|h| h.handle).collect();
         let source = match &self.output_columns {
             Some(columns) => HandleSourceExec::new_mapped_with_context(
@@ -846,9 +1065,10 @@ impl IndexMergeReaderExec {
                 handles,
                 self.decode_context.clone(),
             ),
-        };
+        }
+        .with_partition_ids(Some(partition_ids));
         if self.table_filters.is_empty() {
-            return Box::new(source);
+            return Ok(Box::new(source));
         }
         let context = self
             .filter_context
@@ -856,13 +1076,13 @@ impl IndexMergeReaderExec {
             .expect("table filters require their statement context")
             .clone();
         let memory = context.statement_memory();
-        Box::new(SelectionExec::new(
+        Ok(Box::new(SelectionExec::new(
             meta,
             self.table_filters.clone(),
             Box::new(source),
             context,
             memory,
-        ))
+        )))
     }
 }
 
@@ -888,9 +1108,11 @@ impl Executor for IndexMergeReaderExec {
                 let Some(task) = self.tasks.pop_front() else {
                     return Ok(());
                 };
-                let mut reader = self.build_final_table_reader(task);
-                reader.open()?;
-                self.current = Some(reader);
+                self.current = Some(self.build_final_table_reader(task)?);
+                self.current
+                    .as_mut()
+                    .expect("reader was just installed")
+                    .open()?;
             }
             let reader = self.current.as_mut().expect("reader was just installed");
             reader.next(req)?;
@@ -905,14 +1127,13 @@ impl Executor for IndexMergeReaderExec {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
-        if let Some(mut reader) = self.current.take() {
-            reader.close()?;
-        }
+        let current = self
+            .current
+            .take()
+            .map_or(Ok(()), |mut reader| reader.close());
         self.tasks.clear();
-        for partial in &mut self.partials {
-            partial.close()?;
-        }
-        Ok(())
+        let partials = self.close_partials();
+        current.and(partials)
     }
 
     fn schema(&self) -> &Schema {
@@ -1192,6 +1413,51 @@ mod tests {
 
     #[test]
     fn union_with_order_by_and_limit_keeps_the_smallest_keys() {
+        // Go startPartialIndexWorker merges sorted partition results before
+        // applying the process worker's per-path early termination.
+        for desc in [false, true] {
+            for offset in [0, 1] {
+                let order = vec![MergeByItem {
+                    collation: Collation::Binary,
+                    desc,
+                }];
+                let partition_rows = if desc {
+                    vec![vec![(3, 3), (2, 2), (1, 1)], vec![(30, 30), (20, 20)]]
+                } else {
+                    vec![vec![(10, 10), (20, 20), (30, 30)], vec![(1, 1), (2, 2)]]
+                };
+                // One-row input batches force repeated partition refills;
+                // an empty partition must not terminate the logical path.
+                let sources = std::iter::once(ordered_source(&[]))
+                    .chain(partition_rows.iter().map(|rows| {
+                        Box::new(MaterializedHandleSource::new(
+                            rows.iter()
+                                .map(|(handle, key)| PartialHandleBatch {
+                                    handles: int_handles(&[*handle]),
+                                    sort_keys: vec![vec![Datum::Int(*key)]],
+                                })
+                                .collect(),
+                        )) as Box<dyn PartialHandleSource>
+                    }))
+                    .collect();
+                let partitioned =
+                    PartitionedHandleSource::new(sources).with_order(order.clone(), 1);
+                let mut partitioned_exec = merge(vec![Box::new(partitioned)], false)
+                    .with_by_items(order)
+                    .with_pushed_limit(PushedDownLimit { offset, count: 2 });
+                partitioned_exec.start_workers().unwrap();
+                let tasks = partitioned_exec.tasks.drain(..).collect();
+                let expected = match (desc, offset) {
+                    (false, 0) => vec![1, 2],
+                    (false, _) => vec![2, 10],
+                    (true, 0) => vec![30, 20],
+                    (true, _) => vec![20, 3],
+                };
+                assert_eq!(flatten(tasks), expected);
+                partitioned_exec.close().unwrap();
+            }
+        }
+
         let mut exec = merge(
             vec![
                 ordered_source(&[(10, 9), (20, 1)]),
@@ -1244,6 +1510,90 @@ mod tests {
         let mut exec = merge(vec![source(&[1]), source(&[1])], true).with_by_items(asc());
         let err = exec.start_workers().expect_err("refused");
         assert!(matches!(err, ExecError::Unsupported(_)));
+    }
+
+    /// Go TestIndexMergeError / TestIndexMergeCoprGoroutinesLeak: every opened
+    /// partial is torn down even when another partial fails.
+    #[test]
+    fn index_merge_error_closes_all_started_partials() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        struct Source {
+            opened: Arc<AtomicUsize>,
+            closed: Arc<AtomicUsize>,
+            failure: &'static str,
+        }
+        impl PartialHandleSource for Source {
+            fn open(&mut self) -> Result<(), ExecError> {
+                self.opened.fetch_add(1, Ordering::Relaxed);
+                if self.failure == "open" {
+                    return Err(ExecError::internal("open failure"));
+                }
+                Ok(())
+            }
+            fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError> {
+                if self.failure == "read" {
+                    return Err(ExecError::internal("read failure"));
+                }
+                Ok(None)
+            }
+            fn close(&mut self) -> Result<(), ExecError> {
+                self.closed.fetch_add(1, Ordering::Relaxed);
+                if self.failure == "close" {
+                    return Err(ExecError::internal("close failure"));
+                }
+                Ok(())
+            }
+        }
+        for failures in [
+            ["", "", ""],
+            ["close", "", ""],
+            ["close", "read", ""],
+            ["close", "open", ""],
+        ] {
+            let counts: Vec<_> = (0..3)
+                .map(|_| (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))))
+                .collect();
+            let partials = counts
+                .iter()
+                .zip(failures)
+                .map(|((opened, closed), failure)| {
+                    Box::new(Source {
+                        opened: opened.clone(),
+                        closed: closed.clone(),
+                        failure,
+                    }) as Box<dyn PartialHandleSource>
+                })
+                .collect();
+            let mut exec = merge(partials, false);
+            exec.open().unwrap();
+            let result = exec.start_workers();
+            match failures[1] {
+                "open" => assert!(format!("{:?}", result.unwrap_err()).contains("open failure")),
+                "read" => assert!(format!("{:?}", result.unwrap_err()).contains("read failure")),
+                _ if failures[0] == "close" => {
+                    assert!(format!("{:?}", result.unwrap_err()).contains("close failure"))
+                }
+                _ => result.unwrap(),
+            }
+            // Shutdown errors must not strand a later path or cause a
+            // second Close of an already drained remote result.
+            let _ = exec.close();
+            let _ = exec.close();
+            for (index, (opened, closed)) in counts.iter().enumerate() {
+                let expected = usize::from(failures[1] != "open" || index < 2);
+                assert_eq!(
+                    (
+                        opened.load(Ordering::Relaxed),
+                        closed.load(Ordering::Relaxed)
+                    ),
+                    (expected, expected),
+                    "{failures:?}, source {index}"
+                );
+            }
+        }
     }
 
     #[test]

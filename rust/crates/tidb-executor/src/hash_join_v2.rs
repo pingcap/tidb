@@ -1429,42 +1429,16 @@ fn collect_inner_join_candidates(
     joined_chk.set_incomplete_chunk(true);
 
     while remain_cap > 0 && !base.is_current_chunk_probe_done() {
-        let probe_row = base.current_probe_row();
-        let header = base.matched_rows_headers()[probe_row];
-        if header == 0 {
-            base.finish_lookup_current_probe_row();
-            base.set_current_probe_row(probe_row + 1);
-            continue;
-        }
-
-        let hash_value = base.matched_rows_hash_value()[probe_row];
-        let build_address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-        let build_row = ctx.hash_table.row_bytes(build_address);
-        if is_key_matched(
-            ctx.meta.key_mode,
-            &base.serialized_keys()[probe_row],
-            build_row,
-            ctx.meta,
-        ) {
-            base.append_build_row_to_cached_build_rows_v2(
+        remain_cap -= base.collect_inner_candidate_batch(ctx, remain_cap);
+        if base.next_cached_build_row_index() == crate::base_join_probe::BATCH_BUILD_ROW_SIZE {
+            base.batch_construct_build_rows(
                 ctx,
                 ctx.hash_table,
-                MatchedRowInfo {
-                    probe_row_index: probe_row,
-                    build_row_start: build_address,
-                    build_row_offset: 0,
-                },
                 joined_chk,
                 0,
                 for_other_condition,
             );
-            base.record_matched_row_for_current_probe_row();
-            remain_cap -= 1;
-        } else {
-            base.record_probe_collision();
         }
-        let next = BaseJoinProbe::next_matched_row(build_row, &ctx.tag_helper, hash_value);
-        base.set_matched_rows_header(probe_row, next);
     }
 
     let result = check_probe_killed(killer);

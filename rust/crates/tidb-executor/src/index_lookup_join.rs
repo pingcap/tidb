@@ -674,6 +674,8 @@ impl<C: Columns> IndexLookUpJoin<C> {
         task: &mut LookUpJoinTask,
     ) -> Result<Vec<IndexJoinLookUpContent>, ExecError> {
         let mut contents = Vec::with_capacity(task.outer_result.len());
+        let encoder = tidb_codec::Encoder::new(tidb_datatype::new_collation_enabled());
+        let mut encoded = Vec::with_capacity(64);
         for chk_idx in 0..task.outer_result.num_chunks() {
             let num_rows = task.outer_result.get_chunk(chk_idx).num_rows();
             for row_idx in 0..num_rows {
@@ -692,9 +694,12 @@ impl<C: Columns> IndexLookUpJoin<C> {
                 // The session zone is not reachable from `Columns`; the
                 // zone-free encoder is used, which differs only for TIMESTAMP
                 // keys.
-                let encoded = tidb_codec::encode_key(&hash_key).map_err(|err| {
-                    ExecError::internal(format!("index join encode lookup key: {err:?}"))
-                })?;
+                encoded.clear();
+                encoder
+                    .append_key_in_timezone(&chrono::Utc, &mut encoded, &hash_key)
+                    .map_err(|err| {
+                        ExecError::internal(format!("index join encode lookup key: {err:?}"))
+                    })?;
                 task.encoded_lookup_keys[chk_idx].append_bytes(0, &encoded);
 
                 if self.inner_ctx.has_prefix_col {
@@ -845,7 +850,8 @@ impl<C: Columns> IndexLookUpJoin<C> {
 
     /// Go `innerWorker.buildLookUpMap` (`index_lookup_join.go:800`).
     fn build_lookup_map(&self, task: &mut LookUpJoinTask) -> Result<(), ExecError> {
-        let mut entries: Vec<(Vec<u8>, [u8; 8])> = Vec::new();
+        let encoder = tidb_codec::Encoder::new(tidb_datatype::new_collation_enabled());
+        let mut key = Vec::with_capacity(64);
         for i in 0..task.inner_result.num_chunks() {
             let chk = task.inner_result.get_chunk(i);
             for j in 0..chk.num_rows() {
@@ -853,28 +859,27 @@ impl<C: Columns> IndexLookUpJoin<C> {
                 if self.has_null_in_join_key(inner_row) {
                     continue;
                 }
-                // Go encodes the key columns one datum at a time into one
-                // buffer, which is the same bytes as encoding the tuple.
-                let key_datums: Vec<Datum> = self
-                    .inner_ctx
-                    .hash_cols
-                    .iter()
-                    .map(|&key_col| {
-                        inner_row.get_datum(key_col, &self.inner_ctx.row_types[key_col])
-                    })
-                    .collect();
-                let key = tidb_codec::encode_key(&key_datums).map_err(|err| {
-                    ExecError::internal(format!("index join encode inner key: {err:?}"))
-                })?;
+                // Go reuses one buffer and immediately copies each key into
+                // lookupMap, without retaining a second task-sized key list.
+                key.clear();
+                for &key_col in &self.inner_ctx.hash_cols {
+                    let datum = inner_row.get_datum(key_col, &self.inner_ctx.row_types[key_col]);
+                    encoder
+                        .append_key_in_timezone(
+                            &chrono::Utc,
+                            &mut key,
+                            std::slice::from_ref(&datum),
+                        )
+                        .map_err(|err| {
+                            ExecError::internal(format!("index join encode inner key: {err:?}"))
+                        })?;
+                }
                 let ptr = RowPtr {
                     chk_idx: u32::try_from(i).unwrap_or(u32::MAX),
                     row_idx: u32::try_from(j).unwrap_or(u32::MAX),
                 };
-                entries.push((key, encode_row_ptr(ptr)));
+                task.lookup_map.put(&key, &encode_row_ptr(ptr));
             }
-        }
-        for (key, value) in &entries {
-            task.lookup_map.put(key, value);
         }
         Ok(())
     }

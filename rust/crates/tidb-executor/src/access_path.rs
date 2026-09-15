@@ -797,6 +797,8 @@ pub(crate) enum HandleOutputColumn {
     Stored(usize),
     /// Go's synthetic `_tidb_rowid`, read from the record key.
     ExtraHandle,
+    /// The physical record keyspace retained alongside each handle.
+    PhysicalTableId,
 }
 
 /// Reads rows for an already-known handle list, one per pull: the source
@@ -989,9 +991,8 @@ impl Executor for HandleSourceExec {
         self.cursor = 0;
         self.produced.set(0);
         // Go's `BatchPointGetExec.initialize` reads every handle with ONE
-        // `BatchGet` before the first `Next`. Prefetch here too: a batched
-        // storage call per partition replaces N sequential point reads on
-        // the statement's critical path.
+        // `BatchGet` before the first `Next`. Prefetch all physical keys
+        // together so the storage layer can schedule regions concurrently.
         let rows = if self.single_point_get {
             let handle = self
                 .handles
@@ -1069,6 +1070,23 @@ impl Executor for HandleSourceExec {
                                     ));
                                 }
                             },
+                            HandleOutputColumn::PhysicalTableId => {
+                                let physical_id = self
+                                    .partition_ids
+                                    .as_ref()
+                                    .and_then(|ids| ids.get(index))
+                                    .copied()
+                                    .or_else(|| match self.table.record_physical_ids().as_slice() {
+                                        [id] => Some(*id),
+                                        _ => None,
+                                    })
+                                    .ok_or_else(|| {
+                                        ExecError::internal(
+                                            "physical-table ID output lost its record partition",
+                                        )
+                                    })?;
+                                req.append_int64(output, physical_id);
+                            }
                         }
                     }
                 } else {
@@ -2743,6 +2761,19 @@ impl IndexRangeSourceExec {
             self.skipped_handles += 1;
         }
         self.next_handle()
+    }
+
+    /// Go's partial index worker projects handles, not table rows. Preserve
+    /// the cursor's partition ordinal through this index-only output path.
+    pub(crate) fn next_index_merge_handle(
+        &mut self,
+    ) -> Result<Option<(TableHandle, usize)>, ExecError> {
+        let handle = self.next_window_handle()?;
+        if handle.is_some() {
+            self.scanned.set(self.scanned.get() + 1);
+            self.produced.set(self.produced.get() + 1);
+        }
+        Ok(handle)
     }
 
     /// The next handle in index order across all ranges, with the
@@ -5933,8 +5964,8 @@ mod tests {
         assert_eq!(rows, vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]);
         assert_eq!(
             gets.load(Ordering::Relaxed),
-            2,
-            "one batch per reached partition, none for p0"
+            1,
+            "one batch across reached partitions, none for p0"
         );
     }
 

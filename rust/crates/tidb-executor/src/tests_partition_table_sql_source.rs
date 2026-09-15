@@ -40,6 +40,36 @@ fn ctx() -> StmtContext {
     StmtContext::for_query()
 }
 
+/// Go `partition_table_test.go::TestIdexMerge`, with fixed draws spanning
+/// each partition and the same partitioned/unpartitioned result comparison.
+#[test]
+fn index_merge_partition_table_source() {
+    for partition in [
+        "partition by range(a) (partition p0 values less than(300), partition p1 values less than(500), partition p2 values less than(1100))",
+        "partition by hash(a) partitions 4",
+        "partition by list(a) (partition p0 values in(1,2,3,4), partition p1 values in(5,6,7,8), partition p2 values in(9,10,11,12))",
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on(&format!("create table t(a int, b int, primary key(a) clustered, index idx_b(b)) {partition}"), &mut catalog).unwrap();
+        run_create_table_on("create table regular(a int, b int, primary key(a) clustered)", &mut catalog).unwrap();
+        let values = if partition.contains("list") {
+            "(1,10),(2,20),(5,5),(6,60),(9,9),(12,120)"
+        } else {
+            "(1,10),(2,20),(301,5),(402,60),(501,9),(1000,120)"
+        };
+        for name in ["t", "regular"] {
+            run_insert_on(&format!("insert into {name} values {values}"), &mut catalog, &ctx()).unwrap();
+        }
+        for predicate in ["a > 4 or b < 15", "a > 300 or b > 10"] {
+            assert_eq!(
+                select_sorted(&catalog, &format!("select /*+ use_index_merge(t) */ * from t where {predicate}")),
+                select_sorted(&catalog, &format!("select * from regular where {predicate}")),
+                "{partition}: {predicate}"
+            );
+        }
+    }
+}
+
 fn text(value: &str) -> Datum {
     Datum::String(StringDatum::new(value, Collation::Utf8Mb4Bin))
 }

@@ -567,9 +567,7 @@ impl BaseJoinProbe {
         }
 
         self.chunk_rows = logical_rows;
-        self.matched_rows_headers.clear();
         self.matched_rows_headers.resize(logical_rows, 0);
-        self.matched_rows_hash_value.clear();
         self.matched_rows_hash_value.resize(logical_rows, 0);
         for bucket in &mut self.hash_values {
             bucket.clear();
@@ -641,6 +639,7 @@ impl BaseJoinProbe {
                     spill.spill_probe_chunk(self.work_id, part_index, target)?;
                     target.reset();
                 }
+                self.matched_rows_headers[logical_row] = 0;
                 continue;
             }
             self.hash_values[part_index].push(PosAndHashValue {
@@ -651,11 +650,13 @@ impl BaseJoinProbe {
 
         self.current_probe_row = 0;
         for part_index in 0..ctx.partition_number {
+            if self.hash_values[part_index].is_empty() {
+                continue;
+            }
+            let table = ctx.hash_table.sub_table(part_index);
             for entry in &self.hash_values[part_index] {
-                self.matched_rows_headers[entry.pos] = ctx
-                    .hash_table
-                    .sub_table(part_index)
-                    .lookup(entry.hash_value, &ctx.tag_helper);
+                self.matched_rows_headers[entry.pos] =
+                    table.lookup(entry.hash_value, &ctx.tag_helper);
             }
         }
         // NULL keys and filter-rejected rows need unmatched-row processing,
@@ -869,6 +870,47 @@ impl BaseJoinProbe {
     // -----------------------------------------------------------------
     // Build-row staging (`base_join_probe.go:531`, `:540`, `:551`)
     // -----------------------------------------------------------------
+
+    /// Go innerJoinProbe's chain walk, bounded by the existing staging array.
+    /// Keep the probe key/hash and current chain head local until a batch
+    /// boundary so reconstruction cannot invalidate their borrowed state.
+    /// Returns the number of matches staged, not the number of collisions.
+    pub(crate) fn collect_inner_candidate_batch(
+        &mut self,
+        ctx: &ProbeContext<'_>,
+        capacity: usize,
+    ) -> usize {
+        let initial = self.next_cached_build_row_index;
+        let end = initial + capacity.min(BATCH_BUILD_ROW_SIZE - initial);
+        while self.next_cached_build_row_index < end && self.current_probe_row < self.chunk_rows {
+            let probe_row = self.current_probe_row;
+            let mut header = self.matched_rows_headers[probe_row];
+            let hash = self.matched_rows_hash_value[probe_row];
+            let key = &self.serialized_keys[probe_row];
+            while header != 0 && self.next_cached_build_row_index < end {
+                let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
+                let row = ctx.hash_table.row_bytes(address);
+                if is_key_matched(ctx.meta.key_mode, key, row, ctx.meta) {
+                    self.cached_build_rows[self.next_cached_build_row_index] = MatchedRowInfo {
+                        probe_row_index: probe_row,
+                        build_row_start: address,
+                        build_row_offset: 0,
+                    };
+                    self.next_cached_build_row_index += 1;
+                    self.matched_rows_for_current_probe_row += 1;
+                } else {
+                    self.probe_collision += 1;
+                }
+                header = Self::next_matched_row(row, &ctx.tag_helper, hash);
+            }
+            self.matched_rows_headers[probe_row] = header;
+            if header == 0 {
+                self.finish_lookup_current_probe_row();
+                self.current_probe_row += 1;
+            }
+        }
+        self.next_cached_build_row_index - initial
+    }
 
     /// Go `appendBuildRowToCachedBuildRowsV2`: stage an already-formed
     /// [`MatchedRowInfo`], flushing at [`BATCH_BUILD_ROW_SIZE`].
@@ -1195,18 +1237,16 @@ impl BaseJoinProbe {
                 let source = probe_chk.column(col_index);
                 let mut destination = chk.column_mut(col_index + col_offset);
                 pre_alloc(&source, &mut destination);
-                for run in runs {
-                    destination.append_cell_n_times(&source, run.offset, run.length);
-                }
+                destination
+                    .append_cell_runs(&source, runs.iter().map(|run| (run.offset, run.length)));
             }
         } else {
             for (index, &col_index) in used.iter().enumerate() {
                 let source = probe_chk.column(col_index);
                 let mut destination = chk.column_mut(index + col_offset);
                 pre_alloc(&source, &mut destination);
-                for run in runs {
-                    destination.append_cell_n_times(&source, run.offset, run.length);
-                }
+                destination
+                    .append_cell_runs(&source, runs.iter().map(|run| (run.offset, run.length)));
             }
         }
     }

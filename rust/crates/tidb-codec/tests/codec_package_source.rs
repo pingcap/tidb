@@ -138,6 +138,24 @@ fn test_codec_key() {
     ];
     for row in rows {
         let encoded = encode_key(&row).unwrap();
+        for new_collation in [false, true] {
+            let encoder = Encoder::new(new_collation);
+            let expected = encoder.encode_key(&row).unwrap();
+            let mut reused = Vec::with_capacity(expected.len() + 1);
+            // Go EncodeKey appends to its supplied slice, including when
+            // index join encodes a composite key one datum at a time.
+            for _ in 0..2 {
+                reused.clear();
+                reused.push(0x74);
+                for datum in &row {
+                    encoder
+                        .append_key_in_timezone(&Utc, &mut reused, std::slice::from_ref(datum))
+                        .unwrap();
+                }
+                assert_eq!(reused[0], 0x74);
+                assert_eq!(&reused[1..], expected);
+            }
+        }
         assert_eq!(decode(&encoded, row.len()).unwrap().len(), row.len());
         let value = encode_value(&row).unwrap();
         assert_eq!(
@@ -512,8 +530,7 @@ fn test_decode_range_restores_index_field_types() {
         ]
     );
 
-    let error =
-        decode_range(&encoded, 6, Some(&field_types[..4]), Some(&east_eight)).unwrap_err();
+    let error = decode_range(&encoded, 6, Some(&field_types[..4]), Some(&east_eight)).unwrap_err();
     assert_eq!(
         error.values,
         [

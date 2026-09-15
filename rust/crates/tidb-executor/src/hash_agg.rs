@@ -70,10 +70,12 @@
 use crate::agg_spill::{AggSpillDiskAction, ParallelAggSpillDiskAction};
 
 mod builder;
+mod group_key;
 mod input;
 mod parallel;
 mod spill;
 
+use group_key::GroupKeyBuffer;
 use input::AggInputMode;
 
 use crate::approx_count_distinct::ApproxCountDistinctSketch;
@@ -764,25 +766,6 @@ pub(crate) fn append_group_key_part(
             encode_compact_bytes(output, &collation.key(bytes));
         }
         None => output.extend_from_slice(&tidb_codec::hash_code(datum)),
-    }
-}
-
-/// The allocation-free counterpart of [`append_group_key_part`] for a typed
-/// integer chunk column. This writes exactly the same datum hash code without
-/// first constructing `Datum::Int`/`Datum::UInt` for every input row.
-fn append_integer_group_key_part(
-    row: tidb_chunk::row::Row<'_>,
-    index: usize,
-    output: &mut Vec<u8>,
-) {
-    if row.is_null(index) {
-        output.push(NIL_FLAG);
-    } else {
-        // Go `codec.HashGroupKey` encodes every ETInt chunk column with
-        // `encodeSignedInt`, including columns whose SQL flag is UNSIGNED.
-        // The chunk stores those unsigned bits in its i64 lane.
-        output.push(VARINT_FLAG);
-        encode_varint(output, row.get_int64(index));
     }
 }
 
@@ -2539,11 +2522,6 @@ pub struct HashAggExec<C: HashAggContext> {
     /// Go builder's DefaultVal, absent for partial or FIRST_ROW-only plans.
     emit_default_row: bool,
     group_by: Vec<Expression>,
-    /// Present when every GROUP BY expression is a resolved integer column.
-    /// Go's vectorized hash aggregation reads those typed chunk cells
-    /// directly; retaining the shape here avoids one Datum construction per
-    /// key and input row while keeping computed/mixed keys on the evaluator.
-    integer_group_columns: Option<Vec<usize>>,
     agg_funcs: Vec<AggFunc>,
     input_modes: Vec<AggInputMode>,
     child: Box<dyn Executor>,
@@ -2556,10 +2534,9 @@ pub struct HashAggExec<C: HashAggContext> {
     // --- Go's `unparallelExec` state machine ---
     /// Group key -> index into `ordered`. Go's `groupSet` + `partialResultMap`.
     groups: FastBytesMap<usize>,
-    /// Scratch storage for the current row's encoded group key. The key is
-    /// moved into `groups` only when a new group is opened; repeated rows
-    /// reuse this allocation instead of allocating one `Vec` per row.
-    group_key_buffer: Vec<u8>,
+    /// Go GetGroupKey's reusable per-row buffers, filled column-wise before
+    /// updating any aggregate state.
+    group_key_buffer: GroupKeyBuffer,
     /// The group-by key datums of every open group, flattened by
     /// `group_by.len()`. A cop partial aggregation outputs its group-by
     /// columns after the aggregate columns (see [`super::final_mode_agg`]), so
@@ -2673,32 +2650,12 @@ impl<C: HashAggContext> HashAggExec<C> {
         // the aggregate columns; a root aggregation reaches the same width
         // through its `firstrow()` aggregates and has no trailing columns.
         let output_group_keys = meta.schema().len() > agg_funcs.len();
-        let integer_group_columns = group_by
-            .iter()
-            .map(|expr| {
-                let column = expr.as_column()?;
-                let index = usize::try_from(column.index).ok()?;
-                let field_type = column.get_static_type()?;
-                (field_type.eval_type() == EvalType::Int
-                    && tidb_chunk::column::get_fixed_len(field_type) == 8
-                    && !field_type.is_unsigned())
-                .then_some(index)
-            })
-            .collect::<Option<Vec<_>>>();
-        // The typed fast path encodes keys without materializing a Datum, so it
-        // cannot feed the trailing group-by columns.
-        let integer_group_columns = if output_group_keys {
-            None
-        } else {
-            integer_group_columns
-        };
         HashAggExec {
             emit_default_row: !agg_funcs
                 .iter()
                 .all(|func| matches!(func.kind, AggKind::FirstRow)),
             meta,
             group_by,
-            integer_group_columns,
             agg_funcs,
             input_modes,
             child,
@@ -2706,7 +2663,7 @@ impl<C: HashAggContext> HashAggExec<C> {
             child_chunk,
             child_returned_empty: true,
             groups: FastBytesMap::default(),
-            group_key_buffer: Vec::new(),
+            group_key_buffer: GroupKeyBuffer::default(),
             group_key_values: Vec::new(),
             output_group_keys,
             ordered: Vec::new(),
@@ -2745,31 +2702,15 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// refused to open a group for (Go's `sel`).
     fn fold_chunk(&mut self, chunk: &Chunk, rows: usize) -> Result<Vec<usize>, ExecError> {
         let mut sel: Vec<usize> = Vec::new();
-        let timezone = self.ctx.time_zone();
+        debug_assert_eq!(rows, chunk.num_rows());
+        self.group_key_buffer
+            .prepare(&self.ctx, chunk, &self.group_by, self.output_group_keys)?;
         let inputs = input::bind_inputs(&self.input_modes, chunk);
+        let mut state_memory_delta = 0;
         for r in 0..rows {
             let row = chunk.get_row(r);
-            self.group_key_buffer.clear();
-            let mut group_datums: Vec<Datum> = Vec::new();
-            if let Some(columns) = &self.integer_group_columns {
-                for &index in columns {
-                    append_integer_group_key_part(row, index, &mut self.group_key_buffer);
-                }
-            } else {
-                for expr in &self.group_by {
-                    let datum = expr.eval(&self.ctx, row)?;
-                    append_hash_agg_group_key_part(
-                        &timezone,
-                        expr,
-                        &datum,
-                        &mut self.group_key_buffer,
-                    )?;
-                    if self.output_group_keys {
-                        group_datums.push(datum);
-                    }
-                }
-            }
-            let idx = match self.groups.get(&self.group_key_buffer) {
+            let key = &self.group_key_buffer.encoded[r];
+            let idx = match self.groups.get(key) {
                 Some(&idx) => idx,
                 None => {
                     // Go: a round in spill mode opens no new group -- but it
@@ -2780,11 +2721,8 @@ impl<C: HashAggContext> HashAggExec<C> {
                         continue;
                     }
                     let idx = self.group_count;
-                    let capacity = self.group_key_buffer.capacity();
-                    let key =
-                        std::mem::replace(&mut self.group_key_buffer, Vec::with_capacity(capacity));
                     let key_len = key.len();
-                    self.groups.insert(key, idx);
+                    self.groups.insert(key.clone(), idx);
                     self.ordered.extend(
                         self.agg_funcs
                             .iter()
@@ -2793,7 +2731,8 @@ impl<C: HashAggContext> HashAggExec<C> {
                     );
                     self.group_count += 1;
                     if self.output_group_keys {
-                        self.group_key_values.extend(group_datums);
+                        self.group_key_buffer
+                            .append_values(r, &mut self.group_key_values);
                     }
                     // Consumed HERE, not at the end of the chunk: Go consumes
                     // inside `getPartialResults`, per group, so the spill
@@ -2815,8 +2754,11 @@ impl<C: HashAggContext> HashAggExec<C> {
                 &mut self.ordered[idx * width..(idx + 1) * width],
                 row,
             )?;
-            self.tracker.consume(delta);
+            state_memory_delta += delta;
         }
+        // Go execute accounts aggregate-state growth once per input chunk;
+        // allocations for newly opened groups remain charged inside the loop.
+        self.tracker.consume(state_memory_delta);
         Ok(sel)
     }
 
@@ -2862,7 +2804,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.tmp_chk_for_spill.reset();
         self.child_returned_empty = true;
         self.groups.clear();
-        self.group_key_buffer.clear();
+        self.group_key_buffer = GroupKeyBuffer::default();
         self.group_key_values.clear();
         self.ordered.clear();
         self.group_count = 0;
@@ -2996,6 +2938,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         }
         self.groups.clear();
         self.group_key_values.clear();
+        self.group_key_buffer = GroupKeyBuffer::default();
         self.ordered.clear();
         self.group_count = 0;
         self.pipeline_mode = false;
@@ -3325,18 +3268,23 @@ mod tests {
         chunk.append_null(0);
         chunk.append_null(1);
 
-        for row_index in 0..chunk.num_rows() {
-            let row = chunk.get_row(row_index);
-            for (column, field_type) in types.iter().enumerate() {
-                let mut fast = Vec::new();
-                append_integer_group_key_part(row, column, &mut fast);
-
+        for (column, field_type) in types.iter().enumerate() {
+            let mut expr = Column::new(column as i64, field_type.clone());
+            expr.index = column as i64;
+            let mut keys = GroupKeyBuffer::default();
+            keys.prepare(&NoColumns, &chunk, &[Expression::Column(expr)], false)
+                .unwrap();
+            for row_index in 0..chunk.num_rows() {
+                let row = chunk.get_row(row_index);
                 let expected =
                     tidb_codec::hash_group_key(&[row.get_datum(column, field_type)], field_type)
                         .unwrap()
                         .pop()
                         .unwrap();
-                assert_eq!(fast, expected, "row {row_index}, column {column}");
+                assert_eq!(
+                    keys.encoded[row_index], expected,
+                    "row {row_index}, column {column}"
+                );
             }
         }
     }

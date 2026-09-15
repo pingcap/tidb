@@ -14,7 +14,7 @@
 
 //! Go conn_batch.go collection state, retained per store by the transport loop.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -148,7 +148,7 @@ impl Collectors {
         &mut self,
         address: &str,
         receiver: &mut mpsc::UnboundedReceiver<WorkerCommand>,
-        pending: &mut Option<WorkerCommand>,
+        pending: &mut VecDeque<WorkerCommand>,
     ) -> Option<Vec<BatchSubmission>> {
         let store = self.stores.get_mut(address)?;
         let batch = store.pending.take()?;
@@ -209,7 +209,7 @@ pub(super) fn collect(
     address: &str,
     first: BatchSubmission,
     receiver: &mut mpsc::UnboundedReceiver<WorkerCommand>,
-    pending: &mut Option<WorkerCommand>,
+    pending: &mut VecDeque<WorkerCommand>,
 ) -> Vec<BatchSubmission> {
     collect_more(address, vec![first], receiver, pending)
 }
@@ -218,17 +218,21 @@ fn collect_more(
     address: &str,
     mut submissions: Vec<BatchSubmission>,
     receiver: &mut mpsc::UnboundedReceiver<WorkerCommand>,
-    pending: &mut Option<WorkerCommand>,
+    pending: &mut VecDeque<WorkerCommand>,
 ) -> Vec<BatchSubmission> {
     let mut entries = submissions.iter().map(|s| s.entries.len()).sum::<usize>();
     // Bound empty submissions too, so a producer cannot starve lifecycle work.
     // Publication separately splits oversized caller vectors into wire packets.
-    while pending.is_none()
-        && entries < MAX_BATCH_COMMANDS
-        && submissions.len() < MAX_BATCH_COMMANDS
-    {
-        match receiver.try_recv() {
-            Ok(WorkerCommand::BatchSubmit {
+    // Go has one admission channel per store. Another store's requests do
+    // not cut this store's batch short. The shared native owner retains them
+    // in order, with bounded lookahead and a barrier at lifecycle commands.
+    let mut deferred = VecDeque::new();
+    for _ in 0..MAX_BATCH_COMMANDS {
+        if entries >= MAX_BATCH_COMMANDS || submissions.len() >= MAX_BATCH_COMMANDS {
+            break;
+        }
+        match pending.pop_front().or_else(|| receiver.try_recv().ok()) {
+            Some(WorkerCommand::BatchSubmit {
                 address: next,
                 entries: next_entries,
                 call,
@@ -241,10 +245,16 @@ fn collect_more(
                     reply,
                 });
             }
-            Ok(command) => *pending = Some(command),
-            Err(_) => break,
+            Some(command @ WorkerCommand::BatchSubmit { .. }) => deferred.push_back(command),
+            Some(command) => {
+                deferred.push_back(command);
+                break;
+            }
+            None => break,
         }
     }
+    deferred.append(pending);
+    *pending = deferred;
     submissions
 }
 
@@ -269,11 +279,79 @@ mod tests {
 
     #[test]
     fn test_batch_policy_collection() {
+        // Go's per-store fetchAllPendingRequests drains A even if B's
+        // independent channel also has work. A lifecycle boundary must
+        // remain ahead of any later submission to the same generation.
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut pending = VecDeque::new();
+        let send = |address: &str| {
+            let BatchSubmission {
+                entries,
+                call,
+                reply,
+            } = submission();
+            sender
+                .send(WorkerCommand::BatchSubmit {
+                    address: address.to_owned(),
+                    entries,
+                    call,
+                    reply,
+                })
+                .unwrap();
+        };
+        for address in ["b", "a", "b", "a"] {
+            send(address);
+        }
+        let (reply, _closed) = tokio::sync::oneshot::channel();
+        sender
+            .send(WorkerCommand::CloseAddress {
+                address: "a".into(),
+                reply,
+            })
+            .unwrap();
+        send("a");
+        assert_eq!(
+            collect("a", submission(), &mut receiver, &mut pending).len(),
+            3
+        );
+        let Some(WorkerCommand::BatchSubmit {
+            address,
+            entries,
+            call,
+            reply,
+        }) = pending.pop_front()
+        else {
+            panic!("other store's admission was lost");
+        };
+        assert_eq!(address, "b");
+        assert_eq!(
+            collect(
+                &address,
+                BatchSubmission {
+                    entries,
+                    call,
+                    reply
+                },
+                &mut receiver,
+                &mut pending
+            )
+            .len(),
+            2
+        );
+        assert!(matches!(
+            pending.pop_front(),
+            Some(WorkerCommand::CloseAddress { .. })
+        ));
+        assert!(pending.is_empty());
+        assert!(
+            matches!(receiver.try_recv(), Ok(WorkerCommand::BatchSubmit { address, .. }) if address == "a")
+        );
+
         // client-go client_test.go TestBatchPolicy/standard: the same arrival
         // sequence must drive the live collector, not only the pure trigger.
         let mut collectors = Collectors::default();
         let (sender, mut receiver) = mpsc::unbounded_channel();
-        let mut queued = None;
+        let mut queued = VecDeque::new();
         for (micros, waits) in [
             (100, false),
             (80, false),
@@ -399,7 +477,7 @@ mod tests {
     #[test]
     fn empty_submissions_are_bounded_and_do_not_wait_for_live_senders() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
-        let mut pending = None;
+        let mut pending = VecDeque::new();
         assert_eq!(
             collect("store", empty_submission(), &mut receiver, &mut pending).len(),
             1
@@ -423,7 +501,7 @@ mod tests {
             collect("store", empty_submission(), &mut receiver, &mut pending).len(),
             MAX_BATCH_COMMANDS
         );
-        assert!(pending.is_none());
+        assert!(pending.is_empty());
         assert!(matches!(
             receiver.try_recv(),
             Ok(WorkerCommand::BatchSubmit { .. })

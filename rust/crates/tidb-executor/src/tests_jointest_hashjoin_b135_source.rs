@@ -121,6 +121,69 @@ fn inline_projection_hash_join_row_semantics() {
         "select t.a,t.a,t.c from s join t on t.a=s.a where s.b<t.b order by t.a,t.c",
     );
     assert_eq!(rows.len(), 6, "Go expects six projected rows");
+
+    // Go inner_join_probe_test.go checks chunk results against nested loops.
+    // Retain that oracle across the staging and requested-output boundaries,
+    // including duplicate keys, rejected NULL keys and residual filtering.
+    for key_type in ["int", "varchar(8)"] {
+        let mut catalog = Catalog::default();
+        create(
+            &mut catalog,
+            &format!("create table s (a {key_type}, c int)"),
+        );
+        create(
+            &mut catalog,
+            &format!("create table t (a {key_type}, c int)"),
+        );
+        let values = (0..513)
+            .map(|value| format!("('0',{value})"))
+            .collect::<Vec<_>>()
+            .join(",");
+        insert(
+            &mut catalog,
+            &format!("insert into s values {values},(NULL,1),('2',1)"),
+        );
+        insert(
+            &mut catalog,
+            "insert into t values ('0',128),('0',511),(NULL,1000),('1',1000)",
+        );
+        for max_rows in [1, 31, 256, 1024] {
+            let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+            env.session.use_hash_join_v2 = true;
+            let context = ctx()
+                .with_optimizer_cost_env(env)
+                .with_executor_chunk_sizes(1, max_rows);
+            for residual in [false, true] {
+                let sql = if residual {
+                    "select s.c,t.c from s join t on s.a=t.a and s.c<t.c"
+                } else {
+                    "select s.c,t.c from s join t on s.a=t.a"
+                };
+                let result = run_select_on(sql, &catalog, &context).unwrap();
+                let mut actual: Vec<_> = result
+                    .into_iter()
+                    .map(|row| {
+                        let [Datum::Int(left), Datum::Int(right)] = row.as_slice() else {
+                            panic!("integer projection");
+                        };
+                        (*left, *right)
+                    })
+                    .collect();
+                actual.sort_unstable();
+                let expected: Vec<_> = (0..513)
+                    .flat_map(|left| {
+                        [128, 511].into_iter().filter_map(move |right| {
+                            (!residual || left < right).then_some((left, right))
+                        })
+                    })
+                    .collect();
+                assert_eq!(
+                    actual, expected,
+                    "{key_type}, max_rows={max_rows}, residual={residual}"
+                );
+            }
+        }
+    }
 }
 
 /// Go `hash_join_test.go:597::TestIssue54755`: left/right outer joins retain

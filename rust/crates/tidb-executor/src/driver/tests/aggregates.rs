@@ -1559,13 +1559,19 @@ fn aggregate_selects() {
         ]]
     );
     // GROUP BY with a carried key column, WHERE below the agg.
+    // As in Go's aggregate tests, normalize results without ORDER BY.
+    let mut groups = run_select_on(
+        "SELECT a, COUNT(*) FROM t WHERE b >= 20 GROUP BY a",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    groups.sort_by_key(|row| match row[0] {
+        Datum::Int(value) => value,
+        _ => panic!("integer group key"),
+    });
     assert_eq!(
-        run_select_on(
-            "SELECT a, COUNT(*) FROM t WHERE b >= 20 GROUP BY a",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .unwrap(),
+        groups,
         vec![
             vec![Datum::Int(1), Datum::Int(1)],
             vec![Datum::Int(2), Datum::Int(1)],

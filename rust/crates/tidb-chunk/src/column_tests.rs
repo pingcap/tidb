@@ -545,6 +545,48 @@ fn append_cell_n_times_and_copy_reconstruct_cover_fixed_var_and_null() {
     assert_eq!(selected.get_bytes(1), b"a");
     assert!(selected.is_null(2));
     assert_eq!(selected.offsets, vec![0, 3, 4, 4]);
+
+    // Go's AppendCellNTimes run loop, with the native batch interface. Cover
+    // physical widths, NULL/empty cells, bitmap boundaries and reset reuse.
+    let runs = [(2, 1), (1, 7), (0, 3), (2, 0), (2, 17), (1, 1)];
+    for width in [0, 1, 4, 8, 16, 40] {
+        let mut source = if width == 0 {
+            Column::new_var_len(3)
+        } else {
+            Column::new_fixed_len(width, 3)
+        };
+        for row in 0..3 {
+            if row == 1 {
+                source.append_null();
+            } else {
+                source.append_raw_cell(&vec![row as u8; if width == 0 { row * 3 } else { width }]);
+            }
+        }
+        for frozen_source in [false, true] {
+            let mut source = source.clone();
+            if frozen_source {
+                source.data = SharedBytes::from_bytes(bytes::Bytes::from(source.data.snapshot()));
+            }
+            for frozen_destination in [false, true] {
+                let mut scalar = source.copy_construct();
+                let mut batch = source.copy_construct();
+                if frozen_destination {
+                    batch.data = SharedBytes::from_bytes(bytes::Bytes::from(batch.data.snapshot()));
+                }
+                for reset in [false, true] {
+                    if reset {
+                        scalar.reset();
+                        batch.reset();
+                    }
+                    for (row, times) in runs {
+                        scalar.append_cell_n_times(&source, row, times);
+                    }
+                    batch.append_cell_runs(&source, runs.into_iter());
+                    assert_eq!(batch, scalar, "width={width}, frozen_source={frozen_source}, frozen_destination={frozen_destination}, reset={reset}");
+                }
+            }
+        }
+    }
 }
 
 #[test]

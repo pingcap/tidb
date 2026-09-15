@@ -1415,6 +1415,16 @@ struct PartialWorker<C: Columns + Send + Sync + Clone + 'static> {
 }
 
 impl<C: Columns + Send + Sync + Clone + 'static> PartialWorker<C> {
+    fn take_maps(&mut self) -> Result<PartialOutput, ExecError> {
+        match self.error.take() {
+            Some(error) => Err(error),
+            None => Ok(PartialOutput {
+                maps: self.maps.iter_mut().map(std::mem::take).collect(),
+                key_bytes: self.keys.charged,
+            }),
+        }
+    }
+
     fn process(&mut self, command: PartialInput) {
         #[cfg(test)]
         if !self.started {
@@ -1424,14 +1434,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialWorker<C> {
         let mut input = match command {
             PartialInput::Chunk(input) => input,
             PartialInput::TakeMaps(reply) => {
-                let result = match self.error.take() {
-                    Some(error) => Err(error),
-                    None => Ok(PartialOutput {
-                        maps: self.maps.iter_mut().map(std::mem::take).collect(),
-                        key_bytes: self.keys.charged,
-                    }),
-                };
-                let _ = reply.send(result);
+                let _ = reply.send(self.take_maps());
                 return;
             }
         };
@@ -1488,6 +1491,14 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialLane<C> {
         if state.closed {
             return false;
         }
+        // An idle lane has no in-flight chunks. Go's spill barrier permits
+        // its maps to be detached immediately; no native task is needed.
+        if let (Some(worker), PartialInput::TakeMaps(reply)) = (state.worker.as_mut(), &command) {
+            let result = worker.take_maps();
+            drop(state);
+            let _ = reply.send(result);
+            return true;
+        }
         // The resource token bounds each lane to one queued input chunk.
         // A barrier can follow that chunk, but no unbounded input queue exists.
         state.pending.push_back(command);
@@ -1517,6 +1528,15 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialLane<C> {
             let mut state = queue
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Complete control barriers after this chunk in FIFO order. Each
+            // reply is a fresh capacity-one channel with exactly one send;
+            // publishing cannot park while holding the lane lock. Expression
+            // evaluation stays outside this lock and still yields per chunk.
+            while matches!(state.pending.front(), Some(PartialInput::TakeMaps(_))) {
+                if let Some(PartialInput::TakeMaps(reply)) = state.pending.pop_front() {
+                    let _ = reply.send(worker.take_maps());
+                }
+            }
             if !state.pending.is_empty() {
                 drop(state);
                 // Yield between batches so concurrent queries share the pool.
@@ -1770,7 +1790,19 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
         let plan = Arc::new(PipelinePlan {
             ctx: self.ctx.clone(),
             group_by: self.group_by.clone(),
-            integer_columns: self.integer_group_columns.clone(),
+            integer_columns: self
+                .group_by
+                .iter()
+                .map(|expr| {
+                    let column = expr.as_column()?;
+                    let index = usize::try_from(column.index).ok()?;
+                    let field_type = column.get_static_type()?;
+                    (field_type.eval_type() == EvalType::Int
+                        && tidb_chunk::column::get_fixed_len(field_type) == 8
+                        && !field_type.is_unsigned())
+                    .then_some(index)
+                })
+                .collect(),
             agg_funcs: self.agg_funcs.clone(),
             input_modes: self.input_modes.clone(),
             collations: self.state_collations.clone(),
@@ -1867,6 +1899,11 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                 maps[0].push(default);
             }
             maps.into_iter()
+                // All partial inputs are complete here. Empty buckets have
+                // no final results to evaluate, so they need no runnable task
+                // or result holder. Keep the configured hash partitioning and
+                // the default global group above; spilled inputs stay lazy.
+                .filter(|maps| maps.iter().any(|map| !map.index.is_empty()))
                 .map(|map| FinalInput::Memory(Some(map)))
                 .collect()
         };
@@ -2218,10 +2255,9 @@ struct FoldInputs<'a, C> {
 /// Computed expressions finish a whole column before encoding; direct columns
 /// can be read in place because encoding does not mutate the input chunk.
 struct PipelineKeyBuffer {
-    encoded: Vec<Vec<u8>>,
+    group_keys: GroupKeyBuffer,
     integers: Vec<(Option<i64>, usize)>,
     partial_results: Vec<(usize, usize)>,
-    values: Vec<Datum>,
     tracker: Arc<Tracker>,
     charged: i64,
 }
@@ -2229,26 +2265,19 @@ struct PipelineKeyBuffer {
 impl PipelineKeyBuffer {
     fn new(tracker: Arc<Tracker>) -> Self {
         Self {
-            encoded: Vec::new(),
+            group_keys: GroupKeyBuffer::default(),
             integers: Vec::new(),
             partial_results: Vec::new(),
-            values: Vec::new(),
             tracker,
             charged: 0,
         }
     }
 
     fn account(&mut self) {
-        let bytes = (self.encoded.capacity() * std::mem::size_of::<Vec<u8>>()
-            + self.encoded.iter().map(Vec::capacity).sum::<usize>()
+        let bytes = (self.group_keys.memory_usage()
             + self.integers.capacity() * std::mem::size_of::<(Option<i64>, usize)>()
-            + self.partial_results.capacity() * std::mem::size_of::<(usize, usize)>()
-            + self.values.capacity() * std::mem::size_of::<Datum>()
-            + self
-                .values
-                .iter()
-                .map(|value| value.estimated_mem_usage() - std::mem::size_of::<Datum>())
-                .sum::<usize>()) as i64;
+            + self.partial_results.capacity() * std::mem::size_of::<(usize, usize)>())
+            as i64;
         self.tracker.consume(bytes - self.charged);
         self.charged = bytes;
     }
@@ -2275,64 +2304,9 @@ impl PipelineKeyBuffer {
                 }));
                 return Ok(());
             }
-            self.encoded.resize_with(self.encoded.len().max(rows), || {
-                Vec::with_capacity(10 * inputs.group_by.len())
-            });
-            for key in &mut self.encoded[..rows] {
-                key.clear();
-            }
-            let timezone = inputs.ctx.time_zone();
-            for expr in inputs.group_by {
-                let field_type = expr.static_type().ok_or_else(|| {
-                    ExecError::internal("HashAgg group expression has no field type")
-                })?;
-                if let Some(index) = expr
-                    .as_column()
-                    .and_then(|column| usize::try_from(column.index).ok())
-                    .filter(|index| *index < chunk.num_cols())
-                {
-                    let column = chunk.column(index);
-                    match field_type.eval_type() {
-                        EvalType::Int if column.type_size() == 8 => {
-                            for (logical, key) in self.encoded[..rows].iter_mut().enumerate() {
-                                append_integer_group_key_part(chunk.get_row(logical), index, key);
-                            }
-                            continue;
-                        }
-                        EvalType::String if !field_type.is_hybrid() => {
-                            // Go HashGroupKey resolves the collator once for the
-                            // column, and ImmutableKey borrows binary strings.
-                            let collator = field_type.runtime_collator();
-                            for (logical, key) in self.encoded[..rows].iter_mut().enumerate() {
-                                let physical = chunk.get_row(logical).idx();
-                                if column.is_null(physical) {
-                                    key.push(NIL_FLAG);
-                                } else {
-                                    key.push(tidb_codec::COMPACT_BYTES_FLAG);
-                                    let bytes = column.get_bytes(physical);
-                                    encode_compact_bytes(key, &collator.immutable_key(&bytes));
-                                }
-                            }
-                            continue;
-                        }
-                        _ => {}
-                    }
-                }
-                // Go EvalExpr's non-vectorized fallback also evaluates the
-                // entire expression column, not a row's full grouping list.
-                self.values.clear();
-                for row in 0..rows {
-                    self.values.push(expr.eval(inputs.ctx, chunk.get_row(row))?);
-                }
-                self.account();
-                inputs.memory.check()?;
-                for (value, key) in self.values.iter().zip(&mut self.encoded[..rows]) {
-                    append_hash_agg_group_key_part(&timezone, expr, value, key)?;
-                }
-            }
-            Ok(())
+            self.group_keys
+                .prepare(inputs.ctx, chunk, inputs.group_by, false)
         })();
-        self.values.clear();
         // Include retained capacity on both successful and failed evaluation;
         // Drop releases it when this partial worker ends.
         self.account();
@@ -2342,7 +2316,7 @@ impl PipelineKeyBuffer {
 
     fn key(&self, row: usize) -> PipelineMapKeyRef<'_> {
         if self.integers.is_empty() {
-            PipelineMapKeyRef::Bytes(&self.encoded[row])
+            PipelineMapKeyRef::Bytes(&self.group_keys.encoded[row])
         } else {
             PipelineMapKeyRef::Int(self.integers[row].0)
         }
@@ -2790,6 +2764,9 @@ mod tests {
         // updatePartialResult evaluates aggregate arguments only afterward.
         #[derive(Default)]
         struct Reads(std::cell::RefCell<Vec<String>>);
+        impl HashAggContext for Reads {
+            const PARALLEL_WORKERS_MAY_EVAL: bool = false;
+        }
         impl Columns for Reads {
             fn get(&self, _: &[String]) -> Option<Datum> {
                 None
@@ -2839,6 +2816,20 @@ mod tests {
         .unwrap();
         assert_eq!(
             *ctx.0.borrow(),
+            ["a", "a", "a", "b", "b", "b", "c", "c", "c"]
+        );
+        ctx.0.borrow_mut().clear();
+        let mut serial = HashAggExec::new(
+            ExecutorMeta::new(Schema::new(vec![Column::new(0, long())]), 0, 3, 3),
+            groups.to_vec(),
+            funcs.to_vec(),
+            MultiChunkSource::new(&[(0, 0)], 3),
+            ctx,
+            memory,
+        );
+        serial.fold_chunk(&chunk, chunk.num_rows()).unwrap();
+        assert_eq!(
+            *serial.ctx.0.borrow(),
             ["a", "a", "a", "b", "b", "b", "c", "c", "c"]
         );
     }
@@ -2911,6 +2902,26 @@ mod tests {
                     assert!(
                         matches!(keys.key(logical), PipelineMapKeyRef::Bytes(bytes) if bytes == expected)
                     );
+                }
+                // Serial cop partials retain grouping datums as output.
+                // Encoding must remain identical, without re-evaluation.
+                let mut partial_keys = GroupKeyBuffer::default();
+                partial_keys
+                    .prepare(&NoColumns, &chunk, &expressions, true)
+                    .unwrap();
+                for logical in 0..chunk.num_rows() {
+                    assert_eq!(
+                        partial_keys.encoded[logical],
+                        keys.group_keys.encoded[logical]
+                    );
+                    let mut values = Vec::new();
+                    partial_keys.append_values(logical, &mut values);
+                    let expected: Vec<_> = fields
+                        .iter()
+                        .enumerate()
+                        .map(|(index, field)| chunk.get_row(logical).get_datum(index, field))
+                        .collect();
+                    assert_eq!(values, expected);
                 }
             }
             assert!(tracker.bytes_consumed() > 0);
@@ -3213,8 +3224,8 @@ mod tests {
         let (partial, _final_, dispatched, threads) = info;
         assert_eq!(dispatched, 1);
         assert_eq!(
-            threads, partial,
-            "Go starts the configured partial workers even for one chunk"
+            threads, 1,
+            "only the lane with input needs a runnable native task"
         );
         assert_eq!(allocated, 2 * partial);
 
@@ -3637,7 +3648,20 @@ mod tests {
             &wide_out_types(),
         );
         assert!(exec.pipeline_eligibility().is_some());
-        assert_eq!(run(&mut exec), expected);
+        exec.open().unwrap();
+        assert_eq!(drain_rows(&mut exec), expected);
+        let stats = Arc::clone(exec.pipeline_stats.as_ref().unwrap());
+        let (_, _, dispatched, workers) = exec.pipeline_run_info().unwrap();
+        assert_eq!(dispatched, 0);
+        assert_eq!(workers, 0, "idle partial lanes require no pool task");
+        assert_eq!(
+            stats
+                .final_output_chunks
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "only the default global group needs a final result holder"
+        );
+        exec.close().unwrap();
         assert_eq!(expected.len(), 1);
     }
 

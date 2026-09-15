@@ -1147,6 +1147,7 @@ impl Session {
     ) -> Result<Option<crate::OpenedStatement>, DriverError> {
         self.begin_statement_execution(sql)?;
         let result = (|| {
+            self.set_statement_arbitration_key(sql);
             let cache_hit = execution.cache_hit();
             self.active_resource_group.clone_from(&self.resource_group);
             self.begin_cached_prepared_query_boundary();
@@ -1716,6 +1717,17 @@ impl Session {
         });
     }
 
+    // Go keys memory arbitration by StatementContext.SQLDigest's normalized
+    // OriginalSQL, not binding normalization of a restored AST. The caller
+    // supplies PREPARE's original text, so bound values do not change the key.
+    fn set_statement_arbitration_key(&mut self, sql: &str) {
+        self.current_sql_digest_key = if self.session_memory.arbitrator_enabled() {
+            tidb_parser::normalize(sql, tidb_parser::RedactMode::Enabled)
+        } else {
+            String::new()
+        };
+    }
+
     fn execute_parsed_statement_inner(
         &mut self,
         sql: &str,
@@ -1724,11 +1736,7 @@ impl Session {
         mut select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
-        self.current_sql_digest_key = if self.session_memory.arbitrator_enabled() {
-            crate::binding::normalize_with_db(&stmt, self.current_database()).0
-        } else {
-            String::new()
-        };
+        self.set_statement_arbitration_key(sql);
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
         // its one row lands in the named user variables. Intercepted at this
         // one door so text and prepared spellings share the rules: more than

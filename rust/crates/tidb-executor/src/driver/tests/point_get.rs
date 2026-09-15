@@ -1543,6 +1543,111 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     assert_eq!(decides("SELECT v FROM bd WHERE id IN (1) LIMIT 1"), None);
     assert_eq!(decides("SELECT DISTINCT v FROM bd WHERE id IN (1)"), None);
     assert_eq!(decides("SELECT v FROM bd WHERE id = 1"), None);
+
+    // Go BatchPointGetExec.initialize collects physical keys across all
+    // selected partitions before its single BatchGet. Include absent and
+    // duplicate handles, and both integer and common-handle row keys.
+    for primary in ["PRIMARY KEY(id)", "PRIMARY KEY(id, v) CLUSTERED"] {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            &format!("CREATE TABLE bp (id BIGINT, v BIGINT, {primary}) PARTITION BY HASH(id) PARTITIONS 4"),
+            &mut catalog,
+        ).unwrap();
+        let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "bp") else {
+            panic!("expected a kv table");
+        };
+        let _ = table.replace_storage(Box::new(BatchGetCountingStorage {
+            inner: MemTableStorage::new(),
+            batch_gets: Arc::clone(&batch_gets),
+        }));
+        let ctx = crate::StmtContext::for_query();
+        run_insert_on(
+            "INSERT INTO bp VALUES (1,10),(2,20),(3,30),(4,40)",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap();
+        let predicate = if primary == "PRIMARY KEY(id)" {
+            "id IN (4,1,3,2,1,99)"
+        } else {
+            "(id,v) IN ((4,40),(1,10),(3,30),(2,20),(1,10),(99,990))"
+        };
+        batch_gets.store(0, Ordering::Relaxed);
+        let mut rows = run_select_on(
+            &format!("SELECT id FROM bp WHERE {predicate}"),
+            &catalog,
+            &ctx,
+        )
+        .unwrap();
+        rows.sort_by_key(|row| match row[0] {
+            Datum::Int(value) => value,
+            _ => panic!("integer handle"),
+        });
+        assert_eq!(
+            rows,
+            (1..=4).map(|id| vec![Datum::Int(id)]).collect::<Vec<_>>()
+        );
+        if primary == "PRIMARY KEY(id)" {
+            assert_eq!(
+                batch_gets.load(Ordering::Relaxed),
+                1,
+                "one BatchGet across partitions"
+            );
+        }
+        // The partitioned composite IN predicate currently selects a scan.
+        // Exercise the shared batch reader directly for common handles too;
+        // this does not claim the fast-plan selection gap is fixed.
+        let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "bp") else {
+            panic!("expected a kv table");
+        };
+        let ids = [4i64, 1, 3, 2, 1, 99];
+        let handles: Vec<_> = ids
+            .iter()
+            .map(|&id| {
+                if primary == "PRIMARY KEY(id)" {
+                    crate::kv_table::TableHandle::Int(id)
+                } else {
+                    crate::kv_table::TableHandle::Common(
+                        tidb_codec::encode_key(&[Datum::Int(id), Datum::Int(id * 10)]).unwrap(),
+                    )
+                }
+            })
+            .collect();
+        let partitions = table.record_physical_ids();
+        let routes: Vec<_> = ids.iter().map(|id| partitions[*id as usize % 4]).collect();
+        let expected: Vec<_> = ids
+            .iter()
+            .map(|&id| (id != 99).then(|| vec![Datum::Int(id), Datum::Int(id * 10)]))
+            .collect();
+        for routes in [Some(routes.as_slice()), None] {
+            batch_gets.store(0, Ordering::Relaxed);
+            assert_eq!(
+                table
+                    .stored_records_batched(
+                        &handles,
+                        routes,
+                        &crate::kv_table::RowDecodeContext::for_test_query_utc()
+                    )
+                    .unwrap(),
+                expected
+            );
+            assert_eq!(
+                batch_gets.load(Ordering::Relaxed),
+                1,
+                "{primary}: one BatchGet for routed or unrouted handles"
+            );
+        }
+        batch_gets.store(0, Ordering::Relaxed);
+        assert!(table
+            .stored_records_batched(
+                &[],
+                None,
+                &crate::kv_table::RowDecodeContext::for_test_query_utc()
+            )
+            .unwrap()
+            .is_empty());
+        assert_eq!(batch_gets.load(Ordering::Relaxed), 0);
+    }
 }
 
 /// A constant a point plan keys by must first be moved into the COLUMN's

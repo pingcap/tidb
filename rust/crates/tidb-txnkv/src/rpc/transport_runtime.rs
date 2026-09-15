@@ -428,7 +428,7 @@ async fn run_worker(
         .collect();
     let result = std::panic::AssertUnwindSafe(async {
         let mut cursors = HashMap::new();
-        let mut pending = None;
+        let mut pending = std::collections::VecDeque::new();
         let mut collectors = batching::Collectors::default();
         let mut timer: Option<(std::time::Instant, futures_timer::Delay)> = None;
         loop {
@@ -443,7 +443,7 @@ async fn run_worker(
                 );
                 continue;
             }
-            let command = if let Some(command) = pending.take() {
+            let command = if let Some(command) = pending.pop_front() {
                 command
             } else if let Some(deadline) = collectors.next_deadline() {
                 // Go uses a sub-millisecond batch deadline. Tokio Sleep rounds to

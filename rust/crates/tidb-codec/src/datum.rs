@@ -113,6 +113,18 @@ impl Encoder {
         values: &[Datum],
     ) -> Result<Vec<u8>, CodecError> {
         let mut output = Vec::new();
+        self.append_key_in_timezone(timezone, &mut output, values)?;
+        Ok(output)
+    }
+
+    /// Appends to a caller-owned key buffer, matching Go `Encoder.EncodeKey`.
+    /// On error the buffer can contain an encoded prefix, as in Go.
+    pub fn append_key_in_timezone<TZ: TimeZone + 'static>(
+        self,
+        timezone: &TZ,
+        output: &mut Vec<u8>,
+        values: &[Datum],
+    ) -> Result<(), CodecError> {
         for value in values {
             match value {
                 Datum::Null => output.push(NIL_FLAG),
@@ -120,51 +132,51 @@ impl Encoder {
                 Datum::MaxValue => output.push(MAX_FLAG),
                 Datum::Int(value) => {
                     output.push(INT_FLAG);
-                    encode_int(&mut output, *value);
+                    encode_int(output, *value);
                 }
                 Datum::UInt(value) => {
                     output.push(UINT_FLAG);
-                    encode_uint(&mut output, *value);
+                    encode_uint(output, *value);
                 }
                 Datum::Decimal(value) => {
                     output.push(DECIMAL_FLAG);
-                    encode_decimal(&mut output, value)?;
+                    encode_decimal(output, value)?;
                 }
                 Datum::Real(value) => {
                     output.push(FLOAT_FLAG);
-                    encode_float(&mut output, *value);
+                    encode_float(output, *value);
                 }
                 Datum::Float32(value) => {
                     output.push(FLOAT_FLAG);
-                    encode_float(&mut output, *value);
+                    encode_float(output, *value);
                 }
                 Datum::String(value) => {
                     output.push(BYTES_FLAG);
-                    encode_bytes(&mut output, &self.string_key(value));
+                    encode_bytes(output, &self.string_key(value));
                 }
                 Datum::Bytes(value) => {
                     output.push(BYTES_FLAG);
-                    encode_bytes(&mut output, value);
+                    encode_bytes(output, value);
                 }
                 Datum::BinaryLiteral(value) | Datum::Bit(value) => {
                     output.push(UINT_FLAG);
-                    encode_uint(&mut output, binary_literal_uint(value)?);
+                    encode_uint(output, binary_literal_uint(value)?);
                 }
                 Datum::Duration(value) => {
                     output.push(DURATION_FLAG);
-                    encode_int(&mut output, value.nanoseconds());
+                    encode_int(output, value.nanoseconds());
                 }
                 Datum::Enum(value, _) => {
                     output.push(UINT_FLAG);
-                    encode_uint(&mut output, value.value());
+                    encode_uint(output, value.value());
                 }
                 Datum::Set(value, _) => {
                     output.push(UINT_FLAG);
-                    encode_uint(&mut output, value.value());
+                    encode_uint(output, value.value());
                 }
                 Datum::Time(value) => {
                     output.push(UINT_FLAG);
-                    crate::package::encode_mysql_time(timezone, *value, None, &mut output)?;
+                    crate::package::encode_mysql_time(timezone, *value, None, output)?;
                 }
                 Datum::Json(value) => {
                     output.push(JSON_FLAG);
@@ -172,14 +184,14 @@ impl Encoder {
                 }
                 Datum::VectorFloat32(value) => {
                     output.push(VECTOR_FLOAT32_FLAG);
-                    value.serialize_to(&mut output);
+                    value.serialize_to(output);
                 }
                 Datum::Raw(_) => {
                     return Err(CodecError::InvalidEncoding("unsupported raw datum"));
                 }
             }
         }
-        Ok(output)
+        Ok(())
     }
 
     fn string_key(self, value: &StringDatum) -> Vec<u8> {

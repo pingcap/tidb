@@ -34,8 +34,9 @@ use crate::executor::{Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
 use crate::hash_join_v2::executor::{HashJoinV2Executor, HashJoinV2Plan};
 use crate::index_merge_reader::{
-    ExecutorPartialHandleSource, IndexMergeReaderExec, MergeByItem, PartialHandleColumns,
-    PartialHandleSource, PushedDownLimit as ExecutorPushedDownLimit,
+    ExecutorPartialHandleSource, HandleRef, IndexMergeReaderExec, MergeByItem, PartialHandleBatch,
+    PartialHandleColumns, PartialHandleSource, PartitionedHandleSource,
+    PushedDownLimit as ExecutorPushedDownLimit,
 };
 use crate::join::{IndexLookupPlan, IndexLookupSource, IndexProbeKeyDomain, JoinExec, JoinKind};
 use crate::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
@@ -471,7 +472,12 @@ fn table_scan_schema(
     let mut keep = Vec::with_capacity(output.columns.len());
     let mut extra_handle_slot = None;
     let mut extra_commit_ts_slot = None;
-    for (output_offset, wanted) in output.columns.iter().enumerate() {
+    for (output_offset, wanted) in output
+        .columns
+        .iter()
+        .filter(|column| column.id != tidb_model::column::EXTRA_PHYS_TBL_ID)
+        .enumerate()
+    {
         // Go's `DataSource` appends `_tidb_rowid` and then `_tidb_commit_ts`
         // to the stored columns, and the scan fills both at the tail of its
         // output row. A stored column after either extra cannot line up.
@@ -609,13 +615,79 @@ fn build_table_scan(
         source.accept_scan_estimate(rows);
     }
     let stats = catalog.table_statistics(table.stats_physical_id());
-    let source = source.with_physical_schema(plan_schema(plan)?)?;
-    Ok(Box::new(CopIndexUsageExec::new(
+    let output = plan_schema(plan)?;
+    let stored_output = Schema::new(
+        output
+            .columns
+            .iter()
+            .filter(|column| column.id != tidb_model::column::EXTRA_PHYS_TBL_ID)
+            .cloned()
+            .collect(),
+    );
+    let source = source.with_physical_schema(stored_output)?;
+    let physical_ids = table.record_physical_ids();
+    let source = Box::new(CopIndexUsageExec::new(
         Box::new(source),
         table,
         stats,
         ctx.index_usage_collector().cloned(),
         None,
+    ));
+    project_physical_table_id(source, output, &physical_ids, plan, ctx)
+}
+
+/// Go's per-partition result carries a synthetic physical-table ID, not a
+/// stored SQL column. A worker narrowed to one physical table can emit it as
+/// a constant while retaining the planner's exact output schema.
+fn project_physical_table_id(
+    source: Box<dyn Executor>,
+    output: Schema,
+    physical_ids: &[i64],
+    plan: &PhysicalPlan,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    if !output
+        .columns
+        .iter()
+        .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
+    {
+        return Ok(source);
+    }
+    let [physical_id] = physical_ids else {
+        return Err(DriverError::unsupported(
+            "a physical-table ID output requires a partition-specific scan",
+        ));
+    };
+    let mut source_slot = 0;
+    let mut expressions = Vec::with_capacity(output.len());
+    for column in &output.columns {
+        if column.id == tidb_model::column::EXTRA_PHYS_TBL_ID {
+            expressions.push(Expression::Constant(tidb_expr::constant::Constant::new(
+                tidb_datatype::Datum::Int(*physical_id),
+                FieldType::new(FieldTypeCode::LongLong),
+            )));
+        } else {
+            let mut input = source
+                .schema()
+                .columns
+                .get(source_slot)
+                .cloned()
+                .ok_or_else(|| DriverError::unsupported("physical scan lost an output column"))?;
+            input.index = source_slot as i64;
+            expressions.push(Expression::Column(input));
+            source_slot += 1;
+        }
+    }
+    if source_slot != source.schema().len() {
+        return Err(DriverError::unsupported(
+            "physical scan output width differs from its schema",
+        ));
+    }
+    Ok(Box::new(ProjectionExec::new(
+        meta(ctx, plan, output),
+        expressions,
+        source,
+        ctx.clone(),
     )))
 }
 
@@ -1374,6 +1446,9 @@ fn reader_output_offsets(
     let mut offsets = Vec::with_capacity(schema.columns.len());
     let mut extra_handle_slot = None;
     for (slot, output) in schema.columns.iter().enumerate() {
+        if output.id == tidb_model::column::EXTRA_PHYS_TBL_ID {
+            continue;
+        }
         if Some(slot) == extra_handle {
             if extra_handle_slot.is_some() {
                 return Err(DriverError::unsupported(
@@ -1569,13 +1644,15 @@ fn build_index_reader(
     // arming it here keeps every other read untouched.
     source.enable_dirty_union_scan_merge();
     let stats = catalog.table_statistics(table.stats_physical_id());
-    Ok(Box::new(CopIndexUsageExec::new(
+    let physical_ids = table.record_physical_ids();
+    let source = Box::new(CopIndexUsageExec::new(
         Box::new(source),
         table,
         stats,
         ctx.index_usage_collector().cloned(),
         Some(scan.index_id),
-    )))
+    ));
+    project_physical_table_id(source, schema, &physical_ids, plan, ctx)
 }
 
 fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {
@@ -2959,6 +3036,9 @@ fn table_output_columns(
             if column.id == tidb_model::column::EXTRA_HANDLE_ID {
                 return Ok(HandleOutputColumn::ExtraHandle);
             }
+            if column.id == tidb_model::column::EXTRA_PHYS_TBL_ID {
+                return Ok(HandleOutputColumn::PhysicalTableId);
+            }
             table
                 .columns
                 .iter()
@@ -3353,10 +3433,16 @@ fn partial_handle_columns(
 ) -> Result<PartialHandleColumns, DriverError> {
     let table_column_slot = |offset: usize| {
         let id = table.columns.get(offset)?.id;
-        schema.columns.iter().position(|column| column.id == id)
+        // Common handles are a suffix, even when an index column has the
+        // same ID (and may contain only a prefix of the full key value).
+        schema.columns.iter().rposition(|column| column.id == id)
     };
     if let Some(offset) = table.pk_handle_offset() {
-        return table_column_slot(offset)
+        return schema
+            .columns
+            .iter()
+            .rposition(|column| column.id == tidb_model::column::EXTRA_HANDLE_ID)
+            .or_else(|| table_column_slot(offset))
             .map(PartialHandleColumns::Int)
             .ok_or_else(|| {
                 DriverError::unsupported(
@@ -3411,6 +3497,67 @@ fn partial_sort_key_columns(
         .collect()
 }
 
+/// Go's partial index worker requests handles directly, while retaining the
+/// normal scan's runtime counter and close-time index-usage report.
+struct IndexPartialHandleSource {
+    source: IndexRangeSourceExec,
+    partition_indexes: Vec<usize>,
+    table: crate::KvTable,
+    stats: Option<Arc<crate::access_cost::TableStatistics>>,
+    ctx: crate::StmtContext,
+    index_id: i64,
+    reported: bool,
+}
+
+impl PartialHandleSource for IndexPartialHandleSource {
+    fn open(&mut self) -> Result<(), crate::ExecError> {
+        self.reported = false;
+        self.source.open()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, crate::ExecError> {
+        let mut handles = Vec::with_capacity(self.source.max_chunk_size());
+        while handles.len() < self.source.max_chunk_size() {
+            let Some((handle, partition)) = self.source.next_index_merge_handle()? else {
+                break;
+            };
+            let partition_index = *self.partition_indexes.get(partition).ok_or_else(|| {
+                crate::ExecError::internal("index-merge cursor returned an unknown partition")
+            })?;
+            handles.push(HandleRef {
+                handle,
+                partition_index,
+            });
+        }
+        Ok((!handles.is_empty()).then_some(PartialHandleBatch {
+            handles,
+            sort_keys: Vec::new(),
+        }))
+    }
+
+    fn close(&mut self) -> Result<(), crate::ExecError> {
+        let result = self.source.close();
+        if !self.reported {
+            self.reported = true;
+            if let Some((requests, rows)) =
+                crate::table_access::TableAccess::cop_count_and_rows(&self.source)
+            {
+                super::index_usage_reporter::IndexUsageReporter::new(
+                    self.ctx.index_usage_collector(),
+                )
+                .report_cop_for_table(
+                    &self.table,
+                    self.stats.as_deref(),
+                    self.index_id,
+                    requests,
+                    rows,
+                );
+            }
+        }
+        result
+    }
+}
+
 fn build_index_merge_reader(
     plan: &PhysicalPlan,
     reader: &tidb_planner::physical::PhysicalIndexMergeReader,
@@ -3440,30 +3587,85 @@ fn build_index_merge_reader(
     let table = catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
         DriverError::unsupported("physical index-merge table ID is absent from the catalog")
     })?;
-    if table.record_physical_ids().len() != 1 {
-        return Err(DriverError::unsupported(
-            "physical index merge needs retained partition identity",
-        ));
-    }
-
+    let physical_ids = table.record_physical_ids();
     let mut partials: Vec<Box<dyn PartialHandleSource>> = Vec::new();
     for partial in &reader.partial_plans_raw {
         let partial_schema = plan_schema(partial)?;
-        let handle_columns = partial_handle_columns(&partial_schema, &table)?;
-        let sort_key_columns = partial_sort_key_columns(&partial_schema, &reader.by_items)?;
-        let executor = build_with_state(partial, catalog, ctx, state)?;
-        if executor.schema().len() != partial_schema.len() {
-            return Err(DriverError::unsupported(
-                "an index-merge partial executor changed its retained output width",
+        let selected = index_merge_partition_indexes(partial, &table)?;
+        if let PhysicalPlan::IndexScan(scan) = partial {
+            if reader.by_items.is_empty() {
+                // Go buildIndexScanOutputOffsets returns only handles here.
+                // Do not turn a partial index scan into a table double read.
+                let mut partial_table = table.clone();
+                let ids: Vec<_> = selected.iter().map(|index| physical_ids[*index]).collect();
+                partial_table.restrict_read_to_partitions(&ids);
+                let ranges = if scan.ranges.is_empty() {
+                    vec![IndexRange::full()]
+                } else {
+                    executor_ranges(&scan.ranges)
+                };
+                let source = IndexRangeSourceExec::new_with_statement(
+                    meta(ctx, partial, partial_schema),
+                    partial_table.clone(),
+                    scan.index_id,
+                    ranges,
+                    RowDecodeContext::for_query(ctx),
+                    PushdownStatementContext::from_stmt(ctx)
+                        .with_plan_id(i64::from(scan.base.base.id())),
+                );
+                if let Some(counters) = state.runtime_counters.as_mut() {
+                    counters.insert(runtime_plan_key(partial), source.produced_rows().into());
+                }
+                partials.push(Box::new(IndexPartialHandleSource {
+                    source,
+                    partition_indexes: selected,
+                    stats: catalog.table_statistics(partial_table.stats_physical_id()),
+                    table: partial_table,
+                    ctx: ctx.clone(),
+                    index_id: scan.index_id,
+                    reported: false,
+                }));
+                continue;
+            }
+        }
+        // Go's partial table worker drains one result per pruned partition.
+        // Keep those results under one path for intersection membership.
+        let mut partitions: Vec<Box<dyn PartialHandleSource>> = Vec::new();
+        for partition_index in selected {
+            let mut partition_plan = partial.clone();
+            set_index_merge_partition(&mut partition_plan, physical_ids[partition_index]);
+            let executor = build_with_state(&partition_plan, catalog, ctx, state)?;
+            if executor.schema().len() != partial_schema.len() {
+                return Err(DriverError::unsupported(
+                    "an index-merge partial executor changed its retained output width",
+                ));
+            }
+            partitions.push(Box::new(
+                ExecutorPartialHandleSource::new(
+                    executor,
+                    table.clone(),
+                    RowDecodeContext::for_query(ctx),
+                    partial_handle_columns(&partial_schema, &table)?,
+                    partial_sort_key_columns(&partial_schema, &reader.by_items)?,
+                )
+                .with_partition_index(partition_index),
             ));
         }
-        partials.push(Box::new(ExecutorPartialHandleSource::new(
-            executor,
-            table.clone(),
-            RowDecodeContext::for_query(ctx),
-            handle_columns,
-            sort_key_columns,
-        )));
+        let source = PartitionedHandleSource::new(partitions).with_order(
+            reader
+                .by_items
+                .iter()
+                .map(|item| MergeByItem {
+                    collation: tidb_expr::collation_derive::collation_of_node(&item.expr),
+                    desc: item.desc,
+                })
+                .collect(),
+            ctx.executor_chunk_sizes().1,
+        );
+        if let Some(counters) = state.runtime_counters.as_mut() {
+            counters.insert(runtime_plan_key(partial), source.produced_rows().into());
+        }
+        partials.push(Box::new(source));
     }
 
     let schema = plan_schema(plan)?;
@@ -3493,6 +3695,61 @@ fn build_index_merge_reader(
         });
     }
     Ok(Box::new(executor))
+}
+
+fn index_merge_partition_indexes(
+    plan: &PhysicalPlan,
+    table: &crate::KvTable,
+) -> Result<Vec<usize>, DriverError> {
+    let access = match plan {
+        PhysicalPlan::TableScan(scan) => scan.dynamic_partition_access.as_ref(),
+        PhysicalPlan::IndexScan(scan) => scan.dynamic_partition_access.as_ref(),
+        _ => {
+            return plan
+                .children()
+                .first()
+                .ok_or_else(|| DriverError::unsupported("index-merge partial has no scan"))
+                .and_then(|child| index_merge_partition_indexes(child, table))
+        }
+    };
+    Ok(table
+        .record_physical_ids()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, id)| {
+            let selected = access.is_none_or(|access| {
+                access.all_partitions
+                    || table.partition().is_some_and(|partition| {
+                        partition.definitions.iter().any(|definition| {
+                            definition.id == *id
+                                && access
+                                    .partitions
+                                    .iter()
+                                    .any(|name| name.eq_ignore_ascii_case(&definition.name))
+                        })
+                    })
+            });
+            selected.then_some(index)
+        })
+        .collect())
+}
+
+fn set_index_merge_partition(plan: &mut PhysicalPlan, physical_id: i64) {
+    match plan {
+        PhysicalPlan::TableScan(scan) => {
+            scan.table_id = physical_id;
+            scan.dynamic_partition_access = None;
+        }
+        PhysicalPlan::IndexScan(scan) => {
+            scan.table_id = physical_id;
+            scan.dynamic_partition_access = None;
+        }
+        _ => {
+            for child in plan.base_mut().children_mut() {
+                set_index_merge_partition(child, physical_id);
+            }
+        }
+    }
 }
 
 /// Refresh statement-dependent routing before execution and plan publication.
@@ -5075,67 +5332,240 @@ mod tests {
 
     #[test]
     fn cached_physical_index_merge_builds_from_retained_partial_trees() {
-        let mut table =
-            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
-        table.set_pk_handle_offset(0);
-        table
-            .create_index_with_context(
-                crate::kv_table::KvIndex {
-                    id: 7,
-                    name: "value_idx".to_owned(),
-                    comment: String::new(),
-                    unique: false,
-                    column_offsets: vec![1],
-                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
-                    clustered_primary: false,
-                },
-                &crate::StmtContext::for_query(),
-            )
-            .expect("create secondary index");
-        for value in 1..=4 {
-            table
-                .insert_row(
-                    &[Datum::Int(value), Datum::Int(value * 10)],
-                    &tidb_expr::NoColumns,
-                )
-                .expect("seed row");
-        }
-        let mut catalog = Catalog::default();
-        catalog.register_kv("im", table);
+        // Go TestIdexMerge: exercise the retained reader, not a cost-selected
+        // table scan that can accidentally hide a broken index-merge builder.
+        for (partitioned, global) in [(false, false), (true, false), (true, true)] {
+            for handle_kind in ["integer", "common", "heap"] {
+                let mut table =
+                    crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+                match handle_kind {
+                    "integer" => table.set_pk_handle_offset(0),
+                    "common" => table.set_common_handle_offsets(vec![0]),
+                    _ => {}
+                }
+                if partitioned {
+                    table.set_partition(crate::partition_routing::PartitionSpec {
+                        kind: crate::partition_routing::PartitionKind::Hash,
+                        expr_text: "id".to_owned(),
+                        expr: Expression::Column(two_long_schema().columns[0].clone()),
+                        dependencies: vec!["id".to_owned()],
+                        definitions: (0..2)
+                            .map(|ordinal| crate::partition_routing::PartitionDef {
+                                id: 101 + ordinal,
+                                name: format!("p{ordinal}"),
+                                ..Default::default()
+                            })
+                            .collect(),
+                        overlapping_dropping_partition_indices: Vec::new(),
+                        is_empty_columns: false,
+                    });
+                }
+                table
+                    .create_index_with_context(
+                        crate::kv_table::KvIndex {
+                            id: 7,
+                            name: "value_idx".to_owned(),
+                            comment: String::new(),
+                            unique: false,
+                            column_offsets: vec![1],
+                            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                            visible: true,
+                            global,
+                            global_index_version: 0,
+                            clustered_primary: false,
+                        },
+                        &crate::StmtContext::for_query(),
+                    )
+                    .expect("create secondary index");
+                for value in 1..=4 {
+                    table
+                        .insert_row_with_row_id(
+                            &[Datum::Int(value), Datum::Int(value * 10)],
+                            // The same hidden handle in different partitions
+                            // must survive dedup AND fetch the correct record.
+                            (partitioned && handle_kind == "heap").then_some((value + 1) / 2),
+                            0,
+                            &tidb_expr::NoColumns,
+                        )
+                        .expect("seed row");
+                }
+                let mut catalog = Catalog::default();
+                catalog.register_kv("im", table);
 
-        let mut base = BasePhysicalPlan::with_id(13, "IndexMerge", 0);
-        base.base.set_schema(Some(two_long_schema()));
-        let plan = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
-            base,
-            partial_plans_raw: vec![index_scan(10, 42, 7, 10, 30), index_scan(11, 42, 7, 30, 40)],
-            table_plan: Some(Box::new(table_selection(
-                12,
-                table_scan(14, 42, i64::MIN, i64::MAX),
-                20,
-            ))),
-            ..PhysicalIndexMergeReader::default()
-        });
+                for table_partial in [false, true] {
+                    let mut base = BasePhysicalPlan::with_id(13, "IndexMerge", 0);
+                    base.base.set_schema(Some(two_long_schema()));
+                    let mut partial_plans_raw =
+                        vec![index_scan(10, 42, 7, 10, 30), index_scan(11, 42, 7, 30, 40)];
+                    for partial in &mut partial_plans_raw {
+                        let mut columns = vec![two_long_schema().columns[1].clone()];
+                        let handle = if handle_kind == "heap" {
+                            let mut column =
+                                Column::new(3, FieldType::new(FieldTypeCode::LongLong));
+                            column.id = tidb_model::column::EXTRA_HANDLE_ID;
+                            column
+                        } else {
+                            two_long_schema().columns[0].clone()
+                        };
+                        columns.push(handle);
+                        if global {
+                            let mut column =
+                                Column::new(4, FieldType::new(FieldTypeCode::LongLong));
+                            column.id = tidb_model::column::EXTRA_PHYS_TBL_ID;
+                            columns.push(column);
+                        }
+                        partial
+                            .base_mut()
+                            .base
+                            .set_schema(Some(Schema::new(columns)));
+                    }
+                    if table_partial {
+                        let handle = partial_plans_raw[1].schema().unwrap().columns[1].clone();
+                        let mut partial = table_scan(11, 42, i64::MIN, i64::MAX);
+                        if let PhysicalPlan::TableScan(scan) = &mut partial {
+                            scan.ranges.clear();
+                            scan.base.base.set_schema(Some(Schema::new(vec![handle])));
+                        }
+                        partial_plans_raw[1] = partial;
+                    }
+                    let mut plan = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+                        base,
+                        partial_plans_raw,
+                        table_plan: Some(Box::new(table_selection(
+                            12,
+                            table_scan(14, 42, i64::MIN, i64::MAX),
+                            20,
+                        ))),
+                        ..PhysicalIndexMergeReader::default()
+                    });
 
-        let ctx = crate::StmtContext::for_query();
-        let mut executor = build(&plan, &catalog, &ctx).expect("build cached index merge");
-        executor.open().expect("open cached index merge");
-        let mut rows = Vec::new();
-        loop {
-            let mut output = executor.new_chunk();
-            executor.next(&mut output).expect("read cached index merge");
-            if output.num_rows() == 0 {
-                break;
-            }
-            for row in 0..output.num_rows() {
-                rows.push((
-                    output.get_row(row).get_int64(0),
-                    output.get_row(row).get_int64(1),
-                ));
+                    for order in [None, Some(false), Some(true)] {
+                        let ordered = order.is_some();
+                        if ordered && table_partial {
+                            continue;
+                        }
+                        if let PhysicalPlan::IndexMergeReader(reader) = &mut plan {
+                            reader.by_items = if ordered {
+                                vec![tidb_expr::aggregation::ByItems::new(
+                                    Expression::Column(two_long_schema().columns[1].clone()),
+                                    order.unwrap(),
+                                )]
+                            } else {
+                                Vec::new()
+                            };
+                            let mut output = two_long_schema();
+                            if ordered && partitioned {
+                                // Go BuildIndexMergeTableScan adds this to the
+                                // final fetch as well as the partial workers.
+                                let mut column =
+                                    Column::new(4, FieldType::new(FieldTypeCode::LongLong));
+                                column.id = tidb_model::column::EXTRA_PHYS_TBL_ID;
+                                output.columns.push(column);
+                            }
+                            reader.base.base.set_schema(Some(output.clone()));
+                            reader
+                                .table_plan
+                                .as_mut()
+                                .unwrap()
+                                .base_mut()
+                                .base
+                                .set_schema(Some(output));
+                            for partial in &mut reader.partial_plans_raw {
+                                if let PhysicalPlan::IndexScan(scan) = partial {
+                                    scan.keep_order = ordered;
+                                    scan.desc = order.unwrap_or(false);
+                                }
+                            }
+                        }
+                        for selection in [None, Some("p1"), Some("absent")] {
+                            if selection.is_some() && !partitioned {
+                                continue;
+                            }
+                            if let PhysicalPlan::IndexMergeReader(reader) = &mut plan {
+                                for partial in &mut reader.partial_plans_raw {
+                                    let access = selection.map(|name| {
+                                        tidb_planner::access::DynamicPartitionAccessObject {
+                                            partitions: vec![name.into()],
+                                            ..Default::default()
+                                        }
+                                    });
+                                    match partial {
+                                        PhysicalPlan::IndexScan(scan) => {
+                                            scan.dynamic_partition_access = access
+                                        }
+                                        PhysicalPlan::TableScan(scan) => {
+                                            scan.dynamic_partition_access = access
+                                        }
+                                        _ => unreachable!(),
+                                    }
+                                }
+                            }
+                            let ctx = crate::StmtContext::for_query();
+                            let mut state = BuildState {
+                                runtime_counters: Some(HashMap::new()),
+                                ..Default::default()
+                            };
+                            let mut executor = build_with_state(&plan, &catalog, &ctx, &mut state)
+                                .expect("build cached index merge");
+                            executor.open().expect("open cached index merge");
+                            let mut rows = Vec::new();
+                            loop {
+                                let mut output = executor.new_chunk();
+                                executor.next(&mut output).expect("read cached index merge");
+                                if output.num_rows() == 0 {
+                                    break;
+                                }
+                                for row in 0..output.num_rows() {
+                                    rows.push((
+                                        output.get_row(row).get_int64(0),
+                                        output.get_row(row).get_int64(1),
+                                        if ordered && partitioned {
+                                            output.get_row(row).get_int64(2)
+                                        } else {
+                                            0
+                                        },
+                                    ));
+                                }
+                            }
+                            if !ordered {
+                                rows.sort_unstable();
+                            }
+                            let expected = match selection {
+                                None => vec![(3, 30), (4, 40)],
+                                Some("p1") => vec![(3, 30)],
+                                _ => Vec::new(),
+                            };
+                            let mut expected: Vec<_> = expected
+                                .into_iter()
+                                .map(|(id, value)| {
+                                    (
+                                        id,
+                                        value,
+                                        if ordered && partitioned {
+                                            101 + id % 2
+                                        } else {
+                                            0
+                                        },
+                                    )
+                                })
+                                .collect();
+                            if order == Some(true) {
+                                expected.reverse();
+                            }
+                            assert_eq!(rows, expected, "{handle_kind}, partitioned={partitioned}, global={global}, selection={selection:?}");
+                            executor.close().unwrap();
+                            if let PhysicalPlan::IndexMergeReader(reader) = &plan {
+                                for partial in &reader.partial_plans_raw {
+                                    let count = state.runtime_counters.as_ref().unwrap()
+                                        [&runtime_plan_key(partial)]
+                                        .get();
+                                    assert_eq!(count > 0, selection != Some("absent"));
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
-        assert_eq!(rows, vec![(3, 30), (4, 40)]);
     }
 }

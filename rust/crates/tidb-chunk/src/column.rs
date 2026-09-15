@@ -266,14 +266,7 @@ impl Column {
     /// Go `appendNullBitmap`: extend the bitmap for the next row, marking it
     /// not-null when `not_null` is set (a null leaves the bit at 0).
     pub fn append_null_bitmap(&mut self, not_null: bool) {
-        let idx = self.length >> 3;
-        if idx >= self.null_bitmap.len() {
-            self.null_bitmap.push(0);
-        }
-        if not_null {
-            let pos = self.length & 7;
-            self.null_bitmap[idx] |= 1 << pos;
-        }
+        append_null_bit(&mut self.null_bitmap, self.length, not_null);
     }
 
     /// Go `Reserve`: preserve current content while reserving additional
@@ -329,6 +322,66 @@ impl Column {
             }
         }
         self.length += times;
+    }
+
+    /// Appends Go's source-row/count runs for one output column as a batch.
+    /// The owned path borrows both byte buffers once; shallow destinations
+    /// retain per-append alias visibility through `append_cell_n_times`.
+    pub fn append_cell_runs<I>(&mut self, src: &Column, runs: I)
+    where
+        I: Iterator<Item = (usize, usize)> + Clone,
+    {
+        let fixed = self.is_fixed();
+        let width = src.elem_buffer_len();
+        let Self {
+            data,
+            null_bitmap,
+            offsets,
+            length,
+            ..
+        } = self;
+        let appended = data.append_owned(|data| {
+            let source_data = src.data.read();
+            for (row, times) in runs.clone() {
+                if times == 0 {
+                    continue;
+                }
+                if times == 1 {
+                    append_null_bit(null_bitmap, *length, !src.is_null(row));
+                } else {
+                    append_null_run(null_bitmap, *length, !src.is_null(row), times);
+                }
+                let (start, end) = if fixed {
+                    (row * width, (row + 1) * width)
+                } else {
+                    (src.offsets[row] as usize, src.offsets[row + 1] as usize)
+                };
+                let cell = &source_data[start..end];
+                if fixed {
+                    match width {
+                        4 => append_fixed_copies::<4>(data, cell, times),
+                        8 => append_fixed_copies::<8>(data, cell, times),
+                        40 => append_fixed_copies::<40>(data, cell, times),
+                        _ => {
+                            for _ in 0..times {
+                                data.extend_from_slice(cell);
+                            }
+                        }
+                    }
+                } else {
+                    for _ in 0..times {
+                        data.extend_from_slice(cell);
+                        offsets.push(data.len() as i64);
+                    }
+                }
+                *length += times;
+            }
+        });
+        if !appended {
+            for (row, times) in runs {
+                self.append_cell_n_times(src, row, times);
+            }
+        }
     }
 
     /// Go `reset` (lowercase): drop all rows but keep the element type. A
@@ -1282,23 +1335,7 @@ impl Column {
     /// Go `appendMultiSameNullBitmap`: extend the bitmap by `num` rows that all
     /// share the same nullity.
     pub(crate) fn append_multi_same_null_bitmap(&mut self, not_null: bool, num: usize) {
-        let num_new_bytes = ((self.length + num + 7) >> 3) - self.null_bitmap.len();
-        let b = if not_null { 0xffu8 } else { 0u8 };
-        for _ in 0..num_new_bytes {
-            self.null_bitmap.push(b);
-        }
-        if !not_null {
-            return;
-        }
-        // 1. Set all the remaining bits in the last slot of the old bitmap to 1.
-        let num_remaining_bits = self.length % 8;
-        let bit_mask = !(((1u16 << num_remaining_bits) - 1) as u8);
-        self.null_bitmap[self.length / 8] |= bit_mask;
-        // 2. Set all the redundant bits in the last slot of the new bitmap to 0.
-        let num_redundant_bits = self.null_bitmap.len() * 8 - self.length - num;
-        let bit_mask = ((1u16 << (8 - num_redundant_bits)) as u8).wrapping_sub(1);
-        let last = self.null_bitmap.len() - 1;
-        self.null_bitmap[last] &= bit_mask;
+        append_null_run(&mut self.null_bitmap, self.length, not_null, num);
     }
 
     /// Go `CopyExpectedRowsWithRowIDFunc`: append to this column the rows of
@@ -1359,6 +1396,41 @@ impl Column {
     }
 }
 
+fn append_fixed_copies<const N: usize>(data: &mut Vec<u8>, cell: &[u8], times: usize) {
+    let cell: &[u8; N] = cell.try_into().expect("fixed cell width");
+    for _ in 0..times {
+        data.extend_from_slice(cell);
+    }
+}
+
+fn append_null_bit(bitmap: &mut Vec<u8>, length: usize, not_null: bool) {
+    let index = length >> 3;
+    if index >= bitmap.len() {
+        bitmap.push(0);
+    }
+    if not_null {
+        bitmap[index] |= 1 << (length & 7);
+    }
+}
+
+fn append_null_run(bitmap: &mut Vec<u8>, length: usize, not_null: bool, num: usize) {
+    let num_new_bytes = ((length + num + 7) >> 3) - bitmap.len();
+    let b = if not_null { 0xffu8 } else { 0u8 };
+    for _ in 0..num_new_bytes {
+        bitmap.push(b);
+    }
+    if !not_null {
+        return;
+    }
+    let num_remaining_bits = length % 8;
+    let bit_mask = !(((1u16 << num_remaining_bits) - 1) as u8);
+    bitmap[length / 8] |= bit_mask;
+    let num_redundant_bits = bitmap.len() * 8 - length - num;
+    let bit_mask = ((1u16 << (8 - num_redundant_bits)) as u8).wrapping_sub(1);
+    let last = bitmap.len() - 1;
+    bitmap[last] &= bit_mask;
+}
+
 /// Go `AppendCellFromRawData`: append one cell from a join row's packed raw
 /// stream and return the offset immediately after it.
 ///
@@ -1376,9 +1448,19 @@ pub fn append_cell_from_raw_data(
         let end = current_offset
             .checked_add(width)
             .expect("fixed raw-cell offset overflow");
-        destination
-            .data
-            .extend_from_slice(&row_data[current_offset..end]);
+        let cell = &row_data[current_offset..end];
+        match width {
+            4 => destination
+                .data
+                .extend_from_array::<4>(cell.try_into().expect("four-byte cell")),
+            8 => destination
+                .data
+                .extend_from_array::<8>(cell.try_into().expect("eight-byte cell")),
+            40 => destination
+                .data
+                .extend_from_array::<40>(cell.try_into().expect("decimal cell")),
+            _ => destination.data.extend_from_slice(cell),
+        }
         destination.length += 1;
         return end;
     }

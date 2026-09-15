@@ -198,7 +198,7 @@ struct State<R> {
 struct WorkerGroup<R> {
     state: Mutex<State<R>>,
     ready: tokio::sync::Notify,
-    available: tokio::sync::Notify,
+    available: [tokio::sync::Notify; 2],
     spaces: Vec<tokio::sync::Notify>,
     worker_wakes: Vec<Arc<tokio::sync::Notify>>,
     joined: Condvar,
@@ -231,47 +231,50 @@ impl<R> Drop for WorkerExit<R> {
 }
 
 impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
+    /// Go's sequential sender fills one normal/small-task channel slot and
+    /// wakes a receiver in that lane. A full target slot blocks later tasks.
+    fn admit_tasks(&self, state: &mut State<R>) {
+        let previous_next = state.next_task;
+        while state.next_task < state.tasks.len() && state.next_task < state.retired + self.window {
+            let index = state.next_task;
+            let lane = state.tasks[index].lane;
+            if state.waiting[lane].is_some() {
+                break;
+            }
+            state.waiting[lane] = Some(index);
+            state.next_task += 1;
+            self.available[lane].notify_one();
+        }
+        if previous_next < state.tasks.len() && state.next_task == state.tasks.len() {
+            // Go closes both task channels after its final send. Idle
+            // receivers must see EOF even if no more task is assigned to them.
+            for available in &self.available {
+                available.notify_waiters();
+            }
+        }
+    }
+
     async fn next_task(&self, lane: usize) -> Option<(usize, R)> {
         loop {
             // notify_waiters does not retain a permit: subscribe before
             // observing the send window, just like a channel receive.
-            let available = self.available.notified();
+            let available = self.available[lane].notified();
             tokio::pin!(available);
             available.as_mut().enable();
-            let (task, exhausted, admitted) = {
+            let (task, exhausted) = {
                 let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
                 if self.closed.load(Ordering::Acquire) {
                     return None;
                 }
-                let previous_next = state.next_task;
-                // Go's single task sender visits tasks in order and sends to
-                // a one-slot normal or small-task channel. A full target
-                // channel blocks that sender, not just its worker lane.
-                while state.next_task < state.tasks.len()
-                    && state.next_task < state.retired + self.window
-                {
-                    let index = state.next_task;
-                    let target = state.tasks[index].lane;
-                    if state.waiting[target].is_some() {
-                        break;
-                    }
-                    state.waiting[target] = Some(index);
-                    state.next_task += 1;
-                }
+                self.admit_tasks(&mut state);
                 let task = state.waiting[lane]
                     .take()
                     .map(|index| (index, state.tasks[index].source.take().unwrap()));
-                (
-                    task,
-                    state.next_task == state.tasks.len(),
-                    state.next_task != previous_next,
-                )
+                // Receiving frees exactly this lane's slot. Refill it now
+                // rather than waking every worker to elect another sender.
+                self.admit_tasks(&mut state);
+                (task, state.next_task == state.tasks.len())
             };
-            // Admission may have filled only the other lane. Wake its
-            // receivers even when this worker did not dequeue a task.
-            if admitted || task.is_some() {
-                self.available.notify_waiters();
-            }
             if task.is_some() {
                 return task;
             }
@@ -365,8 +368,8 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
                 }
                 state.current += 1;
                 state.retired += 1;
+                self.admit_tasks(&mut state);
                 drop(state);
-                self.available.notify_waiters();
                 continue;
             }
             let Some((index, event)) = state.ready.pop_front() else {
@@ -380,9 +383,9 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
                 }
                 Event::Finished => {
                     state.retired += 1;
+                    self.admit_tasks(&mut state);
                     drop(state);
                     self.spaces[index].notify_one();
-                    self.available.notify_waiters();
                 }
             }
         }
@@ -393,7 +396,9 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
             return;
         }
         self.call.cancellation().cancel();
-        self.available.notify_waiters();
+        for available in &self.available {
+            available.notify_waiters();
+        }
         for wake in &self.worker_wakes {
             wake.notify_one();
         }
@@ -570,7 +575,7 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
             limiter_wait,
         }),
         ready: tokio::sync::Notify::new(),
-        available: tokio::sync::Notify::new(),
+        available: std::array::from_fn(|_| tokio::sync::Notify::new()),
         worker_wakes: (0..workers)
             .map(|_| Arc::new(tokio::sync::Notify::new()))
             .collect(),

@@ -1575,7 +1575,7 @@ impl KvTable {
     /// One stored record per requested handle, in request order; `None`
     /// where the row is absent.
     ///
-    /// Reads through ONE batched storage call per physical partition -- Go's
+    /// Reads through one batched storage call across physical partitions -- Go's
     /// `BatchPointGetExec.initialize` fetching every handle with a single
     /// `BatchGet` -- instead of one point read per handle. A handle whose
     /// row is absent yields `None`, Go's point get that finds nothing.
@@ -1586,56 +1586,47 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
         let mut rows: Vec<Option<Vec<Datum>>> = vec![None; handles.len()];
-        // Group the requested handles by the physical partition they name,
-        // so every partition costs exactly one batched read.
-        //
-        // A caller that supplies one id per handle has ALREADY routed each
-        // handle (Go's partitioned `BatchPointGetExec`). Without that, the
-        // pre-batch behavior probed EVERY partition id per handle
-        // ([`Self::stored_record`]) -- a partitioned table's row lives under
-        // its PARTITION id, never under the logical `self.table_id`, so the
-        // fallback fans out across `record_physical_ids()` instead of reading
-        // the logical prefix. All of a handle's candidates ride the SAME
-        // single batched read; the first partition holding the row wins.
-        let mut grouped: std::collections::BTreeMap<i64, Vec<(usize, Key)>> =
-            std::collections::BTreeMap::new();
+        // The storage layer groups keys by region and schedules those reads
+        // together. Splitting here by physical table would serialize otherwise
+        // independent partitions. Keep the output position beside each key.
+        let mut keys = Vec::with_capacity(handles.len());
+        let mut positions = Vec::with_capacity(handles.len());
         let partition_ids = self.record_physical_ids();
         for (index, handle) in handles.iter().enumerate() {
+            let record_handle = handle.record_handle();
             match physical_ids.and_then(|ids| ids.get(index).copied()) {
-                Some(id) => grouped.entry(id).or_default().push((
-                    index,
-                    Key::from_bytes(encode_row_key_with_handle(id, &handle.record_handle())),
-                )),
+                Some(id) => {
+                    keys.push(Key::from_bytes(encode_row_key_with_handle(
+                        id,
+                        &record_handle,
+                    )));
+                    positions.push(index);
+                }
                 None => {
+                    // Unrouted handles retain stored_record's ascending
+                    // candidate order; never use the logical table prefix.
                     for id in &partition_ids {
-                        grouped.entry(*id).or_default().push((
-                            index,
-                            Key::from_bytes(encode_row_key_with_handle(
-                                *id,
-                                &handle.record_handle(),
-                            )),
-                        ));
+                        keys.push(Key::from_bytes(encode_row_key_with_handle(
+                            *id,
+                            &record_handle,
+                        )));
+                        positions.push(index);
                     }
                 }
             }
         }
-        let mut answered: Vec<bool> = vec![false; handles.len()];
-        for (_id, keys) in grouped {
-            let key_refs: Vec<Key> = keys.iter().map(|(_, key)| key.clone()).collect();
-            let found = self
-                .store
-                .batch_get(&key_refs)
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
-            for (index, key) in keys {
-                // One handle may carry several candidate keys (one per
-                // partition); the FIRST partition holding it answers,
-                // mirroring [`Self::stored_record`]'s probe order.
-                if !answered[index] {
-                    if let Some(entry) = found.get(&key) {
-                        rows[index] =
-                            Some(self.decode_row_entry(&handles[index], entry, context)?);
-                        answered[index] = true;
-                    }
+        if keys.is_empty() {
+            return Ok(rows);
+        }
+        let found = self
+            .store
+            .batch_get(&keys)
+            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        for (index, key) in positions.into_iter().zip(keys) {
+            // The first matching candidate answers an unrouted handle.
+            if rows[index].is_none() {
+                if let Some(entry) = found.get(&key) {
+                    rows[index] = Some(self.decode_row_entry(&handles[index], entry, context)?);
                 }
             }
         }
@@ -3302,19 +3293,11 @@ impl KvTable {
         // A locally staged tombstone is neither: the row was deleted inside
         // this transaction, and the reinsert overwrites it without any
         // presumption -- Go's own `len(v) == 0` arm.
-        let duplicated = if lazy_dup_check {
-            self.check_insert_key(&key, &duplicate_value, &duplicate_key, true)?;
-            false
-        } else if skip_primary_duplicate_check {
-            false
-        } else {
-            self.row_exists(&handle)?
-        };
-        if duplicated {
-            return Err(KvTableError::DuplicateEntry {
-                value: duplicate_value,
-                key: duplicate_key,
-            });
+        if lazy_dup_check || !skip_primary_duplicate_check {
+            // Go addRecord checks t.RecordKey(recordID), not every partition
+            // containing that handle. Hidden row IDs can repeat across physical
+            // partitions, whose record keys are distinct.
+            self.check_insert_key(&key, &duplicate_value, &duplicate_key, lazy_dup_check)?;
         }
         // Go writes the row first, then its index entries; a duplicate on a
         // unique index aborts the statement.

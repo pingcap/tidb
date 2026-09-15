@@ -18,6 +18,7 @@
 use std::fmt;
 use std::future::{poll_fn, Future};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 
@@ -30,23 +31,27 @@ type Reply = Result<OpaqueBatchCommand, BatchInflightError>;
 type CancelListener = Box<dyn FnOnce() + Send + 'static>;
 
 struct ReplyState {
+    // Go batchCommandsEntry.canceled is monotonic and read on every poll.
+    cancelled: AtomicBool,
+    delivery: Mutex<ReplyDelivery>,
+}
+
+struct ReplyDelivery {
     sender: Option<oneshot::Sender<Reply>>,
-    cancelled: bool,
     cancel_listeners: Vec<CancelListener>,
 }
 
 impl fmt::Debug for ReplyState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReplyState")
-            .field("pending", &self.sender.is_some())
-            .field("cancelled", &self.cancelled)
+            .field("cancelled", &self.cancelled.load(Ordering::Acquire))
             .finish_non_exhaustive()
     }
 }
 
 #[derive(Clone, Debug)]
 enum CompletionKind {
-    Response(Arc<Mutex<ReplyState>>),
+    Response(Arc<ReplyState>),
     Callback(CompletionRequest<OpaqueBatchCommand, BatchInflightError>),
 }
 
@@ -72,6 +77,7 @@ impl BatchCommandCompletion {
             CompletionKind::Callback(callback) => callback.schedule(result),
             CompletionKind::Response(state) => {
                 let sender = state
+                    .delivery
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
                     .sender
@@ -92,14 +98,9 @@ impl BatchCommandCompletion {
     pub fn is_cancelled(&self) -> bool {
         match &self.kind {
             CompletionKind::Callback(callback) => callback.is_cancelled(),
-            CompletionKind::Response(state) => {
-                let state = state.lock().unwrap_or_else(|p| p.into_inner());
-                state.cancelled
-                    || state
-                        .sender
-                        .as_ref()
-                        .is_some_and(oneshot::Sender::is_closed)
-            }
+            // BatchReply owns the receiver and publishes cancellation before
+            // dropping it. Delivery ownership needs no lock for this check.
+            CompletionKind::Response(state) => state.cancelled.load(Ordering::Acquire),
         }
     }
 
@@ -107,12 +108,12 @@ impl BatchCommandCompletion {
         match &self.kind {
             CompletionKind::Callback(callback) => callback.on_cancel(listener),
             CompletionKind::Response(state) => {
-                let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
-                if state.cancelled {
-                    drop(state);
+                let mut delivery = state.delivery.lock().unwrap_or_else(|p| p.into_inner());
+                if state.cancelled.load(Ordering::Acquire) {
+                    drop(delivery);
                     listener();
                 } else {
-                    state.cancel_listeners.push(Box::new(listener));
+                    delivery.cancel_listeners.push(Box::new(listener));
                 }
             }
         }
@@ -136,16 +137,18 @@ impl BatchEntryCompletion for BatchCommandCompletion {
 pub(in crate::rpc) struct BatchReply {
     receiver: Option<oneshot::Receiver<Reply>>,
     ready: Option<Result<Reply, CompletionError>>,
-    state: Arc<Mutex<ReplyState>>,
+    state: Arc<ReplyState>,
 }
 
 pub(in crate::rpc) fn reply_pair() -> (BatchCommandCompletion, BatchReply) {
     let (sender, receiver) = oneshot::channel();
-    let state = Arc::new(Mutex::new(ReplyState {
-        sender: Some(sender),
-        cancelled: false,
-        cancel_listeners: Vec::new(),
-    }));
+    let state = Arc::new(ReplyState {
+        cancelled: AtomicBool::new(false),
+        delivery: Mutex::new(ReplyDelivery {
+            sender: Some(sender),
+            cancel_listeners: Vec::new(),
+        }),
+    });
     (
         BatchCommandCompletion {
             kind: CompletionKind::Response(Arc::clone(&state)),
@@ -258,16 +261,17 @@ impl BatchReply {
     }
 
     fn is_cancelled(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .cancelled
+        self.state.cancelled.load(Ordering::Acquire)
     }
 
     pub(in crate::rpc) fn cancel(&mut self) {
         let (sender, listeners) = {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            state.cancelled = true;
+            let mut state = self
+                .state
+                .delivery
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            self.state.cancelled.store(true, Ordering::Release);
             (
                 state.sender.take(),
                 std::mem::take(&mut state.cancel_listeners),
@@ -315,6 +319,23 @@ mod tests {
 
     #[test]
     fn caller_cancellation_wakes_a_synchronous_response_waiter() {
+        // client-go's canceled-entry flag is visible whether cancellation
+        // happens before or after the route registers its retirement hook.
+        for cancel_first in [false, true] {
+            let (completion, mut pull) = reply_pair();
+            let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            if cancel_first {
+                pull.cancel();
+            }
+            let observed = calls.clone();
+            completion.on_cancel(move || {
+                observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            });
+            pull.cancel();
+            pull.cancel();
+            assert!(completion.is_cancelled());
+            assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        }
         let (_completion, mut pull) = reply_pair();
         let cancellation = UnaryCancellation::new();
         let call = UnaryCallContext::new(Duration::from_secs(10), cancellation.clone());

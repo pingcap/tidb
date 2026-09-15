@@ -55,11 +55,14 @@ pub fn execution_runtime() -> Result<&'static Runtime, String> {
         .map_err(Clone::clone)
 }
 
-/// Go `runtime.GOMAXPROCS(0)`: the parallelism the process may use, which
-/// `copr.Store.numcpu` and the query worker pool below are sized by.
+/// Parallelism captured for the fixed query runtime and cop task admission.
+/// Go stores `runtime.GOMAXPROCS(0)` in `copr.Store.numcpu` at store creation;
+/// neither a new iterator nor an RPC needs to query the OS again.
 #[must_use]
 pub fn go_max_procs() -> usize {
-    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+    static PARALLELISM: OnceLock<usize> = OnceLock::new();
+    *PARALLELISM
+        .get_or_init(|| std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get))
 }
 
 /// The runtime for query-scaled work: one worker per available core, the

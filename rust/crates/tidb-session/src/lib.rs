@@ -465,9 +465,10 @@ pub struct Session {
     /// Go `digestKey := normalizedSQL` (`session.go`, the arbitrator
     /// registration): the current statement's normalized text, which keys
     /// the memory arbitrator's digest profile so a repeat of the same
-    /// statement reserves its previous peak up front. Go normalizes every
-    /// statement for the statement summary; this node has no other consumer
-    /// yet, so it is computed only while the arbitrator is enabled.
+    /// statement reserves its previous peak up front. It uses ordinary
+    /// normalization of the original SQL, including for cached point reads;
+    /// no AST restoration or binding-specific database qualification is needed.
+    /// It is computed only while the arbitrator is enabled.
     current_sql_digest_key: String,
     /// The open transaction, if any.
     txn: Option<Transaction>,
@@ -2105,6 +2106,59 @@ mod session_source_tests {
             approx_compile_plan_token_count("select @@version @a", false),
             3
         );
+
+        struct Recorder;
+        impl tidb_util::memory::RecordMemState for Recorder {
+            fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
+                Ok(None)
+            }
+            fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (id BIGINT PRIMARY KEY)")
+            .unwrap();
+        session.run("INSERT INTO t VALUES (1)").unwrap();
+        // Exercise key selection without starting a process-wide quota worker.
+        session
+            .run("SET tidb_mem_arbitrator_wait_averse='nolimit'")
+            .unwrap();
+        let arbitrator = tidb_util::memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(Recorder));
+        arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Standard);
+        session.set_mem_arbitrator(arbitrator.clone());
+        for sql in [
+            "SELECT id FROM t WHERE id IN (1, 2)",
+            "SELECT /* comment */ id AS n FROM t WHERE id = 1",
+        ] {
+            session.run(sql).unwrap();
+            assert_eq!(
+                session.current_sql_digest_key,
+                tidb_parser::normalize_digest(sql).0
+            );
+        }
+        let sql = "SELECT id FROM t WHERE id = ?";
+        let prepared = session.prepare_ast(sql).unwrap();
+        session.run("SELECT 7").unwrap();
+        let execution = session
+            .bind_cached_prepared_point_get(
+                &prepared.point_get_plan().unwrap(),
+                &[tidb_datatype::Datum::Int(1)],
+            )
+            .unwrap();
+        let opened = session
+            .open_prepared_point_get(execution, prepared.statement(), sql)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            session.current_sql_digest_key,
+            tidb_parser::normalize_digest(sql).0
+        );
+        drop(opened.attach(&mut session));
+        arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Disable);
+        session.run("SELECT 2").unwrap();
+        assert!(session.current_sql_digest_key.is_empty());
     }
 
     #[test]

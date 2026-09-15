@@ -189,6 +189,46 @@ mod concurrent {
     /// reader must start it while the first reader still owns the lite slot.
     #[test]
     fn go_concurrent_small_cop_overlaps_other_reader() {
+        // Go TestBasicSmallTaskConc: repeatedly refill both one-slot task
+        // channels and the retirement window, then close idle receivers.
+        for ordered in [false, true] {
+            let keys: Vec<_> = (0..=64).map(|index| format!("k{index:03}")).collect();
+            let (mut runtime, incoming, _) = runtime((0..64).map(|index| {
+                location(
+                    index as u64 + 1,
+                    &keys[index],
+                    &keys[index + 1],
+                    "tikv-1:20160",
+                )
+            }));
+            let mut request = metadata(&keys[0], &keys[64]);
+            request.keep_order = ordered;
+            request.key_ranges = Some(RequestKeyRanges::new_non_partitioned_with_hints(
+                (0..64)
+                    .map(|index| range(&keys[index], &keys[index + 1]))
+                    .collect(),
+                (0..64)
+                    .map(|index| if index % 3 == 0 { 1 } else { 64 })
+                    .collect(),
+            ));
+            let mut result = select(&mut runtime, request, Arc::new(AtomicBool::new(false)));
+            let replies = std::thread::spawn(move || {
+                for _ in 0..64 {
+                    let attempt = started(&incoming);
+                    let id = attempt.0;
+                    answer(attempt, response(&id.to_le_bytes()));
+                }
+            });
+            let mut actual = Vec::new();
+            while let Some(row) = result.next_raw().unwrap() {
+                actual.push(u64::from_le_bytes(row.try_into().unwrap()));
+            }
+            replies.join().unwrap();
+            if !ordered {
+                actual.sort_unstable();
+            }
+            assert_eq!(actual, (1..=64).collect::<Vec<_>>());
+        }
         let token = Arc::new(AtomicBool::new(false));
         let (mut first_runtime, first_calls, _) = runtime([location(1, "a", "z", "tikv-1:20160")]);
         let first = select(&mut first_runtime, metadata("a", "z"), Arc::clone(&token));

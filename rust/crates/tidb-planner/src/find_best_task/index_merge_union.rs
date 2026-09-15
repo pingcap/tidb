@@ -162,35 +162,9 @@ pub fn build_union_index_merge_task(
             } => {
                 total_rows += rows;
                 let source_index = &ds.indexes[*index_pos];
-                let resolved = source_index
-                    .columns
-                    .iter()
-                    .map_while(|index_column| {
-                        ds.schema_column_for_index_column(index_column)
-                            .cloned()
-                            .map(|column| (column, index_column.length))
-                    })
-                    .collect::<Vec<_>>();
-                // Go `InitSchema` (`physical_index_scan.go:363`): the partial
-                // reads the index columns plus the handle, and the executor's
-                // handle extraction resolves against exactly these columns.
-                let mut schema_columns: Vec<tidb_expr::column::Column> =
-                    resolved.iter().map(|(column, _)| column.clone()).collect();
-                let handles = partial_handle_columns(ds, ctx)?;
-                for handle in &handles {
-                    if !schema_columns
-                        .iter()
-                        .any(|column| column.unique_id == handle.unique_id)
-                    {
-                        schema_columns.push(handle.clone());
-                    }
-                }
-                let mut cost_columns = source_index
-                    .columns
-                    .iter()
-                    .filter_map(|column| ds.table_columns.get(column.offset).cloned())
-                    .collect::<Vec<_>>();
-                cost_columns.extend(schema_columns.iter().cloned());
+                let schema_columns = partial_index_schema(ds, source_index, ctx)?;
+                // Go GetScanRowSize prices the physical index schema once.
+                let cost_columns = schema_columns.clone();
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
                     "IndexRangeScan",
@@ -221,7 +195,7 @@ pub fn build_union_index_merge_task(
             }
             Partial::Table { ranges, rows } => {
                 total_rows += rows;
-                let schema_columns = ds.handle_cols.clone();
+                let schema_columns = partial_handle_columns(ds, ctx)?;
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
                     "TableRangeScan",
@@ -257,13 +231,6 @@ pub fn build_union_index_merge_task(
                 ));
             }
         }
-    }
-
-    // A union whose partials include an index scan must fetch rows by
-    // handle; all-table partials need no final row fetch — and add no
-    // value over the ordinary handle-range path, so leave those to it.
-    if !any_index_partial {
-        return Ok(None);
     }
 
     let table_plan = any_index_partial.then(|| {
@@ -328,6 +295,93 @@ pub fn build_union_index_merge_task(
     Ok(Some(Task::Root(root)))
 }
 
+/// Go PhysicalIndexScan.InitSchema. The usable range prefix and the physical
+/// index row have different widths after pruning; restore the latter from
+/// immutable table metadata and retain the handle suffix's exact order.
+fn partial_index_schema(
+    ds: &DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    ctx: &DispatchContext<'_>,
+) -> Result<Vec<tidb_expr::column::Column>, PlanError> {
+    let mut columns = Vec::with_capacity(index.columns.len() + ds.common_handle_cols.len() + 2);
+    for index_column in &index.columns {
+        let column = if let Some(column) = ds.schema_column_for_index_column(index_column) {
+            column.clone()
+        } else {
+            let mut column = ds
+                .table_columns
+                .get(index_column.offset)
+                .cloned()
+                .ok_or_else(|| {
+                    PlanError::internal("index column is absent from immutable table metadata")
+                })?;
+            column.unique_id = ctx
+                .column_ids
+                .ok_or_else(|| {
+                    PlanError::internal("index merge requires the statement column allocator")
+                })?
+                .alloc();
+            column
+        };
+        columns.push(column);
+    }
+    let schema = ds.base.base.schema();
+    if ds.is_common_handle {
+        // A prefix index can contain a truncated copy of a common-handle
+        // column. Go still appends the full handle, even with the same ID.
+        columns.extend(ds.common_handle_cols.iter().cloned());
+    } else if let Some(handle) = schema.and_then(|schema| {
+        schema.columns.iter().find(|column| {
+            column.id == tidb_model::column::EXTRA_HANDLE_ID
+                || (ds.pk_is_handle
+                    && ds
+                        .columns
+                        .iter()
+                        .any(|metadata| metadata.id == column.id && metadata.is_primary_key))
+        })
+    }) {
+        columns.push(handle.clone());
+    } else {
+        columns.push(extra_column(
+            ctx,
+            tidb_model::column::EXTRA_HANDLE_ID,
+            tidb_model::column::EXTRA_HANDLE_NAME,
+        )?);
+    }
+    if let Some(column) = schema.and_then(|schema| {
+        schema
+            .columns
+            .iter()
+            .find(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
+    }) {
+        columns.push(column.clone());
+    } else if index.global {
+        columns.push(extra_column(
+            ctx,
+            tidb_model::column::EXTRA_PHYS_TBL_ID,
+            tidb_model::column::EXTRA_PHYS_TBL_ID_NAME,
+        )?);
+    }
+    Ok(columns)
+}
+
+fn extra_column(
+    ctx: &DispatchContext<'_>,
+    id: i64,
+    name: &str,
+) -> Result<tidb_expr::column::Column, PlanError> {
+    let ids = ctx.column_ids.ok_or_else(|| {
+        PlanError::internal("index merge requires the statement column allocator")
+    })?;
+    let mut column = tidb_expr::column::Column::new(
+        ids.alloc(),
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    );
+    column.id = id;
+    column.orig_name = name.to_owned();
+    Ok(column)
+}
+
 /// Go `PhysicalIndexScan.InitSchema` and `overwritePartialTableScanSchema`:
 /// a partial access must return a handle even after logical column pruning.
 fn partial_handle_columns(
@@ -342,22 +396,146 @@ fn partial_handle_columns(
     }
     if ds.pk_is_handle {
         if let Some(column) = ds.table_columns.iter().find(|column| {
-            column.ret_type.as_ref().is_some_and(|ty| {
-                ty.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
-            })
+            column
+                .ret_type
+                .as_ref()
+                .is_some_and(|ty| ty.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY))
         }) {
             return Ok(vec![column.clone()]);
         }
-        return Err(PlanError::internal("index merge has no primary handle column"));
+        return Err(PlanError::internal(
+            "index merge has no primary handle column",
+        ));
     }
-    let ids = ctx.column_ids.ok_or_else(|| {
-        PlanError::internal("index merge requires the statement column allocator")
-    })?;
-    let mut handle = tidb_expr::column::Column::new(
-        ids.alloc(),
-        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-    );
-    handle.id = tidb_model::column::EXTRA_HANDLE_ID;
-    handle.orig_name = "_tidb_rowid".to_owned();
-    Ok(vec![handle])
+    Ok(vec![extra_column(
+        ctx,
+        tidb_model::column::EXTRA_HANDLE_ID,
+        tidb_model::column::EXTRA_HANDLE_NAME,
+    )?])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go PhysicalIndexScan.InitSchema, reached by the union candidates in
+    /// TestIndexMergePathGeneration: pruning cannot change physical key layout.
+    #[test]
+    fn index_merge_restores_index_columns_and_handle_suffix() {
+        use crate::logical::{data_source::DataSourceColumn, BaseLogicalPlan};
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::{
+            column::Column, constant::Constant, scalar_function::ScalarFunction, schema::Schema,
+        };
+
+        let ty = FieldType::new(FieldTypeCode::LongLong);
+        let column = |id| {
+            let mut col = Column::new(id + 100, ty.clone());
+            col.id = id;
+            col
+        };
+        let a = column(1);
+        let b = column(2);
+        let mut base = BaseLogicalPlan::with_id(1, "DataSource", 0);
+        base.base.set_schema(Some(Schema::new(vec![a.clone()])));
+        let eq = |value| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new("eq"),
+                ty.clone(),
+                vec![
+                    Expression::Column(a.clone()),
+                    Expression::Constant(Constant::new(Datum::Int(value), ty.clone())),
+                ],
+            ))
+        };
+        let ds = DataSource {
+            base,
+            table_columns: vec![a.clone(), b],
+            columns: vec![DataSourceColumn {
+                id: 1,
+                name: "a".into(),
+                is_primary_key: true,
+                is_not_null: true,
+            }],
+            common_handle_cols: vec![a.clone()],
+            is_common_handle: true,
+            indexes: vec![SourceIndex {
+                id: 7,
+                global: true,
+                columns: vec![
+                    SourceIndexColumn {
+                        name: "a".into(),
+                        offset: 0,
+                        length: -1,
+                    },
+                    SourceIndexColumn {
+                        name: "b".into(),
+                        offset: 1,
+                        length: -1,
+                    },
+                ],
+                ..Default::default()
+            }],
+            pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new("or"),
+                ty.clone(),
+                vec![eq(1), eq(2)],
+            ))],
+            ..Default::default()
+        };
+        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let coster = crate::find_best_task::coster::Ver2Coster::default();
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
+        let task = build_union_index_merge_task(&ds, &mut ctx)
+            .unwrap()
+            .unwrap();
+        let PhysicalPlan::IndexMergeReader(reader) = task.plan().unwrap() else {
+            panic!("expected index merge")
+        };
+        for partial in &reader.partial_plans_raw {
+            let ids: Vec<_> = partial
+                .schema()
+                .unwrap()
+                .columns
+                .iter()
+                .map(|column| column.id)
+                .collect();
+            assert_eq!(ids, vec![1, 2, 1, tidb_model::column::EXTRA_PHYS_TBL_ID]);
+            assert_ne!(
+                partial.schema().unwrap().columns[1].unique_id,
+                ds.table_columns[1].unique_id
+            );
+        }
+        let mut ds = ds;
+        ds.is_common_handle = false;
+        ds.common_handle_cols.clear();
+        ds.indexes[0].global = false;
+        for (pk_is_handle, expected) in [(false, vec![1, 2, -1]), (true, vec![1, 2, 1])] {
+            ds.pk_is_handle = pk_is_handle;
+            let columns = partial_index_schema(&ds, &ds.indexes[0], &ctx).unwrap();
+            assert_eq!(
+                columns.iter().map(|column| column.id).collect::<Vec<_>>(),
+                expected
+            );
+        }
+        ds.columns.clear();
+        let inherited = extra_column(
+            &ctx,
+            tidb_model::column::EXTRA_PHYS_TBL_ID,
+            tidb_model::column::EXTRA_PHYS_TBL_ID_NAME,
+        )
+        .unwrap();
+        ds.base
+            .base
+            .set_schema(Some(Schema::new(vec![inherited.clone()])));
+        ds.indexes[0].global = true;
+        let columns = partial_index_schema(&ds, &ds.indexes[0], &ctx).unwrap();
+        assert_eq!(
+            columns.iter().map(|column| column.id).collect::<Vec<_>>(),
+            vec![1, 2, -1, -3]
+        );
+        assert_eq!(columns.last().unwrap().unique_id, inherited.unique_id);
+    }
 }

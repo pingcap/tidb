@@ -232,6 +232,21 @@ impl SharedBytes {
         self.with_write(|bytes| bytes[old_len..new_len].copy_from_slice(source));
     }
 
+    /// Runs an append-only batch directly on an unaliased vector. Reset keeps
+    /// initialized storage beyond the visible length; truncate that stale tail
+    /// before appending, retaining capacity. Shared/frozen storage is untouched.
+    pub(crate) fn append_owned(&mut self, append: impl FnOnce(&mut Vec<u8>)) -> bool {
+        if self.start == 0 {
+            if let Backing::Owned(bytes) = &mut self.backing {
+                bytes.truncate(self.len);
+                append(bytes);
+                self.len = bytes.len();
+                return true;
+            }
+        }
+        false
+    }
+
     /// Go's `append(dst, src[begin:end]...)`, retaining the plain `Vec` fast
     /// path while still detaching a shallow alias before it writes itself.
     #[inline]
