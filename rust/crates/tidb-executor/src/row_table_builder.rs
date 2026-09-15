@@ -265,6 +265,10 @@ pub struct RowTableBuilder {
     pub part_idx_vector: Vec<usize>,
     /// Physical row index of each logical row.
     pub used_rows: Vec<usize>,
+    /// Whether `used_rows` currently contains the identity mapping. Go keeps
+    /// this mapping in the reusable `fakeSel` backing slice, so consecutive
+    /// unselected chunks only adjust the visible length.
+    used_rows_are_identity: bool,
     /// Hash value of each logical row.
     pub hash_value: Vec<u64>,
     /// Row-count hint for the first segment of the chunk.
@@ -297,6 +301,7 @@ impl RowTableBuilder {
             serialized_key_vector_buffer: SerializedJoinKeys::default(),
             part_idx_vector: Vec::new(),
             used_rows: Vec::new(),
+            used_rows_are_identity: false,
             hash_value: Vec::new(),
             first_seg_row_size_hint: 0,
             filter_vector: None,
@@ -316,10 +321,24 @@ impl RowTableBuilder {
     pub fn reset_buffer(&mut self, chunk: &Chunk) {
         let logical_rows = chunk.num_rows();
         let physical_rows = chunk.physical_rows();
-        self.used_rows.clear();
         match chunk.sel() {
-            Some(sel) => self.used_rows.extend_from_slice(sel),
-            None => self.used_rows.extend(0..logical_rows),
+            Some(sel) => {
+                self.used_rows.clear();
+                self.used_rows.extend_from_slice(sel);
+                self.used_rows_are_identity = false;
+            }
+            None => {
+                if !self.used_rows_are_identity {
+                    self.used_rows.clear();
+                    self.used_rows_are_identity = true;
+                }
+                if self.used_rows.len() < logical_rows {
+                    let start = self.used_rows.len();
+                    self.used_rows.extend(start..logical_rows);
+                } else {
+                    self.used_rows.truncate(logical_rows);
+                }
+            }
         }
         self.part_idx_vector.resize(logical_rows, 0);
         self.hash_value.resize(logical_rows, 0);
@@ -404,13 +423,22 @@ impl RowTableBuilder {
         }
         context.check_killed()?;
 
-        let result = context.key_serializer.serialize(
-            chunk,
-            &self.used_rows,
-            self.filter_vector.as_deref(),
-            self.null_key_vector.get_or_insert_with(Vec::new),
-            &mut self.serialized_key_vector_buffer,
-        );
+        let result = if self.has_nullable_key {
+            context.key_serializer.serialize(
+                chunk,
+                &self.used_rows,
+                self.filter_vector.as_deref(),
+                self.null_key_vector.get_or_insert_with(Vec::new),
+                &mut self.serialized_key_vector_buffer,
+            )
+        } else {
+            context.key_serializer.serialize_without_nulls(
+                chunk,
+                &self.used_rows,
+                self.filter_vector.as_deref(),
+                &mut self.serialized_key_vector_buffer,
+            )
+        };
         // Go charges row segments and buckets, not reusable key scratch. In
         // particular, spill selection must count the storage it can release.
         result.map_err(|error| RowTableBuildError::KeyEncoding(error.to_string()))?;

@@ -189,6 +189,32 @@ impl JoinKeyColumns {
         nulls: &mut Vec<bool>,
         keys: &mut SerializedJoinKeys,
     ) -> Result<(), CodecError> {
+        self.serialize_impl::<S, true>(source, used_rows, filter, Some(nulls), keys)
+    }
+
+    /// Go `SerializeKeys` when `hasNullableKey` is false.
+    ///
+    /// The source leaves `nullKeyVector` nil for a non-nullable join. Keep
+    /// that branch allocation-free instead of materialising and clearing a
+    /// physical-row boolean vector that can never contain a true value.
+    pub fn serialize_without_nulls<S: JoinKeySource>(
+        &self,
+        source: &S,
+        used_rows: &[usize],
+        filter: Option<&[bool]>,
+        keys: &mut SerializedJoinKeys,
+    ) -> Result<(), CodecError> {
+        self.serialize_impl::<S, false>(source, used_rows, filter, None, keys)
+    }
+
+    fn serialize_impl<S: JoinKeySource, const TRACK_NULLS: bool>(
+        &self,
+        source: &S,
+        used_rows: &[usize],
+        filter: Option<&[bool]>,
+        mut nulls: Option<&mut Vec<bool>>,
+        keys: &mut SerializedJoinKeys,
+    ) -> Result<(), CodecError> {
         if self.indices.len() != self.types.len() || self.modes.len() != self.types.len() {
             return Err(CodecError::InvalidEncoding(
                 "serialize column count mismatch",
@@ -204,8 +230,10 @@ impl JoinKeyColumns {
         {
             return Err(CodecError::InvalidEncoding("serialize column or row index"));
         }
-        nulls.resize(physical_rows, false);
-        nulls.fill(false);
+        if let Some(nulls) = nulls.as_deref_mut() {
+            nulls.resize(physical_rows, false);
+            nulls.fill(false);
+        }
         keys.reset(used_rows.len());
 
         // Go preAllocForSerializedKeyBuffer dispatches once per column.
@@ -232,9 +260,14 @@ impl JoinKeyColumns {
                     _ => None,
                 };
                 if let Some(size) = fixed {
-                    return reserve_column_keys(column, used_rows, filter, nulls, keys, |_| {
-                        Ok(size)
-                    });
+                    return reserve_column_keys::<TRACK_NULLS, _>(
+                        column,
+                        used_rows,
+                        filter,
+                        nulls.as_mut().map(|nulls| nulls.as_mut_slice()),
+                        keys,
+                        |_| Ok(size),
+                    );
                 }
                 match field_type.code() {
                     FieldTypeCode::String
@@ -246,24 +279,36 @@ impl JoinKeyColumns {
                     | FieldTypeCode::LongBlob => column.with_raw(|raw| {
                         let collator = field_type.runtime_collator();
                         let prefix = usize::from(mode == SerializeMode::KeepVarColumnLength) * 4;
-                        reserve_column_keys(column, used_rows, filter, nulls, keys, |row| {
-                            Ok(collator.max_key_len(raw.row(row)) + prefix)
-                        })
+                        reserve_column_keys::<TRACK_NULLS, _>(
+                            column,
+                            used_rows,
+                            filter,
+                            nulls.as_mut().map(|nulls| nulls.as_mut_slice()),
+                            keys,
+                            |row| Ok(collator.max_key_len(raw.row(row)) + prefix),
+                        )
                     }),
                     FieldTypeCode::NewDecimal
                     | FieldTypeCode::Enum
                     | FieldTypeCode::Set
                     | FieldTypeCode::Bit
-                    | FieldTypeCode::Json => {
-                        reserve_column_keys(column, used_rows, filter, nulls, keys, |row| {
+                    | FieldTypeCode::Json => reserve_column_keys::<TRACK_NULLS, _>(
+                        column,
+                        used_rows,
+                        filter,
+                        nulls.as_mut().map(|nulls| nulls.as_mut_slice()),
+                        keys,
+                        |row| {
                             let value = column.datum(row, field_type)?;
                             let (_, bytes) = encode_hash_datum(&value, field_type)?;
                             Ok(bytes.len() + prefix_size(field_type, mode))
-                        })
-                    }
+                        },
+                    ),
                     FieldTypeCode::Null => {
-                        for &row in used_rows {
-                            nulls[row] = true;
+                        if let Some(nulls) = nulls.as_deref_mut() {
+                            for &row in used_rows {
+                                nulls[row] = true;
+                            }
                         }
                         Ok(())
                     }
@@ -286,7 +331,11 @@ impl JoinKeyColumns {
                     | FieldTypeCode::Year
                     | FieldTypeCode::Duration => column.with_raw(|raws| {
                         for (logical, &physical) in used_rows.iter().enumerate() {
-                            if skip(physical, filter, nulls) {
+                            if skip::<TRACK_NULLS>(
+                                physical,
+                                filter,
+                                nulls.as_ref().map(|nulls| nulls.as_slice()),
+                            ) {
                                 continue;
                             }
                             let raw = raws.row(physical);
@@ -306,7 +355,11 @@ impl JoinKeyColumns {
                     })?,
                     FieldTypeCode::Float | FieldTypeCode::Double => column.with_raw(|raws| {
                         for (logical, &physical) in used_rows.iter().enumerate() {
-                            if skip(physical, filter, nulls) {
+                            if skip::<TRACK_NULLS>(
+                                physical,
+                                filter,
+                                nulls.as_ref().map(|nulls| nulls.as_slice()),
+                            ) {
                                 continue;
                             }
                             let raw = raws.row(physical);
@@ -333,7 +386,11 @@ impl JoinKeyColumns {
                     | FieldTypeCode::LongBlob => column.with_raw(|raws| {
                         let collator = field_type.runtime_collator();
                         for (logical, &physical) in used_rows.iter().enumerate() {
-                            if skip(physical, filter, nulls) {
+                            if skip::<TRACK_NULLS>(
+                                physical,
+                                filter,
+                                nulls.as_ref().map(|nulls| nulls.as_slice()),
+                            ) {
                                 continue;
                             }
                             let raw = raws.row(physical);
@@ -348,7 +405,11 @@ impl JoinKeyColumns {
                     FieldTypeCode::Null => {}
                     _ => {
                         for (logical, &physical) in used_rows.iter().enumerate() {
-                            if skip(physical, filter, nulls) {
+                            if skip::<TRACK_NULLS>(
+                                physical,
+                                filter,
+                                nulls.as_ref().map(|nulls| nulls.as_slice()),
+                            ) {
                                 continue;
                             }
                             let value = column.datum(physical, field_type)?;
@@ -373,17 +434,21 @@ impl JoinKeyColumns {
     }
 }
 
-fn reserve_column_keys<C: JoinKeyColumn>(
+fn reserve_column_keys<const TRACK_NULLS: bool, C: JoinKeyColumn>(
     column: &C,
     used_rows: &[usize],
     filter: Option<&[bool]>,
-    nulls: &mut [bool],
+    mut nulls: Option<&mut [bool]>,
     keys: &mut SerializedJoinKeys,
     mut size: impl FnMut(usize) -> Result<usize, CodecError>,
 ) -> Result<(), CodecError> {
     for (logical, &physical) in used_rows.iter().enumerate() {
-        nulls[physical] |= column.is_null(physical);
-        if skip(physical, filter, nulls) {
+        if TRACK_NULLS {
+            if let Some(nulls) = nulls.as_deref_mut() {
+                nulls[physical] |= column.is_null(physical);
+            }
+        }
+        if skip::<TRACK_NULLS>(physical, filter, nulls.as_deref()) {
             continue;
         }
         keys.limits[logical] = keys.limits[logical]
@@ -393,8 +458,13 @@ fn reserve_column_keys<C: JoinKeyColumn>(
     Ok(())
 }
 
-fn skip(row: usize, filter: Option<&[bool]>, nulls: &[bool]) -> bool {
-    nulls[row] || filter.is_some_and(|filter| !filter[row])
+fn skip<const TRACK_NULLS: bool>(
+    row: usize,
+    filter: Option<&[bool]>,
+    nulls: Option<&[bool]>,
+) -> bool {
+    (TRACK_NULLS && nulls.is_some_and(|nulls| nulls[row]))
+        || filter.is_some_and(|filter| !filter[row])
 }
 
 fn prefix_size(field_type: &FieldType, mode: SerializeMode) -> usize {

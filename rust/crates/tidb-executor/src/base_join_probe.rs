@@ -319,6 +319,10 @@ pub struct BaseJoinProbe {
     retained_keys: Vec<bool>,
     /// Go `usedRows`: logical row index -> physical row index.
     used_rows: Vec<usize>,
+    /// Whether `used_rows` currently contains the identity mapping. Go keeps
+    /// this mapping in the reusable `fakeSel` backing slice, so consecutive
+    /// unselected chunks only adjust the visible length.
+    used_rows_are_identity: bool,
     /// Go `matchedRowsHeaders`, indexed by logical row.
     matched_rows_headers: Vec<usize>,
     /// Go `matchedRowsHashValue`, indexed by logical row.
@@ -567,10 +571,24 @@ impl BaseJoinProbe {
         // logical rows exactly when the chunk carries a selection vector.
         let physical_rows = chunk.physical_rows();
 
-        self.used_rows.clear();
         match chunk.sel() {
-            Some(sel) => self.used_rows.extend_from_slice(sel),
-            None => self.used_rows.extend(0..logical_rows),
+            Some(sel) => {
+                self.used_rows.clear();
+                self.used_rows.extend_from_slice(sel);
+                self.used_rows_are_identity = false;
+            }
+            None => {
+                if !self.used_rows_are_identity {
+                    self.used_rows.clear();
+                    self.used_rows_are_identity = true;
+                }
+                if self.used_rows.len() < logical_rows {
+                    let start = self.used_rows.len();
+                    self.used_rows.extend(start..logical_rows);
+                } else {
+                    self.used_rows.truncate(logical_rows);
+                }
+            }
         }
 
         self.chunk_rows = logical_rows;
@@ -595,15 +613,26 @@ impl BaseJoinProbe {
             );
         }
 
-        key_serializer
-            .serialize(
-                &chunk,
-                &self.used_rows,
-                self.filter_vector.as_deref(),
-                self.null_key_vector.get_or_insert_with(Vec::new),
-                &mut self.serialized_keys,
-            )
-            .map_err(|error| ProbeError::Seam(error.to_string()))?;
+        if self.has_nullable_key {
+            key_serializer
+                .serialize(
+                    &chunk,
+                    &self.used_rows,
+                    self.filter_vector.as_deref(),
+                    self.null_key_vector.get_or_insert_with(Vec::new),
+                    &mut self.serialized_keys,
+                )
+                .map_err(|error| ProbeError::Seam(error.to_string()))?;
+        } else {
+            key_serializer
+                .serialize_without_nulls(
+                    &chunk,
+                    &self.used_rows,
+                    self.filter_vector.as_deref(),
+                    &mut self.serialized_keys,
+                )
+                .map_err(|error| ProbeError::Seam(error.to_string()))?;
+        }
 
         self.current_chunk = Some(chunk);
         self.init_spill_chunks(ctx);
@@ -693,8 +722,13 @@ impl BaseJoinProbe {
         self.restored_columns.extend(2..chunk.num_cols());
         self.current_chunk = Some(chunk.prune(&self.restored_columns));
         self.chunk_rows = rows;
-        self.used_rows.clear();
-        self.used_rows.extend(0..rows);
+        self.used_rows_are_identity = true;
+        if self.used_rows.len() < rows {
+            let start = self.used_rows.len();
+            self.used_rows.extend(start..rows);
+        } else {
+            self.used_rows.truncate(rows);
+        }
         self.filter_vector = None;
         self.null_key_vector = None;
         self.matched_rows_headers.clear();
@@ -1526,6 +1560,7 @@ pub fn new_join_probe(
         restored_columns: Vec::new(),
         retained_keys: Vec::new(),
         used_rows: Vec::new(),
+        used_rows_are_identity: false,
         matched_rows_headers: Vec::with_capacity(INITIAL_CAPACITY),
         matched_rows_hash_value: Vec::with_capacity(INITIAL_CAPACITY),
         serialized_keys: SerializedJoinKeys::default(),
