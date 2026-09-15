@@ -23,9 +23,9 @@ use tidb_proto::tikvpb::{
 fn coprocessor_request_body_keeps_pinned_tag_22() {
     let request = BatchCommandsRequest {
         requests: vec![batch_commands_request::Request {
-            cmd: Some(batch_commands_request::request::Cmd::Coprocessor(vec![
-                0x08, 0x01,
-            ])),
+            cmd: Some(batch_commands_request::request::Cmd::Coprocessor(
+                vec![0x08, 0x01].into(),
+            )),
         }],
         request_ids: vec![7],
         client_send_time_ns: 9,
@@ -49,7 +49,9 @@ fn coprocessor_request_body_keeps_pinned_tag_22() {
 fn empty_response_and_feedback_presence_keep_pinned_fields() {
     let response = BatchCommandsResponse {
         responses: vec![batch_commands_response::Response {
-            cmd: Some(batch_commands_response::response::Cmd::Empty(Vec::new())),
+            cmd: Some(batch_commands_response::response::Cmd::Empty(
+                prost::bytes::Bytes::new(),
+            )),
         }],
         request_ids: vec![9],
         transport_layer_load: 7,

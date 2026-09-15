@@ -155,8 +155,8 @@ fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<PushdownScanRequest>>
         &tidb_executor::StmtContext::default(),
         &SessionTimeZone::default(),
         &PushdownStatementContext::default(),
-        false,
-        false,
+        false, // desc
+        false, // keep_order
     );
     assert!(
         opened.unwrap().is_none(),
@@ -194,6 +194,8 @@ fn a_clustered_table_without_a_stored_primary_index_sends_its_primary_ids() {
 
     capture(&mut table, Arc::clone(&captured));
     let request = recorded(&captured);
+    assert!(!request.desc);
+    assert!(!request.keep_order);
     assert_eq!(request.primary_column_ids, vec![2]);
     // Whole-column key parts: nothing travels as a prefix.
     assert!(request.primary_prefix_column_ids.is_empty());
@@ -230,6 +232,8 @@ fn a_stored_primary_index_yields_the_same_ids() {
 
     capture(&mut table, Arc::clone(&captured));
     let request = recorded(&captured);
+    assert!(!request.desc);
+    assert!(!request.keep_order);
     assert_eq!(request.primary_column_ids, vec![2]);
     assert!(request.primary_prefix_column_ids.is_empty());
 }

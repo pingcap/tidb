@@ -174,22 +174,22 @@ fn transaction_messages_keep_exact_batchcommands_tags() {
         requests: vec![
             batch_commands_request::Request {
                 cmd: Some(batch_commands_request::request::Cmd::Get(
-                    bodies[0].1.clone(),
+                    bodies[0].1.clone().into(),
                 )),
             },
             batch_commands_request::Request {
                 cmd: Some(batch_commands_request::request::Cmd::Prewrite(
-                    bodies[1].1.clone(),
+                    bodies[1].1.clone().into(),
                 )),
             },
             batch_commands_request::Request {
                 cmd: Some(batch_commands_request::request::Cmd::Commit(
-                    bodies[2].1.clone(),
+                    bodies[2].1.clone().into(),
                 )),
             },
             batch_commands_request::Request {
                 cmd: Some(batch_commands_request::request::Cmd::BatchRollback(
-                    bodies[3].1.clone(),
+                    bodies[3].1.clone().into(),
                 )),
             },
         ],
@@ -204,7 +204,7 @@ fn transaction_messages_keep_exact_batchcommands_tags() {
     let response = BatchCommandsResponse {
         responses: vec![batch_commands_response::Response {
             cmd: Some(batch_commands_response::response::Cmd::Commit(
-                CommitResponse::default().encode_to_vec(),
+                CommitResponse::default().encode_to_vec().into(),
             )),
         }],
         request_ids: vec![17],

@@ -219,7 +219,7 @@ mod tests {
                 data: Some(vec![0x03]),
             }],
             chunks: vec![Chunk {
-                rows_data: Some(vec![0xaa, 0xbb]),
+                rows_data: Some(vec![0xaa, 0xbb].into()),
                 rows_meta: vec![RowMeta {
                     handle: Some(7),
                     length: Some(2),
@@ -256,7 +256,7 @@ mod tests {
             intermediate_outputs: vec![IntermediateOutput {
                 encode_type: Some(EncodeType::TypeDefault as i32),
                 chunks: vec![Chunk {
-                    rows_data: Some(vec![0x55]),
+                    rows_data: Some(vec![0x55].into()),
                     rows_meta: vec![RowMeta {
                         handle: Some(-1),
                         length: Some(1),
@@ -300,7 +300,7 @@ mod tests {
         );
 
         let chunk = Chunk {
-            rows_data: Some(vec![]),
+            rows_data: Some(prost::bytes::Bytes::new()),
             rows_meta: vec![],
         };
         // A present empty rows_data is still field 3 on the Go wire contract.
