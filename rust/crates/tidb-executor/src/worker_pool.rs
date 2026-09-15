@@ -7,6 +7,77 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
+/// A bounded set of reusable lanes for work that may block on external I/O.
+/// Go's index-join workers are goroutines reused for every task; creating one
+/// native thread per batch adds scheduler and stack costs to every lookup.
+/// Lanes stay separate from the compute pool so a blocked request cannot
+/// consume one of its per-core workers.
+pub struct LanePool {
+    sender: Option<std::sync::mpsc::SyncSender<Box<dyn FnOnce() + Send + 'static>>>,
+    workers: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl LanePool {
+    /// Starts `concurrency` persistent lanes and bounds queued work to the
+    /// same count, matching Go's buffered worker channel.
+    pub fn new(name: &'static str, concurrency: usize) -> Self {
+        let workers = concurrency.max(1);
+        let (sender, receiver) =
+            std::sync::mpsc::sync_channel::<Box<dyn FnOnce() + Send + 'static>>(workers);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let receiver = Arc::clone(&receiver);
+            let handle = std::thread::Builder::new()
+                .name(name.to_owned())
+                .spawn(move || loop {
+                    let task = receiver
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .recv();
+                    let Ok(task) = task else { break };
+                    task();
+                })
+                .expect("spawn persistent exec lane");
+            handles.push(handle);
+        }
+        Self {
+            sender: Some(sender),
+            workers: handles,
+        }
+    }
+
+    /// Queues one task for a reusable lane. The bounded send applies the
+    /// same backpressure as Go's `innerCh` when all workers are busy.
+    pub fn submit<F>(&self, task: F) -> Result<(), ()>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.sender
+            .as_ref()
+            .ok_or(())?
+            .send(Box::new(task))
+            .map_err(|_| ())
+    }
+}
+
+impl Drop for LanePool {
+    fn drop(&mut self) {
+        // Close the channel before joining so idle lanes leave recv and all
+        // queued work drains without leaving native threads behind. A shared
+        // plan can be released by its final lane; that lane cannot join
+        // itself, so dropping its handle cleanly detaches the already-ending
+        // thread while every other lane is joined.
+        self.sender.take();
+        let current = std::thread::current().id();
+        for worker in self.workers.drain(..) {
+            if worker.thread().id() != current {
+                let _ = worker.join();
+            }
+        }
+    }
+}
+
 /// One queued unit of work.
 struct Task(Box<dyn FnOnce() + Send>);
 

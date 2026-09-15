@@ -1381,6 +1381,10 @@ pub struct JoinExec<C: Columns> {
     /// What a pool worker needs to join one index task on its own (Go's
     /// `indexHashJoinInnerWorker`), built with the index state.
     index_task_shared: Option<Arc<IndexTaskShared<C>>>,
+    /// Reusable blocking lanes for the index-join worker set. The pool is
+    /// owned by the executor so Close can wait for every worker before the
+    /// lookup source or executor is reused.
+    index_task_lanes: Option<Arc<crate::worker_pool::LanePool>>,
     /// How many times the `ON` clause has been evaluated. This is the cost
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
@@ -1500,6 +1504,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             vectorized: true,
             index_state: None,
             index_task_shared: None,
+            index_task_lanes: None,
             condition_evals: Cell::new(0),
             memory,
             tracker,
@@ -2102,6 +2107,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 IndexLookupSource::Composite { .. } => None,
             };
             let prefetch_disabled = template.is_none();
+            let lane_pool = Arc::new(crate::worker_pool::LanePool::new(
+                "tidb-index-join",
+                INDEX_LOOKUP_JOIN_CONCURRENCY,
+            ));
+            self.index_task_lanes = Some(Arc::clone(&lane_pool));
             self.index_task_shared = Some(Arc::new(IndexTaskShared {
                 hash_output: self.index_hash_output(),
                 template,
@@ -2168,6 +2178,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             index_lookup,
             index_state,
             index_task_shared,
+            index_task_lanes,
             condition_evals,
             ctx,
             ..
@@ -2175,6 +2186,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let shared = index_task_shared
             .as_ref()
             .expect("fill_index_batch installed it");
+        let lane_pool = index_task_lanes
+            .as_ref()
+            .expect("fill_index_batch installed index lanes");
         let outer_child = if outer_is_left {
             left.as_deref_mut()
                 .expect("an index join keeps its left outer child")
@@ -2211,6 +2225,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 tracker,
                 memory,
                 shared,
+                lane_pool,
                 INDEX_LOOKUP_JOIN_CONCURRENCY,
             )?;
         }
@@ -2303,6 +2318,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             tracker,
             memory,
             shared,
+            lane_pool,
             INDEX_LOOKUP_JOIN_CONCURRENCY.saturating_sub(1),
         )?;
         match task.source {
@@ -2373,6 +2389,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
         shared: &Arc<IndexTaskShared<C>>,
+        lane_pool: &Arc<crate::worker_pool::LanePool>,
         target: usize,
     ) -> Result<(), ExecError> {
         let outer_types = outer_child.ret_field_types().to_vec();
@@ -2414,14 +2431,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         Some(PendingIndexLookupSource::Draining { results }),
                     )
                 };
-                let shared = Arc::clone(shared);
                 let task_outer = std::mem::replace(
                     &mut outer,
                     OuterBatch::new(&outer_types, 1, shared.max_chunk_size.max(1)),
                 );
-                crate::worker_pool::spawn_lane_detached("tidb-index-join", move || {
-                    send_index_task(&shared, task_outer, tx);
-                });
+                let task_shared = Arc::clone(shared);
+                lane_pool
+                    .submit(move || send_index_task(&task_shared, task_outer, tx))
+                    .map_err(|_| ExecError::internal("index-join worker pool stopped"))?;
                 source
             };
             let synchronous = matches!(source, Some(PendingIndexLookupSource::Synchronous(_)));
@@ -5312,6 +5329,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
                 .sum::<i64>();
             self.tracker.consume(-(current + pending));
         }
+        // Go waits for every index worker during Close before releasing its
+        // lookup source. Shut down the reusable lanes first so no in-flight
+        // task can outlive this executor or observe a reopened source.
+        drop(self.index_task_lanes.take());
+        drop(self.index_task_shared.take());
         if let Some(plan) = self.index_lookup.as_mut() {
             plan.source.close()?;
         }
