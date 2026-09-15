@@ -1734,9 +1734,9 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	tk.MustExec("create table t_create (id int, c text, fulltext index fts_idx(c))")
 	raw := tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
-	assertTiCIFulltextParserInfo(t, raw)
+	t.Run("create", func(t *testing.T) { assertTiCIFulltextParserInfo(t, raw) })
 
-	tk.MustExec("create table t (id int, c text)")
+	tk.MustExec("create table t (id bigint primary key clustered, c text)")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 
 	tici.ResetMockTiCICreateIndexRequest()
@@ -1746,9 +1746,11 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 
 	raw = tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
-	assertTiCIFulltextParserInfo(t, raw)
+	t.Run("alter", func(t *testing.T) { assertTiCIFulltextParserInfo(t, raw) })
 	for _, name := range []string{"t_create", "t"} {
 		index := external.GetTableByName(t, tk, "test", name).Meta().FindIndexByName("fts_idx")
+		require.Equal(t, pmodel.IndexTypeFulltext, index.Tp)
+		require.Equal(t, "FULLTEXT", index.Tp.String())
 		require.Equal(t, &model.FullTextParserConfig{
 			InnodbFtMinTokenSize: 1, InnodbFtMaxTokenSize: 10,
 			NgramTokenSize: 2, InnodbFtEnableStopword: true,
@@ -1977,6 +1979,15 @@ func assertTiCIFulltextParserInfo(t *testing.T, raw []byte) {
 	var req tici.CreateIndexRequest
 	require.NoError(t, req.Unmarshal(raw))
 	require.NotNil(t, req.ParserInfo)
+
+	var tableInfo model.TableInfo
+	require.NoError(t, json.Unmarshal(req.TableInfo, &tableInfo))
+	index := tableInfo.FindIndexByName("fts_idx")
+	require.NotNil(t, index)
+	require.Equal(t, req.IndexId, index.ID)
+	// The TiCI table-info contract uses 8 for FULLTEXT, as in release-fts-202602.
+	require.Equal(t, 8, int(index.Tp))
+	require.NotNil(t, index.FullTextInfo)
 
 	parserParams := req.ParserInfo.ParserParams
 	require.Equal(t, "standard", parserParams["parser_name"])

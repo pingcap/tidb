@@ -1334,7 +1334,7 @@ func buildFullTextIndexInfo(
 	idxInfo := &model.IndexInfo{
 		Name:         indexName,
 		State:        state,
-		Tp:           pmodel.IndexTypeBtree,
+		Tp:           pmodel.IndexTypeFulltext,
 		Columns:      indexColumns,
 		FullTextInfo: &model.FullTextIndexInfo{ParserType: parserType},
 	}
