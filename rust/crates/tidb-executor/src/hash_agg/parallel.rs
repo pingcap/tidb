@@ -2416,25 +2416,28 @@ fn fold_chunk<C: Columns>(
     keys.account();
     memory.check()?;
     let inputs = input::bind_inputs(input_modes, chunk);
+    let decimal_cache = input::prepare_decimal_cache(input_modes, chunk);
     if let Some(selection) = chunk.sel() {
         debug_assert_eq!(selection.len(), num_rows);
         for (row_index, &(bucket, index)) in keys.partial_results.iter().enumerate() {
-            state_memory_delta += input::update_row(
+            state_memory_delta += input::update_row_with_decimal_cache(
                 &inputs,
                 agg_funcs,
                 ctx,
                 &mut maps[bucket].groups[index].states,
                 chunk.physical_row(selection[row_index]),
+                &decimal_cache,
             )?;
         }
     } else {
         for (row_index, &(bucket, index)) in keys.partial_results.iter().enumerate() {
-            state_memory_delta += input::update_row(
+            state_memory_delta += input::update_row_with_decimal_cache(
                 &inputs,
                 agg_funcs,
                 ctx,
                 &mut maps[bucket].groups[index].states,
                 chunk.physical_row(row_index),
+                &decimal_cache,
             )?;
         }
     }

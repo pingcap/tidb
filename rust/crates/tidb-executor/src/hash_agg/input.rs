@@ -17,7 +17,12 @@
 //! row/function order as `HashAggPartialWorker.updatePartialResult` does.
 
 use super::*;
+use std::sync::Arc;
 use tidb_chunk::ColumnRead;
+use tidb_datatype::MYDECIMAL_STRUCT_SIZE;
+
+type DecimalBatch = Arc<[Option<(i128, u32)>]>;
+type DecimalCache = smallvec::SmallVec<[Option<DecimalBatch>; 4]>;
 
 #[derive(Clone, Copy)]
 pub(super) enum AggInputMode<T = usize> {
@@ -118,7 +123,12 @@ impl AggInputMode {
 impl AggInputMode<ColumnRead<'_>> {
     /// `None` leaves the exact expression path in charge: non-column input,
     /// decimal scale/width changes, or a count outside the scalar domain.
-    fn update_cell(&self, state: &mut AggState, row: usize) -> Option<i64> {
+    fn update_cell(
+        &self,
+        state: &mut AggState,
+        row: usize,
+        decimal_data: Option<&[Option<(i128, u32)>]>,
+    ) -> Option<i64> {
         match self {
             Self::Expression => None,
             Self::FirstRow => state.has_first_row().then_some(0),
@@ -136,7 +146,10 @@ impl AggInputMode<ColumnRead<'_>> {
                 if column.is_null(row) {
                     return Some(0);
                 }
-                let (coefficient, scale) = column.get_my_decimal_i128_scaled(row)?;
+                let (coefficient, scale) = match decimal_data {
+                    Some(values) => values.get(row).copied().flatten()?,
+                    None => column.get_my_decimal_i128_scaled(row)?,
+                };
                 state
                     .partial_update_with_coefficient(coefficient, scale)
                     .then_some(0)
@@ -148,7 +161,10 @@ impl AggInputMode<ColumnRead<'_>> {
                 if sum.is_null(row) {
                     return Some(0);
                 }
-                let coefficient = sum.get_my_decimal_i128_scaled(row)?;
+                let coefficient = match decimal_data {
+                    Some(values) => values.get(row).copied().flatten()?,
+                    None => sum.get_my_decimal_i128_scaled(row)?,
+                };
                 let count = match count {
                     None => 1,
                     Some((column, unsigned)) => match read_count(column, row, *unsigned)? {
@@ -174,7 +190,18 @@ impl AggInputMode<ColumnRead<'_>> {
         state: &mut AggState,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<i64, ExecError> {
-        if let Some(delta) = self.update_cell(state, row.idx()) {
+        self.update_with_decimal_data(func, ctx, state, row, None)
+    }
+
+    fn update_with_decimal_data<C: Columns>(
+        &self,
+        func: &AggFunc,
+        ctx: &C,
+        state: &mut AggState,
+        row: tidb_chunk::row::Row<'_>,
+        decimal_data: Option<&[Option<(i128, u32)>]>,
+    ) -> Result<i64, ExecError> {
+        if let Some(delta) = self.update_cell(state, row.idx(), decimal_data) {
             return Ok(delta);
         }
         let mut extra_values = Vec::new();
@@ -206,6 +233,47 @@ pub(super) fn bind_inputs<'a>(
     modes.iter().map(|mode| mode.bind(chunk)).collect()
 }
 
+/// Decode each DECIMAL input once for the complete physical chunk. Go binds a
+/// typed column once before `UpdatePartialResult` receives its row slice; the
+/// old Rust row accessor reacquired the backing byte view for every row. The
+/// cache is aligned with `modes`, and repeated DECIMAL columns share one
+/// allocation so `SUM(x), MIN(x), MAX(x)` does not decode `x` three times.
+pub(super) fn prepare_decimal_cache(modes: &[AggInputMode], chunk: &Chunk) -> DecimalCache {
+    let mut batches: smallvec::SmallVec<[(usize, DecimalBatch); 4]> = smallvec::SmallVec::new();
+    modes
+        .iter()
+        .map(|mode| {
+            let index = match mode {
+                AggInputMode::Decimal(index) => Some(*index),
+                AggInputMode::AvgDecimal { sum, .. } => Some(*sum),
+                _ => None,
+            }?;
+            if let Some((_, batch)) = batches.iter().find(|(cached, _)| *cached == index) {
+                return Some(Arc::clone(batch));
+            }
+            let column = chunk.column(index);
+            let rows = column.rows();
+            let mut values = Vec::with_capacity(rows);
+            column.with_my_decimal_data(|data| {
+                for row in 0..rows {
+                    if column.is_null(row) {
+                        values.push(None);
+                        continue;
+                    }
+                    let start = row * MYDECIMAL_STRUCT_SIZE;
+                    values.push(
+                        data.get(start..start + MYDECIMAL_STRUCT_SIZE)
+                            .and_then(tidb_datatype::MyDecimal::i128_scaled_from_raw_bytes),
+                    );
+                }
+            });
+            let batch: DecimalBatch = values.into();
+            batches.push((index, Arc::clone(&batch)));
+            Some(batch)
+        })
+        .collect()
+}
+
 pub(super) fn update_row<C: Columns>(
     modes: &[AggInputMode<ColumnRead<'_>>],
     funcs: &[AggFunc],
@@ -216,6 +284,22 @@ pub(super) fn update_row<C: Columns>(
     let mut delta = 0;
     for ((mode, func), state) in modes.iter().zip(funcs).zip(states) {
         delta += mode.update(func, ctx, state, row)?;
+    }
+    Ok(delta)
+}
+
+pub(super) fn update_row_with_decimal_cache<C: Columns>(
+    modes: &[AggInputMode<ColumnRead<'_>>],
+    funcs: &[AggFunc],
+    ctx: &C,
+    states: &mut [AggState],
+    row: tidb_chunk::row::Row<'_>,
+    decimal_cache: &DecimalCache,
+) -> Result<i64, ExecError> {
+    let mut delta = 0;
+    for (mode_index, ((mode, func), state)) in modes.iter().zip(funcs).zip(states).enumerate() {
+        let decimal_data = decimal_cache.get(mode_index).and_then(Option::as_deref);
+        delta += mode.update_with_decimal_data(func, ctx, state, row, decimal_data)?;
     }
     Ok(delta)
 }
