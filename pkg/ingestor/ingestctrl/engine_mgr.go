@@ -16,6 +16,7 @@ package ingestctrl
 
 import (
 	"context"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -227,8 +228,25 @@ func (em *engineManager) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*peb
 	}
 
 	dbPath := filepath.Join(em.LocalStoreDir, engineUUID.String())
-	db, err := pebble.Open(dbPath, opt)
+	db, err := openPebbleDB(dbPath, opt)
 	return db, errors.Trace(err)
+}
+
+func openPebbleDB(dbPath string, opts *pebble.Options) (*pebble.DB, error) {
+	if opts.FS != nil {
+		return pebble.Open(dbPath, opts)
+	}
+
+	// Keep ownership of Pebble's default disk-health-checking FS until Open succeeds.
+	// A failed Open returns no DB, so there is otherwise no handle that can close it.
+	// See https://github.com/pingcap/tidb/issues/71107.
+	opts = opts.Clone().EnsureDefaults()
+	fsCloser, ok := opts.FS.(io.Closer)
+	db, err := pebble.Open(dbPath, opts)
+	if err != nil && ok {
+		_ = fsCloser.Close()
+	}
+	return db, err
 }
 
 // openEngine must be called with holding mutex of Engine.
@@ -642,7 +660,7 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	failpoint.Inject("slowCreateFS", func() {
 		opts.FS = slowCreateFS{vfs.Default}
 	})
-	return pebble.Open(dbPath, opts)
+	return openPebbleDB(dbPath, opts)
 }
 
 func prepareSortDir(config BackendConfig) error {
