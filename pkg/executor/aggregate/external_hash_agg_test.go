@@ -205,6 +205,20 @@ func TestExternalHashAgg(t *testing.T) {
 		}
 		require.Len(t, seen, len(rows))
 		require.LessOrEqual(t, e.tracker.MaxConsumed(), e.memoryLimit)
+		require.NoError(t, e.Close())
+		require.Zero(t, e.tracker.BytesConsumed())
+		// Reopen and stop after one chunk, leaving prefetched later partitions.
+		require.NoError(t, e.Open(ctx))
+		require.NoError(t, e.readInput(ctx))
+		require.NoError(t, e.spill(ctx))
+		e.drained = true
+		require.NoError(t, e.Next(ctx, out))
+		require.Greater(t, e.readCount-e.readCursor, 0)
+		require.NoError(t, e.Close())
+		require.Zero(t, e.tracker.BytesConsumed())
+		for _, data := range e.readObjects {
+			require.Nil(t, data)
+		}
 	})
 }
 
@@ -347,7 +361,7 @@ func TestExternalHashAggCloseDuringNext(t *testing.T) {
 		sctx, source, schema, descs, groups := externalAggTestInput(t, aggregation.CompleteMode, rows)
 		store := &externalAggFailStore{
 			Storage:      objstore.NewMemStorage(),
-			writeStarted: make(chan struct{}, 16), writeFinished: make(chan struct{}, 16),
+			writeStarted: make(chan struct{}, externalAggIOConcurrency), writeFinished: make(chan struct{}, externalAggIOConcurrency),
 		}
 		e, err := NewExternalHashAgg(sctx, schema, 3, source, descs, groups, store, "cancel-spill", 64<<10)
 		require.NoError(t, err)
