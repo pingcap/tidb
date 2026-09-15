@@ -192,12 +192,14 @@ impl ExactIntTable {
     }
 
     /// The index of `key` in `keys`, if present.
+    #[inline(always)]
     fn find(&self, key: i128) -> Option<usize> {
         let hash = exact_int_hash(key);
         self.find_from(hash as usize & self.mask, Self::tag(hash), key)
     }
 
     /// The serial probe from `position` on.
+    #[inline(always)]
     fn find_from(&self, mut position: usize, tag: u64, key: i128) -> Option<usize> {
         loop {
             let slot = self.slots[position];
@@ -229,32 +231,37 @@ impl ExactIntTable {
         found: &mut Vec<Option<usize>>,
     ) {
         home_slots.clear();
-        home_slots.extend(keys.iter().map(|key| match key {
-            Some(key) => {
-                let hash = exact_int_hash(*key);
-                (hash, self.slots[hash as usize & self.mask])
-            }
-            None => (0, 0),
-        }));
+        home_slots.reserve(keys.len());
+        for key in keys {
+            let slot = match key {
+                Some(key) => {
+                    let hash = exact_int_hash(*key);
+                    (hash, self.slots[hash as usize & self.mask])
+                }
+                None => (0, 0),
+            };
+            home_slots.push(slot);
+        }
         found.clear();
-        found.extend(
-            keys.iter()
-                .zip(home_slots.iter())
-                .map(|(key, &(hash, slot))| {
-                    let key = (*key)?;
-                    if slot == 0 {
-                        return None;
-                    }
-                    let tag = Self::tag(hash);
-                    if slot & TAG_MASK == tag {
-                        let index = (slot as u32 as usize) - 1;
-                        if self.keys[index].key == key {
-                            return Some(index);
-                        }
-                    }
-                    self.find_from((hash as usize + 1) & self.mask, tag, key)
-                }),
-        );
+        found.resize(keys.len(), None);
+        for index in 0..keys.len() {
+            let Some(key) = keys[index] else {
+                continue;
+            };
+            let (hash, slot) = home_slots[index];
+            if slot == 0 {
+                continue;
+            }
+            let tag = Self::tag(hash);
+            if slot & TAG_MASK == tag {
+                let key_index = (slot as u32 as usize) - 1;
+                if self.keys[key_index].key == key {
+                    found[index] = Some(key_index);
+                    continue;
+                }
+            }
+            found[index] = self.find_from((hash as usize + 1) & self.mask, tag, key);
+        }
     }
 
     fn place(slots: &mut [u64], mask: usize, hash: u64, index: usize) {
