@@ -259,7 +259,7 @@ func TestRole(t *testing.T) {
 }
 
 func TestMaxUserConnections(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// test global variables max_user_connections.
