@@ -94,8 +94,8 @@ func TestTiFlashExecutionUnitsInvalidAndUnsupported(t *testing.T) {
 		})
 	}
 	stats := NewRuntimeStatsColl(nil)
-	max := uint64(math.MaxUint64)
-	summary := &tipb.ExecutorExecutionSummary{ExecutorId: &id, TiflashNetworkSummary: &tipb.TiFlashNetWorkSummary{InnerZoneSendBytes: &max}}
+	maxBytes := uint64(math.MaxUint64)
+	summary := &tipb.ExecutorExecutionSummary{ExecutorId: &id, TiflashNetworkSummary: &tipb.TiFlashNetWorkSummary{InnerZoneSendBytes: &maxBytes}}
 	stats.RecordTiFlashExecutionSummaries([]int{1}, []*tipb.ExecutorExecutionSummary{summary})
 	stats.RecordTiFlashExecutionSummaries([]int{1}, []*tipb.ExecutorExecutionSummary{summary})
 	units, _ := stats.GetTiFlashExecutionUnits(1)
