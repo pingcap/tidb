@@ -36,14 +36,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
 const (
-	externalAggPartitions         = 256
-	externalAggMinMemory          = 64 << 10
-	externalAggFileVersion uint32 = 1
+	externalAggPartitions           = 256
+	externalAggMinMemory            = 64 << 10
+	externalAggIOConcurrency        = 4
+	externalAggFileVersion   uint32 = 2
 )
 
 // ExternalHashAgg keeps the original aggregate modes and spills state to object
@@ -105,7 +107,7 @@ func NewExternalHashAgg(
 		BaseExecutor: exec.NewBaseExecutor(sctx, schema, id, child),
 		store:        store, prefix: path.Join(prefix, "agg"),
 		memoryLimit: memoryLimit, stateLimit: memoryLimit / 2,
-		batchLimit: min(memoryLimit/8, 1<<20),
+		batchLimit: min(memoryLimit/128, 256<<10),
 		groupBy:    groupBy, serializer: aggfuncs.NewSerializeHelper(),
 	}
 	for i, desc := range descs {
@@ -214,60 +216,109 @@ func (e *ExternalHashAgg) fileName(partition, seq int) string {
 	return path.Join(e.attemptPrefix, fmt.Sprintf("%03d/%08d", partition, seq))
 }
 
-func (e *ExternalHashAgg) writeBatch(ctx context.Context, partition int, batch *chunk.Chunk) error {
-	if batch.NumRows() == 0 {
-		return nil
-	}
-	data := e.codec.Encode(batch)
-	if e.stateBytes+e.frameBytes+2*int64(cap(data))+batch.MemoryUsage()+4 > e.memoryLimit {
-		return errors.New("ExternalHashAgg serialization exceeds memory budget")
-	}
-	payload := make([]byte, 8, 8+len(data))
-	binary.LittleEndian.PutUint32(payload, externalAggFileVersion)
-	binary.LittleEndian.PutUint32(payload[4:], crc32.ChecksumIEEE(data))
-	payload = append(payload, data...)
-	temporaryBytes := int64(cap(payload)+cap(data)) + batch.MemoryUsage()
-	e.tracker.Consume(temporaryBytes)
-	defer e.tracker.Consume(-temporaryBytes)
-	seq := e.fileCounts[partition]
-	// Count the attempted key as well, so Close also cleans up ambiguous writes.
-	e.fileCounts[partition]++
-	if err := e.store.WriteFile(ctx, e.fileName(partition, seq), payload); err != nil {
-		return errors.Annotate(err, "write ExternalHashAgg state")
-	}
-	batch.Reset()
-	return nil
-}
-
-func (e *ExternalHashAgg) spill(ctx context.Context) error {
+func (e *ExternalHashAgg) spill(ctx context.Context) (err error) {
 	e.spilled = true
 	sort.Slice(e.keys, func(i, j int) bool { return externalAggPartition(e.keys[i]) < externalAggPartition(e.keys[j]) })
+	// Reserve room for four uploads, the next object, and the chunk being encoded.
+	objectLimit := int(min(e.memoryLimit/32, 8<<20))
+	group, writeCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	group.SetLimit(externalAggIOConcurrency)
 	batch := chunk.New(e.spillTypes, 1, e.MaxChunkSize())
+	batchBytes := batch.MemoryUsage()
+	e.tracker.Consume(batchBytes)
+	var payload []byte
 	partition := -1
+	defer func() {
+		if writeErr := group.Wait(); writeErr != nil {
+			err = writeErr
+		}
+		e.tracker.Consume(-int64(cap(payload)) - batchBytes)
+	}()
+	writeObject := func() {
+		if len(payload) == 0 {
+			return
+		}
+		seq := e.fileCounts[partition]
+		// Include ambiguous writes in Close's cleanup. Sequence reflects input order,
+		// so concurrent upload completion cannot change FIRST_ROW during restore.
+		e.fileCounts[partition]++
+		name, data := e.fileName(partition, seq), payload
+		payload = nil
+		group.Go(func() error {
+			defer e.tracker.Consume(-int64(cap(data)))
+			return errors.Annotate(e.store.WriteFile(writeCtx, name, data), "write ExternalHashAgg state")
+		})
+	}
+	writeBatch := func() error {
+		if batch.NumRows() == 0 {
+			return nil
+		}
+		data := e.codec.Encode(batch)
+		e.tracker.Consume(int64(cap(data)))
+		defer e.tracker.Consume(-int64(cap(data)))
+		// Each object has a version followed by length/checksum/chunk frames.
+		// SQL chunk size controls decoding work, not the number of S3 objects.
+		if len(payload)+8+len(data) > objectLimit {
+			writeObject()
+		}
+		required := len(payload) + 8 + len(data)
+		if payload == nil {
+			required += 4
+		}
+		if required > cap(payload) {
+			// Grow with the data: small partition tails should not allocate the full
+			// object limit. Account for both buffers while copying during growth.
+			size := max(required, min(objectLimit, max(64<<10, 2*cap(payload))))
+			if e.tracker.BytesConsumed()+int64(size) > e.memoryLimit {
+				return errors.New("ExternalHashAgg serialization exceeds memory budget")
+			}
+			next := make([]byte, len(payload), size)
+			e.tracker.Consume(int64(cap(next)))
+			copy(next, payload)
+			e.tracker.Consume(-int64(cap(payload)))
+			payload = next
+		}
+		if len(payload) == 0 {
+			payload = binary.LittleEndian.AppendUint32(payload, externalAggFileVersion)
+		}
+		if e.tracker.BytesConsumed() > e.memoryLimit {
+			return errors.New("ExternalHashAgg serialization exceeds memory budget")
+		}
+		payload = binary.LittleEndian.AppendUint32(payload, uint32(len(data)))
+		payload = binary.LittleEndian.AppendUint32(payload, crc32.ChecksumIEEE(data))
+		payload = append(payload, data...)
+		batch.Reset()
+		return nil
+	}
 	for _, key := range e.keys {
-		if err := ctx.Err(); err != nil {
+		if err := writeCtx.Err(); err != nil {
 			return err
 		}
 		p := externalAggPartition(key)
 		if partition != -1 && p != partition {
-			if err := e.writeBatch(ctx, partition, batch); err != nil {
+			if err := writeBatch(); err != nil {
 				return err
 			}
+			writeObject()
 		}
 		partition = p
 		for i, fn := range e.funcs {
 			fn.SerializePartialResult(e.states.M[key][i], batch, e.serializer)
 		}
 		batch.AppendString(len(e.funcs), key)
-		if batch.NumRows() >= e.MaxChunkSize() || batch.MemoryUsage() >= e.batchLimit {
-			if err := e.writeBatch(ctx, partition, batch); err != nil {
+		nextBatchBytes := batch.MemoryUsage()
+		e.tracker.Consume(nextBatchBytes - batchBytes)
+		batchBytes = nextBatchBytes
+		if batch.NumRows() >= e.MaxChunkSize() || batch.UsedMemoryUsage() >= e.batchLimit {
+			if err := writeBatch(); err != nil {
 				return err
 			}
 		}
 	}
-	if err := e.writeBatch(ctx, partition, batch); err != nil {
+	if err := writeBatch(); err != nil {
 		return err
 	}
+	writeObject()
 	e.clearState()
 	return nil
 }
@@ -330,17 +381,69 @@ func (e *ExternalHashAgg) readInput(ctx context.Context) error {
 }
 
 func (e *ExternalHashAgg) restore(ctx context.Context, partition int) error {
-	for seq := range e.fileCounts[partition] {
+	for seq := 0; seq < e.fileCounts[partition]; seq += externalAggIOConcurrency {
+		end := min(seq+externalAggIOConcurrency, e.fileCounts[partition])
+		if err := e.restoreFiles(ctx, partition, seq, end); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *ExternalHashAgg) restoreFiles(ctx context.Context, partition, start, end int) error {
+	var objects [externalAggIOConcurrency][]byte
+	defer func() {
+		for _, data := range objects {
+			e.tracker.Consume(-int64(cap(data)))
+		}
+	}()
+	group, readCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	for seq := start; seq < end; seq++ {
+		i := seq - start
+		group.Go(func() error {
+			data, err := e.store.ReadFile(readCtx, e.fileName(partition, seq))
+			objects[i] = data
+			e.tracker.Consume(int64(cap(data)))
+			return errors.Annotate(err, "read ExternalHashAgg state")
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return err
+	}
+	// Merge in sequence order even though the objects were fetched concurrently.
+	for i := range end - start {
+		if err := e.restoreObject(ctx, objects[i]); err != nil {
+			return err
+		}
+		e.tracker.Consume(-int64(cap(objects[i])))
+		objects[i] = nil
+	}
+	return nil
+}
+
+func (e *ExternalHashAgg) restoreObject(ctx context.Context, data []byte) error {
+	if len(data) < 12 || binary.LittleEndian.Uint32(data) != externalAggFileVersion {
+		return errors.New("invalid ExternalHashAgg state header")
+	}
+	for data = data[4:]; len(data) != 0; {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		data, err := e.store.ReadFile(ctx, e.fileName(partition, seq))
-		if err != nil {
-			return errors.Annotate(err, "read ExternalHashAgg state")
+		if len(data) < 8 {
+			return errors.New("invalid ExternalHashAgg state frame")
 		}
-		if err := e.restoreBatch(data); err != nil {
+		size := binary.LittleEndian.Uint32(data)
+		if uint64(size) > uint64(len(data)-8) {
+			return errors.New("invalid ExternalHashAgg state frame size")
+		}
+		frame := data[8 : 8+int(size)]
+		if binary.LittleEndian.Uint32(data[4:]) != crc32.ChecksumIEEE(frame) {
+			return errors.New("invalid ExternalHashAgg state checksum")
+		}
+		if err := e.restoreBatch(frame); err != nil {
 			return err
 		}
+		data = data[8+int(size):]
 	}
 	return nil
 }
@@ -353,18 +456,14 @@ func (e *ExternalHashAgg) restoreBatch(data []byte) (err error) {
 			err = errors.Errorf("invalid ExternalHashAgg state: %v", r)
 		}
 	}()
-	if len(data) < 8 || binary.LittleEndian.Uint32(data) != externalAggFileVersion ||
-		binary.LittleEndian.Uint32(data[4:]) != crc32.ChecksumIEEE(data[8:]) {
-		return errors.New("invalid ExternalHashAgg state header or checksum")
-	}
-	if int64(len(data))+e.stateBytes > e.memoryLimit {
+	if e.tracker.BytesConsumed() > e.memoryLimit {
 		return errors.New("ExternalHashAgg restore exceeds memory budget")
 	}
-	batch, remaining := e.codec.Decode(data[8:])
+	batch, remaining := e.codec.Decode(data)
 	if len(remaining) != 0 || batch.NumCols() != len(e.spillTypes) {
 		return errors.New("invalid ExternalHashAgg state layout")
 	}
-	temporaryBytes = int64(cap(data)) + batch.MemoryUsage()
+	temporaryBytes = batch.MemoryUsage()
 	e.tracker.Consume(temporaryBytes)
 	partials := make([][]aggfuncs.PartialResult, len(e.funcs))
 	for i, fn := range e.funcs {
@@ -395,7 +494,7 @@ func (e *ExternalHashAgg) restoreBatch(data []byte) (err error) {
 				e.consumeState(int64(len(batch.GetRow(i).GetBytes(j))))
 			}
 		}
-		if e.stateBytes > e.stateLimit || e.stateBytes+temporaryBytes > e.memoryLimit {
+		if e.stateBytes > e.stateLimit || e.tracker.BytesConsumed() > e.memoryLimit {
 			return errors.New("ExternalHashAgg restored partition exceeds memory budget")
 		}
 	}
@@ -472,15 +571,21 @@ func (e *ExternalHashAgg) Close() error {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	var firstErr error
+	files := make([]string, 0, 1000)
 	for partition, count := range e.fileCounts {
 		for seq := range count {
-			name := e.fileName(partition, seq)
-			if err := e.store.DeleteFile(cleanupCtx, name); err != nil && firstErr == nil {
-				exists, checkErr := e.store.FileExists(cleanupCtx, name)
-				if checkErr != nil || exists {
+			files = append(files, e.fileName(partition, seq))
+			if len(files) == cap(files) {
+				if err := e.deleteFiles(cleanupCtx, files); err != nil && firstErr == nil {
 					firstErr = err
 				}
+				files = files[:0]
 			}
+		}
+	}
+	if len(files) > 0 {
+		if err := e.deleteFiles(cleanupCtx, files); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 	e.clearState()
@@ -490,6 +595,24 @@ func (e *ExternalHashAgg) Close() error {
 	e.input, e.groupKeyBuf = nil, nil
 	if err := e.BaseExecutor.Close(); firstErr == nil {
 		firstErr = err
+	}
+	return firstErr
+}
+
+func (e *ExternalHashAgg) deleteFiles(ctx context.Context, files []string) error {
+	if err := e.store.DeleteFiles(ctx, files); err == nil {
+		return nil
+	}
+	// Failed writes can leave missing keys. Some stores stop a batch at the first
+	// missing key, so still clean the remaining objects in that case.
+	var firstErr error
+	for _, name := range files {
+		if err := e.store.DeleteFile(ctx, name); err != nil && firstErr == nil {
+			exists, checkErr := e.store.FileExists(ctx, name)
+			if checkErr != nil || exists {
+				firstErr = err
+			}
+		}
 	}
 	return firstErr
 }
