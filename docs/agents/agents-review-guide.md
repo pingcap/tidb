@@ -8,6 +8,7 @@ Normative requirements (MUST/SHOULD/MAY/MUST NOT) remain in root `AGENTS.md`.
 Run this guide before merging changes to:
 
 - `AGENTS.md`
+- Repository skills under `.agents/skills/`
 - Any added/updated/removed agent-facing docs under `docs/agents/`
 
 ## Document Boundaries (Source of Truth)
@@ -34,6 +35,7 @@ Review gate:
 - [ ] Detailed workflows are linked from `AGENTS.md` to `docs/agents/*` instead of copied inline.
 - [ ] Policy statements are not duplicated across sections or docs; keep one source-of-truth line and reference it elsewhere if needed.
 - [ ] No duplicated checklist documents with overlapping normative rules.
+- [ ] Changed skill descriptions, bodies, and their direct references agree on trigger scope, authorization, and completion. Check representative matching and non-matching requests; a shorter description must retain supported entrypoints.
 
 ### 3) High-Risk Policy Gates
 
@@ -48,6 +50,7 @@ Validate these first because they caused prior drift/regressions:
 
 - [ ] `Task -> Validation Matrix` still defines minimal required test surfaces by change scope.
 - [ ] `Testing Policy` remains policy-level and points to command playbooks under `docs/agents/`.
+- [ ] Delivery checks follow change type, including documentation and build changes; read-only analysis does not trigger code checks, and still-applicable evidence can be reused.
 - [ ] RealTiKV rule still requires background start and mandatory cleanup.
 - [ ] Bug-fix policy still requires regression tests with fail-before-fix/pass-after-fix evidence (or explicit infeasibility note).
 
@@ -73,7 +76,7 @@ Use from repository root.
 
 ```bash
 # Check critical policy anchors in AGENTS.md
-grep -n "Issue Number:" AGENTS.md
+rg -n "Issue Number:" .agents/skills/tidb-pr-metadata-guard/SKILL.md
 grep -n "Task -> Validation Matrix\|Testing Policy\|make bazel_prepare" AGENTS.md
 
 # Ensure normative keywords are not wrapped in backticks in policy docs.
