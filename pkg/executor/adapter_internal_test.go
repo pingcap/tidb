@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlmock "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
@@ -283,48 +282,6 @@ func TestObserveStmtBeginOnTopProfiling(t *testing.T) {
 
 	require.Equal(t, normalizedSQL, topCollector.GetSQL(sqlDigest.Bytes()))
 	require.Equal(t, normalizedPlan, topCollector.GetPlan(planDigest.Bytes()))
-}
-
-func TestObserveStmtBeginOnTopProfilingRUV2Wiring(t *testing.T) {
-	resetTopProfilingStateForTest(t)
-	topsqlstate.EnableTopRU()
-
-	t.Run("domain ru version v2 drives top ru sampling", func(t *testing.T) {
-		stmt, stats := newExecStmtWithStmtStatsForTest(context.Background(), t)
-		testCtx := stmt.Ctx.(*stmtStatsTestContext)
-		testCtx.BindDomainAndSchValidator(newMockDomainWithRUVersion(t, rmclient.RUVersionV2), nil)
-
-		vars := stmt.Ctx.GetSessionVars()
-		metrics := execdetails.NewRUV2Metrics()
-		metrics.AddPlanCnt(3)
-		vars.RUV2Metrics = metrics
-		expectedRU := metrics.TotalRU(vars.RUV2Weights(), 0, 0)
-
-		_ = stmt.observeStmtBeginForTopProfiling(context.Background())
-
-		key := ruKeyForStmt(t, stmt)
-		m := stats.MergeRUInto()
-		require.Len(t, m, 1)
-		require.Equal(t, uint64(1), m[key].ExecCount)
-		require.InDelta(t, expectedRU, m[key].TotalRU, 1e-9)
-	})
-
-	t.Run("nil domain falls back to default ru version", func(t *testing.T) {
-		stmt, stats := newExecStmtWithStmtStatsForTest(context.Background(), t)
-
-		vars := stmt.Ctx.GetSessionVars()
-		metrics := execdetails.NewRUV2Metrics()
-		metrics.AddPlanCnt(3)
-		vars.RUV2Metrics = metrics
-
-		_ = stmt.observeStmtBeginForTopProfiling(context.Background())
-
-		key := ruKeyForStmt(t, stmt)
-		m := stats.MergeRUInto()
-		require.Len(t, m, 1)
-		require.Equal(t, uint64(1), m[key].ExecCount)
-		require.InDelta(t, 0.0, m[key].TotalRU, 1e-9)
-	})
 }
 
 // TestObserveStmtFinishedOnTopProfiling verifies stale RU exec context is cleared

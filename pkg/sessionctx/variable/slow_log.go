@@ -303,7 +303,6 @@ type SlowQueryLogItems struct {
 	// resource information
 	ResourceGroupName string
 	RUDetails         *util.RUDetails
-	RUV2Metrics       *execdetails.RUV2Metrics
 	MemMax            int64
 	DiskMax           int64
 	CPUUsages         ppcpuusage.CPUUsages
@@ -563,18 +562,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
 	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
-	var tiKVRU, tiFlashRU float64
-	if logItems.RUDetails != nil {
-		tiKVRU = logItems.RUDetails.TiKVRUV2()
-		tiFlashRU = logItems.RUDetails.TiflashRU()
-	}
-	total, formatted := execdetails.FormatRUV2Summary(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU)
-	if len(total) > 0 {
-		writeSlowLogItem(&buf, SlowLogRequestUnitV2, total)
-	}
-	if len(formatted) > 0 {
-		writeSlowLogItem(&buf, SlowLogRequestUnitV2Detail, formatted)
-	}
 	if len(logItems.SessionConnectAttrs) > 0 {
 		// Encode into a temporary buffer first so that a (practically impossible)
 		// encoding error does not leave a partial line in the main buffer.

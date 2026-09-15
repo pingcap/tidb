@@ -538,14 +538,6 @@ func (b *PlanBuilder) HandleUnusedViewHints() {
 	b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 }
 
-func (b *PlanBuilder) recordPlanBuilderMetric() {
-	if b.ctx != nil {
-		if vars := b.ctx.GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
-			vars.RUV2Metrics.AddPlanCnt(1)
-		}
-	}
-}
-
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
 	err := b.checkSEMStmt(node.Node)
@@ -557,8 +549,6 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
 	b.optFlag |= rule.FlagPruneColumns
-	// Count every recursive build invocation because RU v2 charges plan work per build step.
-	b.recordPlanBuilderMetric()
 	switch x := node.Node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)

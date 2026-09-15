@@ -177,46 +177,13 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	wg.Wait()
 }
 
-func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
+func TestStatementRUV2Context(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 
 	se, err := createSession(store)
 	require.NoError(t, err)
-
-	t.Run("standalone parse carries into next statement only once", func(t *testing.T) {
-		_, err = se.ParseWithParams(context.Background(), "select 1")
-		require.NoError(t, err)
-		require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
-
-		stmt, err := se.ParseWithParams(context.Background(), "set @a=1")
-		require.NoError(t, err)
-		require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
-
-		_, err = se.ExecuteStmt(context.Background(), stmt)
-		require.NoError(t, err)
-		require.Zero(t, se.sessionVars.RUV2PendingSessionParserTotal.Load())
-		require.NotNil(t, se.sessionVars.RUV2Metrics)
-		require.Equal(t, int64(1), se.sessionVars.RUV2Metrics.SessionParserTotal())
-
-		dctx := se.GetDistSQLCtx()
-		require.Same(t, se.sessionVars.RUV2Metrics, dctx.RUV2Metrics)
-	})
-
-	t.Run("internal others bypass skips parser ru accounting", func(t *testing.T) {
-		stmt, err := se.ParseWithParams(context.Background(), "set @b=1")
-		require.NoError(t, err)
-		require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
-
-		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-		_, err = se.ExecuteStmt(ctx, stmt)
-		require.NoError(t, err)
-		require.Zero(t, se.sessionVars.RUV2PendingSessionParserTotal.Load())
-		require.NotNil(t, se.sessionVars.RUV2Metrics)
-		require.True(t, se.sessionVars.RUV2Metrics.Bypass())
-		require.Zero(t, se.sessionVars.RUV2Metrics.SessionParserTotal())
-	})
 
 	t.Run("statement bypass decision follows internal analyze semantics", func(t *testing.T) {
 		statsCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
