@@ -77,6 +77,11 @@ pub struct SerializedJoinKeys {
     /// column loop; retain the result of the sizing pass so the encoding pass
     /// can stay column-wide without repeating those branches.
     active_rows: Vec<(usize, usize)>,
+    /// FNV-1/64 hashes accumulated while key bytes are written. Join
+    /// build/probe consume these immediately after serialization, avoiding a
+    /// second pass over every serialized key. The ordinary serializer leaves
+    /// this empty so non-join callers pay no storage cost.
+    hashes: Vec<u64>,
 }
 
 impl SerializedJoinKeys {
@@ -90,7 +95,7 @@ impl SerializedJoinKeys {
     ) -> Result<(), CodecError> {
         source.with_column(key_column, |column| {
             column.with_raw(|raw| {
-                self.reset(retained.len());
+                self.reset(retained.len(), false);
                 for (row, &keep) in retained.iter().enumerate() {
                     if keep {
                         self.limits[row] = raw.row(row).len();
@@ -130,19 +135,31 @@ impl SerializedJoinKeys {
     pub fn active_rows(&self) -> &[(usize, usize)] {
         &self.active_rows
     }
+    /// FNV-1/64 hash for each logical row when hash collection was requested
+    /// during serialization. Inactive rows contain zero.
+    pub fn hashes(&self) -> &[u64] {
+        &self.hashes
+    }
     /// Retained capacity including key descriptors for worker accounting.
     pub fn memory_usage(&self) -> usize {
         self.bytes.capacity()
             + self.rows.capacity() * std::mem::size_of::<Range<usize>>()
             + self.limits.capacity() * std::mem::size_of::<usize>()
             + self.active_rows.capacity() * std::mem::size_of::<(usize, usize)>()
+            + self.hashes.capacity() * std::mem::size_of::<u64>()
     }
-    fn reset(&mut self, rows: usize) {
+    fn reset(&mut self, rows: usize, collect_hashes: bool) {
         self.rows.resize(rows, 0..0);
         self.rows.fill(0..0);
         self.limits.resize(rows, 0);
         self.limits.fill(0);
         self.active_rows.clear();
+        if collect_hashes {
+            self.hashes.resize(rows, FNV64_OFFSET_BASIS);
+            self.hashes.fill(FNV64_OFFSET_BASIS);
+        } else {
+            self.hashes.clear();
+        }
     }
     fn allocate(&mut self) -> Result<(), CodecError> {
         let mut offset = 0usize;
@@ -171,9 +188,17 @@ impl SerializedJoinKeys {
         }
         self.bytes[self.rows[row].end..end].copy_from_slice(data);
         self.rows[row].end = end;
+        if let Some(hash) = self.hashes.get_mut(row) {
+            for &byte in data {
+                *hash = hash.wrapping_mul(FNV64_PRIME) ^ u64::from(byte);
+            }
+        }
         Ok(())
     }
 }
+
+const FNV64_OFFSET_BASIS: u64 = 14_695_981_039_346_656_037;
+const FNV64_PRIME: u64 = 1_099_511_628_211;
 
 impl Index<usize> for SerializedJoinKeys {
     type Output = [u8];
@@ -204,7 +229,21 @@ impl JoinKeyColumns {
         nulls: &mut Vec<bool>,
         keys: &mut SerializedJoinKeys,
     ) -> Result<(), CodecError> {
-        self.serialize_impl::<S, true>(source, used_rows, filter, Some(nulls), keys)
+        self.serialize_impl::<S, true, false>(source, used_rows, filter, Some(nulls), keys)
+    }
+
+    /// Go `SerializeKeys` with FNV-1/64 accumulated during encoding.
+    /// Join build/probe callers consume the hash immediately after
+    /// serialization, so no second pass over each key is needed.
+    pub fn serialize_with_hashes<S: JoinKeySource>(
+        &self,
+        source: &S,
+        used_rows: &[usize],
+        filter: Option<&[bool]>,
+        nulls: &mut Vec<bool>,
+        keys: &mut SerializedJoinKeys,
+    ) -> Result<(), CodecError> {
+        self.serialize_impl::<S, true, true>(source, used_rows, filter, Some(nulls), keys)
     }
 
     /// Go `SerializeKeys` when `hasNullableKey` is false.
@@ -219,10 +258,22 @@ impl JoinKeyColumns {
         filter: Option<&[bool]>,
         keys: &mut SerializedJoinKeys,
     ) -> Result<(), CodecError> {
-        self.serialize_impl::<S, false>(source, used_rows, filter, None, keys)
+        self.serialize_impl::<S, false, false>(source, used_rows, filter, None, keys)
     }
 
-    fn serialize_impl<S: JoinKeySource, const TRACK_NULLS: bool>(
+    /// `serialize_without_nulls` with FNV-1/64 accumulated during encoding.
+    /// The null-free build/probe path uses this to avoid a second key scan.
+    pub fn serialize_without_nulls_with_hashes<S: JoinKeySource>(
+        &self,
+        source: &S,
+        used_rows: &[usize],
+        filter: Option<&[bool]>,
+        keys: &mut SerializedJoinKeys,
+    ) -> Result<(), CodecError> {
+        self.serialize_impl::<S, false, true>(source, used_rows, filter, None, keys)
+    }
+
+    fn serialize_impl<S: JoinKeySource, const TRACK_NULLS: bool, const COLLECT_HASHES: bool>(
         &self,
         source: &S,
         used_rows: &[usize],
@@ -249,7 +300,7 @@ impl JoinKeyColumns {
             nulls.resize(physical_rows, false);
             nulls.fill(false);
         }
-        keys.reset(used_rows.len());
+        keys.reset(used_rows.len(), COLLECT_HASHES);
 
         // Go preAllocForSerializedKeyBuffer dispatches once per column.
         // Typed decoders run without a raw backing guard: they may acquire

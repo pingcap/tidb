@@ -75,7 +75,7 @@ use crate::join_row_table::{
     next_row_address, RowLayoutMeta, SIZE_OF_ELEMENT_SIZE, SIZE_OF_NEXT_PTR,
 };
 use crate::join_table_meta::KeyMode;
-use crate::row_table_builder::{fnv64, generate_partition_index};
+use crate::row_table_builder::generate_partition_index;
 use crate::tagged_ptr::TagPtrHelper;
 
 /// Go `batchBuildRowSize`: how many matched build rows are reconstructed in
@@ -617,7 +617,7 @@ impl BaseJoinProbe {
 
         if self.has_nullable_key {
             key_serializer
-                .serialize(
+                .serialize_with_hashes(
                     &chunk,
                     &self.used_rows,
                     self.filter_vector.as_deref(),
@@ -627,7 +627,7 @@ impl BaseJoinProbe {
                 .map_err(|error| ProbeError::Seam(error.to_string()))?;
         } else {
             key_serializer
-                .serialize_without_nulls(
+                .serialize_without_nulls_with_hashes(
                     &chunk,
                     &self.used_rows,
                     self.filter_vector.as_deref(),
@@ -640,7 +640,7 @@ impl BaseJoinProbe {
         self.init_spill_chunks(ctx);
 
         for &(logical_row, _physical_row) in self.serialized_keys.active_rows() {
-            let hash_value = fnv64(&self.serialized_keys[logical_row]);
+            let hash_value = self.serialized_keys.hashes()[logical_row];
             self.matched_rows_hash_value[logical_row] = hash_value;
             let part_index =
                 generate_partition_index(hash_value, ctx.partition_mask_offset) as usize;

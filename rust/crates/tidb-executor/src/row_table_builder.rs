@@ -385,7 +385,7 @@ impl RowTableBuilder {
                 fake_part_index = (fake_part_index + 1) % partition.partition_number as u64;
                 continue;
             }
-            let hash = fnv64(&self.serialized_key_vector_buffer[logical_row_index]);
+            let hash = self.serialized_key_vector_buffer.hashes()[logical_row_index];
             self.hash_value[logical_row_index] = hash;
             self.part_idx_vector[logical_row_index] = partition.partition_index(hash);
         }
@@ -424,7 +424,7 @@ impl RowTableBuilder {
         context.check_killed()?;
 
         let result = if self.has_nullable_key {
-            context.key_serializer.serialize(
+            context.key_serializer.serialize_with_hashes(
                 chunk,
                 &self.used_rows,
                 self.filter_vector.as_deref(),
@@ -432,7 +432,7 @@ impl RowTableBuilder {
                 &mut self.serialized_key_vector_buffer,
             )
         } else {
-            context.key_serializer.serialize_without_nulls(
+            context.key_serializer.serialize_without_nulls_with_hashes(
                 chunk,
                 &self.used_rows,
                 self.filter_vector.as_deref(),
