@@ -39,24 +39,24 @@ func TestListPendingBackupsClassifiesStates(t *testing.T) {
 	storage := objstore.NewMemStorage()
 	snapshotOps := repo.SnapshotOpsExtension(storage)
 
-	staleID := repo.BackupID(0x1111)
-	unfinishedID := repo.BackupID(0x2222)
+	finishedID := repo.BackupID(0x1111)
+	resumableID := repo.BackupID(0x2222)
 	markerOnlyID := repo.BackupID(0x3333)
 
-	createPendingMarker(ctx, t, storage, staleID)
-	createBackupMeta(ctx, t, storage, staleID)
+	createPendingMarker(ctx, t, storage, finishedID)
+	createBackupMeta(ctx, t, storage, finishedID)
 
-	createPendingCheckpoint(ctx, t, storage, unfinishedID)
+	createPendingCheckpoint(ctx, t, storage, resumableID)
 	createPendingMarker(ctx, t, storage, markerOnlyID)
 
 	backups, err := snapshotOps.ListPendingBackups(ctx)
 	require.NoError(t, err)
 	require.Len(t, backups, 3)
-	require.Equal(t, repo.PendingBackupStateStale, backups[0].State)
-	require.Equal(t, staleID, backups[0].BackupID)
-	require.Equal(t, repo.PendingBackupStateUnfinished, backups[1].State)
-	require.Equal(t, unfinishedID, backups[1].BackupID)
-	require.Equal(t, repo.PendingBackupStateStale, backups[2].State)
+	require.Equal(t, repo.PendingBackupStateFinished, backups[0].State)
+	require.Equal(t, finishedID, backups[0].BackupID)
+	require.Equal(t, repo.PendingBackupStateResumable, backups[1].State)
+	require.Equal(t, resumableID, backups[1].BackupID)
+	require.Equal(t, repo.PendingBackupStateNonResumable, backups[2].State)
 	require.Equal(t, markerOnlyID, backups[2].BackupID)
 }
 

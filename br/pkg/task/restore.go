@@ -1347,7 +1347,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err := resolvedStorage.Validate(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo)
+	backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo, cfg.CheckRequirements)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2910,7 +2910,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			if err := resolvedStorage.Validate(ctx); err != nil {
 				return errors.Trace(err)
 			}
-			backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo)
+			backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo, cfg.CheckRequirements)
 			if err != nil {
 				return errors.Trace(err)
 			}

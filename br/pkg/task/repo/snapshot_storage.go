@@ -297,10 +297,13 @@ func (ref *SnapshotStorageRef) GetBackupMetaBytes(
 	return backupMetaBytes, nil
 }
 
-// LoadBackupMeta loads backup metadata from the derived metadata storage.
+// LoadBackupMeta loads backup metadata and checks compatibility using the decrypted
+// bytes, since unmarshalling can discard unknown fields. If checkRequirements is
+// false, compatibility errors are logged and the metadata is still returned.
 func (ref *SnapshotStorageRef) LoadBackupMeta(
 	ctx context.Context,
 	cipherInfo *backuppb.CipherInfo,
+	checkRequirements bool,
 ) (*backuppb.BackupMeta, error) {
 	backupMetaBytes, err := ref.GetBackupMetaBytes(ctx, cipherInfo)
 	if err != nil {
@@ -310,13 +313,21 @@ func (ref *SnapshotStorageRef) LoadBackupMeta(
 	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
 		return nil, errors.Annotate(err, "parse backupmeta failed")
 	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
+		if checkRequirements {
+			return nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", gozap.Error(err))
+	}
 	return backupMeta, nil
 }
 
-// A pending marker can mean two things when BR starts up:
-//   - checkpoint metadata exists: the backup is resumable.
-//   - otherwise the backup is not resumable and should be cleaned up together
-//     with any leftover checkpoint files.
+// Pending markers track checkpoint-enabled backup attempts. RunBackup persists
+// checkpoint metadata before writing SSTs or metadata fragments, and only removes
+// checkpoint state after backupmeta is written successfully. Thus, under this
+// lifecycle, an attempt with neither backupmeta nor checkpoint metadata has not
+// started writing backup files. Finished attempts must retain their backup files;
+// both cases only need leftover checkpoint state and pending markers cleaned up.
 func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHash []byte) ([]repo.BackupID, error) {
 	pendingBackups, err := repo.SnapshotOpsExtension(rootStorage).ListPendingBackupsForConfigHash(ctx, cfgHash)
 	if err != nil {
@@ -326,11 +337,11 @@ func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.St
 	for _, pending := range pendingBackups {
 		metadataStorage := repo.NewPrefixedStorage(rootStorage, repo.SnapshotMetadataDir(pending.BackupID))
 		switch pending.State {
-		case repo.PendingBackupStateStale:
-			if err := cleanupNonResumablePendingBackup(ctx, rootStorage, metadataStorage, pending); err != nil {
+		case repo.PendingBackupStateFinished, repo.PendingBackupStateNonResumable:
+			if err := cleanupPendingBackupState(ctx, rootStorage, metadataStorage, pending); err != nil {
 				return nil, errors.Trace(err)
 			}
-		case repo.PendingBackupStateUnfinished:
+		case repo.PendingBackupStateResumable:
 			resumable = append(resumable, pending.BackupID)
 		default:
 			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "unknown pending backup state %q", pending.State)
@@ -339,18 +350,18 @@ func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.St
 	return resumable, nil
 }
 
-func cleanupNonResumablePendingBackup(
+func cleanupPendingBackupState(
 	ctx context.Context,
 	rootStorage storeapi.Storage,
 	metadataStorage storeapi.Storage,
 	pending repo.PendingBackup,
 ) error {
 	if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, metadataStorage); removeErr != nil {
-		return errors.Annotatef(removeErr, "remove checkpoint state for stale pending backup %s", pending.BackupID)
+		return errors.Annotatef(removeErr, "remove checkpoint state for pending backup %s", pending.BackupID)
 	}
 	for _, markerPath := range pending.MarkerPaths {
 		if removeErr := rootStorage.DeleteFile(ctx, markerPath); removeErr != nil {
-			return errors.Annotatef(removeErr, "remove pending marker for stale backup %s", pending.BackupID)
+			return errors.Annotatef(removeErr, "remove pending marker for backup %s", pending.BackupID)
 		}
 	}
 	return nil

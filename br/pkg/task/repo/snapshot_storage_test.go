@@ -81,27 +81,40 @@ func TestPreparedRepoSnapshotBackupRewritesStoreRequestAndResponse(t *testing.T)
 }
 
 func TestCollectResumablePendingBackups(t *testing.T) {
-	t.Run("stale_markers_removed_and_unfinished_retained", func(t *testing.T) {
+	t.Run("finished_markers_removed_and_resumable_retained", func(t *testing.T) {
 		ctx := context.Background()
 		storage := objstore.NewMemStorage()
 		cfgHash := []byte("hash")
-		staleID := repo.BackupID(1)
-		unfinishedID := repo.BackupID(2)
+		finishedID := repo.BackupID(1)
+		resumableID := repo.BackupID(2)
 
-		require.NoError(t, storage.WriteFile(ctx, repo.PendingFile(cfgHash, staleID), []byte("{}")))
-		require.NoError(t, storage.WriteFile(ctx, repo.PendingFile(cfgHash, unfinishedID), []byte("{}")))
+		require.NoError(t, storage.WriteFile(ctx, repo.PendingFile(cfgHash, finishedID), []byte("{}")))
+		require.NoError(t, storage.WriteFile(ctx, repo.PendingFile(cfgHash, resumableID), []byte("{}")))
 
-		staleMetaStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(staleID))
-		require.NoError(t, staleMetaStorage.WriteFile(ctx, metautil.MetaFile, []byte("done")))
+		finishedMetaStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(finishedID))
+		require.NoError(t, finishedMetaStorage.WriteFile(ctx, metautil.MetaFile, []byte("done")))
+		require.NoError(t, finishedMetaStorage.WriteFile(ctx, checkpoint.CheckpointMetaPathForBackup, []byte("cp")))
 
-		unfinishedMetaStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(unfinishedID))
-		require.NoError(t, unfinishedMetaStorage.WriteFile(ctx, checkpoint.CheckpointMetaPathForBackup, []byte("cp")))
+		resumableMetaStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(resumableID))
+		require.NoError(t, resumableMetaStorage.WriteFile(ctx, checkpoint.CheckpointMetaPathForBackup, []byte("cp")))
 
 		unfinished, err := collectResumablePendingBackups(ctx, storage, cfgHash)
 		require.NoError(t, err)
-		require.Equal(t, []repo.BackupID{unfinishedID}, unfinished)
+		require.Equal(t, []repo.BackupID{resumableID}, unfinished)
 
-		exists, err := storage.FileExists(ctx, repo.PendingFile(cfgHash, staleID))
+		exists, err := storage.FileExists(ctx, repo.PendingFile(cfgHash, finishedID))
+		require.NoError(t, err)
+		require.False(t, exists)
+		for _, file := range []string{
+			repo.SnapshotMetadataFile(finishedID),
+			repo.PendingFile(cfgHash, resumableID),
+			repo.SnapshotMetadataDir(resumableID) + "/" + checkpoint.CheckpointMetaPathForBackup,
+		} {
+			exists, err := storage.FileExists(ctx, file)
+			require.NoError(t, err)
+			require.True(t, exists, file)
+		}
+		exists, err = finishedMetaStorage.FileExists(ctx, checkpoint.CheckpointMetaPathForBackup)
 		require.NoError(t, err)
 		require.False(t, exists)
 	})
@@ -166,7 +179,7 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 			RootStorage: storage,
 		}
 		require.NoError(t, resolved.Validate(ctx))
-		backupMeta, err := resolved.LoadBackupMeta(ctx, &cipherInfo)
+		backupMeta, err := resolved.LoadBackupMeta(ctx, &cipherInfo, true)
 		require.NoError(t, err)
 		require.Equal(t, backupID, resolved.BackupID)
 		require.Equal(t, uint64(42), backupMeta.ClusterId)
@@ -174,6 +187,50 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 		exists, err := storage.FileExists(ctx, metautil.MetaFile)
 		require.NoError(t, err)
 		require.False(t, exists)
+	})
+
+	t.Run("backup_meta_compatibility", func(t *testing.T) {
+		ctx := context.Background()
+		for _, backupID := range []repo.BackupID{0, 0x1234} {
+			for _, cipherInfo := range []backuppb.CipherInfo{
+				{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT},
+				{CipherType: encryptionpb.EncryptionMethod_AES128_CTR, CipherKey: []byte("0123456789abcdef")},
+			} {
+				ref := &SnapshotStorageRef{BackupID: backupID, RootStorage: objstore.NewMemStorage()}
+				for _, tc := range []struct {
+					name          string
+					schemaVersion uint32
+					unknownField  bool
+					expectedError string
+				}{
+					{name: "current_schema", schemaVersion: backuppb.BackupSchemaVersion},
+					{name: "newer_schema", schemaVersion: backuppb.BackupSchemaVersion + 1, expectedError: "requires schema version"},
+					{name: "unknown_field", schemaVersion: backuppb.BackupSchemaVersion, unknownField: true, expectedError: "unknown protobuf fields"},
+				} {
+					t.Run(tc.name+"/"+backupID.String()+"/"+cipherInfo.CipherType.String(), func(t *testing.T) {
+						meta := &backuppb.BackupMeta{ClusterId: 42, BackupSchemaVersion: tc.schemaVersion}
+						data, err := meta.Marshal()
+						require.NoError(t, err)
+						if tc.unknownField {
+							// Protobuf varint field 200 with value 1, unknown to the current reader.
+							data = append(data, 0xc0, 0x0c, 0x01)
+						}
+						encrypted, iv, err := metautil.Encrypt(data, &cipherInfo)
+						require.NoError(t, err)
+						require.NoError(t, ref.MetadataStorage().WriteFile(ctx, metautil.MetaFile, append(iv, encrypted...)))
+
+						loaded, err := ref.LoadBackupMeta(ctx, &cipherInfo, true)
+						if tc.expectedError != "" {
+							require.ErrorContains(t, err, tc.expectedError)
+							require.Nil(t, loaded)
+							loaded, err = ref.LoadBackupMeta(ctx, &cipherInfo, false)
+						}
+						require.NoError(t, err)
+						require.Equal(t, uint64(42), loaded.ClusterId)
+					})
+				}
+			}
+		}
 	})
 
 	t.Run("validate_rejects_repo_without_startafter_support", func(t *testing.T) {

@@ -164,7 +164,7 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 	if err := resolved.Validate(ctx); err != nil {
 		return nil, errors.Annotate(err, "failed to init backupmeta storage")
 	}
-	backupMeta, err := resolved.LoadBackupMeta(ctx, &c.cfg.CipherInfo)
+	backupMeta, err := resolved.LoadBackupMeta(ctx, &c.cfg.CipherInfo, c.cfg.CheckRequirements)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to load backupmeta")
 	}

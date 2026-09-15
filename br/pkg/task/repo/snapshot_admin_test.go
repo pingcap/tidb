@@ -259,7 +259,7 @@ func TestRunRepoSnapshotDeletePendingConfirmationAbortKeepsFiles(t *testing.T) {
 	require.Empty(t, console.progressBars)
 	require.Contains(t, console.output.String(), "Continue? (y/N) ")
 	require.Contains(t, console.output.String(), backupID.String())
-	require.Contains(t, console.output.String(), "state: unfinished")
+	require.Contains(t, console.output.String(), "state: resumable")
 	require.Contains(t, console.output.String(), "pending-markers: 1")
 	requireRepoSnapshotFileExists(ctx, t, repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID)), checkpoint.CheckpointMetaPathForBackup)
 	requireRepoSnapshotFileExists(ctx, t, storage, pendingPath)

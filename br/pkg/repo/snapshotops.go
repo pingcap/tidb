@@ -33,11 +33,12 @@ import (
 type PendingBackupState string
 
 const (
-	// PendingBackupStateStale means the pending backup is not resumable.
-	// Completed snapshot metadata/data, if present, are kept.
-	PendingBackupStateStale PendingBackupState = "stale"
-	// PendingBackupStateUnfinished means the backup has checkpoint metadata but no completed backup metadata yet.
-	PendingBackupStateUnfinished PendingBackupState = "unfinished"
+	// PendingBackupStateFinished means the backup is completed but its pending marker remains.
+	PendingBackupStateFinished PendingBackupState = "finished"
+	// PendingBackupStateResumable means the backup has checkpoint metadata but no completed backup metadata yet.
+	PendingBackupStateResumable PendingBackupState = "resumable"
+	// PendingBackupStateNonResumable means neither completed backup metadata nor checkpoint metadata exists.
+	PendingBackupStateNonResumable PendingBackupState = "non-resumable"
 )
 
 type PendingBackup struct {
@@ -112,8 +113,8 @@ func SnapshotOpsExtension(storage storeapi.Storage) SnapshotOps {
 	return SnapshotOps{Storage: storage}
 }
 
-// ListPendingBackups returns all pending backups with stale or unfinished state.
-// For example, a marker whose backup has `backupmeta` is returned as stale.
+// ListPendingBackups returns all pending backups with finished, resumable, or non-resumable state.
+// For example, a marker whose backup has `backupmeta` is returned as finished.
 func (ops SnapshotOps) ListPendingBackups(ctx context.Context) ([]PendingBackup, error) {
 	return listPendingBackups(ctx, ops.Storage, WalkPendingMarkers(ctx, ops.Storage))
 }
@@ -178,16 +179,16 @@ func (ops SnapshotOps) inspectPendingBackupState(
 		return "", errors.Annotatef(err, "check %s for pending backup %s", metautil.MetaFile, backupID)
 	}
 	if hasBackupMeta {
-		return PendingBackupStateStale, nil
+		return PendingBackupStateFinished, nil
 	}
 	hasCheckpoint, err := metadataStorage.FileExists(ctx, checkpoint.CheckpointMetaPathForBackup)
 	if err != nil {
 		return "", errors.Annotatef(err, "check %s for pending backup %s", checkpoint.CheckpointMetaPathForBackup, backupID)
 	}
 	if hasCheckpoint {
-		return PendingBackupStateUnfinished, nil
+		return PendingBackupStateResumable, nil
 	}
-	return PendingBackupStateStale, nil
+	return PendingBackupStateNonResumable, nil
 }
 
 func filePathStream(paths []string) TrySeq[string] {

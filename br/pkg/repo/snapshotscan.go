@@ -201,6 +201,7 @@ func walkParsedSeq[T any](
 }
 
 // ParseCompletedSnapshotMetaPath parses a completed snapshot metadata path.
+// Only backupmeta marks completion; metadata fragments do not.
 // For example, `_meta/snapshot/000000000000F00D/backupmeta` returns
 // BackupID(0xF00D), true, nil.
 func ParseCompletedSnapshotMetaPath(filePath string) (id BackupID, parsed bool, err error) {
@@ -223,7 +224,7 @@ func ParseCompletedSnapshotMetaPath(filePath string) (id BackupID, parsed bool, 
 		return 0, false, nil
 	}
 	base := parts[len(parts)-1]
-	if base != metautil.MetaFile && !strings.HasPrefix(base, metautil.MetaFile+".") {
+	if base != metautil.MetaFile {
 		return 0, false, nil
 	}
 	backupID, err := ParseBackupIDStorageName(parts[2])
