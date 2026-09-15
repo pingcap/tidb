@@ -342,8 +342,11 @@ impl<C: Columns + Clone> BaseJoiner<C> {
             outer_col_offset = 0;
         }
 
-        let l_used = self.l_used.clone();
-        let r_used = self.r_used.clone();
+        // The projection is statement-static. Go passes these slices through
+        // directly; cloning both vectors for every conditional batch only
+        // adds allocation/copy work before the column-wise copy below.
+        let l_used = self.l_used.as_deref();
+        let r_used = self.r_used.as_deref();
         let mut pruned = None;
         if l_used.is_some() || r_used.is_some() {
             let l_size = if self.outer_is_right {
@@ -351,8 +354,8 @@ impl<C: Columns + Clone> BaseJoiner<C> {
             } else {
                 inner_col_offset
             };
-            let l_used = l_used.as_deref().unwrap_or_default();
-            let r_used = r_used.as_deref().unwrap_or_default();
+            let l_used = l_used.unwrap_or_default();
+            let r_used = r_used.unwrap_or_default();
             let mut used = Vec::with_capacity(l_used.len() + r_used.len());
             used.extend_from_slice(l_used);
             used.extend(r_used.iter().map(|index| index + l_size));
@@ -427,8 +430,10 @@ impl<C: Columns + Clone> BaseJoiner<C> {
             }
         }
 
-        let l_used = self.l_used.clone();
-        let r_used = self.r_used.clone();
+        // Keep Go's borrowed projection slices on the hot filter path; they
+        // do not change for the lifetime of a joiner.
+        let l_used = self.l_used.as_deref();
+        let r_used = self.r_used.as_deref();
         let mut pruned = None;
         if l_used.is_some() || r_used.is_some() {
             let l_size = if self.outer_is_right {
@@ -436,8 +441,8 @@ impl<C: Columns + Clone> BaseJoiner<C> {
             } else {
                 input.num_cols() - inner_cols_len
             };
-            let l_used = l_used.as_deref().unwrap_or_default();
-            let r_used = r_used.as_deref().unwrap_or_default();
+            let l_used = l_used.unwrap_or_default();
+            let r_used = r_used.unwrap_or_default();
             let mut used = Vec::with_capacity(l_used.len() + r_used.len());
             used.extend_from_slice(l_used);
             used.extend(r_used.iter().map(|index| index + l_size));
@@ -1236,11 +1241,6 @@ impl<C: Columns + Clone> RowJoiner<C> {
         }
         let outer_first = self.lhs_first();
         let conditional = !self.base.conditions.is_empty();
-        let (l_used, r_used) = if conditional {
-            (None, None)
-        } else {
-            (self.base.l_used.clone(), self.base.r_used.clone())
-        };
         let mut budget = num_to_append(chk);
         let outer_len = outer.len();
 
@@ -1256,6 +1256,14 @@ impl<C: Columns + Clone> RowJoiner<C> {
             None
         };
         {
+            // Go's no-condition path passes the joiner's projection slices by
+            // reference. Borrow them only after taking the optional scratch
+            // chunk so the mutable scratch handoff remains disjoint.
+            let (l_used, r_used) = if conditional {
+                (None, None)
+            } else {
+                (self.base.l_used.as_deref(), self.base.r_used.as_deref())
+            };
             let target: &mut Chunk = scratch.as_mut().unwrap_or(chk);
             loop {
                 if budget == 0 {
@@ -1302,11 +1310,6 @@ impl<C: Columns + Clone> RowJoiner<C> {
     ) -> Result<(), ExecError> {
         let outer_first = self.lhs_first();
         let conditional = !self.base.conditions.is_empty();
-        let (l_used, r_used) = if conditional {
-            (None, None)
-        } else {
-            (self.base.l_used.clone(), self.base.r_used.clone())
-        };
         let budget = num_to_append(chk);
         let inner_len = inner.len();
         let mut cursor = 0;
@@ -1323,6 +1326,13 @@ impl<C: Columns + Clone> RowJoiner<C> {
             None
         };
         {
+            // Projection vectors are immutable for this join. Match Go's
+            // borrowed slices instead of cloning them for every batch.
+            let (l_used, r_used) = if conditional {
+                (None, None)
+            } else {
+                (self.base.l_used.as_deref(), self.base.r_used.as_deref())
+            };
             let target: &mut Chunk = scratch.as_mut().unwrap_or(chk);
             while cursor < budget {
                 let Some(outer) = outers.current() else { break };
