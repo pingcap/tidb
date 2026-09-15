@@ -161,7 +161,7 @@ func TestAccountJobRU(t *testing.T) {
 		}
 		w := worker{sess: sess.NewSession(sessCtx)}
 
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUV2Consumption(42)
 
 		require.Equal(t, []ddlJobRUReport{{
 			resourceGroupName: resourcegroup.DefaultResourceGroupName,
@@ -181,9 +181,9 @@ func TestAccountJobRU(t *testing.T) {
 		}
 		w := worker{sess: sess.NewSession(sessCtx)}
 
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUV2Consumption(42)
 		sessCtx.dctx = nil
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUV2Consumption(42)
 
 		require.Empty(t, reporter.reports)
 	})
@@ -200,7 +200,7 @@ func TestAccountJobRU(t *testing.T) {
 		w := worker{sess: sess.NewSession(sessCtx)}
 
 		require.Panics(t, func() {
-			w.reportJobRUV3Consumption(42)
+			w.reportJobRUV2Consumption(42)
 		})
 	})
 }

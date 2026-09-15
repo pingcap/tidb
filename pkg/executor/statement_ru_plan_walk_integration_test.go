@@ -828,7 +828,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		})
 		t.Run("injected commit error", func(t *testing.T) {
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942", "return(true)")
-			before := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("update"))
+			before := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("update"))
 			rs, err := tk.Exec("explain analyze update commit_failure set b = b + 1 where a = 1")
 			require.Error(t, err)
 			require.Nil(t, rs)
@@ -838,7 +838,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			require.NotNil(t, observation.owner)
 			require.True(t, observation.owner.ConsumedForTest())
 			require.False(t, observation.owner.RecordedSuccessForTest())
-			require.Equal(t, before, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("update")))
+			require.Equal(t, before, testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("update")))
 			vars := tk.Session().GetSessionVars()
 			require.Nil(t, vars.StmtCtx.CTEStorageMap)
 			require.Nil(t, vars.MemTracker.SearchTrackerWithoutLock(vars.StmtCtx.MemTracker.Label()))
@@ -1981,16 +1981,16 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 				_, _, _, _, _, _, _, _, _, _ float64) {
 				observed.Add(1)
 			})
-			totalBefore := testutil.ToFloat64(metrics.RUV3Total)
-			tidbBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb"))
-			tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tikv"))
+			totalBefore := testutil.ToFloat64(metrics.RUV2Total)
+			tidbBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))
+			tikvBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tikv"))
 			tk.MustQuery("select * from ru_report_modes where id > 0").Check(testkit.Rows("1 2"))
 			tk.MustExec("begin")
 			tk.MustExec("update ru_report_modes set v = v + 1 where id = 1")
 			tk.MustExec("commit")
-			tidbDelta := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb")) - tidbBefore
-			tikvDelta := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tikv")) - tikvBefore
-			totalDelta := testutil.ToFloat64(metrics.RUV3Total) - totalBefore
+			tidbDelta := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb")) - tidbBefore
+			tikvDelta := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tikv")) - tikvBefore
+			totalDelta := testutil.ToFloat64(metrics.RUV2Total) - totalBefore
 			require.Positive(t, tidbDelta)
 			require.Positive(t, tikvDelta)
 			require.InDelta(t, tidbDelta+tikvDelta, totalDelta, 1e-9)
@@ -2004,18 +2004,18 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 				labels := []string{"select", "insert", "replace", "update", "delete", "commit", "analyze", "other"}
 				before := make([]float64, len(labels))
 				for i, label := range labels {
-					before[i] = testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(label))
+					before[i] = testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues(label))
 				}
-				totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+				totalBefore := testutil.ToFloat64(metrics.RUV2Total)
 				if stmtType == "select" {
 					tk.MustQuery(sql)
 				} else {
 					tk.MustExec(sql)
 				}
-				total := testutil.ToFloat64(metrics.RUV3Total) - totalBefore
+				total := testutil.ToFloat64(metrics.RUV2Total) - totalBefore
 				require.Positive(t, total, sql)
 				for i, label := range labels {
-					delta := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(label)) - before[i]
+					delta := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues(label)) - before[i]
 					if label == stmtType {
 						require.InDelta(t, total, delta, 1e-9, sql)
 					} else {
