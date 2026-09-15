@@ -15,7 +15,6 @@
 package testkit
 
 import (
-	"crypto/tls"
 	"maps"
 	"sync"
 
@@ -118,8 +117,9 @@ func (*MockSessionManager) Kill(uint64, bool, bool, bool) {
 func (*MockSessionManager) KillAllConnections() {
 }
 
-// UpdateTLSConfig implements the Manager.UpdateTLSConfig interface.
-func (*MockSessionManager) UpdateTLSConfig(*tls.Config) {
+// ReloadTLS implements the Manager.ReloadTLS interface.
+func (*MockSessionManager) ReloadTLS(bool) error {
+	return nil
 }
 
 // ServerID get server id.
