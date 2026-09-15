@@ -593,7 +593,9 @@ impl BaseJoinProbe {
 
         self.chunk_rows = logical_rows;
         self.matched_rows_headers.resize(logical_rows, 0);
+        self.matched_rows_headers.fill(0);
         self.matched_rows_hash_value.resize(logical_rows, 0);
+        self.matched_rows_hash_value.fill(0);
         for bucket in &mut self.hash_values {
             bucket.clear();
         }
@@ -637,24 +639,7 @@ impl BaseJoinProbe {
         self.current_chunk = Some(chunk);
         self.init_spill_chunks(ctx);
 
-        for logical_row in 0..logical_rows {
-            let physical_row = self.used_rows[logical_row];
-            let filtered_out = self
-                .filter_vector
-                .as_ref()
-                .is_some_and(|vector| !vector[physical_row]);
-            let null_key = self
-                .null_key_vector
-                .as_ref()
-                .is_some_and(|vector| vector[physical_row]);
-            if filtered_out || null_key {
-                // Go explicitly zeroes both, so a stale header from a previous
-                // chunk can never be walked.
-                self.matched_rows_headers[logical_row] = 0;
-                self.matched_rows_hash_value[logical_row] = 0;
-                continue;
-            }
-
+        for &(logical_row, _physical_row) in self.serialized_keys.active_rows() {
             let hash_value = fnv64(&self.serialized_keys[logical_row]);
             self.matched_rows_hash_value[logical_row] = hash_value;
             let part_index =

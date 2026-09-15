@@ -122,6 +122,14 @@ impl SerializedJoinKeys {
     pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
         self.rows.iter().map(|range| &self.bytes[range.clone()])
     }
+    /// Logical/physical rows that survived filtering and NULL-key handling.
+    ///
+    /// The serializer computes this set during its sizing pass. Consumers
+    /// that hash or probe the keys can iterate it directly instead of
+    /// repeating the filter/null checks for every row.
+    pub fn active_rows(&self) -> &[(usize, usize)] {
+        &self.active_rows
+    }
     /// Retained capacity including key descriptors for worker accounting.
     pub fn memory_usage(&self) -> usize {
         self.bytes.capacity()
