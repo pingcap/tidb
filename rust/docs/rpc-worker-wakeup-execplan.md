@@ -41,6 +41,7 @@ Reduce synchronization and fragmented batching on the generic RPC-to-query respo
 - [x] Validate the combined incremental-fetch and condition-filter batch after rebasing onto remote `6b42437d1d`, ready for delivery as one commit to `hparser-integration`.
 - [x] Wire the existing native chunk/List Apply into the physical builder, remove the superseded one-row joiner executor and duplicate scalar filter, and validate child filtering, correlation cache and result continuation together.
 - [x] Borrow raw join-key column storage once per sizing/encoding pass, following Go's column access; validate serialized bytes, NULL discovery, selection and spill restore across owned/shared/frozen backing.
+- [x] Batch contiguous chunk range appends with exact capacity reservation and aligned NULL-bitmap copying; keep alias-overlap and arbitrary bitmap offsets on the source-equivalent safe path.
 
 ## Context and Source Evidence
 
@@ -258,6 +259,8 @@ The wider failures from the setup-cost milestone are resolved by the follow-up a
 
 ## Outcomes & Retrospective
 
+
+Range-copy batching (2026-09-16): the existing `Chunk::append_range_from` path now reserves the exact null-bitmap, fixed/variable payload and offset deltas before copying. Equal source/destination bit alignment copies complete NULL-bitmap bytes in one slice operation; arbitrary alignment updates only the affected bits. Shared but distinct column owners hold one read/write borrow for the whole range, while true owner overlap retains the alias-safe row path. This keeps Go's physical-range and selection-ignoring semantics while removing repeated allocator growth and per-row storage-lock work from response, scan, limit, aggregate and join chunk folding. A fixed/variable, aligned/misaligned and shared-owner regression compares the resulting bitmap, offsets and bytes with cell-by-cell appends. No workload benchmark or 25% gain is claimed.
 
 Column-storage batching (2026-09-16): `JoinKeyColumn::with_raw` supplies one borrow-scoped fixed/variable packed-data view per column pass. The chunk implementation acquires its data backing once; integer/real/string encoding, string sizing and spill-key restore no longer construct per-cell storage guards. Fixed-size sizing dispatch also moves outside the row loop and no longer resolves a string collator for integer columns. Complex-type decoders remain outside the raw guard to avoid nested storage borrowing. `JoinKeyBytes` is a native borrowed layout, not a workload-specific path or dependency addition.
 

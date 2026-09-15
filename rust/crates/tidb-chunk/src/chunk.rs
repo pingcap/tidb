@@ -1833,6 +1833,35 @@ mod tests {
         assert_eq!(source.sel(), Some(&[2, 0, 3, 4][..]));
     }
 
+    /// Shared column owners use the same range batch path as ordinary owned
+    /// columns; only true owner-overlap retains the snapshot-safe row path.
+    #[test]
+    fn append_range_from_keeps_shared_columns_batched() {
+        let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+        let mut source = Chunk::new_with_capacity(&fields, 16);
+        for row in 0..16 {
+            if row % 4 == 0 {
+                source.append_null(0);
+            } else {
+                source.append_int64(0, row);
+            }
+        }
+        let shared = source.prune(&[0]);
+
+        let mut target = Chunk::new_with_capacity(&fields, 16);
+        target.append_range_from(&shared, 1, 15);
+        assert_eq!(target.num_rows(), 14);
+        for (actual, expected) in (1..15).enumerate() {
+            assert_eq!(
+                target.column(0).is_null(actual),
+                source.column(0).is_null(expected)
+            );
+            if !source.column(0).is_null(expected) {
+                assert_eq!(target.get_row(actual).get_int64(0), expected as i64);
+            }
+        }
+    }
+
     #[test]
     fn raw_datum_appends_as_a_variable_cell() {
         let field = FieldType::new(FieldTypeCode::VarString);

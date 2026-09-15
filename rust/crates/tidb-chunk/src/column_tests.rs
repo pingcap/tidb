@@ -175,6 +175,44 @@ fn reconstruct_var_len() {
     }
 }
 
+/// A range append is the hot path used when a response or executor chunk is
+/// folded into its output.  Compare the batched implementation with the
+/// source cell-by-cell path across aligned, partially aligned and unrelated
+/// source/destination bit offsets for both column layouts.
+#[test]
+fn append_range_from_matches_cell_appends_for_all_bitmap_alignments() {
+    for field_type in [
+        FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+    ] {
+        let mut source = Column::new_column(&field_type, 40);
+        for row in 0..32 {
+            if row % 5 == 0 {
+                source.append_null();
+            } else if source.is_fixed() {
+                source.append_int64(row);
+            } else {
+                source.append_string(format!("v{row}"));
+            }
+        }
+
+        let mut actual = Column::new_column(&field_type, 0);
+        let mut expected = Column::new_column(&field_type, 0);
+        // The first range exercises a byte-aligned bulk copy.  The following
+        // ranges cover source/destination offsets that do and do not match.
+        for &(begin, end) in &[(0, 24), (1, 17), (8, 32), (3, 11)] {
+            actual.append_range_from(&source, begin, end);
+            for row in begin..end {
+                expected.append_cell_from(&source, row);
+            }
+            assert_eq!(actual.length, expected.length);
+            assert_eq!(actual.null_bitmap, expected.null_bitmap);
+            assert_eq!(actual.offsets, expected.offsets);
+            assert_eq!(actual.data.snapshot(), expected.data.snapshot());
+        }
+    }
+}
+
 #[test]
 fn fixed_int64_append_get_null() {
     let mut c = Column::new_fixed_len(8, 4);

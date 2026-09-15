@@ -191,9 +191,19 @@ impl ColumnSlot {
                 .append_range_from(&source.column, begin, end);
             return;
         }
-        for row in begin..end {
-            self.append_cell_from(source, row);
+        // Preserve the alias-safe row path when both slots designate one
+        // owner. Distinct shared owners can hold their read/write guards for
+        // the complete range and use the same column-wide batch copy as the
+        // ordinary owned fast path.
+        if self.same_identity(source) {
+            for row in begin..end {
+                self.append_cell_from(source, row);
+            }
+            return;
         }
+        let source = source.read();
+        let mut destination = self.write();
+        destination.append_range_from(&source, begin, end);
     }
 
     pub(crate) fn is_shared(&self) -> bool {

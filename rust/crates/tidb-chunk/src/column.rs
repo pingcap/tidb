@@ -1159,25 +1159,30 @@ impl Column {
             return;
         }
         let destination_start_row = self.length;
-        for (offset, row) in (begin..end).enumerate() {
-            let position = destination_start_row + offset;
-            let bitmap_index = position >> 3;
-            if bitmap_index >= self.null_bitmap.len() {
-                self.null_bitmap.push(0);
-            }
-            if !src.is_null(row) {
-                self.null_bitmap[bitmap_index] |= 1 << (position & 7);
-            }
-        }
+        let destination_end_row = destination_start_row
+            .checked_add(rows)
+            .expect("column row count overflow");
+        let null_bitmap_len = (destination_end_row + 7) >> 3;
+        self.null_bitmap
+            .reserve(null_bitmap_len.saturating_sub(self.null_bitmap.len()));
+        self.null_bitmap.resize(null_bitmap_len, 0);
+        self.append_null_bitmap_range(src, begin, rows, destination_start_row);
         if src.is_fixed() {
             let elem_len = src.elem_buffer_len();
-            let start = begin * elem_len;
-            let finish = end * elem_len;
+            let start = begin
+                .checked_mul(elem_len)
+                .expect("fixed column offset overflow");
+            let finish = end
+                .checked_mul(elem_len)
+                .expect("fixed column offset overflow");
+            self.data.reserve(finish.saturating_sub(start));
             self.data.extend_from_slice(&src.data.read()[start..finish]);
         } else {
             let source_start = src.offsets[begin] as usize;
             let source_end = src.offsets[end] as usize;
             let destination_start = self.data.len();
+            self.data.reserve(source_end.saturating_sub(source_start));
+            self.offsets.reserve(rows);
             self.data
                 .extend_from_slice(&src.data.read()[source_start..source_end]);
             for &offset in &src.offsets[begin + 1..=end] {
@@ -1188,7 +1193,66 @@ impl Column {
                 );
             }
         }
-        self.length += rows;
+        self.length = destination_end_row;
+    }
+
+    /// Appends `rows` source null bits at `begin` to the destination bitmap.
+    ///
+    /// The common case has the same bit alignment in both columns. After the
+    /// short leading fragment, complete bytes can be copied directly instead
+    /// of calling `is_null` once per row. A bit-by-bit fallback keeps arbitrary
+    /// range alignment and the append semantics exact.
+    fn append_null_bitmap_range(
+        &mut self,
+        src: &Column,
+        begin: usize,
+        rows: usize,
+        destination_start: usize,
+    ) {
+        debug_assert!(rows > 0);
+        let source_bit = begin & 7;
+        let destination_bit = destination_start & 7;
+        if source_bit != destination_bit {
+            for offset in 0..rows {
+                self.copy_null_bit(src, begin + offset, destination_start + offset);
+            }
+            return;
+        }
+
+        let mut offset = 0;
+        if destination_bit != 0 {
+            let head = (8 - destination_bit).min(rows);
+            for index in 0..head {
+                self.copy_null_bit(src, begin + index, destination_start + index);
+            }
+            offset = head;
+        }
+
+        let full_bytes = (rows - offset) / 8;
+        if full_bytes > 0 {
+            let source_start = (begin + offset) >> 3;
+            let destination_start = (destination_start + offset) >> 3;
+            self.null_bitmap[destination_start..destination_start + full_bytes]
+                .copy_from_slice(&src.null_bitmap[source_start..source_start + full_bytes]);
+            offset += full_bytes * 8;
+        }
+
+        for index in offset..rows {
+            self.copy_null_bit(src, begin + index, destination_start + index);
+        }
+    }
+
+    #[inline]
+    fn copy_null_bit(&mut self, src: &Column, source_row: usize, destination_row: usize) {
+        let source_mask = 1_u8 << (source_row & 7);
+        let destination_mask = 1_u8 << (destination_row & 7);
+        let source_not_null = src.null_bitmap[source_row >> 3] & source_mask != 0;
+        let destination = &mut self.null_bitmap[destination_row >> 3];
+        if source_not_null {
+            *destination |= destination_mask;
+        } else {
+            *destination &= !destination_mask;
+        }
     }
 
     /// Append one cell after its source owner has been unlocked. This is the
