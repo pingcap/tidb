@@ -291,6 +291,21 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustExec("set foreign_key_checks = 0")
 	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
 	tk.MustGetErrCode("recover table p", errno.ErrUnsupportedDDLOperation)
+
+	// Renaming a self-referencing table during flashback must also rename the
+	// recovered foreign-key endpoint.
+	tk.MustExec("drop database if exists fk_self_flashback")
+	tk.MustExec("create database fk_self_flashback")
+	tk.MustExec("use fk_self_flashback")
+	tk.MustExec("set foreign_key_checks = 1")
+	tk.MustExec("create table tree (id int primary key, parent_id int, foreign key (parent_id) references tree(id) on delete cascade)")
+	tk.MustExec("insert into tree values (1, null), (2, 1)")
+	tk.MustExec("drop table tree")
+	tk.MustExec("flashback table tree to restored_tree")
+	tk.MustQuery("select referenced_table_name from information_schema.key_column_usage where table_schema = 'fk_self_flashback' and table_name = 'restored_tree' and referenced_table_name is not null").Check(testkit.Rows("restored_tree"))
+	tk.MustExec("insert into restored_tree values (3, 1)")
+	tk.MustExec("delete from restored_tree where id = 1")
+	tk.MustQuery("select * from restored_tree").Check(testkit.Rows())
 }
 
 func TestRecoverTempTable(t *testing.T) {
