@@ -587,13 +587,13 @@ func TestPlanReplayerLoadReportsCreateDatabaseError(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// The zip has no variables.toml, so the loading session keeps its own
+	// settings. DDL is rejected under tidb_low_resolution_tso.
+	tk.MustExec("set @@tidb_low_resolution_tso = 1")
 	tk.MustExec("plan replayer load 'bad_db.zip'")
 	loadInfo, ok := tk.Session().Value(executor.PlanReplayerLoadVarKey).(*executor.PlanReplayerLoadInfo)
 	require.True(t, ok)
 	defer tk.Session().ClearValue(executor.PlanReplayerLoadVarKey)
-	// The zip has no variables.toml, so the loading session keeps its own
-	// settings. DDL is rejected under tidb_low_resolution_tso.
-	tk.MustExec("set @@tidb_low_resolution_tso = 1")
 	err = loadInfo.Update(buf.Bytes())
 	require.Error(t, err)
 	// The create-database failure itself is reported, not the follow-on
