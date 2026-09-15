@@ -216,6 +216,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildAdminPlugins(v)
 	case *plannercore.DDL:
 		return b.buildDDL(v)
+	case *plannercore.PurgeMaterializedViewLog:
+		return b.buildPurgeMaterializedViewLog(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
 	case *physicalop.Delete:
@@ -997,6 +999,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.sctx, nil, 0),
 			jobID:        uint64(s.JobID),
 		}
+	case *ast.CancelMaterializedViewJobStmt:
+		return &CancelMaterializedViewJobExec{
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, nil, 0),
+			stmt:         s,
+		}
 	}
 	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
@@ -1019,6 +1026,13 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) exec.Executor {
 		vars:         v.VarAssigns,
 	}
 	return e
+}
+
+func (b *executorBuilder) buildPurgeMaterializedViewLog(v *plannercore.PurgeMaterializedViewLog) exec.Executor {
+	return &PurgeMaterializedViewLogExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+	}
 }
 
 func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) exec.Executor {
