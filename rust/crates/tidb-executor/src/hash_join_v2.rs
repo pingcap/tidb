@@ -44,8 +44,8 @@ use tidb_util::memory::Tracker;
 use tidb_util::sqlkiller::SqlKiller;
 
 use crate::base_join_probe::{
-    common_init_for_scan_row_table, is_key_matched, new_join_probe, BaseJoinProbe, ProbeContext,
-    ProbeError, ProbeFilter,
+    common_init_for_scan_row_table, is_key_matched, is_key_matched_mode, new_join_probe,
+    BaseJoinProbe, ProbeContext, ProbeError, ProbeFilter,
 };
 use crate::hash_table_v2::{
     get_hash_table_length_by_row_table, get_hash_table_memory_usage, HashTableV2, RowIter, SubTable,
@@ -972,10 +972,59 @@ impl ProbeV2 for OuterJoinProbe<'_> {
 
 // Go budgets every lookup/advance on a preserved probe side, but only matches
 // when the preserved side is built. That leaves room for deferred NULL rows.
-// Const-specialize the two Go probe methods and their residual/no-residual
-// callers so those mode checks do not run for every chain candidate.
+// Const-specialize the two Go probe methods, their residual/no-residual
+// callers, and the table's physical key representation so those mode checks do
+// not run for every chain candidate.
 #[inline(always)]
 fn collect_outer_join_candidates<const OUTER_SIDE_BUILD: bool, const RESIDUAL: bool>(
+    base: &mut BaseJoinProbe,
+    ctx: &ProbeContext<'_>,
+    is_not_matched: &mut [bool],
+    output: &mut Chunk,
+    remain_cap: usize,
+    killer: &SqlKiller,
+) -> Result<(), ProbeError> {
+    match ctx.meta.key_mode {
+        crate::join_table_meta::KeyMode::OneInt64 => {
+            collect_outer_join_candidates_mode::<OUTER_SIDE_BUILD, RESIDUAL, true, false>(
+                base,
+                ctx,
+                is_not_matched,
+                output,
+                remain_cap,
+                killer,
+            )
+        }
+        crate::join_table_meta::KeyMode::FixedSerializedKey => {
+            collect_outer_join_candidates_mode::<OUTER_SIDE_BUILD, RESIDUAL, false, false>(
+                base,
+                ctx,
+                is_not_matched,
+                output,
+                remain_cap,
+                killer,
+            )
+        }
+        crate::join_table_meta::KeyMode::VariableSerializedKey => {
+            collect_outer_join_candidates_mode::<OUTER_SIDE_BUILD, RESIDUAL, false, true>(
+                base,
+                ctx,
+                is_not_matched,
+                output,
+                remain_cap,
+                killer,
+            )
+        }
+    }
+}
+
+#[inline(always)]
+fn collect_outer_join_candidates_mode<
+    const OUTER_SIDE_BUILD: bool,
+    const RESIDUAL: bool,
+    const INTEGER_KEY: bool,
+    const VARIABLE_KEY: bool,
+>(
     base: &mut BaseJoinProbe,
     ctx: &ProbeContext<'_>,
     is_not_matched: &mut [bool],
@@ -1005,8 +1054,7 @@ fn collect_outer_join_candidates<const OUTER_SIDE_BUILD: bool, const RESIDUAL: b
                 &ctx.tag_helper,
                 hash,
             );
-            if is_key_matched(
-                ctx.meta.key_mode,
+            if is_key_matched_mode::<INTEGER_KEY, VARIABLE_KEY>(
                 &base.serialized_keys()[probe_row],
                 build_row,
                 ctx.meta,

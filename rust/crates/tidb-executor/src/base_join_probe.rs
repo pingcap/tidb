@@ -906,6 +906,25 @@ impl BaseJoinProbe {
         ctx: &ProbeContext<'_>,
         capacity: usize,
     ) -> usize {
+        match ctx.meta.key_mode {
+            KeyMode::OneInt64 => {
+                self.collect_inner_candidate_batch_mode::<true, false>(ctx, capacity)
+            }
+            KeyMode::FixedSerializedKey => {
+                self.collect_inner_candidate_batch_mode::<false, false>(ctx, capacity)
+            }
+            KeyMode::VariableSerializedKey => {
+                self.collect_inner_candidate_batch_mode::<false, true>(ctx, capacity)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn collect_inner_candidate_batch_mode<const INTEGER_KEY: bool, const VARIABLE_KEY: bool>(
+        &mut self,
+        ctx: &ProbeContext<'_>,
+        capacity: usize,
+    ) -> usize {
         let initial = self.next_cached_build_row_index;
         let end = initial + capacity.min(BATCH_BUILD_ROW_SIZE - initial);
         while self.next_cached_build_row_index < end && self.current_probe_row < self.chunk_rows {
@@ -923,7 +942,7 @@ impl BaseJoinProbe {
                     &ctx.tag_helper,
                     hash,
                 );
-                if is_key_matched(ctx.meta.key_mode, key, row, ctx.meta) {
+                if is_key_matched_mode::<INTEGER_KEY, VARIABLE_KEY>(key, row, ctx.meta) {
                     self.cached_build_rows[self.next_cached_build_row_index] = MatchedRowInfo {
                         probe_row_index: probe_row,
                         build_row_start: address,
@@ -1454,17 +1473,38 @@ pub fn is_key_matched(
         "key mode must agree with the layout"
     );
     match key_mode {
-        KeyMode::OneInt64 => {
-            let start = SIZE_OF_NEXT_PTR + meta.null_map_length;
-            let probe =
-                i64::from_ne_bytes(serialized_key[..8].try_into().expect("integer probe key"));
-            let build =
-                i64::from_ne_bytes(row[start..start + 8].try_into().expect("integer build key"));
-            probe == build
+        KeyMode::OneInt64 => is_key_matched_mode::<true, false>(serialized_key, row, meta),
+        KeyMode::FixedSerializedKey => {
+            is_key_matched_mode::<false, false>(serialized_key, row, meta)
         }
-        KeyMode::FixedSerializedKey | KeyMode::VariableSerializedKey => {
-            serialized_key == meta.get_key_bytes(row)
+        KeyMode::VariableSerializedKey => {
+            is_key_matched_mode::<false, true>(serialized_key, row, meta)
         }
+    }
+}
+
+/// Key comparison with the physical representation selected once by the
+/// caller. Go's `isKeyMatched` switches on `keyMode`; hot probe loops dispatch
+/// once per chunk and use this monomorphized form for every chain candidate.
+#[must_use]
+#[inline(always)]
+pub(crate) fn is_key_matched_mode<const INTEGER_KEY: bool, const VARIABLE_KEY: bool>(
+    serialized_key: &[u8],
+    row: &[u8],
+    meta: &RowLayoutMeta,
+) -> bool {
+    let start = SIZE_OF_NEXT_PTR + meta.null_map_length;
+    if INTEGER_KEY {
+        let probe = i64::from_ne_bytes(serialized_key[..8].try_into().expect("integer probe key"));
+        let build =
+            i64::from_ne_bytes(row[start..start + 8].try_into().expect("integer build key"));
+        probe == build
+    } else if VARIABLE_KEY {
+        let length = meta.get_serialized_key_length(row) as usize;
+        let data = start + SIZE_OF_ELEMENT_SIZE;
+        serialized_key == &row[data..data + length]
+    } else {
+        serialized_key == &row[start..start + meta.join_keys_length]
     }
 }
 
