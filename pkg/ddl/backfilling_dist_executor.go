@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -249,7 +250,7 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
-	if isIndexInfoNotFoundErr(err) {
+	if isIndexInfoNotFoundErr(err) || errdef.ErrEngineNotFound.Equal(errors.Cause(err)) {
 		return false
 	}
 	return common.IsRetryableError(err) || isRetryableError(err, true)
