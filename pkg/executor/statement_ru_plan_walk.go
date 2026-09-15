@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -190,9 +191,10 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 			}
 			return
 		}
-		// a.Plan remains the statement eligibility guard even though the flat-plan
-		// view below comes from StatementContext.
-		if a.Ctx == nil || a.Plan == nil {
+		// Match the executed target, including EXPLAIN ANALYZE, against the
+		// flat-plan view borrowed from StatementContext.
+		planInfo := classifyStatementRUPlan(a.Plan)
+		if a.Ctx == nil || planInfo.plan == nil {
 			finalized.failure = statementRUInvalid
 			return
 		}
@@ -206,7 +208,7 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 			finalized.failure = statementRUIneligible
 			return
 		}
-		if statementRUIsCommitPlan(a.Plan) {
+		if planInfo.kind == statementRUPlanCommit {
 			if !owner.rootEOF.Load() {
 				return
 			}
@@ -221,19 +223,9 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 			return
 		}
 
-		switch plan := a.Plan.(type) {
-		case *physicalop.PointGetPlan:
+		if planInfo.kind == statementRUPlanPointLookup {
 			finalized, publishFinalized = calculateStatementRUPointLookup(
-				plan.ID(),
-				sessVars.StmtCtx.RuntimeStatsColl,
-				sessVars.RUV2Metrics,
-				calculationSetup,
-				owner.rootEOF.Load(),
-			)
-			return
-		case *physicalop.BatchPointGetPlan:
-			finalized, publishFinalized = calculateStatementRUPointLookup(
-				plan.ID(),
+				planInfo.plan.ID(),
 				sessVars.StmtCtx.RuntimeStatsColl,
 				sessVars.RUV2Metrics,
 				calculationSetup,
@@ -247,9 +239,9 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 			return
 		}
 
-		// The fresh-session slice must use a flat plan rooted at this ExecStmt.
+		// The flat plan must be rooted at this statement's executed target.
 		// General flat-plan generation identity is not statement-RU evidence.
-		if len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin != a.Plan {
+		if len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin != planInfo.plan {
 			finalized.failure = statementRUInvalid
 			return
 		}
@@ -360,7 +352,8 @@ func calculateStatementRUInternal(
 	if !ok {
 		return statementRUTerminalFailure(rootEOF), false
 	}
-	if statementRUIsWritePlan(flat.Main[0].Origin) || statementRUIsCommitPlan(flat.Main[0].Origin) {
+	planInfo := classifyStatementRUPlan(flat.Main[0].Origin)
+	if planInfo.kind == statementRUPlanWrite || planInfo.kind == statementRUPlanCommit {
 		calculator.units.WriteKeys = float64(writes.keys)
 		calculator.units.WriteBytes = float64(writes.bytes)
 	}
@@ -370,7 +363,7 @@ func calculateStatementRUInternal(
 	// are not all available yet, so the finalized calibration
 	// remains Incomplete and the result is neither exact nor a mathematical upper
 	// or lower bound. Invalid values and malformed tree structure still fail closed.
-	if statementRUIsWritePlan(flat.Main[0].Origin) {
+	if planInfo.kind == statementRUPlanWrite {
 		calculator.units.WriteStatement = 1
 	}
 	mainRootUnits := calculator.units
@@ -416,7 +409,7 @@ func calculateStatementRUInternal(
 	}
 	finalized, ok := calculator.finalize()
 	if ok {
-		finalized.sqlType = statementRUSQLTypeForPlan(flat.Main[0].Origin)
+		finalized.sqlType = planInfo.sqlType
 	}
 	return finalized, ok
 }
@@ -622,7 +615,8 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
 	case *plannercore.Simple:
-		if !operator.IsRoot || len(children) != 0 || !statementRUIsCommitPlan(origin) {
+		_, isCommit := origin.Statement.(*ast.CommitStmt)
+		if !operator.IsRoot || len(children) != 0 || !isCommit {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
 	case *plannercore.Analyze:
