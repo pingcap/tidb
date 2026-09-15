@@ -15,10 +15,82 @@
 package ddl
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBackfillWorkerSendsInFlightResultAfterClose(t *testing.T) {
+	t.Run("worker downscale preserves result", func(t *testing.T) {
+		worker := newBackfillWorker(context.Background(), context.Background(), nil)
+		worker.resultCh = make(chan *backfillResult)
+		worker.Close()
+
+		want := &backfillResult{taskID: 1}
+		go worker.sendResult(want)
+
+		select {
+		case got := <-worker.resultCh:
+			require.Same(t, want, got)
+		case <-time.After(time.Second):
+			t.Fatal("in-flight backfill result was dropped after worker close")
+		}
+	})
+
+	t.Run("executor shutdown can discard result", func(t *testing.T) {
+		resultCtx, cancelResult := context.WithCancel(context.Background())
+		worker := newBackfillWorker(context.Background(), resultCtx, nil)
+		worker.resultCh = make(chan *backfillResult)
+		cancelResult()
+
+		done := make(chan struct{})
+		go func() {
+			worker.sendResult(&backfillResult{taskID: 1})
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("backfill worker blocked while discarding a result during executor shutdown")
+		}
+	})
+}
+
+func TestTxnBackfillExecutorDownscalePreservesInFlightError(t *testing.T) {
+	resultCtx, cancelResult := context.WithCancel(context.Background())
+	t.Cleanup(cancelResult)
+	resultCh := make(chan *backfillResult)
+	workers := []*backfillWorker{
+		newBackfillWorker(context.Background(), resultCtx, nil),
+		newBackfillWorker(context.Background(), resultCtx, nil),
+	}
+	for _, worker := range workers {
+		worker.resultCh = resultCh
+	}
+
+	exec := &txnBackfillExecutor{
+		reorgInfo: &reorgInfo{Job: &model.Job{ReorgMeta: &model.DDLReorgMeta{}}},
+		workers:   workers,
+		resultCtx: resultCtx,
+	}
+	exec.reorgInfo.ReorgMeta.SetConcurrency(1)
+	require.NoError(t, exec.adjustWorkerSize())
+	require.Len(t, exec.workers, 1)
+
+	want := errors.New("duplicate key found during backfill")
+	go workers[1].sendResult(&backfillResult{taskID: 1, err: want})
+	select {
+	case result := <-resultCh:
+		require.ErrorIs(t, result.err, want)
+	case <-time.After(time.Second):
+		t.Fatal("in-flight backfill error was dropped after executor downscale")
+	}
+}
 
 func TestExpectedIngestWorkerCnt(t *testing.T) {
 	tests := []struct {
