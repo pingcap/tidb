@@ -183,6 +183,23 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	return nil
 }
 
+func checkRecoverTableForeignKeys(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
+	// A standalone recovery cannot prove that an external FK endpoint still
+	// identifies the same table or that rows on both sides still match.
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version >= model.FKVersion1 &&
+			(fk.RefSchema.L != schema || fk.RefTable.L != tbInfo.Name.L) {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"recover/flashback table with foreign keys")
+		}
+	}
+	if len(is.GetTableReferredForeignKeys(schema, tbInfo.Name.L)) > 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"recover/flashback table referenced by foreign keys")
+	}
+	return nil
+}
+
 func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	var referTblInfo *model.TableInfo
 	if fk.RefSchema.L == schema && fk.RefTable.L == tbInfo.Name.L {
