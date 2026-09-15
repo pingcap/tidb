@@ -102,7 +102,9 @@ INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40);
 SQL
 
 echo "building the Rust session-driver smoke"
-cargo build --manifest-path "${RUST_ROOT}/Cargo.toml" -p tidb-server --bin cluster-session-smoke
+# Build from the workspace root so rustup honors rust/rust-toolchain.toml;
+# with --manifest-path alone the caller's CWD picks the toolchain instead.
+(cd "${RUST_ROOT}" && cargo build -p tidb-server --bin cluster-session-smoke)
 
 OUTPUT="${WORK_DIR}/smoke.out"
 "${RUST_ROOT}/target/debug/cluster-session-smoke" \

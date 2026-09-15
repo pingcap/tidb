@@ -111,6 +111,26 @@ if [[ -z "${TIDB_SERVER}" ]] || [[ ! -x "${TIDB_SERVER}" ]]; then
   echo "LOCK_RECOVERY_TIDB_SERVER must name an executable failpoint-enabled tidb-server" >&2
   exit 1
 fi
+# The proof depends on Go failpoints being ACTIVE in this binary, so the runner
+# validates the binary BEFORE starting the cluster: it must be built from this
+# tree's exact commit, and it must actually carry the instrumented failpoint
+# names -- a plain `make server` binary would silently ignore GO_FAILPOINTS and
+# falsify the unfinished-secondary fixture.
+EXPECTED_COMMIT=$(git -C "${RUST_ROOT}/.." rev-parse HEAD 2>/dev/null || true)
+TIDB_SERVER_BANNER=$("${TIDB_SERVER}" -V 2>&1) || {
+  echo "LOCK_RECOVERY_TIDB_SERVER -V failed; it is not a runnable tidb-server" >&2
+  exit 1
+}
+echo "${TIDB_SERVER_BANNER}"
+if [[ -z "${EXPECTED_COMMIT}" ]]; then
+  echo "cannot resolve this tree's HEAD; refusing a binary of unknown provenance" >&2
+  exit 1
+fi
+if ! grep -q "Git Commit Hash: ${EXPECTED_COMMIT}" <<<"${TIDB_SERVER_BANNER}"; then
+  echo "LOCK_RECOVERY_TIDB_SERVER was not built from this tree's commit ${EXPECTED_COMMIT}" >&2
+  echo "${TIDB_SERVER_BANNER}" >&2
+  exit 1
+fi
 # The Go server creates the unfinished-secondary fixture; the Rust test below
 # is the system under test. Do not pass Rust-only auth/read-table arguments.
 if ! command -v "${MYSQL_CLIENT}" >/dev/null 2>&1; then
@@ -151,6 +171,16 @@ done
 if [[ "${ready}" != true ]]; then
   echo "TiDB/PD/TiKV did not become ready" >&2
   tail -120 "${PLAYGROUND_LOG}" >&2
+  exit 1
+fi
+# Failpoint capability, proved at runtime: the /fail control route is only
+# registered when the enableTestAPI failpoint FIRES, which a plain `make
+# server` binary can never do even with GO_FAILPOINTS set (its
+# failpoint.Inject call sites are inert). A plain binary must fail here,
+# before the fixture is written, not 20s later as a stale fixture log.
+if ! curl -sf --max-time 3 "http://127.0.0.1:$((10080 + PORT_OFFSET))/fail/" \
+  >/dev/null 2>&1; then
+  echo "${TIDB_SERVER} exposes no /fail API with GO_FAILPOINTS set; it is not failpoint-enabled (build with 'make server_failpoint')" >&2
   exit 1
 fi
 if [[ -z "$(tag_owned_pids)" ]]; then

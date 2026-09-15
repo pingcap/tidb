@@ -174,7 +174,7 @@ check() {
 }
 
 echo "starting playground (tag ${TAG})"
-CLUSTER_VERSION=${ACCESS_PATH_CLUSTER_VERSION:-v8.5.6}
+CLUSTER_VERSION=${ACCESS_PATH_CLUSTER_VERSION:-nightly}
 echo "TiUP cluster version: ${CLUSTER_VERSION}"
 GO_BINARY_ARGS=()
 if [[ -n "${ACCESS_PATH_TIDB_SERVER:-}" ]]; then
@@ -183,7 +183,20 @@ if [[ -n "${ACCESS_PATH_TIDB_SERVER:-}" ]]; then
   "${ACCESS_PATH_TIDB_SERVER}" -V
   GO_BINARY_ARGS=(--db.binpath "${ACCESS_PATH_TIDB_SERVER}")
 else
-  echo "Go baseline: TiUP ${CLUSTER_VERSION} (set ACCESS_PATH_TIDB_SERVER to compare with Go master)"
+  # The Go oracle must be the SAME COMMIT as the tree under test: a TiUP
+  # release download (e.g. v8.5.6) is an older planner whose estimator/path
+  # differences and older PD (no QueryRegion RPC) mislabel current-tree
+  # behavior as failures. Build the exact-current binary and run it on a
+  # protocol-compatible nightly PD/TiKV cluster.
+  REPO_ROOT=$(cd "${RUST_ROOT}/.." && pwd)
+  ACCESS_PATH_TIDB_SERVER="${REPO_ROOT}/bin/tidb-server"
+  make -C "${REPO_ROOT}" server 1>&2 \
+    || { echo "the same-commit Go baseline did not build" >&2; exit 1; }
+  [[ -x "${ACCESS_PATH_TIDB_SERVER}" ]] \
+    || { echo "the same-commit Go baseline ${ACCESS_PATH_TIDB_SERVER} is missing" >&2; exit 1; }
+  echo "Go baseline: same-commit binary ${ACCESS_PATH_TIDB_SERVER}"
+  "${ACCESS_PATH_TIDB_SERVER}" -V 1>&2
+  GO_BINARY_ARGS=(--db.binpath "${ACCESS_PATH_TIDB_SERVER}")
 fi
 tiup playground "${CLUSTER_VERSION}" --without-monitor --tag "${TAG}" \
   "${GO_BINARY_ARGS[@]}" \
@@ -335,7 +348,9 @@ for fixture in t u risky; do
 done
 
 echo "building the Rust node"
-cargo build --manifest-path "${RUST_ROOT}/Cargo.toml" -p tidb-server --bin tidb-server
+# Build from the workspace root so rustup honors rust/rust-toolchain.toml;
+# with --manifest-path alone the caller's CWD picks the toolchain instead.
+(cd "${RUST_ROOT}" && cargo build -p tidb-server --bin tidb-server)
 
 echo "starting the Rust node in cluster-session mode"
 "${RUST_ROOT}/target/debug/tidb-server" \

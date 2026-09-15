@@ -113,7 +113,7 @@ rust_root_sql() {
 }
 
 echo "starting playground (tag ${TAG})"
-CLUSTER_VERSION=${CONVERGENCE_CLUSTER_VERSION:-v8.5.6}
+CLUSTER_VERSION=${CONVERGENCE_CLUSTER_VERSION:-nightly}
 echo "TiUP cluster version: ${CLUSTER_VERSION}"
 GO_BINARY_ARGS=()
 if [[ -n "${CONVERGENCE_TIDB_SERVER:-}" ]]; then
@@ -122,7 +122,21 @@ if [[ -n "${CONVERGENCE_TIDB_SERVER:-}" ]]; then
   "${CONVERGENCE_TIDB_SERVER}" -V
   GO_BINARY_ARGS=(--db.binpath "${CONVERGENCE_TIDB_SERVER}")
 else
-  echo "Go baseline: TiUP ${CLUSTER_VERSION} (set CONVERGENCE_TIDB_SERVER for Go master)"
+  # The Go oracle must be the SAME COMMIT as the tree under test: a TiUP
+  # release download (e.g. v8.5.6) bootstraps the OLD system tables (no
+  # mysql.user.operate_view_priv) that this tree's privilege surface requires,
+  # and its PD rejects the current Go's QueryRegion RPC. Build the
+  # exact-current binary and run it on a protocol-compatible nightly
+  # PD/TiKV cluster.
+  REPO_ROOT=$(cd "${RUST_ROOT}/.." && pwd)
+  CONVERGENCE_TIDB_SERVER="${REPO_ROOT}/bin/tidb-server"
+  make -C "${REPO_ROOT}" server 1>&2 \
+    || { echo "the same-commit Go baseline did not build" >&2; exit 1; }
+  [[ -x "${CONVERGENCE_TIDB_SERVER}" ]] \
+    || { echo "the same-commit Go baseline ${CONVERGENCE_TIDB_SERVER} is missing" >&2; exit 1; }
+  echo "Go baseline: same-commit binary ${CONVERGENCE_TIDB_SERVER}"
+  "${CONVERGENCE_TIDB_SERVER}" -V 1>&2
+  GO_BINARY_ARGS=(--db.binpath "${CONVERGENCE_TIDB_SERVER}")
 fi
 tiup playground "${CLUSTER_VERSION}" --without-monitor --tag "${TAG}" \
   "${GO_BINARY_ARGS[@]}" \
@@ -148,7 +162,10 @@ FLUSH PRIVILEGES;
 SQL
 
 echo "building the Rust node"
-cargo build --manifest-path "${RUST_ROOT}/Cargo.toml" -p tidb-server --bin tidb-server
+# Build from the workspace root so rustup honors rust/rust-toolchain.toml;
+# with --manifest-path alone the caller's CWD picks the toolchain instead.
+(cd "${RUST_ROOT}" && cargo build -p tidb-server --bin tidb-server) \
+  || { echo "the Rust node did not build" >&2; exit 1; }
 
 echo "starting the Rust node in cluster-session mode"
 "${RUST_ROOT}/target/debug/tidb-server" \

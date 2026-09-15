@@ -132,7 +132,9 @@ FLUSH PRIVILEGES;
 SQL
 
 echo "building the Rust node"
-cargo build --manifest-path "${RUST_ROOT}/Cargo.toml" -p tidb-server --bin tidb-server
+# Build from the workspace root so rustup honors rust/rust-toolchain.toml;
+# with --manifest-path alone the caller's CWD picks the toolchain instead.
+(cd "${RUST_ROOT}" && cargo build -p tidb-server --bin tidb-server)
 
 echo "starting the Rust node in cluster-session mode"
 "${RUST_ROOT}/target/debug/tidb-server" \
