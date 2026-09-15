@@ -170,7 +170,12 @@ impl<'a> BaseSemiJoin<'a> {
                 && self.base.matched_rows_for_current_probe_row() < MAX_MATCHED_ROW_NUM
             {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let build_row = self.ctx.hash_table.row_bytes_in_sub_table(table, address);
+                let (build_row, next) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                    table,
+                    address,
+                    &self.ctx.tag_helper,
+                    hash,
+                );
                 if !self.left_build
                     || !self
                         .ctx
@@ -198,7 +203,7 @@ impl<'a> BaseSemiJoin<'a> {
                         self.base.record_probe_collision();
                     }
                 }
-                header = BaseJoinProbe::next_matched_row(build_row, &self.ctx.tag_helper, hash);
+                header = next;
             }
             self.base.set_matched_rows_header(row, header);
             self.base.finish_lookup_current_probe_row();
@@ -251,7 +256,12 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let build_row = self.ctx.hash_table.row_bytes_in_sub_table(table, address);
+                let (build_row, next) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                    table,
+                    address,
+                    &self.ctx.tag_helper,
+                    hash,
+                );
                 if !self
                     .ctx
                     .hash_table
@@ -270,7 +280,7 @@ impl<'a> BaseSemiJoin<'a> {
                         self.base.record_probe_collision();
                     }
                 }
-                header = BaseJoinProbe::next_matched_row(build_row, &self.ctx.tag_helper, hash);
+                header = next;
                 loop_count += 1;
                 if loop_count % 2000 == 0 {
                     check_probe_killed(killer)?;
@@ -305,7 +315,12 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let build_row = self.ctx.hash_table.row_bytes_in_sub_table(table, address);
+                let (build_row, next) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                    table,
+                    address,
+                    &self.ctx.tag_helper,
+                    hash,
+                );
                 if is_key_matched(
                     self.ctx.meta.key_mode,
                     &self.base.serialized_keys()[row],
@@ -316,7 +331,7 @@ impl<'a> BaseSemiJoin<'a> {
                     break;
                 }
                 self.base.record_probe_collision();
-                header = BaseJoinProbe::next_matched_row(build_row, &self.ctx.tag_helper, hash);
+                header = next;
             }
             self.base.set_matched_rows_header(row, 0);
             if !self.base.is_spilled(row) && (self.outer_semi || self.matched[row] != self.anti) {

@@ -71,7 +71,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::join_row_table::{RowTable, RowTableSegment};
+use crate::join_row_table::{next_row_address, RowTable, RowTableSegment, SIZE_OF_NEXT_PTR};
 use crate::tagged_ptr::TagPtrHelper;
 
 /// Smallest hash table the source ever allocates, `minimalHashTableLen`.
@@ -118,11 +118,13 @@ pub const fn get_hash_table_memory_usage(hash_table_length: u64) -> i64 {
 
 /// Strips the tag from a bucket word, the source's `toUnsafePointer`.
 ///
-/// Buckets are stored as raw `usize` words so they can be atomic, so the
-/// helper's `TaggedPtr` is reconstructed here before the mask is cleared.
+/// Buckets are stored as raw `usize` words so they can be atomic. Clear the
+/// configured high bits directly, avoiding a temporary wrapper on every
+/// probe candidate.
 #[must_use]
+#[inline(always)]
 pub fn row_address_of(tag_helper: &TagPtrHelper, tagged: usize) -> usize {
-    tag_helper.to_raw_pointer(tag_helper.to_tagged_ptr(0, tagged))
+    tagged & !(tag_helper.tagged_mask() as usize)
 }
 
 /// The bucket array of one [`SubTable`], shareable across build threads.
@@ -506,7 +508,7 @@ impl HashTableV2 {
     }
 
     /// Resolve a nonzero, untagged row handle with no search or allocation.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn row_location(&self, address: usize) -> (&RowTableSegment, usize) {
         let slot = (address >> self.row_offset_bits) - 1;
         let partition = slot >> self.segment_bits;
@@ -517,23 +519,33 @@ impl HashTableV2 {
         )
     }
 
-    /// Resolves a row handle against an already-selected partition table.
-    ///
-    /// Go's probe chain walks keep the partition-local table pointer and
-    /// dereference build rows directly. Keep that borrow for the whole chain
-    /// so each candidate only decodes its segment and row offset.
-    #[inline]
-    pub(crate) fn row_bytes_in_sub_table<'a>(
+    /// Resolves a row and follows its chain link while the partition-local
+    /// segment is already hot. Go reads both values from one unsafe row
+    /// pointer; returning them together avoids a second helper boundary in
+    /// every candidate walk.
+    #[inline(always)]
+    pub(crate) fn row_bytes_and_next_in_sub_table<'a>(
         &self,
         table: &'a SubTable,
         address: usize,
-    ) -> &'a [u8] {
+        tag_helper: &TagPtrHelper,
+        hash_value: u64,
+    ) -> (&'a [u8], usize) {
         let slot = (address >> self.row_offset_bits) - 1;
-        let segment = slot & self.segment_mask;
+        let segment_index = slot & self.segment_mask;
         let row = (address & self.row_offset_mask) / 8;
-        let segment = &table.row_data.segments[segment];
+        let segment = &table.row_data.segments[segment_index];
         let offset = segment.row_start_offset[row] as usize;
-        &segment.raw_data[offset..]
+        let row_bytes = &segment.raw_data[offset..];
+        let raw_next = u64::from_le_bytes(
+            row_bytes[..SIZE_OF_NEXT_PTR]
+                .try_into()
+                .expect("build row next pointer"),
+        ) as usize;
+        (
+            row_bytes,
+            next_row_address(raw_next, tag_helper, hash_value),
+        )
     }
 
     /// Marks a row using an already-selected partition table.

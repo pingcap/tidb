@@ -932,7 +932,12 @@ impl BaseJoinProbe {
             let table = ctx.hash_table.sub_table(partition);
             while header != 0 && self.next_cached_build_row_index < end {
                 let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-                let row = ctx.hash_table.row_bytes_in_sub_table(table, address);
+                let (row, next) = ctx.hash_table.row_bytes_and_next_in_sub_table(
+                    table,
+                    address,
+                    &ctx.tag_helper,
+                    hash,
+                );
                 if is_key_matched(ctx.meta.key_mode, key, row, ctx.meta) {
                     self.cached_build_rows[self.next_cached_build_row_index] = MatchedRowInfo {
                         probe_row_index: probe_row,
@@ -944,7 +949,7 @@ impl BaseJoinProbe {
                 } else {
                     self.probe_collision += 1;
                 }
-                header = Self::next_matched_row(row, &ctx.tag_helper, hash);
+                header = next;
             }
             self.matched_rows_headers[probe_row] = header;
             if header == 0 {
@@ -1436,6 +1441,7 @@ impl BaseJoinProbe {
     /// Go `getNextRowAddress` as reached from the probe: follow one link of
     /// the current probe row's chain, honoring the tag short-circuit.
     #[must_use]
+    #[inline(always)]
     pub fn next_matched_row(row: &[u8], tag_helper: &TagPtrHelper, hash_value: u64) -> usize {
         let raw = usize::from_le_bytes(
             row[..SIZE_OF_NEXT_PTR]

@@ -312,10 +312,13 @@ impl RowTableSegment {
 
     /// Reads the raw tagged address stored in this row's `next_row_ptr`.
     #[must_use]
+    #[inline(always)]
     pub fn raw_next_row_address(&self, row_offset: usize) -> usize {
-        let mut bytes = [0_u8; SIZE_OF_NEXT_PTR];
-        bytes.copy_from_slice(&self.raw_data[row_offset..row_offset + SIZE_OF_NEXT_PTR]);
-        u64::from_le_bytes(bytes) as usize
+        u64::from_le_bytes(
+            self.raw_data[row_offset..row_offset + SIZE_OF_NEXT_PTR]
+                .try_into()
+                .expect("build row next pointer"),
+        ) as usize
     }
 }
 
@@ -324,6 +327,7 @@ impl RowTableSegment {
 /// Returns `0` when the stored tag cannot match `hash_value`, exactly as the
 /// source's `getNextRowAddress` does.
 #[must_use]
+#[inline(always)]
 pub fn next_row_address(raw: usize, tag_helper: &TagPtrHelper, hash_value: u64) -> usize {
     let hash_tag_value = tag_helper.get_tagged_value(hash_value);
     if (raw as u64) & hash_tag_value != hash_tag_value {

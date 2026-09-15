@@ -44,8 +44,8 @@ use tidb_util::memory::Tracker;
 use tidb_util::sqlkiller::SqlKiller;
 
 use crate::base_join_probe::{
-    common_init_for_scan_row_table, is_key_matched, new_join_probe, BaseJoinProbe, BuildRowSource,
-    ProbeContext, ProbeError, ProbeFilter,
+    common_init_for_scan_row_table, is_key_matched, new_join_probe, BaseJoinProbe, ProbeContext,
+    ProbeError, ProbeFilter,
 };
 use crate::hash_table_v2::{
     get_hash_table_length_by_row_table, get_hash_table_memory_usage, HashTableV2, RowIter, SubTable,
@@ -981,7 +981,12 @@ fn collect_outer_join_candidates(
                     as usize;
             let table = ctx.hash_table.sub_table(partition);
             let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-            let build_row = ctx.hash_table.row_bytes_in_sub_table(table, address);
+            let (build_row, next) = ctx.hash_table.row_bytes_and_next_in_sub_table(
+                table,
+                address,
+                &ctx.tag_helper,
+                hash,
+            );
             if is_key_matched(
                 ctx.meta.key_mode,
                 &base.serialized_keys()[probe_row],
@@ -1011,7 +1016,6 @@ fn collect_outer_join_candidates(
             } else {
                 base.record_probe_collision();
             }
-            let next = BaseJoinProbe::next_matched_row(build_row, &ctx.tag_helper, hash);
             base.set_matched_rows_header(probe_row, next);
         }
         if !outer_side_build {

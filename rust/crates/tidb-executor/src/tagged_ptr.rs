@@ -31,6 +31,7 @@ pub struct TaggedPtr(usize);
 impl TaggedPtr {
     /// Returns the encoded raw address.
     #[must_use]
+    #[inline(always)]
     pub const fn raw(self) -> usize {
         self.0
     }
@@ -56,24 +57,28 @@ impl TagPtrHelper {
 
     /// Returns the configured high-bit tag portion of a raw value.
     #[must_use]
+    #[inline(always)]
     pub fn get_tagged_value(&self, hash_value: u64) -> u64 {
         hash_value & self.tagged_mask
     }
 
     /// Returns the configured mask, useful for source-contract inspection.
     #[must_use]
+    #[inline(always)]
     pub const fn tagged_mask(&self) -> u64 {
         self.tagged_mask
     }
 
     /// Encodes a tag into the high bits of a raw address.
     #[must_use]
+    #[inline(always)]
     pub fn to_tagged_ptr(&self, tagged_value: u64, pointer: usize) -> TaggedPtr {
         TaggedPtr(pointer | tagged_value as usize)
     }
 
     /// Clears the tag bits and returns the original raw address.
     #[must_use]
+    #[inline(always)]
     pub fn to_raw_pointer(&self, tagged_ptr: TaggedPtr) -> usize {
         TaggedPtr(tagged_ptr.0 & !(self.tagged_mask as usize)).raw()
     }
