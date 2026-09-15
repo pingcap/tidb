@@ -38,7 +38,10 @@ fn virtual_column_groups_and_dedups() {
         "Int(0)|Int(2);Int(1)|Int(3)"
     );
     assert_eq!(
-        rows(&mut session, "select distinct parity from t"),
-        "Int(1);Int(0)"
+        rows(
+            &mut session,
+            "select distinct parity from t order by parity"
+        ),
+        "Int(0);Int(1)"
     );
 }

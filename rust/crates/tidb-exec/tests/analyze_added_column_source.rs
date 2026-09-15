@@ -164,7 +164,9 @@ fn a_column_added_after_the_rows_analyzes_as_its_origin_default() {
         &mut store,
         &table,
         &AnalyzeOptions::default(),
-        None,
+        // Go getAdjustedSampleRate scans all rows for this known small table;
+        // an unknown row count instead selects the 0.001 fallback rate.
+        Some(100),
         440_000_000_000_000_000,
         None,
     )

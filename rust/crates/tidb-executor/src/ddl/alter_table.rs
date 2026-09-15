@@ -3582,6 +3582,44 @@ fn modify_column_action(
         field_type.add_flags(AUTO_INCREMENT_FLAG | NOT_NULL_FLAG);
     }
     let drop_auto_increment = was_auto_increment && !wants_auto_increment;
+    // Go GetModifiableColumnJob/checkForNullValue: reject existing NULLs
+    // before index validation or metadata changes. Only non-TIMESTAMP to
+    // TIMESTAMP skips this check (the rewrite substitutes the statement time).
+    if old_flags & NOT_NULL_FLAG == 0
+        && field_type.flags() & NOT_NULL_FLAG != 0
+        && !(original_type.code() != FieldTypeCode::Timestamp
+            && field_type.code() == FieldTypeCode::Timestamp)
+    {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+            unreachable!("the table was found above");
+        };
+        let scan_error = |error| DriverError::DdlCoded {
+            errno: 1105,
+            message: format!("column NULL precheck failed: {error:?}"),
+        };
+        let mut cursor = table
+            .row_cursor_projected_with_context(
+                Some(&[offset]),
+                None,
+                &crate::RowDecodeContext::for_query(ctx),
+            )
+            .map_err(scan_error)?;
+        let memory = ctx.statement_memory();
+        while let Some((_, row)) = cursor.next_row().map_err(scan_error)? {
+            memory.check()?;
+            if row[0].is_null() {
+                // Go's SELECT ... LIMIT 1 reports one matching row, not the
+                // NULL's physical position in the table.
+                return Err(DriverError::DataTruncatedAtRow {
+                    column: def.name.go_to_lower(),
+                    row: 1,
+                });
+            }
+        }
+    }
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+        unreachable!("the table was found above");
+    };
     let integer_type = |code| {
         matches!(
             code,

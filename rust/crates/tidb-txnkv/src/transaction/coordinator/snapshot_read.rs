@@ -19,6 +19,7 @@
 //! whose lock-retry budget and post-read `CheckVisibility` placement this
 //! mirrors exactly.
 
+use std::collections::HashMap;
 use tidb_proto::{
     KvrpcBatchGetRequest, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcScanRequest,
     KvrpcScanResponse,
@@ -35,7 +36,7 @@ use crate::SharedReadRuntime;
 use super::super::command_client::{
     PublishedCommand, TransactionBatchGetRequest, TransactionCommandClient,
 };
-use super::super::region_batches::{group_keys, point_route, RegionKeyBatch};
+use super::super::region_batches::{group_snapshot_keys, point_route, RegionKeyBatch};
 use super::super::state::CoordinatorState;
 use super::{
     alive_retry_delay, recover_region_error_with, wait_with_call, OptimisticCoordinatorError,
@@ -50,18 +51,91 @@ const SCAN_PAGE_LIMIT: u32 = 256;
 pub struct SnapshotGetResult {
     /// Real PD snapshot timestamp shared with later Prewrite.
     pub start_ts: u64,
-    /// `None` means TiKV returned `not_found` at exactly `start_ts`.
+    /// `None` means missing at the requested read timestamp, from TiKV or
+    /// its previously validated snapshot-cache entry.
     pub value: Option<Vec<u8>>,
-    /// Exact region epoch that served the successful Get.
-    pub region: crate::region::RegionVerId,
-    /// Physical BatchCommands publication that produced the value.
-    pub publication: TransactionBatchPublication,
+    /// Serving region for an RPC result; absent on a snapshot-cache hit.
+    pub region: Option<crate::region::RegionVerId>,
+    /// Physical publication for this call; absent on a snapshot-cache hit.
+    pub publication: Option<TransactionBatchPublication>,
     /// Number of physical Get RPCs, including region/lock retries.
     pub rpc_count: u64,
 }
 
 /// Key/value pairs one snapshot scan returned, in key order.
 pub type SnapshotScanPairs = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// Go KVSnapshot's read cache, owned by the transaction rather than a table
+/// or statement. The caller already has exclusive snapshot access.
+#[derive(Default)]
+pub(super) struct SnapshotCache {
+    read_ts: u64,
+    values: HashMap<Vec<u8>, Option<Vec<u8>>>,
+    bytes: u64,
+}
+
+impl SnapshotCache {
+    fn rescope(&mut self, read_ts: u64) {
+        if self.read_ts != read_ts {
+            *self = Self {
+                read_ts,
+                ..Self::default()
+            };
+        }
+    }
+
+    fn get(&self, key: &[u8]) -> Option<&Option<Vec<u8>>> {
+        self.values.get(key)
+    }
+
+    fn insert(&mut self, key: &[u8], value: Option<&[u8]>) {
+        let value = value.filter(|value| !value.is_empty()).map(<[u8]>::to_vec);
+        self.bytes += key.len() as u64 + Self::value_size(&value);
+        if let Some(old) = self.values.insert(key.to_vec(), value) {
+            self.bytes -= key.len() as u64 + Self::value_size(&old);
+        }
+    }
+
+    fn value_size(value: &Option<Vec<u8>>) -> u64 {
+        std::mem::size_of::<crate::ValueEntry>() as u64
+            + value.as_ref().map_or(0, |value| value.len() as u64)
+    }
+
+    fn evict(&mut self, keep: impl Fn(&[u8]) -> bool, limit: u64) {
+        // Go's 10 GiB soft limit retains values returned by the current
+        // operation even if that operation alone exceeds the limit.
+        if self.bytes < limit {
+            return;
+        }
+        let bytes = &mut self.bytes;
+        self.values.retain(|key, value| {
+            if *bytes < limit || keep(key) {
+                true
+            } else {
+                *bytes -= key.len() as u64 + Self::value_size(value);
+                false
+            }
+        });
+    }
+
+    fn update_point(&mut self, key: &[u8], value: Option<&[u8]>) {
+        if self.read_ts == u64::MAX {
+            return;
+        }
+        self.insert(key, value);
+        self.evict(|cached| cached == key, 10 << 30);
+    }
+
+    fn update_batch(&mut self, keys: &[Vec<u8>], values: &HashMap<Vec<u8>, Vec<u8>>) {
+        if self.read_ts == u64::MAX {
+            return;
+        }
+        for key in keys {
+            self.insert(key, values.get(key).map(Vec::as_slice));
+        }
+        self.evict(|key| values.contains_key(key), 10 << 30);
+    }
+}
 
 /// One serving region's complete contribution to a snapshot range scan.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -247,8 +321,8 @@ where
             } else {
                 Some(response.response.value)
             },
-            region: route.region(),
-            publication: response.publication,
+            region: Some(route.region()),
+            publication: Some(response.publication),
             rpc_count,
         });
     }
@@ -587,6 +661,18 @@ where
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
         self.resolved_locks.rescope(read_ts);
+        self.snapshot_cache.rescope(read_ts);
+        if let Some(value) = self.snapshot_cache.get(key) {
+            // Like Go, a hit has no new RPC or post-response visibility
+            // check: only successfully checked responses enter this cache.
+            return Ok(SnapshotGetResult {
+                start_ts: self.start_ts,
+                value: value.clone(),
+                region: None,
+                publication: None,
+                rpc_count: 0,
+            });
+        }
         // Go gives each `KVSnapshot.get` ONE backoffer (`getMaxBackoff`,
         // 20s) shared by its region errors and lock waits. Region recovery
         // here draws on `self`'s own budget seam, so the lock half carries
@@ -672,6 +758,7 @@ where
             } else {
                 Some(response.response.value)
             };
+            self.snapshot_cache.update_point(key, value.as_deref());
             return Ok(SnapshotGetResult {
                 // This receipt identifies the transaction which owns the
                 // coordinator, not the point-read version. A pessimistic
@@ -679,8 +766,8 @@ where
                 // Prewrite still belongs to this original transaction.
                 start_ts: self.start_ts,
                 value,
-                region: route.region(),
-                publication: response.publication,
+                region: Some(route.region()),
+                publication: Some(response.publication),
                 rpc_count,
             });
         }
@@ -707,6 +794,7 @@ where
         read_ts: u64,
         call: &UnaryCallContext,
     ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        self.snapshot_cache.rescope(read_ts);
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -719,22 +807,43 @@ where
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
         self.resolved_locks.rescope(read_ts);
+        let mut cached = HashMap::new();
+        let missing = (!self.snapshot_cache.values.is_empty()).then(|| {
+            keys.iter()
+                .filter_map(|key| match self.snapshot_cache.get(key) {
+                    Some(Some(value)) => {
+                        cached.insert(key.clone(), value.clone());
+                        None
+                    }
+                    Some(None) => None,
+                    None => Some(key.clone()),
+                })
+                .collect::<Vec<_>>()
+        });
+        let keys = missing.as_deref().unwrap_or(keys);
+        if keys.is_empty() {
+            return Ok(cached.into_iter().collect());
+        }
         // Go `KVSnapshot.BatchGet` (`batchGetMaxBackoff`, 20s): the same
         // time-budgeted `BoTxnLockFast` wait as `snapshot_get`'s lock arm.
         let mut lock_backoff = RegionBackoffBudget::campaign_default();
+        let mut pending = std::borrow::Cow::Borrowed(keys);
+        let mut values = HashMap::new();
         loop {
-            let groups = group_keys(&self.runtime, keys)
+            let mut groups = group_snapshot_keys(&self.runtime, &pending)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-            let mut values = Vec::new();
             let mut locked = Vec::new();
             let mut lock_context = None;
-            let mut retry_region = false;
+            let mut retry_keys = Vec::new();
+            // Move routed keys into the wire requests; the route/attempt
+            // metadata stays available for each response's own recovery.
+            let request_keys: Vec<_> = groups.iter_mut().map(RegionKeyBatch::take_keys).collect();
             let mut requests = Vec::with_capacity(groups.len());
-            for batch in &groups {
+            for (batch, keys) in groups.iter().zip(request_keys) {
                 let mut context = self.write_context(batch.context());
                 self.resolved_locks.stamp(&mut context);
                 let request = KvrpcBatchGetRequest {
-                    keys: batch.keys().to_vec(),
+                    keys,
                     version: read_ts,
                     need_commit_ts: true,
                     ..KvrpcBatchGetRequest::default()
@@ -758,7 +867,7 @@ where
             self.snapshot_batch_get_rpc_count = self
                 .snapshot_batch_get_rpc_count
                 .wrapping_add(requests.len() as u64);
-            for ((batch, request), published) in groups.iter().zip(&requests).zip(published) {
+            for ((batch, request), published) in groups.iter().zip(requests).zip(published) {
                 let response = match published {
                     PublishedCommand::Response(response) => response,
                     PublishedCommand::BeforePublication(error)
@@ -774,8 +883,8 @@ where
                         call,
                     )
                     .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-                    retry_region = true;
-                    break;
+                    retry_keys.extend(request.request.keys);
+                    continue;
                 }
                 if let Some(key_error) = response.response.error.as_ref() {
                     if let Some(lock_info) = key_error.locked.as_ref() {
@@ -783,6 +892,9 @@ where
                             |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
                         )?);
                         lock_context = Some(request.context.clone());
+                        // Go cannot trust any pairs when the response itself
+                        // reports an error: retry this entire physical batch.
+                        retry_keys.extend(request.request.keys);
                         continue;
                     }
                     return Err(OptimisticCoordinatorError::SnapshotGet(format!(
@@ -792,9 +904,14 @@ where
                 for pair in response.response.pairs {
                     if let Some(key_error) = pair.error.as_ref() {
                         if let Some(lock_info) = key_error.locked.as_ref() {
-                            locked.extend(decode_blocking_lock_observation(lock_info).map_err(
-                                |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
-                            )?);
+                            let observations = decode_blocking_lock_observation(lock_info)
+                                .map_err(|error| {
+                                    OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                                })?;
+                            // The lock owns the key; a pair's outer key may
+                            // be empty. Keep clean values and absent keys done.
+                            retry_keys.extend(observations.iter().map(|lock| lock.key().to_vec()));
+                            locked.extend(observations);
                             lock_context = Some(request.context.clone());
                             continue;
                         }
@@ -802,11 +919,10 @@ where
                             "TiKV key error: {key_error:?}"
                         )));
                     }
-                    values.push((pair.key, pair.value));
+                    if !pair.value.is_empty() {
+                        values.insert(pair.key, pair.value);
+                    }
                 }
-            }
-            if retry_region {
-                continue;
             }
             if !locked.is_empty() {
                 let context = lock_context.unwrap_or_default();
@@ -843,10 +959,15 @@ where
                         OptimisticCoordinatorError::SnapshotGet(error.to_string())
                     })?;
                 }
+            }
+            if !retry_keys.is_empty() {
+                pending = std::borrow::Cow::Owned(retry_keys);
                 continue;
             }
             self.check_visibility_at(read_ts)?;
-            return Ok(values);
+            self.snapshot_cache.update_batch(keys, &values);
+            cached.extend(values);
+            return Ok(cached.into_iter().collect());
         }
     }
 
@@ -887,6 +1008,7 @@ where
         read_ts: u64,
         call: &UnaryCallContext,
     ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        self.snapshot_cache.rescope(read_ts);
         self.state
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -916,6 +1038,7 @@ where
         end_key: &[u8],
         call: &UnaryCallContext,
     ) -> Result<Vec<SnapshotScanRegion>, OptimisticCoordinatorError> {
+        self.snapshot_cache.rescope(self.start_ts);
         self.state
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -954,4 +1077,49 @@ fn collect_scan_lock(
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?,
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SnapshotCache;
+    use std::collections::HashMap;
+
+    #[test]
+    fn snapshot_cache_update_and_timestamp_reset() {
+        // Go UpdateSnapshotCache protects this operation's returned values
+        // while evicting older entries at its soft limit. Use a small limit
+        // at the same private eviction boundary instead of allocating GiBs.
+        let mut cache = SnapshotCache::default();
+        cache.rescope(100);
+        cache.update_point(b"keep", Some(b"value"));
+        let retained = cache.bytes;
+        cache.update_point(b"keep", Some(b"value"));
+        assert_eq!(cache.bytes, retained);
+        cache.insert(b"old", None);
+        cache.evict(|key| key == b"keep", retained + 1);
+        assert!(cache.get(b"old").is_none());
+        assert_eq!(cache.bytes, retained);
+        cache.evict(|key| key == b"keep", 1);
+        assert!(cache.get(b"keep").is_some());
+
+        cache.rescope(101);
+        assert!(cache.values.is_empty());
+        assert_eq!(cache.bytes, 0);
+        let keys = vec![b"value".to_vec(), b"missing".to_vec(), b"value".to_vec()];
+        let values = HashMap::from([(b"value".to_vec(), b"bytes".to_vec())]);
+        cache.update_batch(&keys, &values);
+        assert_eq!(cache.values.len(), 2);
+        assert_eq!(cache.get(b"missing"), Some(&None));
+        let accounted: u64 = cache
+            .values
+            .iter()
+            .map(|(key, value)| key.len() as u64 + SnapshotCache::value_size(value))
+            .sum();
+        assert_eq!(cache.bytes, accounted);
+        cache.rescope(u64::MAX);
+        cache.update_point(b"keep", Some(b"latest"));
+        cache.update_batch(&keys, &values);
+        assert!(cache.values.is_empty());
+        assert_eq!(cache.bytes, 0);
+    }
 }

@@ -117,7 +117,10 @@ impl RegionRecoveryLoader for OneRegion {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
-        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        _resolved_stores: &mut std::collections::BTreeMap<
+            u64,
+            Option<tidb_txnkv::region::StoreMetadata>,
+        >,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",
@@ -194,7 +197,8 @@ impl ScriptedTikv {
                         value,
                         ..KvrpcGetResponse::default()
                     }
-                    .encode_to_vec().into(),
+                    .encode_to_vec()
+                    .into(),
                 ))
             }
             RequestCmd::Prewrite(body) => {
@@ -207,7 +211,8 @@ impl ScriptedTikv {
                         errors,
                         ..KvrpcPrewriteResponse::default()
                     }
-                    .encode_to_vec().into(),
+                    .encode_to_vec()
+                    .into(),
                 ))
             }
             RequestCmd::Commit(body) => {
@@ -407,11 +412,16 @@ fn every_read_and_the_prewrite_carry_the_transactions_one_start_ts() {
     assert_eq!(outcome.receipt().start_ts, START_TS);
 
     let recorded = recorded.lock().unwrap();
-    assert_eq!(recorded.gets.len(), 3);
+    // Go KVSnapshot reuses the first visible value at this timestamp.
+    assert_eq!(recorded.gets.len(), 1);
     assert!(
         recorded.gets.iter().all(|get| get.version == START_TS),
         "every statement of one transaction reads at its start timestamp: {:?}",
-        recorded.gets.iter().map(|get| get.version).collect::<Vec<_>>()
+        recorded
+            .gets
+            .iter()
+            .map(|get| get.version)
+            .collect::<Vec<_>>()
     );
     assert_eq!(recorded.prewrites.len(), 1);
     assert_eq!(

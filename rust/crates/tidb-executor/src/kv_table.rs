@@ -663,6 +663,135 @@ pub(crate) struct PointRead<'a> {
     store: Box<dyn TableStorage>,
 }
 
+/// Go point readers retain encoded values until Next decodes them. The batch
+/// owns the storage result once; duplicate handles borrow the same bytes.
+pub(crate) enum PointReadValues {
+    Single(Option<Vec<u8>>),
+    Batch {
+        keys: Vec<Option<Key>>,
+        values: std::collections::HashMap<Key, Vec<u8>>,
+    },
+}
+
+/// Decoder metadata belongs to one reader's immutable table/statement image,
+/// like Go NewRowDecoder. Mixed old/new rows initialize each path at most once.
+pub(crate) struct PointRowDecoder {
+    ordinary_columns: bool,
+    v2: Option<(Vec<tidb_codec::ColumnInfo>, Vec<i64>)>,
+    general: Option<RowDecoder>,
+}
+
+impl PointRowDecoder {
+    pub(crate) fn new(table: &KvTable) -> Self {
+        Self {
+            ordinary_columns: !table
+                .columns
+                .iter()
+                .any(|column| column.generated.is_some()),
+            v2: None,
+            general: None,
+        }
+    }
+
+    pub(crate) fn decode(
+        &mut self,
+        table: &KvTable,
+        handle: &TableHandle,
+        entry: &[u8],
+        context: &RowDecodeContext,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        if tidb_codec::is_new_format(entry) && self.ordinary_columns {
+            let (columns, handle_column_ids) = self.v2.get_or_insert_with(|| {
+                let columns = table
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, column)| tidb_codec::ColumnInfo {
+                        id: column.id,
+                        is_pk_handle: table.pk_handle_offset == Some(offset),
+                        virtual_generated: false,
+                        field_type: column.field_type.clone(),
+                    })
+                    .collect();
+                let ids = table
+                    .pk_handle_offset
+                    .into_iter()
+                    .chain(table.common_handle_offsets.iter().copied())
+                    .filter_map(|offset| table.columns.get(offset).map(|column| column.id))
+                    .collect();
+                (columns, ids)
+            });
+            let codec_handle = match handle {
+                TableHandle::Int(value) => tidb_codec::Handle::Int(*value),
+                TableHandle::Common(encoded) => {
+                    let common = CommonHandle::new(encoded.clone())
+                        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                    let parts = (0..table.common_handle_offsets.len())
+                        .filter_map(|index| common.encoded_column(index).map(<[u8]>::to_vec))
+                        .collect();
+                    tidb_codec::Handle::Common(parts)
+                }
+            };
+            let default_datum = |index: usize| {
+                table.columns[index]
+                    .origin_default_value(context.origin_default_flags(), context.zone())
+                    .map_err(|error| error.to_string())
+            };
+            return tidb_codec::decode_row_to_datums(
+                entry,
+                columns,
+                &tidb_codec::DecodeRowOptions {
+                    handle_column_ids,
+                    handle: Some(&codec_handle),
+                    default_datum: Some(&default_datum),
+                    timezone: Some(context.zone()),
+                    ..tidb_codec::DecodeRowOptions::default()
+                },
+            )
+            .map(|row| row.values)
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")));
+        }
+        if self.general.is_none() {
+            self.general = Some(RowDecoder::for_table_read(
+                table.columns.clone(),
+                table.pk_handle_offset,
+                table.common_handle_offsets.clone(),
+                None,
+                table.use_new_collation,
+                context.clone(),
+            )?);
+        }
+        Ok(self
+            .general
+            .as_ref()
+            .expect("initialized decoder")
+            .decode_and_eval(handle, entry)?
+            .into_parts()
+            .0)
+    }
+}
+
+impl PointReadValues {
+    pub(crate) fn get(&self, index: usize) -> Option<&[u8]> {
+        match self {
+            Self::Single(value) => (index == 0).then_some(value.as_deref()).flatten(),
+            Self::Batch { keys, values } => keys
+                .get(index)?
+                .as_ref()
+                .and_then(|key| values.get(key))
+                .map(Vec::as_slice),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            Self::Single(value) => value.is_none(),
+            Self::Batch { keys, .. } => keys.is_empty(),
+        }
+    }
+}
+
 impl PointRead<'_> {
     pub(crate) fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.store.point_rpc_counts()
@@ -1559,7 +1688,7 @@ impl KvTable {
     /// key wants either the row or nothing, and fetching them separately
     /// would double the round trips a point read costs -- which the access-
     /// path tests count.
-    fn stored_record(
+    pub(crate) fn stored_record(
         &mut self,
         handle: &TableHandle,
     ) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
@@ -1583,9 +1712,8 @@ impl KvTable {
         &mut self,
         handles: &[TableHandle],
         physical_ids: Option<&[i64]>,
-        context: &RowDecodeContext,
-    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
-        let mut rows: Vec<Option<Vec<Datum>>> = vec![None; handles.len()];
+    ) -> Result<PointReadValues, KvTableError> {
+        let mut rows = vec![None; handles.len()];
         // The storage layer groups keys by region and schedules those reads
         // together. Splitting here by physical table would serialize otherwise
         // independent partitions. Keep the output position beside each key.
@@ -1616,7 +1744,10 @@ impl KvTable {
             }
         }
         if keys.is_empty() {
-            return Ok(rows);
+            return Ok(PointReadValues::Batch {
+                keys: rows,
+                values: Default::default(),
+            });
         }
         let found = self
             .store
@@ -1625,12 +1756,15 @@ impl KvTable {
         for (index, key) in positions.into_iter().zip(keys) {
             // The first matching candidate answers an unrouted handle.
             if rows[index].is_none() {
-                if let Some(entry) = found.get(&key) {
-                    rows[index] = Some(self.decode_row_entry(&handles[index], entry, context)?);
+                if found.contains_key(&key) {
+                    rows[index] = Some(key);
                 }
             }
         }
-        Ok(rows)
+        Ok(PointReadValues::Batch {
+            keys: rows,
+            values: found,
+        })
     }
 
     /// Records a foreign key this table declares.
@@ -3408,76 +3542,13 @@ impl KvTable {
         Ok(Some(self.decode_row_entry(handle, &entry, context)?))
     }
 
-    fn decode_row_entry(
+    pub(crate) fn decode_row_entry(
         &self,
         handle: &TableHandle,
         entry: &[u8],
         context: &RowDecodeContext,
     ) -> Result<Vec<Datum>, KvTableError> {
-        // Row V2 already carries a positional column directory. For ordinary
-        // stored columns, decode it directly instead of allocating the legacy
-        // column-id map and rebuilding a full RowDecoder for every point read.
-        // Generated columns still use RowDecoder so their expressions retain
-        // the statement context and evaluation order.
-        if tidb_codec::is_new_format(entry)
-            && !self.columns.iter().any(|column| column.generated.is_some())
-        {
-            let columns = self
-                .columns
-                .iter()
-                .enumerate()
-                .map(|(offset, column)| tidb_codec::ColumnInfo {
-                    id: column.id,
-                    is_pk_handle: self.pk_handle_offset == Some(offset),
-                    virtual_generated: false,
-                    field_type: column.field_type.clone(),
-                })
-                .collect::<Vec<_>>();
-            let handle_column_ids = self
-                .pk_handle_offset
-                .into_iter()
-                .chain(self.common_handle_offsets.iter().copied())
-                .filter_map(|offset| self.columns.get(offset).map(|column| column.id))
-                .collect::<Vec<_>>();
-            let codec_handle = match handle {
-                TableHandle::Int(value) => tidb_codec::Handle::Int(*value),
-                TableHandle::Common(encoded) => {
-                    let common = CommonHandle::new(encoded.clone())
-                        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-                    let parts = (0..self.common_handle_offsets.len())
-                        .filter_map(|index| common.encoded_column(index).map(<[u8]>::to_vec))
-                        .collect();
-                    tidb_codec::Handle::Common(parts)
-                }
-            };
-            let default_datum = |index: usize| {
-                self.columns[index]
-                    .origin_default_value(context.origin_default_flags(), context.zone())
-                    .map_err(|error| error.to_string())
-            };
-            return tidb_codec::decode_row_to_datums(
-                entry,
-                &columns,
-                &tidb_codec::DecodeRowOptions {
-                    handle_column_ids: &handle_column_ids,
-                    handle: Some(&codec_handle),
-                    default_datum: Some(&default_datum),
-                    timezone: Some(context.zone()),
-                    ..tidb_codec::DecodeRowOptions::default()
-                },
-            )
-            .map(|row| row.values)
-            .map_err(|error| KvTableError::Decode(format!("{error:?}")));
-        }
-        let decoder = RowDecoder::for_table_read(
-            self.columns.clone(),
-            self.pk_handle_offset,
-            self.common_handle_offsets.clone(),
-            None,
-            self.use_new_collation,
-            context.clone(),
-        )?;
-        Ok(decoder.decode_and_eval(handle, entry)?.into_parts().0)
+        PointRowDecoder::new(self).decode(self, handle, entry, context)
     }
 
     /// Whether a row is already stored under `handle`, in ANY partition.

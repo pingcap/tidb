@@ -77,7 +77,7 @@ fn a_pruned_scan_decodes_exactly_the_columns_the_statement_names() {
     // GROUP BY / HAVING are collected like any other clause.
     let (rows, decoded) = rows_and_decoded(
         &mut session,
-        "SELECT b, SUM(c) FROM t GROUP BY b HAVING b > 10",
+        "SELECT b, SUM(c) FROM t GROUP BY b HAVING b > 10 ORDER BY b",
     );
     assert_eq!(rows, vec![vec!["20", "200"], vec!["30", "300"]]);
     assert_eq!(decoded, BTreeSet::from([B, C]));

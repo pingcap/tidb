@@ -24,6 +24,8 @@ use crate::SharedReadRuntime;
 use super::mutation::OptimisticMutation;
 
 const TXN_COMMIT_BATCH_BYTES: usize = 16 * 1024;
+/// client-go snapshot.go `batchGetSize`, independent of commit byte sizing.
+const SNAPSHOT_BATCH_GET_KEYS: usize = 5120;
 
 /// One deterministically ordered batch routed to one exact region epoch.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -109,6 +111,10 @@ impl RegionKeyBatch {
         &self.keys
     }
 
+    pub(super) fn take_keys(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.keys)
+    }
+
     #[must_use]
     pub(super) fn region_end_key(&self) -> &[u8] {
         &self.region_end_key
@@ -188,6 +194,29 @@ pub(super) fn group_keys<C, L>(
 where
     L: RegionLoader,
 {
+    group_keys_by_size(runtime, keys, |key| key.len(), TXN_COMMIT_BATCH_BYTES)
+}
+
+/// Snapshot BatchGet counts keys; it must not inherit Commit's byte limit.
+pub(super) fn group_snapshot_keys<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    keys: &[Vec<u8>],
+) -> Result<Vec<RegionKeyBatch>, RegionBatchError>
+where
+    L: RegionLoader,
+{
+    group_keys_by_size(runtime, keys, |_| 1, SNAPSHOT_BATCH_GET_KEYS)
+}
+
+fn group_keys_by_size<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    keys: &[Vec<u8>],
+    measure: impl Fn(&[u8]) -> usize + Copy,
+    limit: usize,
+) -> Result<Vec<RegionKeyBatch>, RegionBatchError>
+where
+    L: RegionLoader,
+{
     let mut sorted = keys.to_vec();
     sorted.sort();
     sorted.dedup();
@@ -218,7 +247,7 @@ where
     }
     let mut batches = Vec::new();
     for (region, (route, keys)) in grouped {
-        for keys in split_keys(keys) {
+        for keys in split_keys(keys, measure, limit) {
             batches.push(RegionKeyBatch {
                 region,
                 address: route.address.clone(),
@@ -253,16 +282,21 @@ fn split_mutations(mutations: Vec<OptimisticMutation>) -> Vec<Vec<OptimisticMuta
     batches
 }
 
-fn split_keys(keys: Vec<Vec<u8>>) -> Vec<Vec<Vec<u8>>> {
+fn split_keys(
+    keys: Vec<Vec<u8>>,
+    measure: impl Fn(&[u8]) -> usize,
+    limit: usize,
+) -> Vec<Vec<Vec<u8>>> {
     let mut batches = Vec::new();
     let mut current = Vec::new();
-    let mut current_bytes = 0usize;
+    let mut current_size = 0usize;
     for key in keys {
-        if !current.is_empty() && current_bytes.saturating_add(key.len()) > TXN_COMMIT_BATCH_BYTES {
+        let key_size = measure(&key);
+        if !current.is_empty() && current_size.saturating_add(key_size) > limit {
             batches.push(std::mem::take(&mut current));
-            current_bytes = 0;
+            current_size = 0;
         }
-        current_bytes = current_bytes.saturating_add(key.len());
+        current_size = current_size.saturating_add(key_size);
         current.push(key);
     }
     if !current.is_empty() {

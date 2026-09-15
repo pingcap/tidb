@@ -481,9 +481,9 @@ fn a_limit_over_a_fully_lowered_builtin_predicate_travels_with_it() {
 /// and its Limit must remain at root as well.
 #[test]
 fn a_root_only_predicate_is_not_swallowed_by_the_access_receipt() {
-    // The arithmetic and NOT cases also have no remote descriptor. A
-    // receipt for the empty subset must not bypass their Selection, project
-    // away its inputs, or count raw rows against a pushed TopN/Limit.
+    // Go permits arithmetic and NOT in TiKV, but TAN is unsupported even
+    // beneath NOT. An empty receipt must not bypass these root predicates,
+    // project away their inputs, or count raw rows against a pushed TopN/Limit.
     let ints = |values: &[i64]| values.iter().copied().map(Datum::Int).collect::<Vec<_>>();
     for (sql, expected) in [
         (
@@ -491,11 +491,11 @@ fn a_root_only_predicate_is_not_swallowed_by_the_access_receipt() {
             ints(&[1, 4, 7, 10, 13]),
         ),
         (
-            "SELECT id FROM t WHERE NOT mod(id, 4) LIMIT 5",
-            ints(&[4, 8, 12, 16, 20]),
+            "SELECT id FROM t WHERE NOT (tan(id) > 0) LIMIT 5",
+            ints(&[2, 3, 5, 6, 8]),
         ),
         (
-            "SELECT tag FROM t WHERE id + 1 > 15 LIMIT 5",
+            "SELECT tag FROM t WHERE tan(id) > 0 LIMIT 5",
             vec![
                 Datum::UInt(0),
                 Datum::UInt(7),
@@ -505,8 +505,8 @@ fn a_root_only_predicate_is_not_swallowed_by_the_access_receipt() {
             ],
         ),
         (
-            "SELECT id FROM t WHERE id + 1 > 15 ORDER BY id DESC LIMIT 3",
-            ints(&[20, 19, 18]),
+            "SELECT id FROM t WHERE tan(id) > 0 ORDER BY id DESC LIMIT 3",
+            ints(&[20, 19, 17]),
         ),
     ] {
         let (catalog, region) = fixture();

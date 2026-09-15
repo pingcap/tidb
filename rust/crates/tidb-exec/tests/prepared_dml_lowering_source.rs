@@ -2001,8 +2001,10 @@ fn insert_one_in_zone(
 
 fn decode_one(table: &ConfiguredTable, value_bytes: &[u8]) -> Datum {
     let column = &table.columns()[1];
-    let field_types = std::collections::BTreeMap::from([(column.id(), column.scalar_type().chunk_field_type())]);
-    tidb_tablecodec::decode_table_row_to_map(value_bytes, &field_types, None)
+    let field_types =
+        std::collections::BTreeMap::from([(column.id(), column.scalar_type().chunk_field_type())]);
+    // Go Unflatten converts stored UTC timestamps into the reader's zone.
+    tidb_tablecodec::decode_table_row_to_map(value_bytes, &field_types, Some(&fixed_zone(0)))
         .expect("row must decode")
         .remove(&column.id())
         .expect("column must be present")

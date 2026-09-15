@@ -188,8 +188,8 @@ fn print_publication(
 #[test]
 #[ignore = "requires run-realtikv-optimistic-2pc.sh"]
 fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
-    let pd_address =
-        std::env::var("OPTIMISTIC_2PC_PD_ADDR").expect("runner must provide OPTIMISTIC_2PC_PD_ADDR");
+    let pd_address = std::env::var("OPTIMISTIC_2PC_PD_ADDR")
+        .expect("runner must provide OPTIMISTIC_2PC_PD_ADDR");
     let phase_dir = phase_dir();
     let pd_owner = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
         .expect("start sole real PD authority");
@@ -238,8 +238,12 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         "split-source",
         &format!(
             "region_id={}\nsplit_key_hex={split_hex}\nstale_address={}\n",
-            before_split.region.id,
-            before_split.publication.physical_address(),
+            before_split.region.unwrap().id,
+            before_split
+                .publication
+                .as_ref()
+                .unwrap()
+                .physical_address(),
         ),
     );
     wait_for_phase(&phase_dir, "split-complete");
@@ -293,7 +297,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         .iter()
         .copied()
         .find(|attempt| {
-            attempt.region == before_split.region
+            Some(attempt.region) == before_split.region
                 && matches!(attempt.result, TransactionAttemptResult::Retry(_))
         })
         .expect("typed receipt must retain the stale source-region publication");
@@ -301,7 +305,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         .iter()
         .copied()
         .find(|attempt| {
-            attempt.region.id == before_split.region.id
+            attempt.region.id == before_split.region.unwrap().id
                 && matches!(attempt.result, TransactionAttemptResult::Confirmed)
         })
         .expect("typed receipt must retain the confirmed source-region retry");
@@ -398,8 +402,8 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         low_sibling.value.as_deref(),
         Some(b"low-sibling-v1".as_slice())
     );
-    assert_eq!(low.region.id, low_sibling.region.id);
-    assert_ne!(low.region.id, high.region.id);
+    assert_eq!(low.region.unwrap().id, low_sibling.region.unwrap().id);
+    assert_ne!(low.region.unwrap().id, high.region.unwrap().id);
     let read_only = readback
         .finish_without_writes()
         .expect("finish readback without publishing writes");
@@ -408,7 +412,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
 
     // The low-region Insert prewrites first; the high-region existing Insert
     // fails. The coordinator must synchronously rollback every published batch.
-    let (rollback_key, duplicate_key) = if low.region.id < high.region.id {
+    let (rollback_key, duplicate_key) = if low.region.unwrap().id < high.region.unwrap().id {
         (ROLLBACK_KEY, HIGH_KEY)
     } else {
         (HIGH_ROLLBACK_KEY, LOW_KEY)
@@ -637,8 +641,8 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         "campaign28_optimistic_2pc status=passed cluster_id={cluster_id} start_ts={} commit_ts={} primary_region={} secondary_region={} rollback_start_ts={} older_lock_start_ts={} newer_lock_start_ts={} newer_lock_commit_ts={}",
         committed.receipt.start_ts,
         committed.receipt.commit_ts,
-        low.region.id,
-        high.region.id,
+        low.region.unwrap().id,
+        high.region.unwrap().id,
         rolled_back.receipt.start_ts,
         older_lock_start_ts,
         newer_lock_start_ts,

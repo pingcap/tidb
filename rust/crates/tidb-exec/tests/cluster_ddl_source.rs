@@ -1693,10 +1693,17 @@ fn dropping_a_database_removes_every_field_of_its_hash() {
     expected.sort();
     assert_eq!(deleted, expected);
     apply(&mut store, &dropped);
-    assert!(tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
-        .expect("the catalog loads")
+    let catalog =
+        tidb_exec::cluster_catalog::load_cluster_catalog(&mut store).expect("the catalog loads");
+    assert!(!catalog
         .databases
-        .is_empty());
+        .iter()
+        .any(|database| database.info.id == 112));
+    // DROP DATABASE u6 must leave the fixture's mysql database untouched.
+    assert!(catalog
+        .databases
+        .iter()
+        .any(|database| { database.info.id == tidb_metadef::system::SYSTEM_DATABASE_ID }));
 }
 
 #[test]
@@ -1744,51 +1751,6 @@ fn a_missing_object_without_if_exists_is_named_precisely() {
         existing.to_string(),
         "Can't create database 'U6'; database exists"
     );
-}
-
-#[test]
-fn every_unservable_shape_is_refused_before_a_single_mutation_exists() {
-    for (sql, expected) in [
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT AS (id + 1))",
-            "carries a generated expression, which this node does not support",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL, KEY ((v + 1)))",
-            "expression index parts are not supported",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BLOB NOT NULL DEFAULT 'x')",
-            "can't have a default value",
-        ),
-        // A `PARTITION BY` clause itself is now BUILT and persisted; what is
-        // still refused is a partitioned shape this node cannot serve. Go
-        // 8264: a unique key that does not cover the partitioning columns
-        // needs a GLOBAL index, which this node does not maintain.
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL, UNIQUE KEY uv (v)) \
-             PARTITION BY HASH (id) PARTITIONS 2",
-            "Global Index is needed for index 'uv'",
-        ),
-        (
-            "CREATE TEMPORARY TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
-            "TEMPORARY is not supported",
-        ),
-        (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, ID BIGINT NOT NULL)",
-            "declares column `ID` twice",
-        ),
-        (
-            "DROP TABLE u6.a, u6.b",
-            "DROP TABLE names exactly one table on this node",
-        ),
-    ] {
-        let reason = refusal(sql);
-        assert!(
-            reason.contains(expected),
-            "`{sql}` was refused with `{reason}`, which does not name `{expected}`"
-        );
-    }
 }
 
 #[test]

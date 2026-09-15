@@ -824,10 +824,11 @@ pub struct HandleSourceExec {
     /// Source-row offsets this complete point plan emits, in result order.
     /// `None` keeps the ordinary visible-row schema for residual root work.
     output_columns: Option<Vec<HandleOutputColumn>>,
-    /// Rows prefetched at `open` through ONE batched read, in handle order;
-    /// `None` until then. Go's `BatchPointGetExec.values` -- fetched once,
-    /// served per `Next`.
-    preloaded: Option<Vec<Option<Vec<Datum>>>>,
+    /// Encoded values fetched once by the first Next, then decoded only to
+    /// fill the requested chunk, like Go's BatchPointGetExec.values.
+    preloaded: Option<crate::kv_table::PointReadValues>,
+    decoder: Option<crate::kv_table::PointRowDecoder>,
+    initialized: bool,
     /// Go's `PointGetExecutor` performs one direct record-key `Get`; the
     /// batch executor uses `BatchGet` even when its retained list happens to
     /// contain one handle.
@@ -857,6 +858,8 @@ impl HandleSourceExec {
             handles,
             cursor: 0,
             preloaded: None,
+            decoder: None,
+            initialized: false,
             produced: crate::executor::RowCount::default(),
             decode_context,
             output_columns: None,
@@ -908,6 +911,8 @@ impl HandleSourceExec {
             ),
             extra_handle_slot: None,
             preloaded: None,
+            decoder: None,
+            initialized: false,
             single_point_get: false,
             partition_ids: None,
         }
@@ -933,6 +938,8 @@ impl HandleSourceExec {
             output_columns: Some(output_columns),
             extra_handle_slot: None,
             preloaded: None,
+            decoder: None,
+            initialized: false,
             single_point_get: false,
             partition_ids: None,
         }
@@ -958,6 +965,8 @@ impl HandleSourceExec {
             output_columns: Some(output_columns),
             extra_handle_slot: None,
             preloaded: None,
+            decoder: None,
+            initialized: false,
             single_point_get: true,
             partition_ids: None,
         }
@@ -973,35 +982,22 @@ impl HandleSourceExec {
     pub fn produced_rows(&self) -> crate::executor::RowCount {
         self.produced.clone()
     }
-}
 
-/// Moves one prefetched row out of the stored preload for `index`.
-fn preloaded_ref<'a>(
-    preloaded: &'a mut Option<Vec<Option<Vec<Datum>>>>,
-    index: usize,
-) -> Result<&'a Option<Vec<Datum>>, ExecError> {
-    preloaded
-        .as_ref()
-        .and_then(|rows| rows.get(index))
-        .ok_or_else(|| ExecError::unsupported("batch point read lost its prefetch"))
-}
-
-impl Executor for HandleSourceExec {
-    fn open(&mut self) -> Result<(), ExecError> {
-        self.cursor = 0;
-        self.produced.set(0);
+    fn initialize(&mut self) -> Result<(), ExecError> {
         // Go's `BatchPointGetExec.initialize` reads every handle with ONE
-        // `BatchGet` before the first `Next`. Prefetch all physical keys
+        // `BatchGet` on the first `Next`. Prefetch all physical keys
         // together so the storage layer can schedule regions concurrently.
         let rows = if self.single_point_get {
             let handle = self
                 .handles
                 .first()
                 .ok_or_else(|| ExecError::unsupported("a point get lost its retained handle"))?;
-            vec![self
-                .table
-                .get_row_by_handle_with_context(handle, &self.decode_context)
-                .map_err(ExecError::from)?]
+            crate::kv_table::PointReadValues::Single(
+                self.table
+                    .stored_record(handle)
+                    .map_err(ExecError::from)?
+                    .map(|(_, bytes)| bytes),
+            )
         } else {
             if self
                 .partition_ids
@@ -1013,37 +1009,56 @@ impl Executor for HandleSourceExec {
                 ));
             }
             self.table
-                .stored_records_batched(
-                    &self.handles,
-                    self.partition_ids.as_deref(),
-                    &self.decode_context,
-                )
+                .stored_records_batched(&self.handles, self.partition_ids.as_deref())
                 .map_err(ExecError::from)?
         };
         self.preloaded = Some(rows);
+        self.decoder = Some(crate::kv_table::PointRowDecoder::new(&self.table));
+        Ok(())
+    }
+}
+
+impl Executor for HandleSourceExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.cursor = 0;
+        self.produced.set(0);
+        self.preloaded = None;
+        self.decoder = None;
+        self.initialized = false;
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        let cap = self.meta.max_chunk_size();
-        // The prefetch at `open` owns the reads; `Next` only serves rows.
-        let preloaded = self
-            .preloaded
-            .take()
-            .unwrap_or_else(|| vec![None; self.handles.len()]);
-        self.preloaded = Some(preloaded);
-        while req.num_rows() < cap {
+        if !std::mem::replace(&mut self.initialized, true) {
+            self.initialize()?;
+        }
+        while !req.is_full() {
             if self.cursor >= self.handles.len() {
                 return Ok(());
             };
             let index = self.cursor;
             let handle = self.handles.get(index);
-            self.cursor += 1;
+            // PointGet marks done before its read; BatchPointGet advances
+            // only after successfully decoding the current stored value.
+            if self.single_point_get {
+                self.cursor += 1;
+            }
             // A handle with no row is Go's point get that finds nothing: the
             // plan is right, the row is simply absent.
-            let row = preloaded_ref(&mut self.preloaded, index).map_err(ExecError::from)?;
-            if let Some(row) = row {
+            let value = self.preloaded.as_ref().and_then(|values| values.get(index));
+            if let Some(value) = value {
+                let row = self
+                    .decoder
+                    .as_mut()
+                    .expect("initialized point reader")
+                    .decode(
+                        &self.table,
+                        handle.expect("cursor indexes handles"),
+                        value,
+                        &self.decode_context,
+                    )
+                    .map_err(ExecError::from)?;
                 let visible = visible_of(&self.table, &row);
                 if let Some(columns) = &self.output_columns {
                     for (output, source) in columns.iter().copied().enumerate() {
@@ -1108,11 +1123,18 @@ impl Executor for HandleSourceExec {
                 }
                 self.produced.set(self.produced.get() + 1);
             }
+            if !self.single_point_get {
+                self.cursor += 1;
+            }
         }
         Ok(())
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        self.preloaded = None;
+        self.decoder = None;
+        self.initialized = true;
+        self.cursor = self.handles.len();
         Ok(())
     }
 
@@ -1166,6 +1188,7 @@ pub(crate) struct UniqueIndexPointSourceExec {
     decode_context: crate::kv_table::RowDecodeContext,
     single_point: bool,
     source: Option<HandleSourceExec>,
+    initialized: bool,
 }
 
 impl UniqueIndexPointSourceExec {
@@ -1188,13 +1211,13 @@ impl UniqueIndexPointSourceExec {
             decode_context,
             single_point,
             source: None,
+            initialized: false,
         }
     }
 }
 
-impl Executor for UniqueIndexPointSourceExec {
-    fn open(&mut self) -> Result<(), ExecError> {
-        self.source = None;
+impl UniqueIndexPointSourceExec {
+    fn initialize(&mut self) -> Result<(), ExecError> {
         // Go isCommonHandleRead: clustered PRIMARY has metadata but no
         // separate index entries. Its values directly encode record handles.
         let common_primary = !self.table.common_handle_offsets().is_empty()
@@ -1273,9 +1296,20 @@ impl Executor for UniqueIndexPointSourceExec {
         self.source = Some(source);
         Ok(())
     }
+}
+
+impl Executor for UniqueIndexPointSourceExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.source = None;
+        self.initialized = false;
+        Ok(())
+    }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
+        if !std::mem::replace(&mut self.initialized, true) {
+            self.initialize()?;
+        }
         match self.source.as_mut() {
             Some(source) => source.next(req),
             None => Ok(()),
@@ -1283,6 +1317,7 @@ impl Executor for UniqueIndexPointSourceExec {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        self.initialized = true;
         if let Some(source) = self.source.as_mut() {
             source.close()?;
         }
@@ -5977,6 +6012,14 @@ mod tests {
             Box::new(MemTableStorage::default()),
         );
         table.add_hidden_column(column("hidden", 2));
+        table
+            .insert_row_with_row_id(
+                &[Datum::Int(7), Datum::Int(8)],
+                Some(7),
+                0,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
         let schema = tidb_expr::schema::Schema::new(vec![
             tidb_expr::column::Column::new(2, long()),
             tidb_expr::column::Column::new(1, long()),
@@ -5990,7 +6033,7 @@ mod tests {
         );
         // The row decoder supplies the full table layout, including the
         // expression-index column needed by an UPDATE's physical plan.
-        source.preloaded = Some(vec![Some(vec![Datum::Int(7), Datum::Int(8)])]);
+        source.open().unwrap();
         let mut chunk = Chunk::new(&[long(), long()], 1, 1024);
         source.next(&mut chunk).unwrap();
         assert_eq!(chunk.num_rows(), 1);

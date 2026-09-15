@@ -1544,6 +1544,147 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     assert_eq!(decides("SELECT DISTINCT v FROM bd WHERE id IN (1)"), None);
     assert_eq!(decides("SELECT v FROM bd WHERE id = 1"), None);
 
+    // Go BatchPointGetExec initializes on its first Next, then decodes only
+    // the requested chunk. Opening or reopening performs no storage reads.
+    run_insert_on(
+        "INSERT INTO bd VALUES (2, 'b', 20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let Some(TableEntry::Kv(table)) = catalog.get_in(DEFAULT_DATABASE, "bd") else {
+        panic!("bd")
+    };
+    let schema = Schema::new(vec![Column::new(1, table.columns[0].field_type.clone())]);
+    let mut source = crate::access_path::HandleSourceExec::new_projected_with_context(
+        crate::ExecutorMeta::new(schema, 1, 8, 8),
+        table.clone(),
+        vec![
+            crate::kv_table::TableHandle::Int(1),
+            crate::kv_table::TableHandle::Int(99),
+            crate::kv_table::TableHandle::Int(2),
+        ],
+        vec![0],
+        crate::kv_table::RowDecodeContext::for_test_query_utc(),
+    );
+    for _ in 0..2 {
+        batch_gets.store(0, Ordering::Relaxed);
+        source.open().unwrap();
+        assert_eq!(
+            batch_gets.load(Ordering::Relaxed),
+            0,
+            "Open must not fetch rows"
+        );
+        let mut chunk = source.new_chunk();
+        chunk.set_required_rows(1, 8);
+        for id in [1, 2] {
+            source.next(&mut chunk).unwrap();
+            assert_eq!(chunk.num_rows(), 1, "Next must honor RequiredRows");
+            assert_eq!(chunk.get_row(0).get_int64(0), id);
+            assert_eq!(
+                batch_gets.load(Ordering::Relaxed),
+                1,
+                "one BatchGet for the whole handle set"
+            );
+        }
+        source.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 0);
+        assert_eq!(batch_gets.load(Ordering::Relaxed), 1);
+        source.close().unwrap();
+    }
+
+    let schema = Schema::new(vec![Column::new(1, table.columns[0].field_type.clone())]);
+    let index_id = table
+        .indexes()
+        .iter()
+        .find(|index| index.name == "code")
+        .unwrap()
+        .id;
+    let mut unique = crate::access_path::UniqueIndexPointSourceExec::new(
+        crate::ExecutorMeta::new(schema.clone(), 1, 8, 8),
+        table.clone(),
+        index_id,
+        vec![
+            vec![Datum::new_collation_string(
+                b"a".to_vec(),
+                table.columns[1].field_type.collation(),
+            )],
+            vec![Datum::new_collation_string(
+                b"b".to_vec(),
+                table.columns[1].field_type.collation(),
+            )],
+        ],
+        vec![crate::access_path::HandleOutputColumn::Stored(0)],
+        crate::kv_table::RowDecodeContext::for_test_query_utc(),
+        false,
+    );
+    batch_gets.store(0, Ordering::Relaxed);
+    unique.open().unwrap();
+    assert_eq!(batch_gets.load(Ordering::Relaxed), 0);
+    let mut chunk = unique.new_chunk();
+    chunk.set_required_rows(1, 8);
+    for id in [1, 2] {
+        unique.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 1);
+        assert_eq!(chunk.get_row(0).get_int64(0), id);
+        assert_eq!(
+            batch_gets.load(Ordering::Relaxed),
+            2,
+            "one index batch plus one record batch"
+        );
+    }
+    unique.close().unwrap();
+
+    // Go decodes in Next: corruption beyond the requested chunk cannot fail
+    // the first chunk or an early Close, but must fail when actually pulled.
+    let mut malformed = table.clone();
+    let (key, value) = malformed
+        .stored_record(&crate::kv_table::TableHandle::Int(1))
+        .unwrap()
+        .unwrap();
+    let mut storage = BatchGetCountingStorage {
+        inner: MemTableStorage::new(),
+        batch_gets: Arc::clone(&batch_gets),
+    };
+    storage.set(key, value).unwrap();
+    storage
+        .set(
+            Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
+                malformed.table_id,
+                &tidb_codec::table_key::RecordHandle::Int(2),
+            )),
+            vec![0xff],
+        )
+        .unwrap();
+    malformed.replace_storage(Box::new(storage));
+    let mut source = crate::access_path::HandleSourceExec::new_projected_with_context(
+        crate::ExecutorMeta::new(schema, 1, 8, 8),
+        malformed,
+        vec![
+            crate::kv_table::TableHandle::Int(1),
+            crate::kv_table::TableHandle::Int(2),
+        ],
+        vec![0],
+        crate::kv_table::RowDecodeContext::for_test_query_utc(),
+    );
+    for pull_bad_row in [false, true] {
+        batch_gets.store(0, Ordering::Relaxed);
+        source.open().unwrap();
+        let mut chunk = source.new_chunk();
+        chunk.set_required_rows(1, 8);
+        source.next(&mut chunk).unwrap();
+        assert_eq!(chunk.get_row(0).get_int64(0), 1);
+        if pull_bad_row {
+            assert!(source.next(&mut chunk).is_err());
+            assert!(
+                source.next(&mut chunk).is_err(),
+                "a failed batch decode does not advance past the row"
+            );
+        }
+        source.close().unwrap();
+        assert_eq!(batch_gets.load(Ordering::Relaxed), 1);
+    }
+
     // Go BatchPointGetExec.initialize collects physical keys across all
     // selected partitions before its single BatchGet. Include absent and
     // duplicate handles, and both integer and common-handle row keys.
@@ -1619,18 +1760,46 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             .iter()
             .map(|&id| (id != 99).then(|| vec![Datum::Int(id), Datum::Int(id * 10)]))
             .collect();
+        // The index-lookup batch reader preserves the same duplicate,
+        // missing and cross-partition handle slots without cloning a second
+        // key/handle index. Projection keeps the requested column order.
+        batch_gets.store(0, Ordering::Relaxed);
+        let projected = table
+            .get_rows_by_handles_projected_with_context(
+                &handles,
+                Some(&[1, 0]),
+                &crate::kv_table::RowDecodeContext::for_test_query_utc(),
+            )
+            .unwrap();
+        assert_eq!(
+            projected,
+            expected
+                .iter()
+                .map(|row| {
+                    row.as_ref().map(|row| vec![row[1].clone(), row[0].clone()])
+                })
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(batch_gets.load(Ordering::Relaxed), 1);
         for routes in [Some(routes.as_slice()), None] {
             batch_gets.store(0, Ordering::Relaxed);
-            assert_eq!(
-                table
-                    .stored_records_batched(
-                        &handles,
-                        routes,
-                        &crate::kv_table::RowDecodeContext::for_test_query_utc()
-                    )
-                    .unwrap(),
-                expected
-            );
+            let values = table.stored_records_batched(&handles, routes).unwrap();
+            let decoded = handles
+                .iter()
+                .enumerate()
+                .map(|(index, handle)| {
+                    values.get(index).map(|value| {
+                        table
+                            .decode_row_entry(
+                                handle,
+                                value,
+                                &crate::kv_table::RowDecodeContext::for_test_query_utc(),
+                            )
+                            .unwrap()
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(decoded, expected);
             assert_eq!(
                 batch_gets.load(Ordering::Relaxed),
                 1,
@@ -1638,14 +1807,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             );
         }
         batch_gets.store(0, Ordering::Relaxed);
-        assert!(table
-            .stored_records_batched(
-                &[],
-                None,
-                &crate::kv_table::RowDecodeContext::for_test_query_utc()
-            )
-            .unwrap()
-            .is_empty());
+        assert!(table.stored_records_batched(&[], None,).unwrap().is_empty());
         assert_eq!(batch_gets.load(Ordering::Relaxed), 0);
     }
 }

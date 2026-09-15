@@ -275,7 +275,7 @@ impl Executor for PointIndexUsageExec {
 /// Go coprocessor readers report the scan plan's task/row totals at close.
 pub(super) struct CopIndexUsageExec {
     child: Box<dyn Executor>,
-    table: KvTable,
+    logical_table_id: i64,
     stats: Option<Arc<TableStatistics>>,
     collector: Option<Arc<StmtIndexUsageCollector>>,
     index_id: Option<i64>,
@@ -285,14 +285,14 @@ pub(super) struct CopIndexUsageExec {
 impl CopIndexUsageExec {
     pub(super) fn new(
         child: Box<dyn Executor>,
-        table: KvTable,
+        logical_table_id: i64,
         stats: Option<Arc<TableStatistics>>,
         collector: Option<Arc<StmtIndexUsageCollector>>,
         index_id: Option<i64>,
     ) -> Self {
         Self {
             child,
-            table,
+            logical_table_id,
             stats,
             collector,
             index_id,
@@ -313,20 +313,14 @@ impl CopIndexUsageExec {
             return;
         };
         let reporter = IndexUsageReporter::new(self.collector.as_ref());
-        match self.index_id {
-            Some(index_id) => reporter.report_cop_for_table(
-                &self.table,
-                self.stats.as_deref(),
+        if let Some(index_id) = self.index_id {
+            reporter.report_cop(
+                self.logical_table_id,
                 index_id,
-                kv_requests,
-                accessed_rows,
-            ),
-            None => reporter.report_cop_for_handle(
-                &self.table,
                 self.stats.as_deref(),
                 kv_requests,
                 accessed_rows,
-            ),
+            );
         }
     }
 }

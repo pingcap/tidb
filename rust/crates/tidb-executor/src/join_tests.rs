@@ -26,14 +26,541 @@ fn long() -> FieldType {
     FieldType::new(FieldTypeCode::Long)
 }
 
+/// Go Selection evaluates NULL predicates over chunk rows before the index
+/// join retains its inner chunks. Existing selections are logical row order.
+#[test]
+fn index_inner_null_selection_preserves_chunk_rows() {
+    let types = [long(), FieldType::new(FieldTypeCode::VarString)];
+    let mut chunk = Chunk::new_with_capacity(&types, 4);
+    for key in [Some(1), None, Some(3), None] {
+        match key {
+            Some(key) => chunk.append_int64(0, key),
+            None => chunk.append_null(0),
+        }
+        chunk.append_bytes(1, b"payload kept in the original column");
+    }
+    let payload = chunk.column(1).get_raw(0).as_ptr();
+    // The existing selection reorders and duplicates rows.
+    chunk.set_sel(Some(vec![2, 1, 0, 2, 3]));
+    filter_index_inner_chunk(&mut chunk, &[0]).unwrap();
+    assert_eq!(chunk.sel(), Some([2, 0, 2].as_slice()));
+    assert_eq!(chunk.column(1).get_raw(0).as_ptr(), payload);
+    assert_eq!(
+        (0..chunk.num_rows())
+            .map(|row| chunk.get_row(row).get_int64(0))
+            .collect::<Vec<_>>(),
+        [3, 1, 3]
+    );
+    let selection = chunk.sel().unwrap().as_ptr();
+    filter_index_inner_chunk(&mut chunk, &[0]).unwrap();
+    assert_eq!(chunk.sel().unwrap().as_ptr(), selection);
+
+    chunk.set_sel(Some(vec![1, 3]));
+    filter_index_inner_chunk(&mut chunk, &[0]).unwrap();
+    assert_eq!(chunk.num_rows(), 0);
+    chunk.set_sel(None);
+    filter_index_inner_chunk(&mut chunk, &[1]).unwrap();
+    assert!(chunk.sel().is_none(), "all-pass batches need no selection");
+    filter_index_inner_chunk(&mut chunk, &[0, 1]).unwrap();
+    assert_eq!(chunk.sel(), Some([0, 2].as_slice()));
+    assert!(filter_index_inner_chunk(&mut chunk, &[2]).is_err());
+    assert_eq!(chunk.sel(), Some([0, 2].as_slice()));
+    assert_eq!(chunk.column(1).get_raw(0).as_ptr(), payload);
+}
+
 fn decimal(text: &str) -> Decimal {
     let (value, error) = Decimal::parse_mysql(text);
     assert_eq!(error, None, "invalid decimal fixture {text}");
     value
 }
 
+/// Go IndexLookUpJoin.Next resumes innerIter across RequiredRows boundaries.
+#[test]
+fn index_join_resumes_one_outer_rows_matches_across_requested_chunks() {
+    for ((worker_prepared, kind, residual_limit), hash_order) in [false, true]
+        .into_iter()
+        .flat_map(|worker_prepared| {
+            [
+                JoinKind::Inner,
+                JoinKind::Left,
+                JoinKind::Right,
+                JoinKind::Semi,
+                JoinKind::AntiSemi,
+            ]
+            .into_iter()
+            .flat_map(move |kind| {
+                [None, Some(2), Some(0)]
+                    .into_iter()
+                    .map(move |limit| (worker_prepared, kind, limit))
+            })
+        })
+        .flat_map(|case| {
+            [None, Some(false), Some(true)]
+                .into_iter()
+                .map(move |order| (case, order))
+        })
+    {
+        let types = [long(), long()];
+        let mut conditions = vec![eq_on(0, 0, 2)];
+        if let Some(limit) = residual_limit {
+            let offset = if kind == JoinKind::Right { 1 } else { 3 };
+            let mut column = Column::new(offset + 1, long());
+            column.index = offset;
+            conditions.push(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("lt"),
+                long(),
+                vec![
+                    Expression::Column(column),
+                    Expression::Constant(Constant::new(Datum::Int(limit), long())),
+                ],
+            )));
+        }
+        let mut join = join_of(kind, conditions, vec![], vec![], 2);
+        join.index_hash = hash_order;
+        let mut outer_chunk = Chunk::new_with_capacity(&types, 2);
+        for (key, value) in [(1, 77), (2, 88)] {
+            outer_chunk.append_int64(0, key);
+            outer_chunk.append_int64(1, value);
+        }
+        let mut outer = OuterBatch::new(&types, 2, CHUNK);
+        for index in 0..outer_chunk.num_rows() {
+            outer.push(outer_chunk.get_row(index));
+        }
+        let mut inner = List::new(&types, 2, CHUNK);
+        let mut input = Chunk::new_with_capacity(&types, 9);
+        for value in 0..9 {
+            input.append_int64(0, 1);
+            input.append_int64(1, value);
+        }
+        let prepared = worker_prepared.then(|| {
+            prepare_index_inner(&index_task_shared_for_test(&join), vec![input.clone()]).unwrap()
+        });
+        inner.add(input);
+        let mut matched: FastBytesMap<Vec<RowPtr>> = FastBytesMap::default();
+        for index in 0..inner.len() {
+            let ptr = RowPtr::new(0, index as u32);
+            let row = inner.get_row(ptr);
+            let key = row_key_by(&join.keys, |key| {
+                row.get_datum(key.right, &types[key.right])
+            })
+            .unwrap()
+            .unwrap();
+            matched.entry(key).or_default().push(ptr);
+        }
+        let matched_count = residual_limit.unwrap_or(9);
+        let mut expected = Vec::new();
+        for (key, payload) in [(1, 77), (2, 88)] {
+            let count = if key == 1 { matched_count } else { 0 };
+            match kind {
+                JoinKind::Semi if count > 0 => {
+                    expected.push(vec![Datum::Int(key), Datum::Int(payload)])
+                }
+                JoinKind::AntiSemi if count == 0 => {
+                    expected.push(vec![Datum::Int(key), Datum::Int(payload)])
+                }
+                JoinKind::Left | JoinKind::Right if count == 0 => {
+                    expected.push(if kind == JoinKind::Left {
+                        vec![
+                            Datum::Int(key),
+                            Datum::Int(payload),
+                            Datum::Null,
+                            Datum::Null,
+                        ]
+                    } else {
+                        vec![
+                            Datum::Null,
+                            Datum::Null,
+                            Datum::Int(key),
+                            Datum::Int(payload),
+                        ]
+                    });
+                }
+                JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                    for value in 0..count {
+                        expected.push(if kind == JoinKind::Right {
+                            vec![
+                                Datum::Int(1),
+                                Datum::Int(value),
+                                Datum::Int(key),
+                                Datum::Int(payload),
+                            ]
+                        } else {
+                            vec![
+                                Datum::Int(key),
+                                Datum::Int(payload),
+                                Datum::Int(1),
+                                Datum::Int(value),
+                            ]
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        join.index_state = Some(IndexLookupState {
+            unordered: None,
+            hash: None,
+            hash_results: None,
+            hash_chunk: None,
+            hash_task_bytes: 0,
+            outer,
+            cursor: 0,
+            probe: None,
+            condition_scratch: residual_limit
+                .map(|_| Chunk::new_with_capacity(&join.condition_types, 1)),
+            inner,
+            inner_bytes: 0,
+            matched,
+            outer_chunk,
+            outer_row: 2,
+            outer_done: true,
+            batch_size: CHUNK,
+            pending: VecDeque::new(),
+            prefetch_disabled: true,
+        });
+        if let Some(prepared) = prepared {
+            prepared.install(join.index_state.as_mut().unwrap());
+        }
+        let mut actual = Vec::new();
+        let mut output = join.new_chunk();
+        for required in [1, 3, 2, 1, 3, 2] {
+            output.reset();
+            output.set_required_rows(required, CHUNK);
+            join.drain_index_batch(&mut output).unwrap();
+            assert!(
+                output.num_rows() <= required as usize,
+                "worker_prepared={worker_prepared}: {} > {required}",
+                output.num_rows()
+            );
+            actual.extend(
+                (0..output.num_rows())
+                    .map(|index| output.get_row(index).get_datum_row(join.ret_field_types())),
+            );
+        }
+        assert_eq!(
+            actual, expected,
+            "worker_prepared={worker_prepared} hash_order={hash_order:?} kind={kind:?} residual={residual_limit:?}"
+        );
+        join.close().unwrap();
+        assert_eq!(join.tracker.bytes_consumed(), 0);
+    }
+}
+
 fn schema_of(width: usize) -> Schema {
     schema_with_types(&vec![long(); width])
+}
+
+/// Go indexHashJoinInnerWorker.doJoinUnordered builds outer rows and probes
+/// inner rows; doJoinInOrder retains match pointers in outer-row order.
+#[test]
+fn index_hash_join_builds_outer_and_probes_inner_rows() {
+    for ordered in [false, true] {
+        let mut join = join_of(JoinKind::Inner, vec![eq_on(0, 0, 1)], vec![], vec![], 1);
+        join.index_hash = Some(ordered);
+        let types = [long()];
+        let mut outer = OuterBatch::new(&types, 2, CHUNK);
+        let mut outer_chunk = Chunk::new_with_capacity(&types, 2);
+        for key in [1, 2] {
+            outer_chunk.append_int64(0, key);
+        }
+        for index in 0..2 {
+            outer.push(outer_chunk.get_row(index));
+        }
+        let mut inner = List::new(&types, 2, CHUNK);
+        let mut chunk = Chunk::new_with_capacity(&types, 2);
+        for key in [2, 1] {
+            chunk.append_int64(0, key);
+        }
+        inner.add(chunk);
+        let matched = build_index_lookup_map(&inner, &join.keys, &types, true).unwrap();
+        join.index_state = Some(IndexLookupState {
+            unordered: None,
+            hash: None,
+            hash_results: None,
+            hash_chunk: None,
+            hash_task_bytes: 0,
+            outer,
+            cursor: 0,
+            probe: None,
+            condition_scratch: None,
+            inner,
+            inner_bytes: 0,
+            matched,
+            outer_chunk,
+            outer_row: 2,
+            outer_done: true,
+            batch_size: CHUNK,
+            pending: VecDeque::new(),
+            prefetch_disabled: true,
+        });
+        let mut output = join.new_chunk();
+        join.drain_index_batch(&mut output).unwrap();
+        let keys = (0..output.num_rows())
+            .map(|i| output.get_row(i).get_int64(0))
+            .collect::<Vec<_>>();
+        assert_eq!(keys, if ordered { vec![1, 2] } else { vec![2, 1] });
+        join.close().unwrap();
+    }
+}
+
+/// Go's result chunk channel bounds fanout and Close releases a worker that
+/// is waiting for the consumer. Ordered and unordered workers share ownership.
+#[test]
+fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
+    for ordered in [false, true] {
+        for early_close in [false, true] {
+            let mut join = join_of(JoinKind::Left, vec![eq_on(0, 0, 1)], vec![], vec![], 1);
+            join.index_hash = Some(ordered);
+            let mut shared = index_task_shared_for_test(&join);
+            shared.max_chunk_size = 2;
+            let types = [long()];
+            let mut outer = OuterBatch::new(&types, 2, CHUNK);
+            let mut outer_chunk = Chunk::new_with_capacity(&types, 2);
+            for key in [1, 1, 2] {
+                outer_chunk.append_int64(0, key);
+            }
+            for index in 0..3 {
+                outer.push(outer_chunk.get_row(index));
+            }
+            let bytes = outer.settle_bytes();
+            if ordered {
+                join.tracker.consume(bytes);
+            }
+            let mut chunk = Chunk::new_with_capacity(&types, 4);
+            for _ in 0..9 {
+                chunk.append_int64(0, 1);
+            }
+            let inner = prepare_index_inner(&shared, vec![chunk]).unwrap();
+            assert!(
+                inner.matched.is_empty(),
+                "hash variant must not build the inner map"
+            );
+            let outcome = IndexTaskOutcome::Prepared {
+                outer,
+                inner,
+                inner_rows: 9,
+            };
+            let (sender, receiver, mut unordered) = if ordered {
+                let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+                (sender.into(), Some(receiver), None)
+            } else {
+                let mut tasks = IndexUnordered::new(2, &join.tracker);
+                (tasks.admit(bytes), None, Some(tasks))
+            };
+            let worker = std::thread::spawn(move || {
+                index_hash::send_prepared_index_task(&shared, outcome, sender)
+            });
+            let first = if let Some(tasks) = unordered.as_mut() {
+                tasks.recv().unwrap()
+            } else {
+                receiver.as_ref().unwrap().recv().unwrap()
+            };
+            let IndexTaskOutcome::HashChunk(chunk) = first else {
+                panic!("worker must return chunk output");
+            };
+            assert_eq!(chunk.chunk.num_rows(), 2);
+            let first_buffer = chunk.chunk.column(0).get_raw(0).as_ptr();
+            join.index_state = Some(IndexLookupState {
+                unordered,
+                hash: None,
+                hash_results: receiver,
+                hash_chunk: Some(chunk),
+                hash_task_bytes: if ordered { bytes } else { 0 },
+                outer: OuterBatch::new(&types, 1, CHUNK),
+                cursor: 0,
+                probe: None,
+                condition_scratch: None,
+                inner: List::new(&types, 1, CHUNK),
+                inner_bytes: 0,
+                matched: FastBytesMap::default(),
+                outer_chunk,
+                outer_row: 3,
+                outer_done: true,
+                batch_size: CHUNK,
+                pending: VecDeque::new(),
+                prefetch_disabled: false,
+            });
+            let mut rows = Vec::new();
+            loop {
+                let state = join.index_state.as_mut().unwrap();
+                if state.hash_chunk.is_none() {
+                    if let Some(tasks) = state.unordered.as_mut() {
+                        if tasks.active == 0 {
+                            break;
+                        }
+                        match tasks.recv().unwrap() {
+                            IndexTaskOutcome::HashChunk(chunk) => state.hash_chunk = Some(chunk),
+                            IndexTaskOutcome::HashFinished { .. } => continue,
+                            _ => panic!("unexpected worker outcome"),
+                        }
+                    } else if state.hash_results.is_none() {
+                        break;
+                    }
+                }
+                let mut output = join.new_chunk();
+                let requested = if early_close { 2 } else { 1 };
+                output.set_required_rows(requested, CHUNK);
+                join.drain_index_batch(&mut output).unwrap();
+                assert!(output.num_rows() <= requested as usize);
+                if early_close {
+                    assert_eq!(
+                        output.column(0).get_raw(0).as_ptr(),
+                        first_buffer,
+                        "complete output chunks transfer their column buffers"
+                    );
+                }
+                rows.extend(
+                    (0..output.num_rows())
+                        .map(|i| output.get_row(i).get_datum_row(join.ret_field_types())),
+                );
+                if early_close {
+                    break;
+                }
+            }
+            if !early_close {
+                assert_eq!(rows.len(), 19);
+                assert_eq!(rows.last().unwrap(), &vec![Datum::Int(2), Datum::Null]);
+            }
+            join.close().unwrap();
+            worker.join().unwrap();
+            assert_eq!(join.tracker.bytes_consumed(), 0);
+        }
+    }
+}
+
+/// Go innerWorker.handleTask prepares the inner lookup; ON evaluation belongs
+/// to IndexLookUpJoin.Next. A later output error must not run in preparation.
+#[test]
+fn index_worker_preparation_does_not_evaluate_join_residuals() {
+    let mut column = Column::new(4, long());
+    column.index = 3;
+    let residual = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("gt"),
+        long(),
+        vec![
+            Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("abs"),
+                long(),
+                vec![Expression::Column(column)],
+            )),
+            Expression::Constant(Constant::new(Datum::Int(0), long())),
+        ],
+    ));
+    let mut join = join_of(
+        JoinKind::Left,
+        vec![eq_on(0, 0, 2), residual],
+        vec![],
+        vec![],
+        2,
+    );
+    let types = [long(), long()];
+    let mut outer = OuterBatch::new(&types, 1, CHUNK);
+    let mut input = Chunk::new_with_capacity(&types, 1);
+    input.append_int64(0, 1);
+    input.append_int64(1, 1);
+    outer.push(input.get_row(0));
+    let shared = index_task_shared_for_test(&join);
+    let mut input = Chunk::new_with_capacity(&types, 2);
+    for value in [1, i64::MIN] {
+        input.append_int64(0, 1);
+        input.append_int64(1, value);
+    }
+    let prepared = prepare_index_inner(&shared, vec![input.clone()]).unwrap_or_else(|error| {
+        panic!("preparing inner rows evaluated the ON expression: {error:?}")
+    });
+    assert_eq!(prepared.rows.len(), 2);
+    assert!(join.tracker.bytes_consumed() > 0);
+    drop(prepared);
+    assert_eq!(join.tracker.bytes_consumed(), 0);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    drop(receiver);
+    drop(sender.send(prepare_index_inner(&shared, vec![input.clone()]).unwrap()));
+    assert_eq!(
+        join.tracker.bytes_consumed(),
+        0,
+        "failed delivery releases the prepared batch"
+    );
+
+    let prepared = prepare_index_inner(&shared, vec![input]).unwrap();
+    join.index_state = Some(IndexLookupState {
+        unordered: None,
+        hash: None, hash_results: None, hash_chunk: None, hash_task_bytes: 0,
+        outer,
+        cursor: 0,
+        probe: None,
+        condition_scratch: Some(Chunk::new_with_capacity(&join.condition_types, 1)),
+        inner: List::new(&types, 1, CHUNK),
+        inner_bytes: 0,
+        matched: FastBytesMap::default(),
+        outer_chunk: Chunk::new_with_capacity(&types, 1),
+        outer_row: 0,
+        outer_done: true,
+        batch_size: CHUNK,
+        pending: VecDeque::new(),
+        prefetch_disabled: false,
+    });
+    prepared.install(join.index_state.as_mut().unwrap());
+    let mut output = join.new_chunk();
+    output.set_required_rows(1, CHUNK);
+    join.drain_index_batch(&mut output).unwrap();
+    assert_eq!(
+        output.num_rows(),
+        1,
+        "LIMIT can stop before the overflowing candidate"
+    );
+    assert_eq!(join.condition_evals(), 1);
+    output.reset();
+    assert!(join.drain_index_batch(&mut output).is_err());
+    assert_eq!(join.condition_evals(), 2);
+    // Failed workers must return the outer batch that owns the pending
+    // task's charge, so the consumer's Close path can release it.
+    let mut outer = OuterBatch::new(&types, 1, CHUNK);
+    let mut input = Chunk::new_with_capacity(&types, 1);
+    input.append_int64(0, 1);
+    input.append_int64(1, 1);
+    outer.push(input.get_row(0));
+    let bytes = outer.settle_bytes();
+    join.tracker.consume(bytes);
+    let mut invalid = index_task_shared_for_test(&join);
+    invalid.probe_plan.probe_keys = vec![0];
+    invalid.probe_plan.probe_key_domains = vec![
+        IndexProbeKeyDomain {
+            field_type: long(),
+            prefix_length: -1,
+        };
+        2
+    ];
+    match run_index_task(&invalid, outer) {
+        IndexTaskOutcome::Failed { outer, .. } => {
+            assert_eq!(outer.bytes, bytes);
+            join.index_state.as_mut().unwrap().outer = outer;
+        }
+        _ => panic!("invalid lookup domains must return the failed task"),
+    }
+    join.close().unwrap();
+    assert_eq!(join.tracker.bytes_consumed(), 0);
+}
+
+fn index_task_shared_for_test(join: &JoinExec<NoColumns>) -> IndexTaskShared<NoColumns> {
+    IndexTaskShared {
+        hash_output: join.index_hash_output(),
+        template: None,
+        probe_plan: IndexProbePlan {
+            probe_keys: vec![],
+            probe_key_domains: vec![],
+            probe_bounds: vec![],
+        },
+        outer_is_left: join.outer_is_left(),
+        keys: join.keys.clone(),
+        ctx: NoColumns,
+        outer_types: vec![long(), long()],
+        inner_types: vec![long(), long()],
+        inner_not_null: vec![],
+        init_cap: 1,
+        max_chunk_size: CHUNK,
+        tracker: Arc::clone(&join.tracker),
+        memory: join.memory.clone(),
+    }
 }
 
 fn schema_with_types(types: &[FieldType]) -> Schema {

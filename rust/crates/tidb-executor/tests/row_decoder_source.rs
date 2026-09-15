@@ -89,6 +89,69 @@ fn encode(ids: &[i64], values: &[Datum], new_format: bool, zone: &SessionTimeZon
     tidb_tablecodec::encode_table_row(Some(zone), values, ids, new_format, None).unwrap()
 }
 
+/// Run the source fixtures through one reader across multiple small chunks,
+/// including a reopen, so decoder reuse cannot retain a preceding row's data.
+fn assert_point_chunks(
+    mut table: KvTable,
+    rows: &[(TableHandle, Vec<u8>, Vec<Datum>)],
+    zone: &SessionTimeZone,
+) {
+    use tidb_executor::{
+        executor::Executor,
+        storage::{MemTableStorage, TableStorage},
+    };
+    let mut storage = MemTableStorage::new();
+    for (handle, bytes, _) in rows {
+        let handle = match handle {
+            TableHandle::Int(value) => tidb_codec::table_key::RecordHandle::Int(*value),
+            TableHandle::Common(bytes) => {
+                tidb_codec::table_key::RecordHandle::Common(bytes.clone())
+            }
+        };
+        storage
+            .set(
+                tidb_txnkv::Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
+                    table.table_id,
+                    &handle,
+                )),
+                bytes.clone(),
+            )
+            .unwrap();
+    }
+    table.replace_storage(Box::new(storage));
+    let types = table
+        .columns
+        .iter()
+        .map(|column| column.field_type.clone())
+        .collect::<Vec<_>>();
+    let schema = tidb_expr::schema::Schema::new(
+        table
+            .columns
+            .iter()
+            .map(|column| tidb_expr::column::Column::new(column.id, column.field_type.clone()))
+            .collect(),
+    );
+    let mut source = tidb_executor::access_path::HandleSourceExec::new_with_context(
+        tidb_executor::ExecutorMeta::new(schema, 0, 8, 8),
+        table,
+        rows.iter().map(|(handle, _, _)| handle.clone()).collect(),
+        query_context(zone),
+    );
+    for _ in 0..2 {
+        source.open().unwrap();
+        let mut chunk = source.new_chunk();
+        chunk.set_required_rows(1, 8);
+        for (_, _, expected) in rows {
+            source.next(&mut chunk).unwrap();
+            assert_eq!(chunk.num_rows(), 1);
+            assert_eq!(&chunk.get_row(0).get_datum_row(&types), expected);
+        }
+        source.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 0);
+        source.close().unwrap();
+    }
+}
+
 fn source_columns(zone: &SessionTimeZone, unsigned_handle: bool) -> Vec<KvColumn> {
     let mut columns = vec![
         column(1, "c1", FieldType::new(FieldTypeCode::LongLong)),
@@ -210,6 +273,40 @@ fn row_decoder_matches_defaults_generated_values_and_integer_handles() {
     .decode_and_eval(&TableHandle::Int(-1), &bytes)
     .unwrap();
     assert_eq!(unsigned.values()[6], Datum::UInt(u64::MAX));
+
+    for generated in [false, true] {
+        let mut columns = source_columns(&zone, false);
+        if !generated {
+            columns[5].generated = None;
+        }
+        let mut table = KvTable::new(47, columns);
+        table.set_pk_handle_offset(6);
+        let rows = [false, true, false, true]
+            .into_iter()
+            .enumerate()
+            .map(|(index, new_format)| {
+                let handle = 11 + index as i64;
+                (
+                    TableHandle::Int(handle),
+                    encode(&stored_ids, &stored_values, new_format, &zone),
+                    vec![
+                        Datum::Int(100),
+                        Datum::new_string("abc"),
+                        Datum::Decimal(Decimal::from_int(1)),
+                        Datum::Int(8),
+                        Datum::Int(2),
+                        if generated {
+                            Datum::Int(10)
+                        } else {
+                            Datum::Null
+                        },
+                        Datum::Int(handle),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_point_chunks(table, &rows, &zone);
+    }
 }
 
 #[test]
@@ -281,6 +378,29 @@ fn row_decoder_matches_temporal_defaults_and_null_rows() {
             .unwrap();
         assert_eq!(decoded.values(), &[Datum::Null, Datum::Null, Datum::Null]);
     }
+    assert_point_chunks(
+        KvTable::new(48, columns),
+        &[
+            (
+                TableHandle::Int(1),
+                encode(&[1], &[Datum::Time(timestamp)], true, &zone),
+                vec![
+                    Datum::Time(timestamp),
+                    Datum::Duration(
+                        MySqlDuration::from_nanoseconds((2 * 60 * 60 + 2) * 1_000_000_000, 0)
+                            .unwrap(),
+                    ),
+                    Datum::Time(expected),
+                ],
+            ),
+            (
+                TableHandle::Int(2),
+                encode(&[1, 2], &[Datum::Null, Datum::Null], false, &zone),
+                vec![Datum::Null; 3],
+            ),
+        ],
+        &zone,
+    );
 }
 
 #[test]

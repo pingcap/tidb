@@ -297,13 +297,9 @@ fn modify_column_between_string_types_shrinks_expands_and_remaps_enum_set_member
 }
 
 // Go `modify_column_test.go:169::TestModifyColumnNullToNotNullWithChangingVal2`.
-// Go injects the NULL row mid-DDL through the
-// `beforeDoModifyColumnSkipReorgCheck` failpoint and requires
-// `[ddl:1138]Invalid use of NULL value` (pkg/ddl/modify_column.go:840
-// `return true, dbterror.ErrInvalidUseOfNull`). The same data state is
-// reachable synchronously — a NULL row present when the MODIFY runs — and
-// the alteration must be refused with the table left untouched.
-//
+// Go's admission check reports 1265 for an existing NULL. A NULL introduced
+// after admission (beforeDoModifyColumnSkipReorgCheck) instead reaches the
+// worker's 1138 check. Exercise the two owning boundaries separately.
 #[test]
 fn modify_column_null_to_not_null_rejects_rows_holding_nulls() {
     let mut catalog = Catalog::default();
@@ -314,13 +310,23 @@ fn modify_column_null_to_not_null_rejects_rows_holding_nulls() {
         &ctx(),
     )
     .unwrap();
-    // Go reaches this state via its failpoint; synchronously it is just a row.
     run_insert_on("INSERT INTO tt VALUES (NULL, NULL)", &mut catalog, &ctx()).unwrap();
 
     let error = alter(&mut catalog, "ALTER TABLE tt MODIFY a INT NOT NULL")
-        .expect_err("Go: [ddl:1138]Invalid use of NULL value");
-    assert_eq!(code_of(&error), 1138);
-    assert_eq!(message_of(&error), "Invalid use of NULL value");
+        .expect_err("Go admission rejects existing NULLs");
+    assert_eq!(code_of(&error), 1265);
+    assert_eq!(message_of(&error), "Data truncated for column 'a' at row 1");
+    let Some(TableEntry::Kv(table)) = catalog.table_mut_in("test", "tt") else {
+        panic!("stored table");
+    };
+    let mut column = table.columns[0].clone();
+    column
+        .field_type
+        .add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    assert!(matches!(
+        table.modify_column_with_context(0, column, None, &ctx()),
+        Err(crate::kv_table::KvTableError::InvalidUseOfNull)
+    ));
     // The rows survive the refused alteration.
     assert_eq!(
         text_rows(&catalog, "SELECT * FROM tt"),

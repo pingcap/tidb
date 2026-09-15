@@ -228,6 +228,9 @@ pub struct Catalog {
     /// index view and dropped by every mutator that moves [`Self::version`]
     /// or the metadata epoch.
     planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
+    /// Go InfoSchema's table-ID index. Names resolve against this image's
+    /// current entries without retaining a second copy of table storage.
+    table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
     /// The entries a session's LOCAL temporary tables are DISPLACING while
     /// they are attached: `(folded database, folded name, the entry that was
     /// there)`.
@@ -444,6 +447,7 @@ struct CatalogSnapshot {
     statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<statistics::StatisticsSchema>>>>,
     latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
+    table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
     shadowed_by_local_temporary: Vec<(String, String, Arc<TableEntry>)>,
     temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
 }
@@ -465,6 +469,7 @@ impl CatalogSnapshot {
             statistics_schemas: Arc::clone(&catalog.statistics_schemas),
             latest_index_schema: catalog.latest_index_schema.clone(),
             planner_view: catalog.planner_view.clone(),
+            table_id_names: catalog.table_id_names.clone(),
             shadowed_by_local_temporary: catalog.shadowed_by_local_temporary.clone(),
             temporary_sweep: catalog.temporary_sweep.clone(),
         }
@@ -485,6 +490,7 @@ impl CatalogSnapshot {
             metadata_version: self.metadata_version,
             latest_index_schema: self.latest_index_schema.clone(),
             planner_view: self.planner_view.clone(),
+            table_id_names: self.table_id_names.clone(),
             shadowed_by_local_temporary: self.shadowed_by_local_temporary.clone(),
             statistics: Arc::clone(&owner.statistics),
             statistics_view: owner.statistics_view.clone(),
@@ -587,6 +593,7 @@ impl Default for Catalog {
             metadata_version: 0,
             latest_index_schema: std::sync::OnceLock::new(),
             planner_view: std::sync::OnceLock::new(),
+            table_id_names: Arc::default(),
             shadowed_by_local_temporary: Vec::new(),
             statistics: Arc::default(),
             statistics_view: None,
@@ -1250,7 +1257,11 @@ impl Catalog {
 
     /// Retains immutable statement metadata without cloning the table or its store.
     pub(crate) fn table_handle_by_key(&self, key: &CatalogTableKey) -> Option<Arc<TableEntry>> {
-        self.databases.get(&key.database)?.tables.get(&key.table).cloned()
+        self.databases
+            .get(&key.database)?
+            .tables
+            .get(&key.table)
+            .cloned()
     }
 
     fn get(&self, name: &str) -> Option<&TableEntry> {
@@ -1615,6 +1626,7 @@ impl Catalog {
     fn bump_version(&mut self) {
         self.version += 1;
         self.planner_view.take();
+        self.invalidate_table_id_names();
     }
 
     fn bump_metadata_version(&mut self) {
@@ -1622,6 +1634,15 @@ impl Catalog {
         self.latest_index_schema.take();
         self.planner_view.take();
         self.statistics_schemas = Arc::default();
+        self.invalidate_table_id_names();
+    }
+
+    fn invalidate_table_id_names(&mut self) {
+        if let Some(names) = Arc::get_mut(&mut self.table_id_names) {
+            names.take();
+        } else {
+            self.table_id_names = Arc::default();
+        }
     }
 
     /// Hands out the next TSO -- PD's shape (`now_ms << 18`), strictly
@@ -2306,14 +2327,40 @@ impl Catalog {
     /// same stable ID, so executor construction must not recover the table by
     /// walking SQL names or aliases again.
     pub(crate) fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::KvTable> {
-        self.databases.values().find_map(|database| {
-            database
-                .tables
-                .values()
-                .find_map(|entry| match entry.as_ref() {
-                    TableEntry::Kv(table) if table.table_id == table_id => Some(table),
-                    _ => None,
-                })
+        let key = self.table_id_names().get(&table_id)?;
+        let TableEntry::Kv(table) = self
+            .databases
+            .get(&key.database)?
+            .tables
+            .get(&key.table)?
+            .as_ref()
+        else {
+            return None;
+        };
+        (table.table_id == table_id).then_some(table)
+    }
+
+    fn table_id_names(&self) -> &HashMap<i64, Arc<CatalogTableKey>> {
+        self.table_id_names.get_or_init(|| {
+            let mut names = HashMap::new();
+            for (database_name, database) in self.databases.iter() {
+                for (table_name, entry) in &database.tables {
+                    let TableEntry::Kv(table) = entry.as_ref() else {
+                        continue;
+                    };
+                    let key = Arc::new(CatalogTableKey {
+                        database: database_name.clone(),
+                        table: table_name.clone(),
+                    });
+                    names.insert(table.table_id, Arc::clone(&key));
+                    if let Some(partition) = table.partition() {
+                        for definition in &partition.definitions {
+                            names.insert(definition.id, Arc::clone(&key));
+                        }
+                    }
+                }
+            }
+            names
         })
     }
 
@@ -2321,46 +2368,27 @@ impl Catalog {
     /// names its logical table with the read restricted to that one physical
     /// keyspace, matching executorBuilder's partition-table lookup.
     pub(crate) fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<crate::KvTable> {
-        self.databases.values().find_map(|database| {
-            database.tables.values().find_map(|entry| {
-                let TableEntry::Kv(table) = entry.as_ref() else {
-                    return None;
-                };
-                if table.table_id == physical_id {
-                    return Some(table.clone());
-                }
-                table.partition().and_then(|partition| {
-                    partition
-                        .definitions
-                        .iter()
-                        .any(|definition| definition.id == physical_id)
-                        .then(|| {
-                            let mut physical = table.clone();
-                            physical.restrict_read_to_partitions(&[physical_id]);
-                            physical
-                        })
-                })
-            })
-        })
+        let key = self.table_id_names().get(&physical_id)?;
+        let TableEntry::Kv(table) = self
+            .databases
+            .get(&key.database)?
+            .tables
+            .get(&key.table)?
+            .as_ref()
+        else {
+            return None;
+        };
+        let mut physical = table.clone();
+        if table.table_id != physical_id {
+            physical.restrict_read_to_partitions(&[physical_id]);
+        }
+        Some(physical)
     }
 
     /// Resolves a logical or partition table ID to its owning database name.
     pub(crate) fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<&str> {
-        self.databases.values().find_map(|database| {
-            database.tables.values().find_map(|entry| {
-                let TableEntry::Kv(table) = entry.as_ref() else {
-                    return None;
-                };
-                (table.table_id == physical_id
-                    || table.partition().is_some_and(|partition| {
-                        partition
-                            .definitions
-                            .iter()
-                            .any(|definition| definition.id == physical_id)
-                    }))
-                .then_some(database.name.as_str())
-            })
-        })
+        let key = self.table_id_names().get(&physical_id)?;
+        Some(self.databases.get(&key.database)?.name.as_str())
     }
 
     /// A table of the default database, for tests that inspect the entry.
@@ -2620,6 +2648,9 @@ impl Catalog {
         database: &str,
         name: &str,
     ) -> Option<&mut KvTable> {
+        // The row overlay keeps the schema epoch, but this public handle
+        // can also change an ID. Never retain a directory across that borrow.
+        self.invalidate_table_id_names();
         match self
             .database_mut(database)?
             .tables
@@ -3910,6 +3941,19 @@ mod planner_view_tests {
         let mut catalog = Catalog::default();
         crate::run_create_table_on("CREATE TABLE pv(a INT PRIMARY KEY, b INT)", &mut catalog)
             .unwrap();
+        let TableEntry::Kv(table) = catalog.get_in(DEFAULT_DATABASE, "pv").unwrap() else {
+            panic!("pv")
+        };
+        let table_id = table.table_id;
+        let directory = Arc::clone(&catalog.table_id_names);
+        let original = catalog.clone();
+        let snapshot = CatalogSnapshot::capture(&catalog);
+        assert!(directory.get().is_none());
+        assert_eq!(catalog.kv_table_by_id(table_id).unwrap().name, "pv");
+        assert!(directory.get().unwrap().contains_key(&table_id));
+        assert!(Arc::ptr_eq(&directory, &catalog.table_id_names));
+        assert!(Arc::ptr_eq(&directory, &original.table_id_names));
+        assert!(catalog.physical_kv_table_by_id(i64::MAX).is_none());
         let first = catalog.planner_schema_view();
         assert!(Arc::ptr_eq(&first, &catalog.planner_schema_view()));
         assert!(
@@ -3943,6 +3987,19 @@ mod planner_view_tests {
             false,
         );
         let after_index = catalog.planner_schema_view();
+        assert!(!Arc::ptr_eq(&directory, &catalog.table_id_names));
+        assert!(catalog
+            .kv_table_by_id(table_id)
+            .unwrap()
+            .indexes()
+            .iter()
+            .any(|index| index.id == 7));
+        assert!(!original
+            .kv_table_by_id(table_id)
+            .unwrap()
+            .indexes()
+            .iter()
+            .any(|index| index.id == 7));
         assert!(!Arc::ptr_eq(&first, &after_index), "the view is rebuilt");
         assert!(
             after_index
@@ -3952,7 +4009,11 @@ mod planner_view_tests {
             "the new index reaches the planner"
         );
 
-        crate::run_create_table_on("CREATE TABLE pv2(a INT)", &mut catalog).unwrap();
+        crate::run_create_table_on(
+            "CREATE TABLE pv2(a INT) PARTITION BY HASH(a) PARTITIONS 2",
+            &mut catalog,
+        )
+        .unwrap();
         let after_ddl = catalog.planner_schema_view();
         assert!(
             !Arc::ptr_eq(&after_index, &after_ddl),
@@ -3962,5 +4023,32 @@ mod planner_view_tests {
         assert!(planner.find_table(DEFAULT_DATABASE, "pv").is_some());
         assert!(planner.find_table(DEFAULT_DATABASE, "pv2").is_some());
         assert_eq!(after_index.tables.len() + 1, after_ddl.tables.len());
+
+        let TableEntry::Kv(partitioned) = catalog.get_in(DEFAULT_DATABASE, "pv2").unwrap() else {
+            panic!("partitioned table")
+        };
+        for definition in &partitioned.partition().unwrap().definitions {
+            assert!(catalog.kv_table_by_id(definition.id).is_none());
+            let physical = catalog.physical_kv_table_by_id(definition.id).unwrap();
+            assert_eq!(physical.table_id, partitioned.table_id);
+            assert_eq!(physical.record_physical_ids(), vec![definition.id]);
+            assert_eq!(
+                catalog.physical_kv_table_database_by_id(definition.id),
+                Some(DEFAULT_DATABASE)
+            );
+        }
+
+        let TableEntry::Kv(table) = catalog.get_mut_in(DEFAULT_DATABASE, "pv").unwrap() else {
+            panic!("pv")
+        };
+        table.table_id = 9000;
+        assert!(catalog.kv_table_by_id(table_id).is_none());
+        assert_eq!(catalog.kv_table_by_id(9000).unwrap().name, "pv");
+        let restored = snapshot.restore(&catalog);
+        assert!(Arc::ptr_eq(&directory, &restored.table_id_names));
+        assert!(restored.kv_table_by_id(table_id).is_some());
+        assert!(restored.kv_table_by_id(9000).is_none());
+        catalog.drop_table_in(DEFAULT_DATABASE, "pv");
+        assert!(catalog.physical_kv_table_by_id(9000).is_none());
     }
 }

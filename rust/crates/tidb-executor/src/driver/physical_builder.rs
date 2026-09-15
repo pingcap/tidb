@@ -538,21 +538,17 @@ fn build_table_scan(
         .physical_kv_table_by_id(scan.table_id)
         .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
     let (schema, keep, extra_handle_slot, extra_commit_ts_slot) = table_scan_schema(scan, &table)?;
-    let mut source = TableScanExec::new_with_context(
-        meta(ctx, plan, schema.clone()),
-        table.clone(),
-        RowDecodeContext::for_query(ctx),
-        PushdownStatementContext::from_stmt(ctx).with_plan_id(i64::from(scan.base.base.id())),
-    );
-    // Dynamic prune mode keeps ONE logical scan whose read is restricted to
-    // the partitions the planner selected -- the statement's own `PARTITION
-    // (p, ...)` list intersected with whatever the WHERE pruned. Without
-    // this a named-partition statement would read (or in DELETE/UPDATE,
-    // remove) rows living OUTSIDE the named partitions, which Go never
-    // does.
-    if let Some(access) = &scan.dynamic_partition_access {
-        if !access.all_partitions {
-            let ids = access
+    let logical_table_id = table.table_id;
+    let index_id = super::index_usage_reporter::cluster_index_id(&table);
+    let stats = catalog.table_statistics(table.stats_physical_id());
+    let physical_ids = table.record_physical_ids();
+    let column_count = table.logical_data_source_column_count();
+    let partition_ids = scan
+        .dynamic_partition_access
+        .as_ref()
+        .filter(|access| !access.all_partitions)
+        .map(|access| {
+            access
                 .partitions
                 .iter()
                 .filter_map(|name| {
@@ -564,20 +560,28 @@ fn build_table_scan(
                             .map(|definition| definition.id)
                     })
                 })
-                .collect::<Vec<_>>();
-            if !source.accept_partition_pruning(&ids) {
-                return Err(DriverError::unsupported(
-                    "the physical table scan cannot restrict itself to the named partitions",
-                ));
-            }
+                .collect::<Vec<_>>()
+        });
+    let mut source = TableScanExec::new_with_context(
+        meta(ctx, plan, schema.clone()),
+        table,
+        RowDecodeContext::for_query(ctx),
+        PushdownStatementContext::from_stmt(ctx).with_plan_id(i64::from(scan.base.base.id())),
+    );
+    // Dynamic prune mode keeps ONE logical scan whose read is restricted to
+    // the partitions the planner selected -- the statement's own `PARTITION
+    // (p, ...)` list intersected with whatever the WHERE pruned. Without
+    // this a named-partition statement would read (or in DELETE/UPDATE,
+    // remove) rows living OUTSIDE the named partitions, which Go never
+    // does.
+    if let Some(ids) = partition_ids {
+        if !source.accept_partition_pruning(&ids) {
+            return Err(DriverError::unsupported(
+                "the physical table scan cannot restrict itself to the named partitions",
+            ));
         }
     }
-    if keep.len() != table.logical_data_source_column_count()
-        || keep
-            .iter()
-            .copied()
-            .ne(0..table.logical_data_source_column_count())
-    {
+    if keep.len() != column_count || keep.iter().copied().ne(0..column_count) {
         if !source.accept_column_prune(&keep) {
             return Err(DriverError::unsupported(
                 "physical scan projection does not match its stored columns",
@@ -614,7 +618,6 @@ fn build_table_scan(
     if let Some(rows) = scan.base.base.stats_info().map(|stats| stats.row_count()) {
         source.accept_scan_estimate(rows);
     }
-    let stats = catalog.table_statistics(table.stats_physical_id());
     let output = plan_schema(plan)?;
     let stored_output = Schema::new(
         output
@@ -625,13 +628,12 @@ fn build_table_scan(
             .collect(),
     );
     let source = source.with_physical_schema(stored_output)?;
-    let physical_ids = table.record_physical_ids();
     let source = Box::new(CopIndexUsageExec::new(
         Box::new(source),
-        table,
+        logical_table_id,
         stats,
         ctx.index_usage_collector().cloned(),
-        None,
+        index_id,
     ));
     project_physical_table_id(source, output, &physical_ids, plan, ctx)
 }
@@ -1568,9 +1570,12 @@ fn build_index_reader(
     } else {
         executor_ranges(&scan.ranges)
     };
+    let logical_table_id = table.table_id;
+    let stats = catalog.table_statistics(table.stats_physical_id());
+    let physical_ids = table.record_physical_ids();
     let mut source = IndexRangeSourceExec::new_with_statement(
         meta(ctx, plan, source_schema),
-        table.clone(),
+        table,
         scan.index_id,
         ranges,
         RowDecodeContext::for_query(ctx),
@@ -1643,11 +1648,9 @@ fn build_index_reader(
     // by `compareExec.compare`. This tier folds that merge into the source;
     // arming it here keeps every other read untouched.
     source.enable_dirty_union_scan_merge();
-    let stats = catalog.table_statistics(table.stats_physical_id());
-    let physical_ids = table.record_physical_ids();
     let source = Box::new(CopIndexUsageExec::new(
         Box::new(source),
-        table,
+        logical_table_id,
         stats,
         ctx.index_usage_collector().cloned(),
         Some(scan.index_id),
@@ -2518,6 +2521,9 @@ fn build_index_join(
         ctx.statement_memory(),
         lookup,
     );
+    if join.kind == tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin {
+        executor.set_index_hash_join(join.keep_outer_order);
+    }
     executor
         .set_output_offsets(physical_join_output_offsets(
             plan,

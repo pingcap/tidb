@@ -684,7 +684,10 @@ fn group_by_true_is_the_position_one_reference() {
         .unwrap();
 
     assert_eq!(
-        rows(&mut session, "SELECT k, count(*) FROM gg GROUP BY TRUE"),
+        rows(
+            &mut session,
+            "SELECT k, count(*) FROM gg GROUP BY TRUE ORDER BY k"
+        ),
         [["1", "2"], ["2", "1"]]
     );
     assert_eq!(
@@ -919,7 +922,7 @@ fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
     assert_eq!(
         rows(
             &mut session,
-            "SELECT any_value(v), count(*) FROM gg GROUP BY k"
+            "SELECT any_value(v), count(*) FROM gg GROUP BY k ORDER BY k"
         ),
         [["10", "2"], ["30", "1"]]
     );
@@ -934,11 +937,14 @@ fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
         [["10", "3"]]
     );
     assert_eq!(
-        rows(&mut session, "SELECT k, count(*) FROM gg GROUP BY k+0"),
+        rows(
+            &mut session,
+            "SELECT k, count(*) FROM gg GROUP BY k+0 ORDER BY k"
+        ),
         [["1", "2"], ["2", "1"]]
     );
     assert_eq!(
-        rows(&mut session, "SELECT k+v FROM gg GROUP BY k"),
+        rows(&mut session, "SELECT k+v FROM gg GROUP BY k ORDER BY k"),
         [["11"], ["32"]]
     );
 }
@@ -1381,7 +1387,7 @@ fn select_distinct_may_only_order_by_a_field_it_reports() {
         ("SELECT DISTINCT (k) FROM gg ORDER BY +k", &[&["1"], &["2"]]),
         ("SELECT k FROM gg ORDER BY v", &[&["1"], &["1"], &["2"]]),
         (
-            "SELECT DISTINCT z, w, count(*) FROM pk GROUP BY id",
+            "SELECT DISTINCT z, w, count(*) FROM pk GROUP BY id ORDER BY z",
             &[&["100", "10", "1"], &["200", "20", "1"]],
         ),
     ];

@@ -1005,10 +1005,8 @@ fn with_rollup() {
 /// bitmask whose LEFTMOST argument owns the HIGHEST bit (captured:
 /// `GROUPING(a,b) = 1` and `GROUPING(b,a) = 2` on the `b`-rolled-up row).
 ///
-/// Rows whose whole `ORDER BY` key ties -- a data-NULL row and the
-/// subtotal that also reports `b = NULL` -- keep this tier's stable
-/// emission order (data rows first, then subtotals); Go's order for such
-/// ties is nondeterministic, so only the multiset is contractual there.
+/// GROUPING(b) breaks the ORDER BY tie between a data-NULL row and its
+/// subtotal. Go does not guarantee their relative order without it.
 #[test]
 fn grouping_with_rollup() {
     let mut session = Session::new();
@@ -1025,7 +1023,7 @@ fn grouping_with_rollup() {
     assert_eq!(
         row_text(session.run(
             "SELECT a, b, GROUPING(a), GROUPING(b), SUM(c) FROM t \
-                 GROUP BY a, b WITH ROLLUP ORDER BY a, b"
+                 GROUP BY a, b WITH ROLLUP ORDER BY a, b, GROUPING(b)"
         )),
         [
             ["NULL", "NULL", "1", "1", "100"],
@@ -1042,7 +1040,7 @@ fn grouping_with_rollup() {
     assert_eq!(
         row_text(session.run(
             "SELECT a, b, GROUPING(a,b), GROUPING(b,a), SUM(c) FROM t \
-                 GROUP BY a, b WITH ROLLUP ORDER BY a, b"
+                 GROUP BY a, b WITH ROLLUP ORDER BY a, b, GROUPING(b)"
         )),
         [
             ["NULL", "NULL", "3", "3", "100"],
@@ -1074,7 +1072,7 @@ fn grouping_with_rollup() {
     assert_eq!(
         row_text(session.run(
             "SELECT a, b, GROUPING(a), SUM(c) FROM t GROUP BY a, b WITH ROLLUP \
-                 ORDER BY GROUPING(a), a, b"
+                 ORDER BY GROUPING(a), a, b, GROUPING(b)"
         )),
         [
             ["1", "NULL", "0", "20"],

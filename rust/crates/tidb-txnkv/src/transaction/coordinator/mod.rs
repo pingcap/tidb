@@ -233,6 +233,7 @@ pub struct RealOptimisticTransaction<C, L, T> {
     /// Go `SnapshotRuntimeStats` command RPC totals for point readers.
     snapshot_get_rpc_count: u64,
     snapshot_batch_get_rpc_count: u64,
+    snapshot_cache: snapshot_read::SnapshotCache,
     /// Transactions whose locks every later read from this snapshot may step
     /// over, and transactions whose committed value every later read must see
     /// through their lock.
@@ -376,6 +377,7 @@ where
             resource_group_name: None,
             snapshot_get_rpc_count: 0,
             snapshot_batch_get_rpc_count: 0,
+            snapshot_cache: snapshot_read::SnapshotCache::default(),
             resolved_locks: crate::lock::SnapshotLockSet::default(),
         })
     }

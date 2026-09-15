@@ -112,7 +112,10 @@ impl RegionRecoveryLoader for OneRegion {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
-        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        _resolved_stores: &mut std::collections::BTreeMap<
+            u64,
+            Option<tidb_txnkv::region::StoreMetadata>,
+        >,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",
@@ -135,6 +138,7 @@ impl TimestampSource for TickingTimestamps {
 #[derive(Debug, Default)]
 struct Recorded {
     get_versions: Vec<u64>,
+    batch_requests: Vec<KvrpcBatchGetRequest>,
     status_checks: Vec<KvrpcCheckTxnStatusRequest>,
 }
 
@@ -145,6 +149,7 @@ struct LockingClient {
     remaining_locked: u64,
     request_ids: u64,
     recorded: Arc<Mutex<Recorded>>,
+    batch_responses: std::collections::VecDeque<KvrpcBatchGetResponse>,
 }
 
 impl LockingClient {
@@ -153,6 +158,7 @@ impl LockingClient {
             remaining_locked: LOCKED_RESPONSES,
             request_ids: 0,
             recorded,
+            batch_responses: Default::default(),
         }
     }
 
@@ -182,11 +188,9 @@ impl LockingClient {
 /// silently shaping the outcome.
 macro_rules! never_published {
     ($self:ident, $name:literal) => {
-        PublishedCommand::BeforePublication(concat!(
-            "this regression never publishes ",
-            $name
+        PublishedCommand::BeforePublication(
+            concat!("this regression never publishes ", $name).to_owned(),
         )
-        .to_owned())
     };
 }
 
@@ -212,6 +216,16 @@ impl TransactionCommandClient for LockingClient {
                 }),
                 ..KvrpcGetResponse::default()
             }
+        } else if request.key == b"error" {
+            KvrpcGetResponse {
+                error: Some(KvrpcKeyError {
+                    abort: "injected read failure".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        } else if request.key == b"missing" {
+            KvrpcGetResponse::default()
         } else {
             KvrpcGetResponse {
                 value: b"waited-out-value".to_vec(),
@@ -224,11 +238,50 @@ impl TransactionCommandClient for LockingClient {
     fn publish_transaction_batch_get(
         &mut self,
         _address: &str,
-        _request: &KvrpcBatchGetRequest,
+        request: &KvrpcBatchGetRequest,
         _context: &KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcBatchGetResponse> {
-        never_published!(self, "BatchGet")
+        self.recorded
+            .lock()
+            .unwrap()
+            .batch_requests
+            .push(request.clone());
+        if let Some(response) = self.batch_responses.pop_front() {
+            return self.respond(BatchCommandTag::BatchGet, response);
+        }
+        if request.keys.iter().any(|key| key == b"error") {
+            return self.respond(
+                BatchCommandTag::BatchGet,
+                KvrpcBatchGetResponse {
+                    error: Some(KvrpcKeyError {
+                        abort: "injected read failure".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+        let pairs = request
+            .keys
+            .iter()
+            .filter(|key| key.as_slice() != b"missing")
+            .map(|key| (key.clone(), b"batch-value".to_vec()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_iter()
+            .map(|(key, value)| tidb_proto::KvrpcKvPair {
+                key,
+                value,
+                ..Default::default()
+            })
+            .collect();
+        self.respond(
+            BatchCommandTag::BatchGet,
+            KvrpcBatchGetResponse {
+                pairs,
+                ..Default::default()
+            },
+        )
     }
 
     fn publish_transaction_scan(
@@ -383,28 +436,327 @@ fn a_snapshot_read_waits_out_a_live_lock_beyond_four_attempts() {
         .expect("the read waits the lock out instead of exhausting a counter");
     assert_eq!(read.value.as_deref(), Some(b"waited-out-value".as_slice()));
 
-    let recorded = recorded.lock().unwrap();
+    let observations = recorded.lock().unwrap();
     assert_eq!(
-        recorded.get_versions.len() as u64,
+        observations.get_versions.len() as u64,
         LOCKED_RESPONSES + 1,
         "one probe per locked answer plus the final read"
     );
     assert!(
-        recorded
+        observations
             .get_versions
             .iter()
             .all(|version| *version == START_TS),
         "every probe reads at the transaction's one timestamp"
     );
     assert!(
-        !recorded.status_checks.is_empty(),
+        !observations.status_checks.is_empty(),
         "a locked probe consults the blocking transaction's status"
     );
     assert!(
-        recorded
+        observations
             .status_checks
             .iter()
             .all(|check| check.lock_ts == LOCK_TS && check.primary_key == ROW_KEY),
         "the status question names the lock's own transaction and primary"
+    );
+    drop(observations);
+
+    // Go KVSnapshot.Get/BatchGet share a timestamp-scoped cache, including
+    // not-found results. A lock retry only fills it after the final read.
+    let mut cached = transaction.snapshot_get(ROW_KEY, &call).unwrap();
+    assert_eq!(
+        cached.rpc_count, 0,
+        "a repeated snapshot read must not publish another Get"
+    );
+    assert!(cached.region.is_none() && cached.publication.is_none());
+    cached.value.as_mut().unwrap().clear();
+    assert_eq!(
+        transaction.snapshot_get(ROW_KEY, &call).unwrap().value,
+        read.value
+    );
+    let keys = vec![
+        ROW_KEY.to_vec(),
+        b"other".to_vec(),
+        b"missing".to_vec(),
+        b"other".to_vec(),
+    ];
+    let values = transaction
+        .snapshot_batch_get(&keys, &call)
+        .unwrap()
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(values.get(ROW_KEY), Some(&b"waited-out-value".to_vec()));
+    assert_eq!(
+        values.get(b"other".as_slice()),
+        Some(&b"batch-value".to_vec())
+    );
+    assert!(!values.contains_key(b"missing".as_slice()));
+    assert_eq!(
+        recorded.lock().unwrap().batch_requests[0].keys,
+        vec![b"missing".to_vec(), b"other".to_vec()]
+    );
+    let counts = transaction.snapshot_point_rpc_counts();
+    transaction.snapshot_batch_get(&keys, &call).unwrap();
+    assert_eq!(
+        transaction.snapshot_get(b"missing", &call).unwrap().value,
+        None
+    );
+    assert_eq!(
+        transaction.snapshot_get(b"other", &call).unwrap().value,
+        Some(b"batch-value".to_vec())
+    );
+    assert_eq!(transaction.snapshot_point_rpc_counts(), counts);
+    assert_eq!(
+        transaction.snapshot_batch_get(&keys, &call).unwrap().len(),
+        2
+    );
+    // A failed mixed batch must not return only its cached portion.
+    for _ in 0..2 {
+        assert!(transaction.snapshot_get(b"error", &call).is_err());
+        assert!(transaction
+            .snapshot_batch_get(&[ROW_KEY.to_vec(), b"error".to_vec()], &call)
+            .is_err());
+    }
+    assert_eq!(
+        transaction.snapshot_point_rpc_counts(),
+        (counts.0 + 2, counts.1 + 2)
+    );
+    transaction
+        .snapshot_scan_at(b"a", b"z", Some(0), START_TS + 1, &call)
+        .unwrap();
+    assert_eq!(
+        transaction.snapshot_get(ROW_KEY, &call).unwrap().rpc_count,
+        1
+    );
+
+    // For-update/read timestamps may move in either direction. Neither image
+    // may reuse the other, and MaxUint64 reads never populate the cache.
+    for ts in [START_TS + 1, START_TS, u64::MAX, u64::MAX] {
+        assert_eq!(
+            transaction
+                .snapshot_get_at(ROW_KEY, ts, &call)
+                .unwrap()
+                .rpc_count,
+            1
+        );
+    }
+    let before = transaction.snapshot_point_rpc_counts();
+    for _ in 0..2 {
+        transaction
+            .snapshot_batch_get_at(&keys, u64::MAX, &call)
+            .unwrap();
+    }
+    assert_eq!(transaction.snapshot_point_rpc_counts().1, before.1 + 2);
+    transaction
+        .snapshot_get_at(b"missing", START_TS, &call)
+        .unwrap();
+    assert_eq!(
+        transaction
+            .snapshot_get_at(b"missing", START_TS, &call)
+            .unwrap()
+            .rpc_count,
+        0
+    );
+    assert_batch_read_limits_and_pending_retries();
+}
+
+fn assert_batch_read_limits_and_pending_retries() {
+    // Go snapshot.go: batchGetSize, collectBatchGetResponseData, and
+    // batchGetSingleRegion. Reuse the existing injected client/region seam.
+    let fixture = |responses: Vec<KvrpcBatchGetResponse>| {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut client = LockingClient::new(Arc::clone(&recorded));
+        client.remaining_locked = 0;
+        client.batch_responses = responses.into();
+        let transaction = RealOptimisticTransaction::new_injected(
+            SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
+            TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+            CALL_TIMEOUT,
+            START_TS,
+            Instant::now(),
+            4,
+            4096,
+        )
+        .unwrap();
+        (transaction, recorded)
+    };
+    let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+    let wide_keys: Vec<_> = (0..5121).map(|i| format!("{i:064}").into_bytes()).collect();
+    let (mut transaction, recorded) = fixture(Vec::new());
+    assert_eq!(
+        transaction
+            .snapshot_batch_get(&wide_keys, &call)
+            .unwrap()
+            .len(),
+        5121
+    );
+    assert_eq!(
+        recorded
+            .lock()
+            .unwrap()
+            .batch_requests
+            .iter()
+            .map(|request| request.keys.len())
+            .collect::<Vec<_>>(),
+        vec![5120, 1],
+        "snapshot reads use Go's key-count limit, not commit's byte limit"
+    );
+    // Short keys expose the opposite bug: a byte cap can admit MORE than
+    // Go's maximum key count in one request.
+    let short_keys: Vec<_> = (0..5121_u16).map(|i| i.to_be_bytes().to_vec()).collect();
+    let (mut transaction, recorded) = fixture(Vec::new());
+    assert_eq!(
+        transaction
+            .snapshot_batch_get(&short_keys, &call)
+            .unwrap()
+            .len(),
+        5121
+    );
+    assert_eq!(
+        recorded
+            .lock()
+            .unwrap()
+            .batch_requests
+            .iter()
+            .map(|request| request.keys.len())
+            .collect::<Vec<_>>(),
+        vec![5120, 1]
+    );
+
+    let keys = vec![b"a".to_vec(), b"b".to_vec(), b"missing".to_vec()];
+    let lock = KvrpcKeyError {
+        locked: Some(KvrpcLockInfo {
+            key: b"b".to_vec(),
+            ..LockingClient::live_lock()
+        }),
+        ..Default::default()
+    };
+    for response_level in [false, true] {
+        let mut pairs = vec![tidb_proto::KvrpcKvPair {
+            key: b"a".to_vec(),
+            value: b"first-value".to_vec(),
+            ..Default::default()
+        }];
+        if !response_level {
+            // A pair can omit its outer key; the lock owns the retry key.
+            pairs.push(tidb_proto::KvrpcKvPair {
+                error: Some(lock.clone()),
+                ..Default::default()
+            });
+        }
+        let (mut transaction, recorded) = fixture(vec![KvrpcBatchGetResponse {
+            error: response_level.then(|| lock.clone()),
+            pairs,
+            ..Default::default()
+        }]);
+        let values = transaction
+            .snapshot_batch_get(&keys, &call)
+            .unwrap()
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(values.len(), 2);
+        assert_eq!(
+            values.get(b"a".as_slice()).unwrap().as_slice(),
+            if response_level {
+                b"batch-value".as_slice()
+            } else {
+                b"first-value".as_slice()
+            }
+        );
+        let requests = &recorded.lock().unwrap().batch_requests;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[1].keys,
+            if response_level {
+                keys.clone()
+            } else {
+                vec![b"b".to_vec()]
+            }
+        );
+    }
+
+    // A retryable region error in the first physical batch must not throw
+    // away the successful second batch from the same publication round.
+    let (mut transaction, recorded) = fixture(vec![
+        KvrpcBatchGetResponse {
+            region_error: Some(tidb_proto::errorpb::Error {
+                server_is_busy: Some(tidb_proto::errorpb::ServerIsBusy {
+                    reason: "injected retry".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        KvrpcBatchGetResponse {
+            pairs: vec![tidb_proto::KvrpcKvPair {
+                key: wide_keys[5120].clone(),
+                value: b"completed-batch".to_vec(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+    ]);
+    let values = transaction
+        .snapshot_batch_get(&wide_keys, &call)
+        .unwrap()
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(values.len(), wide_keys.len());
+    assert_eq!(
+        values.get(&wide_keys[5120]),
+        Some(&b"completed-batch".to_vec())
+    );
+    assert_eq!(
+        recorded
+            .lock()
+            .unwrap()
+            .batch_requests
+            .iter()
+            .map(|request| request.keys.len())
+            .collect::<Vec<_>>(),
+        vec![5120, 1, 5120]
+    );
+    assert_eq!(transaction.snapshot_point_rpc_counts(), (0, 3));
+    assert_eq!(
+        transaction
+            .snapshot_batch_get(&wide_keys, &call)
+            .unwrap()
+            .len(),
+        5121
+    );
+    assert_eq!(
+        transaction.snapshot_point_rpc_counts(),
+        (0, 3),
+        "cache every completed batch, not only the last retry"
+    );
+
+    // A fatal later batch must not populate the cache with a successful
+    // prefix from an operation that returned an error.
+    let (mut transaction, _) = fixture(vec![
+        KvrpcBatchGetResponse {
+            pairs: vec![tidb_proto::KvrpcKvPair {
+                key: wide_keys[0].clone(),
+                value: b"uncommitted-read-result".to_vec(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+        KvrpcBatchGetResponse {
+            error: Some(KvrpcKeyError {
+                abort: "injected fatal batch".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    ]);
+    assert!(transaction.snapshot_batch_get(&wide_keys, &call).is_err());
+    assert_eq!(
+        transaction
+            .snapshot_get(&wide_keys[0], &call)
+            .unwrap()
+            .rpc_count,
+        1
     );
 }

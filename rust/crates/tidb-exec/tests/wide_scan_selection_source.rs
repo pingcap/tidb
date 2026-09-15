@@ -562,9 +562,9 @@ fn every_integer_column_width_and_signedness_lowers_with_its_own_field_type() {
     }
 }
 
-/// The refusals, each for a reason Go's own refinement makes necessary.
+/// PB lowering preserves integer signedness and rejects invalid descriptors.
 #[test]
-fn the_wide_lowering_refuses_what_go_would_have_refined_or_cannot_compare_as_an_integer() {
+fn the_wide_lowering_preserves_integer_types_and_rejects_invalid_descriptors() {
     let signed = vec![column_of(MYSQL_TYPE_LONGLONG, 0)];
     let unsigned = vec![column_of(MYSQL_TYPE_LONGLONG, UNSIGNED_FLAG)];
     let text = vec![column_of(MYSQL_TYPE_VARCHAR, 0)];
@@ -596,17 +596,36 @@ fn the_wide_lowering_refuses_what_go_would_have_refined_or_cannot_compare_as_an_
         ),
         Err(WideScanSelectionError::UnsupportedLiteral { offset: 0 })
     );
-    // A non-positive constant against an UNSIGNED column: Go's
-    // `refineArgsByUnsignedFlag` replaces the comparison with a known truth
-    // value instead of sending it, so this lowering must not send it either.
+    // Go CompareInt supports mixed signedness. Planner refinement can fold
+    // this predicate, but scalarFuncToPBExpr serializes an unfolded comparison
+    // with each child's type; the PB boundary must not forbid that encoding.
     for value in [-1, 0] {
+        let conditions = wide_scan_selection_conditions(
+            &[pushed(0, ScanComparisonOp::Lt, Datum::Int(value), true)],
+            &unsigned,
+        )
+        .expect("a mixed-signedness integer comparison lowers");
+        let condition = &conditions[0];
+        assert_eq!(condition.sig, Some(ScalarFuncSig::LtInt as i32));
+        assert_ne!(
+            condition.children[0]
+                .field_type
+                .as_ref()
+                .unwrap()
+                .flag
+                .unwrap_or(0)
+                & UNSIGNED_FLAG as u32,
+            0,
+        );
         assert_eq!(
-            wide_scan_selection_conditions(
-                &[pushed(0, ScanComparisonOp::Lt, Datum::Int(value), true)],
-                &unsigned
-            ),
-            Err(WideScanSelectionError::UnsupportedLiteral { offset: 0 }),
-            "unsigned column against {value}"
+            condition.children[1]
+                .field_type
+                .as_ref()
+                .unwrap()
+                .flag
+                .unwrap_or(0)
+                & UNSIGNED_FLAG as u32,
+            0,
         );
     }
     // The same constant against a SIGNED column is an ordinary comparison.

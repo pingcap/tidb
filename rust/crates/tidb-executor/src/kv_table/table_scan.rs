@@ -158,35 +158,27 @@ impl KvTable {
             return Ok(Vec::new());
         }
         let physical_ids = self.record_physical_ids();
-        let mut probes = Vec::with_capacity(handles.len() * physical_ids.len());
+        if physical_ids.is_empty() {
+            return Ok(vec![None; handles.len()]);
+        }
+        let mut keys = Vec::with_capacity(handles.len() * physical_ids.len());
         for handle in handles {
+            let record_handle = handle.record_handle();
             for physical_id in &physical_ids {
-                probes.push((
-                    Key::from_bytes(encode_row_key_with_handle(
-                        *physical_id,
-                        &handle.record_handle(),
-                    )),
-                    handle.clone(),
-                ));
+                keys.push(Key::from_bytes(encode_row_key_with_handle(
+                    *physical_id,
+                    &record_handle,
+                )));
             }
         }
-        let keys: Vec<Key> = probes.iter().map(|(key, _)| key.clone()).collect();
         let entries = self.store.batch_get(&keys).map_err(KvTableError::from)?;
-        // Keep the batch lookup linear. Scanning `probes` for every handle
-        // makes a 20k-row index batch quadratic before row decoding starts;
-        // Go's batch table reader indexes each returned record once.
-        let mut probe_indices = BTreeMap::<TableHandle, Vec<usize>>::new();
-        for (index, (_, handle)) in probes.iter().enumerate() {
-            probe_indices.entry(handle.clone()).or_default().push(index);
-        }
+        // Each handle owns a contiguous window of physical keys. Preserve
+        // handle order and the first matching partition without a second
+        // key/handle collection or a tree lookup for every output row.
         let decoder = self.row_decoder_projected(keep, context)?;
         let mut rows = Vec::with_capacity(handles.len());
-        for handle in handles {
-            let entry = probe_indices
-                .get(handle)
-                .into_iter()
-                .flatten()
-                .find_map(|index| entries.get(&probes[*index].0));
+        for (handle, keys) in handles.iter().zip(keys.chunks_exact(physical_ids.len())) {
+            let entry = keys.iter().find_map(|key| entries.get(key));
             let Some(entry) = entry else {
                 rows.push(None);
                 continue;

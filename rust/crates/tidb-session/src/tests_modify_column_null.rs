@@ -60,8 +60,12 @@ fn modify_not_null_preserves_go_precheck_error_and_timestamp_boundary() {
         ("same_int", "INT", "INT"),
         ("same_timestamp", "TIMESTAMP NULL", "TIMESTAMP"),
     ] {
-        session.run(&format!("CREATE TABLE {name} (id INT, B {old_type})")).unwrap();
-        session.run(&format!("INSERT INTO {name} VALUES (1, NULL), (2, NULL)")).unwrap();
+        session
+            .run(&format!("CREATE TABLE {name} (id INT, B {old_type})"))
+            .unwrap();
+        session
+            .run(&format!("INSERT INTO {name} VALUES (1, NULL), (2, NULL)"))
+            .unwrap();
         let error = session
             .run(&format!("ALTER TABLE {name} MODIFY B {new_type} NOT NULL"))
             .unwrap_err()
@@ -73,4 +77,23 @@ fn modify_not_null_preserves_go_precheck_error_and_timestamp_boundary() {
             [["NULL"], ["NULL"]]
         );
     }
+    session
+        .run("CREATE TABLE renamed (id INT PRIMARY KEY, OldName INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO renamed VALUES (1, 10), (2, NULL)")
+        .unwrap();
+    let error = session
+        .run("ALTER TABLE renamed CHANGE OldName NewName INT NOT NULL")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1265);
+    assert_eq!(
+        error.message,
+        "Data truncated for column 'newname' at row 1"
+    );
+    assert_eq!(
+        row_text(session.run("SELECT OldName FROM renamed ORDER BY id")),
+        [["10"], ["NULL"]]
+    );
 }

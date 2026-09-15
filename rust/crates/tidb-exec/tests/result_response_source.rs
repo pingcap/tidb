@@ -67,7 +67,9 @@ fn tableless_operator_and_function_metadata_is_derived() {
     assert_eq!(columns[1].name, "text_value");
     assert_eq!(columns[0].type_code, 8); // MYSQL_TYPE_LONGLONG
     assert_eq!(columns[1].type_code, 253); // MYSQL_TYPE_VAR_STRING
-    assert_eq!(columns[1].charset, 45); // utf8mb4_general_ci
+                                           // Go ConvertColumnInfo uses CharsetNameToID, not the expression's
+                                           // collation ID: utf8mb4 maps to its default, utf8mb4_bin.
+    assert_eq!(columns[1].charset, 46);
 }
 
 #[test]
