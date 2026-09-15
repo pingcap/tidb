@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 )
@@ -39,23 +38,24 @@ import (
 func init() { importer.RunImportQuery = runImportQuery }
 
 func parseImportQuery(sctx sessionctx.Context, sql string) (ast.StmtNode, error) {
-	pa := parser.New()
-	pa.SetSQLMode(sctx.GetSessionVars().SQLMode)
+	p := parser.New()
+	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	node, err := pa.ParseOneStmt(sql, charset, collation)
+	node, err := p.ParseOneStmt(sql, charset, collation)
 	if err != nil {
 		return nil, err
 	}
-	if stmt, ok := node.(*ast.ImportIntoStmt); ok {
-		var valid bool
-		node, valid = stmt.Select.(ast.StmtNode)
-		if !valid {
-			return nil, errors.New("import query requires a SELECT")
-		}
-	}
-	if _, ok := node.(ast.ResultSetNode); !ok {
+
+	stmt, ok := node.(*ast.ImportIntoStmt)
+	if !ok {
 		return nil, errors.New("import query requires a SELECT")
 	}
+
+	node, ok = stmt.Select.(ast.StmtNode)
+	if !ok {
+		return nil, errors.New("import query requires a SELECT")
+	}
+
 	return node, nil
 }
 
@@ -68,19 +68,21 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 	if !ast.Walk(node, &importQueryVariableChecker{}) {
 		return nil, errors.New("import query does not support variables")
 	}
+
 	q := &importer.QueryPlan{
-		CurrentDB: sctx.GetSessionVars().CurrentDB,
-		Timestamp: time.Now().Unix(),
-		Keyspace:  sctx.GetStore().GetKeyspace(),
-		// Preserve the original literals, charset introducers and escaping.
+		CurrentDB:   sctx.GetSessionVars().CurrentDB,
+		Timestamp:   time.Now().Unix(),
+		Keyspace:    sctx.GetStore().GetKeyspace(),
 		SQL:         sql,
 		SessionVars: make(map[string]string),
+		Databases:   make(map[int64]*model.DBInfo),
 		Tables:      make(map[int64][]*model.TableInfo),
 	}
 	vars := sctx.GetSessionVars()
 	for _, name := range []string{
 		vardef.SQLModeVar, vardef.TimeZone, vardef.TiDBDistSQLScanConcurrency,
-		vardef.CharacterSetClient, vardef.CharacterSetConnection, vardef.CharacterSetResults, vardef.CollationConnection,
+		vardef.CharacterSetClient, vardef.CharacterSetConnection,
+		vardef.CharacterSetResults, vardef.CollationConnection,
 		vardef.TiDBHashAggPartialConcurrency, vardef.TiDBHashAggFinalConcurrency,
 		vardef.TiDBEnableVectorizedExpression, vardef.TiDBMaxTiFlashThreads,
 		vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy,
@@ -98,62 +100,52 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 	q.SessionVars[vardef.TimeZone] = timeutil.ZoneName(vars.Location())
 	q.PushDownFlags = vars.StmtCtx.PushDownFlags()
 	nodeW := resolve.NewNodeW(node)
-	ret := &plannercore.PreprocessorReturn{InfoSchema: sctx.GetInfoSchema().(infoschema.InfoSchema)}
-	if err := plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	ret := &plannercore.PreprocessorReturn{
+		InfoSchema: sctx.GetLatestInfoSchema().(infoschema.InfoSchema),
+	}
+	if err := plannercore.Preprocess(
+		context.Background(), sctx, nodeW,
+		plannercore.WithPreprocessorReturn(ret),
+	); err != nil {
 		return nil, err
 	}
-	dbs := make(map[int64]*model.DBInfo)
+
 	seen := make(map[int64]bool)
 	for _, tableName := range nodeW.GetResolveContext().GetTableNames() {
-		meta, db := tableName.TableInfo, tableName.DBInfo
-		if meta.IsView() || meta.TempTableType != model.TempTableNone || meta.TableCacheStatusType != model.TableCacheStatusDisable {
+		tblInfo, dbInfo := tableName.TableInfo, tableName.DBInfo
+		if tblInfo.IsView() ||
+			tblInfo.TempTableType != model.TempTableNone ||
+			tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 			return nil, errors.New("import query requires persistent, uncached source tables")
 		}
-		if seen[meta.ID] {
-			continue
+		if !seen[tblInfo.ID] {
+			seen[tblInfo.ID] = true
+			q.Databases[dbInfo.ID] = dbInfo
+			q.Tables[dbInfo.ID] = append(q.Tables[dbInfo.ID], tblInfo)
 		}
-		seen[meta.ID] = true
-		captured := dbs[db.ID]
-		if captured == nil {
-			captured = db.Clone()
-			captured.Deprecated.Tables = nil
-			dbs[db.ID] = captured
-			q.Databases = append(q.Databases, captured)
-		}
-		tableInfo := meta.Clone()
-		tableInfo.DBID = db.ID
-		q.Tables[db.ID] = append(q.Tables[db.ID], tableInfo)
 	}
 	return q, nil
 }
 
-// Variable values and side effects are not transferred between submitter and worker.
 type importQueryVariableChecker struct{}
 
 func (*importQueryVariableChecker) Enter(ast.Node) bool { return false }
+
 func (*importQueryVariableChecker) Leave(node ast.Node) bool {
 	_, isVariable := node.(*ast.VariableExpr)
 	return !isVariable
 }
 
 func runImportQuery(
-	ctx context.Context, sctx sessionctx.Context, q *importer.QueryPlan, memoryLimit int64, output chan<- importer.QueryChunk,
+	ctx context.Context, sctx sessionctx.Context,
+	q *importer.QueryPlan, memoryLimit int64,
+	output chan<- importer.QueryChunk,
 ) (err error) {
-	var opened exec.Executor
-	defer func() {
-		if r := recover(); r != nil {
-			err = tidbutil.GetRecoverError(r)
-		}
-		if opened != nil {
-			if closeErr := exec.Close(opened); err == nil {
-				err = closeErr
-			}
-		}
-	}()
 	workerSession, node, err := newImportQuerySession(ctx, sctx, q, memoryLimit)
 	if err != nil {
 		return err
 	}
+
 	vars := workerSession.GetSessionVars()
 	stmt, err := (&Compiler{Ctx: workerSession}).Compile(ctx, node)
 	if err != nil {
@@ -168,7 +160,8 @@ func runImportQuery(
 		failpoint.Return(errors.New("injected failure after import query optimization"))
 	})
 	b := newExecutorBuilder(ctx, workerSession, workerSession.schema, nil)
-	b.forDataReaderBuilder, b.dataReaderTS = true, vars.SnapshotTS
+	b.forDataReaderBuilder = true
+	b.dataReaderTS = vars.SnapshotTS
 	e := b.build(p)
 	if b.err != nil {
 		return b.err
@@ -176,14 +169,18 @@ func runImportQuery(
 	if e == nil {
 		return errors.New("import query built no executor")
 	}
-	opened = e
 	if err := exec.Open(ctx, e); err != nil {
 		return err
 	}
+	defer func() {
+		if closeErr := exec.Close(e); err == nil {
+			err = closeErr
+		}
+	}()
+
 	fields := e.RetFieldTypes()
 	var rowID int64
 	for {
-		// Encoding consumes each chunk asynchronously, so no session chunk pool.
 		chk := chunk.New(fields, 32, vars.MaxChunkSize)
 		if err := exec.Next(ctx, e, chk); err != nil {
 			return err

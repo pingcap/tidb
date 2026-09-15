@@ -33,12 +33,14 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
-func newImportQuerySchema(sctx sessionctx.Context, q *importer.QueryPlan, readTS uint64) (infoschema.InfoSchema, error) {
+func newImportQuerySchema(
+	sctx sessionctx.Context,
+	q *importer.QueryPlan,
+	readTS uint64,
+) (infoschema.InfoSchema, error) {
 	dbs := make([]*model.DBInfo, len(q.Databases))
 	for i, db := range q.Databases {
-		// The builder mutates database metadata, so each attempt owns its copies.
 		dbInfo := db.Clone()
-		dbInfo.Deprecated.Tables = nil
 		for _, tbl := range q.Tables[db.ID] {
 			tableInfo := tbl.Clone()
 			tableInfo.DBID = db.ID
@@ -46,11 +48,11 @@ func newImportQuerySchema(sctx sessionctx.Context, q *importer.QueryPlan, readTS
 		}
 		dbs[i] = dbInfo
 	}
-	parent := sctx.GetInfoSchema().(infoschema.InfoSchema)
+
+	parent := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	b := infoschema.NewBuilder(parent.GetAutoIDRequirement(), 0, nil, infoschema.NewData(), false).
 		WithCrossKS(true)
-	// This schema contains the submitted table definitions, not a Domain cache version.
-	if err := b.InitWithDBInfos(dbs, parent.AllPlacementPolicies(), parent.AllResourceGroups(), parent.AllMaskingPolicies(), 0); err != nil {
+	if err := b.InitWithDBInfos(dbs, parent.AllPlacementPolicies(), nil, nil, 0); err != nil {
 		return nil, err
 	}
 	return b.Build(readTS), nil
@@ -66,21 +68,26 @@ type importQuerySession struct {
 func (c *importQuerySession) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return c.schema
 }
+
 func (c *importQuerySession) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
 	return c.schema
 }
-func (c *importQuerySession) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema { return c.schema }
-func (c *importQuerySession) GetPlanCtx() base.PlanContext                    { return c }
+
+func (c *importQuerySession) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
+	return c.schema
+}
+
+func (c *importQuerySession) GetPlanCtx() base.PlanContext { return c }
 
 // newImportQuerySession prepares and wraps the caller-owned session for one query attempt.
 func newImportQuerySession(
-	ctx context.Context, sctx sessionctx.Context, q *importer.QueryPlan, memoryLimit int64,
+	ctx context.Context, sctx sessionctx.Context,
+	q *importer.QueryPlan, memoryLimit int64,
 ) (*importQuerySession, ast.StmtNode, error) {
 	if sctx.GetStore().GetKeyspace() != q.Keyspace {
 		return nil, nil, errors.New("import query runtime keyspace mismatch")
 	}
 	vars := sctx.GetSessionVars()
-	// Apply charset before collation; the charset setter also updates collation.
 	varNames := slices.Sorted(maps.Keys(q.SessionVars))
 	for _, name := range varNames {
 		if err := vars.SetSystemVar(name, q.SessionVars[name]); err != nil {
@@ -90,9 +97,7 @@ func newImportQuerySession(
 	vars.MemQuotaQuery = memoryLimit
 	vars.MemTracker.SetBytesLimit(memoryLimit)
 	vars.CurrentDB = q.CurrentDB
-	// Without a statistics provider, this worker uses static partition pruning.
 	vars.PartitionPruneMode.Store("static")
-	// Each attempt reads data at execution time using the submitted table definitions.
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -115,10 +120,13 @@ func newImportQuerySession(
 	if err := ResetContextOfStmt(sctx, node); err != nil {
 		return nil, nil, err
 	}
-	if err := sessiontxn.GetTxnManager(sctx).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{Type: sessiontxn.EnterNewTxnBeforeStmt}); err != nil {
+	if err := sessiontxn.GetTxnManager(sctx).EnterNewTxn(
+		ctx, &sessiontxn.EnterNewTxnRequest{Type: sessiontxn.EnterNewTxnBeforeStmt},
+	); err != nil {
 		return nil, nil, err
 	}
-	vars.SnapshotTS, vars.SnapshotInfoschema = readTS, is
+	vars.SnapshotTS = readTS
+	vars.SnapshotInfoschema = is
 	vars.StmtCtx.InitFromPBFlagAndTz(q.PushDownFlags, vars.Location())
 	querySession := &importQuerySession{Context: sctx, schema: is}
 	querySession.PlanCtxExtended = plannersession.NewPlanCtxExtended(querySession)

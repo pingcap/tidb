@@ -53,12 +53,12 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -332,18 +332,20 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		s.estimateAndSetConcurrency(ctx, subtaskMeta.Chunks)
 	})
 
-	group, groupCtx := errgroup.WithContext(ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	chunks := subtaskMeta.Chunks
 	concurrency := s.concurrency
 	if query := s.taskMeta.Plan.Query; query != nil {
 		selected := make(chan importer.QueryChunk, 1)
 		s.tableImporter.SetSelectedChunkCh(selected)
 		chunks = []importer.Chunk{{Timestamp: query.Timestamp}}
-		concurrency = max(1, min(s.taskMeta.Plan.ThreadCnt, concurrency))
-		group.Go(func() error { return s.readQuery(groupCtx, selected) })
+		eg.Go(func() error {
+			return s.readQuery(egCtx, selected)
+		})
 	}
-	group.Go(func() error {
-		wctx := workerpool.NewContext(groupCtx)
+
+	eg.Go(func() error {
+		wctx := workerpool.NewContext(egCtx)
 		tasks := make([]*importStepMinimalTask, 0, len(chunks))
 		for _, chunk := range chunks {
 			tasks = append(tasks, &importStepMinimalTask{
@@ -369,25 +371,29 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		}
 		return err
 	})
-	if err := group.Wait(); err != nil {
+
+	if err := eg.Wait(); err != nil {
 		return err
 	}
-
 	return s.onFinished(ctx, subtask, objStore)
 }
 
-// readQuery supplies rows to the shared encode-and-sort pipeline.
-func (s *importStepExecutor) readQuery(ctx context.Context, selected chan<- importer.QueryChunk) error {
+func (s *importStepExecutor) readQuery(
+	ctx context.Context,
+	selected chan<- importer.QueryChunk,
+) error {
 	defer close(selected)
 	pool := s.queryRuntime.SysSessionPool()
 	resource, err := pool.Get()
 	if err != nil {
 		return err
 	}
-	// Query execution mutates session state, so destroy this session after the attempt.
+
 	defer pool.Destroy(resource)
 	se := resource.(sessionctx.Context)
-	return importer.RunImportQuery(ctx, se, s.taskMeta.Plan.Query, s.GetResource().Mem.Capacity()/2, selected)
+	return importer.RunImportQuery(
+		ctx, se, s.taskMeta.Plan.Query,
+		s.GetResource().Mem.Capacity()/2, selected)
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {

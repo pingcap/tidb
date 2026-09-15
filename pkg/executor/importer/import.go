@@ -265,7 +265,7 @@ type QueryPlan struct {
 	CurrentDB string
 	Timestamp int64
 	Keyspace  string
-	Databases []*model.DBInfo
+	Databases map[int64]*model.DBInfo
 	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
 	// Persist table definitions grouped by database ID explicitly.
 	Tables        map[int64][]*model.TableInfo
