@@ -324,6 +324,44 @@ struct ParallelProbeResult {
     condition_evals: u64,
 }
 
+/// Scratch owned by one Go-style probe run and reused for every chunk in that
+/// run. The worker already keeps its output chunk across the run; retaining
+/// the temporary lookup and row-reconstruction buffers here removes the same
+/// per-chunk allocation churn from the probe side.
+struct ProbeBatchScratch {
+    build_buf: Chunk,
+    condition_chunk: Chunk,
+    exact_keys: Vec<Option<i128>>,
+    home_slots: Vec<(u64, u64)>,
+    exact_found: Vec<Option<usize>>,
+    batch_ptrs: Vec<RowPtr>,
+    candidates: Vec<RowPtr>,
+}
+
+impl ProbeBatchScratch {
+    fn new(build_types: &[FieldType], condition_types: &[FieldType]) -> Self {
+        Self {
+            build_buf: Chunk::new_with_capacity(build_types, 1),
+            condition_chunk: Chunk::new_with_capacity(condition_types, 1),
+            exact_keys: Vec::new(),
+            home_slots: Vec::new(),
+            exact_found: Vec::new(),
+            batch_ptrs: Vec::new(),
+            candidates: Vec::new(),
+        }
+    }
+
+    fn reset_for_chunk(&mut self) {
+        self.build_buf.reset();
+        self.condition_chunk.reset();
+        self.exact_keys.clear();
+        self.home_slots.clear();
+        self.exact_found.clear();
+        self.batch_ptrs.clear();
+        self.candidates.clear();
+    }
+}
+
 /// One pool task's whole run: the probe chunks it took, and the result chunks
 /// it filled across them. Go's `runJoinWorker` keeps one `joinResult` chunk
 /// across every probe chunk it takes from its channel and sends it on only
@@ -3702,6 +3740,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let mut outputs: Vec<Chunk> = Vec::new();
         let mut matched_build_rows: Vec<RowPtr> = Vec::new();
         let mut condition_evals = 0u64;
+        let mut scratch = ProbeBatchScratch::new(&shared.build_types, &shared.condition_types);
         for input in inputs {
             // The unique exact-integer worker appends a whole probe chunk's
             // matches as one range, without a per-row fullness check, because
@@ -3731,10 +3770,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     shared.builds_preserved,
                     &shared.ctx,
                     shared.residual_conditions.as_slice(),
-                    shared.condition_types.as_slice(),
+                    &mut scratch,
                 )?
             } else {
-                Self::probe_hashed_chunk(shared, input, carried)?
+                Self::probe_hashed_chunk(shared, input, carried, &mut scratch)?
             };
             done_inputs.push(result.input);
             // The set-aside chunks filled before the one the worker still
@@ -3824,6 +3863,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         shared: &ParallelProbeShared<C>,
         input: Chunk,
         mut output: Chunk,
+        scratch: &mut ProbeBatchScratch,
     ) -> Result<ParallelProbeResult, ExecError> {
         // `output` carries rows from the earlier probe chunks of this run;
         // only [`Self::probe_batch`] resets or rotates it.
@@ -3852,29 +3892,35 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let exact_int = keys.first().filter(|key| {
             keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe && table.has_exact_int()
         });
-        let mut build_buf = Chunk::new_with_capacity(build_types, 1);
-        let mut condition_chunk = Chunk::new_with_capacity(&shared.condition_types, 1);
+        scratch.reset_for_chunk();
+        let build_buf = &mut scratch.build_buf;
+        let condition_chunk = &mut scratch.condition_chunk;
+        let exact_keys = &mut scratch.exact_keys;
+        let home_slots = &mut scratch.home_slots;
+        let exact_found = &mut scratch.exact_found;
+        let candidates = &mut scratch.candidates;
         let condition_evals = Cell::new(0u64);
         let mut matched_build_rows = Vec::new();
         let mut extra_outputs = Vec::new();
-        let mut candidates: Vec<RowPtr> = Vec::new();
         // An exact-integer key is looked up for the whole chunk before the
         // row loop, so the table's cache misses overlap across rows.
-        let mut exact_found: Vec<Option<usize>> = vec![None; input.num_rows()];
         if let Some(key) = exact_int {
-            let keys: Vec<Option<i128>> = (0..input.num_rows())
-                .map(|probe_index| {
-                    exact_int_key_chunk(
-                        input.get_row(probe_index),
-                        offset(key),
-                        &probe_types[offset(key)],
-                    )
-                })
-                .collect();
-            let mut home_slots = Vec::new();
-            table.probe_exact_int_many(&keys, &mut home_slots, &mut exact_found);
+            exact_keys.extend((0..input.num_rows()).map(|probe_index| {
+                exact_int_key_chunk(
+                    input.get_row(probe_index),
+                    offset(key),
+                    &probe_types[offset(key)],
+                )
+            }));
+            table.probe_exact_int_many(exact_keys, home_slots, exact_found);
+        } else {
+            // Keep the row loop shared with the exact path. The table lookup
+            // fills this vector only for exact keys; a general hash key gets
+            // its candidate chain from `row_hash_chunk` below.
+            exact_found.resize(input.num_rows(), None);
         }
-        for (probe_index, &found) in exact_found.iter().enumerate() {
+        for probe_index in 0..input.num_rows() {
+            let found = exact_found[probe_index];
             let probe_row = input.get_row(probe_index);
             candidates.clear();
             if exact_int.is_some() {
@@ -3885,9 +3931,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 candidates.extend(table.probe(key));
             }
             let mut matched = false;
-            for &ptr in &candidates {
+            for &ptr in candidates.iter() {
                 let accepted = table
-                    .with_row(ptr, &mut build_buf, |build_row| {
+                    .with_row(ptr, build_buf, |build_row| {
                         let (left, left_types, right, right_types) = if probe_is_left {
                             (probe_row, probe_types, build_row, build_types)
                         } else {
@@ -3910,7 +3956,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 &shared.ctx,
                                 residual_conditions,
                                 &condition_evals,
-                                &mut condition_chunk,
+                                condition_chunk,
                                 left,
                                 right,
                                 left_types.len(),
@@ -4007,7 +4053,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         builds_preserved: bool,
         ctx: &C,
         residual_conditions: &[Expression],
-        condition_types: &[FieldType],
+        scratch: &mut ProbeBatchScratch,
     ) -> Result<ParallelProbeResult, ExecError> {
         // `output` carries rows from the earlier probe chunks of this run;
         // only [`Self::probe_batch`] resets or rotates it.
@@ -4028,8 +4074,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 probe_types.len()
             )));
         }
-        let mut build_buf = Chunk::new_with_capacity(build_types, 1);
-        let mut condition_chunk = Chunk::new_with_capacity(condition_types, 1);
+        scratch.reset_for_chunk();
+        let build_buf = &mut scratch.build_buf;
+        let condition_chunk = &mut scratch.condition_chunk;
+        let exact_keys = &mut scratch.exact_keys;
+        let home_slots = &mut scratch.home_slots;
+        let exact_found = &mut scratch.exact_found;
+        let batch_ptrs = &mut scratch.batch_ptrs;
         let condition_evals = Cell::new(0u64);
         let mut matched_build_rows = if builds_preserved {
             Vec::with_capacity(input.num_rows())
@@ -4072,13 +4123,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         // for the post-probe scan.
         // Every key of the chunk is looked up at once, so the table's cache
         // misses overlap across rows instead of stalling one row at a time.
-        let mut exact_found: Vec<Option<usize>> = Vec::new();
-        {
-            let keys: Vec<Option<i128>> = (0..input.num_rows()).map(exact_key_at).collect();
-            let mut home_slots = Vec::new();
-            table.probe_exact_int_many(&keys, &mut home_slots, &mut exact_found);
-        }
-        let mut batch_ptrs = Vec::with_capacity(input.num_rows());
+        exact_keys.extend((0..input.num_rows()).map(exact_key_at));
+        table.probe_exact_int_many(exact_keys, home_slots, exact_found);
         batch_ptrs.extend(
             exact_found
                 .iter()
@@ -4111,7 +4157,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 if !residual_conditions.is_empty() {
                     let mut probe_index = 0;
                     table
-                        .with_rows(&batch_ptrs, &mut build_buf, |build_row| {
+                        .with_rows(&batch_ptrs, build_buf, |build_row| {
                             let current_probe_index = probe_index;
                             probe_index += 1;
                             let probe_row = input.get_row(current_probe_index);
@@ -4124,7 +4170,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 ctx,
                                 residual_conditions,
                                 &condition_evals,
-                                &mut condition_chunk,
+                                condition_chunk,
                                 left,
                                 right,
                                 left_width,
@@ -4175,7 +4221,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     output_layout.key_range(&mut output, !probe_is_left, &probe, key_offset);
                 } else {
                     table
-                        .with_rows(&batch_ptrs, &mut build_buf, |build_row| {
+                        .with_rows(&batch_ptrs, build_buf, |build_row| {
                             output_layout.chunk_side(&mut output, !probe_is_left, build_row);
                             Ok::<(), ExecError>(())
                         })
@@ -4224,7 +4270,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let mut match_index = 0;
             if !batch_ptrs.is_empty() {
                 table
-                    .with_rows(&batch_ptrs, &mut build_buf, |build_row| {
+                    .with_rows(&batch_ptrs, build_buf, |build_row| {
                         let probe_index = loop {
                             let (index, found) =
                                 probe_rows.next().expect("one probe per build match");
@@ -4252,7 +4298,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                     ctx,
                                     residual_conditions,
                                     &condition_evals,
-                                    &mut condition_chunk,
+                                    condition_chunk,
                                     left,
                                     right,
                                     left_width,
