@@ -244,6 +244,11 @@ struct HashState {
     /// exact-integer path. Kept as an execution-path receipt for focused
     /// regression tests.
     parallel_probe_windows: usize,
+    /// Whether a parallel worker has decoded a spilled build row into its
+    /// reusable read-back chunk. The worker owns that chunk, so retain the
+    /// same one-row observable that the serial path exposes through
+    /// `build_buf`.
+    parallel_build_buf_rows: usize,
 }
 
 /// The 'static snapshots one probe worker borrows for one chunk: Go lends its
@@ -322,6 +327,7 @@ struct ParallelProbeResult {
     extra_outputs: Vec<Chunk>,
     matched_build_rows: Vec<RowPtr>,
     condition_evals: u64,
+    build_buf_rows: usize,
 }
 
 /// Scratch owned by one Go-style probe run and reused for every chunk in that
@@ -374,6 +380,7 @@ struct ParallelProbeBatch {
     outputs: Vec<Chunk>,
     matched_build_rows: Vec<RowPtr>,
     condition_evals: u64,
+    build_buf_rows: usize,
 }
 
 /// One side of the merge strategy: the chunk it streams into, how far that
@@ -1617,9 +1624,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// read back from disk.
     #[must_use]
     pub fn build_buf_rows(&self) -> usize {
-        self.hash
-            .as_ref()
-            .map_or(0, |hash| hash.build_buf.num_rows())
+        self.hash.as_ref().map_or(0, |hash| {
+            hash.build_buf.num_rows().max(hash.parallel_build_buf_rows)
+        })
     }
 
     /// Bytes the build side has written to spill files (Go
@@ -3443,7 +3450,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 | JoinKind::Semi
                 | JoinKind::AntiSemi
         ) && residual_supported
-            && self.concurrency > 1
             && self.hash.is_some()
     }
 
@@ -3778,6 +3784,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let mut outputs: Vec<Chunk> = Vec::new();
         let mut matched_build_rows: Vec<RowPtr> = Vec::new();
         let mut condition_evals = 0u64;
+        let mut build_buf_rows = 0;
         let mut scratch = ProbeBatchScratch::new(&shared.build_types, &shared.condition_types);
         for input in inputs {
             // The unique exact-integer worker appends a whole probe chunk's
@@ -3824,6 +3831,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 matched_build_rows.extend(result.matched_build_rows);
             }
             condition_evals = condition_evals.saturating_add(result.condition_evals);
+            build_buf_rows = build_buf_rows.max(result.build_buf_rows);
         }
         outputs.push(carried);
         Ok(ParallelProbeBatch {
@@ -3831,6 +3839,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             outputs,
             matched_build_rows,
             condition_evals,
+            build_buf_rows,
         })
     }
 
@@ -3875,6 +3884,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 input.reset();
                 hash.parallel_probe_input_reuse.push(input);
             }
+            hash.parallel_build_buf_rows = hash.parallel_build_buf_rows.max(batch.build_buf_rows);
             hash.table.mark_matched_all(&batch.matched_build_rows);
             // `outputs` is already in fill order, so releasing it in order
             // keeps the run's rows in probe-chunk order.
@@ -3940,6 +3950,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let condition_evals = Cell::new(0u64);
         let mut matched_build_rows = Vec::new();
         let mut extra_outputs = Vec::new();
+        let table_spilled = table.already_spilled();
+        let mut build_buf_rows = 0;
         // An exact-integer key is looked up for the whole chunk before the
         // row loop, so the table's cache misses overlap across rows.
         if let Some(key) = exact_int {
@@ -3967,6 +3979,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 row_hash_chunk(keys, probe_row, probe_types, offset).map_err(key_error)?
             {
                 candidates.extend(table.probe(key));
+            }
+            if table_spilled && !candidates.is_empty() {
+                // `with_row` resets this worker-owned chunk for every
+                // candidate. The last read therefore leaves exactly one
+                // decoded row, just like Go's per-worker `chkBuf`.
+                build_buf_rows = 1;
             }
             let mut matched = false;
             for &ptr in candidates.iter() {
@@ -4071,6 +4089,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             extra_outputs,
             matched_build_rows,
             condition_evals: condition_evals.get(),
+            build_buf_rows,
         })
     }
 
@@ -4125,6 +4144,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         } else {
             Vec::new()
         };
+        let table_spilled = table.already_spilled();
+        let mut build_buf_rows = 0;
         // Probe chunks produced by the coprocessor scan normally have no
         // selection vector. Keep the key column borrowed once in that shape;
         // the generic selected-chunk path below still uses the logical Row
@@ -4190,9 +4211,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         extra_outputs: Vec::new(),
                         matched_build_rows,
                         condition_evals: condition_evals.get(),
+                        build_buf_rows,
                     });
                 }
                 if !residual_conditions.is_empty() {
+                    if table_spilled {
+                        build_buf_rows = 1;
+                    }
                     let mut probe_index = 0;
                     table
                         .with_rows(&batch_ptrs, build_buf, |build_row| {
@@ -4234,6 +4259,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         extra_outputs: Vec::new(),
                         matched_build_rows,
                         condition_evals: condition_evals.get(),
+                        build_buf_rows,
                     });
                 }
                 // Bulk appends index physical row ranges and intentionally do
@@ -4258,6 +4284,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 if build_key_from_probe {
                     output_layout.key_range(&mut output, !probe_is_left, &probe, key_offset);
                 } else {
+                    if table_spilled {
+                        build_buf_rows = 1;
+                    }
                     table
                         .with_rows(&batch_ptrs, build_buf, |build_row| {
                             output_layout.chunk_side(&mut output, !probe_is_left, build_row);
@@ -4276,6 +4305,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     extra_outputs: Vec::new(),
                     matched_build_rows,
                     condition_evals: condition_evals.get(),
+                    build_buf_rows,
                 });
             }
         }
@@ -4307,6 +4337,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let mut probe_rows = exact_found.iter().enumerate();
             let mut match_index = 0;
             if !batch_ptrs.is_empty() {
+                if table_spilled {
+                    build_buf_rows = 1;
+                }
                 table
                     .with_rows(&batch_ptrs, build_buf, |build_row| {
                         let probe_index = loop {
@@ -4382,6 +4415,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             extra_outputs: Vec::new(),
             matched_build_rows,
             condition_evals: condition_evals.get(),
+            build_buf_rows,
         })
     }
 
@@ -4502,6 +4536,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             parallel_probe_output_reuse: Vec::new(),
             parallel_exact_int_enabled,
             parallel_probe_windows: 0,
+            parallel_build_buf_rows: 0,
         });
         Ok(())
     }

@@ -1544,9 +1544,9 @@ fn ten_thousand_by_ten_thousand_is_linear_not_quadratic() {
     );
 }
 
-/// Go HashJoin hands probe chunks to five workers. A large pure integer
-/// equality join must take the corresponding bounded parallel path instead of
-/// running every probe chunk on the session thread.
+/// Go initializes its probe-worker pipeline even when the configured
+/// concurrency is one. A large pure integer equality join must take the same
+/// bounded path instead of silently falling back to the session-thread loop.
 #[test]
 fn exact_integer_hash_join_uses_parallel_probe_window() {
     let rows = 10_000i64;
@@ -1554,6 +1554,7 @@ fn exact_integer_hash_join_uses_parallel_probe_window() {
         .map(|i| vec![Datum::Int(i), Datum::Int(i * 2)])
         .collect();
     let mut join = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], side.clone(), side, 2);
+    join.set_parallelism(1);
 
     assert_eq!(run(&mut join).len(), rows as usize);
     assert!(
