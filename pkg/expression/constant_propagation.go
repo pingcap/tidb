@@ -211,6 +211,43 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 type propConstSolver struct {
 	basePropConstSolver
 	conditions []Expression
+<<<<<<< HEAD
+=======
+	// TODO: remove this func pointer for performance
+	vaildExprFunc VaildConstantPropagationExpressionFuncType
+
+	// if schema1 and schema2 are not nil, we're propagating constants for inner joins.
+	// for outer joins, use propOuterJoinConstSolver instead.
+	schema1 *Schema
+	schema2 *Schema
+}
+
+// newPropConstSolver returns a PropagateConstantSolver.
+func newPropConstSolver() PropagateConstantSolver {
+	solver := propConstSolverPool.Get().(*propConstSolver)
+	return solver
+}
+
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext,
+	keepJoinKey bool, schema1, schema2 *Schema,
+	vaildExprFunc VaildConstantPropagationExpressionFuncType, conditions []Expression) []Expression {
+	s.ctx = ctx
+	s.vaildExprFunc = vaildExprFunc
+	s.schema1 = schema1
+	s.schema2 = schema2
+	return s.solve(keepJoinKey, conditions)
+}
+
+// Clear clears the solver and returns it to the pool.
+func (s *propConstSolver) Clear() {
+	s.basePropConstSolver.Clear()
+	s.conditions = s.conditions[:0]
+	s.vaildExprFunc = nil
+	s.schema1 = nil
+	s.schema2 = nil
+	propConstSolverPool.Put(s)
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 }
 
 // propagateConstantEQ propagates expressions like 'column = constant' by substituting the constant for column, the
@@ -356,8 +393,19 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 	return
 }
 
+<<<<<<< HEAD
 func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	cols := make([]*Column, 0, len(conditions))
+=======
+func (s *propConstSolver) solve(keepJoinKey bool, conditions []Expression) []Expression {
+	var joinKeys []Expression
+	if keepJoinKey {
+		// keep join keys in the results since they are crucial for join optimization like join reorder
+		// and index join selection. (#63314, #60076)
+		joinKeys = cloneJoinKeys(conditions, s.schema1, s.schema2)
+	}
+	s.conditions = slices.Grow(s.conditions, len(conditions))
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
 		cols = append(cols, ExtractColumns(cond)...)
@@ -374,15 +422,47 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
+<<<<<<< HEAD
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return s.conditions
+=======
+	s.conditions = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.conditions...)
+	s.conditions = append(s.conditions, joinKeys...)
+	s.conditions = RemoveDupExprs(s.conditions)
+	return slices.Clone(s.conditions)
+}
+
+// PropagateConstantForJoin propagate constants for inner joins.
+func PropagateConstantForJoin(ctx exprctx.ExprContext, keepJoinKey bool, schema1, schema2 *Schema,
+	filter VaildConstantPropagationExpressionFuncType, conditions ...Expression) []Expression {
+	if len(conditions) == 0 {
+		return conditions
+	}
+	solver := newPropConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), keepJoinKey, schema1, schema2, filter, conditions)
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
+<<<<<<< HEAD
 func PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
 	return newPropConstSolver().PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
+=======
+func PropagateConstant(ctx exprctx.ExprContext, filter VaildConstantPropagationExpressionFuncType, conditions ...Expression) []Expression {
+	if len(conditions) == 0 {
+		return conditions
+	}
+	solver := newPropConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), false, nil, nil, filter, conditions)
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 }
 
 type propOuterJoinConstSolver struct {
@@ -658,8 +738,18 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 	}
 }
 
+<<<<<<< HEAD
 func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
 	cols := make([]*Column, 0, len(joinConds)+len(filterConds))
+=======
+func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterConds []Expression) ([]Expression, []Expression) {
+	var joinKeys []Expression
+	if keepJoinKey {
+		// keep join keys in the results since they are crucial for join optimization like join reorder
+		// and index join selection. (#63314, #60076)
+		joinKeys = cloneJoinKeys(joinConds, s.outerSchema, s.innerSchema)
+	}
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		cols = append(cols, ExtractColumns(cond)...)
@@ -680,9 +770,16 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
+<<<<<<< HEAD
 	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds)
 	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds)
 	return s.joinConds, s.filterConds
+=======
+	s.joinConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.joinConds...)
+	s.joinConds = RemoveDupExprs(append(s.joinConds, joinKeys...))
+	s.filterConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.filterConds...)
+	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
@@ -705,6 +802,7 @@ func propagateConstantDNF(ctx exprctx.ExprContext, conds []Expression) []Express
 // Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
+<<<<<<< HEAD
 func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
 	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
@@ -715,10 +813,26 @@ func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Ex
 	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx
 	return solver.solve(joinConds, filterConds)
+=======
+func PropConstForOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
+	outerSchema, innerSchema *Schema, keepJoinKey, nullSensitive bool,
+	vaildExprFunc VaildConstantPropagationExpressionFuncType) ([]Expression, []Expression) {
+	solver := newPropOuterJoinConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	solver.outerSchema = outerSchema
+	solver.innerSchema = innerSchema
+	solver.nullSensitive = nullSensitive
+	solver.ctx = ctx
+	solver.vaildExprFunc = vaildExprFunc
+	return solver.solve(keepJoinKey, joinConds, filterConds)
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 }
 
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
+<<<<<<< HEAD
 	PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression
 }
 
@@ -733,4 +847,40 @@ func newPropConstSolver() PropagateConstantSolver {
 func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
 	s.ctx = ctx
 	return s.solve(conditions)
+=======
+	PropagateConstant(ctx exprctx.ExprContext,
+		keepJoinKey bool, schema1, schema2 *Schema,
+		filter VaildConstantPropagationExpressionFuncType, conditions []Expression) []Expression
+	Clear()
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
+}
+
+// cloneJoinKeys clones all join keys like `t1.col = t2.col` in these expressions.
+// schema1 and schema2 are used to identify join keys.
+func cloneJoinKeys(exprs []Expression, schema1, schema2 *Schema) (joinKeys []Expression) {
+	if schema1 == nil || schema2 == nil {
+		return nil
+	}
+	for _, expr := range exprs {
+		if isJoinKey(expr, schema1, schema2) {
+			joinKeys = append(joinKeys, expr.Clone())
+		}
+	}
+	return
+}
+
+// isJoinKey returns true if this expression could be a join key like `t1.col = t2.col`.
+func isJoinKey(expr Expression, schema1, schema2 *Schema) bool {
+	binop, ok := expr.(*ScalarFunction)
+	if !ok || binop.FuncName.L != ast.EQ {
+		return false
+	}
+	col1, lOK := binop.GetArgs()[0].(*Column)
+	col2, rOK := binop.GetArgs()[1].(*Column)
+	if !lOK || !rOK {
+		return false
+	}
+	// from different tables
+	return (schema1.Contains(col1) && schema2.Contains(col2)) ||
+		(schema1.Contains(col2) && schema2.Contains(col1))
 }

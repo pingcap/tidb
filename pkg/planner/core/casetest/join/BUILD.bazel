@@ -8,6 +8,10 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 5,
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
     deps = [
         "//pkg/config",
         "//pkg/testkit",
