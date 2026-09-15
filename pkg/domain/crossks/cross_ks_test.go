@@ -491,7 +491,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		tk.MustExec("insert into query_source(g,v) values (1,10),(1,20),(2,30)")
 		tk.MustExec("set tidb_isolation_read_engines='tikv'")
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-		sql := "select /*+ HASH_AGG() */ g,count(*) from query_source where v >= 10 group by g"
+		sql := "import into unused_target from select /*+ HASH_AGG() */ g,count(*) from query_source where v >= 10 group by g"
 		captured, err := executor.CaptureImportQuery(tk.Session(), sql)
 		require.NoError(t, err)
 
@@ -527,9 +527,11 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		tk := testkit.NewTestKit(t, targetStore)
 		tk.MustExec("use test")
 		q, err := executor.CaptureImportQuery(tk.Session(),
-			"select g,count(*) from query_source group by g")
+			"import into unused_target from select g,count(*) from query_source group by g")
 		require.NoError(t, err)
-		q.Tables[q.Databases[0].ID][0].TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
+		require.True(t, ok)
+		q.Tables[db.ID][0].TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 		q.SessionVars["tidb_allow_mpp"] = "1"
 		q.SessionVars["tidb_enforce_mpp"] = "1"
 		q.SessionVars["tidb_isolation_read_engines"] = "tiflash"
@@ -544,8 +546,9 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			checked = true
 			panic("stop before MPP dispatch")
 		})
-		err = importer.RunImportQuery(context.Background(), se, q, 1<<20, nil)
-		require.ErrorContains(t, err, "stop before MPP dispatch")
+		require.PanicsWithValue(t, "stop before MPP dispatch", func() {
+			_ = importer.RunImportQuery(context.Background(), se, q, 1<<20, nil)
+		})
 		require.True(t, checked)
 	})
 }

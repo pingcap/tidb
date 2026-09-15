@@ -38,15 +38,15 @@ func newImportQuerySchema(
 	q *importer.QueryPlan,
 	readTS uint64,
 ) (infoschema.InfoSchema, error) {
-	dbs := make([]*model.DBInfo, len(q.Databases))
-	for i, db := range q.Databases {
+	dbs := make([]*model.DBInfo, 0, len(q.Databases))
+	for _, db := range q.Databases {
 		dbInfo := db.Clone()
 		for _, tbl := range q.Tables[db.ID] {
 			tableInfo := tbl.Clone()
 			tableInfo.DBID = db.ID
 			dbInfo.Deprecated.Tables = append(dbInfo.Deprecated.Tables, tableInfo)
 		}
-		dbs[i] = dbInfo
+		dbs = append(dbs, dbInfo)
 	}
 
 	parent := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)

@@ -169,14 +169,14 @@ func runImportQuery(
 	if e == nil {
 		return errors.New("import query built no executor")
 	}
-	if err := exec.Open(ctx, e); err != nil {
-		return err
-	}
 	defer func() {
 		if closeErr := exec.Close(e); err == nil {
 			err = closeErr
 		}
 	}()
+	if err := exec.Open(ctx, e); err != nil {
+		return err
+	}
 
 	fields := e.RetFieldTypes()
 	var rowID int64

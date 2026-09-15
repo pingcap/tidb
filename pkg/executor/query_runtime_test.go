@@ -115,23 +115,43 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from with c as (select a.i from query_src a join query_other b on a.i=b.i) select * from c")
 		require.NoError(t, err)
 		require.Len(t, q.Databases, 1)
+		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
+		require.True(t, ok)
+		require.Contains(t, q.Databases, db.ID)
 		var tables []string
-		for _, tbl := range q.Tables[q.Databases[0].ID] {
+		for _, tbl := range q.Tables[db.ID] {
 			tables = append(tables, tbl.Name.L)
 		}
 		require.ElementsMatch(t, []string{"query_src", "query_other"}, tables)
-		_, err = executor.CaptureImportQuery(tk.Session(), "select ? from query_src")
+		_, err = executor.CaptureImportQuery(tk.Session(), "import into unused_target from select ? from query_src")
 		require.ErrorContains(t, err, "unexpected '?'")
 		for _, sql := range []string{
 			"select @v from query_src", "select @v:=i from query_src",
 			"select @@sql_mode", "with c as (select @v) select * from c",
 		} {
-			_, err = executor.CaptureImportQuery(tk.Session(), sql)
+			_, err = executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+sql+")")
 			require.ErrorContains(t, err, "does not support variables")
 		}
 	})
+	t.Run("close after open error", func(t *testing.T) {
+		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from select i+1 from query_src")
+		require.NoError(t, err)
+		se, err := session.CreateSession4Test(store)
+		require.NoError(t, err)
+		defer se.Close()
+		var planID int
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
+			require.Equal(t, "Projection", p.TP())
+			planID = p.ID()
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockProjectionExecBaseExecutorOpenReturnedError", `return(true)`)
+		})
+		err = importer.RunImportQuery(context.Background(), se, q, 1<<20, nil)
+		require.ErrorContains(t, err, "mock ProjectionExec.baseExecutor.Open returned error")
+		// Projection publishes its concurrency statistics only when Close runs.
+		require.Contains(t, se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(planID).String(), "Concurrency:")
+	})
 	t.Run("submitted table definitions", func(t *testing.T) {
-		q, err := executor.CaptureImportQuery(tk.Session(), "select count(*) from query_src")
+		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from select count(*) from query_src")
 		require.NoError(t, err)
 		data, err := json.Marshal(q)
 		require.NoError(t, err)
@@ -173,7 +193,7 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 	tk.MustExec("set tidb_enforce_mpp=1")
 	tk.MustExec("set tidb_isolation_read_engines='tiflash'")
 
-	sql := "select g,count(*),sum(v) from query_flash group by g"
+	sql := "import into unused_target from select g,count(*),sum(v) from query_flash group by g"
 	captured, err := executor.CaptureImportQuery(tk.Session(), sql)
 	require.NoError(t, err)
 	se, err := session.CreateSession4Test(store)
