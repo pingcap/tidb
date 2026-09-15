@@ -156,10 +156,28 @@ SELECT ROUND(1e14, 1), ROUND(1e15, 1), ROUND(1e308, 1);
 SELECT ROUND(1e-14, 1), ROUND(1e-15, 1), ROUND(1e-308, 1);
 SELECT ROUND(25, -1), ROUND(-25, -1), ROUND(35, -1), ROUND(-35, -1), ROUND(24, -1), ROUND(-24, -1);
 SELECT ROUND(9223372036854775807, 0), ROUND(1234567890123456789, -1), ROUND(25, -20), ROUND(25, -2012);
+-- error 1690
+SELECT ROUND(9223372036854775807, -1);
 drop table if exists t;
 create table t (a bigint, b bigint unsigned);
 insert into t values (25, 9223372036854775815), (-45, 25);
 select round(a, -1), round(b, -1) from t order by a;
+delete from t;
+insert into t values (9223372036854775807, 18446744073709551615);
+-- error 1690
+select round(a, -1) from t;
+-- error 1690
+select round(b, -1) from t;
+delete from t;
+insert into t values (-9223372036854775808, 0);
+-- error 1690
+select round(a, -1) from t;
+select round(a, -2), round(a, 0) from t;
+select round(42, 18446744073709551615), round(9223372036854775807, cast(-1 as unsigned));
+drop table if exists t;
+create table t (a bigint unsigned);
+insert into t values (18446744073709551615), (4294967295);
+select round(42, a) from t order by a;
 SELECT truncate(123, -2), truncate(123, 2), truncate(123, 1), truncate(123, -1);
 SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);
 SELECT truncate(9223372036854775807, -7), truncate(9223372036854775808, -10), truncate(cast(-1 as unsigned), -10);
