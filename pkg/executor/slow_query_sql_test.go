@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -186,6 +187,41 @@ func TestSlowQueryMisc(t *testing.T) {
 	tk.MustExec("commit")
 	require.Len(t, tk.MustQuery("SELECT query, txn_start_ts  FROM `information_schema`.`slow_query` "+
 		"where (query = 'select a from test.t_stale_read;' or query like 'select a from test.t_stale_read as of timestamp %') and Txn_start_ts > 0").Rows(), 3)
+
+	tk.MustExec("set tidb_mview_enable = on")
+	originalMLogLogSlowPurge := fmt.Sprint(tk.MustQuery("select @@global.tidb_mlog_log_slow_purge").Rows()[0][0])
+	defer tk.MustExec("set @@global.tidb_mlog_log_slow_purge = " + originalMLogLogSlowPurge)
+	tk.MustExec("set @@global.tidb_mlog_log_slow_purge = off")
+	tk.MustExec("create table test.t_internal_mv_purge_slow_log (id int primary key, v int)")
+	tk.MustExec("create materialized view log on test.t_internal_mv_purge_slow_log (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into test.t_internal_mv_purge_slow_log values (1, 10)")
+
+	const purgeSQL = "purge materialized view log on test.t_internal_mv_purge_slow_log"
+	tk.MustExec(purgeSQL)
+	tk.MustQuery("select count(*) from information_schema.slow_query where query = '" + purgeSQL + ";'").
+		Check(testkit.Rows("0"))
+
+	tk.MustExec("insert into test.t_internal_mv_purge_slow_log values (2, 20)")
+	func() {
+		vars := tk.Session().GetSessionVars()
+		origRestricted := vars.InRestrictedSQL
+		vars.InRestrictedSQL = true
+		defer func() {
+			vars.InRestrictedSQL = origRestricted
+		}()
+		rs, err := tk.ExecWithContext(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMViewMaintenance), purgeSQL)
+		require.NoError(t, err)
+		require.Nil(t, rs)
+	}()
+
+	tk.MustQuery("select count(*) from information_schema.slow_query where query = '" + purgeSQL + ";'").
+		Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_mlog_log_slow_purge = on")
+	tk.MustExec("insert into test.t_internal_mv_purge_slow_log values (3, 30)")
+	tk.MustExec(purgeSQL)
+	tk.MustQuery("select count(*) from information_schema.slow_query where query = '" + purgeSQL + ";'").
+		Check(testkit.Rows("1"))
 }
 
 func TestLogSlowLogIndex(t *testing.T) {

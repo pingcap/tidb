@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -27,7 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -333,4 +337,145 @@ func TestEncodedPassword(t *testing.T) {
 	pwd, ok = encodedPassword(&u, "")
 	require.True(t, ok)
 	require.Equal(t, "", pwd)
+}
+
+func TestCancelMaterializedViewJobPrecheckErrorNotRewritten(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	e := &CancelMaterializedViewJobExec{
+		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),
+		stmt: &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobType(255),
+			JobID: 123,
+		},
+	}
+
+	err := e.Next(context.Background(), nil)
+	require.ErrorContains(t, err, "invalid materialized view job cancel type: 255")
+}
+
+type mockSQLExecutor struct {
+	calls []struct {
+		sql  string
+		args []any
+	}
+}
+
+func (m *mockSQLExecutor) Execute(context.Context, string) ([]sqlexec.RecordSet, error) {
+	panic("unexpected Execute call")
+}
+
+func (m *mockSQLExecutor) ExecuteInternal(_ context.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+	m.calls = append(m.calls, struct {
+		sql  string
+		args []any
+	}{sql: sql, args: append([]any{}, args...)})
+	return nil, nil
+}
+
+func (m *mockSQLExecutor) ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error) {
+	panic("unexpected ExecuteStmt call")
+}
+
+func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testing.T) {
+	exec := &mockSQLExecutor{}
+	lastPurgedTSO := uint64(200)
+	nextPurgeUnixSeconds := int64(1_772_928_000)
+	require.NoError(t, updateMaterializedViewLogPurgeInfoOnSuccess(context.Background(), exec, int64(123), &lastPurgedTSO, &nextPurgeUnixSeconds, true))
+	require.Len(t, exec.calls, 2)
+	require.Contains(t, exec.calls[0].sql, "LAST_PURGED_TSO = %?")
+	require.Contains(t, exec.calls[0].sql, "LAST_PURGED_TSO IS NULL OR LAST_PURGED_TSO < %?")
+	require.Equal(t, []any{uint64(200), int64(123), uint64(200)}, exec.calls[0].args)
+	require.Contains(t, exec.calls[1].sql, "NEXT_PURGE_UNIX_SECONDS = %?")
+	require.Equal(t, []any{int64(1_772_928_000), int64(123)}, exec.calls[1].args)
+}
+
+func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
+	plan := &mlogPurgeThrottlePlan{targetRate: 2000}
+	require.Equal(t, int64(8000), plan.effectiveDeleteBatchSize(10000))
+	plan = &mlogPurgeThrottlePlan{targetRate: 100000}
+	require.Equal(t, int64(10000), plan.effectiveDeleteBatchSize(10000))
+}
+
+func TestMLogPurgeAdaptiveBatchSizeReplannedAfterNoWait(t *testing.T) {
+	plan := &mlogPurgeThrottlePlan{targetRate: 50000, pendingRows: 100000, effectiveBatchSize: 10000, minRate: 1, deadline: time.Now().Add(30 * time.Second), noWaitStreak: 1}
+	require.NoError(t, plan.maybeSleep(context.Background(), time.Now().Add(-3*time.Second), 98000))
+	require.Equal(t, int64(8000), plan.effectiveBatchSize)
+	require.Zero(t, plan.noWaitStreak)
+	require.Less(t, plan.targetRate, float64(50000))
+}
+
+func TestBuildMLogPurgeDeleteRowIDRanges(t *testing.T) {
+	stats := mlogPurgePendingRowStats{pendingRows: 40000, minRowID: 1, maxRowID: 40000, hasRowIDBounds: true}
+	require.Equal(t, []mlogPurgeDeleteRowIDRange{{startRowID: 1, endRowID: 8000}, {startRowID: 8001, endRowID: 16000}, {startRowID: 16001, endRowID: 24000}, {startRowID: 24001, endRowID: 32000}, {startRowID: 32001, endRowID: 40000}}, buildMLogPurgeDeleteRowIDRanges(stats, 0))
+	stats.pendingRows, stats.maxRowID = 3500, 3500
+	require.Equal(t, []mlogPurgeDeleteRowIDRange{{startRowID: 1, endRowID: 3500}}, buildMLogPurgeDeleteRowIDRanges(stats, 0))
+	stats.pendingRows, stats.maxRowID = 32000, int64(1<<63-1)
+	shardBucketSize := int64(1) << 59
+	require.Equal(t, []mlogPurgeDeleteRowIDRange{{startRowID: 1, endRowID: 4*shardBucketSize - 1}, {startRowID: 4 * shardBucketSize, endRowID: 8*shardBucketSize - 1}, {startRowID: 8 * shardBucketSize, endRowID: 12*shardBucketSize - 1}, {startRowID: 12 * shardBucketSize, endRowID: int64(1<<63 - 1)}}, buildMLogPurgeDeleteRowIDRanges(stats, 4))
+	stats.hasRowIDBounds = false
+	require.Nil(t, buildMLogPurgeDeleteRowIDRanges(stats, 0))
+}
+
+func TestBuildPurgeMaterializedViewLogDeleteSQL(t *testing.T) {
+	r := &mlogPurgeDeleteRowIDRange{startRowID: 10, endRowID: 20}
+	sql := buildPurgeMaterializedViewLogDeleteSQL("test", "$mlog$t", 100, true, 200, r, 1000)
+	require.Contains(t, sql, "_tidb_rowid >= 10 AND _tidb_rowid <= 20")
+	require.Contains(t, sql, "_tidb_commit_ts > 100 AND _tidb_commit_ts <= 200")
+	require.Contains(t, sql, "LIMIT 1000")
+	sql = buildPurgeMaterializedViewLogDeleteSQL("test", "$mlog$t", 0, false, 200, r, 1000)
+	require.Contains(t, sql, "_tidb_commit_ts <= 200")
+	require.NotContains(t, sql, "_tidb_commit_ts >")
+	sql = buildPurgeMaterializedViewLogDeleteSQL("test", "$mlog$t", 100, true, 200, nil, 1000)
+	require.NotContains(t, sql, "_tidb_rowid")
+}
+
+func TestApplyMLogPurgeDeleteTiFlashThreads(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+	require.NoError(t, sessVars.SetSystemVar(vardef.TiDBMaxTiFlashThreads, "9"))
+	restore, err := applyMLogPurgeDeleteTiFlashThreads(sessVars, 2, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), sessVars.TiFlashMaxThreads)
+	restore()
+	require.Equal(t, int64(9), sessVars.TiFlashMaxThreads)
+	restore, err = applyMLogPurgeDeleteTiFlashThreads(sessVars, 0, false)
+	require.NoError(t, err)
+	restore()
+	require.Equal(t, int64(9), sessVars.TiFlashMaxThreads)
+}
+
+func TestApplyMLogPurgeMaintenanceSessionVarsEnablesAndRestoresMView(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+	require.False(t, sessVars.EnableMView)
+
+	restore, err := applyMLogPurgeMaintenanceSessionVars(
+		sessVars,
+		sessVars.MemQuotaQuery,
+		variable.GetIsolationReadEnginesString(sessVars),
+		false,
+	)
+	require.NoError(t, err)
+	require.True(t, sessVars.EnableMView)
+	restore()
+	require.False(t, sessVars.EnableMView)
+}
+
+func TestMVTaskCancelControllerIsManualCancelRequested(t *testing.T) {
+	controller := newMVTaskCancelController(context.Background())
+	require.False(t, controller.isManualCancelRequested())
+	controller.requestManualCancelByRequester("'u'@'h'")
+	require.True(t, controller.isManualCancelRequested())
+}
+
+func TestDeriveMLogPurgeThrottleDeadline(t *testing.T) {
+	baseNow := time.Now().UTC()
+	deadline, err := deriveMLogPurgeThrottleDeadline(context.Background(), nil, nil, false, "test", "t", nil)
+	require.NoError(t, err)
+	require.WithinDuration(t, baseNow.Add(mlogPurgeAdaptiveMaxBudget), *deadline, 2*time.Second)
+	next := baseNow.Add(90 * time.Second)
+	deadline, err = deriveMLogPurgeThrottleDeadline(context.Background(), nil, nil, false, "test", "t", &next)
+	require.NoError(t, err)
+	require.WithinDuration(t, next, *deadline, time.Second)
 }

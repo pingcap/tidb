@@ -64,6 +64,8 @@ var (
 	AffectedRowsCounterNTDMLInsert prometheus.Counter
 	// AffectedRowsCounterNTDMLReplace records the number of NT-DML replace affected rows.
 	AffectedRowsCounterNTDMLReplace prometheus.Counter
+	// AffectedRowsCounterPurgeMVLog records the number of purge materialized view log affected rows.
+	AffectedRowsCounterPurgeMVLog prometheus.Counter
 
 	// NetworkTransmissionStats records the network transmission for queries
 	NetworkTransmissionStats *prometheus.CounterVec
@@ -158,6 +160,7 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterNTDMLDelete = AffectedRowsCounter.WithLabelValues("NTDML-Delete")
 	AffectedRowsCounterNTDMLInsert = AffectedRowsCounter.WithLabelValues("NTDML-Insert")
 	AffectedRowsCounterNTDMLReplace = AffectedRowsCounter.WithLabelValues("NTDML-Replace")
+	AffectedRowsCounterPurgeMVLog = AffectedRowsCounter.WithLabelValues("PurgeMVLog")
 
 	NetworkTransmissionStats = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{

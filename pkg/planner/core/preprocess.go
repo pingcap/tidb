@@ -333,6 +333,8 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		p.flag |= inCreateOrDropTable
 	case *ast.AlterMaterializedViewLogStmt:
 		p.stmtTp = TypeAlter
+	case *ast.PurgeMaterializedViewLogStmt:
+		p.stmtTp = TypeAlter
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
@@ -481,7 +483,8 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		p.checkConstraintGrammar(node)
 	case *ast.ColumnName:
 		if node.Name.L == model.ExtraCommitTSName.L &&
-			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) {
+			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) &&
+			!p.sctx.GetSessionVars().EnableMView {
 			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
 				model.ExtraCommitTSName.O)
 		}

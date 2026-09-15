@@ -647,6 +647,10 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSetConfig(ctx, x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
+	case *ast.PurgeMaterializedViewLogStmt:
+		return b.buildPurgeMaterializedViewLog(ctx, x)
+	case *ast.CancelMaterializedViewJobStmt:
+		return b.buildSimple(ctx, x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.AlterRangeStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
@@ -3716,6 +3720,18 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		np = sort
 	}
 	return np, nil
+}
+
+func (b *PlanBuilder) buildPurgeMaterializedViewLog(_ context.Context, stmt *ast.PurgeMaterializedViewLogStmt) (base.Plan, error) {
+	dbName := stmt.Table.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	return &PurgeMaterializedViewLog{Statement: stmt}, nil
 }
 
 func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.Plan, error) {
