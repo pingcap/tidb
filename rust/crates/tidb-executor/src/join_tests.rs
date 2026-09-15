@@ -303,6 +303,40 @@ fn index_hash_join_builds_outer_and_probes_inner_rows() {
     }
 }
 
+/// Go `constructLookupContent` sorts one batch and removes duplicate lookup
+/// keys; it does not allocate one ordered-map node per outer row.
+#[test]
+fn index_lookup_probe_collection_batches_sort_and_dedup() {
+    let types = [long()];
+    let mut source = Chunk::new_with_capacity(&types, 3);
+    for key in [2, 1, 2] {
+        source.append_int64(0, key);
+    }
+    let mut outer = OuterBatch::new(&types, 3, CHUNK);
+    for row in 0..source.num_rows() {
+        outer.push(source.get_row(row));
+    }
+    let keys = [EquiKey {
+        left: 0,
+        right: 0,
+        class: KeyClass::Int,
+        null_safe: false,
+    }];
+    let plan = IndexProbePlan {
+        probe_keys: vec![0],
+        probe_key_domains: Vec::new(),
+        probe_bounds: Vec::new(),
+    };
+    let probes = index_task_probes(&NoColumns, &keys, &plan, &outer, &types, true).unwrap();
+    assert_eq!(
+        probes
+            .iter()
+            .map(|probe| probe.key[0].clone())
+            .collect::<Vec<_>>(),
+        vec![Datum::Int(1), Datum::Int(2)]
+    );
+}
+
 /// Go fetchInnerResults retains the reader and outer match status across windows.
 #[test]
 fn index_hash_fetches_inner_windows_before_final_unmatched_rows() {

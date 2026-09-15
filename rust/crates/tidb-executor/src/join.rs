@@ -950,7 +950,12 @@ fn index_task_probes<C: Columns>(
             "a lookup probe bound has no comparable encoding",
         ));
     }
-    let mut probes_by_key = std::collections::BTreeMap::new();
+    // Go constructLookupContent appends the whole batch, then
+    // sortAndDedupLookUpContents sorts once and removes adjacent equal keys.
+    // A tree insertion for every row allocates a node and performs a log-N
+    // walk; keeping the encoded key beside its probe lets the native slice
+    // sort do the same work with contiguous storage and no per-row tree node.
+    let mut probes_by_key = Vec::with_capacity(outer.len());
     for index in 0..outer.len() {
         let row = outer.row(index);
         let probe: Option<Vec<Datum>> = plan
@@ -1038,9 +1043,11 @@ fn index_task_probes<C: Columns>(
                 None => continue,
             }
         }
-        probes_by_key.insert(encoded, IndexTaskProbe { key: probe, bounds });
+        probes_by_key.push((encoded, IndexTaskProbe { key: probe, bounds }));
     }
-    Ok(probes_by_key.into_values().collect())
+    probes_by_key.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    probes_by_key.dedup_by(|left, right| left.0 == right.0);
+    Ok(probes_by_key.into_iter().map(|(_, probe)| probe).collect())
 }
 
 /// A prepared task owns its memory charge until installed in the consumer.

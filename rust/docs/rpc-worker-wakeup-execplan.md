@@ -43,6 +43,7 @@ Reduce synchronization and fragmented batching on the generic RPC-to-query respo
 - [x] Borrow raw join-key column storage once per sizing/encoding pass, following Go's column access; validate serialized bytes, NULL discovery, selection and spill restore across owned/shared/frozen backing.
 - [x] Batch contiguous chunk range appends with exact capacity reservation and aligned NULL-bitmap copying; keep alias-overlap and arbitrary bitmap offsets on the source-equivalent safe path.
 - [x] Replace per-key index-hash `Vec` allocations with a contiguous linked outer-entry slab; retain the probe cursor across residual/output batches and validate grouped executor/distsql checks.
+- [x] Replace per-row index-lookup `BTreeMap` insertion with Go's batch slice sort/dedup shape; preserve encoded-key ordering and validate the full executor index matrix.
 
 ## Context and Source Evidence
 
@@ -260,6 +261,16 @@ The wider failures from the setup-cost milestone are resolved by the follow-up a
 
 ## Outcomes & Retrospective
 
+
+Index-lookup probe batching (2026-09-16): `index_task_probes` now collects the complete outer batch in contiguous storage, sorts encoded lookup keys once and removes adjacent duplicates, matching Go's `constructLookupContent` plus `sortAndDedupLookUpContents`. The prior per-row `BTreeMap` path allocated a tree node and performed a logarithmic walk for every probe; the replacement keeps one sort/dedup pass and preserves the existing encoded-key order, probe values, bound values and empty-range handling. No workload benchmark or 25% gain is claimed.
+
+The focused index matrix passes 207 executor unit tests with no failures, including the new duplicate/order regression and existing index-join, hash-join, NULL, prefix, worker and storage cases. The updated grouped run is clean at 30 distsql unit, 249 distsql integration, 1328 executor unit and 329 executor integration tests (`/private/tmp/index-probe-sort-grouped-final.log`); formatting, lint and diff checks pass for this follow-up. No benchmark or release build ran; the cross-workload objective remains unverified. Exact checks:
+
+    RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib index_ -j12 -- --test-threads=12
+    RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-executor -p tidb-distsql --lib --test all -j12 --no-fail-fast -- --test-threads=12
+    make -j12 lint
+    rustfmt --check --edition 2021 --config skip_children=true rust/crates/tidb-executor/src/join.rs rust/crates/tidb-executor/src/join_tests.rs
+    git diff --check
 
 Index-hash outer-entry batching (2026-09-16): the unordered and ordered index-hash paths now store duplicate outer-key rows in one hash map plus a contiguous linked entry slab, matching Go's `unsafeHashTable`/`entryStore` ownership shape without a `Vec` allocation per hash key. The probe keeps an entry cursor across RequiredRows and residual-filter boundaries, resets it only when the inner row/window advances, and still verifies equality after hash collisions. Ordered preparation walks the same slab before releasing it; outer-row order and semi/anti match flags remain unchanged. This removes per-key allocator/hash-value indirection from the build and probe path; no workload benchmark or 25% gain is claimed.
 
