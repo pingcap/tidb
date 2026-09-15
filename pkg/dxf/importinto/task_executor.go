@@ -538,7 +538,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		simplesst.DefaultOneWriterBlockSize,
 		onWriterClose,
 		globalsort.NewMergeCollector(ctx, &m.summary),
-		int(m.GetResource().CPU.Capacity()),
+		1,
 		false,
 		onDup,
 	)
@@ -546,7 +546,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err = globalsort.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
+		1, // run merge tasks serially
 		op,
 	); err != nil {
 		return errors.Trace(err)
