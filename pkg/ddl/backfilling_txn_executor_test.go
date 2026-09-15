@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,6 +59,37 @@ func TestBackfillWorkerSendsInFlightResultAfterClose(t *testing.T) {
 			t.Fatal("backfill worker blocked while discarding a result during executor shutdown")
 		}
 	})
+}
+
+func TestTxnBackfillExecutorDownscalePreservesInFlightError(t *testing.T) {
+	resultCtx, cancelResult := context.WithCancel(context.Background())
+	t.Cleanup(cancelResult)
+	resultCh := make(chan *backfillResult)
+	workers := []*backfillWorker{
+		newBackfillWorker(context.Background(), resultCtx, nil),
+		newBackfillWorker(context.Background(), resultCtx, nil),
+	}
+	for _, worker := range workers {
+		worker.resultCh = resultCh
+	}
+
+	exec := &txnBackfillExecutor{
+		reorgInfo: &reorgInfo{Job: &model.Job{ReorgMeta: &model.DDLReorgMeta{}}},
+		workers:   workers,
+		resultCtx: resultCtx,
+	}
+	exec.reorgInfo.ReorgMeta.SetConcurrency(1)
+	require.NoError(t, exec.adjustWorkerSize())
+	require.Len(t, exec.workers, 1)
+
+	want := errors.New("duplicate key found during backfill")
+	go workers[1].sendResult(&backfillResult{taskID: 1, err: want})
+	select {
+	case result := <-resultCh:
+		require.ErrorIs(t, result.err, want)
+	case <-time.After(time.Second):
+		t.Fatal("in-flight backfill error was dropped after executor downscale")
+	}
 }
 
 func TestExpectedIngestWorkerCnt(t *testing.T) {
