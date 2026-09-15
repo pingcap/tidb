@@ -1620,6 +1620,10 @@ pub struct IndexRangeSourceExec {
     lookup_concurrency: usize,
     /// Bounded-concurrency prefetch pipeline over the row-lookup windows.
     lookup_pipeline: Option<LookupPipeline>,
+    /// Go's persistent table-worker set for the lookup pipeline. The pool is
+    /// owned by this source so Close can stop and join every worker before
+    /// releasing a queued lookup's cloned table/request state.
+    lookup_lanes: Option<Arc<crate::worker_pool::LanePool>>,
     /// Row demand the parent has EXPOSED so far: the sum of every output
     /// chunk's `required_rows`. The prefetch pipeline may never hold more
     /// unemitted windows than this minus what was produced -- a parent that
@@ -1867,6 +1871,7 @@ impl IndexRangeSourceExec {
             partial_done: false,
             lookup_concurrency: DEFAULT_LOOKUP_FETCH_CONCURRENCY,
             lookup_pipeline: None,
+            lookup_lanes: None,
             chunk_demand: 0,
             dirty_merge: false,
             dirty_used_index: Vec::new(),
@@ -2767,15 +2772,31 @@ impl IndexRangeSourceExec {
                 Err(error) => Err(format!("{error:?}")),
             }
         };
-        // The lookup waits on TiKV for its window: a goroutine in Go, a lane
-        // thread here rather than one of the pool's per-core compute workers.
-        // Only Send table/request state enters the task; its thread-local
-        // transport and response are born and consumed there, and only the
-        // finished result crosses the channel.
-        let receiver = crate::worker_pool::spawn_lane("tidb-lookup", worker);
+        // Go's table worker is persistent across lookup tasks. Submit the
+        // whole window to the source-owned lane set instead of creating one
+        // native thread per window. Only Send table/request state enters the
+        // task; the finished result crosses the per-window channel in the
+        // same collection order as Go's table worker results.
+        let concurrency = self.lookup_concurrency;
+        let lanes = self.lookup_lanes.get_or_insert_with(|| {
+            // A few direct source callers build a lookup job without going
+            // through Executor::open. Keep those callers on the same
+            // persistent-worker path rather than falling back to one thread
+            // per window; normal executors install this pool in open.
+            Arc::new(crate::worker_pool::LanePool::new(
+                "tidb-lookup",
+                concurrency,
+            ))
+        });
+        let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+        lanes
+            .submit(move || {
+                let _ = result_tx.send(worker());
+            })
+            .map_err(|_| ExecError::internal("index lookup worker pool stopped"))?;
         Ok(LookupBatchJob {
             handle_count,
-            receiver: Some(receiver),
+            receiver: Some(result_rx),
             ready: None,
         })
     }
@@ -2786,6 +2807,10 @@ impl IndexRangeSourceExec {
     /// discard an early-stopping serial walk performed by never fetching.
     fn teardown_lookup_pipeline(&mut self) {
         self.lookup_pipeline = None;
+        // Closing the queue after dropping per-window receivers mirrors Go's
+        // cancel-then-wait lifecycle and prevents a worker from outliving the
+        // source that supplied its cloned table/request state.
+        self.lookup_lanes = None;
     }
 
     fn next_window_handle(&mut self) -> Result<Option<(TableHandle, usize)>, ExecError> {
@@ -3613,6 +3638,18 @@ impl Executor for IndexRangeSourceExec {
             width: self.lookup_concurrency,
             unemitted_handles: 0,
         });
+        // Go starts one reusable table worker per configured concurrency for
+        // an IndexLookUpExecutor. Covering and partial-aggregate readers do
+        // not issue table lookups, so avoid creating an unused worker set for
+        // those single-read paths.
+        self.lookup_lanes = if !self.covering && self.partial_aggregate.is_none() {
+            Some(Arc::new(crate::worker_pool::LanePool::new(
+                "tidb-lookup",
+                self.lookup_concurrency,
+            )))
+        } else {
+            None
+        };
         Ok(())
     }
 
@@ -3821,9 +3858,11 @@ impl Executor for IndexRangeSourceExec {
 
 impl Drop for IndexRangeSourceExec {
     fn drop(&mut self) {
-        // A scan dropped mid-read stops caring about its in-flight fetches;
-        // dropping the receivers releases each worker after its request.
+        // A scan dropped mid-read stops caring about its in-flight fetches.
+        // Drop receivers first, then close and join the reusable lanes so no
+        // lookup worker survives the source.
         self.lookup_pipeline = None;
+        self.lookup_lanes = None;
     }
 }
 
