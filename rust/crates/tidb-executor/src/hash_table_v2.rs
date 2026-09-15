@@ -517,23 +517,46 @@ impl HashTableV2 {
         )
     }
 
-    /// Resolves a row handle when the owning partition is already known.
+    /// Resolves a row handle against an already-selected partition table.
     ///
-    /// Go's probe chain walks keep the partition selected from the probe hash
-    /// and dereference the build row directly. Reuse that partition here so
-    /// each candidate does not decode it and repeat the table lookup.
+    /// Go's probe chain walks keep the partition-local table pointer and
+    /// dereference build rows directly. Keep that borrow for the whole chain
+    /// so each candidate only decodes its segment and row offset.
     #[inline]
-    pub(crate) fn row_bytes_in_partition(&self, partition: usize, address: usize) -> &[u8] {
+    pub(crate) fn row_bytes_in_sub_table<'a>(
+        &self,
+        table: &'a SubTable,
+        address: usize,
+    ) -> &'a [u8] {
         let slot = (address >> self.row_offset_bits) - 1;
         let segment = slot & self.segment_mask;
         let row = (address & self.row_offset_mask) / 8;
-        let segment = &self.tables[partition]
-            .as_ref()
-            .expect("sub table of a built partition")
-            .row_data
-            .segments[segment];
+        let segment = &table.row_data.segments[segment];
         let offset = segment.row_start_offset[row] as usize;
         &segment.raw_data[offset..]
+    }
+
+    /// Marks a row using an already-selected partition table.
+    #[inline]
+    pub(crate) fn mark_build_row_matched_in_sub_table(&self, table: &SubTable, address: usize) {
+        let slot = (address >> self.row_offset_bits) - 1;
+        let segment = slot & self.segment_mask;
+        let row = (address & self.row_offset_mask) / 8;
+        table.row_data.segments[segment].mark_row_used(row);
+    }
+
+    /// Reports a row's used flag using an already-selected partition table.
+    #[must_use]
+    #[inline]
+    pub(crate) fn is_build_row_matched_in_sub_table(
+        &self,
+        table: &SubTable,
+        address: usize,
+    ) -> bool {
+        let slot = (address >> self.row_offset_bits) - 1;
+        let segment = slot & self.segment_mask;
+        let row = (address & self.row_offset_mask) / 8;
+        table.row_data.segments[segment].is_row_used(row)
     }
 
     /// Go setUsedFlag: each row owns an atomic flag, with no shared set.

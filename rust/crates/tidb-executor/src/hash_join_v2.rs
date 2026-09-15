@@ -979,8 +979,9 @@ fn collect_outer_join_candidates(
             let partition =
                 crate::row_table_builder::generate_partition_index(hash, ctx.partition_mask_offset)
                     as usize;
+            let table = ctx.hash_table.sub_table(partition);
             let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-            let build_row = ctx.hash_table.row_bytes_in_partition(partition, address);
+            let build_row = ctx.hash_table.row_bytes_in_sub_table(table, address);
             if is_key_matched(
                 ctx.meta.key_mode,
                 &base.serialized_keys()[probe_row],

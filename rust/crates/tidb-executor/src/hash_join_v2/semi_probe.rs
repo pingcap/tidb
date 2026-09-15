@@ -163,17 +163,20 @@ impl<'a> BaseSemiJoin<'a> {
                 hash,
                 self.ctx.partition_mask_offset,
             ) as usize;
+            let table = self.ctx.hash_table.sub_table(partition);
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0
                 && remaining > 0
                 && self.base.matched_rows_for_current_probe_row() < MAX_MATCHED_ROW_NUM
             {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let build_row = self
-                    .ctx
-                    .hash_table
-                    .row_bytes_in_partition(partition, address);
-                if !self.left_build || !self.ctx.hash_table.is_build_row_matched(address) {
+                let build_row = self.ctx.hash_table.row_bytes_in_sub_table(table, address);
+                if !self.left_build
+                    || !self
+                        .ctx
+                        .hash_table
+                        .is_build_row_matched_in_sub_table(table, address)
+                {
                     if is_key_matched(
                         self.ctx.meta.key_mode,
                         &self.base.serialized_keys()[row],
@@ -244,21 +247,25 @@ impl<'a> BaseSemiJoin<'a> {
                 hash,
                 self.ctx.partition_mask_offset,
             ) as usize;
+            let table = self.ctx.hash_table.sub_table(partition);
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let build_row = self
+                let build_row = self.ctx.hash_table.row_bytes_in_sub_table(table, address);
+                if !self
                     .ctx
                     .hash_table
-                    .row_bytes_in_partition(partition, address);
-                if !self.ctx.hash_table.is_build_row_matched(address) {
+                    .is_build_row_matched_in_sub_table(table, address)
+                {
                     if is_key_matched(
                         self.ctx.meta.key_mode,
                         &self.base.serialized_keys()[row],
                         build_row,
                         self.ctx.meta,
                     ) {
-                        self.ctx.hash_table.mark_build_row_matched(address);
+                        self.ctx
+                            .hash_table
+                            .mark_build_row_matched_in_sub_table(table, address);
                     } else {
                         self.base.record_probe_collision();
                     }
@@ -294,13 +301,11 @@ impl<'a> BaseSemiJoin<'a> {
                 hash,
                 self.ctx.partition_mask_offset,
             ) as usize;
+            let table = self.ctx.hash_table.sub_table(partition);
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let build_row = self
-                    .ctx
-                    .hash_table
-                    .row_bytes_in_partition(partition, address);
+                let build_row = self.ctx.hash_table.row_bytes_in_sub_table(table, address);
                 if is_key_matched(
                     self.ctx.meta.key_mode,
                     &self.base.serialized_keys()[row],
