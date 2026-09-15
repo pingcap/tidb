@@ -165,11 +165,12 @@ impl<'a> BaseSemiJoin<'a> {
                 && self.base.matched_rows_for_current_probe_row() < MAX_MATCHED_ROW_NUM
             {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
+                let build_row = self.ctx.hash_table.row_bytes(address);
                 if !self.left_build || !self.ctx.hash_table.is_build_row_matched(address) {
                     if is_key_matched(
                         self.ctx.meta.key_mode,
                         &self.base.serialized_keys()[row],
-                        self.ctx.hash_table.row_bytes(address),
+                        build_row,
                         self.ctx.meta,
                     ) {
                         self.base.append_build_row_to_cached_build_rows_v1(
@@ -187,12 +188,7 @@ impl<'a> BaseSemiJoin<'a> {
                         self.base.record_probe_collision();
                     }
                 }
-                header = BaseJoinProbe::next_matched_row(
-                    self.ctx.hash_table,
-                    &self.ctx.tag_helper,
-                    header,
-                    hash,
-                );
+                header = BaseJoinProbe::next_matched_row(build_row, &self.ctx.tag_helper, hash);
             }
             self.base.set_matched_rows_header(row, header);
             self.base.finish_lookup_current_probe_row();
@@ -240,11 +236,12 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
+                let build_row = self.ctx.hash_table.row_bytes(address);
                 if !self.ctx.hash_table.is_build_row_matched(address) {
                     if is_key_matched(
                         self.ctx.meta.key_mode,
                         &self.base.serialized_keys()[row],
-                        self.ctx.hash_table.row_bytes(address),
+                        build_row,
                         self.ctx.meta,
                     ) {
                         self.ctx.hash_table.mark_build_row_matched(address);
@@ -252,12 +249,7 @@ impl<'a> BaseSemiJoin<'a> {
                         self.base.record_probe_collision();
                     }
                 }
-                header = BaseJoinProbe::next_matched_row(
-                    self.ctx.hash_table,
-                    &self.ctx.tag_helper,
-                    header,
-                    hash,
-                );
+                header = BaseJoinProbe::next_matched_row(build_row, &self.ctx.tag_helper, hash);
                 loop_count += 1;
                 if loop_count % 2000 == 0 {
                     check_probe_killed(killer)?;
@@ -287,22 +279,18 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
+                let build_row = self.ctx.hash_table.row_bytes(address);
                 if is_key_matched(
                     self.ctx.meta.key_mode,
                     &self.base.serialized_keys()[row],
-                    self.ctx.hash_table.row_bytes(address),
+                    build_row,
                     self.ctx.meta,
                 ) {
                     self.matched[row] = true;
                     break;
                 }
                 self.base.record_probe_collision();
-                header = BaseJoinProbe::next_matched_row(
-                    self.ctx.hash_table,
-                    &self.ctx.tag_helper,
-                    header,
-                    hash,
-                );
+                header = BaseJoinProbe::next_matched_row(build_row, &self.ctx.tag_helper, hash);
             }
             self.base.set_matched_rows_header(row, 0);
             if !self.base.is_spilled(row) && (self.outer_semi || self.matched[row] != self.anti) {

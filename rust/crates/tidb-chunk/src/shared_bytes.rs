@@ -19,7 +19,6 @@
 //! growth of either view detaches it using Rust's native allocation policy.
 //! This is an aliasing abstraction, not an emulation of Go slice headers.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::mem;
 use std::ops::{Deref, Range};
@@ -151,15 +150,6 @@ impl SharedBytes {
         self.read().to_vec()
     }
 
-    /// Borrow ordinary/frozen column bytes for a copy. Shallow mutable aliases
-    /// need a snapshot so no source read lock survives into a destination write.
-    pub(crate) fn copy_source(&self, range: Range<usize>) -> Cow<'_, [u8]> {
-        match self.read() {
-            SharedBytesRead::Owned(bytes) => Cow::Borrowed(&bytes[range]),
-            bytes @ SharedBytesRead::Shared { .. } => Cow::Owned(bytes[range].to_vec()),
-        }
-    }
-
     pub(crate) fn reset(&mut self) {
         self.len = 0;
     }
@@ -240,6 +230,54 @@ impl SharedBytes {
         self.ensure_initialized(new_len);
         self.len = new_len;
         self.with_write(|bytes| bytes[old_len..new_len].copy_from_slice(source));
+    }
+
+    /// Go's `append(dst, src[begin:end]...)`, retaining the plain `Vec` fast
+    /// path while still detaching a shallow alias before it writes itself.
+    #[inline]
+    pub(crate) fn extend_from_range(&mut self, source: &Self, range: Range<usize>) {
+        assert!(range.start <= range.end, "invalid SharedBytes source range");
+        assert!(
+            range.end <= source.len,
+            "SharedBytes source range exceeds length"
+        );
+        if range.is_empty() {
+            return;
+        }
+
+        let same_shared_backing = match (&self.backing, &source.backing) {
+            (Backing::Shared(destination), Backing::Shared(source)) => {
+                Arc::ptr_eq(destination, source)
+            }
+            _ => false,
+        };
+        if same_shared_backing {
+            let snapshot = source.read()[range].to_vec();
+            self.extend_from_slice(&snapshot);
+            return;
+        }
+
+        if self.start == 0 {
+            if let Backing::Owned(destination) = &mut self.backing {
+                if destination.len() == self.len {
+                    let start = source.start + range.start;
+                    let end = source.start + range.end;
+                    match &source.backing {
+                        Backing::Owned(bytes) => destination.extend_from_slice(&bytes[start..end]),
+                        Backing::Frozen(bytes) => destination.extend_from_slice(&bytes[start..end]),
+                        Backing::Shared(backing) => {
+                            let bytes = Self::read_shared(backing);
+                            destination.extend_from_slice(&bytes[start..end]);
+                        }
+                    }
+                    self.len = destination.len();
+                    return;
+                }
+            }
+        }
+
+        let bytes = source.read();
+        self.extend_from_slice(&bytes[range]);
     }
 
     /// [`Self::extend_from_slice`] for a cell whose width is known at compile

@@ -850,6 +850,10 @@ impl DriverError {
             1265,
             format!("Data truncated for column '{column}', value is '{value}'"),
         ),
+        // Go: "Invalid use of NULL value".
+        DriverError::InvalidUseOfNull => {
+            MysqlError::new(1138, "Invalid use of NULL value".to_owned())
+        }
         // Go: "Data truncated for column '%s' at row %d".
         DriverError::DataTruncatedAtRow { column, row } => MysqlError::new(
             1265,

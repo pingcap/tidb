@@ -19,7 +19,7 @@
 
 use crate::find_best_task::dispatch::DispatchContext;
 use crate::logical::DataSource;
-use crate::physical::{self, PhysicalPlan};
+use crate::physical::PhysicalPlan;
 use crate::plan_base::PlanError;
 use crate::task::Task;
 use tidb_expr::expression::Expression;
@@ -176,7 +176,8 @@ pub fn build_union_index_merge_task(
                 // handle extraction resolves against exactly these columns.
                 let mut schema_columns: Vec<tidb_expr::column::Column> =
                     resolved.iter().map(|(column, _)| column.clone()).collect();
-                for handle in &ds.handle_cols {
+                let handles = partial_handle_columns(ds, ctx)?;
+                for handle in &handles {
                     if !schema_columns
                         .iter()
                         .any(|column| column.unique_id == handle.unique_id)
@@ -325,4 +326,38 @@ pub fn build_union_index_merge_task(
     let mut root = crate::task::RootTask::default();
     root.set_plan(reader);
     Ok(Some(Task::Root(root)))
+}
+
+/// Go `PhysicalIndexScan.InitSchema` and `overwritePartialTableScanSchema`:
+/// a partial access must return a handle even after logical column pruning.
+fn partial_handle_columns(
+    ds: &DataSource,
+    ctx: &DispatchContext<'_>,
+) -> Result<Vec<tidb_expr::column::Column>, PlanError> {
+    if !ds.handle_cols.is_empty() {
+        return Ok(ds.handle_cols.clone());
+    }
+    if !ds.common_handle_cols.is_empty() {
+        return Ok(ds.common_handle_cols.clone());
+    }
+    if ds.pk_is_handle {
+        if let Some(column) = ds.table_columns.iter().find(|column| {
+            column.ret_type.as_ref().is_some_and(|ty| {
+                ty.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
+            })
+        }) {
+            return Ok(vec![column.clone()]);
+        }
+        return Err(PlanError::internal("index merge has no primary handle column"));
+    }
+    let ids = ctx.column_ids.ok_or_else(|| {
+        PlanError::internal("index merge requires the statement column allocator")
+    })?;
+    let mut handle = tidb_expr::column::Column::new(
+        ids.alloc(),
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    );
+    handle.id = tidb_model::column::EXTRA_HANDLE_ID;
+    handle.orig_name = "_tidb_rowid".to_owned();
+    Ok(vec![handle])
 }

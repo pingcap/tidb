@@ -75,7 +75,7 @@ impl DecorrelateSolver {
     /// Go `(*DecorrelateSolver).optimize` (`rule_decorrelate.go:253`).
     fn optimize(
         ctx: &RuleContext<'_>,
-        mut plan: LogicalPlan,
+        plan: LogicalPlan,
         group_by_column: &mut BTreeSet<i64>,
     ) -> Result<LogicalPlan, PlanError> {
         if let LogicalPlan::Aggregation(aggregation) = &plan {
@@ -86,255 +86,259 @@ impl DecorrelateSolver {
             }
         }
 
-        if let LogicalPlan::Apply(mut apply) = plan {
-            let outer_schema = apply
-                .base()
-                .children()
-                .first()
-                .and_then(LogicalPlan::schema)
-                .cloned()
-                .unwrap_or_default();
-            let inner_schema = apply
-                .base()
-                .children()
-                .get(1)
-                .and_then(LogicalPlan::schema)
-                .cloned()
-                .unwrap_or_default();
-            // Go `coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlan,
-            // outerSchema)`: the INNER TREE walk, which resolves the columns
-            // this apply's own outer side supplies. `LogicalApply::
-            // extract_correlated_cols` is the different question
-            // `PruneColumns` asks (which columns reach FURTHER out).
-            let mut children = apply.base_mut().take_children().into_iter();
-            let outer = children.next();
-            let mut inner = children.next();
-            match (outer, inner.as_mut()) {
-                (Some(outer), Some(inner_plan)) => {
-                    apply.cor_cols =
-                        super::super::expression_rewriter::extract_cor_columns_by_schema_4_logical_plan(
-                            inner_plan,
-                            &outer_schema,
-                        );
-                    let inner = inner.expect("the inner child was just matched");
-                    apply.base_mut().set_children(vec![outer, inner]);
-                }
-                (outer, _) => {
-                    let mut restored = Vec::new();
-                    if let Some(outer) = outer {
-                        restored.push(outer);
-                    }
-                    if let Some(inner) = inner {
-                        restored.push(inner);
-                    }
-                    apply.base_mut().set_children(restored);
-                }
-            }
-            let marker_needs_null_aware_join = matches!(
-                apply.join.join_type,
-                LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
-            ) && apply
-                .join
-                .other_conditions
-                .iter()
-                .any(super::join::is_eq_cond_from_in);
-            if apply.cor_cols.is_empty()
-                && apply.join.join_type != LogicalJoinType::AntiLeftOuterSemi
-                && !marker_needs_null_aware_join
-            {
-                // Go: "If the inner plan is non-correlated, the apply will be
-                // simplified to join."
-                // The wired JoinExec still lacks anti marker joins and NULL
-                // markers for IN. EXISTS uses the supported boolean marker.
-                return Self::optimize_children(
-                    ctx,
-                    LogicalPlan::Join(apply.join),
-                    group_by_column,
-                );
-            }
-            if apply.no_decorrelate {
-                return Self::optimize_children(ctx, LogicalPlan::Apply(apply), group_by_column);
-            }
-            let opts = SubstituteOptions::new(ctx.builder);
-            let inner = apply.base().children()[1].clone();
-            match inner {
-                LogicalPlan::Selection(mut selection) => {
-                    let conditions: Vec<_> = selection
-                        .conditions
-                        .iter()
-                        .map(|condition| condition.decorrelate(Some(&outer_schema)))
-                        .collect();
-                    apply
-                        .join
-                        .attach_on_conds(&conditions, &outer_schema, &inner_schema, &opts);
-                    let Some(child) = selection.base.take_children().into_iter().next() else {
-                        return Err(PlanError::internal("selection has no child"));
-                    };
-                    let outer = apply
-                        .base_mut()
-                        .take_children()
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
-                    apply.base_mut().set_children(vec![outer, child]);
-                    return Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column);
-                }
-                LogicalPlan::MaxOneRow(max_one_row) => {
-                    let max_one_row_child = max_one_row
-                        .base
-                        .children()
-                        .first()
-                        .filter(|child| child.max_one_row())
-                        .cloned();
-                    if let Some(child) = max_one_row_child {
-                        let outer = apply
-                            .base_mut()
-                            .take_children()
-                            .into_iter()
-                            .next()
-                            .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
-                        apply.base_mut().set_children(vec![outer, child]);
-                        return Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column);
-                    }
-                }
-                LogicalPlan::Projection(projection) => {
-                    if let Some(wrapper) =
-                        Self::pull_up_projection(ctx, &mut apply, &outer_schema, projection)?
-                    {
-                        let optimized =
-                            Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column)?;
-                        return Ok(match wrapper {
-                            Some(mut proj) => {
-                                proj.base.set_children(vec![optimized]);
-                                LogicalPlan::Projection(proj)
-                            }
-                            None => optimized,
-                        });
-                    }
-                }
-                LogicalPlan::Sort(mut sort) => {
-                    let Some(child) = sort.base.take_children().into_iter().next() else {
-                        return Err(PlanError::internal("sort has no child"));
-                    };
-                    let outer = apply
-                        .base_mut()
-                        .take_children()
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
-                    apply.base_mut().set_children(vec![outer, child]);
-                    return Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column);
-                }
-                LogicalPlan::Limit(mut limit) => {
-                    let semi_family = matches!(
-                        apply.join.join_type,
-                        LogicalJoinType::Semi
-                            | LogicalJoinType::LeftOuterSemi
-                            | LogicalJoinType::AntiSemi
-                            | LogicalJoinType::AntiLeftOuterSemi
+        match plan {
+            LogicalPlan::Apply(apply) => Self::optimize_apply(ctx, apply, group_by_column),
+            plan => Self::optimize_children(ctx, plan, group_by_column),
+        }
+    }
+
+    /// Rewrites one Apply node.
+    ///
+    /// Keep this value-heavy transformation out of the recursive tree walker.
+    /// Go recurses with interface pointers; Rust's `LogicalPlan` is a wide
+    /// value enum, so combining every rewrite temporary with the recursion
+    /// made each tree level reserve a large stack frame.
+    fn optimize_apply(
+        ctx: &RuleContext<'_>,
+        mut apply: LogicalApply,
+        group_by_column: &mut BTreeSet<i64>,
+    ) -> Result<LogicalPlan, PlanError> {
+        let outer_schema = apply
+            .base()
+            .children()
+            .first()
+            .and_then(LogicalPlan::schema)
+            .cloned()
+            .unwrap_or_default();
+        let inner_schema = apply
+            .base()
+            .children()
+            .get(1)
+            .and_then(LogicalPlan::schema)
+            .cloned()
+            .unwrap_or_default();
+        // Go `coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlan,
+        // outerSchema)`: the INNER TREE walk, which resolves the columns
+        // this apply's own outer side supplies. `LogicalApply::
+        // extract_correlated_cols` is the different question
+        // `PruneColumns` asks (which columns reach FURTHER out).
+        let mut children = apply.base_mut().take_children().into_iter();
+        let outer = children.next();
+        let mut inner = children.next();
+        match (outer, inner.as_mut()) {
+            (Some(outer), Some(inner_plan)) => {
+                apply.cor_cols =
+                    super::super::expression_rewriter::extract_cor_columns_by_schema_4_logical_plan(
+                        inner_plan,
+                        &outer_schema,
                     );
-                    let has_conditions = !apply.join.equal_conditions.is_empty()
-                        || !apply.join.left_conditions.is_empty()
-                        || !apply.join.right_conditions.is_empty()
-                        || !apply.join.other_conditions.is_empty();
-                    if semi_family && !has_conditions && limit.offset == 0 {
-                        let Some(child) = limit.base.take_children().into_iter().next() else {
-                            return Err(PlanError::internal("limit has no child"));
-                        };
-                        let outer = apply
-                            .base_mut()
-                            .take_children()
-                            .into_iter()
-                            .next()
-                            .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
-                        apply.base_mut().set_children(vec![outer, child]);
-                        return Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column);
-                    }
-                }
-                LogicalPlan::Aggregation(mut aggregation) => {
-                    match Self::pull_up_aggregation(&mut apply, &outer_schema, &mut aggregation)? {
-                        PullUpAggregation::NotFired => {}
-                        PullUpAggregation::Above => {
-                            let optimized =
-                                Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column)?;
-                            aggregation.base.set_children(vec![optimized]);
-                            return Ok(LogicalPlan::Aggregation(aggregation));
-                        }
-                        PullUpAggregation::Equalities {
-                            count_default: count_default_col,
-                        } => {
-                            let query_block_offset =
-                                apply.base().base.query_block_offset();
-                            let outer = apply
-                                .base_mut()
-                                .take_children()
-                                .into_iter()
-                                .next()
-                                .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
-                            apply
-                                .base_mut()
-                                .set_children(vec![outer, LogicalPlan::Aggregation(aggregation)]);
-                            let optimized =
-                                Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column)?;
-                            // Go :495-540: a scalar COUNT's empty-group default
-                            // 0 rides the `ifnull(count, 0)` projection above
-                            // the join — the count's value for an unmatched
-                            // outer row is 0, not NULL.
-                            let Some(count_col) = count_default_col.as_ref() else {
-                                return Ok(optimized);
-                            };
-                            let Some(join_schema) = optimized.schema().cloned() else {
-                                return Ok(optimized);
-                            };
-                            let zero = tidb_expr::constant::Constant::new_zero();
-                            let ifnull_expr = ctx
-                                .builder
-                                .new_function(
-                                    "ifnull",
-                                    count_col.ret_type.clone(),
-                                    vec![
-                                        tidb_expr::expression::Expression::Column(
-                                            count_col.clone(),
-                                        ),
-                                        tidb_expr::expression::Expression::Constant(zero),
-                                    ],
-                                )
-                                .map_err(|error| PlanError::internal(error.to_string()))?;
-                            let exprs: Vec<tidb_expr::expression::Expression> = join_schema
-                                .columns
-                                .iter()
-                                .map(|column| {
-                                    if column.unique_id == count_col.unique_id {
-                                        ifnull_expr.clone()
-                                    } else {
-                                        tidb_expr::expression::Expression::Column(
-                                            column.clone(),
-                                        )
-                                    }
-                                })
-                                .collect();
-                            let base = crate::logical::BaseLogicalPlan::new(
-                                ctx.allocator,
-                                LogicalProjection::TYPE,
-                                query_block_offset,
-                            );
-                            let mut projection =
-                                LogicalPlan::Projection(LogicalProjection::new(base, exprs));
-                            projection
-                                .base_mut()
-                                .base
-                                .set_schema(Some(join_schema.clone()));
-                            projection.base_mut().set_children(vec![optimized]);
-                            return Ok(projection);
-                        }
-                    }
-                }
-                _ => {}
+                let inner = inner.expect("the inner child was just matched");
+                apply.base_mut().set_children(vec![outer, inner]);
             }
+            (outer, _) => {
+                let mut restored = Vec::new();
+                if let Some(outer) = outer {
+                    restored.push(outer);
+                }
+                if let Some(inner) = inner {
+                    restored.push(inner);
+                }
+                apply.base_mut().set_children(restored);
+            }
+        }
+        let marker_needs_null_aware_join = matches!(
+            apply.join.join_type,
+            LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+        ) && apply
+            .join
+            .other_conditions
+            .iter()
+            .any(super::join::is_eq_cond_from_in);
+        if apply.cor_cols.is_empty()
+            && apply.join.join_type != LogicalJoinType::AntiLeftOuterSemi
+            && !marker_needs_null_aware_join
+        {
+            // Go: "If the inner plan is non-correlated, the apply will be
+            // simplified to join."
+            // The wired JoinExec still lacks anti marker joins and NULL
+            // markers for IN. EXISTS uses the supported boolean marker.
+            return Self::optimize_children(ctx, LogicalPlan::Join(apply.join), group_by_column);
+        }
+        if apply.no_decorrelate {
             return Self::optimize_children(ctx, LogicalPlan::Apply(apply), group_by_column);
         }
-
-        Self::optimize_children(ctx, plan, group_by_column)
+        let opts = SubstituteOptions::new(ctx.builder);
+        let inner = apply.base().children()[1].clone();
+        match inner {
+            LogicalPlan::Selection(mut selection) => {
+                let conditions: Vec<_> = selection
+                    .conditions
+                    .iter()
+                    .map(|condition| condition.decorrelate(Some(&outer_schema)))
+                    .collect();
+                apply
+                    .join
+                    .attach_on_conds(&conditions, &outer_schema, &inner_schema, &opts);
+                let Some(child) = selection.base.take_children().into_iter().next() else {
+                    return Err(PlanError::internal("selection has no child"));
+                };
+                let outer = apply
+                    .base_mut()
+                    .take_children()
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
+                apply.base_mut().set_children(vec![outer, child]);
+                return Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column);
+            }
+            LogicalPlan::MaxOneRow(max_one_row) => {
+                let max_one_row_child = max_one_row
+                    .base
+                    .children()
+                    .first()
+                    .filter(|child| child.max_one_row())
+                    .cloned();
+                if let Some(child) = max_one_row_child {
+                    let outer = apply
+                        .base_mut()
+                        .take_children()
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
+                    apply.base_mut().set_children(vec![outer, child]);
+                    return Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column);
+                }
+            }
+            LogicalPlan::Projection(projection) => {
+                if let Some(wrapper) =
+                    Self::pull_up_projection(ctx, &mut apply, &outer_schema, projection)?
+                {
+                    let optimized =
+                        Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column)?;
+                    return Ok(match wrapper {
+                        Some(mut proj) => {
+                            proj.base.set_children(vec![optimized]);
+                            LogicalPlan::Projection(proj)
+                        }
+                        None => optimized,
+                    });
+                }
+            }
+            LogicalPlan::Sort(mut sort) => {
+                let Some(child) = sort.base.take_children().into_iter().next() else {
+                    return Err(PlanError::internal("sort has no child"));
+                };
+                let outer = apply
+                    .base_mut()
+                    .take_children()
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
+                apply.base_mut().set_children(vec![outer, child]);
+                return Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column);
+            }
+            LogicalPlan::Limit(mut limit) => {
+                let semi_family = matches!(
+                    apply.join.join_type,
+                    LogicalJoinType::Semi
+                        | LogicalJoinType::LeftOuterSemi
+                        | LogicalJoinType::AntiSemi
+                        | LogicalJoinType::AntiLeftOuterSemi
+                );
+                let has_conditions = !apply.join.equal_conditions.is_empty()
+                    || !apply.join.left_conditions.is_empty()
+                    || !apply.join.right_conditions.is_empty()
+                    || !apply.join.other_conditions.is_empty();
+                if semi_family && !has_conditions && limit.offset == 0 {
+                    let Some(child) = limit.base.take_children().into_iter().next() else {
+                        return Err(PlanError::internal("limit has no child"));
+                    };
+                    let outer = apply
+                        .base_mut()
+                        .take_children()
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
+                    apply.base_mut().set_children(vec![outer, child]);
+                    return Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column);
+                }
+            }
+            LogicalPlan::Aggregation(mut aggregation) => {
+                match Self::pull_up_aggregation(&mut apply, &outer_schema, &mut aggregation)? {
+                    PullUpAggregation::NotFired => {}
+                    PullUpAggregation::Above => {
+                        let optimized =
+                            Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column)?;
+                        aggregation.base.set_children(vec![optimized]);
+                        return Ok(LogicalPlan::Aggregation(aggregation));
+                    }
+                    PullUpAggregation::Equalities {
+                        count_default: count_default_col,
+                    } => {
+                        let query_block_offset = apply.base().base.query_block_offset();
+                        let outer = apply
+                            .base_mut()
+                            .take_children()
+                            .into_iter()
+                            .next()
+                            .ok_or_else(|| PlanError::internal("apply has no outer child"))?;
+                        apply
+                            .base_mut()
+                            .set_children(vec![outer, LogicalPlan::Aggregation(aggregation)]);
+                        let optimized =
+                            Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column)?;
+                        // Go :495-540: a scalar COUNT's empty-group default
+                        // 0 rides the `ifnull(count, 0)` projection above
+                        // the join — the count's value for an unmatched
+                        // outer row is 0, not NULL.
+                        let Some(count_col) = count_default_col.as_ref() else {
+                            return Ok(optimized);
+                        };
+                        let Some(join_schema) = optimized.schema().cloned() else {
+                            return Ok(optimized);
+                        };
+                        let zero = tidb_expr::constant::Constant::new_zero();
+                        let ifnull_expr = ctx
+                            .builder
+                            .new_function(
+                                "ifnull",
+                                count_col.ret_type.clone(),
+                                vec![
+                                    tidb_expr::expression::Expression::Column(count_col.clone()),
+                                    tidb_expr::expression::Expression::Constant(zero),
+                                ],
+                            )
+                            .map_err(|error| PlanError::internal(error.to_string()))?;
+                        let exprs: Vec<tidb_expr::expression::Expression> = join_schema
+                            .columns
+                            .iter()
+                            .map(|column| {
+                                if column.unique_id == count_col.unique_id {
+                                    ifnull_expr.clone()
+                                } else {
+                                    tidb_expr::expression::Expression::Column(column.clone())
+                                }
+                            })
+                            .collect();
+                        let base = crate::logical::BaseLogicalPlan::new(
+                            ctx.allocator,
+                            LogicalProjection::TYPE,
+                            query_block_offset,
+                        );
+                        let mut projection =
+                            LogicalPlan::Projection(LogicalProjection::new(base, exprs));
+                        projection
+                            .base_mut()
+                            .base
+                            .set_schema(Some(join_schema.clone()));
+                        projection.base_mut().set_children(vec![optimized]);
+                        return Ok(projection);
+                    }
+                }
+            }
+            _ => {}
+        }
+        Self::optimize_children(ctx, LogicalPlan::Apply(apply), group_by_column)
     }
 
     /// Go `DecorrelateSolver.optimize`'s aggregation arm

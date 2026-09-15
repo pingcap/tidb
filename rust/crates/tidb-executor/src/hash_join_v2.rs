@@ -977,10 +977,11 @@ fn collect_outer_join_candidates(
         } else {
             let hash = base.matched_rows_hash_value()[probe_row];
             let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
+            let build_row = ctx.hash_table.row_bytes(address);
             if is_key_matched(
                 ctx.meta.key_mode,
                 &base.serialized_keys()[probe_row],
-                ctx.hash_table.row_bytes(address),
+                build_row,
                 ctx.meta,
             ) {
                 base.append_build_row_to_cached_build_rows_v1(
@@ -1006,8 +1007,7 @@ fn collect_outer_join_candidates(
             } else {
                 base.record_probe_collision();
             }
-            let next =
-                BaseJoinProbe::next_matched_row(ctx.hash_table, &ctx.tag_helper, header, hash);
+            let next = BaseJoinProbe::next_matched_row(build_row, &ctx.tag_helper, hash);
             base.set_matched_rows_header(probe_row, next);
         }
         if !outer_side_build {
@@ -1463,8 +1463,7 @@ fn collect_inner_join_candidates(
         } else {
             base.record_probe_collision();
         }
-        let next =
-            BaseJoinProbe::next_matched_row(ctx.hash_table, &ctx.tag_helper, header, hash_value);
+        let next = BaseJoinProbe::next_matched_row(build_row, &ctx.tag_helper, hash_value);
         base.set_matched_rows_header(probe_row, next);
     }
 

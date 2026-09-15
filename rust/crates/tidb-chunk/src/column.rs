@@ -316,16 +316,15 @@ impl Column {
         if self.is_fixed() {
             let elem_len = src.elem_buffer_len();
             let start = row * elem_len;
-            let cell = src.data.copy_source(start..start + elem_len);
             for _ in 0..times {
-                self.data.extend_from_slice(&cell);
+                self.data
+                    .extend_from_range(&src.data, start..start + elem_len);
             }
         } else {
             let start = usize::try_from(src.offsets[row]).expect("non-negative offset");
             let end = usize::try_from(src.offsets[row + 1]).expect("non-negative offset");
-            let cell = src.data.copy_source(start..end);
             for _ in 0..times {
-                self.data.extend_from_slice(&cell);
+                self.data.extend_from_range(&src.data, start..end);
                 self.offsets.push(self.data.len() as i64);
             }
         }
@@ -1341,13 +1340,11 @@ impl Column {
             let elem_len = src.elem_buffer_len();
             let start = row_idx * elem_len;
             let end = start + num_rows * elem_len;
-            let cells = src.data.copy_source(start..end);
-            self.data.extend_from_slice(&cells);
+            self.data.extend_from_range(&src.data, start..end);
         } else {
             let start = src.offsets[row_idx] as usize;
             let end = src.offsets[row_idx + num_rows] as usize;
-            let cells = src.data.copy_source(start..end);
-            self.data.extend_from_slice(&cells);
+            self.data.extend_from_range(&src.data, start..end);
             let elem_len = src.offsets[row_idx + 1] - src.offsets[row_idx];
             for _ in 0..num_rows {
                 let last = *self.offsets.last().expect("var-len column keeps offset 0");

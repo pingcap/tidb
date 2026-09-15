@@ -31,7 +31,7 @@
 //! * [`crate::join_row_table`]: row layout, null map, key bytes, chain links
 //!   ([`RowLayoutMeta`], [`next_row_address`]).
 //! * [`crate::hash_table_v2`]: sub-tables, bucket lookup, row iteration
-//!   ([`HashTableV2`], [`RowIter`], [`row_address_of`]).
+//!   ([`HashTableV2`], [`RowIter`], [`crate::hash_table_v2::row_address_of`]).
 //! * [`crate::join_table_meta`]: [`KeyMode`] -- Go declares `keyMode` twice,
 //!   once in `join_table_meta.go` and again at the top of this file with the
 //!   same three constants; one Rust enum serves both.
@@ -70,7 +70,7 @@ use tidb_chunk::chunk_util::{copy_selected_rows, copy_selected_rows_with_row_id_
 use tidb_chunk::column::{append_cell_from_raw_data, Column};
 use tidb_codec::{JoinKeyColumns, SerializedJoinKeys};
 
-use crate::hash_table_v2::{row_address_of, HashTableV2, RowIter};
+use crate::hash_table_v2::{HashTableV2, RowIter};
 use crate::join_row_table::{
     next_row_address, RowLayoutMeta, SIZE_OF_ELEMENT_SIZE, SIZE_OF_NEXT_PTR,
 };
@@ -184,9 +184,6 @@ pub trait BuildRowSource {
     /// Implementations panic on an unknown address, matching Go's behavior on
     /// a bad pointer.
     fn row_bytes(&self, address: usize) -> &[u8];
-
-    /// The raw, still-tagged word stored in the row's `next_row_ptr`.
-    fn raw_next_row_address(&self, address: usize) -> usize;
 }
 
 impl BuildRowSource for HashTableV2 {
@@ -195,13 +192,6 @@ impl BuildRowSource for HashTableV2 {
         let (segment, row) = self.row_location(address);
         let offset = segment.row_start_offset[row] as usize;
         &segment.raw_data[offset..]
-    }
-
-    #[inline]
-    fn raw_next_row_address(&self, address: usize) -> usize {
-        let (segment, row) = self.row_location(address);
-        let offset = segment.row_start_offset[row] as usize;
-        segment.raw_next_row_address(offset)
     }
 }
 
@@ -227,13 +217,6 @@ impl RowBytesMap {
 impl BuildRowSource for RowBytesMap {
     fn row_bytes(&self, address: usize) -> &[u8] {
         self.rows.get(&address).expect("registered row address")
-    }
-
-    fn raw_next_row_address(&self, address: usize) -> usize {
-        let bytes = self.row_bytes(address);
-        let mut raw = [0_u8; 8];
-        raw.copy_from_slice(&bytes[..8]);
-        u64::from_le_bytes(raw) as usize
     }
 }
 
@@ -1331,17 +1314,13 @@ impl BaseJoinProbe {
     /// Go `getNextRowAddress` as reached from the probe: follow one link of
     /// the current probe row's chain, honoring the tag short-circuit.
     #[must_use]
-    pub fn next_matched_row(
-        rows: &dyn BuildRowSource,
-        tag_helper: &TagPtrHelper,
-        current: usize,
-        hash_value: u64,
-    ) -> usize {
-        let untagged = row_address_of(tag_helper, current);
-        if untagged == 0 {
-            return 0;
-        }
-        next_row_address(rows.raw_next_row_address(untagged), tag_helper, hash_value)
+    pub fn next_matched_row(row: &[u8], tag_helper: &TagPtrHelper, hash_value: u64) -> usize {
+        let raw = usize::from_le_bytes(
+            row[..SIZE_OF_NEXT_PTR]
+                .try_into()
+                .expect("build row next pointer"),
+        );
+        next_row_address(raw, tag_helper, hash_value)
     }
 }
 

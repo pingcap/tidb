@@ -388,6 +388,9 @@ pub enum DriverError {
         /// The value that does not fit.
         value: String,
     },
+    /// Go `dbterror.ErrInvalidUseOfNull` (1138): a MODIFY COLUMN admission
+    /// check found a stored NULL before starting the schema change.
+    InvalidUseOfNull,
     /// Go `exeerrors.ErrSavepointNotExists` (`ErrSpDoesNotExist`, 1305):
     /// `ROLLBACK TO` or `RELEASE` named a savepoint the transaction does not
     /// hold. Carries the name AS WRITTEN -- Go matches savepoint names
