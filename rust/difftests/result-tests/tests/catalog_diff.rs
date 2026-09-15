@@ -469,7 +469,11 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 16;
 // because `ddl/db_integration` and `executor/show` stop refusing the
 // statements that build the tables these reads describe; 13 more reads are
 // examined and 15 more agree, two of which used to be counted as divergences.
-const MATCHED_FLOOR: usize = 280;
+//
+// 280 -> 333: 48 more reads are compared while the divergence set has a net
+// reduction of five. Raising both guards prevents the larger supported
+// surface from being mistaken for a pure five-item repair.
+const MATCHED_FLOOR: usize = 333;
 
 /// Stable identity of the known mismatch set, independent of topic order.
 // Moved with the count above: two recorded catalog reads that used to
@@ -568,19 +572,14 @@ fn catalog_reads_match_recorded_tidb_output() {
         eprintln!("carried catalog divergences:{}", total.divergences.join(""));
     }
 
+    let seen = (total.divergences.len(), fingerprint(&total.divergences));
     assert_eq!(
-        total.divergences.len(),
-        KNOWN_CATALOG_DIVERGENCES,
-        "catalog mismatch count changed; inspect with CATALOG_SHOW_DIVERGENCES=1"
-    );
-    let seen = fingerprint(&total.divergences);
-    assert_eq!(
-        seen, CATALOG_DIVERGENCE_FINGERPRINT,
-        "the SET of carried catalog divergences changed while the COUNT did \
-         not. Something inside the already-red set now reads back differently \
-         -- which is either a fix (update the fingerprint to {seen} and say \
-         what it fixed) or a second bug landing on a statement that was \
-         already wrong. Run with CATALOG_SHOW_DIVERGENCES=1 to diff them."
+        seen,
+        (KNOWN_CATALOG_DIVERGENCES, CATALOG_DIVERGENCE_FINGERPRINT),
+        "the COUNT or SET of carried catalog divergences changed. This may be \
+         a fix, a regression, or a coverage shift; run with \
+         CATALOG_SHOW_DIVERGENCES=1 and diff complete per-read-key dumps before \
+         updating either part of this baseline."
     );
     assert!(
         total.matched >= MATCHED_FLOOR,
