@@ -417,6 +417,19 @@ ROUND(1e14, 1)	ROUND(1e15, 1)	ROUND(1e308, 1)
 SELECT ROUND(1e-14, 1), ROUND(1e-15, 1), ROUND(1e-308, 1);
 ROUND(1e-14, 1)	ROUND(1e-15, 1)	ROUND(1e-308, 1)
 0	0	0
+SELECT ROUND(25, -1), ROUND(-25, -1), ROUND(35, -1), ROUND(-35, -1), ROUND(24, -1), ROUND(-24, -1);
+ROUND(25, -1)	ROUND(-25, -1)	ROUND(35, -1)	ROUND(-35, -1)	ROUND(24, -1)	ROUND(-24, -1)
+30	-30	40	-40	20	-20
+SELECT ROUND(9223372036854775807, 0), ROUND(1234567890123456789, -1), ROUND(25, -20), ROUND(25, -2012);
+ROUND(9223372036854775807, 0)	ROUND(1234567890123456789, -1)	ROUND(25, -20)	ROUND(25, -2012)
+9223372036854775807	1234567890123456790	0	0
+drop table if exists t;
+create table t (a bigint, b bigint unsigned);
+insert into t values (25, 9223372036854775815), (-45, 25);
+select round(a, -1), round(b, -1) from t order by a;
+round(a, -1)	round(b, -1)
+-50	30
+30	9223372036854775820
 SELECT truncate(123, -2), truncate(123, 2), truncate(123, 1), truncate(123, -1);
 truncate(123, -2)	truncate(123, 2)	truncate(123, 1)	truncate(123, -1)
 100	123	123	120
