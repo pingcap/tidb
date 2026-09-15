@@ -1113,12 +1113,7 @@ fn matches_for(exec: &HashJoinV2Exec, layout: &RowLayoutMeta, keys: &[i64]) -> V
                     bytes.copy_from_slice(&layout.get_key_bytes(row)[..8]);
                     matched.push(i64::from_le_bytes(bytes));
                 }
-                current = BaseJoinProbe::next_matched_row(
-                    hash_table,
-                    &ctx.tag_helper,
-                    current,
-                    hash_value,
-                );
+                current = BaseJoinProbe::next_matched_row(row, &ctx.tag_helper, hash_value);
             }
             matched.sort_unstable();
             matched

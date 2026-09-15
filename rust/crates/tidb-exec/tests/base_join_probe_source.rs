@@ -618,12 +618,7 @@ fn a_bucket_chain_walks_every_row_that_shares_a_hash_bucket() {
         } else {
             probe.record_probe_collision();
         }
-        current = BaseJoinProbe::next_matched_row(
-            &fixture.hash_table,
-            &fixture.tag_helper,
-            current,
-            hash_value,
-        );
+        current = BaseJoinProbe::next_matched_row(row, &fixture.tag_helper, hash_value);
     }
     assert_eq!(matched, 3, "every duplicate key is reachable from the head");
     assert_eq!(probe.get_probe_collision(), 0);
