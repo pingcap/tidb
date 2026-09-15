@@ -64,11 +64,28 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
 	// test default resource group.
+<<<<<<< HEAD
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM YES <nil> <nil>"))
 	tk.MustExec("alter resource group `default` PRIORITY=LOW")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED LOW YES <nil> <nil>"))
 	tk.MustExec("alter resource group `default` ru_per_sec=1000")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW YES <nil> <nil>"))
+=======
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM UNLIMITED <nil> <nil>"))
+	tk.MustExec("alter resource group `default` PRIORITY=LOW")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED LOW UNLIMITED <nil> <nil>"))
+	tk.MustExec("alter resource group `default` ru_per_sec=1000")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW UNLIMITED <nil> <nil>"))
+	tk.MustExec("alter resource group `default` BURSTABLE")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> <nil>"))
+	tk.MustExec("alter resource group `default` BURSTABLE=OFF")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW OFF <nil> <nil>"))
+	tk.MustExec("alter resource group `default` BURSTABLE=MODERATED")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> <nil>"))
+	tk.MustExec("alter resource group `default` BURSTABLE=UNLIMITED")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW UNLIMITED <nil> <nil>"))
+
+>>>>>>> b8d04e17a2c (session: revert enabling ANALYZE background resource control by default (#69809))
 	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
 
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
