@@ -75,6 +75,72 @@ fn codec_encode_decode_round_trip() {
         assert_eq!(row.get_my_decimal(4), expected_decimal);
         assert_eq!(row.get_json(5), create_string_json(&text));
     }
+
+    // Go SerializeKeys must see identical physical cells through ordinary,
+    // shallow-shared, and response-backed columns. Reuse the mixed codec
+    // fixture to cover raw keys and typed decimal/JSON fallbacks together.
+    let mut shared = old_chk.clone();
+    let mut alias = crate::mutrow::MutRow::from_types(&col_types);
+    alias.shallow_copy_partial_row(0, &mut shared, 0);
+    let mut frozen = Chunk::new_with_capacity(&col_types, num_rows);
+    assert!(codec
+        .try_decode_bytes_to_chunk(&bytes::Bytes::from(buffer), &mut frozen)
+        .unwrap()
+        .is_empty());
+    let rows = (0..num_rows)
+        .map(|i| old_chk.get_row(i).get_datum_row(&col_types))
+        .collect::<Vec<_>>();
+    let used = [9, 2, 0];
+    let mut filter = vec![true; num_rows];
+    filter[2] = false;
+    for indices in [vec![1], vec![1, 2, 3], vec![4, 5], vec![1, 0]] {
+        let types = indices
+            .iter()
+            .map(|&i| col_types[i].clone())
+            .collect::<Vec<_>>();
+        let modes = indices
+            .iter()
+            .map(|&i| {
+                if i < 2 {
+                    tidb_codec::SerializeMode::NeedSignFlag
+                } else {
+                    tidb_codec::SerializeMode::KeepVarColumnLength
+                }
+            })
+            .collect::<Vec<_>>();
+        let (expected, _) =
+            tidb_codec::serialize_keys(&rows, &indices, &types, &modes, Some(&filter)).unwrap();
+        let serializer = tidb_codec::JoinKeyColumns {
+            indices: indices.clone(),
+            types,
+            modes,
+        };
+        let mut keys = tidb_codec::SerializedJoinKeys::default();
+        let mut nulls = vec![];
+        for chunk in [&old_chk, &new_chk, &shared, &frozen] {
+            serializer
+                .serialize(chunk, &used, Some(&filter), &mut nulls, &mut keys)
+                .unwrap();
+            assert_eq!(
+                keys.iter().collect::<Vec<_>>(),
+                used.iter()
+                    .map(|&i| expected[i].as_slice())
+                    .collect::<Vec<_>>()
+            );
+            for &physical in &used {
+                assert_eq!(nulls[physical], indices.contains(&0));
+            }
+            let mut saved = Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::Blob)], 3);
+            for key in keys.iter() {
+                saved.append_bytes(0, key);
+            }
+            let mut restored = tidb_codec::SerializedJoinKeys::default();
+            restored.restore(&saved, 0, &[true, false, true]).unwrap();
+            assert_eq!(&restored[0], &keys[0]);
+            assert!(restored[1].is_empty());
+            assert_eq!(&restored[2], &keys[2]);
+        }
+    }
 }
 
 /// Go `types.CreateBinaryJSON(str)`: a binary JSON string value.

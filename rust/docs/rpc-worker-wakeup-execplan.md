@@ -39,6 +39,8 @@ Reduce synchronization and fragmented batching on the generic RPC-to-query respo
 - [x] Measure the accumulated index-hash changes with rotating short read-only rounds and separate Rust/Go Q21 profiles; retain the modest/noisy results without a target claim.
 - [x] Follow Go's candidate-chunk condition filtering in the live index-hash path and shared joiner, reusing existing expression vector kernels and the session vectorization setting; retain semi/anti short circuiting.
 - [x] Validate the combined incremental-fetch and condition-filter batch after rebasing onto remote `6b42437d1d`, ready for delivery as one commit to `hparser-integration`.
+- [x] Wire the existing native chunk/List Apply into the physical builder, remove the superseded one-row joiner executor and duplicate scalar filter, and validate child filtering, correlation cache and result continuation together.
+- [x] Borrow raw join-key column storage once per sizing/encoding pass, following Go's column access; validate serialized bytes, NULL discovery, selection and spill restore across owned/shared/frozen backing.
 
 ## Context and Source Evidence
 
@@ -76,6 +78,10 @@ Go also sends `finCopResp` through its unordered response channel. Rust's separa
 
 ## Decision Log
 
+
+2026-09-15 hash-key storage review: the retained Q21 profile attributes 913 inclusive samples to `JoinKeyColumns::serialize`; it is a lead, not pure CPU accounting. Go `codec.go::preAllocForSerializedKeyBuffer` and `serializeKeysImpl` dispatch outside row loops and reuse the column data. Rust already holds the column owner but `Column::get_raw` reconstructs its `SharedBytesRead` for every cell, including a read lock for shallow-shared storage. Expose a borrow-scoped raw column view to the codec so raw integer/float/string passes and spill restore acquire storage once. Do not hold that guard while calling typed datum decoders, which may read storage themselves. Keep complex-type fallback and byte layout unchanged; validate together with the retained Apply work without a benchmark.
+
+2026-09-15 Apply call-chain review: `build_apply` imports `apply::NestedLoopApplyExec`, not `apply::native::NestedLoopApplyExec`. The live implementation copies each outer row into a one-row chunk, accumulates all inner rows in one growing chunk and creates a singleton iterator for each joiner call. The existing native executor instead retains the outer chunk and a resumable List iterator, matching Go `hash_join_v1.go::NestedLoopApplyExec.Next`. Wire that path, delete the superseded executor, use the shared vectorized evaluator for both child filters, and encode correlated keys only when caching is active. Keep physical selection indexes, output RequiredRows, per-kind short circuit, cache ownership, aggregate-empty handling and Go close/error ordering. No full benchmark is planned for this implementation batch.
 
 2026-09-15 candidate filtering: index-hash inner/left/right paths now gather at most the remaining output request, evaluate residual conditions as a chunk, and copy selected column ranges. Already-matched equality keys are not re-evaluated. Shared joiners use the same expression evaluator and restore their scratch chunk even on an evaluation error. The physical builder forwards the session vectorization setting. Semi/anti short circuits and Apply's child filters are unchanged. The regression failed before implementation with three prepared-parameter reads instead of one (`/private/tmp/index-condition-before.log`); it now covers both ordered modes and enabled/disabled vectorization. This batch is source/test alignment, not measured performance improvement.
 
@@ -252,6 +258,28 @@ The wider failures from the setup-cost milestone are resolved by the follow-up a
 
 ## Outcomes & Retrospective
 
+
+Column-storage batching (2026-09-16): `JoinKeyColumn::with_raw` supplies one borrow-scoped fixed/variable packed-data view per column pass. The chunk implementation acquires its data backing once; integer/real/string encoding, string sizing and spill-key restore no longer construct per-cell storage guards. Fixed-size sizing dispatch also moves outside the row loop and no longer resolves a string collator for integer columns. Complex-type decoders remain outside the raw guard to avoid nested storage borrowing. `JoinKeyBytes` is a native borrowed layout, not a workload-specific path or dependency addition.
+
+The existing mixed codec round-trip test now checks join-key equivalence through owned, shallow-shared and immutable response-backed storage, reordered/filtered rows, a later NULL key, decimal/JSON fallback, and retained spill-key restoration. Final accumulated Apply plus column-storage validation passes 5385 tests, zero failures, with 400 existing ignored. This includes 267 chunk unit, 46 codec unit, 167 codec integration, and the executor/session/storage surfaces, including their separate test binaries. Lint, touched-file formatting and diff checks pass. Logs: `/private/tmp/join-key-column-grouped.log` and `/private/tmp/join-key-column-lint.log`. Files added to the retained Apply diff are codec `join_keys.rs`, codec `lib.rs`, chunk `chunk.rs`, chunk `tests_codec.rs`, and this plan. No benchmark, release build or live deployment ran for this increment; the saved profile motivates the change but does not measure its benefit. The 25% objective and complete Go parity remain unproven. Exact final checks:
+
+    RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-codec -p tidb-chunk -p tidb-executor -p tidb-session -p tidb-exec --lib --tests -j12 --no-fail-fast -- --test-threads=12
+    GOMAXPROCS=12 GOFLAGS=-p=12 make -j12 lint
+    rustfmt --check --edition 2021 --config skip_children=true rust/crates/tidb-codec/src/join_keys.rs rust/crates/tidb-codec/src/lib.rs rust/crates/tidb-chunk/src/chunk.rs rust/crates/tidb-chunk/src/tests_codec.rs
+    git diff --check
+
+Apply batching follow-up (2026-09-15): the physical builder now uses the existing native executor through `apply::NestedLoopApplyExec`'s re-export. The superseded 300-line one-row implementation and duplicate filter are deleted. Outer chunks and inner List iterators survive output requests; shared joiners receive candidate batches and retain their own semi/anti termination. Both child filters use the shared evaluator, honoring the session vectorization flag and physical selection indexes. Native correlation binding no longer constructs a datum vector when caching is off; native and callback-adapter Apply cache-key paths append directly to the existing timezone/collation-aware codec rather than cloning a temporary datum vector.
+
+The candidate-batch regression failed before wiring with three parameter reads instead of one (`/private/tmp/apply-batch-before.log`). It now passes for both vectorization settings and consecutive three-row output requests. Go `pkg_test.go::TestNestedLoopApply` now constructs the actual Apply executor in `apply.rs` tests instead of using a normal SQL join in `tests_pkg_nested_loop_apply_source.rs`; extended cases cover selection order, cache on/off, two-row output requests and reopen. Wiring also exposed a repeated-Next panic following inner Open failure (`/private/tmp/apply-error-before.log`): an unsuccessful inner fetch is now terminal and never leaves an active outer row without a resumable inner iterator. Inner Close still runs even on Open failure and does not replace the primary error.
+
+Final grouped checks pass 4873 tests (332 tidb-exec unit, 826 integration; 1327 executor unit, 329 integration; 1723 session unit, 336 integration), zero failures and 396 existing ignored. Lint, touched-file formatting and `git diff --check` pass. Logs are `/private/tmp/apply-batch-grouped.log` and `/private/tmp/apply-batch-lint.log`. Changed files are executor `apply.rs`, `apply/native.rs`, `driver/physical_builder.rs`, `joiner.rs`, `tests_pkg_nested_loop_apply_source.rs`, and this plan. The untracked JIT draft is preserved. This follow-up remains local and uncommitted; no benchmark, release build or live deployment was run. Performance improvement, complete Go parity, and the 25% cross-workload goal remain unproven. Exact commands:
+
+    RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib nested_loop_apply_passes_candidate_batches_to_joiner -j12 -- --test-threads=12
+    RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib native_apply_closes_failed_inner_open_and_stops -j12 -- --test-threads=12
+    RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib apply -j12 -- --test-threads=12
+    RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-executor -p tidb-session -p tidb-exec --lib --test all -j12 --no-fail-fast -- --test-threads=12
+    GOMAXPROCS=12 GOFLAGS=-p=12 make -j12 lint
+    git diff --check
 
 Batch-delivery validation (2026-09-15): after rebasing onto `6b42437d1d`, the combined incremental-fetch and candidate-filter changes pass 4871 tests (332 tidb-exec unit, 826 integration; 1325 executor unit, 329 integration; 1723 session unit, 336 integration), with 396 existing ignored and no failures. Both vectorization settings and ordered/unordered candidate filtering are covered. Repository lint and diff checks pass. Logs are `/private/tmp/join-batch-push-tests.log` and `/private/tmp/join-batch-push-lint.log`. The unrelated untracked `rust/docs/plan-cache-jit-design.md` is excluded. No new benchmark, release build or live deployment was run for the candidate-filter changes; earlier binary measurements do not validate their performance. Full Go package parity and the 25% objective remain open. Exact commands:
 

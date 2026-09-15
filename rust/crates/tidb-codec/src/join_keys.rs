@@ -15,7 +15,7 @@
 //! Native column access for Go's two-pass, column-wide join key construction.
 
 use crate::{encode_hash_datum, CodecError, SerializeMode, INT_FLAG, UINT_FLAG};
-use std::ops::{Deref, Index, Range};
+use std::ops::{Index, Range};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 
 /// Read-only physical column access. Implemented by chunks, without making
@@ -34,17 +34,35 @@ pub trait JoinKeySource {
 
 /// A borrowed physical column, shared by sizing, encoding and spill restore.
 pub trait JoinKeyColumn {
-    /// A borrow-scoped view, including any storage guard the column requires.
-    type Bytes<'a>: Deref<Target = [u8]>
-    where
-        Self: 'a;
     /// NULL marker at a physical cell.
     fn is_null(&self, row: usize) -> bool;
-    /// Native bytes of a non-NULL physical cell.
-    fn raw(&self, row: usize) -> Self::Bytes<'_>;
+    /// Borrow packed data once for a column-wide pass. The implementation
+    /// retains any backing guard until the callback returns.
+    fn with_raw<R>(&self, f: impl FnOnce(JoinKeyBytes<'_>) -> R) -> R;
     /// Typed access for decimal, temporal, enum/set, bit and JSON encoding.
     /// Integer, real and string columns use raw storage directly.
     fn datum(&self, row: usize, field_type: &FieldType) -> Result<Datum, CodecError>;
+}
+
+/// Go column data and offsets, borrowed for a complete raw-key pass.
+pub enum JoinKeyBytes<'a> {
+    /// Fixed-width native cells, including NULL slots.
+    Fixed { data: &'a [u8], width: usize },
+    /// Variable-width cells with Go's physical-row offsets.
+    Variable { data: &'a [u8], offsets: &'a [i64] },
+}
+
+impl JoinKeyBytes<'_> {
+    /// Native bytes of one physical cell. Source row bounds are checked by
+    /// the serializer before borrowing a column.
+    pub fn row(&self, row: usize) -> &[u8] {
+        match self {
+            Self::Fixed { data, width } => &data[row * width..(row + 1) * width],
+            Self::Variable { data, offsets } => {
+                &data[offsets[row] as usize..offsets[row + 1] as usize]
+            }
+        }
+    }
 }
 
 /// One retained allocation for all keys, with disjoint per-row capacity.
@@ -66,23 +84,25 @@ impl SerializedJoinKeys {
         retained: &[bool],
     ) -> Result<(), CodecError> {
         source.with_column(key_column, |column| {
-            self.reset(retained.len());
-            for (row, &keep) in retained.iter().enumerate() {
-                if keep {
-                    self.limits[row] = column.raw(row).len();
+            column.with_raw(|raw| {
+                self.reset(retained.len());
+                for (row, &keep) in retained.iter().enumerate() {
+                    if keep {
+                        self.limits[row] = raw.row(row).len();
+                    }
                 }
-            }
-            self.allocate()?;
-            for (row, &keep) in retained.iter().enumerate() {
-                if keep {
-                    let bytes = column.raw(row);
-                    let start = self.rows[row].start;
-                    let end = start + bytes.len();
-                    self.bytes[start..end].copy_from_slice(&bytes);
-                    self.rows[row].end = end;
+                self.allocate()?;
+                for (row, &keep) in retained.iter().enumerate() {
+                    if keep {
+                        let bytes = raw.row(row);
+                        let start = self.rows[row].start;
+                        let end = start + bytes.len();
+                        self.bytes[start..end].copy_from_slice(&bytes);
+                        self.rows[row].end = end;
+                    }
                 }
-            }
-            Ok(())
+                Ok(())
+            })
         })
     }
     /// Number of logical keys in the current chunk.
@@ -188,61 +208,67 @@ impl JoinKeyColumns {
         nulls.fill(false);
         keys.reset(used_rows.len());
 
-        // NULL discovery precedes writing any key bytes, including when a later
-        // key column is NULL. This is the source's preallocation pass.
+        // Go preAllocForSerializedKeyBuffer dispatches once per column.
+        // Typed decoders run without a raw backing guard: they may acquire
+        // their own read view, including for shallow-shared storage.
         for ((&column, field_type), &mode) in self.indices.iter().zip(&self.types).zip(&self.modes)
         {
             source.with_column(column, |column| {
-                let code = field_type.code();
-                let collator = field_type.runtime_collator();
-                for (logical, &physical) in used_rows.iter().enumerate() {
-                    nulls[physical] |= code == FieldTypeCode::Null || column.is_null(physical);
-                    if nulls[physical] || filter.is_some_and(|filter| !filter[physical]) {
-                        continue;
+                let fixed = match field_type.code() {
+                    FieldTypeCode::Tiny
+                    | FieldTypeCode::Short
+                    | FieldTypeCode::Int24
+                    | FieldTypeCode::Long
+                    | FieldTypeCode::LongLong
+                    | FieldTypeCode::Year => {
+                        Some(8 + usize::from(mode == SerializeMode::NeedSignFlag))
                     }
-                    let size = match code {
-                        FieldTypeCode::Tiny
-                        | FieldTypeCode::Short
-                        | FieldTypeCode::Int24
-                        | FieldTypeCode::Long
-                        | FieldTypeCode::LongLong
-                        | FieldTypeCode::Year => {
-                            8 + usize::from(mode == SerializeMode::NeedSignFlag)
-                        }
-                        FieldTypeCode::Float
-                        | FieldTypeCode::Double
-                        | FieldTypeCode::Date
-                        | FieldTypeCode::Datetime
-                        | FieldTypeCode::Timestamp
-                        | FieldTypeCode::Duration => 8,
-                        FieldTypeCode::String
-                        | FieldTypeCode::Varchar
-                        | FieldTypeCode::VarString
-                        | FieldTypeCode::Blob
-                        | FieldTypeCode::TinyBlob
-                        | FieldTypeCode::MediumBlob
-                        | FieldTypeCode::LongBlob => {
-                            collator.max_key_len(&column.raw(physical))
-                                + usize::from(mode == SerializeMode::KeepVarColumnLength) * 4
-                        }
-                        FieldTypeCode::NewDecimal
-                        | FieldTypeCode::Enum
-                        | FieldTypeCode::Set
-                        | FieldTypeCode::Bit
-                        | FieldTypeCode::Json => {
-                            let value = column.datum(physical, field_type)?;
-                            let (_, bytes) = encode_hash_datum(&value, field_type)?;
-                            bytes.len() + prefix_size(field_type, mode)
-                        }
-                        FieldTypeCode::Null => 0,
-                        _ => return Err(CodecError::InvalidEncoding("unsupported join key type")),
-                    };
-                    keys.limits[logical] = keys.limits[logical]
-                        .checked_add(size)
-                        .ok_or(CodecError::InvalidEncoding("serialized key too large"))?;
+                    FieldTypeCode::Float
+                    | FieldTypeCode::Double
+                    | FieldTypeCode::Date
+                    | FieldTypeCode::Datetime
+                    | FieldTypeCode::Timestamp
+                    | FieldTypeCode::Duration => Some(8),
+                    _ => None,
+                };
+                if let Some(size) = fixed {
+                    return reserve_column_keys(column, used_rows, filter, nulls, keys, |_| {
+                        Ok(size)
+                    });
                 }
-
-                Ok::<(), CodecError>(())
+                match field_type.code() {
+                    FieldTypeCode::String
+                    | FieldTypeCode::Varchar
+                    | FieldTypeCode::VarString
+                    | FieldTypeCode::Blob
+                    | FieldTypeCode::TinyBlob
+                    | FieldTypeCode::MediumBlob
+                    | FieldTypeCode::LongBlob => column.with_raw(|raw| {
+                        let collator = field_type.runtime_collator();
+                        let prefix = usize::from(mode == SerializeMode::KeepVarColumnLength) * 4;
+                        reserve_column_keys(column, used_rows, filter, nulls, keys, |row| {
+                            Ok(collator.max_key_len(raw.row(row)) + prefix)
+                        })
+                    }),
+                    FieldTypeCode::NewDecimal
+                    | FieldTypeCode::Enum
+                    | FieldTypeCode::Set
+                    | FieldTypeCode::Bit
+                    | FieldTypeCode::Json => {
+                        reserve_column_keys(column, used_rows, filter, nulls, keys, |row| {
+                            let value = column.datum(row, field_type)?;
+                            let (_, bytes) = encode_hash_datum(&value, field_type)?;
+                            Ok(bytes.len() + prefix_size(field_type, mode))
+                        })
+                    }
+                    FieldTypeCode::Null => {
+                        for &row in used_rows {
+                            nulls[row] = true;
+                        }
+                        Ok(())
+                    }
+                    _ => Err(CodecError::InvalidEncoding("unsupported join key type")),
+                }
             })?;
         }
         keys.allocate()?;
@@ -258,13 +284,13 @@ impl JoinKeyColumns {
                     | FieldTypeCode::Long
                     | FieldTypeCode::LongLong
                     | FieldTypeCode::Year
-                    | FieldTypeCode::Duration => {
+                    | FieldTypeCode::Duration => column.with_raw(|raws| {
                         for (logical, &physical) in used_rows.iter().enumerate() {
                             if skip(physical, filter, nulls) {
                                 continue;
                             }
-                            let raw = column.raw(physical);
-                            let word: [u8; 8] = (&*raw).try_into().map_err(|_| {
+                            let raw = raws.row(physical);
+                            let word: [u8; 8] = raw.try_into().map_err(|_| {
                                 CodecError::InvalidEncoding("invalid integer key width")
                             })?;
                             if code != FieldTypeCode::Duration
@@ -276,46 +302,49 @@ impl JoinKeyColumns {
                             }
                             keys.append(logical, &word)?;
                         }
-                    }
-                    FieldTypeCode::Float | FieldTypeCode::Double => {
+                        Ok::<(), CodecError>(())
+                    })?,
+                    FieldTypeCode::Float | FieldTypeCode::Double => column.with_raw(|raws| {
                         for (logical, &physical) in used_rows.iter().enumerate() {
                             if skip(physical, filter, nulls) {
                                 continue;
                             }
-                            let raw = column.raw(physical);
+                            let raw = raws.row(physical);
                             let value = if code == FieldTypeCode::Float {
-                                f64::from(f32::from_le_bytes((&*raw).try_into().map_err(|_| {
+                                f64::from(f32::from_le_bytes(raw.try_into().map_err(|_| {
                                     CodecError::InvalidEncoding("invalid float key width")
                                 })?))
                             } else {
-                                f64::from_le_bytes((&*raw).try_into().map_err(|_| {
+                                f64::from_le_bytes(raw.try_into().map_err(|_| {
                                     CodecError::InvalidEncoding("invalid double key width")
                                 })?)
                             };
                             let value = if value == 0.0 { 0.0 } else { value };
                             keys.append(logical, &value.to_le_bytes())?;
                         }
-                    }
+                        Ok::<(), CodecError>(())
+                    })?,
                     FieldTypeCode::String
                     | FieldTypeCode::Varchar
                     | FieldTypeCode::VarString
                     | FieldTypeCode::Blob
                     | FieldTypeCode::TinyBlob
                     | FieldTypeCode::MediumBlob
-                    | FieldTypeCode::LongBlob => {
+                    | FieldTypeCode::LongBlob => column.with_raw(|raws| {
                         let collator = field_type.runtime_collator();
                         for (logical, &physical) in used_rows.iter().enumerate() {
                             if skip(physical, filter, nulls) {
                                 continue;
                             }
-                            let raw = column.raw(physical);
-                            let bytes = collator.immutable_key(&raw);
+                            let raw = raws.row(physical);
+                            let bytes = collator.immutable_key(raw);
                             if mode == SerializeMode::KeepVarColumnLength {
                                 append_length(keys, logical, bytes.len(), false)?;
                             }
                             keys.append(logical, &bytes)?;
                         }
-                    }
+                        Ok::<(), CodecError>(())
+                    })?,
                     FieldTypeCode::Null => {}
                     _ => {
                         for (logical, &physical) in used_rows.iter().enumerate() {
@@ -342,6 +371,26 @@ impl JoinKeyColumns {
         }
         Ok(())
     }
+}
+
+fn reserve_column_keys<C: JoinKeyColumn>(
+    column: &C,
+    used_rows: &[usize],
+    filter: Option<&[bool]>,
+    nulls: &mut [bool],
+    keys: &mut SerializedJoinKeys,
+    mut size: impl FnMut(usize) -> Result<usize, CodecError>,
+) -> Result<(), CodecError> {
+    for (logical, &physical) in used_rows.iter().enumerate() {
+        nulls[physical] |= column.is_null(physical);
+        if skip(physical, filter, nulls) {
+            continue;
+        }
+        keys.limits[logical] = keys.limits[logical]
+            .checked_add(size(physical)?)
+            .ok_or(CodecError::InvalidEncoding("serialized key too large"))?;
+    }
+    Ok(())
 }
 
 fn skip(row: usize, filter: Option<&[bool]>, nulls: &[bool]) -> bool {

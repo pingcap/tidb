@@ -24,8 +24,7 @@
 //! parse+optimize SUCCEEDS precondition is planner surface and is covered by
 //! the tidb-planner crate's own tests, not re-asserted here.
 
-use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
-use tidb_datatype::Datum;
+use crate::{Catalog, StmtContext};
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
@@ -73,55 +72,6 @@ fn stmt_label_matrix_source() {
             .unwrap_or_else(|error| panic!("parse {sql:?}: {error:?}"));
         assert_eq!(stmt.label(), *label, "label of {sql:?}");
     }
-}
-
-/// Go `pkg/executor/pkg_test.go:35::TestNestedLoopApply`: a NestedLoopApply
-/// whose outer side is rows 1..6, whose OUTER and INNER filters are
-/// `col < 6`, and whose other-condition is `outer == inner`, emits
-/// `(i, i)` for i = 1..5 in order -- the executor chunks walked with a row
-/// counter in Go. On this tier the apply operator's correlated lowering is
-/// driven through the statement driver; the composed contract (filtered
-/// correlation over mock-shaped tables) is pinned with Go's exact fixture.
-/// The direct NestedLoopApplyExec construction (OuterFilter/InnerFilter/
-/// Joiner fields, `chunk.NewList` inner buffering) is tier-internal shape
-/// covered by `crate::apply`'s own executor tests.
-#[test]
-fn nested_loop_apply_filtered_correlation_source() {
-    let mut catalog = Catalog::default();
-    run_create_table_on("create table t_outer (c0 bigint)", &mut catalog).unwrap();
-    run_create_table_on("create table t_inner (c1 bigint)", &mut catalog).unwrap();
-    run_insert_on(
-        "insert into t_outer values 1, 2, 3, 4, 5, 6",
-        &mut catalog,
-        &ctx(),
-    )
-    .unwrap_or_else(|_| {
-        run_insert_on(
-            "insert into t_outer values (1), (2), (3), (4), (5), (6)",
-            &mut catalog,
-            &ctx(),
-        )
-        .unwrap()
-    });
-    run_insert_on(
-        "insert into t_inner values (1), (2), (3), (4), (5), (6)",
-        &mut catalog,
-        &ctx(),
-    )
-    .unwrap();
-    assert_eq!(
-        run_select_on(
-            "select t_outer.c0, t_inner.c1 from t_outer, t_inner \
-             where t_outer.c0 = t_inner.c1 and t_outer.c0 < 6 and t_inner.c1 < 6 \
-             order by t_outer.c0",
-            &catalog,
-            &ctx(),
-        )
-        .unwrap(),
-        (1..=5i64)
-            .map(|i| vec![Datum::Int(i), Datum::Int(i)])
-            .collect::<Vec<_>>(),
-    );
 }
 
 /// Go `pkg/executor/pkg_test.go:100::TestMoveInfoSchemaToFront`, over the

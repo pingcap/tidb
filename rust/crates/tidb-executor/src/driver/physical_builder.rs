@@ -2941,15 +2941,6 @@ fn build_apply(
     } else {
         (left, right, left_filter, right_filter)
     };
-    let cache_columns = apply
-        .outer_schema
-        .iter()
-        .map(|column| {
-            usize::try_from(column.column.index).map_err(|_| {
-                DriverError::unsupported("an Apply correlated column has a negative index")
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let executor = NestedLoopApplyExec::new(
         meta(ctx, plan, plan_schema(plan)?),
         outer,
@@ -2957,20 +2948,11 @@ fn build_apply(
         outer_filter,
         inner_filter,
         apply.outer_schema.clone(),
-        apply.hash_join.join_type != LogicalJoinType::Inner,
         joiner,
+        apply.hash_join.join_type != LogicalJoinType::Inner,
+        apply.can_use_cache,
         ctx.clone(),
-        ctx.statement_memory(),
     );
-    let executor = if apply.can_use_cache {
-        executor.with_cache(
-            ctx.apply_cache_capacity(),
-            cache_columns,
-            ctx.session_zone(),
-        )
-    } else {
-        executor
-    };
     Ok(Box::new(executor))
 }
 

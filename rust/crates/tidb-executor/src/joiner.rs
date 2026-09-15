@@ -81,7 +81,6 @@
 //! - Candidate-chunk filtering uses `tidb_expr::evaluator`'s vectorized
 //!   filter and its scalar fallback, selected by the session setting and
 //!   expression support. Semi/anti joiners retain Go's row-wise short circuit.
-//!   The local [`row_based_filter`] remains for Apply's child filters only.
 //! - `Joiner::join_type` replaces Go's `JoinerType` type switch: Rust has no
 //!   equivalent of a type switch over trait objects, so each implementation
 //!   reports its own type. Go's function maps every non-listed joiner to
@@ -219,46 +218,6 @@ pub fn eval_bool<C: Columns>(
         return Ok((false, true));
     }
     Ok((true, false))
-}
-
-/// Go `expression.rowBasedFilter` (`pkg/expression/chunk_executor.go:465`):
-/// fill `selected` (and, when asked, `is_null`) for every row of `input`.
-///
-/// Filter-major, and a row already deselected by an earlier filter is skipped
-/// -- both are load-bearing, because they decide whether a row that was NULL
-/// under one filter and FALSE under a later one reports `is_null`.
-///
-/// See the module header for the one deliberate difference from Go: the
-/// `EvalInt` branch's NULL rule is applied to every filter.
-pub(crate) fn row_based_filter<C: Columns>(
-    ctx: &C,
-    conditions: &[Expression],
-    input: &Chunk,
-    selected: &mut Vec<bool>,
-    mut is_null: Option<&mut Vec<bool>>,
-) -> Result<(), ExecError> {
-    let num_rows = input.num_rows();
-    selected.clear();
-    selected.resize(num_rows, true);
-    if let Some(nulls) = is_null.as_deref_mut() {
-        nulls.clear();
-        nulls.resize(num_rows, false);
-    }
-    for filter in conditions {
-        for index in 0..num_rows {
-            if !selected[index] {
-                continue;
-            }
-            let value = filter.eval(ctx, input.get_row(index))?;
-            let null_result = matches!(value, Datum::Null);
-            let truth = !null_result && tidb_expr::truthy_of(&value)? == Some(true);
-            selected[index] = selected[index] && truth;
-            if let Some(nulls) = is_null.as_deref_mut() {
-                nulls[index] = nulls[index] || null_result;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Go `baseJoiner.makeJoinRowToChunk`: append `lhs` then `rhs` into `chk`.

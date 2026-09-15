@@ -17,9 +17,10 @@
 //! Go's `NestedLoopApplyExec` re-runs the inner plan once per outer row, after
 //! writing that row's values into the correlated columns the inner plan
 //! references (`for _, col := range e.OuterSchema { *col.Data = ... }`). This
-//! is that loop: the outer child streams rows, each row is handed to a
-//! `run_inner` callback that produces the inner result for those bindings, and
-//! the output row is the outer row plus one appended column carrying it.
+//! physical loop is [`NestedLoopApplyExec`], implemented in [`native`]: it
+//! retains outer chunks and inner Lists and passes their iterators to Joiner.
+//! The callback-based scalar and lateral adapters below serve their separate
+//! driver paths; they are not the physical Apply executor.
 //!
 //! Appending exactly one column is what lets the outer query keep referring to
 //! the subquery by an ordinary column reference, which is how Go's plan reads
@@ -50,16 +51,12 @@
 use crate::apply_cache::ApplyCache;
 pub mod native;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::joiner::{JoinType, Joiner, NAAJType};
 use crate::mem_quota::StatementMemory;
+pub use native::NestedLoopApplyExec;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
-use tidb_chunk::iterator::LendingIterator;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
-use tidb_expr::column::CorrelatedColumn;
-use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
 use tidb_util::memory::Tracker;
 
 #[derive(Clone)]
@@ -83,7 +80,8 @@ impl<V> ApplyCacheRuntime<V> {
     }
 
     fn key(&self, outer: &[Datum]) -> Result<Vec<u8>, ExecError> {
-        let mut values = Vec::with_capacity(self.config.key_columns.len());
+        let mut key = Vec::new();
+        let encoder = tidb_codec::Encoder::new(tidb_datatype::new_collation_enabled());
         for &column in &self.config.key_columns {
             let value = outer.get(column).ok_or_else(|| {
                 ExecError::internal(format!(
@@ -91,10 +89,17 @@ impl<V> ApplyCacheRuntime<V> {
                     outer.len()
                 ))
             })?;
-            values.push(value.clone());
+            encoder
+                .append_key_in_timezone(
+                    &self.config.time_zone,
+                    &mut key,
+                    std::slice::from_ref(value),
+                )
+                .map_err(|error| {
+                    ExecError::internal(format!("cannot encode apply-cache key: {error}"))
+                })?;
         }
-        tidb_codec::encode_key_in_timezone(&self.config.time_zone, &values)
-            .map_err(|error| ExecError::internal(format!("cannot encode apply-cache key: {error}")))
+        Ok(key)
     }
 
     fn get(&self, key: &[u8]) -> Option<Arc<V>> {
@@ -205,308 +210,6 @@ struct LateralPending {
     outer: Vec<Datum>,
     inner: Arc<Vec<Vec<Datum>>>,
     position: usize,
-}
-
-/// Go `NestedLoopApplyExec`: bind one outer row into the correlated cells,
-/// reopen and drain the retained physical inner executor, then delegate the
-/// join result to the same per-join-type [`Joiner`] used by ordinary joins.
-pub struct NestedLoopApplyExec<C: Columns> {
-    meta: ExecutorMeta,
-    outer: Box<dyn Executor>,
-    inner: Box<dyn Executor>,
-    outer_filter: Vec<Expression>,
-    inner_filter: Vec<Expression>,
-    outer_schema: Vec<CorrelatedColumn>,
-    outer_join: bool,
-    joiner: Box<dyn Joiner>,
-    ctx: C,
-    position: OuterCursor,
-    pending_outer: Option<Chunk>,
-    pending_inner: Option<Arc<Chunk>>,
-    inner_position: usize,
-    has_match: bool,
-    has_null: bool,
-    memory: StatementMemory,
-    tracker: Arc<Tracker>,
-    cache_config: Option<ApplyCacheConfig>,
-    cache: Option<ApplyCacheRuntime<Chunk>>,
-}
-
-impl<C: Columns> NestedLoopApplyExec<C> {
-    /// Build the serial Apply executor selected by Go's `buildApply`.
-    #[allow(clippy::too_many_arguments)]
-    #[must_use]
-    pub fn new(
-        meta: ExecutorMeta,
-        outer: Box<dyn Executor>,
-        inner: Box<dyn Executor>,
-        outer_filter: Vec<Expression>,
-        inner_filter: Vec<Expression>,
-        outer_schema: Vec<CorrelatedColumn>,
-        outer_join: bool,
-        joiner: Box<dyn Joiner>,
-        ctx: C,
-        memory: StatementMemory,
-    ) -> Self {
-        let tracker = memory.operator_tracker(meta.id());
-        Self {
-            meta,
-            outer,
-            inner,
-            outer_filter,
-            inner_filter,
-            outer_schema,
-            outer_join,
-            joiner,
-            ctx,
-            position: OuterCursor::new(),
-            pending_outer: None,
-            pending_inner: None,
-            inner_position: 0,
-            has_match: false,
-            has_null: false,
-            memory,
-            tracker,
-            cache_config: None,
-            cache: None,
-        }
-    }
-
-    /// Configure Go's `CanUseCache` path with its statement quota and key.
-    #[must_use]
-    pub fn with_cache(
-        mut self,
-        capacity: i64,
-        key_columns: Vec<usize>,
-        time_zone: SessionTimeZone,
-    ) -> Self {
-        self.cache_config = (capacity > 0).then_some(ApplyCacheConfig {
-            capacity,
-            key_columns,
-            time_zone,
-        });
-        self
-    }
-
-    fn release_cache(&mut self) {
-        if let Some(cache) = self.cache.take() {
-            self.tracker.consume(-cache.memory_consumed());
-        }
-    }
-
-    fn release_pending_inner(&mut self) {
-        if let Some(inner) = self.pending_inner.take() {
-            self.tracker.consume(-inner.memory_usage());
-        }
-    }
-
-    fn one_row_chunk(types: &[FieldType], values: &[Datum]) -> Chunk {
-        let mut chunk = Chunk::new(types, 1, 1);
-        if values.is_empty() {
-            chunk.set_num_virtual_rows(1);
-        } else {
-            for (column, value) in values.iter().enumerate() {
-                chunk.append_datum(column, value);
-            }
-        }
-        chunk
-    }
-
-    fn materialize_inner(&mut self) -> Result<Arc<Chunk>, ExecError> {
-        self.inner.open()?;
-        let inner_types = self.inner.ret_field_types().to_vec();
-        let mut relation = Chunk::new(
-            &inner_types,
-            self.inner.init_cap(),
-            self.inner.max_chunk_size(),
-        );
-        let result = (|| {
-            loop {
-                let mut input = self.inner.new_chunk();
-                self.inner.next(&mut input)?;
-                if input.num_rows() == 0 {
-                    break;
-                }
-                for index in 0..input.num_rows() {
-                    let row = input.get_row(index);
-                    if crate::joiner::eval_bool(&self.ctx, &self.inner_filter, row)?.0 {
-                        relation.append_row(row);
-                    }
-                }
-            }
-            Ok(Arc::new(relation))
-        })();
-        // Go defers and logs `InnerExec.Close`; it does not replace the
-        // execution result with a close failure.
-        let _ = self.inner.close();
-        result
-    }
-
-    fn bind_outer(&self, values: &[Datum]) -> Result<(), ExecError> {
-        for column in &self.outer_schema {
-            let index = usize::try_from(column.column.index).map_err(|_| {
-                ExecError::internal("an Apply correlated column has a negative outer index")
-            })?;
-            let value = values.get(index).cloned().ok_or_else(|| {
-                ExecError::internal(format!(
-                    "Apply correlated column {index} is outside an outer row of width {}",
-                    values.len()
-                ))
-            })?;
-            column.bind(value);
-        }
-        Ok(())
-    }
-
-    fn prepare_inner(&mut self, values: &[Datum]) -> Result<(), ExecError> {
-        self.bind_outer(values)?;
-        let cache_key = self
-            .cache
-            .as_ref()
-            .map(|cache| cache.key(values))
-            .transpose()?;
-        let cached = cache_key
-            .as_deref()
-            .and_then(|key| self.cache.as_ref().and_then(|cache| cache.get(key)));
-        let inner = if let Some(inner) = cached {
-            inner
-        } else {
-            let inner = self.materialize_inner()?;
-            if let (Some(key), Some(cache)) = (cache_key, self.cache.as_ref()) {
-                let delta = cache.set(key, Arc::clone(&inner), inner.memory_usage());
-                self.tracker.consume(delta);
-                self.memory.check()?;
-            }
-            inner
-        };
-        let inner_memory = inner.memory_usage();
-        self.tracker.consume(inner_memory);
-        if let Err(error) = self.memory.check() {
-            self.tracker.consume(-inner_memory);
-            return Err(error);
-        }
-        self.pending_inner = Some(inner);
-        self.inner_position = 0;
-        self.has_match = false;
-        self.has_null = false;
-        Ok(())
-    }
-}
-
-impl<C: Columns + Send> Executor for NestedLoopApplyExec<C> {
-    fn open(&mut self) -> Result<(), ExecError> {
-        self.release_pending_inner();
-        self.release_cache();
-        self.pending_outer = None;
-        self.position.reset();
-        self.cache = self
-            .cache_config
-            .clone()
-            .map(ApplyCacheRuntime::<Chunk>::new);
-        self.outer.open()
-    }
-
-    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        req.reset();
-        let outer_types = self.outer.ret_field_types().to_vec();
-        while !req.is_full() {
-            if let (Some(outer), Some(inner)) =
-                (self.pending_outer.as_ref(), self.pending_inner.as_ref())
-            {
-                let outer_row = outer.get_row(0);
-                // Go hands `TryToMatchInners` the WHOLE remaining inner
-                // iterator; every semi-family joiner calls `inners.ReachEnd()`
-                // on the row that settles the outer row, which ends the apply's
-                // inner loop. This executor feeds one inner row per call so a
-                // single output chunk can be filled incrementally, so that stop
-                // has to be reproduced explicitly -- otherwise each further
-                // matching inner row appends the outer row (or its semi flag)
-                // again, turning `EXISTS`/`IN` into a fan-out.
-                let semi_family = matches!(
-                    self.joiner.join_type(),
-                    JoinType::SemiJoin
-                        | JoinType::AntiSemiJoin
-                        | JoinType::LeftOuterSemiJoin
-                        | JoinType::AntiLeftOuterSemiJoin
-                );
-                while self.inner_position < inner.num_rows() && !req.is_full() {
-                    let inner_row = inner.get_row(self.inner_position);
-                    let mut iterator = LendingIterator::slice(vec![inner_row]);
-                    iterator.begin();
-                    let (matched, is_null) = self.joiner.try_to_match_inners(
-                        outer_row,
-                        &mut iterator,
-                        req,
-                        NAAJType::Unknown,
-                    )?;
-                    self.has_match |= matched;
-                    self.has_null |= is_null;
-                    self.inner_position += 1;
-                    if semi_family && matched {
-                        self.inner_position = inner.num_rows();
-                    }
-                }
-                if self.inner_position < inner.num_rows() {
-                    break;
-                }
-                if !self.has_match {
-                    self.joiner.on_miss_match(self.has_null, outer_row, req);
-                }
-                self.release_pending_inner();
-                self.pending_outer = None;
-                if req.is_full() {
-                    break;
-                }
-                continue;
-            }
-
-            let Some((values, agg_selected)) = self
-                .position
-                .next_row_marked(self.outer.as_mut(), &outer_types)?
-            else {
-                break;
-            };
-            let outer = Self::one_row_chunk(&outer_types, &values);
-            let selected = agg_selected
-                && crate::joiner::eval_bool(&self.ctx, &self.outer_filter, outer.get_row(0))?.0;
-            if !selected {
-                if self.outer_join {
-                    self.joiner.on_miss_match(false, outer.get_row(0), req);
-                }
-                continue;
-            }
-            self.prepare_inner(&values)?;
-            self.pending_outer = Some(outer);
-        }
-        Ok(())
-    }
-
-    fn close(&mut self) -> Result<(), ExecError> {
-        self.release_pending_inner();
-        self.release_cache();
-        self.pending_outer = None;
-        self.outer.close()
-    }
-
-    fn schema(&self) -> &Schema {
-        self.meta.schema()
-    }
-
-    fn ret_field_types(&self) -> &[FieldType] {
-        self.meta.ret_field_types()
-    }
-
-    fn init_cap(&self) -> usize {
-        self.meta.init_cap()
-    }
-
-    fn max_chunk_size(&self) -> usize {
-        self.meta.max_chunk_size()
-    }
-
-    fn new_chunk(&self) -> Chunk {
-        self.meta.new_chunk()
-    }
 }
 
 /// Go `LogicalApply` with `InnerJoin` -- what `buildLateralJoin`
@@ -900,8 +603,10 @@ fn datum_bytes(value: &Datum) -> i64 {
 mod tests {
     use super::*;
     use crate::executor::RowCount;
+    use crate::joiner::JoinType;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
+    use tidb_expr::{expression::Expression, Columns};
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
@@ -932,6 +637,9 @@ mod tests {
         meta: ExecutorMeta,
         rows: Vec<Vec<Datum>>,
         cursor: usize,
+        selection: Option<Vec<usize>>,
+        fail_open: bool,
+        closes: RowCount,
     }
 
     impl Rows {
@@ -942,6 +650,9 @@ mod tests {
                 meta: ExecutorMeta::new(schema_of(width), 0, 8, 8),
                 rows,
                 cursor: 0,
+                selection: None,
+                fail_open: false,
+                closes: RowCount::default(),
             }
         }
 
@@ -957,6 +668,9 @@ mod tests {
 
     impl Executor for Rows {
         fn open(&mut self) -> Result<(), ExecError> {
+            if self.fail_open {
+                return Err(ExecError::internal("inner open failed"));
+            }
             self.cursor = 0;
             Ok(())
         }
@@ -969,10 +683,14 @@ mod tests {
                 }
                 self.cursor += 1;
             }
+            if req.num_rows() > 0 {
+                req.set_sel(self.selection.clone());
+            }
             Ok(())
         }
 
         fn close(&mut self) -> Result<(), ExecError> {
+            self.closes.set(self.closes.get() + 1);
             Ok(())
         }
 
@@ -994,6 +712,216 @@ mod tests {
 
         fn new_chunk(&self) -> Chunk {
             self.meta.new_chunk()
+        }
+    }
+
+    #[test]
+    fn native_apply_closes_failed_inner_open_and_stops() {
+        let context = crate::StmtContext::for_query();
+        let joiner = crate::joiner::new_joiner(
+            context.clone(),
+            JoinType::Inner,
+            false,
+            &[Datum::Null],
+            vec![],
+            &[long()],
+            &[long()],
+            None,
+            false,
+            crate::joiner::JoinerChunkSizes {
+                vectorized: true,
+                init_chunk_size: 2,
+                max_chunk_size: 8,
+            },
+        );
+        let mut inner = Rows::ints(vec![1]);
+        inner.fail_open = true;
+        let closes = inner.closes.clone();
+        let mut apply = NestedLoopApplyExec::new(
+            ExecutorMeta::new(schema_of(2), 1, 2, 8),
+            Box::new(Rows::ints(vec![1])),
+            Box::new(inner),
+            vec![],
+            vec![],
+            vec![],
+            joiner,
+            false,
+            false,
+            context,
+        );
+        apply.open().unwrap();
+        let mut output = apply.new_chunk();
+        assert!(format!("{:?}", apply.next(&mut output).unwrap_err()).contains("inner open failed"));
+        // Go fetchAllInners defers Close even when Open fails.
+        assert_eq!(closes.get(), 1);
+        apply.next(&mut output).unwrap();
+        assert_eq!(output.num_rows(), 0);
+        apply.close().unwrap();
+        assert_eq!(closes.get(), 1);
+    }
+
+    #[test]
+    fn nested_loop_apply_filtered_correlation_source() {
+        use tidb_expr::{constant::Constant, scalar_function::ScalarFunction};
+        // Go pkg/executor/pkg_test.go::TestNestedLoopApply: both child
+        // filters are col < 6, and the join condition is outer = inner.
+        let column = |index| {
+            let mut column = Column::new(index + 1, long());
+            column.index = index;
+            Expression::Column(column)
+        };
+        let comparison = |name, args| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                long(),
+                args,
+            ))
+        };
+        let child_filter = comparison(
+            "lt",
+            vec![
+                column(0),
+                Expression::Constant(Constant::new(Datum::Int(6), long())),
+            ],
+        );
+        for (vectorized, cache, selected) in [false, true].into_iter().flat_map(|v| {
+            [false, true]
+                .into_iter()
+                .flat_map(move |c| [false, true].map(|s| (v, c, s)))
+        }) {
+            let context =
+                crate::StmtContext::for_query().with_enable_vectorized_expression(vectorized);
+            let joiner = crate::joiner::new_joiner(
+                context.clone(),
+                JoinType::Inner,
+                false,
+                &[Datum::Null],
+                vec![comparison("eq", vec![column(0), column(1)])],
+                &[long()],
+                &[long()],
+                None,
+                false,
+                crate::joiner::JoinerChunkSizes {
+                    vectorized,
+                    init_chunk_size: 2,
+                    max_chunk_size: 8,
+                },
+            );
+            let mut outer = Rows::ints((1..=6).collect());
+            let mut inner = Rows::ints((1..=6).collect());
+            if selected {
+                // Go filter masks are indexed by physical row, while the
+                // iterator preserves selection order and excludes row 6.
+                outer.selection = Some(vec![4, 2, 0, 5]);
+                inner.selection = outer.selection.clone();
+            }
+            let mut apply = NestedLoopApplyExec::new(
+                ExecutorMeta::new(schema_of(2), 1, 2, 8),
+                Box::new(outer),
+                Box::new(inner),
+                vec![child_filter.clone()],
+                vec![child_filter.clone()],
+                vec![],
+                joiner,
+                false,
+                cache,
+                context,
+            );
+            // Reopening must discard both retained iterators and cached rows.
+            for _ in 0..2 {
+                apply.open().unwrap();
+                let mut output = apply.new_chunk();
+                output.set_required_rows(2, 8);
+                let mut rows = Vec::new();
+                loop {
+                    apply.next(&mut output).unwrap();
+                    assert!(output.num_rows() <= 2);
+                    if output.num_rows() == 0 {
+                        break;
+                    }
+                    rows.extend(
+                        (0..output.num_rows())
+                            .map(|i| output.get_row(i).get_datum_row(apply.ret_field_types())),
+                    );
+                }
+                let expected = if selected {
+                    vec![5, 3, 1]
+                } else {
+                    (1..=5).collect()
+                };
+                assert_eq!(
+                    rows,
+                    expected
+                        .into_iter()
+                        .map(|i| vec![Datum::Int(i), Datum::Int(i)])
+                        .collect::<Vec<_>>()
+                );
+                apply.close().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn nested_loop_apply_passes_candidate_batches_to_joiner() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tidb_expr::constant::{Constant, ParamMarker};
+        #[derive(Clone)]
+        struct Parameters(Arc<AtomicUsize>);
+        impl Columns for Parameters {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn param_value(&self, _: usize) -> Result<Datum, tidb_expr::EvalError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(Datum::Int(1))
+            }
+        }
+        // Go NestedLoopApplyExec.Next passes the retained List iterator to
+        // TryToMatchInners, so Constant.VecEval reads once per candidate chunk.
+        for vectorized in [true, false] {
+            let reads = Arc::new(AtomicUsize::new(0));
+            let mut condition = Constant::new(Datum::Int(1), long());
+            condition.param_marker = Some(ParamMarker { order: 0 });
+            let joiner = crate::joiner::new_joiner(
+                Parameters(Arc::clone(&reads)),
+                JoinType::Inner,
+                false,
+                &[Datum::Null],
+                vec![Expression::Constant(condition)],
+                &[long()],
+                &[long()],
+                None,
+                false,
+                crate::joiner::JoinerChunkSizes {
+                    vectorized,
+                    init_chunk_size: 2,
+                    max_chunk_size: 8,
+                },
+            );
+            let mut apply = NestedLoopApplyExec::new(
+                ExecutorMeta::new(schema_of(2), 1, 2, 8),
+                Box::new(Rows::ints(vec![7])),
+                Box::new(Rows::ints((1..=6).collect())),
+                vec![],
+                vec![],
+                vec![],
+                joiner,
+                false,
+                false,
+                crate::StmtContext::for_query().with_enable_vectorized_expression(vectorized),
+            );
+            apply.open().unwrap();
+            let mut output = apply.new_chunk();
+            output.set_required_rows(3, 8);
+            apply.next(&mut output).unwrap();
+            assert_eq!(output.num_rows(), 3);
+            assert_eq!(reads.load(Ordering::SeqCst), if vectorized { 1 } else { 3 });
+            apply.next(&mut output).unwrap();
+            assert_eq!(output.num_rows(), 3);
+            assert_eq!(reads.load(Ordering::SeqCst), if vectorized { 2 } else { 6 });
+            apply.next(&mut output).unwrap();
+            assert_eq!(output.num_rows(), 0);
+            apply.close().unwrap();
         }
     }
 

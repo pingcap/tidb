@@ -57,13 +57,22 @@ impl tidb_codec::JoinKeySource for Chunk {
 }
 
 impl tidb_codec::JoinKeyColumn for Column {
-    type Bytes<'a> = crate::CellBytes<'a>;
-
     fn is_null(&self, row: usize) -> bool {
         self.is_null(row)
     }
-    fn raw(&self, row: usize) -> Self::Bytes<'_> {
-        self.get_raw(row)
+    fn with_raw<R>(&self, f: impl FnOnce(tidb_codec::JoinKeyBytes<'_>) -> R) -> R {
+        let data = self.data.read();
+        let raw = match &self.elem_buf {
+            Some(elem) => tidb_codec::JoinKeyBytes::Fixed {
+                data: &data,
+                width: elem.len(),
+            },
+            None => tidb_codec::JoinKeyBytes::Variable {
+                data: &data,
+                offsets: &self.offsets,
+            },
+        };
+        f(raw)
     }
     fn datum(&self, row: usize, field_type: &FieldType) -> Result<Datum, tidb_codec::CodecError> {
         let mut datum = Datum::Null;

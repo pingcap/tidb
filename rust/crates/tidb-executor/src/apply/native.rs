@@ -15,7 +15,7 @@
 //! Go NestedLoopApplyExec: reopen a built inner executor after rebinding
 //! correlated datum cells; tuple semantics belong to the shared Joiner.
 use crate::apply_cache::ApplyCache;
-use crate::joiner::{row_based_filter, Joiner, NAAJType};
+use crate::joiner::{Joiner, NAAJType};
 use crate::{ExecError, Executor, ExecutorMeta, StatementMemory, StmtContext};
 use std::sync::Arc;
 use tidb_chunk::{
@@ -122,27 +122,35 @@ impl NestedLoopApplyExec {
     }
     fn load_inner(&mut self, index: usize) -> Result<(), ExecError> {
         let row = self.outer_chunk.get_row(index);
-        let mut key_values = Vec::with_capacity(self.outer_schema.len());
+        let mut key = self.cache.as_ref().map(|_| Vec::new());
         for col in &self.outer_schema {
             let ty = col
                 .column
                 .ret_type
                 .as_ref()
                 .ok_or_else(|| ExecError::internal("Apply correlation has no type"))?;
-            let value = row.get_datum(col.column.index as usize, ty);
-            col.bind(value.clone());
-            key_values.push(value);
-        }
-        let key = if self.cache.is_some() {
-            Some(
-                tidb_codec::encode_key_in_timezone(&self.context.session_zone(), &key_values)
+            let index = usize::try_from(col.column.index)
+                .ok()
+                .filter(|&index| index < row.len())
+                .ok_or_else(|| {
+                    ExecError::internal("Apply correlated column is outside the outer row")
+                })?;
+            let value = row.get_datum(index, ty);
+            if let Some(key) = key.as_mut() {
+                col.bind(value.clone());
+                tidb_codec::Encoder::new(tidb_datatype::new_collation_enabled())
+                    .append_key_in_timezone(
+                        &self.context.session_zone(),
+                        key,
+                        std::slice::from_ref(&value),
+                    )
                     .map_err(|e| {
                         ExecError::internal(format!("cannot encode Apply cache key: {e}"))
-                    })?,
-            )
-        } else {
-            None
-        };
+                    })?;
+            } else {
+                col.bind(value);
+            }
+        }
         if let (Some(cache), Some(key)) = (&self.cache, &key) {
             if let Some(rows) = cache.get(key) {
                 self.inner_rows = Some(rows);
@@ -177,16 +185,17 @@ impl NestedLoopApplyExec {
                 if self.inner_chunk.num_rows() == 0 {
                     return Ok(());
                 }
-                row_based_filter(
+                self.inner_selected = tidb_expr::evaluator::vectorized_filter(
                     &self.context,
+                    self.context.enable_vectorized_expression(),
                     &self.inner_filter,
                     &self.inner_chunk,
-                    &mut self.inner_selected,
-                    None,
+                    std::mem::take(&mut self.inner_selected),
                 )?;
                 for row in 0..self.inner_chunk.num_rows() {
-                    if self.inner_selected[row] {
-                        rows.list.append_row(self.inner_chunk.get_row(row));
+                    let row = self.inner_chunk.get_row(row);
+                    if self.inner_selected[row.idx()] {
+                        rows.list.append_row(row);
                     }
                 }
                 self.tracker.replace_bytes_used(
@@ -218,26 +227,27 @@ impl NestedLoopApplyExec {
                     self.done = true;
                     return Ok(false);
                 }
-                row_based_filter(
+                self.outer_selected = tidb_expr::evaluator::vectorized_filter(
                     &self.context,
+                    self.context.enable_vectorized_expression(),
                     &self.outer_filter,
                     &self.outer_chunk,
-                    &mut self.outer_selected,
-                    None,
+                    std::mem::take(&mut self.outer_selected),
                 )?;
+                let first = self.outer_chunk.get_row(0).idx();
                 if previous_cursor == 0
                     && self.outer_chunk.num_rows() == 1
-                    && self.outer_selected[0]
+                    && self.outer_selected[first]
                     && self.outer.agg_tree_input_empty()
                 {
-                    self.outer_selected[0] = false;
+                    self.outer_selected[first] = false;
                 }
                 self.outer_cursor = 0;
                 self.account()?;
             }
             let index = self.outer_cursor;
             self.outer_cursor += 1;
-            if self.outer_selected[index] {
+            if self.outer_selected[self.outer_chunk.get_row(index).idx()] {
                 self.active_outer = Some(index);
                 return Ok(true);
             }
@@ -278,7 +288,14 @@ impl Executor for NestedLoopApplyExec {
                 self.has_match = false;
                 self.has_null = false;
                 self.inner_position = None;
-                self.load_inner(self.active_outer.unwrap())?;
+                if let Err(error) = self.load_inner(self.active_outer.unwrap()) {
+                    // An unsuccessful fetch has no iterator to resume. Keep
+                    // the original error and leave this execution terminal.
+                    self.active_outer = None;
+                    self.inner_rows = None;
+                    self.done = true;
+                    return Err(error);
+                }
             }
             let index = self.active_outer.unwrap();
             let rows = self.inner_rows.as_ref().expect("loaded inner rows");
