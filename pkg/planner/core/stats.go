@@ -155,9 +155,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if err := cleanAccessPathForFTS(ds); err != nil {
 		return nil, false, err
 	}
-	if vars := ds.SCtx().GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
-		vars.RUV2Metrics.AddPlanDeriveStatsPaths(int64(len(ds.PossibleAccessPaths)))
-	}
 
 	indexForce := false
 	ds.AccessPathMinSelectivity, indexForce = getGeneralAttributesFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
