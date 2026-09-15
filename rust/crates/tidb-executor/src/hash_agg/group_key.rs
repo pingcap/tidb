@@ -16,6 +16,28 @@
 
 use super::*;
 
+/// Walk logical rows in the same order as Go's `Chunk.GetRow`, resolving the
+/// selection vector once for the whole column batch.  HashGroupKey receives a
+/// column that has already been evaluated, so repeating row-wrapper creation
+/// for every grouping column only adds selection/indexing overhead.
+#[inline(always)]
+pub(super) fn for_each_logical_row(
+    chunk: &Chunk,
+    rows: usize,
+    mut visit: impl FnMut(usize, usize),
+) {
+    if let Some(selection) = chunk.sel() {
+        debug_assert_eq!(selection.len(), rows);
+        for (logical, &physical) in selection.iter().take(rows).enumerate() {
+            visit(logical, physical);
+        }
+    } else {
+        for logical in 0..rows {
+            visit(logical, logical);
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct GroupKeyBuffer {
     pub(super) encoded: Vec<Vec<u8>>,
@@ -60,8 +82,8 @@ impl GroupKeyBuffer {
                         let column = chunk.column(index);
                         match field_type.eval_type() {
                             EvalType::Int if column.type_size() == 8 => {
-                                for (logical, key) in self.encoded[..rows].iter_mut().enumerate() {
-                                    let physical = chunk.get_row(logical).idx();
+                                for_each_logical_row(chunk, rows, |logical, physical| {
+                                    let key = &mut self.encoded[logical];
                                     if column.is_null(physical) {
                                         key.push(NIL_FLAG);
                                     } else {
@@ -70,13 +92,13 @@ impl GroupKeyBuffer {
                                         key.push(VARINT_FLAG);
                                         encode_varint(key, column.get_int64(physical));
                                     }
-                                }
+                                });
                                 continue;
                             }
                             EvalType::String if !field_type.is_hybrid() => {
                                 let collator = field_type.runtime_collator();
-                                for (logical, key) in self.encoded[..rows].iter_mut().enumerate() {
-                                    let physical = chunk.get_row(logical).idx();
+                                for_each_logical_row(chunk, rows, |logical, physical| {
+                                    let key = &mut self.encoded[logical];
                                     if column.is_null(physical) {
                                         key.push(NIL_FLAG);
                                     } else {
@@ -84,7 +106,7 @@ impl GroupKeyBuffer {
                                         let bytes = column.get_bytes(physical);
                                         encode_compact_bytes(key, &collator.immutable_key(&bytes));
                                     }
-                                }
+                                });
                                 continue;
                             }
                             _ => {}

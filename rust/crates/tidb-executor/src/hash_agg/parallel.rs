@@ -2325,14 +2325,26 @@ impl PipelineKeyBuffer {
             self.partial_results.clear();
             if let Some([index]) = inputs.integer_columns {
                 let column = chunk.column(*index);
-                self.integers.extend((0..rows).map(|logical| {
-                    let physical = chunk.get_row(logical).idx();
-                    let value = (!column.is_null(physical)).then(|| column.get_int64(physical));
-                    (
-                        value,
-                        map_key_bucket(PipelineMapKeyRef::Int(value), bucket_count),
-                    )
-                }));
+                if let Some(selection) = chunk.sel() {
+                    debug_assert_eq!(selection.len(), rows);
+                    self.integers
+                        .extend(selection.iter().take(rows).map(|&physical| {
+                            let value =
+                                (!column.is_null(physical)).then(|| column.get_int64(physical));
+                            (
+                                value,
+                                map_key_bucket(PipelineMapKeyRef::Int(value), bucket_count),
+                            )
+                        }));
+                } else {
+                    self.integers.extend((0..rows).map(|physical| {
+                        let value = (!column.is_null(physical)).then(|| column.get_int64(physical));
+                        (
+                            value,
+                            map_key_bucket(PipelineMapKeyRef::Int(value), bucket_count),
+                        )
+                    }));
+                }
                 return Ok(());
             }
             self.group_keys
@@ -2382,16 +2394,21 @@ fn fold_chunk<C: Columns>(
     let mut new_group_bytes_total = 0i64;
     let mut state_memory_delta = 0i64;
     let num_rows = chunk.num_rows();
-    for row_index in 0..num_rows {
-        let key = keys.key(row_index);
-        let bucket = keys
-            .integers
-            .get(row_index)
-            .map_or_else(|| map_key_bucket(key, bucket_count), |(_, bucket)| *bucket);
-        let map = &mut maps[bucket];
-        let (index, bytes) = map.resolve(key, agg_funcs, collations);
-        new_group_bytes_total += bytes;
-        keys.partial_results.push((bucket, index));
+    if keys.integers.is_empty() {
+        for key_bytes in keys.group_keys.encoded.iter().take(num_rows) {
+            let key = PipelineMapKeyRef::Bytes(key_bytes);
+            let bucket = map_key_bucket(key, bucket_count);
+            let (index, bytes) = maps[bucket].resolve(key, agg_funcs, collations);
+            new_group_bytes_total += bytes;
+            keys.partial_results.push((bucket, index));
+        }
+    } else {
+        for &(value, bucket) in keys.integers.iter().take(num_rows) {
+            let key = PipelineMapKeyRef::Int(value);
+            let (index, bytes) = maps[bucket].resolve(key, agg_funcs, collations);
+            new_group_bytes_total += bytes;
+            keys.partial_results.push((bucket, index));
+        }
     }
     if new_group_bytes_total > 0 {
         tracker.consume(new_group_bytes_total);
@@ -2399,14 +2416,27 @@ fn fold_chunk<C: Columns>(
     keys.account();
     memory.check()?;
     let inputs = input::bind_inputs(input_modes, chunk);
-    for (row_index, &(bucket, index)) in keys.partial_results.iter().enumerate() {
-        state_memory_delta += input::update_row(
-            &inputs,
-            agg_funcs,
-            ctx,
-            &mut maps[bucket].groups[index].states,
-            chunk.get_row(row_index),
-        )?;
+    if let Some(selection) = chunk.sel() {
+        debug_assert_eq!(selection.len(), num_rows);
+        for (row_index, &(bucket, index)) in keys.partial_results.iter().enumerate() {
+            state_memory_delta += input::update_row(
+                &inputs,
+                agg_funcs,
+                ctx,
+                &mut maps[bucket].groups[index].states,
+                chunk.physical_row(selection[row_index]),
+            )?;
+        }
+    } else {
+        for (row_index, &(bucket, index)) in keys.partial_results.iter().enumerate() {
+            state_memory_delta += input::update_row(
+                &inputs,
+                agg_funcs,
+                ctx,
+                &mut maps[bucket].groups[index].states,
+                chunk.physical_row(row_index),
+            )?;
+        }
     }
     // Go updatePartialResult accounts aggregate-state growth once per chunk.
     tracker.consume(state_memory_delta);
