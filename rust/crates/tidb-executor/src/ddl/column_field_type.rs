@@ -302,6 +302,17 @@ pub fn build_field_type(
         let column_charset = field_type.charset_name().to_owned();
         adjust_blob_flen(&mut field_type, code, flen, &column_charset)?;
     }
+    // Go renders a DECIMAL declared with a zero precision as the type
+    // default: `decimal(0,0)` and `decimal(0)` store and show as
+    // `decimal(10,0)` (recorded in `r/ddl/column.result`).
+    if code == FieldTypeCode::NewDecimal
+        && flen == 0
+        && (decimal == 0 || decimal == UNSPECIFIED_LENGTH)
+    {
+        flen = default_flen;
+        decimal = default_decimal;
+        field_type.set_flen(flen);
+    }
     field_type.set_decimal(decimal);
     Ok(field_type)
 }

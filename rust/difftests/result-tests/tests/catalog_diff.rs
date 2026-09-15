@@ -454,7 +454,7 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// 28 -> 27 at the merge with the `SHARD_ROW_ID_BITS` line of work: the
 /// `SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3` read agrees now. Compare count
 /// unchanged at 307; the floor rose with it.
-const KNOWN_CATALOG_DIVERGENCES: usize = 16;
+const KNOWN_CATALOG_DIVERGENCES: usize = 15;
 
 /// Exact lower bound for definitions already matching TiDB.
 // 257 -> 259: the partition clause of `SHOW CREATE TABLE` now matches Go's
@@ -523,7 +523,11 @@ const MATCHED_FLOOR: usize = 333;
 // (`TableByName` does not see sequences) instead of printing the sequence
 // text, which fixes both recorded sequence reads; the rest of the set is
 // unchanged (dumped with CATALOG_SHOW_DIVERGENCES=1).
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 14_905_260_413_831_566_543;
+// 16 -> 15: a DECIMAL declared with a zero precision stores and prints the
+// type default `decimal(10,0)` (Go's own `r/ddl/column.result` for
+// `create table t(a decimal(0,0), b decimal(0))`); the rest of the set is
+// unchanged (dumped with CATALOG_SHOW_DIVERGENCES=1).
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 873_430_266_908_678_939;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
