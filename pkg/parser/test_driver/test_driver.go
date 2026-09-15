@@ -103,7 +103,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 		}
 	case KindMysqlDuration, KindMysqlEnum,
 		KindMysqlBit, KindMysqlSet, KindMysqlTime,
-		KindInterface, KindMinNotNull, KindMaxValue,
+		KindInterfaceDeprecated, KindMinNotNull, KindMaxValue,
 		KindRaw, KindMysqlJSON:
 		// TODO implement Restore function
 		return fmt.Errorf("not implemented")

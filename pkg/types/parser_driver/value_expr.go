@@ -127,7 +127,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("'%s'", n.GetMysqlTime())
 	case types.KindMysqlEnum,
 		types.KindMysqlBit, types.KindMysqlSet,
-		types.KindInterface, types.KindMinNotNull, types.KindMaxValue,
+		types.KindInterfaceDeprecated, types.KindMinNotNull, types.KindMaxValue,
 		types.KindRaw, types.KindMysqlJSON,
 		types.KindVectorFloat32:
 		// TODO implement Restore function
