@@ -27,6 +27,8 @@ var (
 
 	TTLJobStatus *prometheus.GaugeVec
 
+	TTLJobFinishCounter *prometheus.CounterVec
+
 	TTLTaskStatus *prometheus.GaugeVec
 
 	TTLPhaseTime *prometheus.CounterVec
@@ -68,6 +70,14 @@ func InitTTLMetrics() {
 			Name:      "ttl_job_status",
 			Help:      "The jobs count in the specified status",
 		}, []string{LblType})
+
+	TTLJobFinishCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ttl_job_finish_total",
+			Help:      "The count of finished TTL jobs by result.",
+		}, []string{LblResult})
 
 	TTLTaskStatus = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
