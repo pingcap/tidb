@@ -423,6 +423,8 @@ ROUND(25, -1)	ROUND(-25, -1)	ROUND(35, -1)	ROUND(-35, -1)	ROUND(24, -1)	ROUND(-2
 SELECT ROUND(9223372036854775807, 0), ROUND(1234567890123456789, -1), ROUND(25, -20), ROUND(25, -2012);
 ROUND(9223372036854775807, 0)	ROUND(1234567890123456789, -1)	ROUND(25, -20)	ROUND(25, -2012)
 9223372036854775807	1234567890123456790	0	0
+SELECT ROUND(9223372036854775807, -1);
+Error 1690 (22003): BIGINT value is out of range in 'round(9223372036854775807, -1)'
 drop table if exists t;
 create table t (a bigint, b bigint unsigned);
 insert into t values (25, 9223372036854775815), (-45, 25);
@@ -430,6 +432,29 @@ select round(a, -1), round(b, -1) from t order by a;
 round(a, -1)	round(b, -1)
 -50	30
 30	9223372036854775820
+delete from t;
+insert into t values (9223372036854775807, 18446744073709551615);
+select round(a, -1) from t;
+Error 1690 (22003): BIGINT value is out of range in 'round(9223372036854775807, -1)'
+select round(b, -1) from t;
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in 'round(18446744073709551615, -1)'
+delete from t;
+insert into t values (-9223372036854775808, 0);
+select round(a, -1) from t;
+Error 1690 (22003): BIGINT value is out of range in 'round(-9223372036854775808, -1)'
+select round(a, -2), round(a, 0) from t;
+round(a, -2)	round(a, 0)
+-9223372036854775800	-9223372036854775808
+select round(42, 18446744073709551615), round(9223372036854775807, cast(-1 as unsigned));
+round(42, 18446744073709551615)	round(9223372036854775807, cast(-1 as unsigned))
+42	9223372036854775807
+drop table if exists t;
+create table t (a bigint unsigned);
+insert into t values (18446744073709551615), (4294967295);
+select round(42, a) from t order by a;
+round(42, a)
+42
+42
 SELECT truncate(123, -2), truncate(123, 2), truncate(123, 1), truncate(123, -1);
 truncate(123, -2)	truncate(123, 2)	truncate(123, 1)	truncate(123, -1)
 100	123	123	120
