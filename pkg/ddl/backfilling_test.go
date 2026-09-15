@@ -110,8 +110,13 @@ func TestBackfillRetryableErrors(t *testing.T) {
 			require.True(t, isRetryableError(err, false))
 			require.True(t, isRetryableError(errors.Annotate(err, "wrapped"), false))
 			require.True(t, (&backfillDistExecutor{}).IsRetryableError(err))
-			require.True(t, isRetryableJobError(err, 0))
-			require.False(t, isRetryableJobError(err, vardef.GetDDLErrorCountLimit()-1))
+
+			// The local ingest path checks for duplicate keys before classifying
+			// the reorg error. PD errors must retain their identity across it.
+			convertedErr := ingest.TryConvertToKeyExistsErr(err, &model.IndexInfo{}, &model.TableInfo{})
+			require.ErrorIs(t, convertedErr, err)
+			require.True(t, isRetryableJobError(convertedErr, 0))
+			require.False(t, isRetryableJobError(convertedErr, vardef.GetDDLErrorCountLimit()-1))
 		}
 	})
 
