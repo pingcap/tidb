@@ -70,8 +70,7 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	require.EqualValues(s.T(), 10000, summaries.IngestSummary.RowCnt)
 	require.EqualValues(s.T(), 10000, summaries.ImportedRows)
 
-	s.addOrphanImportJob()
-	rs = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
 	importedRows, err := strconv.Atoi(rs[0][fmap["ImportedRows"]].(string))
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 10000, importedRows)
@@ -145,24 +144,8 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	require.EqualValues(s.T(), 0, summaries.MergeSummary.RowCnt)
 	require.EqualValues(s.T(), 10000, summaries.ImportedRows)
 
-	s.addOrphanImportJob()
-	rs = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
 	importedRows, err := strconv.Atoi(rs[0][fmap["ImportedRows"]].(string))
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 10000, importedRows)
-}
-
-func (s *mockGCSSuite) addOrphanImportJob() {
-	s.T().Helper()
-	// A previous test attempt can leave a running import job after its DXF task
-	// is deleted by test setup. Summary checks must only query their own job.
-	jobID, err := importer.CreateJob(s.ctx, s.tk.Session().GetSQLExecutor(), "test", "orphan", 0,
-		s.tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
-			Format: importer.DataFormatCSV,
-		}, 0)
-	require.NoError(s.T(), err)
-	s.T().Cleanup(func() {
-		s.tk.MustExec("delete from mysql.tidb_import_jobs where id = ?", jobID)
-	})
-	require.NoError(s.T(), importer.StartJob(s.ctx, s.tk.Session().GetSQLExecutor(), jobID, importer.JobStepImporting))
 }
