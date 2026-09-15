@@ -3,7 +3,7 @@
 //! DROP with ErrForeignKeyCannotDropParent's, both naming the child.
 
 use tidb_executor::{
-    ddl, run_create_table_in, run_drop_table_in, run_insert_on, run_truncate_table_in, Catalog,
+    ddl, run_drop_table_in, run_insert_on, run_truncate_table_in, Catalog,
     CreateTableSettings, StmtContext,
 };
 

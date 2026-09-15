@@ -22,26 +22,8 @@
 //! and every divergence found is written in the test's comment rather than
 //! papered over.
 
-use tidb_datatype::Datum;
 use tidb_executor::ddl::{self, CreateTableSettings};
 use tidb_executor::{admin_check, run_delete_on, run_insert_on, run_select_on, Catalog, KvForeignKey, RowDecodeContext, StmtContext, TableEntry};
-
-/// The text of a datum, however the codec chose to represent it.
-fn datum_text(value: &Datum) -> String {
-    match value {
-        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-        Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
-        Datum::Int(i) => i.to_string(),
-        Datum::UInt(u) => u.to_string(),
-        other => panic!("unexpected datum {other:?}"),
-    }
-}
-
-fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
-    rows.iter()
-        .map(|row| row.iter().map(datum_text).collect())
-        .collect()
-}
 
 /// Go `getTableInfoReferredForeignKeys`: the constraints in the catalog that
 /// name `db.table` as their referenced table (computed on demand here; see

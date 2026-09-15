@@ -23,7 +23,7 @@ use tidb_chunk::{
     iterator::{Iterator4List, LendingIterator, ListIteratorPosition},
     list::List,
 };
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::FieldType;
 use tidb_expr::{column::CorrelatedColumn, expression::Expression, schema::Schema};
 use tidb_util::memory::Tracker;
 

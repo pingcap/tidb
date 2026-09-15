@@ -4,7 +4,7 @@
 //! first row's width (:4361) and INSERT SELECT always reports row 1 (:4474).
 
 use tidb_executor::{
-    ddl, run_create_table_on, run_insert_on, Catalog, CreateTableSettings, StmtContext,
+    ddl, run_insert_on, Catalog, CreateTableSettings, StmtContext,
 };
 
 #[test]

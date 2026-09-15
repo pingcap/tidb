@@ -4,7 +4,7 @@
 //! removes exactly the first n matching rows.
 
 use tidb_executor::{
-    ddl, run_create_table_on, run_delete_on, run_insert_on, run_select_on, Catalog,
+    ddl, run_delete_on, run_insert_on, run_select_on, Catalog,
     CreateTableSettings, StmtContext,
 };
 

@@ -3819,31 +3819,6 @@ mod tests {
         assert_eq!(run(agg), vec![vec![Datum::Null, Datum::Null]]);
     }
 
-    #[test]
-    fn hash_agg_honors_each_output_chunks_required_rows() {
-        let rows: Vec<(i64, Option<i64>)> = (0..10).map(|value| (value, Some(value))).collect();
-        let mut exec = HashAggExec::new(
-            out_meta(1),
-            vec![col(0)],
-            vec![AggFunc::new(AggKind::FirstRow, Some(col(0)))],
-            source(&rows),
-            NoColumns,
-            StatementMemory::default(),
-        );
-        exec.open().unwrap();
-        let mut req = exec.new_chunk();
-        let mut output = Vec::new();
-        for (requested, expected) in [(1_usize, 1_usize), (5, 5), (3, 3), (10, 1)] {
-            req.set_required_rows(requested as isize, exec.max_chunk_size());
-            exec.next(&mut req).unwrap();
-            assert_eq!(req.num_rows(), expected);
-            output.extend((0..req.num_rows()).map(|row| req.get_row(row).get_int64(0)));
-        }
-        output.sort_unstable();
-        assert_eq!(output, (0..10).collect::<Vec<_>>());
-        exec.close().unwrap();
-    }
-
     fn grouped(
         group_by: Expression,
         funcs: Vec<AggFunc>,

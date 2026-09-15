@@ -147,6 +147,8 @@ mod tests_insert_on_duplicate_key_source;
 #[cfg(test)]
 mod tests_joiner_required_rows_source;
 #[cfg(test)]
+mod tests_required_rows_source;
+#[cfg(test)]
 mod tests_merge_join_in_disk_source;
 #[cfg(test)]
 mod tests_parallel_apply_sql_source;

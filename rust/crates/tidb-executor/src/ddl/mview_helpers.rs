@@ -49,7 +49,6 @@ pub fn check_m_view_readable(
     in_restricted_sql: bool,
     alias_name: &str,
 ) -> Result<(), String> {
-    use tidb_model::MViewInitBuildState;
     if init_build_state.is_ready() {
         return Ok(());
     }

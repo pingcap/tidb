@@ -4,7 +4,7 @@
 //! and an impossible date fails with "Incorrect datetime value" (1292).
 
 use tidb_executor::{
-    ddl, run_create_table_on, run_insert_on, run_select_on, Catalog, CreateTableSettings,
+    ddl, run_insert_on, run_select_on, Catalog, CreateTableSettings,
     StmtContext,
 };
 

@@ -362,7 +362,6 @@ pub use table_lifecycle::{
 
 use crate::driver::{Catalog, DriverError};
 use crate::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableCharset};
-use crate::SchemaErrorKind;
 use tidb_ast::{ColumnDef, DdlStmt, Stmt};
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
 use tidb_hack::GoToLower;

@@ -4091,7 +4091,7 @@ fn alter_ttl_info_or_enable(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
-    let mut info = super::ttl_info_from_options(options)?;
+    let info = super::ttl_info_from_options(options)?;
     let mut explicit_enable: Option<bool> = None;
     let mut explicit_interval: Option<String> = None;
     for option in options {

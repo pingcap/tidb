@@ -639,7 +639,7 @@ fn index_join_int_pk_decided_by_text(context: &IndexJoinExplainContext<'_>) -> S
 /// multi-key or bounded probes get the full rendering with eq pairs + bounds.
 fn index_join_decided_by_text_for_scan(
     context: &IndexJoinExplainContext<'_>,
-    scan: &tidb_planner::physical::PhysicalTableScan,
+    _scan: &tidb_planner::physical::PhysicalTableScan,
 ) -> String {
     let single_pk = context.outer_keys.len() == 1 && context.access_conditions.is_empty();
     if single_pk {

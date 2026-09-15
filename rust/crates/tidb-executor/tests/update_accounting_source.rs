@@ -3,7 +3,7 @@
 //! rows instead (`StmtContext::client_found_rows`).
 
 use tidb_executor::{
-    ddl, run_create_table_on, run_insert_on, run_update_on, Catalog, CreateTableSettings,
+    ddl, run_insert_on, run_update_on, Catalog, CreateTableSettings,
     StmtContext,
 };
 

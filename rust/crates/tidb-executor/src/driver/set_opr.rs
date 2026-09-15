@@ -48,9 +48,6 @@
 //! materializing each term.
 
 use super::*;
-use tidb_chunk::chunk::Chunk;
-
-use crate::union_all::UnionAllExec;
 
 /// Go `preprocessor.checkSetOprSelectList`: every nested set-operation list is
 /// checked, and every plain term except that list's last one must put its own

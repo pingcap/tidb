@@ -3,7 +3,7 @@
 //! "Out of range value" (1264), and IGNORE clamps to the boundary 2155.
 
 use tidb_executor::{
-    ddl, run_create_table_on, run_insert_on, run_select_on, Catalog, CreateTableSettings,
+    ddl, run_insert_on, run_select_on, Catalog, CreateTableSettings,
     StmtContext,
 };
 

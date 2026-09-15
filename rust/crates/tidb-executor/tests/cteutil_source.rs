@@ -62,7 +62,7 @@ fn int_chunk(size: usize) -> Chunk {
 }
 
 #[test]
-fn TestStorageBasic() {
+fn test_storage_basic() {
     let mut storage = CteStorage::new(vec![int_type()], 1, unlimited_memory());
     assert!(storage.deref_and_close().is_err());
     storage.open_and_ref().unwrap();
@@ -77,7 +77,7 @@ fn TestStorageBasic() {
 }
 
 #[test]
-fn TestOpenAndClose() {
+fn test_open_and_close() {
     let mut storage = CteStorage::new(vec![int_type()], 1, unlimited_memory());
     for _ in 0..10 {
         storage.open_and_ref().unwrap();
@@ -89,7 +89,7 @@ fn TestOpenAndClose() {
 }
 
 #[test]
-fn TestAddAndGetChunk() {
+fn test_add_and_get_chunk() {
     let mut storage = CteStorage::new(vec![int_type()], 10, unlimited_memory());
     let input = int_chunk(10);
     assert!(storage.add_chunk(input.copy_construct_sel()).is_err());
@@ -109,7 +109,7 @@ fn TestAddAndGetChunk() {
 }
 
 #[test]
-fn TestSpillToDisk() {
+fn test_spill_to_disk() {
     let scratch = ScratchDir::new("spill");
     let spill = Arc::new(
         SpillStorage::open(SpillStorageSpec {
@@ -149,7 +149,7 @@ fn TestSpillToDisk() {
 }
 
 #[test]
-fn TestReopen() {
+fn test_reopen() {
     let mut storage = CteStorage::new(vec![int_type()], 10, unlimited_memory());
     storage.open_and_ref().unwrap();
     let input = int_chunk(10);
@@ -184,7 +184,7 @@ fn TestReopen() {
 }
 
 #[test]
-fn TestSwapData() {
+fn test_swap_data() {
     let mut ints = CteStorage::new(vec![int_type()], 10, unlimited_memory());
     ints.open_and_ref().unwrap();
     ints.add_chunk(int_chunk(10)).unwrap();

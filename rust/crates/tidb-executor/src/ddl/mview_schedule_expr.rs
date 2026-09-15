@@ -26,7 +26,6 @@ use std::cmp::Ordering;
 
 use tidb_ddl_session::{Error, ScheduleTime, Session, SessionContext};
 use tidb_model::job::ResolvedTimeZone;
-use tidb_model::MaterializedViewBaseInfo;
 use tidb_model::{MaterializedViewInfo, MaterializedViewLogInfo};
 use tidb_sqlexec::ExecutionContext;
 
@@ -192,7 +191,7 @@ pub fn load_create_materialized_view_schedule_now<C: SessionContext>(
 /// Go `evalCreateMaterializedViewScheduleExprToDatetime`.
 pub fn eval_create_materialized_view_schedule_expr_to_datetime<C: SessionContext>(
     session: &Session<C>,
-    context: &dyn ExecutionContext,
+    _context: &dyn ExecutionContext,
     expr_sql: &str,
 ) -> Result<Option<ScheduleTime>, Error> {
     session

@@ -28,7 +28,7 @@
 //! [`MemTableSourceExec`] remains the source for catalog-backed in-memory
 //! tables.
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{ExecError, Executor};
 use crate::kv_table::{KvTable, TableHandle};
 use crate::mem_quota;
 use std::collections::HashMap;
