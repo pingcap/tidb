@@ -666,9 +666,11 @@ func TestMergeSSTsDuplicated(t *testing.T) {
 
 type mockPdClient struct {
 	pd.Client
-	stores  []*metapb.Store
-	regions []*router.Region
-	closed  bool
+	stores   []*metapb.Store
+	regions  []*router.Region
+	tsErrors []error
+	tsCalls  atomic.Int64
+	closed   bool
 }
 
 func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
@@ -680,6 +682,10 @@ func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limi
 }
 
 func (c *mockPdClient) GetTS(ctx context.Context) (int64, int64, error) {
+	call := int(c.tsCalls.Add(1)) - 1
+	if call < len(c.tsErrors) {
+		return 0, 0, c.tsErrors[call]
+	}
 	return 1, 2, nil
 }
 

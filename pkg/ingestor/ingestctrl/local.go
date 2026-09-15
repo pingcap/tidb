@@ -1805,9 +1805,26 @@ func (local *Backend) SetTSBeforeImportEngine(ctx context.Context, engineUUID uu
 	}
 	defer e.unlock()
 	if ts == 0 {
-		p, l, err := local.pdCli.GetTS(ctx)
+		var (
+			p, l     int64
+			err      error
+			attempts int
+		)
+		for range maxRetryTimes {
+			attempts++
+			p, l, err = local.pdCli.GetTS(ctx)
+			if err == nil {
+				break
+			}
+			if common.IsContextCanceledError(err) {
+				return errors.Trace(err)
+			}
+			if !common.IsRetryableError(err) {
+				break
+			}
+		}
 		if err != nil {
-			return errors.Trace(err)
+			return errdef.ErrSetTSBeforeImport.GenWithStackByArgs(engineUUID.String(), attempts, err)
 		}
 		failpoint.Inject("afterSetTSBeforeImportEngine", func(_ failpoint.Value) {
 			failpoint.Return(errors.Errorf("mock err"))
