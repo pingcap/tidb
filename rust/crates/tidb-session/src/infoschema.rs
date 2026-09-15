@@ -1070,10 +1070,19 @@ fn views_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum
     rows
 }
 
-/// Go `TIDB_ROW_ID_SHARDING_INFO`, whose value states why the table is not
-/// sharded.
+/// Go `GetShardingInfo` (`pkg/infoschema/tables.go`): the AUTO_RANDOM branch
+/// prints the shard bit count (with a RANGE BITS suffix only when the range
+/// bits are non-default), then SHARD_BITS, then the two NOT_SHARDED forms.
 fn sharding_info(table: &KvTable) -> String {
-    if table.pk_handle_offset().is_some() {
+    if let Some(spec) = table.auto_random() {
+        let mut info = format!("PK_AUTO_RANDOM_BITS={}", spec.shard_bits);
+        if spec.range_bits != 0 && spec.range_bits != 64 {
+            info = format!("{info}, RANGE BITS={}", spec.range_bits);
+        }
+        info
+    } else if table.shard_row_id_bits() > 0 {
+        format!("SHARD_BITS={}", table.shard_row_id_bits())
+    } else if table.pk_handle_offset().is_some() {
         "NOT_SHARDED(PK_IS_HANDLE)".to_owned()
     } else {
         "NOT_SHARDED".to_owned()

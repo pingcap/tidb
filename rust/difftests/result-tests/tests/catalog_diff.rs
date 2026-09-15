@@ -454,7 +454,7 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// 28 -> 27 at the merge with the `SHARD_ROW_ID_BITS` line of work: the
 /// `SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3` read agrees now. Compare count
 /// unchanged at 307; the floor rose with it.
-const KNOWN_CATALOG_DIVERGENCES: usize = 15;
+const KNOWN_CATALOG_DIVERGENCES: usize = 14;
 
 /// Exact lower bound for definitions already matching TiDB.
 // 257 -> 259: the partition clause of `SHOW CREATE TABLE` now matches Go's
@@ -527,7 +527,14 @@ const MATCHED_FLOOR: usize = 333;
 // type default `decimal(10,0)` (Go's own `r/ddl/column.result` for
 // `create table t(a decimal(0,0), b decimal(0))`); the rest of the set is
 // unchanged (dumped with CATALOG_SHOW_DIVERGENCES=1).
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 873_430_266_908_678_939;
+// 15 -> 14: `TIDB_ROW_ID_SHARDING_INFO` now follows Go `GetShardingInfo`'s
+// AUTO_RANDOM branch (`PK_AUTO_RANDOM_BITS={shard_bits}`, RANGE BITS suffix
+// only when non-default), so an `auto_random` table no longer reads as
+// NOT_SHARDED. Dumped with CATALOG_SHOW_DIVERGENCES=1; the remaining 14 are
+// the view `Name_exp_*` naming, `AUTO_INCREMENT=`, partial-index WHERE,
+// case-sensitive information_schema reads, `desc`-view nullability, the
+// latin1 `varbinary` charset resolution and `tidb_index_usage` gaps.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 11_403_873_438_976_122_415;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
