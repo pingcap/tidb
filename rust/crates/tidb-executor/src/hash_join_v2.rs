@@ -45,7 +45,7 @@ use tidb_util::sqlkiller::SqlKiller;
 
 use crate::base_join_probe::{
     common_init_for_scan_row_table, is_key_matched, new_join_probe, BaseJoinProbe, BuildRowSource,
-    MatchedRowInfo, ProbeContext, ProbeError, ProbeFilter,
+    ProbeContext, ProbeError, ProbeFilter,
 };
 use crate::hash_table_v2::{
     get_hash_table_length_by_row_table, get_hash_table_memory_usage, HashTableV2, RowIter, SubTable,

@@ -341,6 +341,13 @@ pub struct BaseJoinProbe {
     cached_build_rows: Vec<MatchedRowInfo>,
     /// Go `nextCachedBuildRowIndex`, how much of it is live.
     next_cached_build_row_index: usize,
+    /// Destination columns for stored build columns in the normal output
+    /// phase. The map is fixed for a probe and replaces Go's per-batch
+    /// `colIndexMap` allocation while preserving its source-column keys.
+    normal_column_destinations: Vec<Option<usize>>,
+    /// Destination columns for stored build columns in the other-condition
+    /// scratch phase. Entries are relative to the phase's column offset.
+    other_column_destinations: Vec<Option<usize>>,
     /// Go `keyIndex`.
     key_index: Vec<usize>,
     /// Go `hasNullableKey`.
@@ -789,10 +796,10 @@ impl BaseJoinProbe {
 
     /// Go `finishCurrentLookupLoop`: flush cached build rows, close the
     /// current probe row's run, and copy the probe columns in.
-    pub fn finish_current_lookup_loop(
+    pub fn finish_current_lookup_loop<R: BuildRowSource + ?Sized>(
         &mut self,
         ctx: &ProbeContext<'_>,
-        rows: &dyn BuildRowSource,
+        rows: &R,
         joined_chk: &mut Chunk,
     ) {
         if self.next_cached_build_row_index > 0 {
@@ -812,10 +819,10 @@ impl BaseJoinProbe {
     /// `finish_current_lookup_loop` path gets its probe-row multiplicity from
     /// matched build rows, whereas an unmatched row still has to be copied
     /// once.
-    pub fn append_unmatched_probe_row(
+    pub fn append_unmatched_probe_row<R: BuildRowSource + ?Sized>(
         &mut self,
         ctx: &ProbeContext<'_>,
-        rows: &dyn BuildRowSource,
+        rows: &R,
         joined_chk: &mut Chunk,
     ) {
         self.offset_and_length_array.push(OffsetAndLength {
@@ -914,10 +921,10 @@ impl BaseJoinProbe {
 
     /// Go `appendBuildRowToCachedBuildRowsV2`: stage an already-formed
     /// [`MatchedRowInfo`], flushing at [`BATCH_BUILD_ROW_SIZE`].
-    pub fn append_build_row_to_cached_build_rows_v2(
+    pub fn append_build_row_to_cached_build_rows_v2<R: BuildRowSource + ?Sized>(
         &mut self,
         ctx: &ProbeContext<'_>,
-        rows: &dyn BuildRowSource,
+        rows: &R,
         row_info: MatchedRowInfo,
         chk: &mut Chunk,
         current_column_index_in_row: usize,
@@ -942,10 +949,10 @@ impl BaseJoinProbe {
     // plus the receiver; splitting them into a struct would hide which call
     // site passes which of Go's parameters.
     #[allow(clippy::too_many_arguments)]
-    pub fn append_build_row_to_cached_build_rows_v1(
+    pub fn append_build_row_to_cached_build_rows_v1<R: BuildRowSource + ?Sized>(
         &mut self,
         ctx: &ProbeContext<'_>,
-        rows: &dyn BuildRowSource,
+        rows: &R,
         probe_row_index: usize,
         build_row_start: usize,
         chk: &mut Chunk,
@@ -969,10 +976,10 @@ impl BaseJoinProbe {
     /// Go `batchConstructBuildRows`: reconstruct the staged rows, remember
     /// them when an other condition still has to see them, and empty the
     /// staging array.
-    pub fn batch_construct_build_rows(
+    pub fn batch_construct_build_rows<R: BuildRowSource + ?Sized>(
         &mut self,
         ctx: &ProbeContext<'_>,
-        rows: &dyn BuildRowSource,
+        rows: &R,
         chk: &mut Chunk,
         current_column_index_in_row: usize,
         for_other_condition: bool,
@@ -1003,10 +1010,10 @@ impl BaseJoinProbe {
 
     /// Go `appendBuildRowToChunk`: pick which used-column list and which
     /// destination offset apply, from the build side and the caller's phase.
-    pub fn append_build_row_to_chunk(
+    pub fn append_build_row_to_chunk<R: BuildRowSource + ?Sized>(
         &mut self,
         ctx: &ProbeContext<'_>,
-        rows: &dyn BuildRowSource,
+        rows: &R,
         chk: &mut Chunk,
         current_column_index_in_row: usize,
         for_other_condition: bool,
@@ -1015,22 +1022,21 @@ impl BaseJoinProbe {
             .current_chunk
             .as_ref()
             .map_or(0, tidb_chunk::chunk::Chunk::num_cols);
-        let (used_cols, col_offset) = if self.right_as_build_side {
+        let col_offset = if self.right_as_build_side {
             if for_other_condition {
-                (&ctx.r_used_in_other_condition, probe_num_cols)
+                probe_num_cols
             } else {
-                (&ctx.r_used, ctx.l_used.len())
+                ctx.l_used.len()
             }
         } else if for_other_condition {
-            (&ctx.l_used_in_other_condition, 0)
+            0
         } else {
-            (&ctx.l_used, 0)
+            0
         };
         self.append_build_row_to_chunk_internal(
             ctx,
             rows,
             chk,
-            used_cols,
             for_other_condition,
             col_offset,
             current_column_index_in_row,
@@ -1041,12 +1047,11 @@ impl BaseJoinProbe {
     /// each stored column either append it to its destination column or step
     /// past it.
     #[allow(clippy::too_many_arguments)]
-    fn append_build_row_to_chunk_internal(
+    fn append_build_row_to_chunk_internal<R: BuildRowSource + ?Sized>(
         &mut self,
         ctx: &ProbeContext<'_>,
-        rows: &dyn BuildRowSource,
+        rows: &R,
         chk: &mut Chunk,
-        used_cols: &[usize],
         for_other_condition: bool,
         col_offset: usize,
         current_column_in_row: usize,
@@ -1054,7 +1059,12 @@ impl BaseJoinProbe {
         let chk_rows = chk.num_rows();
         let need_update_virtual_row = current_column_in_row == 0;
         let live = self.next_cached_build_row_index;
-        if used_cols.is_empty() || live == 0 {
+        let destinations = if for_other_condition {
+            &self.other_column_destinations
+        } else {
+            &self.normal_column_destinations
+        };
+        if destinations.is_empty() || live == 0 {
             if need_update_virtual_row {
                 chk.set_num_virtual_rows(chk_rows + live);
             }
@@ -1075,35 +1085,20 @@ impl BaseJoinProbe {
             }
         }
 
-        // Go's `colIndexMap`: build column index -> destination chunk column.
-        // For the other-condition phase the destination keeps the *source*
-        // column index (the scratch chunk is laid out probe-then-build in
-        // original order); otherwise it is packed into `used_cols` order.
-        let mut col_index_map: HashMap<usize, usize> = HashMap::new();
-        for (index, &value) in used_cols.iter().enumerate() {
-            if for_other_condition {
-                col_index_map.insert(value, value + col_offset);
-            } else {
-                col_index_map.insert(value, index + col_offset);
-            }
-        }
+        // Go builds `colIndexMap` once per batch. Rust precomputes the same
+        // source-column mapping when the probe is created, because all used
+        // column lists are statement-static; only the output offset changes
+        // for the other-condition scratch chunk.
         let mut columns_to_append = meta.row_columns_order.len();
         if for_other_condition {
             columns_to_append = ctx.column_count_needed_for_other_condition;
-            let also = if ctx.right_as_build_side {
-                &ctx.r_used
-            } else {
-                &ctx.l_used
-            };
-            for &value in also {
-                col_index_map.insert(value, value + col_offset);
-            }
         }
 
         let last_column = meta.row_columns_order.len().min(columns_to_append);
         for column_index in current_column_in_row..last_column {
             let source_column = meta.row_columns_order[column_index];
-            if let Some(&destination_index) = col_index_map.get(&source_column) {
+            if let Some(relative_destination) = destinations.get(source_column).copied().flatten() {
+                let destination_index = relative_destination + col_offset;
                 let mut destination = chk.column_mut(destination_index);
                 let destination = &mut *destination;
                 for (row, cached) in row_data[..live]
@@ -1261,10 +1256,10 @@ impl BaseJoinProbe {
     /// Go's own comment enumerates the three kinds of column involved:
     /// already in `joinedChk`; from the build side but not in it; from the
     /// probe side but not in it.
-    pub fn build_result_after_other_condition(
+    pub fn build_result_after_other_condition<R: BuildRowSource + ?Sized>(
         &mut self,
         ctx: &ProbeContext<'_>,
-        rows: &dyn BuildRowSource,
+        rows: &R,
         chk: &mut Chunk,
         joined_chk: &Chunk,
     ) {
@@ -1427,6 +1422,48 @@ pub fn common_init_for_scan_row_table<'a>(
     hash_table.create_row_iter(start_index, end_index)
 }
 
+/// Precomputes Go's `colIndexMap` for both reconstruction phases. Used-column
+/// lists do not change during a probe, so rebuilding a hash map for every
+/// 32-row output batch only repeats statement-static work.
+fn build_column_destinations(
+    ctx: &ProbeContext<'_>,
+    right_as_build_side: bool,
+) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+    let normal_used = if right_as_build_side {
+        &ctx.r_used
+    } else {
+        &ctx.l_used
+    };
+    let other_used = if right_as_build_side {
+        &ctx.r_used_in_other_condition
+    } else {
+        &ctx.l_used_in_other_condition
+    };
+    let max_source_column = ctx
+        .meta
+        .row_columns_order
+        .iter()
+        .chain(normal_used)
+        .chain(other_used)
+        .copied()
+        .max()
+        .map_or(0, |column| column + 1);
+    let mut normal = vec![None; max_source_column];
+    for (destination, &source) in normal_used.iter().enumerate() {
+        normal[source] = Some(destination);
+    }
+    let mut other = vec![None; max_source_column];
+    for &source in other_used {
+        other[source] = Some(source);
+    }
+    // Go adds the regular used-column list after the other-condition list,
+    // so regular output columns win when both lists contain a source column.
+    for &source in normal_used {
+        other[source] = Some(source);
+    }
+    (normal, other)
+}
+
 /// Go `NewJoinProbe`.
 ///
 /// Builds the shared base and applies every validation Go's factory performs.
@@ -1477,6 +1514,8 @@ pub fn new_join_probe(
     }
 
     let has_nullable_key = probe_key_nullable.iter().take(key_index.len()).any(|n| *n);
+    let (normal_column_destinations, other_column_destinations) =
+        build_column_destinations(ctx, right_as_build_side);
 
     BaseJoinProbe {
         work_id,
@@ -1500,6 +1539,8 @@ pub fn new_join_probe(
         chunk_rows: 0,
         cached_build_rows: vec![MatchedRowInfo::default(); BATCH_BUILD_ROW_SIZE],
         next_cached_build_row_index: 0,
+        normal_column_destinations,
+        other_column_destinations,
         key_index,
         has_nullable_key,
         max_chunk_size: ctx.max_chunk_size,

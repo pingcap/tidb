@@ -45,6 +45,7 @@ Reduce synchronization and fragmented batching on the generic RPC-to-query respo
 - [x] Replace per-key index-hash `Vec` allocations with a contiguous linked outer-entry slab; retain the probe cursor across residual/output batches and validate grouped executor/distsql checks.
 - [x] Replace per-row index-lookup `BTreeMap` insertion with Go's batch slice sort/dedup shape; preserve encoded-key ordering and validate the full executor index matrix.
 - [x] Match Go's post-build hash-bucket read path with relaxed atomic loads after the build-join publication barrier; retain atomic build updates and validate the hash-join matrix.
+- [x] Keep Go's direct build-row reconstruction shape in the concrete Rust path: monomorphize the row source and precompute statement-static column destinations instead of rebuilding `colIndexMap` for every output batch.
 
 ## Context and Source Evidence
 
@@ -272,6 +273,16 @@ that join publishes the completed bucket and row links. This removes an
 unnecessary per-row acquire barrier without changing the table shape, tag
 check, collision walk or build synchronization. No workload benchmark or 25%
 gain is claimed.
+
+Build-row reconstruction (2026-09-16): Go keeps direct row pointers through
+`appendBuildRowToChunkInternal` and rebuilds only the small source-column map
+needed by that batch. Rust now keeps the `BuildRowSource` generic on concrete
+hash-join calls, allowing `HashTableV2::row_bytes` to inline, and computes the
+normal/residual destination maps once when a probe is created. The output
+offset and residual-column override rules remain Go-equivalent; this removes
+virtual row-source dispatch and repeated hash-map allocation/lookup from the
+32-row reconstruction loop. The grouped executor/distsql matrix passes; no
+workload benchmark or 25% gain is claimed.
 
 Index-lookup probe batching (2026-09-16): `index_task_probes` now collects the complete outer batch in contiguous storage, sorts encoded lookup keys once and removes adjacent duplicates, matching Go's `constructLookupContent` plus `sortAndDedupLookUpContents`. The prior per-row `BTreeMap` path allocated a tree node and performed a logarithmic walk for every probe; the replacement keeps one sort/dedup pass and preserves the existing encoded-key order, probe values, bound values and empty-range handling. No workload benchmark or 25% gain is claimed.
 
