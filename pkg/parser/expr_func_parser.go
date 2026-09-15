@@ -476,6 +476,8 @@ func (p *HandParser) parseScalarFuncCall(name string) ast.ExprNode {
 		return p.parseDateAddSubFuncCall(node)
 	case "char", "char_func":
 		return p.parseCharFuncCall(node, lowerName)
+	case "sysdate", "curtime":
+		return p.parseDatetimePrecFuncCall(node)
 	case "get_format":
 		return p.parseGetFormatFuncCall(node)
 	case "weight_string":
@@ -623,6 +625,26 @@ func (p *HandParser) parseDateAddSubFuncCall(node *ast.FuncCallExpr) ast.ExprNod
 }
 
 // parseCharFuncCall parses CHAR(expr [, expr ...] [USING charset_name]).
+// parseDatetimePrecFuncCall parses SYSDATE/CURTIME's argument list, which Go
+// master restricts in the yacc grammar to `FuncDatetimePrecListOpt`: either
+// empty or a single non-negative integer literal (FuncDatetimePrecList is
+// `intLit` alone — no expressions, no signs, no extra arguments). Anything
+// else is a syntax error at the offending token, which the session layer
+// wraps into 1064 with the `line N column M near "..."` position text
+// (e.g. `SELECT SYSDATE(-1)` rejects near "-1);").
+func (p *HandParser) parseDatetimePrecFuncCall(node *ast.FuncCallExpr) ast.ExprNode {
+	if tok := p.peek(); tok.Tp != ')' {
+		if tok.Tp != intLit {
+			p.syntaxErrorAt(tok)
+			return nil
+		}
+		p.next()
+		node.Args = append(node.Args, ast.NewValueExpr(tok.Item, p.charset, p.collation))
+	}
+	p.expect(')')
+	return node
+}
+
 func (p *HandParser) parseCharFuncCall(node *ast.FuncCallExpr, lowerName string) ast.ExprNode {
 	var args []ast.ExprNode
 	for {

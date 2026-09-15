@@ -50,6 +50,8 @@ func builtinFuncName(tp int) string {
 		return "count"
 	case builtinFnSum:
 		return "sum"
+	case builtinFnSumInt:
+		return "sum_int"
 	case builtinFnMax:
 		return "max"
 	case builtinFnMin:
@@ -64,7 +66,7 @@ func builtinFuncName(tp int) string {
 // isAggregateFunc returns true if the function name is an aggregate function.
 func isAggregateFunc(name string) bool {
 	switch strings.ToLower(name) {
-	case "count", "sum", "avg", "max", "min", "group_concat",
+	case "count", "sum", "sum_int", "avg", "max", "min", "group_concat",
 		"bit_and", "bit_or", "bit_xor", "stddev_pop", "stddev_samp",
 		"var_pop", "var_samp", "json_arrayagg", "json_objectagg",
 		"std", "stddev", "variance",
