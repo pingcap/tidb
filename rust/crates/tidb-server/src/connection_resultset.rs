@@ -203,21 +203,33 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     options: ResultSetOptions,
     batch_size: usize,
 ) -> Result<ResultSetWriteOutcome, BinaryTrackedError> {
-    let mut batch = source
-        .next_batch(batch_size.max(1))
-        .map_err(|message| BinaryTrackedError {
-            error: ResultSetWriteError {
-                cause: message.into(),
-                retryable: true,
-                bytes_escaped: false,
-            },
-            finish_attempted: false,
-        })?;
+    let mut chunk = source.new_chunk();
+    let mut batch = if let Some(chunk) = &mut chunk {
+        source.next_chunk(chunk).map(|()| Vec::new())
+    } else {
+        source.next_batch(batch_size.max(1))
+    }
+    .map_err(|message| BinaryTrackedError {
+        error: ResultSetWriteError {
+            cause: message.into(),
+            retryable: true,
+            bytes_escaped: false,
+        },
+        finish_attempted: false,
+    })?;
     let columns = source
         .columns()
         .map_err(|message| binary_failure(message, sink, false))?;
+    let mut options = options;
+    if let Some(status) = source.statement_status() {
+        status.apply(&mut options);
+    }
     let mut stream = BinaryResultSetStream::new(columns.clone(), options)
         .map_err(|error| binary_failure(error.to_string(), sink, false))?;
+    if chunk.is_some() {
+        stream.validate_chunk_types(source.field_types())
+            .map_err(|error| binary_failure(error.to_string(), sink, false))?;
+    }
     let metadata_packets = stream
         .metadata_packets()
         .map_err(|error| binary_failure(error.to_string(), sink, false))?;
@@ -232,6 +244,22 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     // owns coalescing, so neither a row queue nor a lookahead batch is needed.
     let mut payload = Vec::new();
     loop {
+        if let Some(chunk) = &mut chunk {
+            if chunk.num_rows() == 0 {
+                break;
+            }
+            for index in 0..chunk.num_rows() {
+                stream
+                    .row_packet_chunk_into(chunk.get_row(index), &mut payload)
+                    .map_err(|error| binary_failure(error.to_string(), sink, false))?;
+                write_binary_payloads(sink, &[&payload], false)?;
+                rows_written += 1;
+            }
+            source
+                .next_chunk(chunk)
+                .map_err(|error| binary_failure(error, sink, false))?;
+            continue;
+        }
         if batch.is_empty() {
             break;
         }
@@ -279,6 +307,9 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     source
         .finish()
         .map_err(|message| binary_failure(message, sink, true))?;
+    if let Some(status) = source.statement_status() {
+        stream.update_statement_status(|options| status.apply(options));
+    }
     let terminal = stream
         .finish_packet()
         .map_err(|error| binary_failure(error.to_string(), sink, true))?;
@@ -366,6 +397,14 @@ mod tests {
     }
 
     fn row(datum: Datum, type_code: u8) -> Vec<u8> {
+        let mut chunk = tidb_chunk::chunk::Chunk::new(
+            &[tidb_datatype::FieldType::new(
+                tidb_datatype::FieldTypeCode::from_mysql_type(type_code),
+            )],
+            1,
+            1,
+        );
+        chunk.append_datum(0, &datum);
         let cell = datum_to_binary_cell(datum, type_code).expect("column type admits this datum");
         let expected = encode_binary_result_row(std::slice::from_ref(&cell));
         let mut stream = tidb_protocol::BinaryResultSetStream::new(
@@ -383,6 +422,13 @@ mod tests {
             .row_packet_owned_into(vec![cell], &mut buffer)
             .unwrap();
         assert_eq!(buffer, expected);
+        stream
+            .row_packet_chunk_into(chunk.get_row(0), &mut buffer)
+            .unwrap();
+        assert_eq!(
+            buffer, expected,
+            "native chunk bytes must match Go DumpBinaryRow"
+        );
         buffer
     }
 

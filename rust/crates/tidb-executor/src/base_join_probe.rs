@@ -21,7 +21,7 @@
 //! plus one small per-join-type probe (`innerJoinProbe`,
 //! `outerJoinProbe`, `semiJoinProbe`, `antiSemiJoinProbe`,
 //! `leftOuterSemiJoinProbe`) that decides which matches become rows. The base
-//! owns the shared state; the narrow no-residual probe wrappers live in
+//! owns the shared state; the per-join-type probe wrappers live in
 //! [`crate::hash_join_v2`] and reuse it rather than duplicating the lookup
 //! machinery. [`new_join_probe`] still validates and constructs only the base,
 //! exactly as Go's factory does before dispatching to those wrappers.
@@ -36,92 +36,46 @@
 //!   once in `join_table_meta.go` and again at the top of this file with the
 //!   same three constants; one Rust enum serves both.
 //! * [`crate::row_table_builder`]: [`fnv64`] (Go `hash/fnv`),
-//!   [`generate_partition_index`], [`FAKE_SEL_LENGTH`].
+//!   [`generate_partition_index`].
 //! * [`crate::tagged_ptr`]'s [`TagPtrHelper`].
 //! * `tidb_chunk`: the real `chunk.Chunk`/`chunk.Column`, including
 //!   `AppendCellFromRawData`, `AppendCellNTimes`, the `Reserve` pre-sizing
 //!   deltas, and `CopySelectedRows*`.
-//! * `tidb_executor::joiner::JoinType`: Go `plannerbase.JoinType`. The
+//! * `crate::joiner::JoinType`: Go `plannerbase.JoinType`. The
 //!   per-join-type match/miss semantics live there and are not re-derived.
 //!
-//! ## Sequential here, worker-parallel there
+//! ## Worker ownership
 //!
 //! Go runs `Concurrency` probe workers, each owning its own `baseJoinProbe`
 //! (`workID`), all reading one shared, already-built hash table. Nothing in
 //! this file is shared mutable state between workers: `matchedRowsHeaders`,
 //! `serializedKeys`, `hashValues`, `cachedBuildRows`, `offsetAndLengthArray`
 //! and the scratch chunk are all per-worker. The only cross-worker
-//! interaction is the used-flag bit in the build row's null map, which the
-//! outer/semi probes set with an atomic OR -- and that is in *those* files,
-//! not this one.
+//! interaction is matched-build-row tracking. Each row has an atomic used
+//! flag owned by its segment. Probe workers share the immutable table and
+//! scan preserved build rows only after the all-probe completion barrier.
+//! Output is unordered across worker chunks, as in Go.
 //!
-//! So this port is a single [`BaseJoinProbe`] driven sequentially, and that
-//! changes nothing observable about which rows are produced:
-//!
-//! * Row content is identical -- every reconstruction here reads immutable
-//!   build bytes and the worker's own probe chunk.
-//! * Row *order* is identical **within one probe chunk**, which is all Go
-//!   promises: hash join v2 is unordered across chunks because chunks are
-//!   handed to whichever worker is free, and the result chunks are merged in
-//!   completion order. A sequential driver simply picks one of the orderings
-//!   Go already permits.
-//! * [`common_init_for_scan_row_table`] is ported with its `work_id` /
-//!   `concurrency` arguments intact, because the *partition* of the row table
-//!   across workers is observable in each worker's output even though the
-//!   union is not. Driving it with `concurrency == 1` scans the whole table,
-//!   which is the sequential equivalent.
-//!
-//! What is *not* reproduced: the `SQLKiller` cancellation checkpoints
-//! (`checkSQLKiller`) that Go interleaves into the probe loop, and the
-//! spill-to-disk path, both of which only exist because probing is a
-//! long-running concurrent activity. Both are narrowed below.
-//!
-//! ## Narrowings (every one named)
-//!
-//! * **Spill.** `SetRestoredChunkForProbe`, `preAllocForSetRestoredChunkForProbe`
-//!   and `SpillRemainingProbeChunks` are `todo!()`; `SetChunkForProbe` omits
-//!   the `spillHelper` branches. Blocking symbol:
-//!   `hashJoinSpillHelper` (`pkg/executor/join/hash_join_spill.go`), together
-//!   with `HashJoinCtxV2.spillHelper`, `spillProbeChk`, `isPartitionSpilled`,
-//!   `areAllPartitionsSpilled` and `spillChunkSize`.
-//! * **`SQLKiller`.** Go `checkSQLKiller` is not ported. Blocking symbol:
-//!   `util/sqlkiller.SQLKiller` plus `failpoint.Inject` and
-//!   `exeerrors.ErrQueryInterrupted`.
-//! * **`HashJoinCtxV2`.** Not ported (it lives in `hash_join_v2.go`, which is
-//!   explicitly out of scope). [`ProbeContext`] carries exactly the fields
-//!   this file reads, and nothing else.
-//! * **Probe filter and key serialization.** Go calls
-//!   `expression.VectorizedFilter` and `codec.SerializeKeys`. Both are seams
-//!   here ([`ProbeFilter`], [`ProbeKeySerializer`]), mirroring the seams
-//!   [`crate::row_table_builder`] already established for the build side.
-//! * **`isReadNullMapThreadSafe`.** Go picks between `isColumnNull` and
-//!   `isColumnNullThreadSafe`; the two differ only in whether the null-map
-//!   word is read atomically, which is invisible to a single reader. One
-//!   implementation ([`RowLayoutMeta::is_column_null`]) serves both arms.
-//! * **`intest.InTest` assertions.** Go's in-test capacity checks (that
-//!   `Reserve` pre-sized exactly, and that restored serialized-key buffers
-//!   never grow) are dropped; they assert about Go slice capacity growth,
-//!   which has no Rust counterpart.
-//! * **Per-join-type dispatch.** [`new_join_probe`] returns the validated
-//!   base. [`crate::hash_join_v2`] supplies the inner, probe-preserved outer,
-//!   right-build semi-family, and left-build anti-semi no-residual wrappers;
-//!   other preserved-build, residual-condition, and spill variants remain
-//!   outside this port.
-//! * **`mockJoinProbe`.** Not ported: it is a test-only shell whose every
-//!   method is `panic("not supported")`, and it exists to feed
-//!   `hash_join_v2_test.go`, which is out of scope.
+//! Spill preparation stores hashes, serialized keys and original columns in
+//! worker-local partition chunks. Restore rehashes and copies saved keys, with
+//! no expression reevaluation. The native worker flushes partial spill chunks
+//! before reporting completion; the owning executor schedules restore rounds.
+//! Cancellation checkpoints live in the kind-specific probes and workers.
 
 use std::collections::HashMap;
 
+use crate::joiner::JoinType;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::{copy_selected_rows, copy_selected_rows_with_row_id_func};
 use tidb_chunk::column::{append_cell_from_raw_data, Column};
-use tidb_executor::joiner::JoinType;
+use tidb_codec::{JoinKeyColumns, SerializedJoinKeys};
 
 use crate::hash_table_v2::{row_address_of, HashTableV2, RowIter};
-use crate::join_row_table::{next_row_address, RowLayoutMeta, SIZE_OF_ELEMENT_SIZE};
+use crate::join_row_table::{
+    next_row_address, RowLayoutMeta, SIZE_OF_ELEMENT_SIZE, SIZE_OF_NEXT_PTR,
+};
 use crate::join_table_meta::KeyMode;
-use crate::row_table_builder::{fnv64, generate_partition_index, FAKE_SEL_LENGTH};
+use crate::row_table_builder::{fnv64, generate_partition_index};
 use crate::tagged_ptr::TagPtrHelper;
 
 /// Go `batchBuildRowSize`: how many matched build rows are reconstructed in
@@ -174,15 +128,24 @@ pub struct PosAndHashValue {
 /// Errors this file's ported entry points return.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProbeError {
+    /// Physical spill IO failure, preserved by the worker result channel.
+    Spill(String),
+    /// Canonical SQL cancellation from inside a probe or scan loop.
+    Killed(tidb_error::mysql::SqlError),
+    /// Typed expression failure; preserve it for SQL error conversion.
+    Expression(tidb_expr::EvalError),
     /// Go: `errors.New("Previous chunk is not probed yet")`.
     PreviousChunkNotProbed,
-    /// A [`ProbeKeySerializer`] or [`ProbeFilter`] failed.
+    /// A [`JoinKeyColumns`] or [`ProbeFilter`] failed.
     Seam(String),
 }
 
 impl std::fmt::Display for ProbeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Spill(error) => f.write_str(error),
+            Self::Killed(error) => write!(f, "{error:?}"),
+            Self::Expression(error) => write!(f, "{error:?}"),
             Self::PreviousChunkNotProbed => f.write_str("Previous chunk is not probed yet"),
             Self::Seam(message) => f.write_str(message),
         }
@@ -190,6 +153,20 @@ impl std::fmt::Display for ProbeError {
 }
 
 impl std::error::Error for ProbeError {}
+
+impl From<crate::ExecError> for ProbeError {
+    fn from(error: crate::ExecError) -> Self {
+        match error {
+            crate::ExecError::Killed(error) => Self::Killed(error),
+            crate::ExecError::MemoryExceedForQuery { conn_id } => {
+                Self::Killed(crate::mem_quota::memory_exceed_for_query(conn_id))
+            }
+            crate::ExecError::Eval(error) => Self::Expression(error),
+            crate::ExecError::SpillFailed(error) => Self::Spill(error),
+            other => Self::Seam(format!("{other:?}")),
+        }
+    }
+}
 
 /// Reads the packed bytes of build rows by address.
 ///
@@ -213,24 +190,18 @@ pub trait BuildRowSource {
 }
 
 impl BuildRowSource for HashTableV2 {
+    #[inline]
     fn row_bytes(&self, address: usize) -> &[u8] {
-        // Linear over partitions and segments. Go indexes by raw pointer, so
-        // it has no equivalent cost; the ranges are disjoint, so the answer is
-        // the same either way.
-        self.tables
-            .iter()
-            .flatten()
-            .find_map(|sub| sub.row_data.row_bytes_at(address))
-            .expect("build row address belongs to some segment")
+        let (segment, row) = self.row_location(address);
+        let offset = segment.row_start_offset[row] as usize;
+        &segment.raw_data[offset..]
     }
 
+    #[inline]
     fn raw_next_row_address(&self, address: usize) -> usize {
-        for sub in self.tables.iter().flatten() {
-            if let Some((segment_index, offset)) = sub.row_data.segment_of_address(address) {
-                return sub.row_data.segments[segment_index].raw_next_row_address(offset);
-            }
-        }
-        panic!("build row address belongs to some segment")
+        let (segment, row) = self.row_location(address);
+        let offset = segment.row_start_offset[row] as usize;
+        segment.raw_next_row_address(offset)
     }
 }
 
@@ -266,31 +237,50 @@ impl BuildRowSource for RowBytesMap {
     }
 }
 
-/// Go `expression.VectorizedFilter` over `HashJoinCtxV2.ProbeFilter`,
-/// evaluated per **physical** row -- Go indexes `filterVector` physically
-/// because that is what `VectorizedFilter` returns.
-pub type ProbeFilter<'a> = &'a dyn Fn(&Chunk, usize) -> bool;
-
-/// Go `codec.SerializeKeys` for the probe side.
-///
-/// Returns `None` when any key column of the row is NULL, which is how Go's
-/// `SerializeKeys` reports through `nullKeyVector`.
-pub trait ProbeKeySerializer {
-    /// Serializes the join key of one logical probe row.
-    fn serialize(&self, chunk: &Chunk, logical_row_index: usize) -> Option<Vec<u8>>;
+/// Statement expressions shared by the build or probe workers. Evaluation
+/// borrows a whole chunk and returns the worker's reusable physical-row mask.
+pub struct JoinFilter<'a> {
+    evaluate: Box<dyn Fn(&Chunk, Vec<bool>) -> Result<Vec<bool>, tidb_expr::EvalError> + Sync + 'a>,
 }
 
-impl<F: Fn(&Chunk, usize) -> Option<Vec<u8>>> ProbeKeySerializer for F {
-    fn serialize(&self, chunk: &Chunk, logical_row_index: usize) -> Option<Vec<u8>> {
-        self(chunk, logical_row_index)
+impl<'a> JoinFilter<'a> {
+    pub fn new<C: tidb_expr::Columns + Sync + 'a>(
+        context: C,
+        predicates: Vec<tidb_expr::expression::Expression>,
+        vectorized: bool,
+    ) -> Self {
+        Self {
+            evaluate: Box::new(move |chunk, selected| {
+                tidb_expr::evaluator::vectorized_filter(
+                    &context,
+                    vectorized,
+                    &predicates,
+                    chunk,
+                    selected,
+                )
+            }),
+        }
+    }
+
+    pub fn evaluate(
+        &self,
+        chunk: &Chunk,
+        selected: Vec<bool>,
+    ) -> Result<Vec<bool>, tidb_expr::EvalError> {
+        (self.evaluate)(chunk, selected)
     }
 }
+
+/// Go `HashJoinCtxV2.ProbeFilter`, evaluated with VectorizedFilter.
+pub type ProbeFilter<'a> = &'a JoinFilter<'a>;
 
 /// The slice of Go `HashJoinCtxV2` that `base_join_probe.go` actually reads.
 ///
 /// `HashJoinCtxV2` itself lives in `hash_join_v2.go` and is out of scope; this
 /// is the narrowed boundary, carrying one field per Go access site.
 pub struct ProbeContext<'a> {
+    /// Immutable routing and worker-private disk lanes for this build round.
+    pub spill: Option<&'a crate::hash_join_v2::spill::HashJoinSpill>,
     /// Go `hashTableContext.hashTable`.
     pub hash_table: &'a HashTableV2,
     /// Go `hashTableMeta`, row-layout half.
@@ -339,8 +329,11 @@ pub struct BaseJoinProbe {
     /// Go `currentChunk`. Owned here; Go holds a borrowed pointer into the
     /// worker's chunk queue.
     current_chunk: Option<Chunk>,
-    /// Go `selRows`, the identity selection built when the chunk has none.
-    sel_rows: Vec<usize>,
+    restored_chunk: Option<Chunk>,
+    spill_tmp: Vec<Chunk>,
+    spilled_idx: Vec<usize>,
+    restored_columns: Vec<usize>,
+    retained_keys: Vec<bool>,
     /// Go `usedRows`: logical row index -> physical row index.
     used_rows: Vec<usize>,
     /// Go `matchedRowsHeaders`, indexed by logical row.
@@ -348,7 +341,7 @@ pub struct BaseJoinProbe {
     /// Go `matchedRowsHashValue`, indexed by logical row.
     matched_rows_hash_value: Vec<u64>,
     /// Go `serializedKeys`, indexed by logical row.
-    serialized_keys: Vec<Vec<u8>>,
+    serialized_keys: SerializedJoinKeys,
     /// Go `filterVector`, indexed by **physical** row.
     filter_vector: Option<Vec<bool>>,
     /// Go `nullKeyVector`, indexed by **physical** row.
@@ -484,7 +477,7 @@ impl BaseJoinProbe {
 
     /// Go `serializedKeys`.
     #[must_use]
-    pub fn serialized_keys(&self) -> &[Vec<u8>] {
+    pub fn serialized_keys(&self) -> &SerializedJoinKeys {
         &self.serialized_keys
     }
 
@@ -518,6 +511,43 @@ impl BaseJoinProbe {
         self.current_chunk.is_none() || self.current_probe_row >= self.chunk_rows
     }
 
+    /// Returns the consumed input allocation to the probe fetcher's resource queue.
+    pub fn take_probe_chunk(&mut self) -> Option<Chunk> {
+        assert!(self.is_current_chunk_probe_done());
+        let current = self.current_chunk.take();
+        if self.restored_chunk.is_some() {
+            drop(current);
+            self.restored_chunk.take()
+        } else {
+            current
+        }
+    }
+
+    /// Logical rows deferred to another spill round, in ascending order.
+    pub fn spilled_indices(&self) -> &[usize] {
+        &self.spilled_idx
+    }
+    /// A deferred row must not be emitted as unmatched in this round.
+    pub fn is_spilled(&self, row: usize) -> bool {
+        self.spilled_idx.binary_search(&row).is_ok()
+    }
+
+    fn init_spill_chunks(&mut self, ctx: &ProbeContext<'_>) {
+        if let Some(spill) = ctx.spill {
+            if self.spill_tmp.is_empty() && spill.spilled_partitions().iter().any(|&part| part) {
+                self.spill_tmp = (0..ctx.partition_number)
+                    .map(|_| {
+                        Chunk::new_with_capacity(
+                            spill.probe_field_types(),
+                            crate::hash_join_v2::spill::SPILL_CHUNK_SIZE,
+                        )
+                    })
+                    .collect();
+            }
+        }
+        self.spilled_idx.clear();
+    }
+
     // -----------------------------------------------------------------
     // SetChunkForProbe (`base_join_probe.go:179`)
     // -----------------------------------------------------------------
@@ -536,11 +566,8 @@ impl BaseJoinProbe {
         ctx: &ProbeContext<'_>,
         chunk: Chunk,
         filter: Option<ProbeFilter<'_>>,
-        key_serializer: &dyn ProbeKeySerializer,
+        key_serializer: &JoinKeyColumns,
     ) -> Result<(), ProbeError> {
-        // boundary: Go's `defer` here forces `currentProbeRow = chunkRows`
-        // when `spillHelper.areAllPartitionsSpilled()`. No spill helper is
-        // ported, so no partition is ever spilled and the defer is a no-op.
         if self.current_chunk.is_some() && self.current_probe_row < self.chunk_rows {
             return Err(ProbeError::PreviousChunkNotProbed);
         }
@@ -548,25 +575,12 @@ impl BaseJoinProbe {
         let logical_rows = chunk.num_rows();
         // Go: `chk.Column(0).Rows()` -- physical rows, which differ from
         // logical rows exactly when the chunk carries a selection vector.
-        let physical_rows = if chunk.num_cols() == 0 {
-            logical_rows
-        } else {
-            chunk.column(0).rows()
-        };
+        let physical_rows = chunk.physical_rows();
 
+        self.used_rows.clear();
         match chunk.sel() {
-            Some(sel) => self.used_rows = sel.to_vec(),
-            None => {
-                // Go reuses a shared `fakeSel` prefix below FAKE_SEL_LENGTH
-                // and allocates above it; both produce the identity mapping,
-                // which is all that is observable.
-                if self.sel_rows.len() < logical_rows || logical_rows <= FAKE_SEL_LENGTH {
-                    self.sel_rows = (0..logical_rows).collect();
-                } else {
-                    self.sel_rows.truncate(logical_rows);
-                }
-                self.used_rows.clone_from(&self.sel_rows);
-            }
+            Some(sel) => self.used_rows.extend_from_slice(sel),
+            None => self.used_rows.extend(0..logical_rows),
         }
 
         self.chunk_rows = logical_rows;
@@ -578,46 +592,33 @@ impl BaseJoinProbe {
             bucket.clear();
         }
         if filter.is_some() {
-            self.filter_vector = Some(vec![false; physical_rows]);
+            self.filter_vector
+                .get_or_insert_with(Vec::new)
+                .resize(physical_rows, false);
+        } else {
+            self.filter_vector = None;
         }
-        if self.has_nullable_key {
-            self.null_key_vector = Some(vec![false; physical_rows]);
-        }
-        self.serialized_keys.clear();
-        self.serialized_keys.resize(logical_rows, Vec::new());
 
         if let Some(filter) = filter {
-            let vector = self
-                .filter_vector
-                .as_mut()
-                .expect("filter vector allocated alongside the filter");
-            for (physical_row, slot) in vector.iter_mut().enumerate() {
-                *slot = filter(&chunk, physical_row);
-            }
+            self.filter_vector = Some(
+                filter
+                    .evaluate(&chunk, self.filter_vector.take().unwrap_or_default())
+                    .map_err(ProbeError::Expression)?,
+            );
         }
 
-        // Go: one `codec.SerializeKeys` call fills `serializedKeys` and
-        // `nullKeyVector` together, skipping rows the filter already rejected.
-        for logical_row in 0..logical_rows {
-            let physical_row = self.used_rows[logical_row];
-            if self
-                .filter_vector
-                .as_ref()
-                .is_some_and(|vector| !vector[physical_row])
-            {
-                continue;
-            }
-            match key_serializer.serialize(&chunk, logical_row) {
-                Some(key) => self.serialized_keys[logical_row] = key,
-                None => {
-                    if let Some(vector) = self.null_key_vector.as_mut() {
-                        vector[physical_row] = true;
-                    }
-                }
-            }
-        }
+        key_serializer
+            .serialize(
+                &chunk,
+                &self.used_rows,
+                self.filter_vector.as_deref(),
+                self.null_key_vector.get_or_insert_with(Vec::new),
+                &mut self.serialized_keys,
+            )
+            .map_err(|error| ProbeError::Seam(error.to_string()))?;
 
         self.current_chunk = Some(chunk);
+        self.init_spill_chunks(ctx);
 
         for logical_row in 0..logical_rows {
             let physical_row = self.used_rows[logical_row];
@@ -641,8 +642,24 @@ impl BaseJoinProbe {
             self.matched_rows_hash_value[logical_row] = hash_value;
             let part_index =
                 generate_partition_index(hash_value, ctx.partition_mask_offset) as usize;
-            // boundary: Go routes a spilled partition's rows to
-            // `spillTmpChk[partIndex]` and zeroes the header instead.
+            if let Some(spill) = ctx
+                .spill
+                .filter(|spill| spill.spilled_partitions()[part_index])
+            {
+                let target = &mut self.spill_tmp[part_index];
+                target.append_uint64(0, hash_value);
+                target.append_bytes(1, &self.serialized_keys[logical_row]);
+                target.append_partial_row(
+                    2,
+                    self.current_chunk.as_ref().unwrap().get_row(logical_row),
+                );
+                self.spilled_idx.push(logical_row);
+                if target.is_full() {
+                    spill.spill_probe_chunk(self.work_id, part_index, target)?;
+                    target.reset();
+                }
+                continue;
+            }
             self.hash_values[part_index].push(PosAndHashValue {
                 hash_value,
                 pos: logical_row,
@@ -658,31 +675,98 @@ impl BaseJoinProbe {
                     .lookup(entry.hash_value, &ctx.tag_helper);
             }
         }
+        // NULL keys and filter-rejected rows need unmatched-row processing,
+        // even when every partition spilled. Only defer an entire chunk.
+        if self.spilled_idx.len() == self.chunk_rows {
+            self.current_probe_row = self.chunk_rows;
+        }
         Ok(())
     }
 
-    /// Go `SetRestoredChunkForProbe`.
-    ///
-    /// # Panics
-    ///
-    /// Always. boundary: `hashJoinSpillHelper` (`hash_join_spill.go`) --
-    /// restored chunks only exist once probe-side spilling has run, and their
-    /// layout (`hashValue`, `serializedKey`, then the pruned probe columns) is
-    /// defined by `spillHelper.probeSpillFieldTypes`. Go's companion
-    /// `preAllocForSetRestoredChunkForProbe` and its `rehash` loop are blocked
-    /// on the same symbol.
-    pub fn set_restored_chunk_for_probe(&mut self, _chunk: Chunk) -> Result<(), ProbeError> {
-        todo!("boundary: hashJoinSpillHelper / probeSpillFieldTypes (hash_join_spill.go)")
+    /// Go SetRestoredChunkForProbe: rehash saved hashes and reuse saved keys;
+    /// do not reevaluate the probe filter, collation or SQL expressions.
+    pub fn set_restored_chunk_for_probe(
+        &mut self,
+        ctx: &ProbeContext<'_>,
+        mut chunk: Chunk,
+    ) -> Result<(), ProbeError> {
+        if !self.is_current_chunk_probe_done() {
+            return Err(ProbeError::PreviousChunkNotProbed);
+        }
+        assert!(
+            chunk.sel().is_none(),
+            "restored probe chunk has no selection"
+        );
+        let rows = chunk.num_rows();
+        self.restored_columns.clear();
+        self.restored_columns.extend(2..chunk.num_cols());
+        self.current_chunk = Some(chunk.prune(&self.restored_columns));
+        self.chunk_rows = rows;
+        self.used_rows.clear();
+        self.used_rows.extend(0..rows);
+        self.filter_vector = None;
+        self.null_key_vector = None;
+        self.matched_rows_headers.clear();
+        self.matched_rows_headers.resize(rows, 0);
+        self.matched_rows_hash_value.resize(rows, 0);
+        self.retained_keys.resize(rows, true);
+        self.init_spill_chunks(ctx);
+        for bucket in &mut self.hash_values {
+            bucket.clear();
+        }
+        for row in 0..rows {
+            let hash = crate::row_table_builder::rehash(chunk.get_row(row).get_uint64(0));
+            self.matched_rows_hash_value[row] = hash;
+            let part = generate_partition_index(hash, ctx.partition_mask_offset) as usize;
+            self.retained_keys[row] = !ctx
+                .spill
+                .is_some_and(|spill| spill.spilled_partitions()[part]);
+        }
+        self.serialized_keys
+            .restore(&chunk, 1, &self.retained_keys)
+            .map_err(|error| ProbeError::Seam(error.to_string()))?;
+        for row in 0..rows {
+            let hash = self.matched_rows_hash_value[row];
+            let part = generate_partition_index(hash, ctx.partition_mask_offset) as usize;
+            if !self.retained_keys[row] {
+                let spill = ctx.spill.expect("spilled partition");
+                let target = &mut self.spill_tmp[part];
+                target.append_uint64(0, hash);
+                target.append_bytes(1, &chunk.get_row(row).get_bytes(1));
+                target.append_partial_row(2, self.current_chunk.as_ref().unwrap().get_row(row));
+                self.spilled_idx.push(row);
+                if target.is_full() {
+                    spill.spill_probe_chunk(self.work_id, part, target)?;
+                    target.reset();
+                }
+            } else {
+                self.matched_rows_headers[row] =
+                    ctx.hash_table.sub_table(part).lookup(hash, &ctx.tag_helper);
+            }
+        }
+        self.restored_chunk = Some(chunk);
+        self.current_probe_row = if self.spilled_idx.len() == rows {
+            rows
+        } else {
+            0
+        };
+        Ok(())
     }
 
-    /// Go `SpillRemainingProbeChunks`.
-    ///
-    /// # Panics
-    ///
-    /// Always. boundary: `hashJoinSpillHelper.spillProbeChk`
-    /// (`hash_join_spill.go`).
-    pub fn spill_remaining_probe_chunks(&mut self) -> Result<(), ProbeError> {
-        todo!("boundary: hashJoinSpillHelper.spillProbeChk (hash_join_spill.go)")
+    /// Flush the final partial spill batch in every partition at worker EOF.
+    pub fn spill_remaining_probe_chunks(
+        &mut self,
+        ctx: &ProbeContext<'_>,
+    ) -> Result<(), ProbeError> {
+        if let Some(spill) = ctx.spill {
+            for (part, chunk) in self.spill_tmp.iter_mut().enumerate() {
+                if chunk.num_rows() > 0 {
+                    spill.spill_probe_chunk(self.work_id, part, chunk)?;
+                    chunk.reset();
+                }
+            }
+        }
+        Ok(())
     }
 
     // -----------------------------------------------------------------
@@ -908,20 +992,20 @@ impl BaseJoinProbe {
             .map_or(0, tidb_chunk::chunk::Chunk::num_cols);
         let (used_cols, col_offset) = if self.right_as_build_side {
             if for_other_condition {
-                (ctx.r_used_in_other_condition.clone(), probe_num_cols)
+                (&ctx.r_used_in_other_condition, probe_num_cols)
             } else {
-                (ctx.r_used.clone(), ctx.l_used.len())
+                (&ctx.r_used, ctx.l_used.len())
             }
         } else if for_other_condition {
-            (ctx.l_used_in_other_condition.clone(), 0)
+            (&ctx.l_used_in_other_condition, 0)
         } else {
-            (ctx.l_used.clone(), 0)
+            (&ctx.l_used, 0)
         };
         self.append_build_row_to_chunk_internal(
             ctx,
             rows,
             chk,
-            &used_cols,
+            used_cols,
             for_other_condition,
             col_offset,
             current_column_index_in_row,
@@ -953,10 +1037,16 @@ impl BaseJoinProbe {
         }
 
         let meta = ctx.meta;
-        for index in 0..live {
-            if self.cached_build_rows[index].build_row_offset == 0 {
-                let row = rows.row_bytes(self.cached_build_rows[index].build_row_start);
-                Self::advance_to_row_data(meta, &mut self.cached_build_rows[index], row);
+        // Go retains direct row pointers across the column loop. Resolve the
+        // safe row handles once per batch and borrow those same rows throughout.
+        let mut row_data: [&[u8]; BATCH_BUILD_ROW_SIZE] = [&[]; BATCH_BUILD_ROW_SIZE];
+        for (row, cached) in row_data[..live]
+            .iter_mut()
+            .zip(&mut self.cached_build_rows[..live])
+        {
+            *row = rows.row_bytes(cached.build_row_start);
+            if cached.build_row_offset == 0 {
+                Self::advance_to_row_data(meta, cached, row);
             }
         }
 
@@ -989,20 +1079,20 @@ impl BaseJoinProbe {
         for column_index in current_column_in_row..last_column {
             let source_column = meta.row_columns_order[column_index];
             if let Some(&destination_index) = col_index_map.get(&source_column) {
-                for index in 0..live {
-                    let address = self.cached_build_rows[index].build_row_start;
-                    let offset = self.cached_build_rows[index].build_row_offset;
-                    let row = rows.row_bytes(address);
+                let mut destination = chk.column_mut(destination_index);
+                let destination = &mut *destination;
+                for (row, cached) in row_data[..live]
+                    .iter()
+                    .zip(&mut self.cached_build_rows[..live])
+                {
                     // Narrowing: Go picks `isColumnNull` or
                     // `isColumnNullThreadSafe` from
                     // `meta.isReadNullMapThreadSafe(columnIndex)`; the two
                     // differ only in atomicity of the null-map read.
                     let not_null = !meta.is_column_null(row, column_index);
-                    let mut destination = chk.column_mut(destination_index);
                     destination.append_null_bitmap(not_null);
-                    let new_offset = append_cell_from_raw_data(&mut destination, row, offset);
-                    drop(destination);
-                    self.cached_build_rows[index].build_row_offset = new_offset;
+                    cached.build_row_offset =
+                        append_cell_from_raw_data(destination, row, cached.build_row_offset);
                 }
             } else {
                 // Not used downstream, so nothing is appended -- but the row
@@ -1014,15 +1104,15 @@ impl BaseJoinProbe {
                         }
                     }
                     None => {
-                        for index in 0..live {
-                            let address = self.cached_build_rows[index].build_row_start;
-                            let offset = self.cached_build_rows[index].build_row_offset;
-                            let row = rows.row_bytes(address);
+                        for (row, cached) in row_data[..live]
+                            .iter()
+                            .zip(&mut self.cached_build_rows[..live])
+                        {
+                            let offset = cached.build_row_offset;
                             let mut size_bytes = [0_u8; SIZE_OF_ELEMENT_SIZE];
                             size_bytes.copy_from_slice(&row[offset..offset + SIZE_OF_ELEMENT_SIZE]);
                             let size = u32::from_ne_bytes(size_bytes) as usize;
-                            self.cached_build_rows[index].build_row_offset +=
-                                SIZE_OF_ELEMENT_SIZE + size;
+                            cached.build_row_offset += SIZE_OF_ELEMENT_SIZE + size;
                         }
                     }
                 }
@@ -1119,7 +1209,7 @@ impl BaseJoinProbe {
                     continue;
                 }
                 seen.push(col_index);
-                let source = probe_chk.column(col_index).clone();
+                let source = probe_chk.column(col_index);
                 let mut destination = chk.column_mut(col_index + col_offset);
                 pre_alloc(&source, &mut destination);
                 for run in runs {
@@ -1128,7 +1218,7 @@ impl BaseJoinProbe {
             }
         } else {
             for (index, &col_index) in used.iter().enumerate() {
-                let source = probe_chk.column(col_index).clone();
+                let source = probe_chk.column(col_index);
                 let mut destination = chk.column_mut(index + col_offset);
                 pre_alloc(&source, &mut destination);
                 for run in runs {
@@ -1163,23 +1253,19 @@ impl BaseJoinProbe {
 
         let (probe_used_columns, probe_col_offset, probe_col_offset_in_joined_chk) =
             if self.right_as_build_side {
-                (ctx.l_used.clone(), 0, 0)
+                (&ctx.l_used, 0, 0)
             } else {
-                (
-                    ctx.r_used.clone(),
-                    ctx.l_used.len(),
-                    ctx.total_column_number,
-                )
+                (&ctx.r_used, ctx.l_used.len(), ctx.total_column_number)
             };
 
         for (index, &col_index) in probe_used_columns.iter().enumerate() {
             let joined_index = col_index + probe_col_offset_in_joined_chk;
             if joined_chk.column(joined_index).rows() > 0 {
-                let source = joined_chk.column(joined_index).clone();
+                let source = joined_chk.column(joined_index);
                 let mut destination = chk.column_mut(index + probe_col_offset);
                 copy_selected_rows(&mut destination, &source, &self.selected);
             } else {
-                let source = probe_chunk.column(col_index).clone();
+                let source = probe_chunk.column(col_index);
                 let selected_len = self.selected.len();
                 let mut destination = chk.column_mut(index + probe_col_offset);
                 copy_selected_rows_with_row_id_func(
@@ -1195,14 +1281,14 @@ impl BaseJoinProbe {
 
         let (build_used_columns, build_col_offset, build_col_offset_in_joined_chk) =
             if self.right_as_build_side {
-                (ctx.r_used.clone(), ctx.l_used.len(), probe_chunk.num_cols())
+                (&ctx.r_used, ctx.l_used.len(), probe_chunk.num_cols())
             } else {
-                (ctx.l_used.clone(), 0, 0)
+                (&ctx.l_used, 0, 0)
             };
         let mut has_remain_cols = false;
         for (index, &col_index) in build_used_columns.iter().enumerate() {
             let joined_index = col_index + build_col_offset_in_joined_chk;
-            let source = joined_chk.column(joined_index).clone();
+            let source = joined_chk.column(joined_index);
             if source.rows() > 0 {
                 let mut destination = chk.column_mut(index + build_col_offset);
                 copy_selected_rows(&mut destination, &source, &self.selected);
@@ -1262,10 +1348,9 @@ impl BaseJoinProbe {
 /// Go `isKeyMatched`: compare a probe row's serialized key against the key
 /// stored in a build row.
 ///
-/// The three key modes differ only in how the stored key's extent is found,
-/// which [`RowLayoutMeta::get_key_bytes`] already encodes; Go's `OneInt64` arm
-/// compares two `int64`s, which is byte equality over the same eight bytes.
+/// Integer keys use Go's scalar comparison; serialized keys use byte equality.
 #[must_use]
+#[inline]
 pub fn is_key_matched(
     key_mode: KeyMode,
     serialized_key: &[u8],
@@ -1277,7 +1362,15 @@ pub fn is_key_matched(
         "key mode must agree with the layout"
     );
     match key_mode {
-        KeyMode::OneInt64 | KeyMode::FixedSerializedKey | KeyMode::VariableSerializedKey => {
+        KeyMode::OneInt64 => {
+            let start = SIZE_OF_NEXT_PTR + meta.null_map_length;
+            let probe =
+                i64::from_ne_bytes(serialized_key[..8].try_into().expect("integer probe key"));
+            let build =
+                i64::from_ne_bytes(row[start..start + 8].try_into().expect("integer build key"));
+            probe == build
+        }
+        KeyMode::FixedSerializedKey | KeyMode::VariableSerializedKey => {
             serialized_key == meta.get_key_bytes(row)
         }
     }
@@ -1369,11 +1462,15 @@ pub fn new_join_probe(
     BaseJoinProbe {
         work_id,
         current_chunk: None,
-        sel_rows: (0..INITIAL_CAPACITY).collect(),
+        restored_chunk: None,
+        spill_tmp: Vec::new(),
+        spilled_idx: Vec::new(),
+        restored_columns: Vec::new(),
+        retained_keys: Vec::new(),
         used_rows: Vec::new(),
         matched_rows_headers: Vec::with_capacity(INITIAL_CAPACITY),
         matched_rows_hash_value: Vec::with_capacity(INITIAL_CAPACITY),
-        serialized_keys: Vec::with_capacity(INITIAL_CAPACITY),
+        serialized_keys: SerializedJoinKeys::default(),
         filter_vector: None,
         null_key_vector: None,
         hash_values: (0..ctx.partition_number)

@@ -2089,7 +2089,7 @@ pub fn execute_configured_write<C, L, T>(
 ) -> Result<ConfiguredWriteOutcome, ConfiguredWriteError>
 where
     C: TransactionCommandClient + LockRecoveryClient,
-    L: RegionRecoveryLoader,
+    L: RegionRecoveryLoader + Send + 'static,
     T: TimestampSource,
 {
     let (plan, processed_keys) = {

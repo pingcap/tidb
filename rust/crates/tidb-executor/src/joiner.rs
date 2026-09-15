@@ -532,7 +532,7 @@ impl<C: Columns + Clone> BaseJoiner<C> {
 /// Go `Joiner`: generates join results according to the join type.
 ///
 /// NOTE, as in Go: this is **not** thread-safe.
-pub trait Joiner {
+pub trait Joiner: Send {
     /// Go `TryToMatchInners`: join one outer row with a batch of inner rows.
     ///
     /// Returns `(matched, is_null)`. `matched` is false when `inners` was
@@ -610,7 +610,7 @@ pub struct SemiJoiner<C: Columns> {
     base: BaseJoiner<C>,
 }
 
-impl<C: Columns + Clone + 'static> Joiner for SemiJoiner<C> {
+impl<C: Columns + Clone + Send + 'static> Joiner for SemiJoiner<C> {
     fn try_to_match_inners(
         &mut self,
         outer: Row<'_>,
@@ -716,7 +716,7 @@ pub struct NullAwareAntiSemiJoiner<C: Columns> {
     base: BaseJoiner<C>,
 }
 
-impl<C: Columns + Clone + 'static> Joiner for NullAwareAntiSemiJoiner<C> {
+impl<C: Columns + Clone + Send + 'static> Joiner for NullAwareAntiSemiJoiner<C> {
     fn try_to_match_inners(
         &mut self,
         outer: Row<'_>,
@@ -795,7 +795,7 @@ pub struct AntiSemiJoiner<C: Columns> {
     base: BaseJoiner<C>,
 }
 
-impl<C: Columns + Clone + 'static> Joiner for AntiSemiJoiner<C> {
+impl<C: Columns + Clone + Send + 'static> Joiner for AntiSemiJoiner<C> {
     fn try_to_match_inners(
         &mut self,
         outer: Row<'_>,
@@ -908,7 +908,7 @@ impl<C: Columns + Clone> LeftOuterSemiJoiner<C> {
     }
 }
 
-impl<C: Columns + Clone + 'static> Joiner for LeftOuterSemiJoiner<C> {
+impl<C: Columns + Clone + Send + 'static> Joiner for LeftOuterSemiJoiner<C> {
     fn try_to_match_inners(
         &mut self,
         outer: Row<'_>,
@@ -1045,7 +1045,7 @@ impl<C: Columns + Clone> NullAwareAntiLeftOuterSemiJoiner<C> {
     }
 }
 
-impl<C: Columns + Clone + 'static> Joiner for NullAwareAntiLeftOuterSemiJoiner<C> {
+impl<C: Columns + Clone + Send + 'static> Joiner for NullAwareAntiLeftOuterSemiJoiner<C> {
     fn try_to_match_inners(
         &mut self,
         outer: Row<'_>,
@@ -1132,7 +1132,7 @@ impl<C: Columns + Clone> AntiLeftOuterSemiJoiner<C> {
     }
 }
 
-impl<C: Columns + Clone + 'static> Joiner for AntiLeftOuterSemiJoiner<C> {
+impl<C: Columns + Clone + Send + 'static> Joiner for AntiLeftOuterSemiJoiner<C> {
     fn try_to_match_inners(
         &mut self,
         outer: Row<'_>,
@@ -1413,7 +1413,7 @@ pub struct LeftOuterJoiner<C: Columns> {
     inner: RowJoiner<C>,
 }
 
-impl<C: Columns + Clone + 'static> Joiner for LeftOuterJoiner<C> {
+impl<C: Columns + Clone + Send + 'static> Joiner for LeftOuterJoiner<C> {
     fn try_to_match_inners(
         &mut self,
         outer: Row<'_>,
@@ -1472,7 +1472,7 @@ pub struct RightOuterJoiner<C: Columns> {
     inner: RowJoiner<C>,
 }
 
-impl<C: Columns + Clone + 'static> Joiner for RightOuterJoiner<C> {
+impl<C: Columns + Clone + Send + 'static> Joiner for RightOuterJoiner<C> {
     fn try_to_match_inners(
         &mut self,
         outer: Row<'_>,
@@ -1531,7 +1531,7 @@ pub struct InnerJoiner<C: Columns> {
     inner: RowJoiner<C>,
 }
 
-impl<C: Columns + Clone + 'static> Joiner for InnerJoiner<C> {
+impl<C: Columns + Clone + Send + 'static> Joiner for InnerJoiner<C> {
     fn try_to_match_inners(
         &mut self,
         outer: Row<'_>,
@@ -1600,7 +1600,7 @@ pub struct JoinerChunkSizes {
 // Go's `NewJoiner` takes nine parameters; folding them into a struct would
 // hide which argument is which Go one, so the shape is kept.
 #[allow(clippy::too_many_arguments)]
-pub fn new_joiner<C: Columns + Clone + 'static>(
+pub fn new_joiner<C: Columns + Clone + Send + 'static>(
     ctx: C,
     join_type: JoinType,
     outer_is_right: bool,

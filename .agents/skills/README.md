@@ -8,7 +8,6 @@ This repository stores TiDB's repo-level skills under `.agents/skills`.
 
 Current operational workflow skills:
 
-- `tidb-verify-profile`: choose WIP/Ready/Heavy validation scope before running checks.
 - `tidb-bazel-prepare-gate`: decide whether `make bazel_prepare` is required from changed files.
 - `tidb-failpoint-test-runner`: decide failpoint enable/disable and run unit tests safely.
 - `tidb-integrationtest-recorder`: run and review `tests/integrationtest` recording flow.

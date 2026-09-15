@@ -191,7 +191,11 @@ impl PendingRequest for BatchCoprocessorPending {
 
 impl Drop for BatchCoprocessorPending {
     fn drop(&mut self) {
-        self.cancel();
+        // The native response owner cancels only an unfinished receive on
+        // drop. Do not cancel a consumed response or retire its request twice.
+        if let CoprocessorCompletion::Callback(pull) = &mut self.completion {
+            pull.cancel();
+        }
     }
 }
 
@@ -226,6 +230,7 @@ mod tests {
     #[test]
     fn completed_response_keeps_route_without_collecting_submission_receipt() {
         let (entry, mut pending) = BatchCoprocessorPending::entry(vec![], Some("logical:20160"));
+        let completion = entry.completion().clone();
         assert!(pending.try_publication().is_none());
         assert!(pending.try_complete().unwrap().is_none());
         let mut scheduler = BatchScheduler::new();
@@ -258,10 +263,18 @@ mod tests {
             route.physical_channel_version()
         );
         assert_eq!(pending.publication().unwrap().batch_stream_generation(), 17);
+        drop(pending);
+        // Go sendBatchRequest sets canceled only on cancellation/timeout,
+        // never after consuming a successfully delivered response.
+        assert!(!completion.is_cancelled());
     }
 
     #[test]
     fn admission_failure_completes_without_receipt_or_invented_route() {
+        let (abandoned, pending) = BatchCoprocessorPending::entry(vec![], None);
+        drop(pending);
+        assert!(abandoned.completion().is_cancelled());
+
         let (entry, mut pending) = BatchCoprocessorPending::entry(vec![], None);
         entry
             .completion()
@@ -275,5 +288,7 @@ mod tests {
             Some(Err(DirectUnaryClientError::AdmissionBusy { .. }))
         ));
         assert!(pending.try_publication().is_none());
+        drop(pending);
+        assert!(!entry.completion().is_cancelled());
     }
 }

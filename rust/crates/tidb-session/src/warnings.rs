@@ -277,12 +277,14 @@ impl Session {
     /// the ordinary run path: the previous statement's warnings go, and the
     /// routed statement is never SHOW WARNINGS.
     pub fn begin_routed_statement_warnings(&mut self) {
+        self.restore_statement_variables();
         self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;
     }
 
     pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {
+        self.restore_statement_variables();
         self.prepared_params = None;
         self.statement_result_authority.get_mut().take();
         self.snapshot_previous_warning_counts();
@@ -291,11 +293,21 @@ impl Session {
     }
 
     fn install_statement_warning_state(&mut self, stmt: &Stmt, previous: Vec<SqlWarning>) {
+        self.restore_statement_variables();
         self.set_previous_warning_counts(&previous);
         self.in_show_warning = reports_warnings(stmt);
         if self.in_show_warning {
             self.warnings = previous;
         }
+    }
+
+    /// Restores the preceding SET_VAR overlay at Go's ResetContextOfStmt
+    /// boundary. Front ends that select a cached plan or read snapshot before
+    /// entering execution call this after parsing, before those decisions.
+    /// Finish/Close continue to use the producing statement's variables.
+    pub fn restore_statement_variables(&mut self) {
+        self.vars
+            .restore_system(std::mem::take(&mut self.set_var_hint_restore));
     }
 
     /// Go `ResetContextOfStmt`'s

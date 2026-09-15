@@ -86,7 +86,7 @@ const RPC_READ_TIMEOUT_MEDIUM: Duration = Duration::from_secs(60);
 /// Go `cleanupMaxBackoff` (`2pc.go:1638`).
 const CLEANUP_MAX_BACKOFF: Duration = Duration::from_millis(20_000);
 /// Go `CommitSecondaryMaxBackoff` (`2pc.go:967`).
-const COMMIT_SECONDARY_MAX_BACKOFF: Duration = Duration::from_millis(41_000);
+pub(super) const COMMIT_SECONDARY_MAX_BACKOFF: Duration = Duration::from_millis(41_000);
 
 /// The deadline a detached cleanup runs under.
 ///

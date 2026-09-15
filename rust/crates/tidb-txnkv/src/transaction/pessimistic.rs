@@ -768,7 +768,10 @@ where
         mut self,
         mutations: Vec<OptimisticMutation>,
         call: &UnaryCallContext,
-    ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
+    ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError>
+    where
+        L: Send + 'static,
+    {
         self.two_pc
             .set_pessimistic_prewrite(PessimisticPrewritePlan {
                 for_update_ts: self.for_update_ts,

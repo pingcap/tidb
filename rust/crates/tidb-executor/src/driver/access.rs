@@ -33,6 +33,7 @@
 use super::point_get_key::{names_no_rows, point_get_value, point_get_value_overflowed};
 use super::*;
 use std::sync::Arc;
+use tidb_chunk::chunk::Chunk;
 
 #[derive(Clone, Debug)]
 struct FastPointOutput {
@@ -1569,8 +1570,7 @@ fn prepared_primary_index_hint(table_ref: &tidb_ast::TableRef) -> bool {
     })
 }
 
-/// Executes one rebound prepared point plan with fresh mutable runtime state.
-/// `None` means the schema identity moved after the cache decision.
+/// Materializes explicitly for callers that require owned values.
 pub fn run_prepared_point_get(
     execution: &PreparedPointGetExecution,
     catalog: &Catalog,
@@ -1578,81 +1578,142 @@ pub fn run_prepared_point_get(
     ctx: &crate::kv_table::PreparedPointGetDecodeContext,
     stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<SelectMeta>, DriverError> {
+    open_prepared_point_get(execution, catalog, current_database, ctx, stmt_ctx)?
+        .map(super::QueryRecordSet::collect)
+        .transpose()
+}
+
+/// Opens a rebound cached point plan without reading rows. None is a schema
+/// cache miss; immutable metadata is retained until the record set closes.
+pub fn open_prepared_point_get(
+    execution: &PreparedPointGetExecution,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::kv_table::PreparedPointGetDecodeContext,
+    stmt_ctx: &crate::StmtContext,
+) -> Result<Option<super::QueryRecordSet>, DriverError> {
     let plan = execution.plan();
     if !plan.matches_catalog(catalog, current_database) {
         return Ok(None);
     }
-    // A NULL key bound to an always-empty execution; no read may run.
-    if execution.handle.is_none() && execution.range_values.is_none() {
-        return Ok(Some((plan.output.columns.clone(), Vec::new())));
-    }
-    // The residual equalities the key lookup could not answer decide per row,
-    // comparing in each column's own domain — the same `=` the ordinary scan
-    // would have evaluated.
-    let matches_residuals =
-        |row: &[Datum]| residuals_pass(row, &plan.output.columns, &execution.residuals);
-    let _ = matches_residuals;
-    let decode_error = |error: crate::kv_table::KvTableError| {
-        ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-    };
-    let Some(TableEntry::Kv(table)) = catalog.get_by_key(&plan.table_key) else {
+    let Some(table) = catalog.table_handle_by_key(&plan.table_key) else {
         return Ok(None);
     };
-    let mut reader = table.point_reader();
-    let before = reader.point_rpc_counts();
-    let rows = match plan.target {
-        PreparedPointTarget::RowHandle => {
-            let handle = execution.handle.as_ref().expect("row-handle arm binds one");
-            match reader
-                .get_prepared_point_row(handle, &plan.row_decoder, ctx)
-                .map_err(decode_error)?
-            {
-                None => Vec::new(),
-                Some(row) if matches_residuals(&row) => vec![row],
-                Some(_) => Vec::new(),
-            }
-        }
-        PreparedPointTarget::UniqueIndex { index_id } => {
-            let values = execution
-                .range_values
-                .as_deref()
-                .expect("index-prefix arm binds key values");
-            let handle = reader
-                .lookup_unique(index_id, values, ctx.zone())
-                .map_err(decode_error)?;
-            match handle {
-                Some(handle) => match reader
-                    .get_prepared_point_row(&handle, &plan.row_decoder, ctx)
-                    .map_err(decode_error)?
-                {
-                    Some(row) if matches_residuals(&row) => vec![row],
-                    _ => Vec::new(),
-                },
-                None => Vec::new(),
-            }
-        }
+    let TableEntry::Kv(kv) = table.as_ref() else {
+        return Ok(None);
     };
-    let after = reader.point_rpc_counts();
-    let logical_table_id = table.table_id;
-    let stats_id = table.stats_physical_id();
-    let index_id = match plan.target {
-        PreparedPointTarget::RowHandle => super::index_usage_reporter::cluster_index_id(table),
-        PreparedPointTarget::UniqueIndex { index_id } => Some(index_id),
+    let schema = fast_point_schema(kv, &plan.output);
+    let statistics = catalog.table_statistics(kv.stats_physical_id());
+    let columns = plan.output.columns.clone();
+    // Go buildPointGet sets both capacities to one (point_get.go:94).
+    let executor = PreparedPointGetExecutor {
+        meta: crate::ExecutorMeta::new(schema, 0, 1, 1),
+        table,
+        execution: execution.clone(),
+        decode: ctx.clone(),
+        context: stmt_ctx.clone(),
+        statistics,
+        done: false,
     };
-    let kv_requests = after.0.wrapping_sub(before.0);
-    let stats = catalog.table_statistics(stats_id);
-    let reporter =
-        super::index_usage_reporter::IndexUsageReporter::new(stmt_ctx.index_usage_collector());
-    if let Some(index_id) = index_id {
-        reporter.report_point(
-            logical_table_id,
-            stats.as_deref(),
-            index_id,
-            kv_requests,
-            rows.len() as u64,
-        );
+    super::QueryRecordSet::open(Box::new(executor), columns, stmt_ctx.statement_memory()).map(Some)
+}
+
+struct PreparedPointGetExecutor {
+    meta: crate::ExecutorMeta,
+    table: Arc<TableEntry>,
+    execution: PreparedPointGetExecution,
+    decode: crate::kv_table::PreparedPointGetDecodeContext,
+    context: crate::StmtContext,
+    statistics: Option<Arc<crate::access_cost::TableStatistics>>,
+    done: bool,
+}
+
+impl Executor for PreparedPointGetExecutor {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.done = false;
+        Ok(())
     }
-    Ok(Some((plan.output.columns.clone(), rows)))
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        if std::mem::replace(&mut self.done, true) {
+            return Ok(());
+        }
+        let execution = &self.execution;
+        let plan = execution.plan();
+        // Go marks done before the read, including empty keys and failed reads.
+        if execution.handle.is_none() && execution.range_values.is_none() {
+            return Ok(());
+        }
+        let TableEntry::Kv(table) = self.table.as_ref() else {
+            unreachable!("validated point table")
+        };
+        let mut reader = table.point_reader();
+        let before = reader.point_rpc_counts();
+        let decode_error = |error: crate::kv_table::KvTableError| {
+            ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+        };
+        let handle = match plan.target {
+            PreparedPointTarget::RowHandle => execution.handle.clone(),
+            PreparedPointTarget::UniqueIndex { index_id } => reader
+                .lookup_unique(
+                    index_id,
+                    execution
+                        .range_values
+                        .as_deref()
+                        .expect("index point binds key values"),
+                    self.decode.zone(),
+                )
+                .map_err(decode_error)?,
+        };
+        let row = match handle {
+            Some(handle) => reader
+                .get_prepared_point_row(&handle, &plan.row_decoder, &self.decode)
+                .map_err(decode_error)?,
+            None => None,
+        }
+        .filter(|row| residuals_pass(row, &plan.output.columns, &execution.residuals));
+        if let Some(row) = row {
+            for (column, value) in row.iter().enumerate() {
+                req.append_datum(column, value);
+            }
+        }
+        let after = reader.point_rpc_counts();
+        let index_id = match plan.target {
+            PreparedPointTarget::RowHandle => super::index_usage_reporter::cluster_index_id(table),
+            PreparedPointTarget::UniqueIndex { index_id } => Some(index_id),
+        };
+        if let Some(index_id) = index_id {
+            super::index_usage_reporter::IndexUsageReporter::new(
+                self.context.index_usage_collector(),
+            )
+            .report_point(
+                table.table_id,
+                self.statistics.as_deref(),
+                index_id,
+                after.0.wrapping_sub(before.0),
+                req.num_rows() as u64,
+            );
+        }
+        Ok(())
+    }
+    fn close(&mut self) -> Result<(), ExecError> {
+        Ok(())
+    }
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
 }
 
 /// The residual gate shared by every prepared point-read arm: each unconsumed

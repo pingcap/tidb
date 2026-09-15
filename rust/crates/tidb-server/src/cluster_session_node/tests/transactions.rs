@@ -188,10 +188,40 @@ fn autocommit_publishes_each_statement_and_takes_a_fresh_snapshot() {
 
     // The next statement reads the published rows through a NEW snapshot.
     let opened_before = cluster.opened.load(Ordering::Acquire);
-    let selected = rows(&mut session, "SELECT id, v FROM t ORDER BY id DESC");
+    let mut result = session
+        .execute("SELECT id, v FROM t ORDER BY id DESC")
+        .unwrap();
+    let source = result.source();
+    let mut chunk = source.new_chunk().expect("query owns native chunks");
+    source.next_chunk(&mut chunk).unwrap();
+    assert_eq!(
+        cluster.live.load(Ordering::Acquire),
+        1,
+        "snapshot outlives Next"
+    );
+    let selected: Vec<_> = (0..chunk.num_rows())
+        .map(|i| chunk.get_row(i).get_datum_row(source.field_types()))
+        .collect();
+    source.next_chunk(&mut chunk).unwrap();
+    assert_eq!(chunk.num_rows(), 0);
+    assert_eq!(cluster.live.load(Ordering::Acquire), 1, "EOF is not Finish");
+    source.finish().unwrap();
+    assert_eq!(cluster.live.load(Ordering::Acquire), 0);
+    // Go adapter_internal_test: metadata/NewChunk survive Finish; Next does not.
+    assert_eq!(source.new_chunk().unwrap().num_cols(), 2);
+    assert_eq!(source.next_chunk(&mut chunk).unwrap_err().code, 1317);
+    source.close().unwrap();
+    drop(result);
+    // The same result owner closes its snapshot if the client abandons rows.
+    let mut result = session.execute("SELECT id FROM t").unwrap();
+    let mut chunk = result.source().new_chunk().unwrap();
+    result.source().next_chunk(&mut chunk).unwrap();
+    assert_eq!(cluster.live.load(Ordering::Acquire), 1);
+    drop(result);
+    assert_eq!(cluster.live.load(Ordering::Acquire), 0);
     assert_eq!(selected.len(), 3);
     assert_eq!(selected[0], vec![Datum::Int(3), Datum::Int(30)]);
-    assert_eq!(cluster.opened.load(Ordering::Acquire), opened_before + 1);
+    assert_eq!(cluster.opened.load(Ordering::Acquire), opened_before + 2);
     // A read publishes nothing.
     assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
     // Every statement's snapshot was finished; none is still bound.

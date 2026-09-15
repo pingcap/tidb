@@ -537,42 +537,14 @@ impl<T: CanGetFloat64 + Clone + Default> Percentile<T> {
 #[must_use]
 #[expect(
     clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    reason = "Go time.Duration(float64) and float64(time.Duration) conversions"
+    reason = "Go time.Duration uses signed int64 nanoseconds"
 )]
 pub fn format_duration(d: StdDuration) -> String {
     let ns = d.as_nanos() as i64;
     if ns <= 1_000 {
         return format_go_duration(d);
     }
-    let unit = get_unit(ns);
-    if unit == 1 {
-        return format_go_duration(d);
-    }
-    let integer = (ns / unit) * unit;
-    let mut decimal = (ns % unit) as f64 / unit as f64;
-    if ns < 10 * unit {
-        decimal = (decimal * 100.0).round() / 100.0;
-    } else {
-        decimal = (decimal * 10.0).round() / 10.0;
-    }
-    let pruned = integer + (decimal * unit as f64) as i64;
-    format_go_duration(StdDuration::from_nanos(pruned as u64))
-}
-
-/// Go `getUnit` (`util.go`): the pruning unit for [`format_duration`], in
-/// nanoseconds.
-fn get_unit(ns: i64) -> i64 {
-    if ns >= 1_000_000_000 {
-        1_000_000_000
-    } else if ns >= 1_000_000 {
-        1_000_000
-    } else if ns >= 1_000 {
-        1_000
-    } else {
-        1
-    }
+    tidb_model::go_duration::format_explain_duration(ns)
 }
 
 /// Compatibility name for the one client-go `util.ScanDetail` type.

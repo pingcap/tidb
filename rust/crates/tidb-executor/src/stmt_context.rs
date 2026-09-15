@@ -750,6 +750,9 @@ pub struct StmtContextData {
     /// it gets the shipped defaults (1GiB, `CANCEL`); see
     /// [`StatementMemory::default`].
     memory: StatementMemory,
+    executor_chunk_sizes: ExecutorChunkSizes,
+    /// Go `SessionVars.EnableVectorizedExpression`, captured for executor workers.
+    enable_vectorized_expression: bool,
     /// The scanner flags of `@@sql_mode` -- Go's `Parser.SetSQLMode` input.
     ///
     /// Go parses a statement once, in `session.ParseSQL`, and hands the AST
@@ -883,9 +886,786 @@ pub struct StmtContextData {
     cop_lite_worker: Arc<AtomicBool>,
 }
 
+// Define owned and borrowed configuration setters together. Session setup
+// borrows the configuration once; standalone with_* calls retain copy-on-write.
+macro_rules! context_configuration {
+    ($(
+        $(#[$attr:meta])*
+        pub fn $name:ident(mut $this:ident $(, $arg:ident: $ty:ty)* $(,)?) -> Self $body:block
+    )*) => {
+        impl StmtContext {
+            $(
+                $(#[$attr])*
+                pub fn $name(mut $this $(, $arg: $ty)*) -> Self {
+                    let _ = Arc::make_mut(&mut $this.0).$name($($arg),*);
+                    $this
+                }
+            )*
+        }
+
+        impl StmtContextData {
+            $(
+                $(#[$attr])*
+                pub fn $name(&mut $this $(, $arg: $ty)*) -> &mut Self $body
+            )*
+        }
+    };
+}
+
+context_configuration! {
+    /// Binds the transaction owner's selected-row channel for this attempt.
+    #[must_use]
+    pub fn with_selected_lock_keys(
+        mut self,
+        keys: Option<crate::select_lock::SelectedLockKeys>,
+    ) -> Self {
+        self.selected_lock_keys = keys;
+        self
+    }
+
+    /// Captures Go's session InitChunkSize/MaxChunkSize for executor construction.
+    #[must_use]
+    pub fn with_executor_chunk_sizes(mut self, init: usize, max: usize) -> Self {
+        self.executor_chunk_sizes = ExecutorChunkSizes { init, max };
+        self
+    }
+
+    /// Captures the session's expression execution setting for this statement.
+    pub fn with_enable_vectorized_expression(mut self, enabled: bool) -> Self {
+        self.enable_vectorized_expression = enabled;
+        self
+    }
+
+    /// Attaches the session's scanner `sql_mode` flags, which every re-parse
+    /// this statement performs must lex under.
+    #[must_use]
+    pub fn with_sql_mode(mut self, sql_mode: tidb_parser::SqlMode) -> Self {
+        self.sql_mode = sql_mode;
+        self
+    }
+
+    /// Captures the remaining session fields Go persists with a DDL job.
+    #[must_use]
+    pub fn with_ddl_job_context(
+        mut self,
+        cdc_write_source: u64,
+        reorg_priority: i64,
+        session_alias: impl Into<String>,
+        trace_id: Vec<u8>,
+    ) -> Self {
+        self.ddl_cdc_write_source = cdc_write_source;
+        self.ddl_reorg_priority = reorg_priority;
+        self.ddl_session_alias = session_alias.into();
+        self.ddl_trace_id = trace_id;
+        self
+    }
+
+    /// Attaches `NO_UNSIGNED_SUBTRACTION` for expression build and runtime.
+    #[must_use]
+    pub fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
+        self.no_unsigned_subtraction = enabled;
+        self
+    }
+
+    /// Attaches the statement-time implicit `LIKE` escape selected by the
+    /// session's SQL mode and `tidb_enable_no_backslash_escapes_in_like`.
+    #[must_use]
+    pub fn with_like_default_escape(mut self, escape: u8) -> Self {
+        self.like_default_escape = escape;
+        self
+    }
+
+    /// Attaches the session's raw string-match selectivity setting.
+    #[must_use]
+    pub fn with_default_string_match_selectivity(mut self, value: f64) -> Self {
+        self.default_string_match_selectivity = value;
+        self
+    }
+
+    /// Attaches the session's general predicate selectivity factor.
+    #[must_use]
+    pub fn with_selectivity_factor(mut self, value: f64) -> Self {
+        self.selectivity_factor = value;
+        self
+    }
+
+    /// Sets `@@tidb_enable_pseudo_for_outdated_stats` for this statement.
+    #[must_use]
+    pub fn with_pseudo_for_outdated_stats(mut self, enabled: bool) -> Self {
+        self.enable_pseudo_for_outdated_stats = enabled;
+        self
+    }
+
+    /// Attaches Go's synchronous statistics-load policy.
+    #[must_use]
+    pub fn with_stats_load_policy(
+        mut self,
+        wait_ms: u64,
+        pseudo_timeout: bool,
+        max_execution_time_ms: u64,
+    ) -> Self {
+        self.stats_load_sync_wait_ms = wait_ms;
+        self.stats_load_pseudo_timeout = pseudo_timeout;
+        self.max_execution_time_ms = max_execution_time_ms;
+        self
+    }
+
+    /// Sets the range-building memory quota; zero means unlimited.
+    #[must_use]
+    pub fn with_range_max_size(mut self, bytes: i64) -> Self {
+        self.range_max_size = bytes;
+        self
+    }
+
+    /// Sets `@@tidb_opt_index_prune_threshold` for this statement.
+    #[must_use]
+    pub fn with_opt_index_prune_threshold(mut self, threshold: i32) -> Self {
+        self.opt_index_prune_threshold = threshold;
+        self
+    }
+
+    /// Sets `@@tidb_opt_prefix_index_single_scan` for this statement.
+    #[must_use]
+    pub fn with_opt_prefix_index_single_scan(mut self, enabled: bool) -> Self {
+        self.opt_prefix_index_single_scan = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_opt_always_keep_join_key` for this statement.
+    #[must_use]
+    pub fn with_always_keep_join_key(mut self, always_keep: bool) -> Self {
+        self.always_keep_join_key = always_keep;
+        self
+    }
+
+    /// Sets `@@tidb_enable_unsafe_substitute` for this statement.
+    #[must_use]
+    pub fn with_enable_unsafe_substitute(mut self, enable: bool) -> Self {
+        self.enable_unsafe_substitute = enable;
+        self
+    }
+
+    /// Sets `@@tidb_opt_enable_semi_join_rewrite` for this statement.
+    #[must_use]
+    pub fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
+        self.enable_semi_join_rewrite = enable;
+        self
+    }
+
+    /// Sets Go `SessionVars.GetAllowInSubqToJoinAndAgg()` for this statement.
+    #[must_use]
+    pub fn with_allow_in_subq_to_join_and_agg(mut self, allow: bool) -> Self {
+        self.allow_in_subq_to_join_and_agg = allow;
+        self
+    }
+
+    /// Sets `@@tidb_opt_enable_no_decorrelate_in_select` for this statement.
+    #[must_use]
+    pub fn with_enable_no_decorrelate_in_select(mut self, enable: bool) -> Self {
+        self.enable_no_decorrelate_in_select = enable;
+        self
+    }
+
+    /// Sets `@@tidb_opt_skew_distinct_agg` for this statement.
+    #[must_use]
+    pub fn with_enable_skew_distinct_agg(mut self, enable: bool) -> Self {
+        self.enable_skew_distinct_agg = enable;
+        self
+    }
+
+    /// Attaches the AES mode selected by this session for the statement.
+    #[must_use]
+    pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
+        self.block_encryption_mode = mode;
+        self
+    }
+
+    /// Attaches Go's per-session predicate-column usage collector.
+    #[must_use]
+    pub fn with_column_stats_usage(
+        mut self,
+        usage: Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
+    ) -> Self {
+        self.column_stats_usage = usage;
+        self
+    }
+
+    /// Installs Go `StmtCtx.IndexUsageCollector`.
+    #[must_use]
+    pub fn with_index_usage_collector(
+        mut self,
+        collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
+    ) -> Self {
+        self.index_usage_collector = collector;
+        self
+    }
+
+    /// Installs Go `SessionVars.TxnCtx.TableDeltaMap`.
+    #[must_use]
+    pub fn with_table_delta(mut self, delta: Arc<tidb_stats_handle_usage::TableDeltaMap>) -> Self {
+        self.table_delta = Some(delta);
+        self
+    }
+
+    /// Sets Go `SessionVars.IsPlanReplayerCaptureEnabled()` for this statement.
+    #[must_use]
+    pub fn with_plan_replayer_capture(mut self, enabled: bool) -> Self {
+        self.plan_replayer_capture_enabled = enabled;
+        self
+    }
+
+    /// Sets whether this statement runs under a strict SQL mode.
+    ///
+    /// [`Self::for_dml`] derives this from the mode already, because a DML
+    /// statement's error LEVELS are derived from it in the same breath.
+    /// [`Self::for_query`] cannot: its levels are the literals Go writes for a
+    /// read, so it had to pass SOMETHING for `strict` and passed `true`.
+    ///
+    /// That placeholder is only sound while nothing reads it. DDL takes this
+    /// same non-DML context, and Go's DDL checks do read the session's mode --
+    /// `checkColumnDefaultValue` calls `SQLMode.HasStrictMode()` to decide
+    /// whether an empty BLOB/TEXT/JSON default is 1101 or a warning. Reading
+    /// the placeholder made `SET sql_mode=''` inoperative for DDL, so the
+    /// session sets the real value here instead of DDL growing a second,
+    /// parallel channel for the same fact.
+    #[must_use]
+    pub fn with_strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self.strict_sql_mode = strict;
+        self
+    }
+
+    /// Sets the session's `max_allowed_packet`.
+    ///
+    /// Go `EvalContext.GetMaxAllowedPacket` is what every result-sizing string
+    /// builtin captures at build time (`builtinSpaceSig.maxAllowedPacket` and
+    /// friends). Without this the trait default -- `DefMaxAllowedPacket`, 64
+    /// MiB -- stood for every statement, so `SET GLOBAL max_allowed_packet`
+    /// moved the wire limit and left `SPACE`/`REPEAT`/`RPAD` sizing results
+    /// against the shipped default.
+    #[must_use]
+    pub fn with_max_allowed_packet(mut self, max_allowed_packet: u64) -> Self {
+        self.max_allowed_packet = max_allowed_packet;
+        self
+    }
+
+    /// Sets the session's `group_concat_max_len`.
+    ///
+    /// Go `SessionVars.GroupConcatMaxLen`, which the aggregate builder copies
+    /// into every `GROUP_CONCAT` it builds. The default is Go's
+    /// `DefGroupConcatMaxLen`, 1024.
+    #[must_use]
+    pub fn with_group_concat_max_len(mut self, group_concat_max_len: u64) -> Self {
+        self.group_concat_max_len = group_concat_max_len;
+        self
+    }
+
+    /// Sets the statement snapshot of `@@tidb_mem_quota_apply_cache`.
+    #[must_use]
+    pub fn with_apply_cache_capacity(mut self, capacity: i64) -> Self {
+        self.apply_cache_capacity = capacity;
+        self
+    }
+
+    /// Sets the session's `default_week_format` and `div_precision_increment`.
+    #[must_use]
+    pub fn with_week_and_division_scale(
+        mut self,
+        default_week_format: i64,
+        div_precision_increment: u32,
+    ) -> Self {
+        self.default_week_format = default_week_format;
+        self.div_precision_increment = div_precision_increment;
+        self
+    }
+
+    /// Sets `@@cte_max_recursion_depth`; a non-positive session value clamps
+    /// to `0`, which refuses the very first recursive round.
+    #[must_use]
+    pub fn with_cte_max_recursion_depth(mut self, depth: i64) -> Self {
+        self.cte_max_recursion_depth = u64::try_from(depth).unwrap_or(0);
+        self
+    }
+
+    /// Sets `@@tidb_opt_join_reorder_threshold` for this statement.
+    #[must_use]
+    pub fn with_join_reorder_threshold(mut self, threshold: i32) -> Self {
+        self.join_reorder_threshold = threshold;
+        self
+    }
+
+    /// Sets `@@tidb_opt_ordering_index_selectivity_ratio` for this statement.
+    #[must_use]
+    pub fn with_ordering_index_selectivity_ratio(mut self, ratio: f64) -> Self {
+        self.ordering_index_selectivity_ratio = ratio;
+        self
+    }
+
+    /// Sets `@@tidb_opt_projection_push_down` for this statement.
+    #[must_use]
+    pub fn with_projection_push_down(mut self, allow: bool) -> Self {
+        self.allow_projection_push_down = allow;
+        self
+    }
+
+    /// Sets `@@tidb_opt_limit_push_down_threshold` for this statement.
+    #[must_use]
+    pub fn with_limit_push_down_threshold(mut self, threshold: u64) -> Self {
+        self.limit_push_down_threshold = threshold;
+        self
+    }
+
+    /// Attaches the validated statement snapshot of
+    /// `@@tidb_opt_fix_control`.
+    #[must_use]
+    pub fn with_optimizer_fix_control(
+        mut self,
+        control: tidb_planner::fix_control::OptimizerFixControl,
+    ) -> Self {
+        self.optimizer_fix_control = control;
+        self
+    }
+
+    /// Attaches the session and transaction facts used by index-lookup
+    /// pushdown planning.
+    #[must_use]
+    pub fn with_index_lookup_push_down_session(
+        mut self,
+        session: tidb_planner::access_path::IndexLookupPushDownSession,
+    ) -> Self {
+        self.index_lookup_push_down_session = session;
+        self
+    }
+
+    /// Attaches the statement's latest-domain index metadata.
+    #[must_use]
+    pub fn with_latest_index_schema(
+        mut self,
+        schema: Arc<tidb_planner::domain_misc::LatestIndexSchema>,
+    ) -> Self {
+        self.latest_index_schema = Some(schema);
+        self
+    }
+
+    /// Attaches the resolved statement snapshot used by cost model v2.
+    #[must_use]
+    pub fn with_optimizer_cost_env(
+        mut self,
+        env: impl Into<Arc<tidb_planner::find_best_task::coster::CostEnv>>,
+    ) -> Self {
+        let env = env.into();
+        self.executor_concurrency = env.session.union_concurrency.max(1.0) as usize;
+        self.optimizer_cost_env = Some(env);
+        self
+    }
+
+    /// Attaches Go's two resolved HashAgg worker counts.
+    ///
+    /// Go's cost model reads `HashAggFinalConcurrency()` directly from the
+    /// session, so the optimizer cost environment has to see the same value;
+    /// otherwise a serial statement would still be costed as if five final
+    /// workers were running and would pick a HashAgg over the StreamAgg Go
+    /// chooses.
+    #[must_use]
+    pub fn with_hashagg_concurrency(mut self, partial: usize, final_: usize) -> Self {
+        self.hashagg_partial_concurrency = partial;
+        self.hashagg_final_concurrency = final_;
+        let env = self
+            .optimizer_cost_env
+            .get_or_insert_with(|| Arc::new(Default::default()));
+        if env.session.hashagg_final_concurrency != final_ as f64 {
+            Arc::make_mut(env).session.hashagg_final_concurrency = final_ as f64;
+        }
+        self
+    }
+
+    /// Sets `@@tidb_opt_agg_push_down` for this statement.
+    #[must_use]
+    pub fn with_allow_agg_push_down(mut self, enabled: bool) -> Self {
+        self.allow_agg_push_down = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_opt_enable_advanced_join_reorder` for this statement.
+    #[must_use]
+    pub fn with_advanced_join_reorder(mut self, enabled: bool) -> Self {
+        self.advanced_join_reorder = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_opt_join_reorder_through_proj` for this statement.
+    #[must_use]
+    pub fn with_join_reorder_through_proj(mut self, through: bool) -> Self {
+        self.join_reorder_through_proj = through;
+        self
+    }
+
+    /// Sets `@@tidb_opt_join_reorder_through_sel` for this statement.
+    #[must_use]
+    pub fn with_join_reorder_through_sel(mut self, through: bool) -> Self {
+        self.join_reorder_through_sel = through;
+        self
+    }
+
+    /// Sets `@@tidb_enable_outer_join_reorder` for this statement.
+    #[must_use]
+    pub fn with_outer_join_reorder(mut self, enabled: bool) -> Self {
+        self.outer_join_reorder = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_enable_index_merge` for this statement.
+    #[must_use]
+    pub fn with_index_merge(mut self, enabled: bool) -> Self {
+        self.index_merge = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_opt_write_row_id` for this statement.
+    #[must_use]
+    pub fn with_allow_write_row_id(mut self, allowed: bool) -> Self {
+        self.allow_write_row_id = allowed;
+        self
+    }
+
+    /// Installs the current session's process-plan publication cell.
+    #[must_use]
+    pub fn with_process_plan_info_sink(mut self, sink: Arc<Mutex<ProcessPlanInfo>>) -> Self {
+        self.process_plan_info = Some(sink);
+        self
+    }
+
+    /// Go's binary-protocol EXECUTE keeps the plan detail out of the process
+    /// list; `false` skips rendering `BriefBinaryPlan` for this statement.
+    #[must_use]
+    pub fn with_brief_binary_plan(mut self, publish: bool) -> Self {
+        self.publish_brief_binary_plan = publish;
+        self
+    }
+
+    /// Installs the two published blacklists. See
+    /// [`crate::pushdown_blacklist`].
+    #[must_use]
+    pub fn with_pushdown_blacklists(
+        mut self,
+        published: (
+            std::sync::Arc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
+            std::sync::Arc<std::collections::HashSet<String>>,
+        ),
+    ) -> Self {
+        (self.expr_pushdown_blacklist, self.disabled_logical_rules) = published;
+        self
+    }
+
+    /// Sets `@@tidb_partition_prune_mode` for this statement, as the one bit
+    /// the planner reads off it.
+    #[must_use]
+    pub fn with_static_partition_prune(mut self, static_prune: bool) -> Self {
+        self.static_partition_prune = static_prune;
+        self
+    }
+
+    /// Sets whether `ONLY_FULL_GROUP_BY` is in effect, which a session reads
+    /// off its `sql_mode`.
+    #[must_use]
+    pub fn with_only_full_group_by(mut self, only_full_group_by: bool) -> Self {
+        self.only_full_group_by = only_full_group_by;
+        self
+    }
+
+    /// Sets Go EnableAutoIncrementInGenerated for DDL validation.
+    #[must_use]
+    pub fn with_auto_increment_in_generated(mut self, enabled: bool) -> Self {
+        self.auto_increment_in_generated = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_enable_new_only_full_group_by_check` for this statement.
+    #[must_use]
+    pub fn with_new_only_full_group_by_check(mut self, enabled: bool) -> Self {
+        self.new_only_full_group_by_check = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_remove_orderby_in_subquery` for this statement.
+    #[must_use]
+    pub fn with_remove_orderby_in_subquery(mut self, remove: bool) -> Self {
+        self.remove_orderby_in_subquery = remove;
+        self
+    }
+
+    /// Sets `@@foreign_key_checks` for this statement.
+    #[must_use]
+    pub fn with_foreign_key_checks(mut self, foreign_key_checks: bool) -> Self {
+        self.foreign_key_checks = foreign_key_checks;
+        self
+    }
+
+    /// Sets Go's session `EnableMView` switch for this statement
+    /// (`tidb_mview_enable`, default `OFF`).
+    #[must_use]
+    pub fn with_enable_mview(mut self, enabled: bool) -> Self {
+        self.enable_mview = enabled;
+        self
+    }
+
+    /// Attaches Go's query-scoped per-store coprocessor limiter to this
+    /// statement. All remote scans cloned from the context share this Arc.
+    #[must_use]
+    pub fn with_query_cop_store_limiter(
+        mut self,
+        limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    ) -> Self {
+        self.query_cop_store_limiter = limiter;
+        self
+    }
+
+    /// Sets Go's process-wide CHECK-constraint DDL switch for this statement.
+    #[must_use]
+    pub fn with_enable_check_constraint(mut self, enabled: bool) -> Self {
+        self.enable_check_constraint = enabled;
+        self
+    }
+
+    /// Marks this statement's INSERT a lazy duplicate check (Go
+    /// `DupKeyCheckLazy` under a pessimistic transaction): the row existence
+    /// read consults only the statement's own staged writes.
+    #[must_use]
+    pub fn with_pessimistic_lazy_dup_check(mut self, enabled: bool) -> Self {
+        self.pessimistic_lazy_dup_check = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_constraint_check_in_place` for this statement.
+    #[must_use]
+    pub fn with_constraint_check_in_place(mut self, enabled: bool) -> Self {
+        self.constraint_check_in_place = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_allow_remove_auto_inc` for this statement.
+    #[must_use]
+    pub fn with_allow_remove_auto_inc(mut self, allow_remove_auto_inc: bool) -> Self {
+        self.allow_remove_auto_inc = allow_remove_auto_inc;
+        self
+    }
+
+    /// Attaches the session state the builtins read: Go reads both from
+    /// `SessionVars`, where `DATABASE()` is `CurrentDB` and `VERSION()` is
+    /// the same string `@@version` reports.
+    #[must_use]
+    pub fn with_session_state(
+        mut self,
+        current_db: Option<String>,
+        version: Option<String>,
+    ) -> Self {
+        self.current_db = current_db;
+        self.version = version;
+        self
+    }
+
+    /// Attaches the authenticated identity, which Go keeps on
+    /// `SessionVars.User` in the two spellings its builtins report.
+    #[must_use]
+    pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
+        self.current_user = current_user;
+        self.login_user = login_user;
+        self
+    }
+
+    /// Attaches the live GLOBAL-variable reader used by expression builtins.
+    #[must_use]
+    pub fn with_global_sysvar_accessor(mut self, accessor: Arc<dyn GlobalSysvarAccessor>) -> Self {
+        self.global_sysvars = Some(accessor);
+        self
+    }
+
+    /// Attaches Go's typed `SessionVars.ActiveRoles` authority.
+    #[must_use]
+    pub fn with_active_roles(mut self, active_roles: Option<Arc<Vec<(String, String)>>>) -> Self {
+        self.active_roles = active_roles;
+        self
+    }
+
+    /// Attaches the connection identifier `CONNECTION_ID()` reports, which Go
+    /// keeps on `SessionVars.ConnectionID`. `None` is a session with no
+    /// connection identity, where the builtin answers NULL.
+    #[must_use]
+    pub fn with_connection_id(mut self, connection_id: Option<u64>) -> Self {
+        self.connection_id = connection_id;
+        self
+    }
+
+    /// Attaches the catalog metadata visible to this statement.
+    #[must_use]
+    pub fn with_tidb_decode_key_snapshot(
+        mut self,
+        snapshot: Arc<crate::TidbDecodeKeySnapshot>,
+    ) -> Self {
+        self.tidb_decode_key_snapshot = Some(snapshot);
+        self
+    }
+
+    /// Attaches the session-scoped generator unseeded `RAND()` reads and
+    /// advances, which Go keeps on `SessionVars.Rng` for the session's whole
+    /// lifetime (shared across statements, unlike constant `RAND(N)`'s
+    /// per-statement generators).
+    #[must_use]
+    pub fn with_rand_session(mut self, rand_session: Arc<MysqlRng>) -> Self {
+        self.rand_session = Some(rand_session);
+        self
+    }
+
+    /// Attaches the session's user-variable map, which `@x` reads and `@x :=
+    /// expr` writes THROUGH -- see the field's own doc for why this is a
+    /// shared handle rather than a copy.
+    #[must_use]
+    pub fn with_user_vars(mut self, user_vars: Arc<Mutex<HashMap<String, Datum>>>) -> Self {
+        self.user_vars = Some(user_vars);
+        self
+    }
+
+    /// Supplies one execution's parameter snapshot to every ordinary
+    /// expression evaluator built with this statement context.
+    #[must_use]
+    pub fn with_prepared_params(mut self, values: Arc<[Datum]>) -> Self {
+        self.prepared_params = Some(values);
+        self
+    }
+
+    /// Attaches Go's lazy statement clock. The first time expression fixes
+    /// one instant in the shared cell; cloned worker contexts read it back.
+    #[must_use]
+    pub fn with_lazy_clock(
+        mut self,
+        timestamp: Option<f64>,
+        time_zone: tidb_expr::SessionTimeZone,
+    ) -> Self {
+        self.statement_clock = Some(Arc::new(OnceLock::new()));
+        self.statement_timestamp = timestamp;
+        self.time_zone = Some(time_zone);
+        self
+    }
+
+    /// Selects the statement clock for `SYSDATE`, matching
+    /// `@@tidb_sysdate_is_now`.
+    #[must_use]
+    pub fn with_sysdate_is_now(mut self, enabled: bool) -> Self {
+        self.sysdate_is_now = enabled;
+        self
+    }
+
+    /// Sets Go `SessionVars.GetReplicaRead()` for this statement.
+    #[must_use]
+    pub fn with_replica_read(mut self, replica_read: ReplicaReadType) -> Self {
+        self.replica_read = replica_read;
+        self
+    }
+
+    /// Sets Go `SessionVars.DistSQLScanConcurrency()` for this statement.
+    #[must_use]
+    pub fn with_dist_sql_scan_concurrency(mut self, concurrency: u64) -> Self {
+        self.dist_sql_scan_concurrency = concurrency;
+        self
+    }
+
+    /// Attaches `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.
+    #[must_use]
+    pub fn with_date_modes(mut self, date_modes: crate::zero_date::DateModes) -> Self {
+        self.date_modes = date_modes;
+        self
+    }
+
+    /// Carries only ResetContextOfStmt's three string-validation bits; numeric
+    /// and date policy remains derived from the statement's own state.
+    #[must_use]
+    pub fn with_string_type_flags(mut self, flags: tidb_datatype::ConversionFlags) -> Self {
+        use tidb_datatype::ConversionFlags as Flags;
+        self.string_type_flags = Flags::from_bits(
+            flags.bits()
+                & (Flags::SKIP_ASCII_CHECK | Flags::SKIP_UTF8_CHECK | Flags::SKIP_UTF8MB4_CHECK),
+        );
+        self
+    }
+
+    /// Declares the two session policies used by AUTO_RANDOM insertion.
+    #[must_use]
+    pub fn with_auto_random_policy(mut self, explicit_allowed: bool, shard_step: u64) -> Self {
+        self.allow_auto_random_explicit_insert = explicit_allowed;
+        self.shard_allocate_step = shard_step.max(1);
+        self
+    }
+
+    /// Attaches what the PRECEDING statement published: Go's
+    /// `StmtCtx.PrevLastInsertID` and `StmtCtx.PrevAffectedRows`, which are
+    /// exactly what `LAST_INSERT_ID()` and `ROW_COUNT()` read.
+    #[must_use]
+    pub fn with_previous_statement(
+        mut self,
+        prev_last_insert_id: u64,
+        prev_row_count: i64,
+    ) -> Self {
+        self.prev_last_insert_id = prev_last_insert_id;
+        self.prev_row_count = prev_row_count;
+        self
+    }
+
+    /// Attaches the completed result-set count `FOUND_ROWS()` reads.
+    #[must_use]
+    pub fn with_last_found_rows(mut self, rows: u64) -> Self {
+        self.last_found_rows = Some(rows);
+        self
+    }
+
+    /// Attaches the connection's negotiated `CLIENT_FOUND_ROWS` bit.
+    #[must_use]
+    pub fn with_client_found_rows(mut self, enabled: bool) -> Self {
+        self.client_found_rows = enabled;
+        self
+    }
+
+    /// Declares `@@auto_increment_increment` and `@@auto_increment_offset`.
+    #[must_use]
+    pub fn with_auto_increment_step(mut self, increment: u64, offset: u64) -> Self {
+        self.auto_increment_step = (increment, offset);
+        self
+    }
+
+    /// Declares whether `NO_AUTO_VALUE_ON_ZERO` is in the session's
+    /// `sql_mode`.
+    #[must_use]
+    pub fn with_auto_increment_zero_explicit(mut self, is_explicit: bool) -> Self {
+        self.auto_increment_zero_is_explicit = is_explicit;
+        self
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ExecutorChunkSizes {
+    init: usize,
+    max: usize,
+}
+
+impl Default for ExecutorChunkSizes {
+    fn default() -> Self {
+        Self {
+            init: tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize,
+            max: tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE as usize,
+        }
+    }
+}
+
 pub use crate::driver::SequenceSnapshot;
 
 impl StmtContext {
+    /// Applies one setup batch, detaching shared configuration at most once.
+    /// Statement effects keep their existing shared owners, as for with_* calls.
+    #[must_use]
+    pub fn configure(mut self, configure: impl FnOnce(&mut StmtContextData)) -> Self {
+        configure(Arc::make_mut(&mut self.0));
+        self
+    }
+
     /// Initializes common state once. Query/DML constructors resolve error
     /// policy, and callers supply the statement's memory-lifetime owner.
     fn new(
@@ -1008,6 +1788,8 @@ impl StmtContext {
             static_partition_prune: false,
             sequences: session.sequences,
             memory,
+            executor_chunk_sizes: ExecutorChunkSizes::default(),
+            enable_vectorized_expression: true,
             sql_mode: tidb_parser::SqlMode::default(),
             ddl_sql_mode: session.ddl_sql_mode,
             ddl_query: String::new(),
@@ -1220,16 +2002,6 @@ impl StmtContext {
         self
     }
 
-    /// Binds the transaction owner's selected-row channel for this attempt.
-    #[must_use]
-    pub fn with_selected_lock_keys(
-        mut self,
-        keys: Option<crate::select_lock::SelectedLockKeys>,
-    ) -> Self {
-        self.selected_lock_keys = keys;
-        self
-    }
-
     /// The locking-query collector, absent outside a locking-capable session.
     #[must_use]
     pub fn selected_lock_keys(&self) -> Option<crate::select_lock::SelectedLockKeys> {
@@ -1257,18 +2029,19 @@ impl StmtContext {
         self
     }
 
+    /// Initial capacity and maximum rows for this statement's ordinary executors.
+    #[must_use]
+    pub fn executor_chunk_sizes(&self) -> (usize, usize) {
+        (
+            self.executor_chunk_sizes.init,
+            self.executor_chunk_sizes.max,
+        )
+    }
+
     /// This statement's memory budget; see [`StatementMemory`].
     #[must_use]
     pub fn statement_memory(&self) -> StatementMemory {
         self.memory.clone()
-    }
-
-    /// Attaches the session's scanner `sql_mode` flags, which every re-parse
-    /// this statement performs must lex under.
-    #[must_use]
-    pub fn with_sql_mode(mut self, sql_mode: tidb_parser::SqlMode) -> Self {
-        self.sql_mode = sql_mode;
-        self
     }
 
     /// Attaches the complete session SQL mode that Go persists in DDL jobs.
@@ -1285,146 +2058,10 @@ impl StmtContext {
         self
     }
 
-    /// Captures the remaining session fields Go persists with a DDL job.
-    #[must_use]
-    pub fn with_ddl_job_context(
-        mut self,
-        cdc_write_source: u64,
-        reorg_priority: i64,
-        session_alias: impl Into<String>,
-        trace_id: Vec<u8>,
-    ) -> Self {
-        self.ddl_cdc_write_source = cdc_write_source;
-        self.ddl_reorg_priority = reorg_priority;
-        self.ddl_session_alias = session_alias.into();
-        self.ddl_trace_id = trace_id;
-        self
-    }
-
-    /// Attaches `NO_UNSIGNED_SUBTRACTION` for expression build and runtime.
-    #[must_use]
-    pub fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
-        self.no_unsigned_subtraction = enabled;
-        self
-    }
-
-    /// Attaches the statement-time implicit `LIKE` escape selected by the
-    /// session's SQL mode and `tidb_enable_no_backslash_escapes_in_like`.
-    #[must_use]
-    pub fn with_like_default_escape(mut self, escape: u8) -> Self {
-        self.like_default_escape = escape;
-        self
-    }
-
-    /// Attaches the session's raw string-match selectivity setting.
-    #[must_use]
-    pub fn with_default_string_match_selectivity(mut self, value: f64) -> Self {
-        self.default_string_match_selectivity = value;
-        self
-    }
-
-    /// Attaches the session's general predicate selectivity factor.
-    #[must_use]
-    pub fn with_selectivity_factor(mut self, value: f64) -> Self {
-        self.selectivity_factor = value;
-        self
-    }
-
-    /// Sets `@@tidb_enable_pseudo_for_outdated_stats` for this statement.
-    #[must_use]
-    pub fn with_pseudo_for_outdated_stats(mut self, enabled: bool) -> Self {
-        self.enable_pseudo_for_outdated_stats = enabled;
-        self
-    }
-
-    /// Attaches Go's synchronous statistics-load policy.
-    #[must_use]
-    pub fn with_stats_load_policy(
-        mut self,
-        wait_ms: u64,
-        pseudo_timeout: bool,
-        max_execution_time_ms: u64,
-    ) -> Self {
-        self.stats_load_sync_wait_ms = wait_ms;
-        self.stats_load_pseudo_timeout = pseudo_timeout;
-        self.max_execution_time_ms = max_execution_time_ms;
-        self
-    }
-
-    /// Sets the range-building memory quota; zero means unlimited.
-    #[must_use]
-    pub fn with_range_max_size(mut self, bytes: i64) -> Self {
-        self.range_max_size = bytes;
-        self
-    }
-
     /// Go `SessionVars.RangeMaxSize`.
     #[must_use]
     pub fn range_max_size(&self) -> i64 {
         self.range_max_size
-    }
-
-    /// Sets `@@tidb_opt_index_prune_threshold` for this statement.
-    #[must_use]
-    pub fn with_opt_index_prune_threshold(mut self, threshold: i32) -> Self {
-        self.opt_index_prune_threshold = threshold;
-        self
-    }
-
-    /// Sets `@@tidb_opt_prefix_index_single_scan` for this statement.
-    #[must_use]
-    pub fn with_opt_prefix_index_single_scan(mut self, enabled: bool) -> Self {
-        self.opt_prefix_index_single_scan = enabled;
-        self
-    }
-
-    /// Sets `@@tidb_opt_always_keep_join_key` for this statement.
-    #[must_use]
-    pub fn with_always_keep_join_key(mut self, always_keep: bool) -> Self {
-        self.always_keep_join_key = always_keep;
-        self
-    }
-
-    /// Sets `@@tidb_enable_unsafe_substitute` for this statement.
-    #[must_use]
-    pub fn with_enable_unsafe_substitute(mut self, enable: bool) -> Self {
-        self.enable_unsafe_substitute = enable;
-        self
-    }
-
-    /// Sets `@@tidb_opt_enable_semi_join_rewrite` for this statement.
-    #[must_use]
-    pub fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
-        self.enable_semi_join_rewrite = enable;
-        self
-    }
-
-    /// Sets Go `SessionVars.GetAllowInSubqToJoinAndAgg()` for this statement.
-    #[must_use]
-    pub fn with_allow_in_subq_to_join_and_agg(mut self, allow: bool) -> Self {
-        self.allow_in_subq_to_join_and_agg = allow;
-        self
-    }
-
-    /// Sets `@@tidb_opt_enable_no_decorrelate_in_select` for this statement.
-    #[must_use]
-    pub fn with_enable_no_decorrelate_in_select(mut self, enable: bool) -> Self {
-        self.enable_no_decorrelate_in_select = enable;
-        self
-    }
-
-    /// Sets `@@tidb_opt_skew_distinct_agg` for this statement.
-    #[must_use]
-    pub fn with_enable_skew_distinct_agg(mut self, enable: bool) -> Self {
-        self.enable_skew_distinct_agg = enable;
-        self
-    }
-
-    /// Attaches the AES mode selected by this session for the statement.
-    #[must_use]
-    pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
-        self.block_encryption_mode = mode;
-        self
     }
 
     /// The scanner `sql_mode` flags for this statement's re-parses.
@@ -1467,6 +2104,11 @@ impl StmtContext {
     #[must_use]
     pub fn ddl_session_alias(&self) -> &str {
         &self.ddl_session_alias
+    }
+
+    /// Whether executor filters use Go's vectorized expression path.
+    pub fn enable_vectorized_expression(&self) -> bool {
+        self.enable_vectorized_expression
     }
 
     /// Trace identifier captured in Go `TraceInfo`.
@@ -1620,26 +2262,6 @@ impl StmtContext {
         self.operator_num.load(Ordering::Relaxed)
     }
 
-    /// Attaches Go's per-session predicate-column usage collector.
-    #[must_use]
-    pub fn with_column_stats_usage(
-        mut self,
-        usage: Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
-    ) -> Self {
-        self.column_stats_usage = usage;
-        self
-    }
-
-    /// Installs Go `StmtCtx.IndexUsageCollector`.
-    #[must_use]
-    pub fn with_index_usage_collector(
-        mut self,
-        collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
-    ) -> Self {
-        self.index_usage_collector = collector;
-        self
-    }
-
     /// Returns the statement-local index-usage collector, when enabled.
     #[must_use]
     pub fn index_usage_collector(
@@ -1657,25 +2279,11 @@ impl StmtContext {
         usage.update_col_stats_usage(items, std::time::SystemTime::now());
     }
 
-    /// Installs Go `SessionVars.TxnCtx.TableDeltaMap`.
-    #[must_use]
-    pub fn with_table_delta(mut self, delta: Arc<tidb_stats_handle_usage::TableDeltaMap>) -> Self {
-        self.table_delta = Some(delta);
-        self
-    }
-
     /// Go `TransactionContext.UpdateDeltaForTable`.
     pub fn update_table_delta(&self, physical_table_id: i64, delta: i64, count: i64) {
         if let Some(table_delta) = &self.table_delta {
             table_delta.update(physical_table_id, delta, count);
         }
-    }
-
-    /// Sets Go `SessionVars.IsPlanReplayerCaptureEnabled()` for this statement.
-    #[must_use]
-    pub fn with_plan_replayer_capture(mut self, enabled: bool) -> Self {
-        self.plan_replayer_capture_enabled = enabled;
-        self
     }
 
     /// Whether Go's plan-replayer table-statistics capture is enabled.
@@ -1852,71 +2460,6 @@ impl StmtContext {
         .with_statement_class(StatementClass::Select)
     }
 
-    /// Sets whether this statement runs under a strict SQL mode.
-    ///
-    /// [`Self::for_dml`] derives this from the mode already, because a DML
-    /// statement's error LEVELS are derived from it in the same breath.
-    /// [`Self::for_query`] cannot: its levels are the literals Go writes for a
-    /// read, so it had to pass SOMETHING for `strict` and passed `true`.
-    ///
-    /// That placeholder is only sound while nothing reads it. DDL takes this
-    /// same non-DML context, and Go's DDL checks do read the session's mode --
-    /// `checkColumnDefaultValue` calls `SQLMode.HasStrictMode()` to decide
-    /// whether an empty BLOB/TEXT/JSON default is 1101 or a warning. Reading
-    /// the placeholder made `SET sql_mode=''` inoperative for DDL, so the
-    /// session sets the real value here instead of DDL growing a second,
-    /// parallel channel for the same fact.
-    #[must_use]
-    pub fn with_strict(mut self, strict: bool) -> Self {
-        self.strict = strict;
-        self.strict_sql_mode = strict;
-        self
-    }
-
-    /// Sets the session's `max_allowed_packet`.
-    ///
-    /// Go `EvalContext.GetMaxAllowedPacket` is what every result-sizing string
-    /// builtin captures at build time (`builtinSpaceSig.maxAllowedPacket` and
-    /// friends). Without this the trait default -- `DefMaxAllowedPacket`, 64
-    /// MiB -- stood for every statement, so `SET GLOBAL max_allowed_packet`
-    /// moved the wire limit and left `SPACE`/`REPEAT`/`RPAD` sizing results
-    /// against the shipped default.
-    #[must_use]
-    pub fn with_max_allowed_packet(mut self, max_allowed_packet: u64) -> Self {
-        self.max_allowed_packet = max_allowed_packet;
-        self
-    }
-
-    /// Sets the session's `group_concat_max_len`.
-    ///
-    /// Go `SessionVars.GroupConcatMaxLen`, which the aggregate builder copies
-    /// into every `GROUP_CONCAT` it builds. The default is Go's
-    /// `DefGroupConcatMaxLen`, 1024.
-    #[must_use]
-    pub fn with_group_concat_max_len(mut self, group_concat_max_len: u64) -> Self {
-        self.group_concat_max_len = group_concat_max_len;
-        self
-    }
-
-    /// Sets the statement snapshot of `@@tidb_mem_quota_apply_cache`.
-    #[must_use]
-    pub fn with_apply_cache_capacity(mut self, capacity: i64) -> Self {
-        self.apply_cache_capacity = capacity;
-        self
-    }
-
-    /// Sets the session's `default_week_format` and `div_precision_increment`.
-    #[must_use]
-    pub fn with_week_and_division_scale(
-        mut self,
-        default_week_format: i64,
-        div_precision_increment: u32,
-    ) -> Self {
-        self.default_week_format = default_week_format;
-        self.div_precision_increment = div_precision_increment;
-        self
-    }
-
     /// Attaches the sequences this statement may read. Without it, a
     /// `NEXTVAL` reports that it needs a session rather than silently
     /// answering NULL.
@@ -1933,32 +2476,10 @@ impl StmtContext {
         self.sequences.validate_path(path)
     }
 
-    /// Sets `@@cte_max_recursion_depth`; a non-positive session value clamps
-    /// to `0`, which refuses the very first recursive round.
-    #[must_use]
-    pub fn with_cte_max_recursion_depth(mut self, depth: i64) -> Self {
-        self.cte_max_recursion_depth = u64::try_from(depth).unwrap_or(0);
-        self
-    }
-
     /// See [`StmtContext::with_cte_max_recursion_depth`].
     #[must_use]
     pub fn cte_max_recursion_depth(&self) -> u64 {
         self.cte_max_recursion_depth
-    }
-
-    /// Sets `@@tidb_opt_join_reorder_threshold` for this statement.
-    #[must_use]
-    pub fn with_join_reorder_threshold(mut self, threshold: i32) -> Self {
-        self.join_reorder_threshold = threshold;
-        self
-    }
-
-    /// Sets `@@tidb_opt_ordering_index_selectivity_ratio` for this statement.
-    #[must_use]
-    pub fn with_ordering_index_selectivity_ratio(mut self, ratio: f64) -> Self {
-        self.ordering_index_selectivity_ratio = ratio;
-        self
     }
 
     /// Go `SessionVars.OptOrderingIdxSelRatio`.
@@ -1967,24 +2488,10 @@ impl StmtContext {
         self.ordering_index_selectivity_ratio
     }
 
-    /// Sets `@@tidb_opt_projection_push_down` for this statement.
-    #[must_use]
-    pub fn with_projection_push_down(mut self, allow: bool) -> Self {
-        self.allow_projection_push_down = allow;
-        self
-    }
-
     /// Go `SessionVars.AllowProjectionPushDown`.
     #[must_use]
     pub fn allow_projection_push_down(&self) -> bool {
         self.allow_projection_push_down
-    }
-
-    /// Sets `@@tidb_opt_limit_push_down_threshold` for this statement.
-    #[must_use]
-    pub fn with_limit_push_down_threshold(mut self, threshold: u64) -> Self {
-        self.limit_push_down_threshold = threshold;
-        self
     }
 
     /// Go `SessionVars.LimitPushDownThreshold`.
@@ -1993,32 +2500,10 @@ impl StmtContext {
         self.limit_push_down_threshold
     }
 
-    /// Attaches the validated statement snapshot of
-    /// `@@tidb_opt_fix_control`.
-    #[must_use]
-    pub fn with_optimizer_fix_control(
-        mut self,
-        control: tidb_planner::fix_control::OptimizerFixControl,
-    ) -> Self {
-        self.optimizer_fix_control = control;
-        self
-    }
-
     /// The statement's parsed optimizer-fix controls.
     #[must_use]
     pub fn optimizer_fix_control(&self) -> &tidb_planner::fix_control::OptimizerFixControl {
         &self.optimizer_fix_control
-    }
-
-    /// Attaches the session and transaction facts used by index-lookup
-    /// pushdown planning.
-    #[must_use]
-    pub fn with_index_lookup_push_down_session(
-        mut self,
-        session: tidb_planner::access_path::IndexLookupPushDownSession,
-    ) -> Self {
-        self.index_lookup_push_down_session = session;
-        self
     }
 
     /// The statement snapshot used by index-lookup pushdown planning.
@@ -2029,32 +2514,10 @@ impl StmtContext {
         self.index_lookup_push_down_session
     }
 
-    /// Attaches the statement's latest-domain index metadata.
-    #[must_use]
-    pub fn with_latest_index_schema(
-        mut self,
-        schema: Arc<tidb_planner::domain_misc::LatestIndexSchema>,
-    ) -> Self {
-        self.latest_index_schema = Some(schema);
-        self
-    }
-
     /// Returns the latest-domain index metadata captured for this statement.
     #[must_use]
     pub fn latest_index_schema(&self) -> Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>> {
         self.latest_index_schema.clone()
-    }
-
-    /// Attaches the resolved statement snapshot used by cost model v2.
-    #[must_use]
-    pub fn with_optimizer_cost_env(
-        mut self,
-        env: impl Into<Arc<tidb_planner::find_best_task::coster::CostEnv>>,
-    ) -> Self {
-        let env = env.into();
-        self.executor_concurrency = env.session.union_concurrency.max(1.0) as usize;
-        self.optimizer_cost_env = Some(env);
-        self
     }
 
     /// The statement's cost-model-v2 environment.
@@ -2089,26 +2552,6 @@ impl StmtContext {
         }
     }
 
-    /// Attaches Go's two resolved HashAgg worker counts.
-    ///
-    /// Go's cost model reads `HashAggFinalConcurrency()` directly from the
-    /// session, so the optimizer cost environment has to see the same value;
-    /// otherwise a serial statement would still be costed as if five final
-    /// workers were running and would pick a HashAgg over the StreamAgg Go
-    /// chooses.
-    #[must_use]
-    pub fn with_hashagg_concurrency(mut self, partial: usize, final_: usize) -> Self {
-        self.hashagg_partial_concurrency = partial;
-        self.hashagg_final_concurrency = final_;
-        let env = self
-            .optimizer_cost_env
-            .get_or_insert_with(|| Arc::new(Default::default()));
-        if env.session.hashagg_final_concurrency != final_ as f64 {
-            Arc::make_mut(env).session.hashagg_final_concurrency = final_ as f64;
-        }
-        self
-    }
-
     /// Go `SessionVars.HashAggPartialConcurrency()` and
     /// `HashAggFinalConcurrency()` for this statement.
     #[must_use]
@@ -2126,24 +2569,10 @@ impl StmtContext {
         self.join_reorder_threshold
     }
 
-    /// Sets `@@tidb_opt_agg_push_down` for this statement.
-    #[must_use]
-    pub fn with_allow_agg_push_down(mut self, enabled: bool) -> Self {
-        self.allow_agg_push_down = enabled;
-        self
-    }
-
     /// Go `SessionVars.AllowAggPushDown`.
     #[must_use]
     pub fn allow_agg_push_down(&self) -> bool {
         self.allow_agg_push_down
-    }
-
-    /// Sets `@@tidb_opt_enable_advanced_join_reorder` for this statement.
-    #[must_use]
-    pub fn with_advanced_join_reorder(mut self, enabled: bool) -> Self {
-        self.advanced_join_reorder = enabled;
-        self
     }
 
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`. The advanced
@@ -2179,26 +2608,12 @@ impl StmtContext {
         self.advanced_join_hint
     }
 
-    /// Sets `@@tidb_opt_join_reorder_through_proj` for this statement.
-    #[must_use]
-    pub fn with_join_reorder_through_proj(mut self, through: bool) -> Self {
-        self.join_reorder_through_proj = through;
-        self
-    }
-
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`. `OFF` is the shipped
     /// default, under which a `Projection` over a join is an atomic group
     /// leaf and the relations below it never join the group.
     #[must_use]
     pub fn join_reorder_through_proj(&self) -> bool {
         self.join_reorder_through_proj
-    }
-
-    /// Sets `@@tidb_opt_join_reorder_through_sel` for this statement.
-    #[must_use]
-    pub fn with_join_reorder_through_sel(mut self, through: bool) -> Self {
-        self.join_reorder_through_sel = through;
-        self
     }
 
     /// Go `SessionVars.TiDBOptJoinReorderThroughSel`. `OFF` is the shipped
@@ -2211,13 +2626,6 @@ impl StmtContext {
         self.join_reorder_through_sel
     }
 
-    /// Sets `@@tidb_enable_outer_join_reorder` for this statement.
-    #[must_use]
-    pub fn with_outer_join_reorder(mut self, enabled: bool) -> Self {
-        self.outer_join_reorder = enabled;
-        self
-    }
-
     /// Go `SessionVars.EnableOuterJoinReorder`, whose shipped default is ON
     /// (`vardef.DefTiDBEnableOuterJoinReorder = true`). OFF puts back the
     /// stop `extractJoinGroupImpl` spells right after its own list: "If the
@@ -2225,20 +2633,6 @@ impl StmtContext {
     #[must_use]
     pub fn outer_join_reorder(&self) -> bool {
         self.outer_join_reorder
-    }
-
-    /// Sets `@@tidb_enable_index_merge` for this statement.
-    #[must_use]
-    pub fn with_index_merge(mut self, enabled: bool) -> Self {
-        self.index_merge = enabled;
-        self
-    }
-
-    /// Sets `@@tidb_opt_write_row_id` for this statement.
-    #[must_use]
-    pub fn with_allow_write_row_id(mut self, allowed: bool) -> Self {
-        self.allow_write_row_id = allowed;
-        self
     }
 
     /// Go `SessionVars.AllowWriteRowID`.
@@ -2259,13 +2653,6 @@ impl StmtContext {
     pub fn report_planned_apply(&self) {
         self.planned_apply
             .store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Installs the current session's process-plan publication cell.
-    #[must_use]
-    pub fn with_process_plan_info_sink(mut self, sink: Arc<Mutex<ProcessPlanInfo>>) -> Self {
-        self.process_plan_info = Some(sink);
-        self
     }
 
     /// Installs the session value and the statement-attempt latch used by
@@ -2335,28 +2722,6 @@ impl StmtContext {
         ));
     }
 
-    /// Go's binary-protocol EXECUTE keeps the plan detail out of the process
-    /// list; `false` skips rendering `BriefBinaryPlan` for this statement.
-    #[must_use]
-    pub fn with_brief_binary_plan(mut self, publish: bool) -> Self {
-        self.publish_brief_binary_plan = publish;
-        self
-    }
-
-    /// Installs the two published blacklists. See
-    /// [`crate::pushdown_blacklist`].
-    #[must_use]
-    pub fn with_pushdown_blacklists(
-        mut self,
-        published: (
-            std::sync::Arc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
-            std::sync::Arc<std::collections::HashSet<String>>,
-        ),
-    ) -> Self {
-        (self.expr_pushdown_blacklist, self.disabled_logical_rules) = published;
-        self
-    }
-
     /// The published `mysql.expr_pushdown_blacklist`.
     #[must_use]
     pub fn expr_pushdown_blacklist(&self) -> &tidb_expr::infer_pushdown::ExprPushDownBlacklist {
@@ -2378,14 +2743,6 @@ impl StmtContext {
         self.index_merge
     }
 
-    /// Sets `@@tidb_partition_prune_mode` for this statement, as the one bit
-    /// the planner reads off it.
-    #[must_use]
-    pub fn with_static_partition_prune(mut self, static_prune: bool) -> Self {
-        self.static_partition_prune = static_prune;
-        self
-    }
-
     /// Go `SessionVars.IsDynamicPartitionPruneEnabled()`, inverted:
     /// `@@tidb_partition_prune_mode = 'static'`.
     ///
@@ -2403,37 +2760,15 @@ impl StmtContext {
         self.static_partition_prune
     }
 
-    /// Sets whether `ONLY_FULL_GROUP_BY` is in effect, which a session reads
-    /// off its `sql_mode`.
-    #[must_use]
-    pub fn with_only_full_group_by(mut self, only_full_group_by: bool) -> Self {
-        self.only_full_group_by = only_full_group_by;
-        self
-    }
-
     /// Whether `ONLY_FULL_GROUP_BY` is in effect for this statement.
     #[must_use]
     pub fn only_full_group_by(&self) -> bool {
         self.only_full_group_by
     }
 
-    /// Sets Go EnableAutoIncrementInGenerated for DDL validation.
-    #[must_use]
-    pub fn with_auto_increment_in_generated(mut self, enabled: bool) -> Self {
-        self.auto_increment_in_generated = enabled;
-        self
-    }
-
     /// Whether generated expressions may reference AUTO_INCREMENT columns.
     pub fn auto_increment_in_generated(&self) -> bool {
         self.auto_increment_in_generated
-    }
-
-    /// Sets `@@tidb_enable_new_only_full_group_by_check` for this statement.
-    #[must_use]
-    pub fn with_new_only_full_group_by_check(mut self, enabled: bool) -> Self {
-        self.new_only_full_group_by_check = enabled;
-        self
     }
 
     /// Whether the functional-dependency `ONLY_FULL_GROUP_BY` checker is on
@@ -2445,13 +2780,6 @@ impl StmtContext {
         self.new_only_full_group_by_check
     }
 
-    /// Sets `@@tidb_remove_orderby_in_subquery` for this statement.
-    #[must_use]
-    pub fn with_remove_orderby_in_subquery(mut self, remove: bool) -> Self {
-        self.remove_orderby_in_subquery = remove;
-        self
-    }
-
     /// Whether a derived table's `ORDER BY` is dropped
     /// (`@@tidb_remove_orderby_in_subquery`, default ON as Go's
     /// `DefTiDBRemoveOrderbyInSubquery`).
@@ -2460,25 +2788,10 @@ impl StmtContext {
         self.remove_orderby_in_subquery
     }
 
-    /// Sets `@@foreign_key_checks` for this statement.
-    #[must_use]
-    pub fn with_foreign_key_checks(mut self, foreign_key_checks: bool) -> Self {
-        self.foreign_key_checks = foreign_key_checks;
-        self
-    }
-
     /// Whether this statement enforces referential integrity.
     #[must_use]
     pub fn foreign_key_checks(&self) -> bool {
         self.foreign_key_checks
-    }
-
-    /// Sets Go's session `EnableMView` switch for this statement
-    /// (`tidb_mview_enable`, default `OFF`).
-    #[must_use]
-    pub fn with_enable_mview(mut self, enabled: bool) -> Self {
-        self.enable_mview = enabled;
-        self
     }
 
     /// Whether materialized-view DDL is enabled for this statement.
@@ -2487,43 +2800,16 @@ impl StmtContext {
         self.enable_mview
     }
 
-    /// Attaches Go's query-scoped per-store coprocessor limiter to this
-    /// statement. All remote scans cloned from the context share this Arc.
-    #[must_use]
-    pub fn with_query_cop_store_limiter(
-        mut self,
-        limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
-    ) -> Self {
-        self.query_cop_store_limiter = limiter;
-        self
-    }
-
     /// Returns the query-scoped per-store coprocessor limiter, if enabled.
     #[must_use]
     pub fn query_cop_store_limiter(&self) -> Option<Arc<tidb_txnkv::QueryCopStoreLimiter>> {
         self.query_cop_store_limiter.clone()
     }
 
-    /// Sets Go's process-wide CHECK-constraint DDL switch for this statement.
-    #[must_use]
-    pub fn with_enable_check_constraint(mut self, enabled: bool) -> Self {
-        self.enable_check_constraint = enabled;
-        self
-    }
-
     /// Whether CHECK declarations are persisted and enforced.
     #[must_use]
     pub fn enable_check_constraint(&self) -> bool {
         self.enable_check_constraint
-    }
-
-    /// Marks this statement's INSERT a lazy duplicate check (Go
-    /// `DupKeyCheckLazy` under a pessimistic transaction): the row existence
-    /// read consults only the statement's own staged writes.
-    #[must_use]
-    pub fn with_pessimistic_lazy_dup_check(mut self, enabled: bool) -> Self {
-        self.pessimistic_lazy_dup_check = enabled;
-        self
     }
 
     /// Whether this statement's INSERT defers duplicate detection to the
@@ -2539,20 +2825,6 @@ impl StmtContext {
         self.constraint_check_in_place
     }
 
-    /// Sets `@@tidb_constraint_check_in_place` for this statement.
-    #[must_use]
-    pub fn with_constraint_check_in_place(mut self, enabled: bool) -> Self {
-        self.constraint_check_in_place = enabled;
-        self
-    }
-
-    /// Sets `@@tidb_allow_remove_auto_inc` for this statement.
-    #[must_use]
-    pub fn with_allow_remove_auto_inc(mut self, allow_remove_auto_inc: bool) -> Self {
-        self.allow_remove_auto_inc = allow_remove_auto_inc;
-        self
-    }
-
     /// Whether `ALTER TABLE ... MODIFY COLUMN` may drop AUTO_INCREMENT.
     ///
     /// Go's default is OFF, so a `MODIFY COLUMN` that leaves the option out
@@ -2561,20 +2833,6 @@ impl StmtContext {
     #[must_use]
     pub fn allow_remove_auto_inc(&self) -> bool {
         self.allow_remove_auto_inc
-    }
-
-    /// Attaches the session state the builtins read: Go reads both from
-    /// `SessionVars`, where `DATABASE()` is `CurrentDB` and `VERSION()` is
-    /// the same string `@@version` reports.
-    #[must_use]
-    pub fn with_session_state(
-        mut self,
-        current_db: Option<String>,
-        version: Option<String>,
-    ) -> Self {
-        self.current_db = current_db;
-        self.version = version;
-        self
     }
 
     /// Attaches Go `SessionVars.IsolationReadEngines` to physical planning.
@@ -2602,75 +2860,6 @@ impl StmtContext {
     #[must_use]
     pub fn tidb_info_len(&self) -> usize {
         tidb_util::printer::get_tidb_info().len()
-    }
-
-    /// Attaches the authenticated identity, which Go keeps on
-    /// `SessionVars.User` in the two spellings its builtins report.
-    #[must_use]
-    pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
-        self.current_user = current_user;
-        self.login_user = login_user;
-        self
-    }
-
-    /// Attaches the live GLOBAL-variable reader used by expression builtins.
-    #[must_use]
-    pub fn with_global_sysvar_accessor(mut self, accessor: Arc<dyn GlobalSysvarAccessor>) -> Self {
-        self.global_sysvars = Some(accessor);
-        self
-    }
-
-    /// Attaches Go's typed `SessionVars.ActiveRoles` authority.
-    #[must_use]
-    pub fn with_active_roles(mut self, active_roles: Option<Arc<Vec<(String, String)>>>) -> Self {
-        self.active_roles = active_roles;
-        self
-    }
-
-    /// Attaches the connection identifier `CONNECTION_ID()` reports, which Go
-    /// keeps on `SessionVars.ConnectionID`. `None` is a session with no
-    /// connection identity, where the builtin answers NULL.
-    #[must_use]
-    pub fn with_connection_id(mut self, connection_id: Option<u64>) -> Self {
-        self.connection_id = connection_id;
-        self
-    }
-
-    /// Attaches the catalog metadata visible to this statement.
-    #[must_use]
-    pub fn with_tidb_decode_key_snapshot(
-        mut self,
-        snapshot: Arc<crate::TidbDecodeKeySnapshot>,
-    ) -> Self {
-        self.tidb_decode_key_snapshot = Some(snapshot);
-        self
-    }
-
-    /// Attaches the session-scoped generator unseeded `RAND()` reads and
-    /// advances, which Go keeps on `SessionVars.Rng` for the session's whole
-    /// lifetime (shared across statements, unlike constant `RAND(N)`'s
-    /// per-statement generators).
-    #[must_use]
-    pub fn with_rand_session(mut self, rand_session: Arc<MysqlRng>) -> Self {
-        self.rand_session = Some(rand_session);
-        self
-    }
-
-    /// Attaches the session's user-variable map, which `@x` reads and `@x :=
-    /// expr` writes THROUGH -- see the field's own doc for why this is a
-    /// shared handle rather than a copy.
-    #[must_use]
-    pub fn with_user_vars(mut self, user_vars: Arc<Mutex<HashMap<String, Datum>>>) -> Self {
-        self.user_vars = Some(user_vars);
-        self
-    }
-
-    /// Supplies one execution's parameter snapshot to every ordinary
-    /// expression evaluator built with this statement context.
-    #[must_use]
-    pub fn with_prepared_params(mut self, values: Arc<[Datum]>) -> Self {
-        self.prepared_params = Some(values);
-        self
     }
 
     /// Installs the candidate row exposed to `VALUES(col)` while an insert
@@ -2714,28 +2903,6 @@ impl StmtContext {
         self
     }
 
-    /// Attaches Go's lazy statement clock. The first time expression fixes
-    /// one instant in the shared cell; cloned worker contexts read it back.
-    #[must_use]
-    pub fn with_lazy_clock(
-        mut self,
-        timestamp: Option<f64>,
-        time_zone: tidb_expr::SessionTimeZone,
-    ) -> Self {
-        self.statement_clock = Some(Arc::new(OnceLock::new()));
-        self.statement_timestamp = timestamp;
-        self.time_zone = Some(time_zone);
-        self
-    }
-
-    /// Selects the statement clock for `SYSDATE`, matching
-    /// `@@tidb_sysdate_is_now`.
-    #[must_use]
-    pub fn with_sysdate_is_now(mut self, enabled: bool) -> Self {
-        self.sysdate_is_now = enabled;
-        self
-    }
-
     /// Attaches the session's time zone without inventing a statement clock.
     ///
     /// Metadata-only statement paths such as cluster DDL need the zone for
@@ -2756,13 +2923,6 @@ impl StmtContext {
         self
     }
 
-    /// Sets Go `SessionVars.GetReplicaRead()` for this statement.
-    #[must_use]
-    pub fn with_replica_read(mut self, replica_read: ReplicaReadType) -> Self {
-        self.replica_read = replica_read;
-        self
-    }
-
     /// Sets Go `StmtCtx.Priority` from the statement's own priority modifier.
     #[must_use]
     pub fn with_statement_priority(
@@ -2777,13 +2937,6 @@ impl StmtContext {
     #[must_use]
     pub fn with_not_fill_cache(mut self, not_fill_cache: bool) -> Self {
         self.not_fill_cache = not_fill_cache;
-        self
-    }
-
-    /// Sets Go `SessionVars.DistSQLScanConcurrency()` for this statement.
-    #[must_use]
-    pub fn with_dist_sql_scan_concurrency(mut self, concurrency: u64) -> Self {
-        self.dist_sql_scan_concurrency = concurrency;
         self
     }
 
@@ -2944,25 +3097,6 @@ impl StmtContext {
     #[must_use]
     pub fn with_truncate_level(mut self, truncate: ErrorLevel) -> Self {
         self.truncate = truncate;
-        self
-    }
-
-    /// Attaches `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.
-    #[must_use]
-    pub fn with_date_modes(mut self, date_modes: crate::zero_date::DateModes) -> Self {
-        self.date_modes = date_modes;
-        self
-    }
-
-    /// Carries only ResetContextOfStmt's three string-validation bits; numeric
-    /// and date policy remains derived from the statement's own state.
-    #[must_use]
-    pub fn with_string_type_flags(mut self, flags: tidb_datatype::ConversionFlags) -> Self {
-        use tidb_datatype::ConversionFlags as Flags;
-        self.string_type_flags = Flags::from_bits(
-            flags.bits()
-                & (Flags::SKIP_ASCII_CHECK | Flags::SKIP_UTF8_CHECK | Flags::SKIP_UTF8MB4_CHECK),
-        );
         self
     }
 
@@ -3158,14 +3292,6 @@ impl StmtContext {
         self
     }
 
-    /// Declares the two session policies used by AUTO_RANDOM insertion.
-    #[must_use]
-    pub fn with_auto_random_policy(mut self, explicit_allowed: bool, shard_step: u64) -> Self {
-        self.allow_auto_random_explicit_insert = explicit_allowed;
-        self.shard_allocate_step = shard_step.max(1);
-        self
-    }
-
     /// The complete AUTO_RANDOM id assigned to this row by the previous
     /// retry attempt, if that attempt reached the row.
     pub fn reuse_auto_random_id(&self) -> Option<u64> {
@@ -3199,34 +3325,6 @@ impl StmtContext {
         self.allow_auto_random_explicit_insert
     }
 
-    /// Attaches what the PRECEDING statement published: Go's
-    /// `StmtCtx.PrevLastInsertID` and `StmtCtx.PrevAffectedRows`, which are
-    /// exactly what `LAST_INSERT_ID()` and `ROW_COUNT()` read.
-    #[must_use]
-    pub fn with_previous_statement(
-        mut self,
-        prev_last_insert_id: u64,
-        prev_row_count: i64,
-    ) -> Self {
-        self.prev_last_insert_id = prev_last_insert_id;
-        self.prev_row_count = prev_row_count;
-        self
-    }
-
-    /// Attaches the completed result-set count `FOUND_ROWS()` reads.
-    #[must_use]
-    pub fn with_last_found_rows(mut self, rows: u64) -> Self {
-        self.last_found_rows = Some(rows);
-        self
-    }
-
-    /// Attaches the connection's negotiated `CLIENT_FOUND_ROWS` bit.
-    #[must_use]
-    pub fn with_client_found_rows(mut self, enabled: bool) -> Self {
-        self.client_found_rows = enabled;
-        self
-    }
-
     /// Whether unchanged matched update rows count as affected.
     #[must_use]
     pub fn client_found_rows(&self) -> bool {
@@ -3258,21 +3356,6 @@ impl StmtContext {
     #[must_use]
     pub fn given_insert_id(&self) -> u64 {
         self.given_insert_id.load(Ordering::Relaxed)
-    }
-
-    /// Declares `@@auto_increment_increment` and `@@auto_increment_offset`.
-    #[must_use]
-    pub fn with_auto_increment_step(mut self, increment: u64, offset: u64) -> Self {
-        self.auto_increment_step = (increment, offset);
-        self
-    }
-
-    /// Declares whether `NO_AUTO_VALUE_ON_ZERO` is in the session's
-    /// `sql_mode`.
-    #[must_use]
-    pub fn with_auto_increment_zero_explicit(mut self, is_explicit: bool) -> Self {
-        self.auto_increment_zero_is_explicit = is_explicit;
-        self
     }
 
     /// Whether an explicit `0` written to an AUTO_INCREMENT column must be
@@ -3917,8 +4000,15 @@ mod tests {
     #[test]
     fn stats_load_wait_is_capped_and_failure_state_is_shared_by_clones() {
         let ctx = StmtContext::for_query().with_stats_load_policy(100, true, 7);
-        let clone = ctx.clone();
+        let clone = ctx.clone().configure(|config| {
+            let _ = config
+                .with_stats_load_policy(100, true, 11)
+                .with_executor_chunk_sizes(8, 64);
+        });
         assert_eq!(ctx.stats_load_wait_ms(), 7);
+        assert_eq!(clone.stats_load_wait_ms(), 11);
+        assert_eq!(ctx.executor_chunk_sizes(), (32, 1024));
+        assert_eq!(clone.executor_chunk_sizes(), (8, 64));
         assert!(!clone.sync_stats_failed());
         assert!(!clone.skip_plan_cache());
 

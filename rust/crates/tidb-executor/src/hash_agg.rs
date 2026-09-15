@@ -70,8 +70,11 @@
 use crate::agg_spill::{AggSpillDiskAction, ParallelAggSpillDiskAction};
 
 mod builder;
+mod input;
 mod parallel;
 mod spill;
+
+use input::AggInputMode;
 
 use crate::approx_count_distinct::ApproxCountDistinctSketch;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
@@ -83,7 +86,6 @@ use spill::new_group_bytes;
 pub use parallel::HashAggContext;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
@@ -249,61 +251,11 @@ pub struct AggFunc {
     pub arg_orig_name: String,
 }
 
-/// Go's hash aggregation uses a cheap FNV-family bucket hash. The default
-/// Rust `HashMap` hasher is SipHash, which is needlessly expensive for the
-/// executor-owned group keys.
-#[derive(Default)]
-struct HashAggHasher {
-    hash: u64,
-    initialized: bool,
-}
-
-impl Hasher for HashAggHasher {
-    fn finish(&self) -> u64 {
-        if self.initialized {
-            self.hash
-        } else {
-            0xcbf29ce484222325
-        }
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        let mut hash = if self.initialized {
-            self.hash
-        } else {
-            self.initialized = true;
-            0xcbf29ce484222325
-        };
-        for byte in bytes {
-            hash = hash.wrapping_mul(0x100000001b3);
-            hash ^= u64::from(*byte);
-        }
-        self.hash = hash;
-    }
-
-    fn write_u8(&mut self, value: u8) {
-        self.write(&[value]);
-    }
-
-    fn write_i64(&mut self, value: i64) {
-        self.write(&value.to_ne_bytes());
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        self.write(&value.to_ne_bytes());
-    }
-}
-
 /// One row's aggregate input. `GROUP_CONCAT(DISTINCT ...)` needs the rendered
 /// value and its per-argument collation key separately.
 struct AggInput {
     value: Option<Datum>,
     distinct_key: Option<Vec<u8>>,
-    /// A DECIMAL cell's `(signed coefficient, scale)` read straight from the
-    /// chunk, set only for a non-DISTINCT SUM over a bare DECIMAL column.
-    /// The fold consumes this INSTEAD of `value`, skipping the Datum and its
-    /// `Decimal` build entirely.
-    decimal_coefficient: Option<(i128, u32)>,
 }
 
 impl AggFunc {
@@ -321,25 +273,10 @@ impl AggFunc {
         output_type: &tidb_datatype::FieldType,
     ) -> Result<Datum, ExecError> {
         let mut state = AggState::new(self);
+        let mode = AggInputMode::new(self);
+        let bound = mode.bind(chunk);
         for index in start..end {
-            let row = chunk.get_row(index);
-            let mut extra_values = Vec::new();
-            let input = eval_agg_input(self, ctx, row, &mut extra_values)?;
-            let mut sort_key = Vec::with_capacity(self.order_by.len());
-            for (expr, _) in &self.order_by {
-                sort_key.push(expr.eval(ctx, row)?);
-            }
-            if let Some((coefficient, scale)) = input.decimal_coefficient {
-                if state.partial_update_with_coefficient(coefficient, scale) {
-                    continue;
-                }
-                // The fold refused (a scale change or an overflow): the
-                // state is materialized, so replay this row as its datum.
-                let value = Datum::Decimal(Decimal::from_scaled_i128(coefficient, scale));
-                state.update(Some(value), &extra_values, sort_key, input.distinct_key)?;
-                continue;
-            }
-            state.update(input.value, &extra_values, sort_key, input.distinct_key)?;
+            bound.update(self, ctx, &mut state, chunk.get_row(index))?;
         }
         let mut truncated = false;
         finish_agg_value(&mut state, self, output_type, ctx, &mut truncated)
@@ -545,57 +482,6 @@ fn count_distinct_int(func: &AggFunc) -> bool {
             .is_some_and(|ty| ty.eval_type() == EvalType::Int)
 }
 
-/// The partial count a FINAL `COUNT` can add straight from the row, or `None`
-/// when the row must go through the complete path.
-///
-/// `Some(None)` is a NULL partial count, which contributes nothing --
-/// `Partial::update`'s `(FinalCount, Null)` arm -- and `Some(Some(n))` the
-/// count itself. An unsigned column past `i64` yields `None` so the complete
-/// path can raise Go's "partial COUNT exceeds i64".
-fn read_final_count_cell(f: &AggFunc, row: tidb_chunk::row::Row<'_>) -> Option<Option<i64>> {
-    if !matches!(f.kind, AggKind::FinalCount)
-        || f.distinct
-        || !f.extra_args.is_empty()
-        || !f.order_by.is_empty()
-    {
-        return None;
-    }
-    let column = f.arg.as_ref().and_then(Expression::as_column)?;
-    let field_type = column.get_static_type()?;
-    if !matches!(
-        field_type.code(),
-        tidb_datatype::FieldTypeCode::Tiny
-            | tidb_datatype::FieldTypeCode::Short
-            | tidb_datatype::FieldTypeCode::Int24
-            | tidb_datatype::FieldTypeCode::Long
-            | tidb_datatype::FieldTypeCode::LongLong
-    ) {
-        return None;
-    }
-    let index = usize::try_from(column.index).ok()?;
-    if row.is_null(index) {
-        return Some(None);
-    }
-    let bits = row.get_int64(index);
-    if field_type.is_unsigned() {
-        i64::try_from(bits as u64).ok().map(Some)
-    } else {
-        Some(Some(bits))
-    }
-}
-
-/// The chunk column a typed integer `COUNT(DISTINCT)` reads directly, when
-/// its argument is a bare column.
-fn count_distinct_int_column(func: &AggFunc) -> Option<usize> {
-    if !count_distinct_int(func) {
-        return None;
-    }
-    func.arg
-        .as_ref()
-        .and_then(Expression::as_column)
-        .and_then(|column| usize::try_from(column.index).ok())
-}
-
 impl AggState {
     fn new(func: &AggFunc) -> AggState {
         Self::with_collation(func, state_collation(func))
@@ -724,32 +610,6 @@ impl AggState {
             return self.update_decimal_max_min_fast(coefficient, scale);
         }
         self.partial.update_with_coefficient(coefficient, scale)
-    }
-
-    fn update_sum_decimal_fast(&mut self, coefficient: i128, scale: u32) -> bool {
-        if self.seen.is_some() {
-            return false;
-        }
-        match &mut self.partial {
-            Partial::SumDecimal(None) => {
-                self.partial = Partial::SumDecimalFast {
-                    sum: coefficient,
-                    scale,
-                };
-                true
-            }
-            Partial::SumDecimalFast {
-                sum,
-                scale: current_scale,
-            } if *current_scale == scale => match sum.checked_add(coefficient) {
-                Some(total) => {
-                    *sum = total;
-                    true
-                }
-                None => false,
-            },
-            _ => false,
-        }
     }
 
     fn update_avg_decimal_fast(&mut self, coefficient: i128, scale: u32, count: i64) -> bool {
@@ -1763,7 +1623,7 @@ impl Partial {
     /// under this call, the single largest `memmove` caller in the query.
     ///
     /// Only a caller that owns the state and drops it may claim: a claimed
-    /// state reads as an empty one. `finalize_map` qualifies -- it takes each
+    /// state reads as an empty one. `FinalWorker::run` qualifies -- it takes each
     /// group by value out of the map and drops it at the end of the iteration
     /// -- and passes `claim: true` for that reason; every other finalize path
     /// passes `false` and keeps the copy.
@@ -2165,6 +2025,7 @@ pub struct StreamAggExec<C: Columns> {
     /// Go builder's DefaultVal, absent for partial or FIRST_ROW-only plans.
     emit_default_row: bool,
     agg_funcs: Vec<AggFunc>,
+    input_modes: Vec<AggInputMode>,
     child: Box<dyn Executor>,
     ctx: C,
     child_chunk: Chunk,
@@ -2192,12 +2053,14 @@ impl<C: Columns> StreamAggExec<C> {
         let child_chunk = child.new_chunk();
         let states = agg_funcs.iter().map(AggState::new).collect();
         let truncated = vec![false; agg_funcs.len()];
+        let input_modes = agg_funcs.iter().map(AggInputMode::new).collect();
         Self {
             emit_default_row: !agg_funcs
                 .iter()
                 .all(|func| matches!(func.kind, AggKind::FirstRow)),
             meta,
             agg_funcs,
+            input_modes,
             child,
             ctx,
             child_chunk,
@@ -2207,45 +2070,9 @@ impl<C: Columns> StreamAggExec<C> {
             child_returned_empty: true,
         }
     }
-
-    fn update_row(
-        agg_funcs: &[AggFunc],
-        ctx: &C,
-        states: &mut [AggState],
-        row: tidb_chunk::row::Row<'_>,
-    ) -> Result<(), ExecError> {
-        for index in 0..agg_funcs.len() {
-            let func = &agg_funcs[index];
-            if let Some(column) = count_distinct_int_column(func) {
-                let value = (!row.is_null(column)).then(|| row.get_int64(column));
-                if states[index]
-                    .update_count_distinct_int_fast(value)
-                    .is_some()
-                {
-                    continue;
-                }
-            }
-            let mut extra_values = Vec::new();
-            let input = eval_agg_input(func, ctx, row, &mut extra_values)?;
-            let mut sort_key = Vec::with_capacity(func.order_by.len());
-            for (expr, _) in &func.order_by {
-                sort_key.push(expr.eval(ctx, row)?);
-            }
-            if let Some((coefficient, scale)) = input.decimal_coefficient {
-                if states[index].partial_update_with_coefficient(coefficient, scale) {
-                    continue;
-                }
-                let value = Datum::Decimal(Decimal::from_scaled_i128(coefficient, scale));
-                states[index].update(Some(value), &extra_values, sort_key, input.distinct_key)?;
-                continue;
-            }
-            states[index].update(input.value, &extra_values, sort_key, input.distinct_key)?;
-        }
-        Ok(())
-    }
 }
 
-impl<C: Columns> Executor for StreamAggExec<C> {
+impl<C: Columns + Send> Executor for StreamAggExec<C> {
     fn agg_tree_input_empty(&self) -> bool {
         self.child_returned_empty
     }
@@ -2272,14 +2099,17 @@ impl<C: Columns> Executor for StreamAggExec<C> {
                 break;
             }
             self.child_returned_empty = false;
+            let inputs = input::bind_inputs(&self.input_modes, &self.child_chunk);
             for row_index in 0..rows {
-                Self::update_row(
+                input::update_row(
+                    &inputs,
                     &self.agg_funcs,
                     &self.ctx,
                     &mut self.states,
                     self.child_chunk.get_row(row_index),
                 )?;
             }
+            drop(inputs);
             self.child_chunk.reset();
         }
         if self.child_returned_empty && !self.emit_default_row {
@@ -2342,6 +2172,7 @@ pub struct GroupedStreamAggExec<C: Columns> {
     meta: ExecutorMeta,
     group_by: Vec<Expression>,
     agg_funcs: Vec<AggFunc>,
+    input_modes: Vec<AggInputMode>,
     /// Output column for each aggregate state. This separates TiKV's
     /// function-first physical state order from the aggregation schema order
     /// Go exposes without an extra Projection.
@@ -2393,11 +2224,13 @@ impl<C: Columns> GroupedStreamAggExec<C> {
         let child_chunk = child.new_chunk();
         let states = agg_funcs.iter().map(AggState::new).collect();
         let truncated = vec![false; agg_funcs.len()];
+        let input_modes = agg_funcs.iter().map(AggInputMode::new).collect();
         let output_group_keys = meta.schema().len() > agg_funcs.len();
         Self {
             meta,
             group_by,
             agg_funcs,
+            input_modes,
             output_positions,
             child,
             ctx,
@@ -2584,7 +2417,7 @@ impl<C: Columns> GroupedStreamAggExec<C> {
     }
 }
 
-impl<C: Columns> Executor for GroupedStreamAggExec<C> {
+impl<C: Columns + Send> Executor for GroupedStreamAggExec<C> {
     fn agg_tree_input_empty(&self) -> bool {
         self.child_returned_empty
     }
@@ -2633,10 +2466,12 @@ impl<C: Columns> Executor for GroupedStreamAggExec<C> {
                 }
             }
             let end = self.group_ends[self.group_index];
+            let inputs = input::bind_inputs(&self.input_modes, &self.child_chunk);
             for row_index in self.child_at..end {
                 let row = self.child_chunk.get_row(row_index);
-                StreamAggExec::<C>::update_row(&self.agg_funcs, &self.ctx, &mut self.states, row)?;
+                input::update_row(&inputs, &self.agg_funcs, &self.ctx, &mut self.states, row)?;
             }
+            drop(inputs);
             self.child_at = end;
             if end < self.child_chunk.num_rows() {
                 // The group ends inside this chunk; the next starts at `end`.
@@ -2710,6 +2545,7 @@ pub struct HashAggExec<C: HashAggContext> {
     /// key and input row while keeping computed/mixed keys on the evaluator.
     integer_group_columns: Option<Vec<usize>>,
     agg_funcs: Vec<AggFunc>,
+    input_modes: Vec<AggInputMode>,
     child: Box<dyn Executor>,
     ctx: C,
     child_chunk: Chunk,
@@ -2786,14 +2622,9 @@ pub struct HashAggExec<C: HashAggContext> {
     offset_of_spilled_chks: usize,
     /// Go `isChildDrained`.
     is_child_drained: bool,
-    /// Flattened row-major output produced by the partial/final pipeline.
-    /// Result chunks the pipeline's final maps were finalised into on pool
-    /// workers (Go's final workers each `getFinalResult` into chunks),
-    /// served whole by `next`.
-    parallel_output: std::collections::VecDeque<Chunk>,
-    /// Rows of the front `parallel_output` chunk already served.
-    parallel_output_offset: usize,
-    parallel_output_active: bool,
+    /// Go finalOutputCh and reusable final-result holders, owned until EOF
+    /// or Close. Final workers cannot run ahead of their returned chunks.
+    parallel_output: Option<parallel::FinalOutput>,
     /// The parallel partial/final worker pipeline is engaged for this Open
     /// (Go `parallelExecValid`). Decided once per Open; `execute` never
     /// re-decides mid-run.
@@ -2836,6 +2667,7 @@ impl<C: HashAggContext> HashAggExec<C> {
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let truncated = vec![false; agg_funcs.len()];
+        let input_modes = agg_funcs.iter().map(AggInputMode::new).collect();
         let state_collations = agg_funcs.iter().map(state_collation).collect();
         // A cop partial aggregation's schema appends the group-by columns after
         // the aggregate columns; a root aggregation reaches the same width
@@ -2868,6 +2700,7 @@ impl<C: HashAggContext> HashAggExec<C> {
             group_by,
             integer_group_columns,
             agg_funcs,
+            input_modes,
             child,
             ctx,
             child_chunk,
@@ -2896,9 +2729,7 @@ impl<C: HashAggContext> HashAggExec<C> {
             num_of_spilled_chks: 0,
             offset_of_spilled_chks: 0,
             is_child_drained: false,
-            parallel_output: std::collections::VecDeque::new(),
-            parallel_output_offset: 0,
-            parallel_output_active: false,
+            parallel_output: None,
             pipeline_mode: false,
             pipeline_partial_concurrency: 1,
             pipeline_final_concurrency: 1,
@@ -2915,6 +2746,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     fn fold_chunk(&mut self, chunk: &Chunk, rows: usize) -> Result<Vec<usize>, ExecError> {
         let mut sel: Vec<usize> = Vec::new();
         let timezone = self.ctx.time_zone();
+        let inputs = input::bind_inputs(&self.input_modes, chunk);
         for r in 0..rows {
             let row = chunk.get_row(r);
             self.group_key_buffer.clear();
@@ -2975,179 +2807,17 @@ impl<C: HashAggContext> HashAggExec<C> {
                     idx
                 }
             };
-            let delta = self.update_group(idx, row)?;
+            let width = self.agg_funcs.len();
+            let delta = input::update_row(
+                &inputs,
+                &self.agg_funcs,
+                &self.ctx,
+                &mut self.ordered[idx * width..(idx + 1) * width],
+                row,
+            )?;
             self.tracker.consume(delta);
         }
         Ok(sel)
-    }
-
-    /// Folds one row into group `idx`, reporting the bytes the group grew by.
-    fn update_group(
-        &mut self,
-        idx: usize,
-        row: tidb_chunk::row::Row<'_>,
-    ) -> Result<i64, ExecError> {
-        let mut delta = 0;
-        let group_offset = idx * self.agg_funcs.len();
-        for c in 0..self.agg_funcs.len() {
-            let f = &self.agg_funcs[c];
-            let state = &mut self.ordered[group_offset + c];
-            if let Some(column) = count_distinct_int_column(f) {
-                let value = (!row.is_null(column)).then(|| row.get_int64(column));
-                if let Some(grown) = state.update_count_distinct_int_fast(value) {
-                    delta += grown;
-                    continue;
-                }
-            }
-            // Go's typed COUNT implementations only inspect the source
-            // column's NULL bitmap. Keep COUNT(*) and the common
-            // COUNT(column) path equally direct.
-            if matches!(f.kind, AggKind::Count)
-                && !f.distinct
-                && f.extra_args.is_empty()
-                && f.order_by.is_empty()
-            {
-                let input_is_non_null = match f.arg.as_ref() {
-                    None => Some(true),
-                    Some(expr) => expr.as_column().and_then(|column| {
-                        usize::try_from(column.index)
-                            .ok()
-                            .map(|index| !row.is_null(index))
-                    }),
-                };
-                if input_is_non_null.is_some_and(|present| state.update_count_fast(present)) {
-                    continue;
-                }
-            }
-            // The same read for a FINAL COUNT, which carries its partial
-            // count in an integer column rather than a NULL bit.
-            if let Some(cell) = read_final_count_cell(f, row) {
-                match cell {
-                    None => continue,
-                    Some(value) => {
-                        if state.update_final_count_fast(value) {
-                            continue;
-                        }
-                    }
-                }
-            }
-            // Go's FIRST_ROW returns before evaluating its argument once the
-            // group owns a value. This matters for the second q13 aggregation,
-            // where nearly every input row revisits an existing group.
-            if matches!(f.kind, AggKind::FirstRow) && state.has_first_row() {
-                continue;
-            }
-            if matches!(f.kind, AggKind::Min | AggKind::Max)
-                && !f.distinct
-                && f.extra_args.is_empty()
-                && f.order_by.is_empty()
-            {
-                let decimal_column =
-                    f.arg
-                        .as_ref()
-                        .and_then(Expression::as_column)
-                        .filter(|column| {
-                            column.get_static_type().is_some_and(|ty| {
-                                ty.code() == tidb_datatype::FieldTypeCode::NewDecimal
-                            })
-                        });
-                if let Some(column) = decimal_column {
-                    if row.is_null(column.index as usize) {
-                        continue;
-                    }
-                    if let Some((coefficient, scale)) =
-                        row.get_my_decimal(column.index as usize).to_i128_scaled()
-                    {
-                        if state.update_decimal_max_min_fast(coefficient, scale) {
-                            continue;
-                        }
-                    }
-                }
-            }
-            // A fixed-scale DECIMAL AVG accumulates the raw MyDecimal
-            // coefficient directly, in partial and in final mode (Go
-            // `avgOriginal4Decimal` / `avgPartial4Decimal`). The expression
-            // path remains the fallback for computed, mixed-scale, or
-            // non-decimal arguments.
-            if let Some(cells) = read_avg_decimal_cells(f, row) {
-                match cells {
-                    None => continue,
-                    Some((coefficient, scale, count)) => {
-                        if state.update_avg_decimal_fast(coefficient, scale, count) {
-                            continue;
-                        }
-                        state.partial.materialize_avg_fast();
-                    }
-                }
-            }
-            // A fixed-scale DECIMAL SUM folds the raw cell coefficient the
-            // same way MIN/MAX and AVG do: no Datum, no `Decimal` build per
-            // row. A differing scale or an overflow falls back to the
-            // complete path, which materializes and replays the row.
-            if matches!(f.kind, AggKind::Sum)
-                && !f.distinct
-                && f.extra_args.is_empty()
-                && f.order_by.is_empty()
-            {
-                let column = f.arg.as_ref().and_then(Expression::as_column);
-                let decimal_column = column.filter(|column| {
-                    column
-                        .get_static_type()
-                        .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::NewDecimal)
-                });
-                if let Some(column) = decimal_column {
-                    if row.is_null(column.index as usize) {
-                        continue;
-                    }
-                    if let Some((coefficient, scale)) =
-                        row.get_my_decimal(column.index as usize).to_i128_scaled()
-                    {
-                        if state.update_sum_decimal_fast(coefficient, scale) {
-                            continue;
-                        }
-                        state.partial.materialize_sum_fast();
-                    }
-                }
-            }
-            // Final AVG rows carry the partial count in `arg` and the
-            // partial sum in one extra column. Keep that one extra datum on
-            // the stack: allocating a fresh Vec for every partial row is a
-            // measurable cost in TPC-H q17's 1.17M-row inner aggregation.
-            if matches!(f.kind, AggKind::Avg) && f.extra_args.len() == 1 {
-                let value = f
-                    .arg
-                    .as_ref()
-                    .map(|expr| expr.eval(&self.ctx, row))
-                    .transpose()?;
-                let extra = [f.extra_args[0].eval(&self.ctx, row)?];
-                let input = AggInput {
-                    value,
-                    distinct_key: None,
-                    decimal_coefficient: None,
-                };
-                let sort_key = Vec::new();
-                delta += state.update(input.value, &extra, sort_key, input.distinct_key)?;
-                continue;
-            }
-            let mut extra_values: Vec<Datum> = Vec::new();
-            let input = eval_agg_input(f, &self.ctx, row, &mut extra_values)?;
-            // GROUP_CONCAT's own ORDER BY is evaluated over the same source
-            // row that produced the value, so the key travels with it.
-            let mut sort_key = Vec::with_capacity(f.order_by.len());
-            for (expr, _) in &f.order_by {
-                sort_key.push(expr.eval(&self.ctx, row)?);
-            }
-            if let Some((coefficient, scale)) = input.decimal_coefficient {
-                if state.partial_update_with_coefficient(coefficient, scale) {
-                    continue;
-                }
-                let value = Datum::Decimal(Decimal::from_scaled_i128(coefficient, scale));
-                delta += state.update(Some(value), &extra_values, sort_key, input.distinct_key)?;
-                continue;
-            }
-            delta += state.update(input.value, &extra_values, sort_key, input.distinct_key)?;
-        }
-        Ok(delta)
     }
 
     /// Appends group `idx`'s final values to `req`.
@@ -3186,6 +2856,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
     }
 
     fn open(&mut self) -> Result<(), ExecError> {
+        self.parallel_output = None;
         self.child.open()?;
         self.child_chunk.reset();
         self.tmp_chk_for_spill.reset();
@@ -3209,14 +2880,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.num_of_spilled_chks = 0;
         self.offset_of_spilled_chks = 0;
         self.is_child_drained = false;
-        self.parallel_output.clear();
-        self.parallel_output_offset = 0;
-        self.parallel_output_active = false;
         self.pipeline_mode = false;
-        #[cfg(test)]
-        {
-            self.pipeline_concurrency_override = None;
-        }
         #[cfg(test)]
         {
             self.pipeline_stats = None;
@@ -3281,34 +2945,14 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         loop {
-            if self.parallel_output_active {
-                // Go `parallelExec`: `req.SwapColumns(result.chk)` when a
-                // whole result chunk fits the request; otherwise serve it
-                // range by range so the caller's `RequiredRows` holds.
-                while let Some(front) = self.parallel_output.front() {
-                    let remaining = front.num_rows() - self.parallel_output_offset;
-                    let wanted = req.required_rows() - req.num_rows();
-                    if req.num_rows() == 0
-                        && self.parallel_output_offset == 0
-                        && remaining == req.required_rows()
-                    {
-                        let mut chunk = self.parallel_output.pop_front().expect("front");
-                        req.swap_columns(&mut chunk);
-                        return Ok(());
-                    }
-                    let take = remaining.min(wanted);
-                    let begin = self.parallel_output_offset;
-                    req.append_range_from(front, begin, begin + take);
-                    self.parallel_output_offset += take;
-                    if self.parallel_output_offset == front.num_rows() {
-                        self.parallel_output.pop_front();
-                        self.parallel_output_offset = 0;
-                    }
-                    if req.is_full() {
-                        return Ok(());
-                    }
+            if let Some(output) = &mut self.parallel_output {
+                let result = output.next(req, &self.memory);
+                if matches!(result, Ok(true)) {
+                    return Ok(());
                 }
-                self.parallel_output_active = false;
+                output.close(&mut self.truncated);
+                self.parallel_output = None;
+                result?;
                 continue;
             }
             if self.prepared {
@@ -3347,13 +2991,13 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        if let Some(mut output) = self.parallel_output.take() {
+            output.close(&mut self.truncated);
+        }
         self.groups.clear();
         self.group_key_values.clear();
         self.ordered.clear();
         self.group_count = 0;
-        self.parallel_output.clear();
-        self.parallel_output_offset = 0;
-        self.parallel_output_active = false;
         self.pipeline_mode = false;
         #[cfg(test)]
         {
@@ -3401,116 +3045,12 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
 /// values it keeps separate. Go evaluates these inside
 /// `UpdatePartialResult`, per function; this port evaluates them once at the
 /// call site and hands the result to [`AggState::update`].
-/// The cells a fixed-scale DECIMAL AVG folds without a Datum, as Go's
-/// `avgOriginal4Decimal` (partial mode: `EvalDecimal` on the argument) and
-/// `avgPartial4Decimal` (final mode: `EvalInt` on the partial count,
-/// `EvalDecimal` on the partial sum) read them. `None` when the function's
-/// shape is not the bare-column one; `Some(None)` when Go skips the row (a
-/// NULL count or sum); `Some(Some((coefficient, scale, count)))` otherwise.
-fn read_avg_decimal_cells(
-    f: &AggFunc,
-    row: tidb_chunk::row::Row<'_>,
-) -> Option<Option<(i128, u32, i64)>> {
-    if !matches!(f.kind, AggKind::Avg) || f.distinct || !f.order_by.is_empty() {
-        return None;
-    }
-    let (count_column, sum_column) = match f.extra_args.as_slice() {
-        [] => (None, f.arg.as_ref().and_then(Expression::as_column)?),
-        [sum] => (
-            Some(f.arg.as_ref().and_then(Expression::as_column)?),
-            sum.as_column()?,
-        ),
-        _ => return None,
-    };
-    let sum_type = sum_column.get_static_type()?;
-    if sum_type.code() != tidb_datatype::FieldTypeCode::NewDecimal {
-        return None;
-    }
-    let sum_index = usize::try_from(sum_column.index).ok()?;
-    let count = match count_column {
-        None => 1,
-        Some(column) => {
-            let count_type = column.get_static_type()?;
-            if !matches!(
-                count_type.code(),
-                tidb_datatype::FieldTypeCode::Tiny
-                    | tidb_datatype::FieldTypeCode::Short
-                    | tidb_datatype::FieldTypeCode::Int24
-                    | tidb_datatype::FieldTypeCode::Long
-                    | tidb_datatype::FieldTypeCode::LongLong
-            ) {
-                return None;
-            }
-            let index = usize::try_from(column.index).ok()?;
-            if row.is_null(index) {
-                return Some(None);
-            }
-            let bits = row.get_int64(index);
-            if count_type.is_unsigned() {
-                i64::try_from(bits as u64).ok()?
-            } else if bits < 0 {
-                return None;
-            } else {
-                bits
-            }
-        }
-    };
-    if row.is_null(sum_index) {
-        return Some(None);
-    }
-    let (coefficient, scale) = row
-        .chunk()?
-        .column(sum_index)
-        .get_my_decimal_i128_scaled(row.idx())?;
-    Some(Some((coefficient, scale, count)))
-}
-
 fn eval_agg_input<C: Columns>(
     f: &AggFunc,
     ctx: &C,
     row: tidb_chunk::row::Row<'_>,
     extra_values: &mut Vec<Datum>,
 ) -> Result<AggInput, ExecError> {
-    // A non-DISTINCT SUM, MIN or MAX over a bare DECIMAL column reads the raw
-    // MyDecimal words directly and returns the i128 coefficient -- skipping
-    // the Datum materialization whose NewDecimal arm converts via an ASCII
-    // digit round trip (`Decimal::from_my_decimal`). The fold consumes
-    // `decimal_coefficient` without building a `Decimal`.
-    if matches!(f.kind, AggKind::Sum | AggKind::Min | AggKind::Max)
-        && !f.distinct
-        && f.extra_args.is_empty()
-        && f.order_by.is_empty()
-    {
-        if let Some(Expression::Column(column)) = &f.arg {
-            let index = usize::try_from(column.index)
-                .map_err(|_| ExecError::unsupported("a SUM argument column has no valid offset"))?;
-            if !row.is_null(index) {
-                let is_decimal = column
-                    .get_static_type()
-                    .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::NewDecimal);
-                if is_decimal {
-                    if let Some((coefficient, scale)) = row
-                        .chunk()
-                        .expect("row has chunk")
-                        .column(index)
-                        .get_my_decimal_i128_scaled(row.idx())
-                    {
-                        return Ok(AggInput {
-                            value: None,
-                            distinct_key: None,
-                            decimal_coefficient: Some((coefficient, scale)),
-                        });
-                    }
-                }
-            } else {
-                return Ok(AggInput {
-                    value: Some(Datum::Null),
-                    distinct_key: None,
-                    decimal_coefficient: None,
-                });
-            }
-        }
-    }
     let (value, distinct_key) = if f.extra_args.is_empty()
         && !matches!(
             f.kind,
@@ -3617,7 +3157,6 @@ fn eval_agg_input<C: Columns>(
     Ok(AggInput {
         value,
         distinct_key,
-        decimal_coefficient: None,
     })
 }
 
@@ -3912,16 +3451,8 @@ mod tests {
             .pipeline_run_info()
             .expect("Go admits this DISTINCT HashAgg to its parallel pipeline");
         assert_eq!(dispatched, 1);
-        // One chunk is handed to exactly ONE partial worker, by this port and
-        // by Go's `fetchChildData` alike (`parallel.rs`'s one-chunk test pins
-        // `threads == 1`). The pipeline -- not the worker count -- is what
-        // this test proves.
+        // Go starts its configured workers; only one consumes this chunk.
         assert!(workers >= 1);
-        assert_eq!(
-            exec.pipeline_inline_folds(),
-            Some(1),
-            "a single-chunk input is folded on the fetching thread, not a lane"
-        );
         let mut rows = Vec::new();
         loop {
             rows.extend((0..output.num_rows()).map(|index| {
@@ -4517,24 +4048,14 @@ mod tests {
         let (_, _, dispatched, workers) = exec.pipeline_run_info().expect("pipeline ran");
         assert!(dispatched > 0);
         assert!(workers > 1);
-        // The fetcher folds a chunk itself only when the lane it is due to
-        // hand it to has no room, so on a multi-chunk input the lanes must
-        // still do the bulk of the folding. This used to require NO inline
-        // fold at all; that held only while the fetcher blocked on a full
-        // lane, which left its core idle. What matters is unchanged: the
-        // pipeline has not degenerated into a fold on the fetching thread.
-        let inline = exec.pipeline_inline_folds().expect("pipeline ran");
-        assert!(
-            inline < dispatched - inline,
-            "the lanes must fold most of a multi-chunk input, \
-             not the fetching thread ({inline} inline of {dispatched} chunks)"
-        );
+        let (partial, _, _, _) = exec.pipeline_run_info().expect("pipeline ran");
+        assert_eq!(exec.pipeline_input_chunks(), Some(2 * partial));
         exec.close().unwrap();
     }
 
     /// A source that delivers one chunk and, while doing so, raises the
-    /// query's memory kill signal: the fetcher's next `check` then fails with
-    /// that chunk held back, and the chunk's tracker charge must go with it.
+    /// query's memory kill signal: all queued and working chunk owners must
+    /// release their tracker charges when the pipeline drains.
     struct KillAfterFirstChunkSource {
         meta: ExecutorMeta,
         data: Option<Chunk>,
@@ -4576,12 +4097,11 @@ mod tests {
     }
 
     #[test]
-    fn a_cancellation_with_a_held_chunk_releases_its_charge() {
+    fn cancellation_releases_reusable_input_chunk_charges() {
         let field_type = binary_varchar();
         // Values well past the variable-length column's per-element estimate,
         // so filling the source's chunk GROWS it: the charge the fetcher
-        // takes for that chunk is its growth, and a chunk that fits its
-        // preallocation would charge nothing and prove nothing.
+        // updates include allocation growth as well as the initial buffers.
         let values: Vec<Vec<u8>> = (0..64u8).map(|i| vec![b'a' + i % 2; 40]).collect();
         let mut data = Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
         for value in &values {
@@ -4596,7 +4116,7 @@ mod tests {
             }
             assert!(
                 probe.memory_usage() > before,
-                "the held chunk must carry a nonzero charge for the release to be observable"
+                "the input chunk must grow for the release to be observable"
             );
         }
         let mut column = Column::new(1, field_type.clone());
@@ -4622,14 +4142,13 @@ mod tests {
         let outcome = exec.open().and_then(|()| exec.next(&mut output));
         assert!(
             matches!(outcome, Err(ExecError::MemoryExceedForQuery { .. })),
-            "the kill signal raised while the first chunk was held must surface: {outcome:?}"
+            "the kill signal raised while filling the first input must surface: {outcome:?}"
         );
-        // The operator's own tracker, before `close` detaches it: the held
-        // chunk's charge must already be gone.
+        // All input and work buffers are released before Close detaches the tracker.
         assert_eq!(
             exec.tracker.bytes_consumed(),
             0,
-            "the held chunk's charge must be released with the chunk"
+            "all reusable chunk charges must be released"
         );
         exec.close().unwrap();
     }
@@ -4936,6 +4455,7 @@ mod tests {
         for (label, field_type, values) in [
             ("signed", signed.clone(), vec![Some(3_i64), None, Some(4)]),
             ("unsigned", unsigned.clone(), vec![Some(7_i64), Some(0)]),
+            ("unsigned overflow", unsigned.clone(), vec![Some(-1_i64)]),
             ("all null", signed.clone(), vec![None, None]),
         ] {
             let mut chunk = Chunk::new_with_capacity(&[field_type.clone()], values.len());
@@ -4949,17 +4469,15 @@ mod tests {
             let func = AggFunc::new(AggKind::FinalCount, Some(typed_col(0, field_type.clone())));
             let mut fast = AggState::new(&func);
             let mut exact = AggState::new(&func);
+            let mode = AggInputMode::new(&func);
+            assert!(matches!(mode, AggInputMode::FinalCount { .. }));
+            // Selection order and repeated physical rows must not become
+            // indices into the packed column themselves.
+            chunk.set_sel(Some(vec![values.len() - 1, 0, values.len() - 1]));
+            let bound = mode.bind(&chunk);
             for index in 0..chunk.num_rows() {
                 let row = chunk.get_row(index);
-                let cell = read_final_count_cell(&func, row)
-                    .unwrap_or_else(|| panic!("{label}: an integer column must be readable"));
-                match cell {
-                    None => {}
-                    Some(value) => assert!(
-                        fast.update_final_count_fast(value),
-                        "{label}: the fast path must take an integer partial count"
-                    ),
-                }
+                let actual = bound.update(&func, &NoColumns, &mut fast, row);
                 // The datum path, as `Partial::update` sees it.
                 let datum = if row.is_null(0) {
                     Datum::Null
@@ -4968,9 +4486,12 @@ mod tests {
                 } else {
                     Datum::Int(row.get_int64(0))
                 };
-                exact
-                    .update(Some(datum), &[], Vec::new(), None)
-                    .expect("the datum path accepts the cell");
+                let expected = exact.update(Some(datum), &[], Vec::new(), None);
+                assert_eq!(
+                    actual.map_err(|error| format!("{error:?}")),
+                    expected.map_err(|error| format!("{error:?}")),
+                    "{label}: cell updates and overflow errors must agree"
+                );
             }
             assert_eq!(
                 fast.partial.finish(&[], 4).unwrap(),
@@ -4985,7 +4506,7 @@ mod tests {
         let mut chunk = Chunk::new_with_capacity(&[text], 1);
         chunk.append_bytes(0, b"3");
         assert!(
-            read_final_count_cell(&func, chunk.get_row(0)).is_none(),
+            matches!(AggInputMode::new(&func), AggInputMode::Expression),
             "a non-integer partial count must not be read as a cell"
         );
     }

@@ -467,24 +467,9 @@ pub(crate) fn cluster_commit_error(
 pub struct QueryResult<'a> {
     source: BoxedResultSetSource<'a>,
     cursor_materialization: Option<CursorMaterializationAuthority>,
-    /// The count the result set's EOF packets carry (Go `writeEOF` reading
-    /// `ctx.WarningCount()`).
-    ///
-    /// Go re-reads the session at each `writeEOF`; here the result holds the
-    /// session's mutable borrow for as long as it is being written, so the
-    /// session hands the count over with the result. A session that produces
-    /// its rows eagerly -- which is every session that has a warning buffer
-    /// today -- has already finished warning by then, so the two agree.
+    /// Fallback values for eager sources. Lazy sources supply live statement
+    /// state at each metadata/terminal boundary through ResultSetSource.
     warnings: u16,
-    /// The status word the result set's EOF packets carry (Go
-    /// `status := cc.ctx.Status()` in `pkg/server/conn.go`, threaded into
-    /// `writeResultSet` -> `writeEOF`).
-    ///
-    /// Go snapshots the status once, right after the statement finished and
-    /// before the first byte of the result set goes out; this holds that same
-    /// snapshot, taken by the session at the same moment, because the result
-    /// holds the session's mutable borrow while it is being written and
-    /// nothing can change the transaction state under it in the meantime.
     status: WireStatus,
     /// Statement affected-row value carried by a deprecated-EOF OK packet.
     affected_rows: u64,
@@ -860,31 +845,41 @@ impl<'a> QueryResult<'a> {
     /// The status word for the EOF packets that frame this result set.
     #[must_use]
     pub fn wire_status(&self) -> WireStatus {
-        self.status
+        self.source
+            .statement_status()
+            .map_or(self.status, |state| state.status)
     }
 
     /// The warning count for the EOF packets that frame this result set.
     #[must_use]
     pub fn warning_count(&self) -> u16 {
-        self.warnings
+        self.source
+            .statement_status()
+            .map_or(self.warnings, |state| state.warnings)
     }
 
     /// Statement affected rows preserved for deprecated-EOF framing.
     #[must_use]
-    pub const fn affected_rows(&self) -> u64 {
-        self.affected_rows
+    pub fn affected_rows(&self) -> u64 {
+        self.source
+            .statement_status()
+            .map_or(self.affected_rows, |state| state.affected_rows)
     }
 
     /// Statement last insert id preserved for deprecated-EOF framing.
     #[must_use]
-    pub const fn last_insert_id(&self) -> u64 {
-        self.last_insert_id
+    pub fn last_insert_id(&self) -> u64 {
+        self.source
+            .statement_status()
+            .map_or(self.last_insert_id, |state| state.last_insert_id)
     }
 
     /// Statement info preserved for deprecated-EOF framing.
     #[must_use]
     pub fn info(&self) -> &[u8] {
-        &self.info
+        self.source
+            .statement_status()
+            .map_or(&self.info, |state| state.info)
     }
 
     /// Returns the sole mutable result-set owner.
@@ -940,6 +935,22 @@ struct ProcessTrackedResultSet<'a> {
 }
 
 impl ResultSetSource for ProcessTrackedResultSet<'_> {
+    fn statement_status(&self) -> Option<crate::resultset_source::StatementStatus<'_>> {
+        self.inner.statement_status()
+    }
+    fn new_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        self.inner.new_chunk()
+    }
+    fn next_chunk(
+        &mut self,
+        chunk: &mut tidb_chunk::chunk::Chunk,
+    ) -> Result<(), tidb_executor::MysqlError> {
+        self.inner.next_chunk(chunk)
+    }
+    fn field_types(&self) -> &[tidb_datatype::FieldType] {
+        self.inner.field_types()
+    }
+
     fn next_batch(
         &mut self,
         max_rows: usize,
@@ -984,6 +995,22 @@ pub struct BoxedResultSetSource<'a> {
 }
 
 impl ResultSetSource for BoxedResultSetSource<'_> {
+    fn statement_status(&self) -> Option<crate::resultset_source::StatementStatus<'_>> {
+        self.inner.statement_status()
+    }
+    fn new_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        self.inner.new_chunk()
+    }
+    fn next_chunk(
+        &mut self,
+        chunk: &mut tidb_chunk::chunk::Chunk,
+    ) -> Result<(), tidb_executor::MysqlError> {
+        self.inner.next_chunk(chunk)
+    }
+    fn field_types(&self) -> &[tidb_datatype::FieldType] {
+        self.inner.field_types()
+    }
+
     fn next_batch(
         &mut self,
         max_rows: usize,

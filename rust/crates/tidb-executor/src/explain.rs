@@ -18,9 +18,6 @@
 //! `EXPLAIN ANALYZE` attaches row counters while draining that executor tree;
 //! plain `EXPLAIN` only renders it and never executes the target statement.
 
-use std::cell::Cell;
-use std::rc::Rc;
-
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_planner::access::{AccessObject, IndexAccess, OtherAccessObject, ScanAccessObject};
@@ -1345,6 +1342,16 @@ fn physical_explain_operator(
     if let Some(rows) = runtime_rows(plan, runtime) {
         operator = operator.with_actual_rows(rows);
     }
+    // A local fallback for a cop plan is not a TiKV timing measurement.
+    // Only publish the runtime of the actual root executor at this seam.
+    if matches!(operator.task, ExplainTask::Root) {
+        if let Some(info) = runtime
+            .and_then(|stats| stats.get(&crate::driver::physical_builder::runtime_plan_key(plan)))
+            .and_then(|counter| counter.execution_info())
+        {
+            operator = operator.with_execution_info(info);
+        }
+    }
     operator
 }
 
@@ -2008,7 +2015,7 @@ pub fn explain_analyze_insert_stmt(
         Some(&mut physical),
         Some(&mut runtime),
     )?;
-    runtime.insert(root_key, Rc::new(Cell::new(0)));
+    runtime.insert(root_key, crate::executor::RowCount::default().into());
     render_physical_plan(&physical, catalog, format, true, Some(&runtime), &[])
 }
 
@@ -2100,7 +2107,7 @@ pub fn explain_analyze_update_stmt(
         Some(&mut physical),
         Some(&mut runtime),
     )?;
-    runtime.insert(root_key, Rc::new(Cell::new(0)));
+    runtime.insert(root_key, crate::executor::RowCount::default().into());
     render_physical_plan(&physical, catalog, format, true, Some(&runtime), &[])
 }
 
@@ -2135,7 +2142,7 @@ pub fn explain_analyze_delete_stmt(
         Some(&mut physical),
         Some(&mut runtime),
     )?;
-    runtime.insert(root_key, Rc::new(Cell::new(0)));
+    runtime.insert(root_key, crate::executor::RowCount::default().into());
     render_physical_plan(&physical, catalog, format, true, Some(&runtime), &[])
 }
 

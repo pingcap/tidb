@@ -13,9 +13,9 @@
 // limitations under the License.
 
 //! `pkg/executor/explain_test.go` on the Rust side: the one plain-EXPLAIN
-//! format contract this tier can run, plus the EXPLAIN ANALYZE runtime-column
-//! tests that remain gaps because `crate::explain` renders `N/A` execution
-//! info (the port's documented placeholder for counters it never collects).
+//! format contract this tier can run. Root EXPLAIN ANALYZE time and loop
+//! counters are exercised by tidb-session's explain tests; coprocessor timing,
+//! memory and disk columns remain uncollected at this seam.
 
 use tidb_ast::{QueryStmt, Stmt};
 use tidb_parser;

@@ -161,18 +161,6 @@ impl JoinOutput {
         Self::finish(req, 1);
     }
 
-    pub(super) fn chunk_datum(
-        &self,
-        req: &mut Chunk,
-        outer_left: bool,
-        outer: Row<'_>,
-        inner: &[Datum],
-    ) {
-        self.chunk_side(req, outer_left, outer);
-        self.datum_side(req, !outer_left, inner);
-        Self::finish(req, 1);
-    }
-
     pub(super) fn chunks(&self, req: &mut Chunk, probe_left: bool, probe: Row<'_>, build: Row<'_>) {
         self.chunk_side(req, probe_left, probe);
         self.chunk_side(req, !probe_left, build);

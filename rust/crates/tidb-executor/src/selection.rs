@@ -255,7 +255,7 @@ impl FastSelectionFilter {
     }
 }
 
-impl<C: Columns> Executor for SelectionExec<C> {
+impl<C: Columns + Send> Executor for SelectionExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         self.release_child_chunk();
         self.child.open()?;

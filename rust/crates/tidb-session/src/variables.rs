@@ -1380,9 +1380,9 @@ impl Session {
     /// session variable for the duration of THIS statement only, and where
     /// the same name appears twice the FIRST occurrence wins.
     ///
-    /// The snapshot goes on [`Session::set_var_hint_restore`], which
-    /// [`Session::run_with_columns`] puts back once the statement is over --
-    /// so a statement that FAILS restores the overlay too, as Go's does.
+    /// The snapshot goes on [`Session::set_var_hint_restore`]. The next
+    /// statement boundary restores it, as Go's `ResetContextOfStmt` does,
+    /// including after an execution error.
     ///
     pub(crate) fn apply_set_var_hints(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
         let Some(hints) = statement_hints(stmt) else {

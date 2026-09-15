@@ -66,7 +66,7 @@ impl<C: Columns> ExpandExec<C> {
     }
 }
 
-impl<C: Columns> Executor for ExpandExec<C> {
+impl<C: Columns + Send> Executor for ExpandExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         self.child.open()?;
         self.input.reset();

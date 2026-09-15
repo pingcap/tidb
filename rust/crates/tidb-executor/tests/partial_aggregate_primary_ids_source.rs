@@ -155,6 +155,8 @@ fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<PushdownScanRequest>>
         &tidb_executor::StmtContext::default(),
         &SessionTimeZone::default(),
         &PushdownStatementContext::default(),
+        false,
+        false,
     );
     assert!(
         opened.unwrap().is_none(),

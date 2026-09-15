@@ -357,19 +357,24 @@ fn test_get_correct_result() {
 #[test]
 fn test_fall_back_action() {
     let dir = scratch_temp_dir("hashagggate");
-
-    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42)
-        .with_spill_storage(test_storage(&dir))
-        .with_tmp_storage_on_oom(false);
-    let mut exec = grouped(&interleaved_rows(), 64, memory);
-    exec.open().unwrap();
-    let mut req = exec.new_chunk();
-    match exec.next(&mut req) {
-        Err(ExecError::MemoryExceedForQuery { conn_id }) => assert_eq!(conn_id, 42),
-        other => panic!("expected 8175 with tmp storage disabled, got {other:?}"),
+    let rows = interleaved_rows();
+    // Even one copy of the 2000 groups exceeds this quota under Go's
+    // partial-result accounting; cancellation must not depend on how many
+    // lanes happen to duplicate groups. A single input chunk is folded only
+    // after the fetcher has already observed EOF.
+    for batch in [64, rows.len()] {
+        let memory = StatementMemory::new(1 << 18, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir))
+            .with_tmp_storage_on_oom(false);
+        let mut exec = grouped(&rows, batch, memory);
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        match exec.next(&mut req) {
+            Err(ExecError::MemoryExceedForQuery { conn_id }) => assert_eq!(conn_id, 42),
+            other => panic!("expected 8175 with batch {batch}, got {other:?}"),
+        }
+        assert!(spill_files_in(&dir).is_empty(), "no file may be written");
     }
-    assert!(spill_files_in(&dir).is_empty(), "no file may be written");
-    drop(exec);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

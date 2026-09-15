@@ -275,6 +275,8 @@ mod from;
 mod index_usage_reporter;
 pub mod infoschema_meta;
 mod multi_dml;
+mod record_set;
+pub use record_set::QueryRecordSet;
 pub(crate) mod params;
 pub(crate) mod physical_builder;
 pub(crate) mod planner_bridge;
@@ -297,9 +299,6 @@ pub(crate) use subquery::*;
 pub(crate) use write_cast::*;
 
 pub use errors::{DriverError, MysqlError, SchemaErrorKind, TxnErrorKind, VarErrorKind};
-
-const INIT_CAP: usize = 1;
-const MAX_CHUNK_SIZE: usize = 1024;
 
 /// Parses and runs a `FROM`-less `SELECT`, returning its rows as `Datum`s.
 pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -435,10 +434,7 @@ pub(crate) fn run_query_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
-    validate_query_sequence_names(query, ctx)?;
-    set_opr::validate_query_usage(query, ctx)?;
-    let mut physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
-    physical_builder::execute_query(query, &mut physical, catalog, ctx)
+    open_query_meta_stmt_with_physical(query, None, catalog, current_db, ctx)?.collect()
 }
 
 /// Go `planner.optimize`: try the complete fast physical plan first, then
@@ -708,10 +704,26 @@ pub fn run_query_meta_stmt_with_physical(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
+    open_query_meta_stmt_with_physical(query, physical, catalog, current_db, ctx)?.collect()
+}
+
+/// Opens a fresh or cache-rebuilt query without draining its result. The
+/// statement owner retains its snapshot until this record set finishes.
+pub fn open_query_meta_stmt_with_physical(
+    query: &QueryStmt,
+    physical: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<QueryRecordSet, DriverError> {
     validate_query_sequence_names(query, ctx)?;
     match physical {
-        Some(physical) => physical_builder::execute_query(query, physical, catalog, ctx),
-        None => run_query_stmt(query, catalog, current_db, ctx),
+        Some(physical) => physical_builder::open_query(query, physical, catalog, ctx),
+        None => {
+            set_opr::validate_query_usage(query, ctx)?;
+            let mut physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
+            physical_builder::open_query(query, &mut physical, catalog, ctx)
+        }
     }
 }
 
@@ -839,30 +851,6 @@ pub fn plan_select_meta_stmt(
     let physical = planner_bridge::physical_select_plan(select, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)?;
     physical_builder::planned_result_columns(select, &physical)
-}
-
-/// Opens a finished physical executor tree, drains every row, and closes it.
-fn drain_root_executor(
-    mut root: Box<dyn Executor>,
-    columns: Vec<(String, FieldType)>,
-    ctx: &crate::StmtContext,
-) -> Result<SelectMeta, DriverError> {
-    let ret_types: Vec<FieldType> = columns.iter().map(|(_, ty)| ty.clone()).collect();
-    root.open()?;
-    let mut req = root.new_chunk();
-    let mut rows: Vec<Vec<Datum>> = Vec::new();
-    loop {
-        next_executor(root.as_mut(), &mut req, &ctx.statement_memory())?;
-        let n = req.num_rows();
-        if n == 0 {
-            break;
-        }
-        for r in 0..n {
-            rows.push(req.get_row(r).get_datum_row(&ret_types));
-        }
-    }
-    root.close()?;
-    Ok((columns, rows))
 }
 
 /// Go turns a subquery's result `Datum` into an `expression.Constant`; the

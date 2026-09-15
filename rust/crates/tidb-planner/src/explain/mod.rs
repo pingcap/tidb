@@ -203,6 +203,8 @@ pub struct ExplainOperator {
     pub estimated_rows: Option<f64>,
     /// Rows produced by this physical operator during `EXPLAIN ANALYZE`.
     pub actual_rows: Option<u64>,
+    /// Collected runtime information; absent when this operator was not metered.
+    pub execution_info: Option<String>,
     /// Task in which the operator executes.
     pub task: ExplainTask,
     /// Table, index, partition, or other accessed object.
@@ -223,6 +225,7 @@ impl ExplainOperator {
             label: String::new(),
             estimated_rows: None,
             actual_rows: None,
+            execution_info: None,
             task: ExplainTask::Root,
             access_object: None,
             operator_info: String::new(),
@@ -241,6 +244,13 @@ impl ExplainOperator {
     #[must_use]
     pub const fn with_actual_rows(mut self, rows: u64) -> Self {
         self.actual_rows = Some(rows);
+        self
+    }
+
+    /// Sets runtime information collected while executing this operator.
+    #[must_use]
+    pub fn with_execution_info(mut self, info: impl Into<String>) -> Self {
+        self.execution_info = Some(info.into());
         self
     }
 
@@ -474,7 +484,10 @@ fn render_operator(
                 .access_object
                 .as_ref()
                 .map_or_else(String::new, ToString::to_string),
-            "N/A".to_owned(),
+            operator
+                .execution_info
+                .clone()
+                .unwrap_or_else(|| "N/A".to_owned()),
             operator.operator_info.clone(),
             "N/A".to_owned(),
             "N/A".to_owned(),

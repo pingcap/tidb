@@ -192,14 +192,14 @@ impl OuterCursor {
 ///
 /// The values are the outer row's cells, in outer-schema order; the callback
 /// binds the correlated columns from them and runs the inner query.
-pub type InnerRunner = Box<dyn FnMut(&[Datum]) -> Result<Datum, ExecError>>;
+pub type InnerRunner = Box<dyn FnMut(&[Datum]) -> Result<Datum, ExecError> + Send>;
 
 /// Produces one outer row's whole inner relation, row by row.
 ///
 /// This is the multi-row, multi-column counterpart of [`InnerRunner`]: a
 /// `LATERAL` derived table is a relation per outer row, not a value per outer
 /// row. Each returned row must have the inner relation's fixed width.
-pub type LateralRunner = Box<dyn FnMut(&[Datum]) -> Result<Vec<Vec<Datum>>, ExecError>>;
+pub type LateralRunner = Box<dyn FnMut(&[Datum]) -> Result<Vec<Vec<Datum>>, ExecError> + Send>;
 
 struct LateralPending {
     outer: Vec<Datum>,
@@ -393,7 +393,7 @@ impl<C: Columns> NestedLoopApplyExec<C> {
     }
 }
 
-impl<C: Columns> Executor for NestedLoopApplyExec<C> {
+impl<C: Columns + Send> Executor for NestedLoopApplyExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         self.release_pending_inner();
         self.release_cache();
@@ -899,8 +899,7 @@ fn datum_bytes(value: &Datum) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
-    use std::rc::Rc;
+    use crate::executor::RowCount;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
 
@@ -1000,8 +999,8 @@ mod tests {
 
     #[test]
     fn repeated_correlated_values_reuse_the_inner_result() {
-        let calls = Rc::new(Cell::new(0));
-        let runner_calls = Rc::clone(&calls);
+        let calls = RowCount::default();
+        let runner_calls = calls.clone();
         let mut apply = ApplyExec::new(
             ExecutorMeta::new(schema_of(2), 1, 8, 8),
             Box::new(Rows::ints(vec![7, 7])),
@@ -1032,8 +1031,8 @@ mod tests {
 
     #[test]
     fn zero_apply_cache_quota_runs_every_inner_lookup() {
-        let calls = Rc::new(Cell::new(0));
-        let runner_calls = Rc::clone(&calls);
+        let calls = RowCount::default();
+        let runner_calls = calls.clone();
         let mut apply = ApplyExec::new(
             ExecutorMeta::new(schema_of(2), 1, 8, 8),
             Box::new(Rows::ints(vec![7, 7])),
@@ -1056,8 +1055,8 @@ mod tests {
 
     #[test]
     fn apply_cache_key_contains_only_correlated_columns() {
-        let calls = Rc::new(Cell::new(0));
-        let runner_calls = Rc::clone(&calls);
+        let calls = RowCount::default();
+        let runner_calls = calls.clone();
         let mut apply = ApplyExec::new(
             ExecutorMeta::new(schema_of(3), 1, 8, 8),
             Box::new(Rows::new(vec![
@@ -1228,8 +1227,8 @@ mod tests {
 
     #[test]
     fn repeated_lateral_keys_reuse_the_inner_relation_without_reordering_rows() {
-        let calls = Rc::new(Cell::new(0));
-        let runner_calls = Rc::clone(&calls);
+        let calls = RowCount::default();
+        let runner_calls = calls.clone();
         let mut apply = LateralApplyExec::new(
             ExecutorMeta::new(schema_of(2), 1, 8, 8),
             Box::new(Rows::ints(vec![7, 7])),

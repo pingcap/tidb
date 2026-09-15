@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use crate::{DriverError, Session, StatementKind, StmtOutput};
+use crate::{DriverError, Session, StatementKind};
 
 /// The statement context's SESSION-VARIABLE half, parsed once per
 /// variable-table generation instead of once per statement.
@@ -1062,8 +1062,13 @@ impl Session {
             ddl_sql_mode: sql_mode.0,
         };
         if !is_dml {
-            let mut ctx =
-                tidb_executor::StmtContext::for_query_with_session(statement_memory, session_state)
+            return tidb_executor::StmtContext::for_query_with_session(
+                statement_memory,
+                session_state,
+            )
+            .configure(|ctx| {
+                let _ = ctx
+                    .with_executor_chunk_sizes(snapshot.init_chunk_size, snapshot.max_chunk_size)
                     // A read's error levels do not depend on the mode, but DDL
                     // takes this same context and Go's DDL checks DO read
                     // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
@@ -1080,6 +1085,11 @@ impl Session {
                     .with_index_lookup_push_down_session(index_lookup_push_down_session)
                     .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
                     .with_optimizer_cost_env(optimizer_cost_env.clone())
+                    .with_enable_vectorized_expression(
+                        self.vars
+                            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_VECTORIZED_EXPRESSION)
+                            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON")),
+                    )
                     .with_hashagg_concurrency(
                         hashagg_partial_concurrency,
                         hashagg_final_concurrency,
@@ -1164,129 +1174,137 @@ impl Session {
                             .unwrap_or(tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64),
                     )
                     .with_lazy_clock(snapshot.timestamp, zone);
-            if let Some(latest_index_schema) = latest_index_schema {
-                ctx = ctx.with_latest_index_schema(latest_index_schema);
-            }
-            if let Some(parameters) = &self.prepared_params {
-                ctx = ctx.with_prepared_params(Arc::clone(parameters));
-            }
-            return ctx;
+                if let Some(latest_index_schema) = latest_index_schema {
+                    let _ = ctx.with_latest_index_schema(latest_index_schema);
+                }
+                if let Some(parameters) = &self.prepared_params {
+                    let _ = ctx.with_prepared_params(Arc::clone(parameters));
+                }
+            });
         }
         let (increment, offset) = self.auto_increment_step();
-        let mut ctx = tidb_executor::StmtContext::for_dml_with_session(
+        tidb_executor::StmtContext::for_dml_with_session(
             sql_mode.has_error_for_division_by_zero_mode(),
             sql_mode.has_strict_mode(),
             ignore_err,
             statement_memory,
             session_state,
         )
-        .with_date_modes(date_modes)
-        .with_string_type_flags(string_type_flags)
-        .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
-        .with_brief_binary_plan(!self.binary_prepared_execution)
-        .with_allow_write_row_id(allow_write_row_id)
-        .with_only_full_group_by(sql_mode.has_only_full_group_by())
-        .with_new_only_full_group_by_check(new_only_full_group_by_check)
-        .with_auto_increment_in_generated(snapshot.auto_increment_in_generated)
-        .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
-        .with_session_state(current_db, version)
-        .with_user(self.current_user.clone(), self.login_user.clone())
-        .with_global_sysvar_accessor(global_sysvar_accessor)
-        .with_active_roles(
-            self.current_user
-                .as_ref()
-                .map(|_| Arc::clone(&self.active_roles)),
-        )
-        .with_connection_id(self.connection_id)
-        .with_selected_lock_keys(self.selected_lock_keys.clone())
-        .with_rand_session(Arc::clone(&self.rand))
-        .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
-        .with_user_vars(Arc::clone(&self.user_vars))
-        .with_previous_statement(self.last_insert_id, self.prev_row_count)
-        .with_last_found_rows(self.last_found_rows)
-        .with_client_found_rows(self.client_found_rows)
-        .with_week_and_division_scale(week_format, div_scale)
-        .with_max_allowed_packet(max_allowed_packet)
-        .with_group_concat_max_len(group_concat_max_len)
-        .with_apply_cache_capacity(apply_cache_capacity)
-        .with_block_encryption_mode(block_encryption_mode)
-        .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
-        .with_sysdate_is_now(sysdate_is_now)
-        .with_replica_read(tidb_executor::ReplicaReadType::Leader)
-        .with_lazy_clock(snapshot.timestamp, zone)
-        .with_sql_mode(snapshot.scanner_sql_mode)
-        .with_ddl_job_context(
-            snapshot.ddl_cdc_write_source,
-            snapshot.ddl_reorg_priority,
-            snapshot.ddl_session_alias.clone(),
-            Vec::new(),
-        )
-        .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
-        .with_like_default_escape(like_default_escape)
-        .with_default_string_match_selectivity(default_string_match_selectivity)
-        .with_selectivity_factor(selectivity_factor)
-        .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
-        .with_stats_load_policy(
-            stats_load_sync_wait_ms,
-            stats_load_pseudo_timeout,
-            max_execution_time_ms,
-        )
-        .with_plan_replayer_capture(plan_replayer_capture_enabled)
-        .with_column_stats_usage(self.stats_collector.clone())
-        .with_index_usage_collector(index_usage_collector)
-        .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
-        .with_opt_index_prune_threshold(opt_index_prune_threshold)
-        .with_range_max_size(range_max_size)
-        .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
-        .with_always_keep_join_key(always_keep_join_key)
-        .with_enable_unsafe_substitute(enable_unsafe_substitute)
-        .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
-        .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
-        .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
-        .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
-        .with_enable_mview(enable_mview)
-        .with_query_cop_store_limiter(tidb_txnkv::new_query_cop_store_limiter(
-            self.vars.query_cop_store_limit() as isize,
-        ))
-        .with_auto_increment_step(increment, offset)
-        .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
-        .with_foreign_key_checks(self.foreign_key_checks())
-        .with_enable_check_constraint(self.enable_check_constraint())
-        .with_constraint_check_in_place(constraint_check_in_place)
-        // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
-        // (`pkg/executor/insert.go:331-337,347-350`): normal INSERT uses
-        // `DupKeyCheckLazy` whenever constraint checks are disabled OR the
-        // statement transaction is pessimistic. The Go auto-commit path still
-        // opens a pessimistic transaction under the default `tidb_txn_mode`,
-        // so the Rust context must carry that mode before `Txn()` is opened.
-        .with_pessimistic_lazy_dup_check(
-            self.statement_txn_mode().is_pessimistic()
-                && self.connection_id.is_some_and(|id| id > 0),
-        )
-        .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
-        .with_cte_max_recursion_depth(cte_depth)
-        .with_join_reorder_threshold(join_reorder_threshold)
-        .with_advanced_join_reorder(advanced_join_reorder)
-        .with_allow_agg_push_down(allow_agg_push_down)
-        .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
-        .with_projection_push_down(allow_projection_push_down)
-        .with_limit_push_down_threshold(limit_push_down_threshold)
-        .with_index_lookup_push_down_session(index_lookup_push_down_session)
-        .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
-        .with_optimizer_cost_env(optimizer_cost_env)
-        .with_hashagg_concurrency(hashagg_partial_concurrency, hashagg_final_concurrency)
-        .with_join_reorder_through_proj(join_reorder_through_proj)
-        .with_join_reorder_through_sel(join_reorder_through_sel)
-        .with_outer_join_reorder(outer_join_reorder)
-        .with_index_merge(index_merge)
-        .with_static_partition_prune(static_partition_prune);
-        if let Some(parameters) = &self.prepared_params {
-            ctx = ctx.with_prepared_params(Arc::clone(parameters));
-        }
-        if let Some(latest_index_schema) = latest_index_schema {
-            ctx = ctx.with_latest_index_schema(latest_index_schema);
-        }
-        ctx
+        .configure(|ctx| {
+            let _ = ctx
+                .with_executor_chunk_sizes(snapshot.init_chunk_size, snapshot.max_chunk_size)
+                .with_date_modes(date_modes)
+                .with_string_type_flags(string_type_flags)
+                .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
+                .with_brief_binary_plan(!self.binary_prepared_execution)
+                .with_allow_write_row_id(allow_write_row_id)
+                .with_only_full_group_by(sql_mode.has_only_full_group_by())
+                .with_new_only_full_group_by_check(new_only_full_group_by_check)
+                .with_auto_increment_in_generated(snapshot.auto_increment_in_generated)
+                .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
+                .with_session_state(current_db, version)
+                .with_user(self.current_user.clone(), self.login_user.clone())
+                .with_global_sysvar_accessor(global_sysvar_accessor)
+                .with_active_roles(
+                    self.current_user
+                        .as_ref()
+                        .map(|_| Arc::clone(&self.active_roles)),
+                )
+                .with_connection_id(self.connection_id)
+                .with_selected_lock_keys(self.selected_lock_keys.clone())
+                .with_rand_session(Arc::clone(&self.rand))
+                .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
+                .with_user_vars(Arc::clone(&self.user_vars))
+                .with_previous_statement(self.last_insert_id, self.prev_row_count)
+                .with_last_found_rows(self.last_found_rows)
+                .with_client_found_rows(self.client_found_rows)
+                .with_week_and_division_scale(week_format, div_scale)
+                .with_max_allowed_packet(max_allowed_packet)
+                .with_group_concat_max_len(group_concat_max_len)
+                .with_apply_cache_capacity(apply_cache_capacity)
+                .with_block_encryption_mode(block_encryption_mode)
+                .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
+                .with_sysdate_is_now(sysdate_is_now)
+                .with_replica_read(tidb_executor::ReplicaReadType::Leader)
+                .with_lazy_clock(snapshot.timestamp, zone)
+                .with_sql_mode(snapshot.scanner_sql_mode)
+                .with_ddl_job_context(
+                    snapshot.ddl_cdc_write_source,
+                    snapshot.ddl_reorg_priority,
+                    snapshot.ddl_session_alias.clone(),
+                    Vec::new(),
+                )
+                .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
+                .with_like_default_escape(like_default_escape)
+                .with_default_string_match_selectivity(default_string_match_selectivity)
+                .with_selectivity_factor(selectivity_factor)
+                .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
+                .with_stats_load_policy(
+                    stats_load_sync_wait_ms,
+                    stats_load_pseudo_timeout,
+                    max_execution_time_ms,
+                )
+                .with_plan_replayer_capture(plan_replayer_capture_enabled)
+                .with_column_stats_usage(self.stats_collector.clone())
+                .with_index_usage_collector(index_usage_collector)
+                .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
+                .with_opt_index_prune_threshold(opt_index_prune_threshold)
+                .with_range_max_size(range_max_size)
+                .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
+                .with_always_keep_join_key(always_keep_join_key)
+                .with_enable_unsafe_substitute(enable_unsafe_substitute)
+                .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+                .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
+                .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
+                .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
+                .with_enable_mview(enable_mview)
+                .with_query_cop_store_limiter(tidb_txnkv::new_query_cop_store_limiter(
+                    self.vars.query_cop_store_limit() as isize,
+                ))
+                .with_auto_increment_step(increment, offset)
+                .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
+                .with_foreign_key_checks(self.foreign_key_checks())
+                .with_enable_check_constraint(self.enable_check_constraint())
+                .with_constraint_check_in_place(constraint_check_in_place)
+                // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
+                // (`pkg/executor/insert.go:331-337,347-350`): normal INSERT uses
+                // `DupKeyCheckLazy` whenever constraint checks are disabled OR the
+                // statement transaction is pessimistic. The Go auto-commit path still
+                // opens a pessimistic transaction under the default `tidb_txn_mode`,
+                // so the Rust context must carry that mode before `Txn()` is opened.
+                .with_pessimistic_lazy_dup_check(
+                    self.statement_txn_mode().is_pessimistic()
+                        && self.connection_id.is_some_and(|id| id > 0),
+                )
+                .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
+                .with_cte_max_recursion_depth(cte_depth)
+                .with_join_reorder_threshold(join_reorder_threshold)
+                .with_advanced_join_reorder(advanced_join_reorder)
+                .with_allow_agg_push_down(allow_agg_push_down)
+                .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
+                .with_projection_push_down(allow_projection_push_down)
+                .with_limit_push_down_threshold(limit_push_down_threshold)
+                .with_index_lookup_push_down_session(index_lookup_push_down_session)
+                .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
+                .with_optimizer_cost_env(optimizer_cost_env)
+                .with_enable_vectorized_expression(
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_VECTORIZED_EXPRESSION)
+                        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON")),
+                )
+                .with_hashagg_concurrency(hashagg_partial_concurrency, hashagg_final_concurrency)
+                .with_join_reorder_through_proj(join_reorder_through_proj)
+                .with_join_reorder_through_sel(join_reorder_through_sel)
+                .with_outer_join_reorder(outer_join_reorder)
+                .with_index_merge(index_merge)
+                .with_static_partition_prune(static_partition_prune);
+            if let Some(parameters) = &self.prepared_params {
+                let _ = ctx.with_prepared_params(Arc::clone(parameters));
+            }
+            if let Some(latest_index_schema) = latest_index_schema {
+                let _ = ctx.with_latest_index_schema(latest_index_schema);
+            }
+        })
     }
 
     /// Go `SessionVars.ForeignKeyChecks`, read off `@@foreign_key_checks`.
@@ -1373,7 +1391,10 @@ impl Session {
     /// [`Session::statement_insert_id`]'s own fallback off the same
     /// publication -- so the function and the wire can differ only where Go
     /// itself makes them differ.
-    pub(crate) fn publish_statement_status(&mut self, result: &Result<StmtOutput, DriverError>) {
+    pub(crate) fn publish_statement_status(
+        &mut self,
+        result: &Result<crate::record_set::StatementCompletion, DriverError>,
+    ) {
         // The publication outlives a failing statement, exactly as Go's
         // `StmtCtx.LastInsertID` does: `SELECT LAST_INSERT_ID(17), bad()`
         // fails and still moves the id (captured).
@@ -1384,8 +1405,8 @@ impl Session {
         {
             self.last_insert_id = published;
         }
-        if let Ok(StmtOutput::Rows { rows, .. }) = result {
-            self.last_found_rows = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+        if let Ok(crate::record_set::StatementCompletion::Rows(Some(rows))) = result {
+            self.last_found_rows = *rows;
         }
         self.prev_row_count = match self.statement_kind {
             StatementKind::Select => -1,
@@ -1393,7 +1414,9 @@ impl Session {
             // leaves at whatever it managed to apply -- 0 for a statement
             // that never reached a row.
             StatementKind::Dml => match result {
-                Ok(StmtOutput::Affected(rows)) => i64::try_from(*rows).unwrap_or(i64::MAX),
+                Ok(crate::record_set::StatementCompletion::Affected(rows)) => {
+                    i64::try_from(*rows).unwrap_or(i64::MAX)
+                }
                 _ => 0,
             },
             StatementKind::Other => 0,

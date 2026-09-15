@@ -281,6 +281,18 @@ fn hash_join_versions_accept_only_legacy_or_optimized() {
                 scalar_text(&mut session, &format!("SELECT @@{name}")),
                 Some(value.to_owned())
             );
+            if name == "tidb_hash_join_version" {
+                for is_dml in [false, true] {
+                    assert_eq!(
+                        session
+                            .statement_context(is_dml)
+                            .optimizer_cost_env()
+                            .session
+                            .use_hash_join_v2,
+                        value.eq_ignore_ascii_case("optimized")
+                    );
+                }
+            }
         }
 
         for value in ["invalid", "v2", "optimized "] {
@@ -299,6 +311,56 @@ fn hash_join_versions_accept_only_legacy_or_optimized() {
                 Some("OptimiZed".to_owned()),
                 "a refused SET must leave the previous value intact"
             );
+        }
+    }
+
+    // Go outer-table build and probe-filter cases must use the same session
+    // selection boundary for both query and INSERT SELECT contexts.
+    session
+        .run("create table join_version_a (k int, v int)")
+        .unwrap();
+    session
+        .run("create table join_version_b (k int, v int)")
+        .unwrap();
+    session
+        .run("insert into join_version_a values (null,0),(1,1),(1,2),(2,3)")
+        .unwrap();
+    session
+        .run("insert into join_version_b values (1,8),(1,9),(2,10)")
+        .unwrap();
+    for version in ["legacy", "optimized"] {
+        session
+            .apply_set(&format!("set tidb_hash_join_version='{version}'"))
+            .unwrap();
+        for vectorized in [false, true] {
+            session
+                .apply_set(&format!(
+                    "set tidb_enable_vectorized_expression={}",
+                    u8::from(vectorized)
+                ))
+                .unwrap();
+            for is_dml in [false, true] {
+                assert_eq!(
+                    session
+                        .statement_context(is_dml)
+                        .enable_vectorized_expression(),
+                    vectorized
+                );
+            }
+            for build in ["a", "b"] {
+                let sql = format!("select /*+ HASH_JOIN_BUILD({build}) */ a.k,b.v from join_version_a a left join join_version_b b on a.k=b.k and a.v>1 order by a.v,b.v");
+                assert_eq!(
+                    row_text(session.run(&sql)),
+                    vec![
+                        vec!["NULL", "NULL"],
+                        vec!["1", "NULL"],
+                        vec!["1", "8"],
+                        vec!["1", "9"],
+                        vec!["2", "10"],
+                    ],
+                    "version={version}, vectorized={vectorized}, build={build}"
+                );
+            }
         }
     }
 }
@@ -776,7 +838,7 @@ fn set_var_hint_overlays_one_statement() {
         row_text(session.run("SELECT /*+ SET_VAR(sql_safe_updates=1) */ @@sql_safe_updates")),
         [["1"]]
     );
-    // The overlay does not outlive the statement.
+    // The next statement restores the preceding overlay.
     assert_eq!(row_text(session.run("SELECT @@sql_safe_updates")), [["0"]]);
 
     // Two hints for one name: the FIRST wins.
@@ -789,7 +851,7 @@ fn set_var_hint_overlays_one_statement() {
     );
 
     // The overlay is a write, not a floor: it can also turn a value OFF.
-    session.apply_set("SET sql_safe_updates = 1").unwrap();
+    session.run("SET sql_safe_updates = 1").unwrap();
     assert_eq!(
         row_text(session.run("SELECT /*+ SET_VAR(sql_safe_updates=0) */ @@sql_safe_updates")),
         [["0"]]

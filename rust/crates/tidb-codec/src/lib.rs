@@ -24,6 +24,7 @@ mod decimal;
 mod duration;
 mod error;
 mod float;
+mod join_keys;
 mod json;
 mod number;
 mod package;
@@ -57,6 +58,7 @@ pub use duration::{
 };
 pub use error::CodecError;
 pub use float::{decode_float, decode_float_desc, encode_float, encode_float_desc};
+pub use join_keys::{JoinKeyColumn, JoinKeyColumns, JoinKeySource, SerializedJoinKeys};
 pub use json::{
     decode_json, peek_json_len, RawJson, RawJsonTemporal, RawJsonTemporalKind,
     JSON_TYPE_CODE_ARRAY, JSON_TYPE_CODE_DATE, JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION,

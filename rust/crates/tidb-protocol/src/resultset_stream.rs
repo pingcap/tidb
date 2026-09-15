@@ -162,18 +162,32 @@ impl ResultSetStream {
         &mut self,
         capacity: usize,
     ) -> Result<TextRowWriter<'_>, ResultSetStreamError> {
+        self.text_row_with_buffer(Vec::with_capacity(capacity))
+    }
+
+    /// Reuses the connection's packet buffer while borrowing each chunk cell.
+    pub fn text_row_with_buffer(
+        &mut self,
+        mut payload: Vec<u8>,
+    ) -> Result<TextRowWriter<'_>, ResultSetStreamError> {
         if self.state != ResultSetStreamState::Rows {
             return Err(ResultSetStreamError::InvalidState {
                 state: self.state,
                 operation: "emit row for",
             });
         }
+        payload.clear();
         Ok(TextRowWriter {
-            payload: Vec::with_capacity(capacity),
+            payload,
             next_column: 0,
             row_index: self.rows,
             stream: self,
         })
+    }
+
+    /// Refreshes statement-owned EOF values without changing negotiated encoding.
+    pub fn update_statement_status(&mut self, update: impl FnOnce(&mut ResultSetOptions)) {
+        update(&mut self.options);
     }
 
     /// Returns the current lifecycle state.

@@ -291,7 +291,8 @@ fn validate_chunk_row(row: Row<'_>, field_types: &[FieldType]) -> Result<(), Str
     Ok(())
 }
 
-fn append_chunk_cell(
+/// Appends one typed chunk cell with Go DumpTextRow formatting.
+pub fn append_chunk_cell(
     writer: &mut TextRowWriter<'_>,
     row: Row<'_>,
     column: usize,

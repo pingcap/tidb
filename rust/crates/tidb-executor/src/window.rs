@@ -352,7 +352,7 @@ impl<C: Columns> WindowExec<C> {
     }
 }
 
-impl<C: Columns> Executor for WindowExec<C> {
+impl<C: Columns + Send> Executor for WindowExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         self.fetched = false;
         self.emitted = 0;

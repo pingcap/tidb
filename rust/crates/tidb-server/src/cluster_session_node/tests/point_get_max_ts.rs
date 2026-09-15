@@ -107,9 +107,15 @@ fn cached_prepared_index_lookup_uses_one_timestamp() {
                 panic!("expected rows");
             };
             let source = result.source();
+            assert!(
+                source.new_chunk().is_some(),
+                "prepared SELECT retains chunks"
+            );
             assert_eq!(source.next_batch(8).unwrap(), expected);
+            assert_eq!(node.live.load(Ordering::Acquire), 1);
             assert!(source.next_batch(8).unwrap().is_empty());
             source.finish().unwrap();
+            assert_eq!(node.live.load(Ordering::Acquire), 0);
             source.close().unwrap();
         });
         assert_eq!(observed, PAID, "index and record reads need one snapshot");
@@ -124,7 +130,7 @@ fn cached_prepared_index_lookup_uses_one_timestamp() {
 
 #[test]
 fn prepared_cursor_retains_its_statement_overlay() {
-    let (mut session, _) = open_session();
+    let (mut session, node) = open_session();
     seed(&mut session);
     session
         .execute_write("SET tidb_init_chunk_size = 32, tidb_max_chunk_size = 1024")
@@ -141,6 +147,20 @@ fn prepared_cursor_retains_its_statement_overlay() {
     else {
         panic!("expected rows")
     };
+    let point_chunk = result
+        .source()
+        .new_chunk()
+        .expect("cached point get returns a native executor");
+    assert_eq!(
+        point_chunk.required_rows(),
+        1,
+        "Go point executor uses one-row chunks"
+    );
+    assert_eq!(
+        node.live.load(Ordering::Acquire),
+        1,
+        "result retains its snapshot"
+    );
     let authority = result.take_cursor_materialization().unwrap();
     assert_eq!(authority.init_chunk_size, 8);
     assert_eq!(authority.max_chunk_size, 128);
@@ -149,6 +169,7 @@ fn prepared_cursor_retains_its_statement_overlay() {
         vec![vec![Datum::Int(10)]]
     );
     drop(result);
+    assert_eq!(node.live.load(Ordering::Acquire), 0);
     assert_eq!(
         rows(
             &mut session,

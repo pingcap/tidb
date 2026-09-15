@@ -2195,6 +2195,27 @@ impl KvTable {
         )
     }
 
+    /// A cursor over several index ranges in the physical scan direction,
+    /// preserving global index order when the plan requires it.
+    pub fn index_ranges_cursor_with_direction(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+        descending: bool,
+        ordered: bool,
+    ) -> Result<IndexRangeCursor, KvTableError> {
+        let physical_ids = self.record_physical_ids();
+        self.index_ranges_cursor_for_physical_ids(
+            index_id,
+            ranges,
+            zone,
+            &physical_ids,
+            descending,
+            ordered,
+        )
+    }
+
     /// The UNORDERED cursor an index LOOKUP walks: every range, partition by
     /// partition, no cross-partition merge.
     ///
@@ -3609,7 +3630,7 @@ pub struct TableScanExec {
     keep: Vec<usize>,
     /// Rows this scan read before filtering -- what Go's `TableFullScan`
     /// reports as `actRows`, which a filter above it must not change.
-    scanned: std::rc::Rc<std::cell::Cell<u64>>,
+    scanned: crate::executor::RowCount,
     /// A pushed row cap (`offset + count` of a `LIMIT`): the scan stops once
     /// it has emitted this many qualifying rows. See
     /// [`Executor::accept_scan_limit`].
@@ -3755,7 +3776,7 @@ impl TableScanExec {
             remote_topn: None,
             keep_order: false,
             keep,
-            scanned: std::rc::Rc::new(std::cell::Cell::new(0)),
+            scanned: crate::executor::RowCount::default(),
             limit: None,
             emitted: 0,
             handle_ranges: None,
@@ -3786,8 +3807,8 @@ impl TableScanExec {
 
     /// The live count of rows read from storage, before any pushed filter.
     #[must_use]
-    pub fn scanned_rows(&self) -> std::rc::Rc<std::cell::Cell<u64>> {
-        std::rc::Rc::clone(&self.scanned)
+    pub fn scanned_rows(&self) -> crate::executor::RowCount {
+        self.scanned.clone()
     }
 
     /// How many rows the backend's coprocessor has sent across the network for
@@ -4929,7 +4950,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         true
     }
 
-    fn scanned_rows_counter(&self) -> Option<std::rc::Rc<std::cell::Cell<u64>>> {
+    fn scanned_rows_counter(&self) -> Option<crate::executor::RowCount> {
         Some(self.scanned_rows())
     }
 

@@ -34,9 +34,26 @@ fn binary_prepared_result_authority_path_reuses_select_plan() {
         .prepare_ast("SELECT id,v,v FROM authority_cache WHERE id=?")
         .unwrap();
     for (id, expected_hit) in [(1, 0), (2, 1)] {
-        let (output, authority) = session
-            .run_prepared_with_result_authority(&prepared, &[Datum::Int(id)])
-            .unwrap();
+        let (output, authority) = if id == 1 {
+            session
+                .run_prepared_with_result_authority(&prepared, &[Datum::Int(id)])
+                .unwrap()
+        } else {
+            let cached = session
+                .bind_cached_prepared_select(&prepared.select_plan().unwrap(), &[Datum::Int(id)])
+                .unwrap();
+            let execution = session
+                .execute_prepared_record_set_for(&cached, &prepared)
+                .unwrap();
+            let crate::StatementExecution::Rows(result) = execution else {
+                panic!("expected an open cached SELECT");
+            };
+            let authority = result.session().result_materialization_authority();
+            (
+                crate::tests_support::collect_record_set(crate::StatementExecution::Rows(result)),
+                Some(authority),
+            )
+        };
         let crate::StmtOutput::Rows { rows, .. } = output else {
             panic!("expected rows");
         };

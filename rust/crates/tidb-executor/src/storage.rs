@@ -153,7 +153,7 @@ impl From<MemStorageError> for StorageError {
 ///
 /// This is [`KvIterator`] with `Error` pinned to [`StorageError`], which makes
 /// it object-safe.
-pub trait StorageIterator {
+pub trait StorageIterator: Send {
     /// Whether the current position holds an entry (Go `Iterator.Valid`).
     fn valid(&self) -> bool;
     /// The key at the current position (Go `Iterator.Key`).
@@ -168,7 +168,7 @@ pub trait StorageIterator {
 
 impl<I> StorageIterator for I
 where
-    I: KvIterator,
+    I: KvIterator + Send,
     StorageError: From<<I as KvIterator>::Error>,
 {
     fn valid(&self) -> bool {

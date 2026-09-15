@@ -105,10 +105,22 @@ fn prepared_server_result_retains_the_executing_statement_authority() {
                SET_VAR(tidb_max_chunk_size=64) */ 1";
     let prepared = session.prepare_ast(sql).unwrap();
     let bound = prepared.bind(&[]).unwrap();
-    let output = session
-        .run_parsed_bound_owned_for(bound, &prepared)
-        .unwrap();
-    assert!(matches!(output, StmtOutput::Rows { .. }));
+    {
+        let StatementExecution::Rows(mut result) = session
+            .execute_bound_record_set_for(bound, &prepared)
+            .unwrap()
+        else {
+            panic!("SELECT must retain its executor");
+        };
+        let mut chunk = result.new_chunk();
+        // Go exec.newExecutorChunkAllocator captures the statement's variables.
+        assert_eq!(chunk.capacity(), 8);
+        assert_eq!(chunk.required_rows(), 64);
+        result.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 1);
+        assert_eq!(chunk.get_row(0).get_int64(0), 1);
+        result.close().unwrap();
+    }
 
     // The cluster server asks for the authority after the session call has
     // returned. It must receive the tracker and chunk policy that executed

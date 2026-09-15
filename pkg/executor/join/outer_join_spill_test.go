@@ -150,6 +150,63 @@ func TestOuterJoinSpillBasic1(t *testing.T) {
 	})
 	testFuncName := util.GetFunctionName()
 
+	t.Run("AllPartitionsWithNullProbe", func(t *testing.T) {
+		for _, filtered := range []bool{false, true} {
+			ctx := mock.NewContext()
+			ctx.GetSessionVars().InitChunkSize = 32
+			ctx.GetSessionVars().MaxChunkSize = 32
+			intTp := types.NewFieldType(mysql.TypeLonglong)
+			leftKey := &expression.Column{Index: 0, RetType: intTp}
+			rightKey := &expression.Column{Index: 0, RetType: intTp}
+			leftValues, rightValues := make([]any, 128), make([]any, 32768)
+			nulls := make([]bool, len(leftValues))
+			for i := range leftValues {
+				leftValues[i] = int64(i)
+				nulls[i] = i%19 == 0
+			}
+			for i := range rightValues {
+				rightValues[i] = int64(i)
+			}
+			left := testutil.BuildMockDataSource(testutil.MockDataSourceParameters{
+				DataSchema: expression.NewSchema(leftKey), Ctx: ctx, Rows: len(leftValues),
+				Ndvs: []int{-2}, Datums: [][]any{leftValues}, Nulls: [][]bool{nulls},
+			})
+			right := testutil.BuildMockDataSource(testutil.MockDataSourceParameters{
+				DataSchema: expression.NewSchema(rightKey), Ctx: ctx, Rows: len(rightValues),
+				Ndvs: []int{-2}, Datums: [][]any{rightValues},
+			})
+			resultTypes := []*types.FieldType{intTp, intTp}
+			info := &hashJoinInfo{
+				ctx: ctx, schema: buildSchema(resultTypes), leftExec: left, rightExec: right,
+				joinType: base.LeftOuterJoin, rightAsBuildSide: true,
+				buildKeys: []*expression.Column{rightKey}, probeKeys: []*expression.Column{leftKey},
+				lUsed: []int{0}, rUsed: []int{0}, fileNamePrefixForTest: testFuncName,
+			}
+			newJoin := func() *HashJoinV2Exec {
+				join := buildHashJoinV2Exec(info)
+				if filtered {
+					filter, err := expression.NewFunction(ctx, ast.LT, types.NewFieldType(mysql.TypeTiny),
+						leftKey, &expression.Constant{Value: types.NewIntDatum(64), RetType: intTp})
+					require.NoError(t, err)
+					join.ProbeFilter = expression.CNFExprs{filter}
+				}
+				return join
+			}
+			left.PrepareChunks()
+			right.PrepareChunks()
+			expected := getSortedResults(t, newJoin(), resultTypes)
+			require.Len(t, expected, len(leftValues))
+			ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 128*1024)
+			ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+			left.PrepareChunks()
+			right.PrepareChunks()
+			join := newJoin()
+			result := getSortedResults(t, join, resultTypes)
+			require.True(t, join.spillHelper.areAllPartitionsSpilledForTest())
+			checkResults(t, resultTypes, result, expected)
+		}
+	})
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32

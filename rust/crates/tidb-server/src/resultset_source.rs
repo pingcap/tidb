@@ -18,8 +18,59 @@ use tidb_datatype::Datum;
 use tidb_exec::distsql_recordset::{DistSqlRecordSet, TextResultBatch};
 use tidb_protocol::ColumnInfo;
 
+/// Statement values read at the metadata/terminal boundary, not before Next.
+pub struct StatementStatus<'a> {
+    /// Warnings produced so far, including during Next/Finish.
+    pub warnings: u16,
+    /// Current transaction/autocommit state.
+    pub status: crate::wire_status::WireStatus,
+    /// Affected-row count for an OK-as-EOF packet.
+    pub affected_rows: u64,
+    /// Statement's insert identifier.
+    pub last_insert_id: u64,
+    /// Statement informational text.
+    pub info: &'a [u8],
+}
+
+impl StatementStatus<'_> {
+    pub(crate) fn apply(&self, options: &mut tidb_protocol::ResultSetOptions) {
+        // Keep command-owned flags (more results/cursor) alongside live session bits.
+        const SESSION_BITS: u16 = crate::wire_status::SERVER_STATUS_IN_TRANS
+            | crate::wire_status::SERVER_STATUS_AUTOCOMMIT;
+        options.status_flags = (options.status_flags & !SESSION_BITS) | self.status.bits();
+        options.warnings = self.warnings;
+        options.affected_rows = self.affected_rows;
+        options.last_insert_id = self.last_insert_id;
+        options.info.clear();
+        options.info.extend_from_slice(self.info);
+    }
+}
+
 /// Lazy source consumed by the connection result-set writer.
 pub trait ResultSetSource {
+    /// Live statement state when execution belongs to this source.
+    fn statement_status(&self) -> Option<StatementStatus<'_>> {
+        None
+    }
+
+    /// Native chunk shape, or None for a row-oriented compatibility source.
+    fn new_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        None
+    }
+
+    /// Fills the source's reusable chunk.
+    fn next_chunk(
+        &mut self,
+        _chunk: &mut tidb_chunk::chunk::Chunk,
+    ) -> Result<(), tidb_executor::MysqlError> {
+        Err("result source does not produce chunks".into())
+    }
+
+    /// Types of native chunk cells.
+    fn field_types(&self) -> &[tidb_datatype::FieldType] {
+        &[]
+    }
+
     /// Pulls a bounded row batch.
     fn next_batch(&mut self, max_rows: usize)
         -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError>;

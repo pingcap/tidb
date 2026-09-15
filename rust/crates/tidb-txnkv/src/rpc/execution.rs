@@ -158,10 +158,10 @@ impl Wake for ThreadWake {
     }
 }
 
-/// Synchronous response bridge with the caller's original absolute deadline.
-/// The native park timeout supplies the clock; no second timer task or thread
-/// is registered merely to wake a thread that is already waiting on the reply.
-pub(in crate::rpc) fn wait_with_call<F: Future>(
+/// Waits for a native future while honoring the caller's cancellation and
+/// absolute deadline. A blocking caller returns its Tokio worker before
+/// parking; this does not create a second timer or completion queue.
+pub fn wait_with_call<F: Future>(
     future: F,
     call: &super::UnaryCallContext,
 ) -> Result<F::Output, super::CompletionError> {

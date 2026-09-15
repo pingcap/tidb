@@ -131,7 +131,24 @@ impl CursorState {
     }
 
     fn materialize_source(&mut self, result: &mut QueryResult<'_>) -> Result<(), SqlQueryError> {
+        let mut native = result.source().new_chunk();
         loop {
+            if let Some(chunk) = &mut native {
+                result
+                    .source()
+                    .next_chunk(chunk)
+                    .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))?;
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                self.total_rows = self.total_rows.saturating_add(chunk.num_rows());
+                let next = chunk.renew(self.max_chunk_size);
+                self.rows
+                    .add(std::mem::replace(chunk, next))
+                    .map_err(cursor_disk_error)?;
+                self.memory.check().map_err(cursor_exec_error)?;
+                continue;
+            }
             let batch = result
                 .source()
                 .next_batch(self.max_chunk_size)
@@ -202,7 +219,14 @@ impl CursorState {
                 message: error.to_string(),
                 sequence: 1,
             })?;
+        stream
+            .validate_chunk_types(&self.field_types)
+            .map_err(|error| CursorFetchError::Protocol {
+                message: error.to_string(),
+                sequence: 1,
+            })?;
         let mut sequence = 1_u8;
+        let mut packet = Vec::with_capacity(1024);
         for _ in 0..row_count {
             let reader = self
                 .reader
@@ -218,23 +242,8 @@ impl CursorState {
                 message: "cursor ended before its retained row count".to_owned(),
                 sequence,
             })?;
-            let datums = row.get_datum_row(&self.field_types);
-            let cells: Vec<tidb_protocol::BinaryResultCell> = datums
-                .into_iter()
-                .zip(&self.columns)
-                .map(|(datum, column)| {
-                    crate::connection_resultset::datum_to_binary_cell(datum, column.type_code)
-                        .ok_or_else(|| CursorFetchError::Protocol {
-                            message: format!(
-                                "cursor row datum does not match column type {}",
-                                column.type_code
-                            ),
-                            sequence,
-                        })
-                })
-                .collect::<Result<_, _>>()?;
-            let packet = stream
-                .row_packet(&cells)
+            stream
+                .row_packet_chunk_into(row, &mut packet)
                 .map_err(|error| CursorFetchError::Protocol {
                     message: error.to_string(),
                     sequence,

@@ -32,10 +32,10 @@ use tidb_expr::Columns;
 /// Marks an evaluation context [`ProjectionExec`] accepts.
 ///
 /// Go hands its session context to every projection worker goroutine; a Rust
-/// context may cross to the pool's threads only when it is `Send + Sync`. The
-/// bridge method carries that proof into the parallel path without imposing
-/// the bound on contexts that cannot honor it, which keep the serial path.
-pub trait ProjectionContext: Columns {
+/// context and shared worker program must be `Send + Sync`, including when
+/// the whole projection moves with a join's build child. The bridge also
+/// supplies the clone/lifetime proof needed by persistent projection workers.
+pub trait ProjectionContext: Columns + Send + Sync {
     /// One parallel `Next`, or `None` when this context cannot share
     /// evaluation across threads.
     fn parallel_next_bridge(
@@ -295,11 +295,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
         crate::worker_pool::enqueue_public(Box::new(move || {
             let mut input = input;
             let mut output = output;
-            let suite = EvaluatorSuite::from_program(Arc::clone(&shared.program));
-            let result = suite
-                .run(&shared.ctx, &mut input, &mut output)
-                .map(|()| (input, output))
-                .map_err(Self::evaluator_error);
+            let result = crate::sort_util::recover_worker_panic(|| {
+                let suite = EvaluatorSuite::from_program(Arc::clone(&shared.program));
+                suite
+                    .run(&shared.ctx, &mut input, &mut output)
+                    .map(|()| (input, output))
+                    .map_err(Self::evaluator_error)
+            });
             // A dropped receiver means the projection is already closed.
             let _ = result_tx.send((seq, result));
         }));
@@ -657,15 +659,15 @@ mod tests {
         next: i64,
         total: i64,
         chunk_rows: usize,
-        required: std::rc::Rc<std::cell::RefCell<Vec<usize>>>,
+        required: std::sync::Arc<std::sync::Mutex<Vec<usize>>>,
     }
 
     impl NumberSource {
         fn new(
             total: i64,
             chunk_rows: usize,
-        ) -> (Box<Self>, std::rc::Rc<std::cell::RefCell<Vec<usize>>>) {
-            let required = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        ) -> (Box<Self>, std::sync::Arc<std::sync::Mutex<Vec<usize>>>) {
+            let required = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
             let mut first = Column::new(1, long());
             first.index = 0;
             let mut second = Column::new(2, long());
@@ -675,7 +677,7 @@ mod tests {
                 next: 0,
                 total,
                 chunk_rows,
-                required: std::rc::Rc::clone(&required),
+                required: std::sync::Arc::clone(&required),
             });
             (source, required)
         }
@@ -688,7 +690,7 @@ mod tests {
         }
         fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
             req.reset();
-            self.required.borrow_mut().push(req.required_rows());
+            self.required.lock().unwrap().push(req.required_rows());
             let end = (self.next + self.chunk_rows as i64).min(self.total);
             while self.next < end {
                 req.append_int64(0, self.next);
@@ -766,7 +768,7 @@ mod tests {
             }
         }
         projection.close().unwrap();
-        let required = required.borrow().clone();
+        let required = required.lock().unwrap().clone();
         (rows, required)
     }
 

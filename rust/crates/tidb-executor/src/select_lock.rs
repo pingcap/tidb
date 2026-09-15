@@ -111,7 +111,7 @@ impl SelectedLockKeys {
 /// A physical plan's record-key expression over a selected row. Each joined
 /// base table supplies one expression. `None` denotes a null-extended input
 /// without a physical row, not an unknown or pruned handle.
-pub type SelectedRecordKey = Box<dyn Fn(Row<'_>) -> Result<Option<Vec<u8>>, ExecError>>;
+pub type SelectedRecordKey = Box<dyn Fn(Row<'_>) -> Result<Option<Vec<u8>>, ExecError> + Send>;
 
 /// Passes rows through unchanged and collects their physical record keys.
 /// Like Go's SelectLockExec, it publishes keys only after draining its child.

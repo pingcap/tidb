@@ -50,7 +50,7 @@
 //! loader to call that container's process-wide config seam, so its startup
 //! remains plaintext and rejects unsupported command-line options loudly.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
@@ -85,10 +85,6 @@ pub struct TopNSpillAction {
     need_spill: Arc<AtomicBool>,
     /// The TopN's own tracker, which `hasEnoughDataToSpill` reads.
     topn_tracker: Arc<Tracker>,
-    /// Monotonic spill request generation observed by every post-spill worker.
-    /// A generation lets all workers drain once per shared request while the
-    /// flag remains raised until the last worker has acknowledged it.
-    spill_generation: Arc<AtomicUsize>,
 }
 
 impl TopNSpillAction {
@@ -100,15 +96,8 @@ impl TopNSpillAction {
             base: BaseOomAction::default(),
             need_spill: Arc::clone(&need_spill),
             topn_tracker: Arc::clone(topn_tracker),
-            spill_generation: Arc::new(AtomicUsize::new(0)),
         });
         (action, need_spill)
-    }
-
-    /// The generation shared with post-spill workers.
-    #[must_use]
-    pub(crate) fn spill_generation(&self) -> Arc<AtomicUsize> {
-        Arc::clone(&self.spill_generation)
     }
 
     /// Go `sortexec.hasEnoughDataToSpill`: a tenth of the quota, read off the
@@ -136,7 +125,6 @@ impl ActionOnExceed for TopNSpillAction {
                 quota = t.get_bytes_limit(),
                 "memory exceeds quota, spill to disk now."
             );
-            self.spill_generation.fetch_add(1, SeqCst);
             self.need_spill.store(true, SeqCst);
             return;
         }

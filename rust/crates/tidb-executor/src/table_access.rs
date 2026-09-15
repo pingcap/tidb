@@ -77,9 +77,6 @@
 //! wrapper (the `EXPLAIN ANALYZE` meter) forwards to its child, because
 //! metering must not change what runs.
 
-use std::cell::Cell;
-use std::rc::Rc;
-
 use crate::predicate_pushdown::PushedScanFilter;
 use crate::remote_scan::{PushdownPartialAggregate, PushdownTopN};
 use crate::StmtContext;
@@ -233,7 +230,7 @@ pub trait TableAccess {
     /// filter it accepted -- `TableFullScan`'s `actRows`, which a pushed
     /// predicate must not change. `None` for anything that is not such a
     /// scan.
-    fn scanned_rows_counter(&self) -> Option<Rc<Cell<u64>>> {
+    fn scanned_rows_counter(&self) -> Option<crate::executor::RowCount> {
         None
     }
 

@@ -101,18 +101,20 @@ pub(super) struct TransportHandle {
 /// Cloneable direct cancellation for interrupting a blocked transport open.
 #[derive(Clone)]
 pub struct TransportShutdownCancellation {
-    shutdown: watch::Sender<bool>,
+    shutdown: Option<watch::Sender<bool>>,
 }
 
 impl TransportShutdownCancellation {
     /// Interrupts runtime-owned operations before orderly close is queued.
     pub fn cancel(&self) {
-        let _ = self.shutdown.send(true);
+        if let Some(shutdown) = &self.shutdown {
+            let _ = shutdown.send(true);
+        }
     }
 
     pub(super) fn detached() -> Self {
-        let (shutdown, _) = watch::channel(false);
-        Self { shutdown }
+        // Borrowed request handles have no runtime shutdown authority.
+        Self { shutdown: None }
     }
 }
 
@@ -135,7 +137,9 @@ impl TransportRuntime {
         Ok(Self {
             commands: Some(commands),
             worker: Some(worker),
-            cancellation: TransportShutdownCancellation { shutdown },
+            cancellation: TransportShutdownCancellation {
+                shutdown: Some(shutdown),
+            },
         })
     }
 
@@ -865,7 +869,9 @@ mod tests {
 
     fn cancellation() -> TransportShutdownCancellation {
         let (shutdown, _) = watch::channel(false);
-        TransportShutdownCancellation { shutdown }
+        TransportShutdownCancellation {
+            shutdown: Some(shutdown),
+        }
     }
 
     #[test]

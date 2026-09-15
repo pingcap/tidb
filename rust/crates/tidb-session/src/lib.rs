@@ -1020,6 +1020,9 @@ mod noop;
 mod prepared_ast;
 mod prepared_plan_cache;
 mod prepared_statements;
+mod record_set;
+use record_set::StatementCompletion;
+pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
 pub mod session_vars;
 mod stmt_ctx;
 mod table_privilege;
@@ -1654,6 +1657,7 @@ impl Session {
         prepared: &PreparedAst,
         params: &[Datum],
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        self.restore_statement_variables();
         let statement = prepared.bind(params)?;
         let (effective_statement, binding_sql) =
             self.prepared_statement_with_binding(prepared.statement());
@@ -1928,6 +1932,19 @@ impl Session {
         capture_result_authority: bool,
         execute: impl FnOnce(&mut Self) -> Result<StmtOutput, DriverError>,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        self.begin_statement_execution(sql)?;
+        let result = execute(self);
+        let result_authority = (capture_result_authority
+            && matches!(&result, Ok(StmtOutput::Rows { .. })))
+        .then(|| self.result_materialization_authority());
+        self.finish_statement_execution(result)
+            .map(|output| (output, result_authority))
+    }
+
+    // Go resets statement state before executor construction. Keep this
+    // boundary separate from completion, which belongs to record-set close
+    // for queries and to execution itself for statements without results.
+    fn begin_statement_execution(&mut self, sql: &str) -> Result<(), DriverError> {
         if !self.external_executor_breakpoint_scope {
             self.executor_first_run_breakpoint
                 .store(false, std::sync::atomic::Ordering::Release);
@@ -1982,20 +1999,26 @@ impl Session {
         // `select @@last_plan_from_binding` reports the statement BEFORE it
         // rather than itself (that SELECT matches no binding of its own).
         self.prev_found_in_binding = std::mem::take(&mut self.found_in_binding);
-        let result = execute(self);
-        let result_authority = (capture_result_authority
-            && matches!(&result, Ok(StmtOutput::Rows { .. })))
-        .then(|| self.result_materialization_authority());
-        // Go `ExecStmt` puts a `SET_VAR` hint's variables back when the
-        // statement finishes, from the restore list the optimizer built --
-        // which is why an overlay survives neither a successful statement nor
-        // a failing one.
-        let restore = std::mem::take(&mut self.set_var_hint_restore);
-        self.vars.restore_system(restore);
-        self.publish_statement_status(&result);
+        Ok(())
+    }
+
+    fn finish_statement_execution(
+        &mut self,
+        result: Result<StmtOutput, DriverError>,
+    ) -> Result<StmtOutput, DriverError> {
+        let completion = result
+            .as_ref()
+            .map(StatementCompletion::from)
+            .map_err(Clone::clone);
+        self.finish_statement_state(&completion);
+        result
+    }
+
+    fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
+        self.publish_statement_status(result);
         if let Some(guard) = &self.process {
-            let affected_rows = match &result {
-                Ok(StmtOutput::Affected(count)) => *count,
+            let affected_rows = match result {
+                Ok(StatementCompletion::Affected(count)) => *count,
                 _ => 0,
             };
             guard
@@ -2017,7 +2040,6 @@ impl Session {
             let reported = error.clone().to_mysql_error();
             self.append_warning(WarningLevel::Error, reported.code, reported.message);
         }
-        result.map(|output| (output, result_authority))
     }
 }
 

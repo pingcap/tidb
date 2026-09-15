@@ -1220,6 +1220,135 @@ impl BinaryResultSetStream {
         Ok(())
     }
 
+    /// Refreshes statement-owned EOF values without changing negotiated encoding.
+    pub fn update_statement_status(&mut self, update: impl FnOnce(&mut ResultSetOptions)) {
+        update(&mut self.options);
+    }
+
+    /// Checks the typed layout once before using native chunk getters. Go's
+    /// field metadata and chunk schema share an owner; adapters must preserve
+    /// that relationship rather than reinterpreting a string as an integer.
+    pub fn validate_chunk_types(
+        &self,
+        fields: &[tidb_datatype::FieldType],
+    ) -> Result<(), PreparedStatementError> {
+        if fields.len() != self.columns.len() {
+            return Err(PreparedStatementError::RowColumnCount {
+                expected: self.columns.len(),
+                actual: fields.len(),
+            });
+        }
+        for (column, (field, metadata)) in fields.iter().zip(&self.columns).enumerate() {
+            let code = match field.code() {
+                tidb_datatype::FieldTypeCode::Varchar => TYPE_VAR_STRING,
+                code => code.mysql_type(),
+            };
+            let advertised = match metadata.type_code {
+                TYPE_VARCHAR => TYPE_VAR_STRING,
+                code => code,
+            };
+            if code != advertised {
+                return Err(PreparedStatementError::MismatchedBinaryResultCell {
+                    column,
+                    type_code: metadata.type_code,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Go DumpBinaryRow reads typed chunk cells into one reused packet buffer.
+    pub fn row_packet_chunk_into(
+        &self,
+        row: tidb_chunk::row::Row<'_>,
+        encoded: &mut Vec<u8>,
+    ) -> Result<(), PreparedStatementError> {
+        if self.state != BinaryResultSetState::Rows {
+            return Err(PreparedStatementError::InvalidField {
+                field: "binary result-set state",
+                value: self.state as u8,
+            });
+        }
+        if row.len() != self.columns.len() {
+            return Err(PreparedStatementError::RowColumnCount {
+                expected: self.columns.len(),
+                actual: row.len(),
+            });
+        }
+        encoded.clear();
+        encoded.resize(1 + (row.len() + 7 + 2) / 8, 0);
+        for (index, column) in self.columns.iter().enumerate() {
+            if row.is_null(index) {
+                let bit = index + 2;
+                encoded[1 + bit / 8] |= 1 << (bit % 8);
+                continue;
+            }
+            match column.type_code {
+                TYPE_TINY => encoded.push(row.get_int64(index) as u8),
+                TYPE_SHORT | TYPE_YEAR => {
+                    encoded.extend_from_slice(&(row.get_int64(index) as u16).to_le_bytes())
+                }
+                TYPE_INT24 | TYPE_LONG => {
+                    encoded.extend_from_slice(&(row.get_int64(index) as u32).to_le_bytes())
+                }
+                TYPE_LONGLONG => encoded.extend_from_slice(&row.get_uint64(index).to_le_bytes()),
+                TYPE_FLOAT => {
+                    encoded.extend_from_slice(&row.get_float32(index).to_bits().to_le_bytes())
+                }
+                TYPE_DOUBLE => {
+                    encoded.extend_from_slice(&row.get_float64(index).to_bits().to_le_bytes())
+                }
+                TYPE_NEW_DECIMAL => append_length_encoded_bytes(
+                    encoded,
+                    Some(&row.get_my_decimal(index).to_result_string_bytes()),
+                ),
+                TYPE_DATE | TYPE_DATETIME | TYPE_TIMESTAMP => {
+                    let time = row.get_time(index);
+                    let kind = match time.kind() {
+                        tidb_datatype::TimeType::Date => BinaryDateTimeType::Date,
+                        tidb_datatype::TimeType::DateTime => BinaryDateTimeType::Datetime,
+                        tidb_datatype::TimeType::Timestamp => BinaryDateTimeType::Timestamp,
+                    };
+                    let packed = time.to_packed_uint().map_err(|_| {
+                        PreparedStatementError::MismatchedBinaryResultCell {
+                            column: index,
+                            type_code: column.type_code,
+                        }
+                    })?;
+                    encoded.extend_from_slice(&encode_binary_datetime(
+                        PackedTime::from_raw(packed),
+                        kind,
+                    ));
+                }
+                TYPE_DURATION => encoded.extend_from_slice(&encode_binary_time(
+                    row.get_duration(index, 0).nanoseconds(),
+                )),
+                _ => {
+                    let append = |bytes: &[u8], encoded: &mut Vec<u8>| {
+                        if let Some(encoder) = &self.data_encodings[index] {
+                            if let Ok(bytes) = encoder.encode_data(bytes) {
+                                append_length_encoded_bytes(encoded, Some(&bytes));
+                                return;
+                            }
+                        }
+                        append_length_encoded_bytes(encoded, Some(bytes));
+                    };
+                    match column.type_code {
+                        TYPE_ENUM => append(row.get_enum(index).name_bytes(), encoded),
+                        TYPE_SET => append(row.get_set(index).name_bytes(), encoded),
+                        TYPE_JSON => append(row.get_json(index).to_string().as_bytes(), encoded),
+                        TYPE_TIDB_VECTOR_FLOAT32 => append(
+                            row.get_vector_float32(index).to_string().as_bytes(),
+                            encoded,
+                        ),
+                        _ => append(row.get_bytes(index).as_ref(), encoded),
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Emits the terminal EOF exactly once.
     pub fn finish_packet(&mut self) -> Result<Vec<u8>, PreparedStatementError> {
         if self.state != BinaryResultSetState::Rows {

@@ -54,8 +54,7 @@ When writing complex features or significant refactors, use an ExecPlan from des
 | RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md` -> `RealTiKV tests`). |
 | Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
 | Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
-| During local coding iterations (not claiming completion) | SHOULD use the `WIP` verification profile from `.agents/skills/tidb-verify-profile` to run only scoped checks. |
-| Claiming task completion / PR readiness | MUST use the `Ready` verification profile from `.agents/skills/tidb-verify-profile`; if there are code changes, this includes `make lint`. `Ready` is mandatory before making final-status claims such as "fixed", "done", "all tests pass", "ready for review", or "ready for PR". |
+| Claiming task completion / PR readiness | MUST run the validation required by the change scope; if there are code changes, this includes `make lint`. Report what was and was not verified. |
 | Creating or updating a GitHub issue | SHOULD use `.agents/skills/tidb-issue-metadata-guard` to preserve issue templates and label hygiene. |
 | Creating a PR or editing PR metadata | SHOULD use `.agents/skills/tidb-pr-metadata-guard` to preserve PR templates, title scope, and bot-parsed checklist sections. |
 | Before finishing | SHOULD self-review diff quality before finishing. |
@@ -154,7 +153,6 @@ Command details for package, integration-test, and RealTiKV surfaces live in `do
 
 - Detailed command playbooks live in `docs/agents/testing-flow.md`.
 - Select required test surfaces first (`Task -> Validation Matrix`), then run scoped commands from the playbook.
-- Use `.agents/skills/tidb-verify-profile` to pick a validation profile (`WIP` / `Ready` / `Heavy`). `Ready` is required before any final-status claim; trigger phrases are defined in `Quick Decision Matrix`.
 - All other testing rules (failpoints, integration recording, RealTiKV lifecycle, regression tests) are stated once in `Quick Decision Matrix` above; do not duplicate them here.
 
 ## Code Style Guide
@@ -190,7 +188,7 @@ Command details for package, integration-test, and RealTiKV surfaces live in `do
 When finishing a task, report:
 
 1. Files changed.
-2. Validation profile used (`WIP`, `Ready`, or `Heavy`) and why.
+2. Validation scope and why.
 3. Risks: correctness, compatibility, performance.
 4. Exact commands run for validation.
 5. What was not verified locally.

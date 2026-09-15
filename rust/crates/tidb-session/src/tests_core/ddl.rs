@@ -2035,15 +2035,22 @@ fn table_cache_state_is_shared_metadata_and_guards_ddl() {
     session.run("INSERT INTO cached_t VALUES (1, 10)").unwrap();
 
     assert!(!query_text(&mut session, "SHOW CREATE TABLE cached_t").1[0][1].contains("CACHED ON"));
-    assert_eq!(
-        query_text(
-            &mut session,
-            "SELECT CREATE_OPTIONS FROM information_schema.tables \
-             WHERE table_schema = 'test' AND table_name = 'cached_t'",
-        )
-        .1,
-        vec![vec![String::new()]]
-    );
+    let sql = "SELECT CREATE_OPTIONS FROM information_schema.tables \
+               WHERE table_schema = 'test' AND table_name = 'cached_t'";
+    let statement = session.parse_statement(sql).unwrap();
+    {
+        let StatementExecution::Rows(mut result) =
+            session.execute_record_set_parsed(statement, sql).unwrap()
+        else {
+            panic!("virtual SELECT must retain its executor");
+        };
+        let mut chunk = result.new_chunk();
+        result.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 1);
+        assert!(chunk.get_row(0).get_bytes(0).is_empty());
+        result.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 0);
+    }
 
     session.run("ALTER TABLE cached_t CACHE").unwrap();
     session.run("ALTER TABLE cached_t CACHE").unwrap();

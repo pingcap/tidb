@@ -128,23 +128,32 @@ fn residual_conditions_still_filter_merged_groups() {
 /// the semantics.
 #[test]
 fn a_descending_merge_finds_the_same_matches() {
-    let mut left = sorted_fixture(120, 7, false);
-    let mut right = sorted_fixture(120, 5, false);
-    left.reverse();
-    right.reverse();
-    let mut merged = join_of(
-        JoinKind::Inner,
-        vec![eq_on(0, 0, 2)],
-        left.clone(),
-        right.clone(),
-        2,
-    );
-    merged.set_merge_plan(MergeJoinPlan {
-        keys: vec![MergeJoinKey { left: 0, right: 0 }],
-        desc: true,
-    });
-    let mut hashed = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], left, right, 2);
-    assert_eq!(as_multiset(run(&mut merged)), as_multiset(run(&mut hashed)));
+    for kind in [JoinKind::Inner, JoinKind::Left, JoinKind::Right] {
+        for composite in [false, true] {
+            let mut left = sorted_fixture(120, 7, true);
+            let mut right = sorted_fixture(120, 5, true);
+            left.reverse();
+            right.reverse();
+            // Key positions belong to each side's own schema.
+            for row in &mut right {
+                row.swap(0, 1);
+            }
+            let mut conditions = vec![eq_on(0, 1, 2)];
+            let mut keys = vec![MergeJoinKey { left: 0, right: 1 }];
+            if composite {
+                conditions.push(eq_on(1, 0, 2));
+                keys.push(MergeJoinKey { left: 1, right: 0 });
+            }
+            let mut merged = join_of(kind, conditions.clone(), left.clone(), right.clone(), 2);
+            merged.set_merge_plan(MergeJoinPlan { keys, desc: true });
+            let mut hashed = join_of(kind, conditions, left, right, 2);
+            assert_eq!(
+                as_multiset(run(&mut merged)),
+                as_multiset(run(&mut hashed)),
+                "{kind:?}, composite={composite}"
+            );
+        }
+    }
 }
 
 /// One empty side: an inner join produces nothing, and an outer join
@@ -172,16 +181,22 @@ fn an_empty_side_still_emits_the_preserved_rows() {
 /// group spanning several source chunks fans out completely.
 #[test]
 fn a_group_spanning_chunks_is_still_one_group() {
-    let left: Vec<Vec<Datum>> = (0..3000)
-        .map(|i| vec![Datum::Int(1), Datum::Int(i)])
-        .collect();
-    let right = vec![vec![Datum::Int(1), Datum::Int(0)]; 3];
-    let mut merged = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], left, right, 2);
-    merged.set_merge_plan(MergeJoinPlan {
-        keys: vec![MergeJoinKey { left: 0, right: 0 }],
-        desc: false,
-    });
-    assert_eq!(run(&mut merged).len(), 9000);
+    // The run begins and ends inside its chunks. Transferring a whole
+    // unselected child chunk would incorrectly include either boundary row.
+    let mut large = vec![vec![Datum::Int(0), Datum::Int(-1)]];
+    large.extend((0..3000).map(|i| vec![Datum::Int(1), Datum::Int(i)]));
+    large.push(vec![Datum::Int(2), Datum::Int(-1)]);
+    let small = vec![vec![Datum::Int(1), Datum::Int(0)]; 3];
+    for (left, right) in [(large.clone(), small.clone()), (small, large)] {
+        let mut merged = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], left, right, 2);
+        merged.set_merge_plan(MergeJoinPlan {
+            keys: vec![MergeJoinKey { left: 0, right: 0 }],
+            desc: false,
+        });
+        let rows = run(&mut merged);
+        assert_eq!(rows.len(), 9000);
+        assert!(rows.iter().all(|row| row[0] == 1 && row[2] == 1));
+    }
 }
 
 /// Go keeps a current inner chunk outside the spillable row container and
@@ -189,7 +204,7 @@ fn a_group_spanning_chunks_is_still_one_group() {
 /// boundary. A unique-key inner stream must therefore not perform one
 /// RowContainer add/reset cycle per row.
 #[test]
-fn a_single_row_inner_group_stays_in_the_reusable_staging_chunk() {
+fn a_single_row_inner_group_uses_child_until_chunk_boundary() {
     let left: Vec<Vec<Datum>> = (0..3000)
         .map(|i| vec![Datum::Int(i), Datum::Int(i)])
         .collect();
@@ -201,7 +216,19 @@ fn a_single_row_inner_group_stays_in_the_reusable_staging_chunk() {
     });
     merged.open().unwrap();
     let mut req = merged.new_chunk();
+    let chunk_rows = merged.max_chunk_size();
+    req.set_required_rows((chunk_rows - 1) as isize, chunk_rows);
     merged.next(&mut req).unwrap();
+    assert_eq!(req.num_rows(), chunk_rows - 1);
+    assert_eq!(merged.merge_inner_container_chunks(), 0);
+    // Go must retain even a unique final key before fetching the next
+    // chunk: only that fetch tells it whether the same key continues.
+    req.set_required_rows(1, chunk_rows);
+    merged.next(&mut req).unwrap();
+    assert_eq!(req.get_row(0).get_int64(0), (chunk_rows - 1) as i64);
+    assert_eq!(merged.merge_inner_container_chunks(), 1);
+    merged.next(&mut req).unwrap();
+    assert_eq!(req.get_row(0).get_int64(0), chunk_rows as i64);
     assert_eq!(merged.merge_inner_container_chunks(), 0);
     merged.close().unwrap();
 }

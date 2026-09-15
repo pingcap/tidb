@@ -52,14 +52,18 @@
 //!   space ([`allocate_row_address_range`]) instead of a real heap address.
 //!   Addresses are unique, 8-byte aligned, monotone within a segment, and
 //!   have enough leading zeros to carry a 24-bit tag -- the four properties
-//!   the source relies on. They cannot be dereferenced; reads go through
-//!   [`RowTable::segment_of_address`].
+//!   the source relies on. During merging, HashTableV2 rebinds segments into
+//!   a table-owned address space encoding partition, segment and row index;
+//!   production probes decode those handles without searching for the owner.
+//! * mutable used flags are per-row atomics outside the immutable byte payload;
+//!   row indices reach both payload offsets and flags directly. Only layouts
+//!   reserving Go's used flag allocate this native state, before spill admission.
 //! * `totalUsedBytes` uses Rust `Vec::capacity`, not Go slice `cap`, so the
 //!   accounting is the same formula over a different allocator's growth.
 //! * Go's `runtime.heapObjectsCanMove` guard has no analogue: `Vec` contents
 //!   never move without `&mut`, and no address here outlives its table.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use tidb_util::serialization::{INT_LEN, UINT64_LEN};
 
@@ -115,6 +119,35 @@ pub const ROW_ADDRESS_SPACE_BASE: usize = 0x1_0000;
 
 static NEXT_ROW_ADDRESS: AtomicUsize = AtomicUsize::new(ROW_ADDRESS_SPACE_BASE);
 
+/// Mutable row state is separate from the immutable packed payload in safe
+/// Rust. Each row has its own atomic, as in Go; cloning a segment copies state.
+#[derive(Debug, Default)]
+struct RowUsedFlags(Box<[AtomicBool]>);
+
+impl Clone for RowUsedFlags {
+    fn clone(&self) -> Self {
+        Self(
+            self.0
+                .iter()
+                .map(|flag| AtomicBool::new(flag.load(Ordering::SeqCst)))
+                .collect(),
+        )
+    }
+}
+
+impl PartialEq for RowUsedFlags {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len()
+            && self
+                .0
+                .iter()
+                .zip(&other.0)
+                .all(|(left, right)| left.load(Ordering::SeqCst) == right.load(Ordering::SeqCst))
+    }
+}
+
+impl Eq for RowUsedFlags {}
+
 /// Reserves `length` bytes of synthetic address space for one segment.
 ///
 /// Ranges never overlap and never repeat within a process, which is what lets
@@ -139,6 +172,7 @@ pub struct RowTableSegment {
     pub valid_join_key_pos: Vec<usize>,
     tagged_bits: u8,
     base_address: usize,
+    used_flags: RowUsedFlags,
 }
 
 impl RowTableSegment {
@@ -153,8 +187,22 @@ impl RowTableSegment {
     /// Called once, after the segment stops growing. The source does the same
     /// two steps when a finished segment is handed to the hash-table context.
     pub fn finalize(&mut self) {
-        self.base_address = allocate_row_address_range(self.raw_data.len());
+        self.base_address = allocate_row_address_range(self.row_start_offset.len() * 8);
         self.init_tagged_bits();
+    }
+
+    pub(crate) fn allocate_used_flags(&mut self, rows: usize) {
+        self.used_flags = RowUsedFlags((0..rows).map(|_| AtomicBool::new(false)).collect());
+    }
+
+    #[inline]
+    pub(crate) fn mark_row_used(&self, row: usize) {
+        self.used_flags.0[row].store(true, Ordering::SeqCst);
+    }
+
+    #[inline]
+    pub(crate) fn is_row_used(&self, row: usize) -> bool {
+        self.used_flags.0[row].load(Ordering::SeqCst)
     }
 
     /// Recomputes the tag width from this segment's first and last row.
@@ -180,13 +228,21 @@ impl RowTableSegment {
         self.base_address
     }
 
-    /// Bytes retained by this segment's four buffers.
+    /// Binds the finished segment to its merged table's native address space.
+    /// No bucket may retain a segment address until this ownership transfer.
+    pub(crate) fn bind_address(&mut self, base_address: usize) {
+        self.base_address = base_address;
+        self.init_tagged_bits();
+    }
+
+    /// Bytes retained by this segment's payload, indices and native used flags.
     #[must_use]
     pub fn total_used_bytes(&self) -> i64 {
         let mut ret = self.raw_data.capacity() as i64;
         ret += (self.hash_values.capacity() * UINT64_LEN) as i64;
         ret += (self.row_start_offset.capacity() * UINT64_LEN) as i64;
         ret += (self.valid_join_key_pos.capacity() * INT_LEN) as i64;
+        ret += self.used_flags.0.len() as i64 * size_of::<AtomicBool>() as i64;
         ret
     }
 
@@ -198,7 +254,8 @@ impl RowTableSegment {
     /// bounds check.
     #[must_use]
     pub fn get_row_pointer(&self, index: usize) -> usize {
-        self.base_address + usize::try_from(self.row_start_offset[index]).expect("row offset")
+        assert!(index < self.row_start_offset.len());
+        self.base_address + index * 8
     }
 
     /// Number of rows that have a start offset.
@@ -235,10 +292,13 @@ impl RowTableSegment {
     /// Offset of `address` inside this segment, when it lands here.
     #[must_use]
     pub fn offset_of_address(&self, address: usize) -> Option<usize> {
-        if address < self.base_address || address >= self.base_address + self.raw_data.len() {
+        let offset = address.checked_sub(self.base_address)?;
+        if offset % 8 != 0 {
             return None;
         }
-        Some(address - self.base_address)
+        self.row_start_offset
+            .get(offset / 8)
+            .map(|&offset| offset as usize)
     }
 
     /// Writes the tagged address of the next row in this row's chain.

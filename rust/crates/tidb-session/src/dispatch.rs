@@ -24,6 +24,7 @@
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
+use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{
     infoschema, privilege, statement_kind_of, statement_priority_of, Session, StatementKind,
@@ -477,76 +478,15 @@ impl Session {
         }
     }
 
-    /// Runs a `SELECT` whose `FROM` names an `information_schema` table.
-    ///
-    /// The virtual rows are materialized into a scratch catalog and then run
-    /// through the ordinary plan, so `WHERE`, `ORDER BY`, `LIMIT`, expressions
-    /// and aggregates all behave as they do over a stored table. Go reaches
-    /// the same place differently -- its memory tables are real tables to the
-    /// planner -- but the requirement is the same: a predicate over a virtual
-    /// table must filter it.
-    ///
-    /// Returns `None` when the statement is an ordinary one, so the caller
-    /// falls through to the storage path.
-    ///
-    fn run_information_schema_select(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        let Some(join) = &select.from else {
-            let Some(with) = &select.with else {
-                return Ok(None);
-            };
-            let mut table_names = Vec::new();
-            for cte in &with.ctes {
-                information_schema_tables_in_query(&cte.query, &self.current_db, &mut table_names);
-            }
-            if table_names.is_empty() {
-                return Ok(None);
-            }
-            let ctx = self.statement_context(false);
-            let current_db = self.current_db.clone();
-            let (columns, rows) = self.run_information_schema_query(
-                &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
-                table_names,
-                &current_db,
-                &ctx,
-            )?;
-            self.drain_eval_warnings(&ctx);
-            return Ok(Some(StmtOutput::Rows { columns, rows }));
-        };
-        let mut table_names = Vec::new();
-        if let Some(with) = &select.with {
-            for cte in &with.ctes {
-                information_schema_tables_in_query(&cte.query, &self.current_db, &mut table_names);
-            }
-        }
-        information_schema_tables_in_join(&join.left, &self.current_db, &mut table_names);
-        if let Some(right) = &join.right {
-            information_schema_tables_in_join(right, &self.current_db, &mut table_names);
-        }
-        if table_names.is_empty() {
-            return Ok(None);
-        }
-        let ctx = self.statement_context(false);
-        let current_db = self.current_db.clone();
-        let (columns, rows) = self.run_information_schema_query(
-            &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
-            table_names,
-            &current_db,
-            &ctx,
-        )?;
-        self.drain_eval_warnings(&ctx);
-        Ok(Some(StmtOutput::Rows { columns, rows }))
-    }
-
-    fn run_information_schema_query(
+    /// Opens the ordinary executor over the virtual table image. The image
+    /// remains eagerly generated; query evaluation and result delivery use Next.
+    fn open_information_schema_query(
         &mut self,
         query: &tidb_ast::QueryStmt,
         mut table_names: Vec<String>,
         current_db: &str,
         ctx: &tidb_executor::StmtContext,
-    ) -> Result<tidb_executor::SelectMeta, DriverError> {
+    ) -> Result<tidb_executor::driver::QueryRecordSet, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
 
@@ -566,7 +506,7 @@ impl Session {
             needs_storage_stats,
             needs_column_lengths,
         )?;
-        tidb_executor::run_query_meta_stmt_with_physical(
+        tidb_executor::driver::open_query_meta_stmt_with_physical(
             query,
             Some(&mut physical),
             &scratch,
@@ -1149,12 +1089,49 @@ impl Session {
     pub(crate) fn execute_prepared_ast(
         &mut self,
         sql: &str,
-        mut stmt: Stmt,
+        stmt: Stmt,
         privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
+        self.prepare_bound_execution(sql, stmt, privilege_requests)?
+            .collect(self)
+    }
+
+    pub(crate) fn prepare_bound_execution(
+        &mut self,
+        sql: &str,
+        mut stmt: Stmt,
+        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+    ) -> Result<PendingExecution, DriverError> {
         let parameters = tidb_executor::bound_parameter_values(&mut stmt)?;
         self.begin_prepared_statement_boundary(&stmt, parameters);
-        self.execute_parsed_statement(sql, stmt, Some(privilege_requests))
+        self.prepare_parsed_statement_with_optional_physical_plan(
+            sql,
+            stmt,
+            Some(privilege_requests),
+            None,
+            None,
+        )
+    }
+
+    /// Executes a bound PREPARE tree, keeping a query open until its result closes.
+    pub fn execute_bound_record_set_for<'a>(
+        &'a mut self,
+        stmt: Stmt,
+        prepared: &crate::PreparedAst,
+    ) -> Result<crate::StatementExecution<'a>, DriverError> {
+        Ok(self.open_bound_record_set_for(stmt, prepared)?.attach(self))
+    }
+
+    /// Opens a bound PREPARE tree for a front end that owns session teardown.
+    pub fn open_bound_record_set_for(
+        &mut self,
+        stmt: Stmt,
+        prepared: &crate::PreparedAst,
+    ) -> Result<crate::OpenedStatement, DriverError> {
+        self.begin_statement_execution(prepared.sql())?;
+        let result =
+            self.prepare_bound_execution(prepared.sql(), stmt, prepared.privilege_requests());
+        self.return_opened_record_set(result)
     }
 
     /// Executes the subset Go serves through a prepared `PointGetPlan`. The
@@ -1162,41 +1139,66 @@ impl Session {
     /// binding, and hint gates, and each call creates fresh mutable execution
     /// state. The execution carries the complete binding-aware cache-key hit
     /// result rather than receiving a protocol-local readiness flag.
-    pub fn execute_prepared_point_get(
+    pub fn open_prepared_point_get(
         &mut self,
         execution: tidb_executor::PreparedPointGetExecution,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        let cache_hit = execution.cache_hit();
-        self.active_resource_group.clone_from(&self.resource_group);
-        self.begin_cached_prepared_query_boundary();
-        let plan = execution.plan();
-        self.require_named_table_privilege(
-            plan.names().0,
-            plan.names().1,
-            privilege::GlobalPriv::Select,
-        )?;
-        // `dirty_content` only gates scan/access-path planning. This cached
-        // executor owns one handle read and the admission gate already refuses
-        // an open transaction, so walking every catalog table cannot affect
-        // its result.
-        self.statement_insert_id = 0;
-        self.statement_kind = StatementKind::Select;
+        statement: &Stmt,
+        sql: &str,
+    ) -> Result<Option<crate::OpenedStatement>, DriverError> {
+        self.begin_statement_execution(sql)?;
+        let result = (|| {
+            let cache_hit = execution.cache_hit();
+            self.active_resource_group.clone_from(&self.resource_group);
+            self.begin_cached_prepared_query_boundary();
+            // Go Optimize applies StmtHints.SetVars for cached plans too. The
+            // effective PREPARE tree carries the same binding-selected hints as
+            // the ordinary SELECT path; the point plan alone cannot supply them.
+            self.apply_set_var_hints(statement)?;
+            self.activate_statement_resource_group(statement);
+            let plan = execution.plan();
+            self.require_named_table_privilege(
+                plan.names().0,
+                plan.names().1,
+                privilege::GlobalPriv::Select,
+            )?;
+            // `dirty_content` only gates scan/access-path planning. This cached
+            // executor owns one handle read and the admission gate already refuses
+            // an open transaction, so walking every catalog table cannot affect
+            // its result.
+            self.statement_insert_id = 0;
+            self.statement_kind = StatementKind::Select;
 
-        if self.in_transaction() {
-            let names = [(plan.names().0.to_owned(), plan.names().1.to_owned())];
-            self.record_mdl_related_table_names(&names);
+            if self.in_transaction() {
+                let names = [(plan.names().0.to_owned(), plan.names().1.to_owned())];
+                self.record_mdl_related_table_names(&names);
+            }
+            let current_db = self.current_db.clone();
+            let ctx = self.prepared_point_get_context();
+            let stmt_ctx = self.statement_context_for_stmt(statement, false);
+            let result = self.with_catalog_mut(|catalog| {
+                tidb_executor::open_prepared_point_get(
+                    &execution,
+                    catalog,
+                    &current_db,
+                    &ctx,
+                    &stmt_ctx,
+                )
+            })?;
+            let Some(record_set) = result else {
+                return Ok(None);
+            };
+            self.found_in_plan_cache = cache_hit;
+            let mut query = PendingQuery::new(record_set, stmt_ctx);
+            if !self.in_transaction() {
+                query.transaction_end = QueryTransactionEnd::AutocommitRead;
+            }
+            Ok(Some(PendingExecution::Query(query)))
+        })();
+        match result {
+            Ok(None) => Ok(None),
+            Ok(Some(execution)) => self.return_opened_record_set(Ok(execution)).map(Some),
+            Err(error) => self.return_opened_record_set(Err(error)).map(Some),
         }
-        let current_db = self.current_db.clone();
-        let ctx = self.prepared_point_get_context();
-        let stmt_ctx = self.statement_context(false);
-        let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_prepared_point_get(&execution, catalog, &current_db, &ctx, &stmt_ctx)
-        })?;
-        let Some((columns, rows)) = result else {
-            return Ok(None);
-        };
-        self.found_in_plan_cache = cache_hit;
-        Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 
     /// Executes a prepared SELECT through the ordinary statement and
@@ -1230,28 +1232,63 @@ impl Session {
         privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
         capture_authority: bool,
     ) -> Result<(StmtOutput, Option<crate::ResultMaterializationAuthority>), DriverError> {
+        self.run_with_columns_using(sql, capture_authority, |session| {
+            session
+                .prepare_cached_select_execution(execution, sql, privilege_requests)?
+                .collect(session)
+        })
+    }
+
+    /// Opens the retained prepared plan without collecting its query results.
+    pub fn execute_prepared_record_set_for<'a>(
+        &'a mut self,
+        execution: &tidb_executor::PreparedSelectExecution,
+        prepared: &crate::PreparedAst,
+    ) -> Result<crate::StatementExecution<'a>, DriverError> {
+        Ok(self
+            .open_prepared_record_set_for(execution, prepared)?
+            .attach(self))
+    }
+
+    /// Opens a cached SELECT for a front end that owns session teardown.
+    pub fn open_prepared_record_set_for(
+        &mut self,
+        execution: &tidb_executor::PreparedSelectExecution,
+        prepared: &crate::PreparedAst,
+    ) -> Result<crate::OpenedStatement, DriverError> {
+        self.begin_statement_execution(prepared.sql())?;
+        let result = self.prepare_cached_select_execution(
+            execution,
+            prepared.sql(),
+            prepared.privilege_requests(),
+        );
+        self.return_opened_record_set(result)
+    }
+
+    pub(crate) fn prepare_cached_select_execution(
+        &mut self,
+        execution: &tidb_executor::PreparedSelectExecution,
+        sql: &str,
+        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+    ) -> Result<PendingExecution, DriverError> {
         let mut used = false;
         let output = execution
             .with_plan(|statement, physical| {
-                self.run_with_columns_using(sql, capture_authority, |session| {
-                    session
-                        .begin_prepared_statement_boundary(statement, Some(execution.parameters()));
-                    for (level, code, message) in execution.take_planning_warnings() {
-                        session.append_warning(
-                            crate::WarningLevel::from_executor(level),
-                            code,
-                            message,
-                        );
-                    }
-                    session.execute_parsed_statement_with_select_plan(
-                        sql,
-                        statement.clone(),
-                        Some(privilege_requests),
+                self.begin_prepared_statement_boundary(statement, Some(execution.parameters()));
+                for (level, code, message) in execution.take_planning_warnings() {
+                    self.append_warning(crate::WarningLevel::from_executor(level), code, message);
+                }
+                self.prepare_parsed_statement_with_optional_physical_plan(
+                    sql,
+                    statement.clone(),
+                    Some(privilege_requests),
+                    Some(RetainedSelectPlan {
                         physical,
-                        execution.schema_version(),
-                        &mut used,
-                    )
-                })
+                        schema_version: execution.schema_version(),
+                        used: &mut used,
+                    }),
+                    None,
+                )
             })
             .ok_or_else(|| {
                 DriverError::unsupported(
@@ -1418,7 +1455,10 @@ impl Session {
     /// stale one -- `@@tidb_current_ts` is the as-of timestamp for its
     /// duration, and `LastTxnInfo` records the start-only shape a read-only
     /// transaction leaves (`setLastTxnInfoBeforeTxnEnd`).
-    fn execute_as_of_statement(&mut self, stmt: &Stmt) -> Result<Option<StmtOutput>, DriverError> {
+    fn execute_as_of_statement(
+        &mut self,
+        stmt: &Stmt,
+    ) -> Result<Option<PendingExecution>, DriverError> {
         struct StripAsOf {
             taken: Vec<tidb_ast::Expr>,
         }
@@ -1464,21 +1504,22 @@ impl Session {
     /// through the same transaction overlay every in-transaction statement
     /// uses -- so the read path is the ordinary one, only the catalog is
     /// historical.
-    fn run_statement_as_of(&mut self, ts: u64, stripped: Stmt) -> Result<StmtOutput, DriverError> {
+    fn run_statement_as_of(
+        &mut self,
+        ts: u64,
+        stripped: Stmt,
+    ) -> Result<PendingExecution, DriverError> {
         self.open_stale_transaction(ts)?;
-        let outcome = self.execute_parsed_statement_no_as_of(stripped);
-        // The stale statement's transaction ends with the statement: Go's
-        // read-only end leaves the start-only `LastTxnInfo` record and the
-        // published timestamp goes with it.
-        self.discard_stale_statement_transaction();
-        outcome
-    }
-
-    /// [`Self::execute_parsed_statement`] minus the as-of interception, for
-    /// the stale execution itself (its statement is already stripped and its
-    /// transaction already open).
-    fn execute_parsed_statement_no_as_of(&mut self, stmt: Stmt) -> Result<StmtOutput, DriverError> {
-        self.execute_parsed_statement_inner("", stmt, None, None, None)
+        match self.execute_parsed_statement_inner("", stripped, None, None, None) {
+            Ok(PendingExecution::Query(mut query)) => {
+                query.transaction_end = QueryTransactionEnd::StaleRead;
+                Ok(PendingExecution::Query(query))
+            }
+            outcome => {
+                self.discard_stale_statement_transaction();
+                outcome
+            }
+        }
     }
 
     fn execute_parsed_statement(
@@ -1488,28 +1529,6 @@ impl Session {
         prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
     ) -> Result<StmtOutput, DriverError> {
         self.execute_parsed_statement_with_optional_physical_plan(sql, stmt, prepared, None, None)
-    }
-
-    fn execute_parsed_statement_with_select_plan(
-        &mut self,
-        sql: &str,
-        stmt: Stmt,
-        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
-        physical: &mut tidb_planner::physical::PhysicalPlan,
-        schema_version: u64,
-        used: &mut bool,
-    ) -> Result<StmtOutput, DriverError> {
-        self.execute_parsed_statement_with_optional_physical_plan(
-            sql,
-            stmt,
-            prepared,
-            Some(RetainedSelectPlan {
-                physical,
-                schema_version,
-                used,
-            }),
-            None,
-        )
     }
 
     fn execute_parsed_statement_with_dml_plan(
@@ -1531,11 +1550,52 @@ impl Session {
     fn execute_parsed_statement_with_optional_physical_plan(
         &mut self,
         sql: &str,
-        mut stmt: Stmt,
+        stmt: Stmt,
         prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
         select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
+        self.prepare_parsed_statement_with_optional_physical_plan(
+            sql,
+            stmt,
+            prepared,
+            select_plan,
+            dml_plan,
+        )?
+        .collect(self)
+    }
+
+    /// Executes a parsed statement while retaining ordinary query chunks and
+    /// session state until the returned record set closes.
+    pub fn execute_record_set_parsed<'a>(
+        &'a mut self,
+        stmt: Stmt,
+        sql: &str,
+    ) -> Result<crate::StatementExecution<'a>, DriverError> {
+        Ok(self.open_record_set_parsed(stmt, sql)?.attach(self))
+    }
+
+    /// Opens a parsed statement for a front end that retains its own snapshot.
+    pub fn open_record_set_parsed(
+        &mut self,
+        stmt: Stmt,
+        sql: &str,
+    ) -> Result<crate::OpenedStatement, DriverError> {
+        self.begin_statement_execution(sql)?;
+        self.begin_text_statement_boundary(&stmt);
+        let result =
+            self.prepare_parsed_statement_with_optional_physical_plan(sql, stmt, None, None, None);
+        self.return_opened_record_set(result)
+    }
+
+    fn prepare_parsed_statement_with_optional_physical_plan(
+        &mut self,
+        sql: &str,
+        mut stmt: Stmt,
+        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+        select_plan: Option<RetainedSelectPlan<'_>>,
+        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    ) -> Result<PendingExecution, DriverError> {
         if tidb_util::sem_v2::is_enabled()
             && tidb_util::sem_v2::is_restricted_sql(&sem_stmt_view(&stmt))
             && !self.has_dynamic_privilege("RESTRICTED_SQL_ADMIN", false)
@@ -1581,15 +1641,16 @@ impl Session {
                 }
             };
         let was_autocommit_statement = !self.in_transaction();
-        let output =
+        let mut execution =
             self.execute_parsed_statement_inner(sql, stmt, prepared, select_plan, dml_plan)?;
-        // Go's autocommit statement is its own transaction; its end writes
-        // `LastTxnInfo` exactly as an explicit one's would -- the full
-        // commit record for a statement that published, the start-only one
-        // for a read that activated, and nothing for `SELECT 1`.
         if was_autocommit_statement && !self.in_transaction() {
-            match &output {
-                StmtOutput::Affected(_) | StmtOutput::Done(_) => {
+            match &mut execution {
+                PendingExecution::Query(query) => {
+                    if query_reads_stored_table {
+                        query.transaction_end = QueryTransactionEnd::AutocommitRead;
+                    }
+                }
+                PendingExecution::Complete(StmtOutput::Affected(_) | StmtOutput::Done(_)) => {
                     let (start_ts, commit_ts) = {
                         let shared = self.lock_catalog()?;
                         let start_ts = shared.allocate_tso();
@@ -1599,14 +1660,14 @@ impl Session {
                     };
                     self.set_last_txn_info_committed(start_ts, commit_ts);
                 }
-                StmtOutput::Rows { .. } if query_reads_stored_table => {
+                PendingExecution::Complete(StmtOutput::Rows { .. }) if query_reads_stored_table => {
                     let start_ts = self.lock_catalog()?.allocate_tso();
                     self.set_last_txn_info_started(start_ts);
                 }
                 _ => {}
             }
         }
-        Ok(output)
+        Ok(execution)
     }
 
     /// Runs Go's `matchAgainstToLike` before physical planning. Prepared
@@ -1662,7 +1723,7 @@ impl Session {
         prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
         mut select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
-    ) -> Result<StmtOutput, DriverError> {
+    ) -> Result<PendingExecution, DriverError> {
         self.current_sql_digest_key = if self.session_memory.arbitrator_enabled() {
             crate::binding::normalize_with_db(&stmt, self.current_database()).0
         } else {
@@ -1699,7 +1760,9 @@ impl Session {
                             vars.insert(name.to_ascii_lowercase(), value.clone());
                         }
                     }
-                    return Ok(StmtOutput::Affected(u64::from(!rows.is_empty())));
+                    return Ok(PendingExecution::Complete(StmtOutput::Affected(u64::from(
+                        !rows.is_empty(),
+                    ))));
                 }
             }
         }
@@ -1759,7 +1822,7 @@ impl Session {
         }
         // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
         if let Some(output) = self.apply_schema_stmt(&stmt)? {
-            return Ok(output);
+            return Ok(PendingExecution::Complete(output));
         }
         // BEGIN / COMMIT / ROLLBACK and SET both have their own entry points
         // for the wire front, which answers them with an OK packet carrying
@@ -1767,10 +1830,10 @@ impl Session {
         // every statement can go through, which is what a client expects of
         // one connection.
         if self.control_transaction_stmt(&stmt)?.is_some() {
-            return Ok(StmtOutput::Affected(0));
+            return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
         }
         if self.apply_set_stmt(&stmt)?.is_some() {
-            return Ok(StmtOutput::Affected(0));
+            return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
         }
         // A pinned historical read must not silently answer from the present.
         // The check sits BELOW the `SET` and transaction-control doors so the
@@ -1788,14 +1851,14 @@ impl Session {
             match &**session_stmt {
                 SessionStmt::Prepare { name, source } => {
                     self.prepare_statement(name, source)?;
-                    return Ok(StmtOutput::Affected(0));
+                    return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
                 }
                 SessionStmt::Execute { name, using } => {
                     return self.execute_prepared_statement(name, using);
                 }
                 SessionStmt::Deallocate(name) => {
                     self.deallocate_prepared_statement(name)?;
-                    return Ok(StmtOutput::Affected(0));
+                    return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
                 }
                 _ => {}
             }
@@ -1885,48 +1948,35 @@ impl Session {
         // no database selected (captured). The driver's own
         // `split_table_path` raises it at the resolution point, which is
         // where Go's does.
-        match &stmt {
+        let output = match &stmt {
             Stmt::Query(query) => {
-                let tidb_ast::QueryStmt::Select(select) = &**query else {
-                    let tidb_ast::QueryStmt::SetOpr(_) = &**query else {
-                        unreachable!("a query is a SELECT or a set operation")
-                    };
-                    let current_db = self.current_db.clone();
-                    let ctx = self.statement_context(false);
-                    let mut table_names = Vec::new();
-                    information_schema_tables_in_query(query, &current_db, &mut table_names);
-                    let (columns, rows) = if table_names.is_empty() {
-                        self.with_catalog_mut(|catalog| {
-                            let physical = select_plan.as_mut().and_then(|retained| {
-                                (retained.schema_version == catalog.metadata_version()).then(|| {
-                                    *retained.used = true;
-                                    &mut *retained.physical
-                                })
-                            });
-                            tidb_executor::run_query_meta_stmt_with_physical(
-                                query,
-                                physical,
-                                catalog,
-                                &current_db,
-                                &ctx,
-                            )
-                        })?
-                    } else {
-                        self.run_information_schema_query(query, table_names, &current_db, &ctx)?
-                    };
-                    self.drain_eval_warnings(&ctx);
-                    return Ok(StmtOutput::Rows { columns, rows });
-                };
-                // An information_schema table is virtual: its rows are
-                // computed from the catalog rather than read from storage.
-                if let Some(output) = self.run_information_schema_select(select)? {
-                    return Ok(output);
-                }
                 let current_db = self.current_db.clone();
-                // Go `ResetContextOfStmt`'s `*ast.SelectStmt` arm copies the
-                // statement's own priority and `SQL_NO_CACHE` onto the
-                // statement context before anything reads storage.
                 let ctx = self.statement_context_for_stmt(&stmt, false);
+                let mut table_names = Vec::new();
+                information_schema_tables_in_query(query, &current_db, &mut table_names);
+                if !table_names.is_empty() {
+                    let record_set =
+                        self.open_information_schema_query(query, table_names, &current_db, &ctx)?;
+                    return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
+                }
+                let tidb_ast::QueryStmt::Select(select) = &**query else {
+                    let record_set = self.with_catalog_mut(|catalog| {
+                        let physical = select_plan.as_mut().and_then(|retained| {
+                            (retained.schema_version == catalog.metadata_version()).then(|| {
+                                *retained.used = true;
+                                &mut *retained.physical
+                            })
+                        });
+                        tidb_executor::driver::open_query_meta_stmt_with_physical(
+                            query,
+                            physical,
+                            catalog,
+                            &current_db,
+                            &ctx,
+                        )
+                    })?;
+                    return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
+                };
                 if let Some(parameterized) = non_prepared.as_ref() {
                     let mut effective_parameterized = parameterized.statement.clone();
                     if binding_sql.is_some() {
@@ -1944,14 +1994,14 @@ impl Session {
                             let Stmt::Query(query) = statement else {
                                 unreachable!("a retained SELECT owns a query statement")
                             };
-                            let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+                            let tidb_ast::QueryStmt::Select(_) = query.as_ref() else {
                                 unreachable!("a retained SELECT owns a SELECT query")
                             };
                             self.with_catalog_mut(|catalog| {
                                 (schema_version == catalog.metadata_version())
                                     .then(|| {
-                                        tidb_executor::run_select_meta_stmt_with_physical(
-                                            select,
+                                        tidb_executor::driver::open_query_meta_stmt_with_physical(
+                                            query,
                                             Some(physical),
                                             catalog,
                                             &current_db,
@@ -1961,30 +2011,28 @@ impl Session {
                                     .transpose()
                             })
                         });
-                        if let Some(Some((columns, rows))) = result.transpose()? {
+                        if let Some(Some(record_set)) = result.transpose()? {
                             self.found_in_plan_cache = cache_hit;
-                            self.drain_eval_warnings(&ctx);
-                            return Ok(StmtOutput::Rows { columns, rows });
+                            return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
                         }
                     }
                 }
-                let (columns, rows) = self.with_catalog_mut(|catalog| {
+                let record_set = self.with_catalog_mut(|catalog| {
                     let physical = select_plan.as_mut().and_then(|retained| {
                         (retained.schema_version == catalog.metadata_version()).then(|| {
                             *retained.used = true;
                             &mut *retained.physical
                         })
                     });
-                    tidb_executor::run_select_meta_stmt_with_physical(
-                        select,
+                    tidb_executor::driver::open_query_meta_stmt_with_physical(
+                        query,
                         physical,
                         catalog,
                         &current_db,
                         &ctx,
                     )
                 })?;
-                self.drain_eval_warnings(&ctx);
-                Ok(StmtOutput::Rows { columns, rows })
+                return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
             }
             Stmt::Dml(dml) => {
                 // Go parameterizes a non-prepared DML statement too (the
@@ -2014,7 +2062,9 @@ impl Session {
                             &stmt,
                             &self.current_db,
                         );
-                        return self.execute_cached_prepared_dml(&execution, sql, &requests);
+                        return self
+                            .execute_cached_prepared_dml(&execution, sql, &requests)
+                            .map(PendingExecution::Complete);
                     }
                 }
                 match &**dml {
@@ -2494,7 +2544,8 @@ impl Session {
                 "this statement kind ({}) is not supported yet",
                 variant_name(&**session)
             ))),
-        }
+        };
+        output.map(PendingExecution::Complete)
     }
 
     /// The query clauses this tier parses but cannot execute.

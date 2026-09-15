@@ -85,6 +85,35 @@ pub fn format_go_duration_ms(ms: i64) -> String {
     format_go_duration(ms * 1_000_000)
 }
 
+/// Go `execdetails.FormatDuration`: prune elapsed-time precision for EXPLAIN.
+/// Shared by the physical executor and the detailed runtime-stat collector.
+#[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "Go FormatDuration converts time.Duration through float64"
+)]
+pub fn format_explain_duration(ns: i64) -> String {
+    if ns <= 1_000 {
+        return format_go_duration(ns);
+    }
+    let unit = if ns >= 1_000_000_000 {
+        1_000_000_000
+    } else if ns >= 1_000_000 {
+        1_000_000
+    } else {
+        1_000
+    };
+    let integer = (ns / unit) * unit;
+    let mut decimal = (ns % unit) as f64 / unit as f64;
+    if ns < 10 * unit {
+        decimal = (decimal * 100.0).round() / 100.0;
+    } else {
+        decimal = (decimal * 10.0).round() / 10.0;
+    }
+    format_go_duration(integer + (decimal * unit as f64) as i64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

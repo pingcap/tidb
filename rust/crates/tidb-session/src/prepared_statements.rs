@@ -69,7 +69,8 @@ use tidb_ast::{Expr, PrepareSource, QueryStmt, SelectField, Stmt};
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 
-use crate::{Session, StmtOutput};
+use crate::record_set::PendingExecution;
+use crate::Session;
 
 /// One prepared statement of a session: Go's retained `PlanCacheStmt` input
 /// plus the cache-owned physical SELECT descriptor.
@@ -249,7 +250,7 @@ impl Session {
         &mut self,
         name: &str,
         using: &[Expr],
-    ) -> Result<StmtOutput, DriverError> {
+    ) -> Result<PendingExecution, DriverError> {
         let prepared = self
             .prepared_statements
             .get(name)
@@ -290,13 +291,8 @@ impl Session {
         let (effective_statement, binding_sql) =
             self.prepared_statement_with_binding(&prepared.statement);
         let mut effective_statement = effective_statement.into_owned();
-        // The binding match belongs to the outer EXECUTE statement, but the
-        // retained-plan and ordinary fallback paths each enter a nested
-        // statement lifecycle to execute the bound AST. That inner boundary
-        // promotes (and consumes) `found_in_binding` before the outer
-        // statement can publish it. Remember the match here and re-arm the
-        // current-statement flag after the inner execution returns, including
-        // when that execution fails.
+        // EXECUTE and its bound body share one result lifecycle. Keep the
+        // binding match while the body applies its own hints and metadata.
         let binding_matched = binding_sql.is_some();
         self.rewrite_fts_for_planning(&mut effective_statement);
         if prepared.cacheable.is_ok()
@@ -310,7 +306,7 @@ impl Session {
                     binding_sql.as_deref(),
                 )
             }) {
-                let result = self.execute_prepared_select(
+                let result = self.prepare_cached_select_execution(
                     &cached,
                     &prepared.sql,
                     &prepared.privilege_requests,
@@ -336,7 +332,7 @@ impl Session {
                 if binding_matched {
                     self.found_in_binding = true;
                 }
-                return result;
+                return result.map(PendingExecution::Complete);
             }
         }
         let bound = tidb_executor::bind_statement(effective_statement, &values)?;
@@ -345,27 +341,12 @@ impl Session {
         // dispatch every other statement does -- including DDL's implicit
         // commit, which is why `EXECUTE` of a prepared `CREATE TABLE` works
         // (captured).
-        let result = self.run_parsed_bound_owned_with_requests(
-            bound,
-            &prepared.sql,
-            &prepared.privilege_requests,
-        );
+        let result =
+            self.prepare_bound_execution(&prepared.sql, bound, &prepared.privilege_requests);
         if binding_matched {
             self.found_in_binding = true;
         }
-        let output = result?;
-        // Go `isPhysicalPlanCacheable`'s `PhysicalApply` arm runs on the
-        // BUILT plan, after the AST checker said yes: a plan containing an
-        // Apply is refused outright -- neither stored nor reported -- because
-        // a per-outer-row executor cannot be reused across parameter sets.
-        // The driver reports it through the statement context's channel.
-        if self
-            .planned_apply
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            return Ok(output);
-        }
-        Ok(output)
+        result
     }
 
     /// Go `DeallocateExec.Next`: drops the name, or reports

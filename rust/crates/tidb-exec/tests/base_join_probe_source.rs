@@ -24,21 +24,18 @@
 //! directly, and names the Go function it is pinning.
 
 use tidb_chunk::chunk::Chunk;
+use tidb_codec::{JoinKeyColumns, SerializeMode};
+
 use tidb_datatype::{FieldType, FieldTypeCode};
 
 use tidb_exec::base_join_probe::{
-    BATCH_BUILD_ROW_SIZE, BaseJoinProbe, BuildRowSource, MatchedRowInfo, OffsetAndLength,
-    ProbeContext, ProbeError, RowBytesMap, common_init_for_scan_row_table, is_key_matched,
-    new_join_probe,
+    common_init_for_scan_row_table, is_key_matched, new_join_probe, BaseJoinProbe, BuildRowSource,
+    MatchedRowInfo, OffsetAndLength, ProbeContext, ProbeError, RowBytesMap, BATCH_BUILD_ROW_SIZE,
 };
 use tidb_exec::hash_table_v2::HashTableV2;
-use tidb_exec::join_row_table::{
-    RowLayoutMeta, RowTable, RowTableSegment, SIZE_OF_NEXT_PTR,
-};
+use tidb_exec::join_row_table::{RowLayoutMeta, RowTable, RowTableSegment, SIZE_OF_NEXT_PTR};
 use tidb_exec::join_table_meta::KeyMode;
-use tidb_exec::row_table_builder::{
-    BuildChunk, BuildColumn, BuildContext, PartitionInfo, RowTableBuilder, fnv64,
-};
+use tidb_exec::row_table_builder::{fnv64, BuildContext, PartitionInfo, RowTableBuilder};
 use tidb_exec::tagged_ptr::TagPtrHelper;
 use tidb_executor::joiner::JoinType;
 
@@ -77,19 +74,15 @@ fn build_side(keys: &[i64], layout: &RowLayoutMeta) -> (RowTable, u8) {
         false,
         layout.null_map_length,
     );
-    let key_serializer =
-        |chunk: &BuildChunk, row: usize| -> Vec<u8> { chunk.get_raw(row, 0).to_vec() };
+    let key_serializer = key_columns(FieldTypeCode::LongLong);
     let mut context = BuildContext::new(layout, partition, &key_serializer);
 
-    let values: Vec<(Vec<u8>, bool)> = keys
-        .iter()
-        .map(|key| (key.to_le_bytes().to_vec(), false))
-        .collect();
-    let chunk = BuildChunk::new(vec![BuildColumn::fixed(8, &values)]);
+    let mut chunk = Chunk::new_with_capacity(&int_fields(1), keys.len().max(1));
+    for &key in keys {
+        chunk.append_int64(0, key);
+    }
 
     let mut table = RowTable::new();
-    builder.reset_buffer(&chunk);
-    builder.init_hash_value_and_part_index_for_one_chunk(partition);
     let segments = builder
         .process_one_chunk(&chunk, &mut context)
         .expect("row table build");
@@ -131,6 +124,7 @@ fn fixture(keys: &[i64]) -> Fixture {
 
 fn context<'a>(fixture: &'a Fixture, right_as_build_side: bool) -> ProbeContext<'a> {
     ProbeContext {
+        spill: None,
         hash_table: &fixture.hash_table,
         meta: &fixture.layout,
         column_count_needed_for_other_condition: 0,
@@ -158,12 +152,6 @@ fn probe_chunk(keys: &[i64]) -> Chunk {
 }
 
 /// The probe-side counterpart of the build fixture's key serializer.
-fn key_of(chunk: &Chunk, row: usize) -> Option<Vec<u8>> {
-    if chunk.column(0).is_null(row) {
-        return None;
-    }
-    Some(chunk.column(0).get_int64(row).to_le_bytes().to_vec())
-}
 
 // ---------------------------------------------------------------------------
 // isKeyMatched (`base_join_probe.go:911`)
@@ -254,7 +242,12 @@ fn set_chunk_for_probe_hashes_buckets_and_resolves_headers() {
     let mut probe = new_join_probe(&ctx, 0, JoinType::Inner, vec![0], &[false], true);
 
     probe
-        .set_chunk_for_probe(&ctx, probe_chunk(&[20, 999]), None, &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[20, 999]),
+            None,
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("first chunk");
 
     assert_eq!(probe.chunk_rows(), 2);
@@ -292,9 +285,30 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
     chunk.column_mut(0).set_null(1, true);
 
     // ProbeFilter rejects the last physical row.
-    let filter = |_: &Chunk, physical_row: usize| physical_row != 2;
+    let mut column = tidb_expr::column::Column::new(1, int_fields(1)[0].clone());
+    column.index = 0;
+    let predicate = tidb_expr::expression::Expression::ScalarFunction(
+        tidb_expr::expression::ScalarFunction::new(
+            tidb_ast::CiString::new("lt"),
+            int_fields(1)[0].clone(),
+            vec![
+                tidb_expr::expression::Expression::Column(column),
+                tidb_expr::expression::Expression::Constant(tidb_expr::constant::Constant::new(
+                    tidb_datatype::Datum::Int(20),
+                    int_fields(1)[0].clone(),
+                )),
+            ],
+        ),
+    );
+    let filter =
+        tidb_exec::base_join_probe::JoinFilter::new(tidb_expr::NoColumns, vec![predicate], true);
     probe
-        .set_chunk_for_probe(&ctx, chunk, Some(&filter), &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            chunk,
+            Some(&filter),
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("chunk");
 
     assert_ne!(probe.matched_rows_headers()[0], 0);
@@ -302,6 +316,33 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
     assert_eq!(probe.matched_rows_hash_value()[1], 0);
     assert_eq!(probe.matched_rows_headers()[2], 0, "filtered -> no match");
     assert_eq!(probe.matched_rows_hash_value()[2], 0);
+
+    // The same VectorizedFilter failure must reach the probe owner unchanged.
+    let parameter =
+        tidb_expr::constant::Constant::new(tidb_datatype::Datum::Int(0), int_fields(1)[0].clone());
+    let failing_filter = tidb_exec::base_join_probe::JoinFilter::new(
+        tidb_expr::NoColumns,
+        vec![tidb_expr::expression::Expression::ScalarFunction(
+            tidb_expr::expression::ScalarFunction::new(
+                tidb_ast::CiString::new("getparam"),
+                int_fields(1)[0].clone(),
+                vec![tidb_expr::expression::Expression::Constant(parameter)],
+            ),
+        )],
+        true,
+    );
+    let mut probe = new_join_probe(&ctx, 0, JoinType::Inner, vec![0], &[true], true);
+    assert_eq!(
+        probe.set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[10]),
+            Some(&failing_filter),
+            &key_columns(FieldTypeCode::LongLong)
+        ),
+        Err(ProbeError::Expression(
+            tidb_expr::EvalError::ParamIndexExceedParamCounts
+        ))
+    );
 }
 
 #[test]
@@ -311,11 +352,21 @@ fn set_chunk_for_probe_rejects_a_chunk_while_the_previous_one_is_unprobed() {
     let mut probe = new_join_probe(&ctx, 0, JoinType::Inner, vec![0], &[false], true);
 
     probe
-        .set_chunk_for_probe(&ctx, probe_chunk(&[1, 2]), None, &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[1, 2]),
+            None,
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("first chunk");
     assert!(!probe.is_current_chunk_probe_done());
     assert_eq!(
-        probe.set_chunk_for_probe(&ctx, probe_chunk(&[3]), None, &key_of),
+        probe.set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[3]),
+            None,
+            &key_columns(FieldTypeCode::LongLong)
+        ),
         Err(ProbeError::PreviousChunkNotProbed)
     );
 
@@ -323,7 +374,12 @@ fn set_chunk_for_probe_rejects_a_chunk_while_the_previous_one_is_unprobed() {
     probe.set_current_probe_row(probe.chunk_rows());
     assert!(probe.is_current_chunk_probe_done());
     probe
-        .set_chunk_for_probe(&ctx, probe_chunk(&[3]), None, &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[3]),
+            None,
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("second chunk");
 }
 
@@ -336,7 +392,7 @@ fn set_chunk_for_probe_honors_a_selection_vector() {
     let mut chunk = probe_chunk(&[7, 8, 9]);
     chunk.set_sel(Some(vec![2, 0]));
     probe
-        .set_chunk_for_probe(&ctx, chunk, None, &key_of)
+        .set_chunk_for_probe(&ctx, chunk, None, &key_columns(FieldTypeCode::LongLong))
         .expect("chunk");
 
     // usedRows maps logical -> physical, and chunkRows counts logical rows.
@@ -355,7 +411,12 @@ fn probe_row_runs_are_replayed_once_per_match() {
     let ctx = context(&fixture, true);
     let mut probe = new_join_probe(&ctx, 0, JoinType::Inner, vec![0], &[false], true);
     probe
-        .set_chunk_for_probe(&ctx, probe_chunk(&[100, 200, 300]), None, &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[100, 200, 300]),
+            None,
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("chunk");
 
     // Row 0 matched three build rows, row 1 matched none, row 2 matched one.
@@ -407,11 +468,18 @@ fn build_rows_are_reconstructed_from_their_packed_bytes() {
     let ctx = context(&fixture, true);
     let mut probe = new_join_probe(&ctx, 0, JoinType::Inner, vec![0], &[false], true);
     probe
-        .set_chunk_for_probe(&ctx, probe_chunk(&[1000]), None, &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[1000]),
+            None,
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("chunk");
 
     let segment = &fixture.hash_table.sub_table(0).row_data.segments[0];
-    let addresses: Vec<usize> = (0..keys.len()).map(|i| segment.get_row_pointer(i)).collect();
+    let addresses: Vec<usize> = (0..keys.len())
+        .map(|i| segment.get_row_pointer(i))
+        .collect();
 
     // rightAsBuildSide with no other condition puts the build columns after
     // the probe columns, i.e. at offset len(lUsed).
@@ -447,7 +515,12 @@ fn staged_build_rows_flush_at_the_batch_size() {
     let ctx = context(&fixture, true);
     let mut probe = new_join_probe(&ctx, 0, JoinType::Inner, vec![0], &[false], true);
     probe
-        .set_chunk_for_probe(&ctx, probe_chunk(&[0]), None, &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[0]),
+            None,
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("chunk");
 
     let segment = &fixture.hash_table.sub_table(0).row_data.segments[0];
@@ -485,7 +558,12 @@ fn an_unused_build_column_is_stepped_over_rather_than_appended() {
     ctx.r_used = Vec::new();
     let mut probe = new_join_probe(&ctx, 0, JoinType::Inner, vec![0], &[false], true);
     probe
-        .set_chunk_for_probe(&ctx, probe_chunk(&[11]), None, &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[11]),
+            None,
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("chunk");
 
     let segment = &fixture.hash_table.sub_table(0).row_data.segments[0];
@@ -516,7 +594,12 @@ fn a_bucket_chain_walks_every_row_that_shares_a_hash_bucket() {
     let ctx = context(&fixture, true);
     let mut probe = new_join_probe(&ctx, 0, JoinType::Inner, vec![0], &[false], true);
     probe
-        .set_chunk_for_probe(&ctx, probe_chunk(&[77]), None, &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[77]),
+            None,
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("chunk");
 
     let hash_value = probe.matched_rows_hash_value()[0];
@@ -593,7 +676,10 @@ fn prepare_for_probe_reports_the_remaining_capacity_and_the_scratch_choice() {
     chk.append_int64(0, 1);
     chk.append_int64(0, 2);
     let (use_scratch, remain) = probe.prepare_for_probe(&ctx, &chk);
-    assert!(!use_scratch, "no other condition -> build straight into chk");
+    assert!(
+        !use_scratch,
+        "no other condition -> build straight into chk"
+    );
     assert_eq!(remain, 8);
 
     ctx.has_other_condition = true;
@@ -613,7 +699,12 @@ fn reconstruction_reads_rows_from_any_build_row_source() {
     let ctx = context(&fixture, true);
     let mut probe = new_join_probe(&ctx, 0, JoinType::Inner, vec![0], &[false], true);
     probe
-        .set_chunk_for_probe(&ctx, probe_chunk(&[1]), None, &key_of)
+        .set_chunk_for_probe(
+            &ctx,
+            probe_chunk(&[1]),
+            None,
+            &key_columns(FieldTypeCode::LongLong),
+        )
         .expect("chunk");
 
     let mut rows = RowBytesMap::new();
@@ -660,7 +751,10 @@ fn new_join_probe_records_the_join_type_and_nullable_key_flag() {
     assert_eq!(probe.max_chunk_size(), 1024);
 
     let probe = new_join_probe(&ctx, 0, JoinType::LeftOuter, vec![0], &[true], true);
-    assert!(probe.has_nullable_key(), "a nullable probe key sets the flag");
+    assert!(
+        probe.has_nullable_key(),
+        "a nullable probe key sets the flag"
+    );
 }
 
 #[test]
@@ -677,5 +771,20 @@ fn new_join_probe_rejects_a_left_outer_semi_join_built_on_the_left() {
     let fixture = fixture(&[1]);
     let mut ctx = context(&fixture, true);
     ctx.r_used = Vec::new();
-    let _ = new_join_probe(&ctx, 0, JoinType::LeftOuterSemiJoin, vec![0], &[false], false);
+    let _ = new_join_probe(
+        &ctx,
+        0,
+        JoinType::LeftOuterSemiJoin,
+        vec![0],
+        &[false],
+        false,
+    );
+}
+
+fn key_columns(code: FieldTypeCode) -> JoinKeyColumns {
+    JoinKeyColumns {
+        indices: vec![0],
+        types: vec![FieldType::new(code)],
+        modes: vec![SerializeMode::Normal],
+    }
 }

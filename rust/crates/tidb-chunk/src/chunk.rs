@@ -26,7 +26,7 @@
 
 use crate::chunk_util::MSG_ERR_SEL_NOT_NIL;
 use crate::column::Column;
-use crate::column_slot::{ColumnHandle, ColumnRead, ColumnSlot, ColumnWrite};
+use crate::column_slot::{ColumnHandle, ColumnRead, ColumnRef, ColumnSlot, ColumnWrite};
 use crate::compare::{compare, sort_search};
 use crate::row::Row;
 use std::cmp::Ordering;
@@ -41,6 +41,38 @@ pub const INITIAL_CAPACITY: usize = 32;
 /// Go `chunk.ZeroCapacity`: the public executor-builder sentinel requesting a
 /// first batch that grows from zero capacity.
 pub const ZERO_CAPACITY: usize = 0;
+
+impl tidb_codec::JoinKeySource for Chunk {
+    type Column = Column;
+
+    fn num_columns(&self) -> usize {
+        self.num_cols()
+    }
+    fn physical_rows(&self) -> usize {
+        self.physical_num_rows()
+    }
+    fn with_column<R>(&self, column: usize, f: impl FnOnce(&Column) -> R) -> R {
+        f(&self.column(column))
+    }
+}
+
+impl tidb_codec::JoinKeyColumn for Column {
+    type Bytes<'a> = crate::CellBytes<'a>;
+
+    fn is_null(&self, row: usize) -> bool {
+        self.is_null(row)
+    }
+    fn raw(&self, row: usize) -> Self::Bytes<'_> {
+        self.get_raw(row)
+    }
+    fn datum(&self, row: usize, field_type: &FieldType) -> Result<Datum, tidb_codec::CodecError> {
+        let mut datum = Datum::Null;
+        crate::row::DatumCell { column: self, row }
+            .try_datum_with_buffer(0, field_type, &mut datum)
+            .map_err(|_| tidb_codec::CodecError::InvalidEncoding("invalid native join key cell"))?;
+        Ok(datum)
+    }
+}
 
 /// Go `chunk.Chunk`: a columnar batch of rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -201,15 +233,34 @@ impl Chunk {
         if let Some(sel) = &self.sel {
             return sel.len();
         }
+        self.physical_rows()
+    }
+
+    /// Row count before applying selection, including incomplete/virtual chunks.
+    /// Equivalent to Go NumRows with Sel temporarily cleared, without copying.
+    pub fn physical_rows(&self) -> usize {
         if self.in_complete_chunk || self.num_cols() == 0 {
             return self.num_virtual_rows;
         }
         self.columns[0].read().rows()
     }
 
+    /// Borrows a physical row without applying the chunk's selection vector.
+    pub fn physical_row(&self, idx: usize) -> Row<'_> {
+        Row::new(self, idx)
+    }
+
     /// Go `Column`: the column at `col_idx`.
     pub fn column(&self, col_idx: usize) -> ColumnRead<'_> {
         self.columns[col_idx].read()
+    }
+
+    /// Resolve a column once for a chunk-wide operation. The reference holds
+    /// no lock and cannot outlive this chunk or survive a column swap.
+    pub fn column_ref(&self, col_idx: usize) -> ColumnRef<'_> {
+        ColumnRef {
+            slot: &self.columns[col_idx],
+        }
     }
 
     /// A mutable borrow of the column at `col_idx`.

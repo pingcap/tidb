@@ -336,9 +336,8 @@ struct ParallelProbeBatch {
 /// One side of the merge strategy: the chunk it streams into, how far that
 /// chunk is consumed, and the current equal-key group metadata.
 ///
-/// The OUTER side retains a range in its current child chunk. The INNER side
-/// sets `group_len` and writes its rows to [`MergeInnerGroup`], which is the
-/// spillable authority accepted TiDB uses for a run crossing chunk bounds.
+/// Both sides retain ranges in their current child chunks. Only an INNER
+/// run crossing chunk bounds transfers chunks to [`MergeInnerGroup`].
 struct MergeSide {
     chunk: Chunk,
     /// The exact live capacity charge for `chunk`.
@@ -350,17 +349,12 @@ struct MergeSide {
     group_start: usize,
     /// One-past-the-end row in the current OUTER equal-key range.
     group_end: usize,
-    /// Number of rows in the current group. The inner group is not stored in
-    /// `group`, so emptiness cannot be derived from the vector.
+    /// Number of rows in the current group, including retained inner chunks.
     group_len: usize,
-    /// The key of the current group.
+    /// The last inner key at a child-chunk boundary, for continuation checks.
     key: Vec<Datum>,
     /// Go MergeJoinTable.filtersSelected, evaluated once per outer input chunk.
     selected: Vec<bool>,
-    /// Typed single-BIGINT key of the CURRENT row, when the merge key is one
-    /// non-null-safe integer column: `None` until first read, then the row's
-    /// `Option<i64>` (SQL NULL inside). Skips per-row `Vec<Datum>` building.
-    int_key_cache: Option<Option<i64>>,
 }
 
 impl MergeSide {
@@ -376,7 +370,6 @@ impl MergeSide {
             group_len: 0,
             key: Vec::new(),
             selected: Vec::new(),
-            int_key_cache: None,
         }
     }
 }
@@ -390,15 +383,13 @@ struct MergeOuterRange {
 
 /// The merge INNER side's current equal-key group.
 ///
-/// `staging` is the child-sized chunk currently being filled. Its memory is
-/// charged directly to the join tracker until ownership is transferred to
-/// `rows`; `RowContainer::add` charges the same chunk before that direct
-/// charge is released, matching TiDB's child-chunk-to-container handoff.
+/// The final range stays in the child's chunk. Earlier chunks of an unbroken
+/// group move into `rows`, matching Go's child-chunk-to-container handoff.
 struct MergeInnerGroup {
     rows: RowContainer,
-    staging: Chunk,
+    child_start: usize,
+    child_end: usize,
     read_back: Chunk,
-    types: Vec<FieldType>,
     /// Whether `rows` has taken a chunk since its last reset. Go hands the
     /// child chunk to its row container only when a group outgrows it, and
     /// resets the container before every group regardless; the Rust
@@ -410,7 +401,7 @@ struct MergeInnerGroup {
 #[derive(Clone, Copy)]
 enum MergeInnerPtr {
     Stored(RowPtr),
-    Staging(usize),
+    Child(usize),
 }
 
 impl MergeInnerGroup {
@@ -421,22 +412,22 @@ impl MergeInnerGroup {
         tracker: &Arc<Tracker>,
         disk_tracker: &Arc<tidb_util::disk::Tracker>,
     ) -> Self {
-        let mut rows = RowContainer::new(&types, chunk_size, memory.spill_storage());
+        let rows = RowContainer::new(&types, chunk_size, memory.spill_storage());
         rows.mem_tracker().attach_to(tracker);
         rows.disk_tracker().attach_to(disk_tracker);
-        let staging = rows.alloc_chunk();
         let read_back = Chunk::new_with_capacity(&types, 1);
         Self {
             rows,
-            staging,
+            child_start: 0,
+            child_end: 0,
             read_back,
-            types,
             flushed: false,
         }
     }
 
     fn reset(&mut self) {
-        self.staging.reset();
+        self.child_start = 0;
+        self.child_end = 0;
         if self.read_back.num_rows() != 0 {
             self.read_back.reset();
         }
@@ -446,24 +437,20 @@ impl MergeInnerGroup {
         }
     }
 
-    fn append(
+    fn retain_child(
         &mut self,
-        row: tidb_chunk::row::Row<'_>,
+        side: &mut MergeSide,
         tracker: &Arc<Tracker>,
-        memory: &StatementMemory,
     ) -> Result<(), ExecError> {
-        let before = self.staging.memory_usage();
-        self.staging.append_row(row);
-        tracker.consume(self.staging.memory_usage() - before);
-        if self.staging.is_full() {
-            self.flush(tracker)?;
-        }
-        memory.check()
-    }
-
-    fn flush(&mut self, tracker: &Arc<Tracker>) -> Result<(), ExecError> {
-        let chunk = std::mem::take(&mut self.staging);
-        let chunk_bytes = chunk.memory_usage();
+        let mut chunk = std::mem::take(&mut side.chunk);
+        let selection = match chunk.sel() {
+            Some(selected) => selected[self.child_start..self.child_end].to_vec(),
+            None => (self.child_start..self.child_end).collect(),
+        };
+        chunk.set_sel(Some(selection));
+        let chunk_bytes = std::mem::take(&mut side.chunk_bytes);
+        self.child_start = 0;
+        self.child_end = 0;
         let result = self
             .rows
             .add(chunk)
@@ -471,14 +458,14 @@ impl MergeInnerGroup {
         tracker.consume(-chunk_bytes);
         self.flushed = true;
         result?;
-        self.staging = self.rows.alloc_chunk();
-        tracker.consume(self.staging.memory_usage());
+        side.chunk = self.rows.alloc_chunk();
+        side.chunk_bytes = side.chunk.memory_usage();
+        tracker.consume(side.chunk_bytes);
         Ok(())
     }
 
     fn close(&mut self, tracker: &Arc<Tracker>) {
-        tracker.consume(-self.staging.memory_usage() - self.read_back.memory_usage());
-        self.staging = Chunk::default();
+        tracker.consume(-self.read_back.memory_usage());
         self.read_back = Chunk::default();
         self.rows.close();
     }
@@ -487,13 +474,13 @@ impl MergeInnerGroup {
         if self.rows.num_chunks() != 0 {
             return Some(MergeInnerPtr::Stored(RowPtr::new(0, 0)));
         }
-        (self.staging.num_rows() != 0).then_some(MergeInnerPtr::Staging(0))
+        (self.child_start < self.child_end).then_some(MergeInnerPtr::Child(self.child_start))
     }
 
     fn next_ptr(&self, ptr: MergeInnerPtr) -> Option<MergeInnerPtr> {
         match ptr {
-            MergeInnerPtr::Staging(row) => {
-                (row + 1 < self.staging.num_rows()).then_some(MergeInnerPtr::Staging(row + 1))
+            MergeInnerPtr::Child(row) => {
+                (row + 1 < self.child_end).then_some(MergeInnerPtr::Child(row + 1))
             }
             MergeInnerPtr::Stored(ptr) => {
                 let chunk_index = ptr.chk_idx as usize;
@@ -508,25 +495,31 @@ impl MergeInnerGroup {
                 if next_chunk < self.rows.num_chunks() {
                     return Some(MergeInnerPtr::Stored(RowPtr::new(next_chunk as u32, 0)));
                 }
-                (self.staging.num_rows() != 0).then_some(MergeInnerPtr::Staging(0))
+                (self.child_start < self.child_end)
+                    .then_some(MergeInnerPtr::Child(self.child_start))
             }
         }
     }
 
-    fn datum_row(&mut self, ptr: MergeInnerPtr) -> Result<Vec<Datum>, ExecError> {
+    fn with_row<R>(
+        &mut self,
+        ptr: MergeInnerPtr,
+        child: &Chunk,
+        visit: impl FnOnce(Row<'_>) -> Result<R, ExecError>,
+    ) -> Result<R, ExecError> {
         match ptr {
-            MergeInnerPtr::Staging(row) => Ok(self.staging.get_row(row).get_datum_row(&self.types)),
+            MergeInnerPtr::Child(row) => visit(child.get_row(row)),
             MergeInnerPtr::Stored(ptr) => {
                 self.read_back.reset();
-                let row = {
+                let result = {
                     let loaded = self
                         .rows
                         .get_row_and_append_to_chunk_if_in_disk(ptr, &mut self.read_back)
                         .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
-                    loaded.row(&self.read_back).get_datum_row(&self.types)
+                    visit(loaded.row(&self.read_back))
                 };
                 self.read_back.reset();
-                Ok(row)
+                result
             }
         }
     }
@@ -565,7 +558,7 @@ pub(crate) enum IndexLookupSource {
     /// shared probe channel published by the enclosing join.
     Composite {
         exec: Box<dyn Executor>,
-        probes: std::rc::Rc<std::cell::RefCell<crate::access_path::SharedIndexJoinProbes>>,
+        probes: std::sync::Arc<std::sync::Mutex<crate::access_path::SharedIndexJoinProbes>>,
     },
 }
 
@@ -581,7 +574,7 @@ impl IndexLookupSource {
                 probes: shared,
             } => {
                 exec.close()?;
-                shared.borrow_mut().publish(probes);
+                shared.lock().unwrap().publish(probes);
                 exec.open()
             }
         }
@@ -2614,8 +2607,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         memory.check()
     }
 
-    /// Pulls the next INNER group into the spillable row container. Only the
-    /// key is materialized as datums; complete rows remain chunk encoded.
+    /// Go fetchNextInnerGroup: retain the current chunk's equal-key range,
+    /// transferring it to the spillable container only to fetch another chunk.
     fn fetch_inner_group(
         side: &mut MergeSide,
         child: &mut dyn Executor,
@@ -2632,6 +2625,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             if side.row >= side.chunk.num_rows() {
                 if side.done {
                     break;
+                }
+                if group.child_start < group.child_end {
+                    side.key.clear();
+                    let last = side.chunk.get_row(group.child_end - 1);
+                    side.key
+                        .extend(key_offsets.iter().map(|&at| last.get_datum(at, &types[at])));
+                    group.retain_child(side, tracker)?;
+                    memory.check()?;
                 }
                 let result = child.next(&mut side.chunk);
                 let current_bytes = side.chunk.memory_usage();
@@ -2654,48 +2655,27 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 side.row += 1;
                 continue;
             }
-            // Single-BIGINT-key fast path: read the typed cell directly and
-            // keep it in the cache instead of materializing a fresh
-            // `Vec<Datum>` per row. The cache holds the CURRENT row's key —
-            // `Option<i64>` so a SQL NULL compares as its own group value,
-            // and two NULLs sort together exactly as the general path's
-            // `Datum` ordering does.
-            if key_offsets.len() == 1 && side.int_key_cache.is_some() {
-                let at = key_offsets[0];
-                let current = if row.is_null(at) {
-                    None
-                } else {
-                    Some(row.get_int64(at))
-                };
-                // The outer `Option` only marks "typed mode"; the group
-                // boundary compare uses the row-level `Option<i64>`.
-                let previous = side.int_key_cache.replace(current).unwrap_or(None);
-                if side.group_len == 0 {
-                    // Seed the group's stored key so callers that read
-                    // `side.key` still see it.
-                    side.key = vec![match current {
-                        Some(value) => Datum::Int(value),
-                        None => Datum::Null,
-                    }];
-                } else if current != previous {
-                    break;
-                }
-            } else {
-                let key: Vec<Datum> = key_offsets
-                    .iter()
-                    .map(|&at| row.get_datum(at, &types[at]))
-                    .collect();
-                if side.group_len == 0 {
-                    side.key = key;
-                } else if merge_key_cmp(&side.key, &key, key_offsets, types, false)?
+            if side.group_len != 0
+                && merge_row_key_cmp(row, types, key_offsets, &side.key, false)? != Ordering::Equal
+            {
+                break;
+            }
+            let first = side.row;
+            side.row += 1;
+            while side.row < side.chunk.num_rows() {
+                if merge_rows_cmp(row, side.chunk.get_row(side.row), key_offsets, types, false)?
                     != Ordering::Equal
                 {
                     break;
                 }
+                side.row += 1;
             }
-            group.append(row, tracker, memory)?;
-            side.group_len += 1;
-            side.row += 1;
+            group.child_start = first;
+            group.child_end = side.row;
+            side.group_len += side.row - first;
+            if side.row < side.chunk.num_rows() {
+                break;
+            }
         }
         memory.check()
     }
@@ -2741,33 +2721,40 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     }
                     if let Some(ptr) = *inner_ptr {
                         let next = inner.next_ptr(ptr);
-                        let inner_row = match inner.datum_row(ptr) {
-                            Ok(row) => row,
+                        let (outer_row, inner_chunk) = {
+                            let state = self.merge_state.as_ref().expect("merge state exists");
+                            if outer.side_left {
+                                (state.left.chunk.get_row(*outer_index), &state.right.chunk)
+                            } else {
+                                (state.right.chunk.get_row(*outer_index), &state.left.chunk)
+                            }
+                        };
+                        let accepted = inner.with_row(ptr, inner_chunk, |inner_row| {
+                            *inner_ptr = next;
+                            if !self.residual_conditions.is_empty() {
+                                let inner_types = if outer.side_left {
+                                    &self.right_types
+                                } else {
+                                    &self.left_types
+                                };
+                                let outer_values = outer_row.get_datum_row(&outer_types);
+                                let inner_values = inner_row.get_datum_row(inner_types);
+                                let joined = self.join_rows(&outer_values, &inner_values);
+                                if !self.matches(&joined)? {
+                                    return Ok(false);
+                                }
+                            }
+                            if !matches!(self.kind, JoinKind::Semi | JoinKind::AntiSemi) {
+                                self.output
+                                    .chunks(req, outer.side_left, outer_row, inner_row);
+                            }
+                            Ok(true)
+                        });
+                        let accepted = match accepted {
+                            Ok(value) => value,
                             Err(current) => {
                                 error = Some(current);
                                 break;
-                            }
-                        };
-                        *inner_ptr = next;
-                        let outer_row = {
-                            let state = self.merge_state.as_ref().expect("merge state exists");
-                            if outer.side_left {
-                                state.left.chunk.get_row(*outer_index)
-                            } else {
-                                state.right.chunk.get_row(*outer_index)
-                            }
-                        };
-                        let accepted = if self.residual_conditions.is_empty() {
-                            true
-                        } else {
-                            let outer_values = outer_row.get_datum_row(&outer_types);
-                            let joined = self.join_rows(&outer_values, &inner_row);
-                            match self.matches(&joined) {
-                                Ok(value) => value,
-                                Err(current) => {
-                                    error = Some(current);
-                                    break;
-                                }
                             }
                         };
                         match accepted {
@@ -2778,13 +2765,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                         self.output.preserved(req, outer_row);
                                     }
                                     *inner_ptr = None;
-                                } else {
-                                    self.output.chunk_datum(
-                                        req,
-                                        outer.side_left,
-                                        outer_row,
-                                        &inner_row,
-                                    );
                                 }
                             }
                             false => {}
@@ -2901,27 +2881,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     .fallback_old_and_set_new_action(Arc::clone(&action));
                 self.registered_action = Some(action);
             }
-            let inner_scratch_bytes =
-                inner_group.staging.memory_usage() + inner_group.read_back.memory_usage();
-            let mut left = MergeSide::new(self.left_exec().new_chunk());
-            let mut right = MergeSide::new(self.right_exec().new_chunk());
-            // A single non-nullable-safe integer key pair reads typed i64s
-            // directly in `fetch_inner_group`/`fetch_outer_group`, skipping
-            // one `Vec<Datum>` per row on shapes like q12's 1.5M-row build.
-            if left_keys.len() == 1 {
-                let lt = &left_types[left_keys[0]];
-                let rt = &right_types[right_keys[0]];
-                let signed_int = |ft: &FieldType| {
-                    ft.code() == tidb_datatype::FieldTypeCode::LongLong
-                        && ft.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED == 0
-                };
-                if signed_int(lt) {
-                    left.int_key_cache = Some(None);
-                }
-                if signed_int(rt) {
-                    right.int_key_cache = Some(None);
-                }
-            }
+            let inner_scratch_bytes = inner_group.read_back.memory_usage();
+            let left = MergeSide::new(self.left_exec().new_chunk());
+            let right = MergeSide::new(self.right_exec().new_chunk());
             let input_bytes = left.chunk_bytes + right.chunk_bytes;
             self.merge_state = Some(MergeState {
                 left,
@@ -3034,29 +2996,35 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             if outer_side.group_len == 0 {
                 return Ok(());
             }
-            let (left_empty, right_empty) = (state.left.group_len == 0, state.right.group_len == 0);
+            let (left_empty, right_empty) = if outer_is_left {
+                (outer_side.group_len == 0, inner_side.group_len == 0)
+            } else {
+                (inner_side.group_len == 0, outer_side.group_len == 0)
+            };
             // A side that ran out makes the other side's remaining groups all
             // unmatched, which only an OUTER join still emits.
             let order = if left_empty {
                 Ordering::Greater
             } else if right_empty {
                 Ordering::Less
-            } else if outer_is_left {
-                merge_row_key_cmp(
-                    state.left.chunk.get_row(state.left.group_start),
-                    &left_types,
-                    &left_keys,
-                    &state.right.key,
-                    desc,
-                )?
             } else {
-                merge_key_cmp_row(
-                    &state.left.key,
-                    state.right.chunk.get_row(state.right.group_start),
-                    &right_keys,
-                    &right_types,
-                    desc,
-                )?
+                let inner_ptr = inner.first_ptr().expect("nonempty inner group");
+                let order = inner.with_row(inner_ptr, &inner_side.chunk, |inner_row| {
+                    merge_join_rows_cmp(
+                        outer_side.chunk.get_row(outer_side.group_start),
+                        inner_row,
+                        outer_keys,
+                        inner_keys,
+                        outer_types,
+                        inner_types,
+                        desc,
+                    )
+                })?;
+                if outer_is_left {
+                    order
+                } else {
+                    order.reverse()
+                }
             };
             match order {
                 Ordering::Equal => {
@@ -3580,7 +3548,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let result_tx = pipeline.result_tx.clone();
         crate::worker_pool::enqueue_public(Box::new(move || {
             // A dropped receiver means the join is already closed or failed.
-            let _ = result_tx.send((seq, Self::probe_batch(&shared, inputs, output)));
+            let result = crate::sort_util::recover_worker_panic(|| {
+                Self::probe_batch(&shared, inputs, output)
+            });
+            let _ = result_tx.send((seq, result));
         }));
         Ok(true)
     }
@@ -4955,48 +4926,20 @@ fn build_error(error: BuildError) -> ExecError {
     }
 }
 
-/// Go's condition truth test (`Datum.ToBool` via `expression.EvalBool`):
-/// Compares two merge-join keys column by column, reversing for a descending
-/// merge.
-///
-/// Go's `MergeJoinExec.compare` runs `CompareFuncs[i]` -- `GetCmpFunction` on
-/// the two key columns -- and returns at the first non-equal column. The
-/// shared `compare_datums` is that function's answer for the comparable types
-/// a merge join is offered, and is the same one [`crate::sort`] orders by, so
-/// the order the merge ASSUMES and the order a sort would PRODUCE are one
-/// implementation.
-fn merge_key_cmp(
-    left: &[Datum],
-    right: &[Datum],
-    key_offsets: &[usize],
-    types: &[FieldType],
-    desc: bool,
-) -> Result<Ordering, ExecError> {
-    for ((a, b), &offset) in left.iter().zip(right).zip(key_offsets) {
-        let mut cmp = tidb_expr::compare_datums_with_collation(a, b, types[offset].collation())?;
-        if desc {
-            cmp = cmp.reverse();
-        }
-        if cmp != Ordering::Equal {
-            return Ok(cmp);
-        }
-    }
-    Ok(Ordering::Equal)
-}
-
-fn merge_key_cmp_row(
-    left: &[Datum],
+fn merge_join_rows_cmp(
+    left: Row<'_>,
     right: Row<'_>,
-    key_offsets: &[usize],
-    types: &[FieldType],
+    left_keys: &[usize],
+    right_keys: &[usize],
+    left_types: &[FieldType],
+    right_types: &[FieldType],
     desc: bool,
 ) -> Result<Ordering, ExecError> {
-    // Single signed-integer join key: compare the typed i64 directly instead
-    // of materializing the row's cell into a Datum (see merge_rows_cmp).
-    if key_offsets.len() == 1 {
-        let offset = key_offsets[0];
-        let ft = &types[offset];
-        if matches!(
+    // Go MergeJoinExec.compare reads both current rows. Select the integer
+    // comparison only when both columns have that domain; mixed domains keep
+    // the canonical datum comparison and the outer key's collation.
+    let signed_integer = |ft: &FieldType| {
+        matches!(
             ft.code(),
             tidb_datatype::FieldTypeCode::Tiny
                 | tidb_datatype::FieldTypeCode::Short
@@ -5004,35 +4947,23 @@ fn merge_key_cmp_row(
                 | tidb_datatype::FieldTypeCode::Long
                 | tidb_datatype::FieldTypeCode::LongLong
         ) && !ft.is_unsigned()
-        {
-            // Go picks the comparison from BOTH sides
-            // (`GetCmpFunction` -> `GetAccurateCmpType(lhs, rhs)`), and its
-            // `CompareInt` takes EACH side's own unsigned flag
-            // (`types.CompareInt`, `pkg/types/compare.go:90`). This typed
-            // path reproduces that only when both sides are signed
-            // integers: the row's type is checked above, and the cached key
-            // is a signed integer exactly when its datum is `Int`. A key of
-            // any other shape -- an unsigned column, a `bit` -- falls
-            // through to the generic comparison, which IS `CompareInt`'s
-            // answer for the mixed case.
-            if let Some(Datum::Int(left_value)) = left.first() {
-                if right.is_null(offset) {
-                    // A real key against NULL compares Greater, as the datum
-                    // order does.
-                    let cmp = Ordering::Greater;
-                    return Ok(if desc { cmp.reverse() } else { cmp });
-                }
-                let cmp = left_value.cmp(&right.get_int64(offset));
-                return Ok(if desc { cmp.reverse() } else { cmp });
-            }
-        }
-    }
-    for (left, &offset) in left.iter().zip(key_offsets) {
-        let mut cmp = tidb_expr::compare_datums_with_collation(
-            left,
-            &right.get_datum(offset, &types[offset]),
-            types[offset].collation(),
-        )?;
+    };
+    for (&left_offset, &right_offset) in left_keys.iter().zip(right_keys) {
+        let left_type = &left_types[left_offset];
+        let right_type = &right_types[right_offset];
+        let (left_null, right_null) = (left.is_null(left_offset), right.is_null(right_offset));
+        let mut cmp = if left_null || right_null {
+            right_null.cmp(&left_null)
+        } else if signed_integer(left_type) && signed_integer(right_type) {
+            left.get_int64(left_offset)
+                .cmp(&right.get_int64(right_offset))
+        } else {
+            tidb_expr::compare_datums_with_collation(
+                &left.get_datum(left_offset, left_type),
+                &right.get_datum(right_offset, right_type),
+                left_type.collation(),
+            )?
+        };
         if desc {
             cmp = cmp.reverse();
         }
@@ -5050,49 +4981,7 @@ fn merge_rows_cmp(
     types: &[FieldType],
     desc: bool,
 ) -> Result<Ordering, ExecError> {
-    // The single signed-integer join key (TPC-H q12's l_orderkey = o_orderkey,
-    // every handle equality) is the hot path of an ordered scan merge: typed
-    // i64 column reads skip the per-row Datum materialization (a heap
-    // allocation for string columns) that the generic comparison pays.
-    if key_offsets.len() == 1
-        && !desc
-        && matches!(
-            types[key_offsets[0]].code(),
-            tidb_datatype::FieldTypeCode::Tiny
-                | tidb_datatype::FieldTypeCode::Short
-                | tidb_datatype::FieldTypeCode::Int24
-                | tidb_datatype::FieldTypeCode::Long
-                | tidb_datatype::FieldTypeCode::LongLong
-        )
-        && !types[key_offsets[0]].is_unsigned()
-    {
-        let offset = key_offsets[0];
-        let (ln, rn) = (left.is_null(offset), right.is_null(offset));
-        if ln || rn {
-            return Ok(if ln && rn {
-                Ordering::Equal
-            } else if ln {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            });
-        }
-        return Ok(left.get_int64(offset).cmp(&right.get_int64(offset)));
-    }
-    for &offset in key_offsets {
-        let mut cmp = tidb_expr::compare_datums_with_collation(
-            &left.get_datum(offset, &types[offset]),
-            &right.get_datum(offset, &types[offset]),
-            types[offset].collation(),
-        )?;
-        if desc {
-            cmp = cmp.reverse();
-        }
-        if cmp != Ordering::Equal {
-            return Ok(cmp);
-        }
-    }
-    Ok(Ordering::Equal)
+    merge_join_rows_cmp(left, right, key_offsets, key_offsets, types, types, desc)
 }
 
 fn merge_row_key_cmp(
@@ -5131,8 +5020,8 @@ fn merge_row_key_cmp(
                 return Ok(if desc { cmp.reverse() } else { cmp });
             }
             // Both sides must be signed integers for this to equal Go's
-            // `CompareInt` -- see the note in `merge_key_cmp_row`. A key of
-            // any other shape falls through to the generic comparison.
+            // `CompareInt`. Other boundary-key domains use the canonical
+            // datum comparison, just as cross-side row comparison does.
             if let Some(Datum::Int(key_value)) = key.first() {
                 let cmp = row.get_int64(offset).cmp(key_value);
                 return Ok(if desc { cmp.reverse() } else { cmp });

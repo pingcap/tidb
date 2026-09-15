@@ -64,9 +64,9 @@
 //! vectors are the published MurmurHash3 x86_32 reference values, which is
 //! what `github.com/twmb/murmur3.Sum32` computes.
 
-use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
@@ -109,51 +109,52 @@ enum ShuffleOutput {
 #[derive(Debug, Default)]
 struct Inbox {
     /// Chunks queued for the receiver, in the order the splitter filled them.
-    queue: RefCell<VecDeque<Chunk>>,
+    queue: VecDeque<Chunk>,
     /// Go's closing of `inputCh` in `fetchDataAndSplit`'s defer
     /// (`shuffle.go:288-290`): no further chunk will arrive for this
     /// (source, worker) pair.
-    closed: Cell<bool>,
+    closed: bool,
 }
 
 /// A handle on one receiver's mailbox, shared by the splitter that fills it and
 /// the [`ShuffleReceiver`] that drains it.
 #[derive(Clone, Debug, Default)]
-pub struct InboxHandle(Rc<Inbox>);
+pub struct InboxHandle(Arc<Mutex<Inbox>>);
 
 impl InboxHandle {
     /// A fresh, open mailbox.
     #[must_use]
     pub fn new() -> Self {
-        InboxHandle(Rc::new(Inbox::default()))
+        InboxHandle(Arc::new(Mutex::new(Inbox::default())))
     }
 
     fn push(&self, chunk: Chunk) {
-        self.0.queue.borrow_mut().push_back(chunk);
+        self.0.lock().unwrap().queue.push_back(chunk);
     }
 
     fn pop(&self) -> Option<Chunk> {
-        self.0.queue.borrow_mut().pop_front()
+        self.0.lock().unwrap().queue.pop_front()
     }
 
     fn close(&self) {
-        self.0.closed.set(true);
+        self.0.lock().unwrap().closed = true;
     }
 
     /// Go's `channel.Clear(r.inputCh)` in `ShuffleExec.Close`
     /// (`shuffle.go:186`): drop whatever the splitter left queued.
     fn clear(&self) {
-        self.0.queue.borrow_mut().clear();
+        self.0.lock().unwrap().queue.clear();
     }
 
     /// Whether Go's `inputCh` has been closed for this (source, worker) pair.
     fn is_closed(&self) -> bool {
-        self.0.closed.get()
+        self.0.lock().unwrap().closed
     }
 
     fn reopen(&self) {
-        self.0.queue.borrow_mut().clear();
-        self.0.closed.set(false);
+        let mut inbox = self.0.lock().unwrap();
+        inbox.queue.clear();
+        inbox.closed = false;
     }
 }
 
@@ -166,26 +167,26 @@ impl InboxHandle {
 /// loop -- the checks are kept so the structure matches Go's and so a future
 /// concurrent drive inherits the same shape.
 #[derive(Clone, Debug, Default)]
-pub struct FinishFlag(Rc<Cell<bool>>);
+pub struct FinishFlag(Arc<AtomicBool>);
 
 impl FinishFlag {
     /// An unset flag, matching Go's freshly made `finishCh`.
     #[must_use]
     pub fn new() -> Self {
-        FinishFlag(Rc::new(Cell::new(false)))
+        FinishFlag(Arc::new(AtomicBool::new(false)))
     }
 
     fn is_set(&self) -> bool {
-        self.0.get()
+        self.0.load(Ordering::Relaxed)
     }
 
     fn set(&self) {
-        self.0.set(true);
+        self.0.store(true, Ordering::Relaxed);
     }
 
     /// Go's `Open` replacing `finishCh` with a fresh, open channel.
     fn reset(&self) {
-        self.0.set(false);
+        self.0.store(false, Ordering::Relaxed);
     }
 }
 
@@ -349,7 +350,7 @@ impl ShuffleWorker {
 /// caller-owned buffer instead, which keeps the reuse without the aliasing.
 /// Go leaves the buffer untouched on error (it returns the argument unchanged
 /// at `shuffle.go:453` and `shuffle.go:494`) and so does this signature.
-pub trait PartitionSplitter<C: Columns> {
+pub trait PartitionSplitter<C: Columns>: Send {
     /// Go `split`: fills `worker_indices` with one worker index per input row.
     fn split(
         &mut self,
@@ -704,7 +705,7 @@ fn fetch_data_and_split<C: Columns>(
     close_inboxes(workers);
 }
 
-impl<C: Columns> Executor for ShuffleExec<C> {
+impl<C: Columns + Send> Executor for ShuffleExec<C> {
     /// Go `ShuffleExec.Open` (`shuffle.go:113`).
     fn open(&mut self) -> Result<(), ExecError> {
         for source in &mut self.data_sources {
@@ -714,7 +715,7 @@ impl<C: Columns> Executor for ShuffleExec<C> {
         self.prepared = false;
         self.output.clear();
         // Go allocates a *new* `finishCh` here (`shuffle.go:124`), so a
-        // shuffle reopened after `Close` is not permanently finished. The Rc
+        // shuffle reopened after `Close` is not permanently finished. The Arc
         // is shared with every worker and receiver, which is how Go's
         // `w.finishCh = e.finishCh` fan-out (`shuffle.go:128`) reaches them.
         self.finish.reset();
@@ -980,7 +981,7 @@ mod tests {
         meta: ExecutorMeta,
         children: Vec<Box<dyn Executor>>,
         at: usize,
-        close_err: Rc<Cell<bool>>,
+        close_err: Arc<AtomicBool>,
     }
 
     impl Executor for ConcatExec {
@@ -1008,7 +1009,7 @@ mod tests {
             for child in &mut self.children {
                 child.close()?;
             }
-            if self.close_err.get() {
+            if self.close_err.load(Ordering::Relaxed) {
                 return Err(ExecError::internal("worker child close failed"));
             }
             Ok(())
@@ -1038,14 +1039,19 @@ mod tests {
         num_sources: usize,
         finish: &FinishFlag,
     ) -> Vec<ShuffleWorker> {
-        build_workers_with(concurrency, num_sources, finish, &Rc::new(Cell::new(false)))
+        build_workers_with(
+            concurrency,
+            num_sources,
+            finish,
+            &Arc::new(AtomicBool::new(false)),
+        )
     }
 
     fn build_workers_with(
         concurrency: usize,
         num_sources: usize,
         finish: &FinishFlag,
-        close_err: &Rc<Cell<bool>>,
+        close_err: &Arc<AtomicBool>,
     ) -> Vec<ShuffleWorker> {
         (0..concurrency)
             .map(|_| {
@@ -1398,7 +1404,7 @@ mod tests {
     #[test]
     fn close_keeps_the_first_error_and_closes_everything() {
         let finish = FinishFlag::new();
-        let child_close_err = Rc::new(Cell::new(true));
+        let child_close_err = Arc::new(AtomicBool::new(true));
         let workers = build_workers_with(1, 1, &finish, &child_close_err);
         let mut source = ReplaySource::new(vec![vec![1]]);
         source.close_err = true;

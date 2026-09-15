@@ -125,12 +125,11 @@ pub(crate) fn window_session() -> Session {
 /// A result's column names and rows as text, matching how the captured
 /// Go output above prints them.
 pub(crate) fn query_text(session: &mut Session, sql: &str) -> (Vec<String>, Vec<Vec<String>>) {
-    match session.run_with_columns(sql).unwrap() {
+    let stmt = session.parse_statement(sql).unwrap();
+    let output = collect_record_set(session.execute_record_set_parsed(stmt, sql).unwrap());
+    match output {
         StmtOutput::Rows { columns, rows } => (
-            columns
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect::<Vec<_>>(),
+            columns.into_iter().map(|(name, _)| name).collect(),
             rows.into_iter()
                 .map(|row| {
                     row.iter()
@@ -139,11 +138,35 @@ pub(crate) fn query_text(session: &mut Session, sql: &str) -> (Vec<String>, Vec<
                             Datum::Int(v) => v.to_string(),
                             other => datum_text(other).unwrap_or_default(),
                         })
-                        .collect::<Vec<_>>()
+                        .collect()
                 })
-                .collect::<Vec<_>>(),
+                .collect(),
         ),
         other => panic!("expected rows, got {other:?}"),
+    }
+}
+
+pub(crate) fn collect_record_set(execution: StatementExecution<'_>) -> StmtOutput {
+    match execution {
+        StatementExecution::Complete(output) => output,
+        StatementExecution::Rows(mut result) => {
+            let columns = result.columns().to_vec();
+            let types = columns.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>();
+            let mut req = result.new_chunk();
+            let mut rows = Vec::new();
+            loop {
+                result.next(&mut req).unwrap();
+                if req.num_rows() == 0 {
+                    break;
+                }
+                for index in 0..req.num_rows() {
+                    rows.push(req.get_row(index).get_datum_row(&types));
+                }
+            }
+            result.finish().unwrap();
+            result.close().unwrap();
+            StmtOutput::Rows { columns, rows }
+        }
     }
 }
 

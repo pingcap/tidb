@@ -183,6 +183,9 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     options: ResultSetOptions,
     batch_size: usize,
 ) -> Result<ResultSetWriteOutcome, TrackedResultSetWriteError> {
+    if let Some(chunk) = source.new_chunk() {
+        return write_chunk_result_set(source, sink, options, chunk);
+    }
     let batch_size = batch_size.max(1);
     let text_batches = source.supports_text_batch();
     let mut batch = if text_batches {
@@ -217,6 +220,10 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     let columns = source
         .columns()
         .map_err(|message| tracked_after_pull(message, sink, false))?;
+    let mut options = options;
+    if let Some(status) = source.statement_status() {
+        status.apply(&mut options);
+    }
     let mut stream = ResultSetStream::new(columns, options);
     // One coalesced transport write for ALL metadata packets. A socket sink
     // flushes per `write_payload`, which used to send every column definition
@@ -243,6 +250,9 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         source
             .finish()
             .map_err(|message| tracked_after_pull(message, sink, true))?;
+        if let Some(status) = source.statement_status() {
+            stream.update_statement_status(|options| status.apply(options));
+        }
         let terminal = stream
             .finish_packet()
             .map_err(|error| tracked_after_pull(error.to_string(), sink, true))?;
@@ -317,6 +327,9 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
                 flush_sink(sink).map_err(|error| tracked(error, false))?;
                 return Err(tracked_after_pull(message, sink, true));
             }
+            if let Some(status) = source.statement_status() {
+                stream.update_statement_status(|options| status.apply(options));
+            }
             let terminal = stream
                 .finish_packet()
                 .map_err(|error| tracked_after_pull(error.to_string(), sink, true))?;
@@ -333,6 +346,72 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         }
     }
 
+    Ok(ResultSetWriteOutcome {
+        rows_written: stream.row_count(),
+        packets_written: sink.packets_written(),
+    })
+}
+
+/// One reusable chunk and one row buffer, in Go writeChunks order.
+fn write_chunk_result_set<S: ResultSetSource, W: ResultSetSink>(
+    source: &mut S,
+    sink: &mut W,
+    mut options: ResultSetOptions,
+    mut chunk: tidb_chunk::chunk::Chunk,
+) -> Result<ResultSetWriteOutcome, TrackedResultSetWriteError> {
+    source
+        .next_chunk(&mut chunk)
+        .map_err(|cause| TrackedResultSetWriteError {
+            error: ResultSetWriteError {
+                cause,
+                retryable: true,
+                bytes_escaped: false,
+            },
+            finish_attempted: false,
+        })?;
+    let columns = source
+        .columns()
+        .map_err(|error| tracked_after_pull(error, sink, false))?;
+    if let Some(status) = source.statement_status() {
+        status.apply(&mut options);
+    }
+    let mut stream = ResultSetStream::new(columns, options);
+    let metadata = stream
+        .metadata_packets()
+        .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
+    sink.write_payloads_owned(metadata)
+        .map_err(|error| payloads_failed(error, sink))?;
+    let mut payload = Vec::with_capacity(1024);
+    while chunk.num_rows() != 0 {
+        for index in 0..chunk.num_rows() {
+            let row = chunk.get_row(index);
+            let mut writer = stream
+                .text_row_with_buffer(std::mem::take(&mut payload))
+                .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
+            for (column, field) in source.field_types().iter().enumerate() {
+                tidb_exec::distsql_recordset::append_chunk_cell(&mut writer, row, column, field)
+                    .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
+            }
+            payload = writer
+                .finish()
+                .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
+            write_payload(sink, &payload).map_err(|error| tracked(error, false))?;
+        }
+        source
+            .next_chunk(&mut chunk)
+            .map_err(|error| tracked_after_pull(error, sink, false))?;
+    }
+    source
+        .finish()
+        .map_err(|error| tracked_after_pull(error, sink, true))?;
+    if let Some(status) = source.statement_status() {
+        stream.update_statement_status(|options| status.apply(options));
+    }
+    let terminal = stream
+        .finish_packet()
+        .map_err(|error| tracked_after_pull(error.to_string(), sink, true))?;
+    write_payload(sink, &terminal).map_err(|error| tracked(error, true))?;
+    flush_sink(sink).map_err(|error| tracked(error, true))?;
     Ok(ResultSetWriteOutcome {
         rows_written: stream.row_count(),
         packets_written: sink.packets_written(),

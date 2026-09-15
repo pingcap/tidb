@@ -31,6 +31,201 @@ use tidb_datatype::{
     MyDecimal, MySqlDuration, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE, UNSPECIFIED_LENGTH,
 };
 
+/// Shared typed-cell conversion for row cursors and column-wide consumers.
+/// The caller holds the column owner; conversion never reacquires that owner.
+pub(crate) struct DatumCell<'a> {
+    pub(crate) column: &'a crate::column::Column,
+    pub(crate) row: usize,
+}
+
+impl DatumCell<'_> {
+    /// Go `DatumWithBuffer`: materializes one cell into caller-owned datum
+    /// storage. Existing contents are overwritten for every supported kind.
+    pub(crate) fn datum_with_buffer(&self, field_type: &FieldType, datum: &mut Datum) {
+        if self.column.is_null(self.row) {
+            *datum = Datum::Null;
+            return;
+        }
+        let materialized = match field_type.code() {
+            FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong => {
+                if field_type.is_unsigned() {
+                    Datum::UInt(self.column.get_uint64(self.row))
+                } else {
+                    Datum::Int(self.column.get_int64(self.row))
+                }
+            }
+            FieldTypeCode::Year => Datum::Int(self.column.get_int64(self.row)),
+            FieldTypeCode::Float => Datum::Float32(f64::from(self.column.get_float32(self.row))),
+            FieldTypeCode::Double => Datum::Real(self.column.get_float64(self.row)),
+            FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::String
+            | FieldTypeCode::Blob
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob => {
+                let mut value = Datum::Null;
+                value.set_string(
+                    self.column.get_bytes(self.row).to_vec(),
+                    field_type.collation(),
+                );
+                value
+            }
+            FieldTypeCode::Bit => Datum::Bit(tidb_datatype::BinaryLiteral::from(
+                self.column.get_bytes(self.row).to_vec(),
+            )),
+            FieldTypeCode::Json => {
+                let cell = self.column.get_bytes(self.row);
+                let (type_code, value) = cell
+                    .split_first()
+                    .expect("a JSON cell always carries its type code");
+                Datum::Json(tidb_datatype::BinaryJSON::from_encoded_parts(
+                    *type_code, value,
+                ))
+            }
+            FieldTypeCode::Enum => {
+                Datum::new_enum(self.column.get_enum(self.row), field_type.collation())
+            }
+            FieldTypeCode::Set => {
+                Datum::new_set(self.column.get_set(self.row), field_type.collation())
+            }
+            FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
+                Datum::Time(self.column.get_time(self.row))
+            }
+            FieldTypeCode::Duration => {
+                Datum::Duration(self.column.get_duration(self.row, field_type.decimal()))
+            }
+            FieldTypeCode::NewDecimal => {
+                let stored = self.column.get_my_decimal(self.row);
+                let fraction = if field_type.decimal() == UNSPECIFIED_LENGTH {
+                    i64::from(stored.digits_frac())
+                } else {
+                    field_type.decimal()
+                };
+                Datum::Decimal(
+                    Decimal::from_my_decimal(&stored)
+                        .with_declared_shape(field_type.flen(), fraction),
+                )
+            }
+            FieldTypeCode::VectorFloat32 => {
+                Datum::VectorFloat32(self.column.get_vector_float32(self.row))
+            }
+            _ => return,
+        };
+        *datum = materialized;
+    }
+
+    /// Checked `DatumWithBuffer` boundary used by response and spill readers.
+    pub(crate) fn try_datum_with_buffer(
+        &self,
+        col_idx: usize,
+        field_type: &FieldType,
+        datum: &mut Datum,
+    ) -> Result<(), RowDatumError> {
+        if self.column.is_null(self.row) {
+            *datum = Datum::Null;
+            return Ok(());
+        }
+        match field_type.code() {
+            FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Year
+            | FieldTypeCode::Double => {
+                let _: [u8; 8] = self.try_fixed(col_idx, field_type)?;
+            }
+            FieldTypeCode::Float => {
+                let _: [u8; 4] = self.try_fixed(col_idx, field_type)?;
+            }
+            FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::String
+            | FieldTypeCode::Blob
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+            | FieldTypeCode::Bit => {}
+            FieldTypeCode::Json => {
+                let cell = self.column.get_bytes(self.row);
+                let (type_code, value) = cell
+                    .split_first()
+                    .ok_or_else(|| self.invalid_cell(col_idx, field_type, "empty JSON cell"))?;
+                tidb_datatype::BinaryJSON::from_raw(*type_code, value.to_vec())
+                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
+            }
+            FieldTypeCode::Enum | FieldTypeCode::Set => {
+                let cell = self.column.get_bytes(self.row);
+                if !cell.is_empty() {
+                    cell.split_at_checked(8).ok_or_else(|| {
+                        self.invalid_cell(
+                            col_idx,
+                            field_type,
+                            "name/value cell is shorter than its 8-byte value prefix",
+                        )
+                    })?;
+                }
+            }
+            FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
+                let raw = u64::from_ne_bytes(self.try_fixed(col_idx, field_type)?);
+                Time::from_go_raw(raw)
+                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
+            }
+            FieldTypeCode::Duration => {
+                let nanoseconds = i64::from_ne_bytes(self.try_fixed(col_idx, field_type)?);
+                MySqlDuration::from_nanoseconds(nanoseconds, field_type.decimal())
+                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
+            }
+            FieldTypeCode::NewDecimal => {
+                let raw: [u8; MYDECIMAL_STRUCT_SIZE] = self.try_fixed(col_idx, field_type)?;
+                MyDecimal::from_raw_bytes(raw)
+                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
+            }
+            FieldTypeCode::VectorFloat32 => {
+                let cell = self.column.get_bytes(self.row);
+                deserialize_vector_float32(cell.as_ref())
+                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
+            }
+            _ => {}
+        }
+        self.datum_with_buffer(field_type, datum);
+        Ok(())
+    }
+
+    fn try_fixed<const N: usize>(
+        &self,
+        col_idx: usize,
+        field_type: &FieldType,
+    ) -> Result<[u8; N], RowDatumError> {
+        let cell = self.column.get_raw(self.row);
+        cell.as_ref().try_into().map_err(|_| {
+            self.invalid_cell(
+                col_idx,
+                field_type,
+                format!("expected {N} bytes, got {}", cell.len()),
+            )
+        })
+    }
+
+    fn invalid_cell(
+        &self,
+        col_idx: usize,
+        field_type: &FieldType,
+        message: impl std::fmt::Display,
+    ) -> RowDatumError {
+        RowDatumError::InvalidCell {
+            column: col_idx,
+            field_type: field_type.code(),
+            message: message.to_string(),
+        }
+    }
+}
+
 /// Go `chunk.RowSize = unsafe.Sizeof(Row{})`: what one retained row CURSOR
 /// costs, which memory-tracked operators add per row on top of the chunk
 /// bytes (Go `sort_partition.go`'s `chunk.RowSize*rowNum`).
@@ -352,75 +547,14 @@ impl<'a> Row<'a> {
         Ok(datum)
     }
 
-    /// Go `DatumWithBuffer`: materializes one cell into caller-owned datum
-    /// storage. Existing contents are overwritten for every supported kind.
+    /// Go `DatumWithBuffer`: borrow the column once for the whole conversion.
     pub fn datum_with_buffer(&self, col_idx: usize, field_type: &FieldType, datum: &mut Datum) {
-        if self.is_null(col_idx) {
-            *datum = Datum::Null;
-            return;
+        let column = self.expect_chunk().column(col_idx);
+        DatumCell {
+            column: &column,
+            row: self.idx,
         }
-        let materialized = match field_type.code() {
-            FieldTypeCode::Tiny
-            | FieldTypeCode::Short
-            | FieldTypeCode::Int24
-            | FieldTypeCode::Long
-            | FieldTypeCode::LongLong => {
-                if field_type.is_unsigned() {
-                    Datum::UInt(self.get_uint64(col_idx))
-                } else {
-                    Datum::Int(self.get_int64(col_idx))
-                }
-            }
-            FieldTypeCode::Year => Datum::Int(self.get_int64(col_idx)),
-            FieldTypeCode::Float => Datum::Float32(f64::from(self.get_float32(col_idx))),
-            FieldTypeCode::Double => Datum::Real(self.get_float64(col_idx)),
-            FieldTypeCode::Varchar
-            | FieldTypeCode::VarString
-            | FieldTypeCode::String
-            | FieldTypeCode::Blob
-            | FieldTypeCode::TinyBlob
-            | FieldTypeCode::MediumBlob
-            | FieldTypeCode::LongBlob => {
-                let mut value = Datum::Null;
-                value.set_string(self.get_bytes(col_idx).to_vec(), field_type.collation());
-                value
-            }
-            FieldTypeCode::Bit => Datum::Bit(tidb_datatype::BinaryLiteral::from(
-                self.get_bytes(col_idx).to_vec(),
-            )),
-            FieldTypeCode::Json => {
-                let cell = self.get_bytes(col_idx);
-                let (type_code, value) = cell
-                    .split_first()
-                    .expect("a JSON cell always carries its type code");
-                Datum::Json(tidb_datatype::BinaryJSON::from_encoded_parts(
-                    *type_code, value,
-                ))
-            }
-            FieldTypeCode::Enum => Datum::new_enum(self.get_enum(col_idx), field_type.collation()),
-            FieldTypeCode::Set => Datum::new_set(self.get_set(col_idx), field_type.collation()),
-            FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
-                Datum::Time(self.get_time(col_idx))
-            }
-            FieldTypeCode::Duration => {
-                Datum::Duration(self.get_duration(col_idx, field_type.decimal()))
-            }
-            FieldTypeCode::NewDecimal => {
-                let stored = self.get_my_decimal(col_idx);
-                let fraction = if field_type.decimal() == UNSPECIFIED_LENGTH {
-                    i64::from(stored.digits_frac())
-                } else {
-                    field_type.decimal()
-                };
-                Datum::Decimal(
-                    Decimal::from_my_decimal(&stored)
-                        .with_declared_shape(field_type.flen(), fraction),
-                )
-            }
-            FieldTypeCode::VectorFloat32 => Datum::VectorFloat32(self.get_vector_float32(col_idx)),
-            _ => return,
-        };
-        *datum = materialized;
+        .datum_with_buffer(field_type, datum);
     }
 
     /// Checked `DatumWithBuffer` boundary used by response and spill readers.
@@ -436,103 +570,12 @@ impl<'a> Row<'a> {
                 columns: self.len(),
             });
         }
-        if self.is_null(col_idx) {
-            *datum = Datum::Null;
-            return Ok(());
+        let column = self.expect_chunk().column(col_idx);
+        DatumCell {
+            column: &column,
+            row: self.idx,
         }
-        match field_type.code() {
-            FieldTypeCode::Tiny
-            | FieldTypeCode::Short
-            | FieldTypeCode::Int24
-            | FieldTypeCode::Long
-            | FieldTypeCode::LongLong
-            | FieldTypeCode::Year
-            | FieldTypeCode::Double => {
-                let _: [u8; 8] = self.try_fixed(col_idx, field_type)?;
-            }
-            FieldTypeCode::Float => {
-                let _: [u8; 4] = self.try_fixed(col_idx, field_type)?;
-            }
-            FieldTypeCode::Varchar
-            | FieldTypeCode::VarString
-            | FieldTypeCode::String
-            | FieldTypeCode::Blob
-            | FieldTypeCode::TinyBlob
-            | FieldTypeCode::MediumBlob
-            | FieldTypeCode::LongBlob
-            | FieldTypeCode::Bit => {}
-            FieldTypeCode::Json => {
-                let cell = self.get_bytes(col_idx);
-                let (type_code, value) = cell
-                    .split_first()
-                    .ok_or_else(|| self.invalid_cell(col_idx, field_type, "empty JSON cell"))?;
-                tidb_datatype::BinaryJSON::from_raw(*type_code, value.to_vec())
-                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
-            }
-            FieldTypeCode::Enum | FieldTypeCode::Set => {
-                let cell = self.get_bytes(col_idx);
-                if !cell.is_empty() {
-                    cell.split_at_checked(8).ok_or_else(|| {
-                        self.invalid_cell(
-                            col_idx,
-                            field_type,
-                            "name/value cell is shorter than its 8-byte value prefix",
-                        )
-                    })?;
-                }
-            }
-            FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
-                let raw = u64::from_ne_bytes(self.try_fixed(col_idx, field_type)?);
-                Time::from_go_raw(raw)
-                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
-            }
-            FieldTypeCode::Duration => {
-                let nanoseconds = i64::from_ne_bytes(self.try_fixed(col_idx, field_type)?);
-                MySqlDuration::from_nanoseconds(nanoseconds, field_type.decimal())
-                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
-            }
-            FieldTypeCode::NewDecimal => {
-                let raw: [u8; MYDECIMAL_STRUCT_SIZE] = self.try_fixed(col_idx, field_type)?;
-                MyDecimal::from_raw_bytes(raw)
-                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
-            }
-            FieldTypeCode::VectorFloat32 => {
-                let cell = self.get_bytes(col_idx);
-                deserialize_vector_float32(cell.as_ref())
-                    .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
-            }
-            _ => {}
-        }
-        self.datum_with_buffer(col_idx, field_type, datum);
-        Ok(())
-    }
-
-    fn try_fixed<const N: usize>(
-        &self,
-        col_idx: usize,
-        field_type: &FieldType,
-    ) -> Result<[u8; N], RowDatumError> {
-        let cell = self.get_raw(col_idx);
-        cell.as_ref().try_into().map_err(|_| {
-            self.invalid_cell(
-                col_idx,
-                field_type,
-                format!("expected {N} bytes, got {}", cell.len()),
-            )
-        })
-    }
-
-    fn invalid_cell(
-        &self,
-        col_idx: usize,
-        field_type: &FieldType,
-        message: impl std::fmt::Display,
-    ) -> RowDatumError {
-        RowDatumError::InvalidCell {
-            column: col_idx,
-            field_type: field_type.code(),
-            message: message.to_string(),
-        }
+        .try_datum_with_buffer(col_idx, field_type, datum)
     }
 
     /// Go `Row.CopyConstruct`: deep-copy this physical row into an independently

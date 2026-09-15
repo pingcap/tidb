@@ -153,15 +153,6 @@ func (h *hashJoinSpillHelper) close() {
 	}
 }
 
-func (h *hashJoinSpillHelper) areAllPartitionsSpilled() bool {
-	for _, spilled := range h.spilledPartitions {
-		if !spilled {
-			return false
-		}
-	}
-	return true
-}
-
 // After merging row tables, hash join can not spill any more.
 // Set flag so that we can trigger other executor's spill when
 // hash join can not spill.

@@ -38,9 +38,62 @@ struct Source {
     columns_calls: usize,
     finish_error: Option<String>,
     close_calls: usize,
+    field_types: Vec<tidb_datatype::FieldType>,
+    live_status: bool,
+}
+
+impl Source {
+    fn native(mut self) -> Self {
+        self.field_types = self
+            .columns
+            .clone()
+            .unwrap_or_else(|| vec![column()])
+            .iter()
+            .map(|column| {
+                let mut field = tidb_datatype::FieldType::new(
+                    tidb_datatype::FieldTypeCode::from_mysql_type(column.type_code),
+                );
+                field.add_flags(u32::from(column.flag));
+                field.set_decimal(i64::from(column.decimal));
+                field
+            })
+            .collect();
+        self
+    }
 }
 
 impl ResultSetSource for Source {
+    fn statement_status(&self) -> Option<tidb_server::resultset_source::StatementStatus<'_>> {
+        self.live_status
+            .then(|| tidb_server::resultset_source::StatementStatus {
+                warnings: if self.log.contains(&"finish") { 7 } else { 3 },
+                status: tidb_server::wire_status::WireStatus::AUTOCOMMIT,
+                affected_rows: 0,
+                last_insert_id: 0,
+                info: &[],
+            })
+    }
+
+    fn new_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        (!self.field_types.is_empty())
+            .then(|| tidb_chunk::chunk::Chunk::new(&self.field_types, 8, 8))
+    }
+    fn field_types(&self) -> &[tidb_datatype::FieldType] {
+        &self.field_types
+    }
+    fn next_chunk(
+        &mut self,
+        chunk: &mut tidb_chunk::chunk::Chunk,
+    ) -> Result<(), tidb_executor::MysqlError> {
+        chunk.reset();
+        for row in self.next_batch(8)? {
+            for (i, datum) in row.iter().enumerate() {
+                chunk.append_datum(i, datum);
+            }
+        }
+        Ok(())
+    }
+
     fn next_batch(&mut self, _: usize) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         self.log.push("next");
         self.events.pop_front().unwrap_or(Ok(Vec::new()))
@@ -191,6 +244,33 @@ fn empty_first_next_still_emits_metadata_then_finishes_and_emits_eof() {
     assert_eq!(sink.flushes, 1);
     assert_eq!(sink.payloads.first().unwrap(), &[1]);
     assert_eq!(sink.payloads.last().unwrap()[0], 0xfe);
+
+    // Go writeChunks reads live WarningCount at metadata and after Finish.
+    for binary in [false, true] {
+        let mut source = Source {
+            live_status: true,
+            ..Source::default()
+        }
+        .native();
+        let mut sink = Sink::default();
+        let options = ResultSetOptions {
+            status_flags: 8,
+            ..ResultSetOptions::default()
+        };
+        if binary {
+            tidb_server::connection_resultset::write_connection_binary_result_set_to_sink(
+                &mut source,
+                &mut sink,
+                options,
+                8,
+            )
+            .unwrap();
+        } else {
+            write_connection_result_set_to_sink(&mut source, &mut sink, options, 8).unwrap();
+        }
+        assert_eq!(sink.payloads[2], [0xfe, 3, 0, 10, 0]);
+        assert_eq!(sink.payloads[3], [0xfe, 7, 0, 10, 0]);
+    }
 }
 
 #[test]
@@ -335,6 +415,7 @@ fn binary_rows_reuse_one_encoding_buffer_across_batches() {
         .into(),
         ..Source::default()
     };
+    let mut source = source.native();
     let mut sink = RowBufferSink::default();
     let outcome = tidb_server::connection_resultset::write_connection_binary_result_set_to_sink(
         &mut source,
@@ -524,14 +605,6 @@ fn text_rows_connect_every_supported_datum_family_to_the_wire_formatter() {
         Datum::new_json(BinaryJSON::parse(r#"{"a": 1}"#).unwrap()),
         Datum::new_vector_float32(VectorFloat32::parse("[1,2]").unwrap()),
     ];
-    let mut source = Source {
-        columns: Some(columns),
-        events: [Ok(vec![row]), Ok(Vec::new())].into(),
-        ..Source::default()
-    };
-    let mut sink = Sink::default();
-    write_result_set(&mut source, &mut sink, ResultSetOptions::default(), 8).unwrap();
-
     let mut expected = Vec::new();
     for value in [
         b"-10".as_slice(),
@@ -548,5 +621,18 @@ fn text_rows_connect_every_supported_datum_family_to_the_wire_formatter() {
     ] {
         append_length_encoded_bytes(&mut expected, Some(value));
     }
-    assert_eq!(sink.payloads[sink.payloads.len() - 2], expected);
+    for native in [false, true] {
+        let mut source = Source {
+            columns: Some(columns.clone()),
+            events: [Ok(vec![row.clone()]), Ok(Vec::new())].into(),
+            ..Source::default()
+        };
+        if native {
+            source = source.native();
+        }
+        let mut sink = Sink::default();
+        write_result_set(&mut source, &mut sink, ResultSetOptions::default(), 8).unwrap();
+
+        assert_eq!(sink.payloads[sink.payloads.len() - 2], expected);
+    }
 }

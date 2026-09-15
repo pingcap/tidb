@@ -24,7 +24,7 @@
 #![allow(missing_docs)]
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -118,14 +118,30 @@ impl RegionLoader for SplitTopology {
 impl RegionRecoveryLoader for SplitTopology {
     fn hydrate_region(
         &mut self,
-        _metadata: &RegionMetadata,
+        metadata: &RegionMetadata,
         _leader_store_id: u64,
-        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        _resolved_stores: &mut std::collections::BTreeMap<
+            u64,
+            Option<tidb_txnkv::region::StoreMetadata>,
+        >,
     ) -> Result<RegionLocation, RegionLoadError> {
-        Err(RegionLoadError::new(
-            "unexpected-hydration",
-            "these branches never take the EpochNotMatch hydration path",
-        ))
+        let mut location = self.load_region(&metadata.encoded_start_key)?;
+        location.region = metadata.region;
+        location.start_key.clone_from(&metadata.encoded_start_key);
+        location.end_key.clone_from(&metadata.encoded_end_key);
+        location.peers = metadata
+            .peers
+            .iter()
+            .map(|peer| Peer {
+                id: peer.id,
+                store_id: peer.store_id,
+                role: peer.role,
+                is_witness: peer.is_witness,
+                store_epoch: 1,
+            })
+            .collect();
+        location.leader_peer_id = location.peers.first().map(|peer| peer.id);
+        Ok(location)
     }
 }
 
@@ -189,6 +205,7 @@ struct ScriptedTikv {
     prewrites: Arc<Mutex<Vec<PrewriteAnswer>>>,
     recorded: Arc<Mutex<Recorded>>,
     hold_commit: Option<(u64, tokio::sync::watch::Receiver<bool>)>,
+    split_secondary: Arc<AtomicBool>,
 }
 
 impl ScriptedTikv {
@@ -197,6 +214,7 @@ impl ScriptedTikv {
             prewrites: Arc::new(Mutex::new(prewrites)),
             recorded: Arc::new(Mutex::new(Recorded::default())),
             hold_commit: None,
+            split_secondary: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -237,16 +255,20 @@ impl Tikv for ScriptedTikv {
                     let Some(cmd) = request.cmd else {
                         continue;
                     };
-                    let mut held = service.hold_commit.as_ref().and_then(|(start_ts, release)| {
-                        match &cmd {
+                    let mut held = service
+                        .hold_commit
+                        .as_ref()
+                        .and_then(|(start_ts, release)| match &cmd {
                             RequestCmd::Commit(body)
-                                if KvrpcCommitRequest::decode(body.as_ref()).unwrap().start_version == *start_ts =>
+                                if KvrpcCommitRequest::decode(body.as_ref())
+                                    .unwrap()
+                                    .start_version
+                                    == *start_ts =>
                             {
                                 Some(release.clone())
                             }
                             _ => None,
-                        }
-                    });
+                        });
                     let response = match service.answer(cmd) {
                         Ok(response) => response,
                         Err(status) => {
@@ -295,13 +317,52 @@ impl ScriptedTikv {
                         one_pc_commit_ts: answer.one_pc_commit_ts,
                         ..KvrpcPrewriteResponse::default()
                     }
-                    .encode_to_vec().into(),
+                    .encode_to_vec()
+                    .into(),
                 ))
             }
             RequestCmd::Commit(body) => {
                 let request = KvrpcCommitRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
+                let split = request.commit_role == KvrpcCommitRole::Secondary as i32
+                    && self.split_secondary.swap(false, Ordering::SeqCst);
                 self.recorded.lock().unwrap().commits.push(request);
+                if split {
+                    let regions = [
+                        (HIGH_REGION, b"m".to_vec(), b"t".to_vec()),
+                        (HIGH_REGION + 1, b"t".to_vec(), Vec::new()),
+                    ]
+                    .into_iter()
+                    .map(|(id, start_key, end_key)| tidb_proto::metapb::Region {
+                        id,
+                        start_key,
+                        end_key,
+                        region_epoch: Some(tidb_proto::metapb::RegionEpoch {
+                            conf_ver: 1,
+                            version: 2,
+                        }),
+                        peers: vec![tidb_proto::metapb::Peer {
+                            id: id * 10,
+                            store_id: HIGH_REGION * 100,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    })
+                    .collect();
+                    return Ok(ResponseCmd::Commit(
+                        KvrpcCommitResponse {
+                            region_error: Some(tidb_proto::RegionError {
+                                epoch_not_match: Some(tidb_proto::errorpb::EpochNotMatch {
+                                    current_regions: regions,
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }
+                        .encode_to_vec()
+                        .into(),
+                    ));
+                }
                 Ok(ResponseCmd::Commit(
                     KvrpcCommitResponse::default().encode_to_vec().into(),
                 ))
@@ -336,6 +397,19 @@ fn detached_secondary_flushes_progress_independently() {
     let (first_completion, first_observed) = mpsc::channel();
     let (second_completion, second_observed) = mpsc::channel();
     let request = |start_version| OwnedTransactionCommitRequest {
+        attempt: tidb_txnkv::region::RegionAttempt {
+            region: RegionVerId {
+                id: HIGH_REGION,
+                epoch: RegionEpoch {
+                    conf_ver: 1,
+                    version: 1,
+                },
+            },
+            peer_id: HIGH_REGION * 10,
+            store_id: HIGH_REGION * 100,
+            address: server.address.clone(),
+            store_epoch: 1,
+        },
         completion: Some(if start_version == 10 {
             first_completion.clone()
         } else {
@@ -351,16 +425,35 @@ fn detached_secondary_flushes_progress_independently() {
         },
         context: Default::default(),
     };
-    assert!(first.lock().unwrap().publish_commits_detached(vec![request(10)], Arc::clone(&first)));
+    let first_runtime = SharedReadRuntime::new_injected(
+        first.lock().unwrap().clone(),
+        RegionCache::new(SplitTopology {
+            address: server.address.clone(),
+        }),
+    );
+    let second_runtime = SharedReadRuntime::new_injected(
+        second.lock().unwrap().clone(),
+        RegionCache::new(SplitTopology {
+            address: server.address.clone(),
+        }),
+    );
+    assert!(first
+        .lock()
+        .unwrap()
+        .publish_commits_detached(vec![request(10)], first_runtime));
     let deadline = Instant::now() + Duration::from_secs(2);
     while recorded.lock().unwrap().commits.is_empty() {
         assert!(Instant::now() < deadline, "first flush never reached TiKV");
         std::thread::sleep(Duration::from_millis(1));
     }
     let first_authority_available = first.try_lock().is_ok();
-    let admission_has_no_response = matches!(first_observed.try_recv(), Err(mpsc::TryRecvError::Empty));
+    let admission_has_no_response =
+        matches!(first_observed.try_recv(), Err(mpsc::TryRecvError::Empty));
     let started = Instant::now();
-    assert!(second.lock().unwrap().publish_commits_detached(vec![request(20)], Arc::clone(&second)));
+    assert!(second
+        .lock()
+        .unwrap()
+        .publish_commits_detached(vec![request(20)], second_runtime));
     let deadline = Instant::now() + Duration::from_secs(2);
     while recorded.lock().unwrap().commits.len() < 2 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(1));
@@ -374,19 +467,106 @@ fn detached_secondary_flushes_progress_independently() {
     let second_response = second_response.unwrap().unwrap();
     assert!(second_response.response.error.is_none());
     assert!(second_response.response.region_error.is_none());
-    let first_response = first_observed.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+    let first_response = first_observed
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
     assert!(first_response.response.error.is_none());
     assert!(first_response.response.region_error.is_none());
-    assert!(admission_has_no_response && held_has_no_response,
-        "only the released transaction may report a completed response");
+    assert!(
+        admission_has_no_response && held_has_no_response,
+        "only the released transaction may report a completed response"
+    );
     let deadline = Instant::now() + Duration::from_secs(2);
     while recorded.lock().unwrap().commits.len() < 2 {
-        assert!(Instant::now() < deadline, "flush did not drain after release");
+        assert!(
+            Instant::now() < deadline,
+            "flush did not drain after release"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
     eprintln!("detached independent={independent} authority_available={first_authority_available} second_admission_us={}", elapsed.as_micros());
-    assert!(independent, "a stalled transaction must not serialize another transaction's flush");
-    assert!(first_authority_available, "secondary response wait must not hold the client authority");
+    assert!(
+        independent,
+        "a stalled transaction must not serialize another transaction's flush"
+    );
+    assert!(
+        first_authority_available,
+        "secondary response wait must not hold the client authority"
+    );
+}
+
+/// Go commit.go relocates and regroups the detached secondary batch after a
+/// split; 2pc.go keeps that retry inside the store-owned background task.
+#[test]
+fn detached_secondary_commit_regroups_after_split() {
+    for async_commit in [false, true] {
+        let service = ScriptedTikv::new(vec![ok(1_100 << 18), ok(1_200 << 18)]);
+        service.split_secondary.store(true, Ordering::SeqCst);
+        let recorded = Arc::clone(&service.recorded);
+        let server = TestServer::start(service);
+        let (mut transaction, _) = transaction(
+            server.store_address(),
+            CommitProtocol {
+                async_commit,
+                one_pc: false,
+            },
+        );
+        set_txn_resource_group(&mut transaction, "split-recovery");
+        let observed = transaction.observe_detached_commits();
+        let mut mutations = two_region_mutations();
+        mutations.push(OptimisticMutation::insert(b"z".to_vec(), b"tail".to_vec()).unwrap());
+        let outcome = transaction
+            .commit(mutations, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+            .unwrap();
+        assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)));
+        for _ in 0..if async_commit { 3 } else { 2 } {
+            let response = observed.recv_timeout(CALL_TIMEOUT).unwrap().unwrap();
+            assert!(
+                response.response.region_error.is_none(),
+                "a split must regroup, not end the detached commit"
+            );
+            assert!(response.response.error.is_none());
+        }
+        let commits = &recorded.lock().unwrap().commits;
+        assert_eq!(
+            commits.len(),
+            4,
+            "primary, rejected secondary, and two regrouped batches"
+        );
+        let mut retried: Vec<_> = commits[2..]
+            .iter()
+            .map(|request| request.keys.clone())
+            .collect();
+        retried.sort();
+        assert_eq!(retried, vec![vec![b"m".to_vec()], vec![b"z".to_vec()]]);
+        for request in &commits[2..] {
+            assert_eq!(request.primary_key, PRIMARY_KEY);
+            assert_eq!(request.use_async_commit, async_commit);
+            assert_eq!(request.commit_role, KvrpcCommitRole::Secondary as i32);
+            assert_eq!(request.start_version, START_TS);
+            assert_eq!(request.commit_version, outcome.receipt().commit_ts);
+            let context = request.context.as_ref().unwrap();
+            assert!(context.is_retry_request);
+            assert_eq!(context.region_epoch.as_ref().unwrap().version, 2);
+            assert_eq!(
+                context.region_id,
+                if request.keys[0] == b"m" {
+                    HIGH_REGION
+                } else {
+                    HIGH_REGION + 1
+                }
+            );
+            assert_eq!(
+                context
+                    .resource_control_context
+                    .as_ref()
+                    .unwrap()
+                    .resource_group_name,
+                "split-recovery"
+            );
+        }
+    }
 }
 
 struct TestServer {
@@ -468,7 +648,8 @@ fn transaction(
     // non-owning clone, and dropping the owner would close the transport
     // under it — production keeps this owner for the process lifetime.
     let client = TonicCoprocessorClient::new().unwrap();
-    let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(SplitTopology { address }));
+    let runtime =
+        SharedReadRuntime::new_injected(client, RegionCache::new(SplitTopology { address }));
     let (timestamps, calls) = CountingTimestampSource::new(PD_COMMIT_TS);
     let mut transaction = RealOptimisticTransaction::new_injected(
         runtime,
@@ -611,9 +792,15 @@ fn a_multi_region_transaction_never_asks_for_one_pc() {
     );
 
     assert_eq!(outcome.state(), OptimisticTransactionState::Committed);
-    assert_eq!(outcome.receipt().commit_protocol, CommittedProtocol::TwoPhase);
+    assert_eq!(
+        outcome.receipt().commit_protocol,
+        CommittedProtocol::TwoPhase
+    );
     assert_eq!(outcome.receipt().commit_ts, PD_COMMIT_TS);
-    assert_eq!(timestamp_calls, 1, "normal 2PC takes exactly one commit TSO");
+    assert_eq!(
+        timestamp_calls, 1,
+        "normal 2PC takes exactly one commit TSO"
+    );
 
     {
         let recorded = recorded.lock().unwrap();
@@ -635,10 +822,8 @@ fn txn_resource_group_is_attached_to_prewrite_and_commit_rpc_contexts() {
     let service = ScriptedTikv::new(vec![ok(1_100 << 18), ok(1_200 << 18)]);
     let recorded = Arc::clone(&service.recorded);
     let server = TestServer::start(service);
-    let (mut transaction, _) = transaction(
-        server.store_address(),
-        CommitProtocol::two_phase_only(),
-    );
+    let (mut transaction, _) =
+        transaction(server.store_address(), CommitProtocol::two_phase_only());
     set_txn_resource_group(&mut transaction, "analytics");
 
     let outcome = transaction
@@ -662,17 +847,12 @@ fn txn_resource_group_is_attached_to_prewrite_and_commit_rpc_contexts() {
                 .as_ref()
                 .expect("the transport attaches the Prewrite context")
         })
-        .chain(
-            recorded
-                .commits
-                .iter()
-                .map(|request| {
-                    request
-                        .context
-                        .as_ref()
-                        .expect("the transport attaches the Commit context")
-                }),
-        )
+        .chain(recorded.commits.iter().map(|request| {
+            request
+                .context
+                .as_ref()
+                .expect("the transport attaches the Commit context")
+        }))
     {
         assert_eq!(
             context
@@ -821,8 +1001,7 @@ fn an_async_commit_uses_the_largest_min_commit_ts_and_takes_no_second_tso() {
     assert!(recorded
         .prewrites
         .iter()
-        .all(|request| request.max_commit_ts > START_TS
-            && request.min_commit_ts == START_TS + 1));
+        .all(|request| request.max_commit_ts > START_TS && request.min_commit_ts == START_TS + 1));
 
     // The commits only publish the decision; they carry the async-commit flag
     // and the primary's batch keeps the primary role.

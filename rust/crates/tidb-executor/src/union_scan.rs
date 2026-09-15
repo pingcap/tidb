@@ -217,7 +217,7 @@ fn from_mem_reader_error(error: MemReaderError) -> ExecError {
 /// is spelled -- one `PKIsHandle` column, a clustered tuple, or the hidden
 /// `_tidb_rowid` -- is a planner fact carried down with the plan. Only the two
 /// methods `union_scan.go` calls are declared.
-pub trait HandleColumns {
+pub trait HandleColumns: Send {
     /// Go `HandleCols.BuildHandle(sc, row)`
     /// (`pkg/executor/union_scan.go:261`): the handle of a CHILD chunk row.
     fn build_handle(&self, row: Row<'_>) -> Result<TableHandle, ExecError>;
@@ -247,7 +247,7 @@ pub trait HandleColumns {
 /// satisfies that: the committed row must vanish. An implementation that
 /// reported `Ok(None)` for a tombstone would resurrect deleted rows, which is
 /// why this contract is written down here.
-pub trait MemBufferSnapshotGetter {
+pub trait MemBufferSnapshotGetter: Send {
     /// Go `kv.Getter.Get(ctx, key)`. `Ok(None)` is Go's `kv.ErrNotExist`;
     /// `Ok(Some(bytes))` is Go's `err == nil`, tombstones (empty `bytes`)
     /// included.
@@ -635,7 +635,7 @@ impl<C: Columns> UnionScanExec<C> {
     }
 }
 
-impl<C: Columns> Executor for UnionScanExec<C> {
+impl<C: Columns + Send> Executor for UnionScanExec<C> {
     /// Go `Open` (:75) plus `open` (:85), minus the reader type switch.
     fn open(&mut self) -> Result<(), ExecError> {
         self.child.open()?;

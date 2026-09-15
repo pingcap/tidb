@@ -177,14 +177,6 @@ func (j *baseJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
 }
 
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
-	defer func() {
-		if j.ctx.spillHelper.areAllPartitionsSpilled() {
-			// We will not call `Probe` function when all partitions are spilled.
-			// So it's necessary to manually set `currentProbeRow` to avoid check fail.
-			j.currentProbeRow = j.chunkRows
-		}
-	}()
-
 	if j.currentChunk != nil {
 		if j.currentProbeRow < j.chunkRows {
 			return errors.New("Previous chunk is not probed yet")
@@ -329,6 +321,11 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
 		}
 	}
+	// NULL keys and filter-rejected rows still need unmatched-row processing,
+	// even when every hash partition spilled. Skip only an entirely deferred chunk.
+	if len(j.spilledIdx) == j.chunkRows {
+		j.currentProbeRow = j.chunkRows
+	}
 	return
 }
 
@@ -393,14 +390,6 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 }
 
 func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
-	defer func() {
-		if j.ctx.spillHelper.areAllPartitionsSpilled() {
-			// We will not call `Probe` function when all partitions are spilled.
-			// So it's necessary to manually set `currentProbeRow` to avoid check fail.
-			j.currentProbeRow = j.chunkRows
-		}
-	}()
-
 	if j.currentChunk != nil {
 		if j.currentProbeRow < j.chunkRows {
 			return errors.New("Previous chunk is not probed yet")
@@ -482,6 +471,9 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	}
 
 	j.currentProbeRow = 0
+	if len(j.spilledIdx) == j.chunkRows {
+		j.currentProbeRow = j.chunkRows
+	}
 	return nil
 }
 

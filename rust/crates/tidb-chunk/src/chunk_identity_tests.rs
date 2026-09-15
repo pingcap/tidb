@@ -120,11 +120,19 @@ fn prune_preserves_metadata_order_duplicates_and_live_owners() {
     assert!(pruned.columns_share_identity(0, &pruned, 2));
     assert!(pruned.columns_share_identity(0, &source, 1));
 
+    let first = pruned.column_ref(0);
+    let repeated = pruned.column_ref(2);
+    assert_eq!(first.read().get_int64(0), 20);
+    assert_eq!(repeated.read().get_int64(0), 20);
     source
         .column_mut(1)
         .with_int64s_mut(|values| values[0] = 88);
     assert_eq!(pruned.column(0).get_int64(0), 88);
     assert_eq!(pruned.column(2).get_int64(0), 88);
+    // Bound references keep the live owner, not a snapshot or a read lock
+    // that would prevent the source mutation above.
+    assert_eq!(first.read().get_int64(0), 88);
+    assert_eq!(repeated.read().get_int64(0), 88);
 
     pruned.reset();
     assert_eq!(pruned.num_virtual_rows(), 0);

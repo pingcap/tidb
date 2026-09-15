@@ -361,13 +361,54 @@ fn as_of_timestamp_reads_the_stores_history() {
         .run("SET @prev_commit_ts = cast(cast(@last_commit_ts as unsigned) - 1 as char)")
         .unwrap();
 
-    assert_eq!(
-        session
-            .run("SELECT count(*) FROM t AS OF TIMESTAMP @last_commit_ts")
-            .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(2)]]),
-        "the last commit's timestamp sees the last commit"
+    let sql = "SELECT count(*) FROM t AS OF TIMESTAMP @last_commit_ts";
+    let statement = session.parse_statement(sql).unwrap();
+    let OpenedStatement::Rows(mut result) = session.open_record_set_parsed(statement, sql).unwrap()
+    else {
+        panic!("historical SELECT must retain its executor");
+    };
+    assert!(session.in_transaction());
+    let mut chunk = result.new_chunk();
+    result.next(&mut session, &mut chunk).unwrap();
+    assert_eq!(chunk.num_rows(), 1);
+    assert_eq!(chunk.get_row(0).get_int64(0), 2);
+    assert!(
+        session.in_transaction(),
+        "Next does not end the stale statement"
     );
+    result.finish(&mut session).unwrap();
+    assert!(!session.in_transaction());
+    result.close(&mut session).unwrap();
+    result.close(&mut session).unwrap();
+
+    // Go's record-set Close owns statement teardown on abandonment and errors too.
+    for cancel in [false, true] {
+        let statement = session.parse_statement(sql).unwrap();
+        {
+            let StatementExecution::Rows(mut result) =
+                session.execute_record_set_parsed(statement, sql).unwrap()
+            else {
+                panic!("historical SELECT must retain its executor");
+            };
+            assert!(result.session().in_transaction());
+            if cancel {
+                result
+                    .session()
+                    .routed_statement_memory()
+                    .sql_killer()
+                    .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+                let mut chunk = result.new_chunk();
+                assert_eq!(
+                    result.next(&mut chunk).unwrap_err().to_mysql_error().code,
+                    1317
+                );
+            }
+        }
+        assert!(
+            !session.in_transaction(),
+            "Drop must end the stale statement"
+        );
+    }
     assert_eq!(
         session
             .run("SELECT count(*) FROM t AS OF TIMESTAMP @prev_commit_ts")

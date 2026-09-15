@@ -11,6 +11,7 @@ build = "../../scripts/aggregate-tests.rs"
 
 [dependencies]
 flate2.workspace = true
+tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 zstd.workspace = true

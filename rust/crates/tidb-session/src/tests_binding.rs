@@ -122,11 +122,17 @@ fn binding_set_var_overrides_the_query_hint_and_restores_the_persistent_value() 
         "select /*+ set_var(sql_select_limit=2) */ * from t",
     );
     assert_eq!(rows.len(), 1);
+    // Go ResetContextOfStmt restores the overlay at the NEXT statement,
+    // after the preceding record set has finished and closed.
     assert_eq!(
         session.vars.get_system("sql_select_limit").as_deref(),
-        Ok("3"),
+        Ok("1"),
     );
     assert_eq!(matched(&mut session), "1");
+    assert_eq!(
+        session.vars.get_system("sql_select_limit").as_deref(),
+        Ok("3")
+    );
 }
 
 /// The central capture. Real TiDB, `gorun`, database `bt3`:

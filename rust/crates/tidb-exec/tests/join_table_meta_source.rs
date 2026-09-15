@@ -346,6 +346,21 @@ fn test_join_table_meta_row_columns_order_source() {
         false,
     );
     assert_eq!(result.row_columns_order, [2, 0, 1]);
+    // setupColumnOrder tests len(columnsUsedByOtherCondition), not nil.
+    // An allocated empty list must not advance late reconstruction past keys.
+    for other in [None, Some(&[][..])] {
+        let result = meta(
+            &[2],
+            &[ColumnType::Int; 3],
+            &[ColumnType::Int],
+            &[ColumnType::Int],
+            other,
+            Some(&[0, 1, 2]),
+            false,
+        );
+        assert_eq!(result.row_columns_order, [2, 0, 1]);
+        assert_eq!(result.column_count_needed_for_other_condition, 0);
+    }
 
     let result = meta(
         &[0],

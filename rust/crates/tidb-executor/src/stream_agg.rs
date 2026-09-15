@@ -318,7 +318,7 @@ impl<C: Columns> StreamAggExec<C> {
     }
 }
 
-impl<C: Columns> Executor for StreamAggExec<C> {
+impl<C: Columns + Send> Executor for StreamAggExec<C> {
     fn agg_tree_input_empty(&self) -> bool {
         self.child_returned_empty
     }

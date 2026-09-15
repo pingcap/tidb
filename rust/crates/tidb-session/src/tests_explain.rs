@@ -691,12 +691,34 @@ fn explain_analyze_select() {
     assert_eq!(rows[0][3], "root");
     assert_eq!(rows[1][3], "cop[tikv]");
     assert_eq!(rows[2][3], "cop[tikv]");
-    // This tier collects no runtime timing/memory/disk counters at all.
+    // Go exec.Next counts the final empty call as well as the result batch.
+    assert!(rows[0][5].starts_with("time:"), "{rows:?}");
+    assert!(rows[0][5].contains("loops:2"), "{rows:?}");
+    // TiKV timing and memory/disk counters are not collected at this seam.
     for row in &rows {
-        assert_eq!(row[5], "N/A"); // execution info
         assert_eq!(row[7], "N/A"); // memory
         assert_eq!(row[8], "N/A"); // disk
     }
+    assert_eq!(rows[1][5], "N/A"); // no fabricated coprocessor timing
+    assert_eq!(rows[2][5], "N/A");
+
+    session.run("SET tidb_init_chunk_size = 32").unwrap();
+    session.run("SET tidb_max_chunk_size = 32").unwrap();
+    let values = (5..=65)
+        .map(|id| format!("({id},{id})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO t VALUES {values}"))
+        .unwrap();
+    for _ in 0..2 {
+        let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t"));
+        assert_eq!(rows[0][2], "65");
+        assert!(rows[0][5].contains("loops:4"), "{rows:?}");
+    }
+    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t WHERE v > 100"));
+    assert_eq!(rows[0][2], "0");
+    assert!(rows[0][5].contains("loops:1"), "{rows:?}");
 }
 
 /// `EXPLAIN ANALYZE <insert>` really inserts -- captured: real TiDB's

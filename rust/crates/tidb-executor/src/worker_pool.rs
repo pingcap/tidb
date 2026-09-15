@@ -1,16 +1,8 @@
-//! A process-global persistent worker pool for short-lived parallel
-//! sub-tasks (hash-join probe windows, hash-agg pipeline lanes).
-//!
-//! Go's executor forks goroutines for the same fan-out; a goroutine spawn
-//! costs ~100ns because the runtime multiplexes them onto long-lived OS
-//! threads. `std::thread::spawn` costs tens of microseconds per call (stack
-//! mmap, thread registration), which profiling shows as up to ~16% of
-//! TPC-H q2/q9/q17 wall time. This pool keeps its threads alive across
-//! calls so each task pays only a channel round-trip.
-//!
-//! The workspace forbids `unsafe` code, so tasks must be `'static`: callers
-//! share read inputs through [`std::sync::Arc`] and move owned buffers in,
-//! receiving them back with their results.
+//! Persistent workers for ready, owned executor batches.
+//! Go multiplexes executor goroutines onto reusable runtime threads. This
+//! queue likewise keeps CPU workers alive, parking them when no work is ready.
+//! Blocking input pipelines run on separate lanes; jobs move their buffers
+//! and return ownership at a completion barrier.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -195,42 +187,42 @@ where
     if all.len() <= 1 || concurrency <= 1 {
         return all.into_iter().map(|task| task()).collect();
     }
-    let (result_tx, result_rx) = std::sync::mpsc::channel::<(usize, R)>();
-    // Keepalive sender: holds the channel open while results are still in
-    // flight even though every per-task clone has been moved into a task.
-    let keepalive_tx = result_tx.clone();
-
     let total = all.len();
-    let mut items = all.into_iter().enumerate();
-    let mut in_flight = 0usize;
+    let tasks = Arc::new(Mutex::new(all.into_iter().enumerate()));
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
     let mut results: Vec<Option<R>> = Vec::with_capacity(total);
     results.resize_with(total, || None);
 
-    // Prime up to `concurrency` tasks before waiting on any result.
-    for (index, task) in items.by_ref().take(concurrency) {
-        let tx = result_tx.clone();
-        enqueue(Box::new(move || {
-            let _ = tx.send((index, task()));
+    // All input is ready. Each worker claims a whole batch, then computes
+    // outside the lock; no worker waits for a producer or result consumer.
+    for _ in 0..concurrency.min(total) {
+        let tasks = Arc::clone(&tasks);
+        let result_tx = result_tx.clone();
+        enqueue(Box::new(move || loop {
+            let next = tasks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .next();
+            let Some((index, task)) = next else { break };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task));
+            let _ = result_tx.send((index, result));
         }));
-        in_flight += 1;
     }
+    drop(result_tx);
 
-    while in_flight > 0 {
-        let (index, value) = result_rx
-            .recv()
-            .unwrap_or_else(|_| panic!("exec pool worker dropped a mapped task"));
-        results[index] = Some(value);
-        in_flight -= 1;
-        if let Some((index, task)) = items.next() {
-            let tx = result_tx.clone();
-            enqueue(Box::new(move || {
-                let _ = tx.send((index, task()));
-            }));
-            in_flight += 1;
+    // Channel EOF joins every admitted worker, including on task panic.
+    // Propagate the first panic only after all owned input has been released.
+    let mut panic = None;
+    for (index, result) in result_rx {
+        match result {
+            Ok(value) => results[index] = Some(value),
+            Err(error) if panic.is_none() => panic = Some(error),
+            Err(_) => {}
         }
     }
-    drop(keepalive_tx);
-    drop(result_tx);
+    if let Some(error) = panic {
+        std::panic::resume_unwind(error);
+    }
     results
         .into_iter()
         .map(|slot| slot.unwrap_or_else(|| panic!("missing mapped task result")))

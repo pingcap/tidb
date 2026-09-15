@@ -17,7 +17,7 @@
 //! [`crate::Session::apply_schema_statement`], reached through
 //! [`Session::dispatch_admin_stmt`], plus the `SHOW CREATE TABLE`/`VIEW` text
 //! builders and column-description rows those arms share with
-//! `run_information_schema_select` in `lib.rs`.
+//! `open_information_schema_query` in `dispatch.rs`.
 //!
 //! `EXPLAIN`, account management (`CREATE`/`ALTER`/`DROP`/`RENAME USER`,
 //! `GRANT`/`REVOKE`/`SHOW GRANTS`), and `KILL`/processlist live in their own

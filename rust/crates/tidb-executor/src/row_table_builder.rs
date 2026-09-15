@@ -39,32 +39,26 @@
 //!
 //! What is only OBSERVABLY EQUIVALENT:
 //!
-//! * [`BuildChunk`] stands in for `util/chunk.Chunk`. It keeps the parts the
-//!   builder reads -- a `sel` vector, per-column fixed width, per-row raw
-//!   bytes, and per-row nullness -- but stores nullness as `Vec<bool>`
-//!   instead of chunk's packed null bitmap, and is not `tidb-chunk`.
-//! * serialized join keys arrive from a [`KeySerializer`] rather than
-//!   `util/codec.SerializeKeys`, and the build filter from a closure rather
-//!   than `expression.VectorizedFilter`. Both live in other Go packages; the
-//!   builder's own contract is where their bytes land in a row.
-//! * `hashJoinCtx.hashTableContext.memoryTracker.Consume` becomes
-//!   [`BuildContext::consumed_memory`], and `checkSQLKiller` is dropped: it
-//!   is cancellation, not row layout.
+//! * join keys use the codec's native column-wide serializer; build filters
+//!   bind the shared expression evaluator once per statement context.
+//! * `hashJoinCtx.hashTableContext.memoryTracker.Consume` charges the native
+//!   stage's shared tracker before row-segment allocation; component fixtures
+//!   can use [`BuildContext::consumed_memory`] alone. The native stage supplies
+//!   the statement killer for Go's cancellation checkpoints.
 //! * `resizeSlice` is not ported; `Vec::resize` has the same reuse-or-grow
 //!   behavior.
-//! * Spill restore (`preAllocForSegmentsInSpill`,
-//!   `processOneRestoredChunk`) is not ported, because it reads back chunks
-//!   written by `hash_join_spill*.go`, which is outside this seed.
+//! * Spill restore rehashes saved hashes and copies native raw rows unchanged.
 
+use std::sync::Arc;
+use tidb_chunk::chunk::Chunk;
+use tidb_codec::{JoinKeyColumns, SerializedJoinKeys};
 use tidb_util::serialization::{INT_LEN, UINT64_LEN};
+use tidb_util::{memory::Tracker, sqlkiller::SqlKiller};
 
 use crate::join_row_table::{
     RowLayoutMeta, RowTableSegment, FAKE_ADDR_PLACE_HOLDER, FAKE_ADDR_PLACE_HOLDER_LEN,
     SIZE_OF_ELEMENT_SIZE,
 };
-
-/// Default `sel` length the source pre-builds for chunks without one.
-pub const FAKE_SEL_LENGTH: usize = 4096;
 
 const FNV64_OFFSET_BASIS: u64 = 14_695_981_039_346_656_037;
 const FNV64_PRIME: u64 = 1_099_511_628_211;
@@ -141,187 +135,8 @@ pub const fn generate_partition_index(hash_value: u64, partition_mask_offset: us
     }
 }
 
-/// One build-side column, modeling `util/chunk.Column`.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct BuildColumn {
-    fixed_size: Option<usize>,
-    data: Vec<u8>,
-    offsets: Vec<usize>,
-    nulls: Vec<bool>,
-}
-
-impl BuildColumn {
-    /// Creates a fixed-width column from equally sized per-row values.
-    ///
-    /// # Panics
-    ///
-    /// Panics when a value's width differs from `fixed_size`.
-    #[must_use]
-    pub fn fixed(fixed_size: usize, values: &[(Vec<u8>, bool)]) -> Self {
-        let mut data = Vec::with_capacity(fixed_size * values.len());
-        let mut nulls = Vec::with_capacity(values.len());
-        for (value, is_null) in values {
-            assert_eq!(value.len(), fixed_size, "fixed column width mismatch");
-            data.extend_from_slice(value);
-            nulls.push(*is_null);
-        }
-        Self {
-            fixed_size: Some(fixed_size),
-            data,
-            offsets: Vec::new(),
-            nulls,
-        }
-    }
-
-    /// Creates a variable-width column from per-row values.
-    #[must_use]
-    pub fn variable(values: &[(Vec<u8>, bool)]) -> Self {
-        let mut data = Vec::new();
-        let mut offsets = Vec::with_capacity(values.len() + 1);
-        let mut nulls = Vec::with_capacity(values.len());
-        offsets.push(0);
-        for (value, is_null) in values {
-            data.extend_from_slice(value);
-            offsets.push(data.len());
-            nulls.push(*is_null);
-        }
-        Self {
-            fixed_size: None,
-            data,
-            offsets,
-            nulls,
-        }
-    }
-
-    /// Fixed width of this column, `None` when values vary in width.
-    #[must_use]
-    pub const fn fixed_size(&self) -> Option<usize> {
-        self.fixed_size
-    }
-
-    /// Number of physical rows.
-    #[must_use]
-    pub fn rows(&self) -> usize {
-        self.nulls.len()
-    }
-
-    /// Raw bytes of a physical row.
-    #[must_use]
-    pub fn get_raw(&self, row: usize) -> &[u8] {
-        match self.fixed_size {
-            Some(size) => &self.data[row * size..(row + 1) * size],
-            None => &self.data[self.offsets[row]..self.offsets[row + 1]],
-        }
-    }
-
-    /// Byte length of a physical row's value.
-    #[must_use]
-    pub fn get_raw_len(&self, row: usize) -> usize {
-        self.get_raw(row).len()
-    }
-
-    /// Whether a physical row is null.
-    #[must_use]
-    pub fn is_null(&self, row: usize) -> bool {
-        self.nulls[row]
-    }
-
-    /// Whether any element is too large for the 4-byte size prefix.
-    #[must_use]
-    pub fn contains_very_large_element(&self) -> bool {
-        if self.fixed_size.is_some() {
-            return false;
-        }
-        (0..self.rows()).any(|row| self.get_raw_len(row) > u32::MAX as usize)
-    }
-}
-
-/// A build-side chunk, modeling `util/chunk.Chunk`.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct BuildChunk {
-    columns: Vec<BuildColumn>,
-    sel: Option<Vec<usize>>,
-}
-
-impl BuildChunk {
-    /// Creates a chunk from its columns, with no selection vector.
-    #[must_use]
-    pub fn new(columns: Vec<BuildColumn>) -> Self {
-        Self { columns, sel: None }
-    }
-
-    /// Installs a selection vector of physical row indices.
-    pub fn set_sel(&mut self, sel: Vec<usize>) {
-        self.sel = Some(sel);
-    }
-
-    /// Borrows the selection vector.
-    #[must_use]
-    pub fn sel(&self) -> Option<&[usize]> {
-        self.sel.as_deref()
-    }
-
-    /// Borrows one column.
-    #[must_use]
-    pub fn column(&self, index: usize) -> &BuildColumn {
-        &self.columns[index]
-    }
-
-    /// Number of columns.
-    #[must_use]
-    pub fn num_cols(&self) -> usize {
-        self.columns.len()
-    }
-
-    /// Number of logical rows, honoring the selection vector.
-    #[must_use]
-    pub fn num_rows(&self) -> usize {
-        match &self.sel {
-            Some(sel) => sel.len(),
-            None => self.columns.first().map_or(0, BuildColumn::rows),
-        }
-    }
-
-    /// Physical row index behind a logical one.
-    #[must_use]
-    pub fn physical_row(&self, logical_row: usize) -> usize {
-        match &self.sel {
-            Some(sel) => sel[logical_row],
-            None => logical_row,
-        }
-    }
-
-    /// Raw bytes of a column in a logical row.
-    #[must_use]
-    pub fn get_raw(&self, logical_row: usize, column_index: usize) -> &[u8] {
-        self.columns[column_index].get_raw(self.physical_row(logical_row))
-    }
-
-    /// Whether a column is null in a logical row.
-    #[must_use]
-    pub fn is_null(&self, logical_row: usize, column_index: usize) -> bool {
-        self.columns[column_index].is_null(self.physical_row(logical_row))
-    }
-}
-
-/// Produces the serialized join key of a logical row.
-///
-/// The source gets these from `util/codec.SerializeKeys`, which belongs to
-/// another Go package; this seam keeps its output without pulling it in.
-pub trait KeySerializer {
-    /// Serializes the join key of one logical row.
-    fn serialize(&self, chunk: &BuildChunk, logical_row_index: usize) -> Vec<u8>;
-}
-
-impl<F: Fn(&BuildChunk, usize) -> Vec<u8>> KeySerializer for F {
-    fn serialize(&self, chunk: &BuildChunk, logical_row_index: usize) -> Vec<u8> {
-        self(chunk, logical_row_index)
-    }
-}
-
-/// Build filter over one physical row, standing in for
-/// `expression.VectorizedFilter`'s per-row result.
-pub type BuildFilter<'a> = &'a dyn Fn(&BuildChunk, usize) -> bool;
+/// Go `HashJoinCtxV2.BuildFilter`, evaluated with VectorizedFilter.
+pub type BuildFilter<'a> = &'a crate::base_join_probe::JoinFilter<'a>;
 
 /// Everything outside the builder that one `processOneChunk` call reads.
 pub struct BuildContext<'a> {
@@ -330,11 +145,14 @@ pub struct BuildContext<'a> {
     /// Partition geometry for this join.
     pub partition: PartitionInfo,
     /// Serializer for join keys.
-    pub key_serializer: &'a dyn KeySerializer,
-    /// Build filter, evaluated per physical row; `None` keeps every row.
+    pub key_serializer: &'a JoinKeyColumns,
+    /// Build expressions, evaluated chunk-wide; `None` keeps every row.
     pub build_filter: Option<BuildFilter<'a>>,
     /// Running total of the source's hash-table memory tracker.
     pub consumed_memory: i64,
+    /// Shared tracker and killer used by the native build stage.
+    pub memory_tracker: Option<&'a Arc<Tracker>>,
+    pub sql_killer: Option<&'a SqlKiller>,
 }
 
 impl<'a> BuildContext<'a> {
@@ -343,7 +161,7 @@ impl<'a> BuildContext<'a> {
     pub fn new(
         meta: &'a RowLayoutMeta,
         partition: PartitionInfo,
-        key_serializer: &'a dyn KeySerializer,
+        key_serializer: &'a JoinKeyColumns,
     ) -> Self {
         Self {
             meta,
@@ -351,6 +169,22 @@ impl<'a> BuildContext<'a> {
             key_serializer,
             build_filter: None,
             consumed_memory: 0,
+            memory_tracker: None,
+            sql_killer: None,
+        }
+    }
+
+    fn check_killed(&self) -> Result<(), RowTableBuildError> {
+        if let Some(error) = self.sql_killer.and_then(SqlKiller::handle_signal) {
+            return Err(RowTableBuildError::Killed(error.to_sql_error()));
+        }
+        Ok(())
+    }
+
+    fn consume(&mut self, delta: i64) {
+        self.consumed_memory += delta;
+        if let Some(tracker) = self.memory_tracker {
+            tracker.consume(delta);
         }
     }
 }
@@ -358,6 +192,12 @@ impl<'a> BuildContext<'a> {
 /// Errors the source returns when an element cannot be length-prefixed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RowTableBuildError {
+    /// Original expression error from the build-side filter.
+    Expression(tidb_expr::EvalError),
+    /// Canonical SQL cancellation, including quota exhaustion before allocation.
+    Killed(tidb_error::mysql::SqlError),
+    /// Codec failure while constructing the chunk's join keys.
+    KeyEncoding(String),
     /// A stored column holds an element wider than a `u32` size prefix.
     ColumnElementTooLarge {
         /// Index of the offending build column.
@@ -370,6 +210,9 @@ pub enum RowTableBuildError {
 impl std::fmt::Display for RowTableBuildError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Expression(error) => write!(formatter, "{error:?}"),
+            Self::Killed(error) => write!(formatter, "{error:?}"),
+            Self::KeyEncoding(message) => formatter.write_str(message),
             Self::ColumnElementTooLarge { column_index } => write!(
                 formatter,
                 "row table build failed: column contains element larger than 4GB, column index: {column_index}"
@@ -417,7 +260,7 @@ pub struct RowTableBuilder {
     /// Number of build partitions.
     pub partition_number: usize,
     /// Serialized key of each logical row; empty for rejected rows.
-    pub serialized_key_vector_buffer: Vec<Vec<u8>>,
+    pub serialized_key_vector_buffer: SerializedJoinKeys,
     /// Partition index of each logical row.
     pub part_idx_vector: Vec<usize>,
     /// Physical row index of each logical row.
@@ -451,7 +294,7 @@ impl RowTableBuilder {
             has_filter,
             keep_filtered_rows,
             partition_number,
-            serialized_key_vector_buffer: Vec::new(),
+            serialized_key_vector_buffer: SerializedJoinKeys::default(),
             part_idx_vector: Vec::new(),
             used_rows: Vec::new(),
             hash_value: Vec::new(),
@@ -470,31 +313,26 @@ impl RowTableBuilder {
     }
 
     /// `ResetBuffer`: re-points the per-chunk vectors at this chunk's shape.
-    pub fn reset_buffer(&mut self, chunk: &BuildChunk) {
-        self.used_rows = match chunk.sel() {
-            Some(sel) => sel.to_vec(),
-            None => (0..chunk.num_rows()).collect(),
-        };
+    pub fn reset_buffer(&mut self, chunk: &Chunk) {
         let logical_rows = chunk.num_rows();
-        let physical_rows = chunk.column(0).rows();
-
+        let physical_rows = chunk.physical_rows();
+        self.used_rows.clear();
+        match chunk.sel() {
+            Some(sel) => self.used_rows.extend_from_slice(sel),
+            None => self.used_rows.extend(0..logical_rows),
+        }
         self.part_idx_vector.resize(logical_rows, 0);
-        self.part_idx_vector.truncate(logical_rows);
         self.hash_value.resize(logical_rows, 0);
         self.hash_value.truncate(logical_rows);
         if self.has_filter {
-            self.filter_vector = Some(vec![false; physical_rows]);
+            self.filter_vector
+                .get_or_insert_with(Vec::new)
+                .resize(physical_rows, false);
         }
-        if self.has_nullable_key {
-            self.null_key_vector = Some(vec![false; physical_rows]);
-        }
-        self.serialized_key_vector_buffer.clear();
-        self.serialized_key_vector_buffer
-            .resize(logical_rows, Vec::new());
     }
 
     /// `checkMaxElementSize`.
-    fn check_max_element_size(&self, chunk: &BuildChunk, meta: &RowLayoutMeta) -> Option<usize> {
+    fn check_max_element_size(&self, chunk: &Chunk, meta: &RowLayoutMeta) -> Option<usize> {
         self.build_key_index
             .iter()
             .chain(meta.row_columns_order.iter())
@@ -542,7 +380,7 @@ impl RowTableBuilder {
     /// join key exceeds the 4-byte size prefix.
     pub fn process_one_chunk(
         &mut self,
-        chunk: &BuildChunk,
+        chunk: &Chunk,
         context: &mut BuildContext<'_>,
     ) -> Result<Vec<RowTableSegment>, RowTableBuildError> {
         if let Some(column_index) = self.check_max_element_size(chunk, context.meta) {
@@ -558,37 +396,24 @@ impl RowTableBuilder {
         );
 
         if let Some(filter) = context.build_filter {
-            let vector = self
-                .filter_vector
-                .as_mut()
-                .expect("filter vector exists when a filter runs");
-            for (physical_row_index, kept) in vector.iter_mut().enumerate() {
-                *kept = filter(chunk, physical_row_index);
-            }
+            self.filter_vector = Some(
+                filter
+                    .evaluate(chunk, self.filter_vector.take().unwrap_or_default())
+                    .map_err(RowTableBuildError::Expression)?,
+            );
         }
+        context.check_killed()?;
 
-        // `codec.SerializeKeys` reports null keys through `nullKeyVector` and
-        // leaves the serialized key of a rejected row empty.
-        if self.has_nullable_key {
-            let mut vector = self
-                .null_key_vector
-                .take()
-                .expect("null key vector exists for a nullable key");
-            for &physical_row_index in &self.used_rows {
-                vector[physical_row_index] = self
-                    .build_key_index
-                    .iter()
-                    .any(|&column_index| chunk.column(column_index).is_null(physical_row_index));
-            }
-            self.null_key_vector = Some(vector);
-        }
-        for logical_row_index in 0..self.used_rows.len() {
-            if !self.has_valid_key(self.used_rows[logical_row_index]) {
-                continue;
-            }
-            self.serialized_key_vector_buffer[logical_row_index] =
-                context.key_serializer.serialize(chunk, logical_row_index);
-        }
+        let result = context.key_serializer.serialize(
+            chunk,
+            &self.used_rows,
+            self.filter_vector.as_deref(),
+            self.null_key_vector.get_or_insert_with(Vec::new),
+            &mut self.serialized_key_vector_buffer,
+        );
+        // Go charges row segments and buckets, not reusable key scratch. In
+        // particular, spill selection must count the storage it can release.
+        result.map_err(|error| RowTableBuildError::KeyEncoding(error.to_string()))?;
         if self
             .serialized_key_vector_buffer
             .iter()
@@ -596,9 +421,93 @@ impl RowTableBuilder {
         {
             return Err(RowTableBuildError::JoinKeyTooLarge);
         }
+        context.check_killed()?;
 
         self.init_hash_value_and_part_index_for_one_chunk(context.partition);
-        Ok(self.append_to_row_table(chunk, context))
+        self.append_to_row_table(chunk, context)
+    }
+
+    /// Go `processOneRestoredChunk`: preallocate once, rehash, then copy saved rows.
+    pub fn process_one_restored_chunk(
+        &mut self,
+        chunk: &Chunk,
+        context: &mut BuildContext<'_>,
+    ) -> Result<Vec<RowTableSegment>, RowTableBuildError> {
+        assert!(
+            chunk.sel().is_none(),
+            "restored build chunk has no selection"
+        );
+        let rows = chunk.num_rows();
+        self.part_idx_vector.resize(rows, 0);
+        self.hash_value.resize(rows, 0);
+        for helper in &mut self.helpers {
+            helper.reset();
+        }
+        let mut fake_part = 0;
+        for index in 0..rows {
+            if index % 200 == 0 {
+                context.check_killed()?;
+            }
+            let row = chunk.get_row(index);
+            let valid = row.get_bytes(1)[0] != 0;
+            let (hash, part) = if valid {
+                let hash = rehash(row.get_uint64(0));
+                (hash, context.partition.partition_index(hash))
+            } else {
+                let part = fake_part;
+                fake_part = (fake_part + 1) % self.partition_number;
+                (part as u64, part)
+            };
+            self.part_idx_vector[index] = part;
+            self.hash_value[index] = hash;
+            let helper = &mut self.helpers[part];
+            helper.total_row_num += 1;
+            helper.valid_row_num += i64::from(valid);
+            helper.raw_data_len += row.get_bytes(2).len() as i64;
+        }
+        context.consume(
+            self.helpers
+                .iter()
+                .map(|helper| {
+                    helper.raw_data_len
+                        + helper.total_row_num * 2 * UINT64_LEN as i64
+                        + helper.valid_row_num * INT_LEN as i64
+                        + helper.total_row_num * context.meta.col_offset_in_null_map as i64
+                })
+                .sum(),
+        );
+        let mut segments: Vec<_> = self
+            .helpers
+            .iter()
+            .map(|helper| {
+                let mut segment = RowTableSegment::new();
+                segment.raw_data = Vec::with_capacity(helper.raw_data_len as usize);
+                segment.hash_values = Vec::with_capacity(helper.total_row_num as usize);
+                segment.row_start_offset = Vec::with_capacity(helper.total_row_num as usize);
+                segment.valid_join_key_pos = Vec::with_capacity(helper.valid_row_num as usize);
+                if context.meta.col_offset_in_null_map != 0 {
+                    segment.allocate_used_flags(helper.total_row_num as usize);
+                }
+                segment
+            })
+            .collect();
+        for index in 0..rows {
+            if index % 200 == 0 {
+                context.check_killed()?;
+            }
+            let row = chunk.get_row(index);
+            let segment = &mut segments[self.part_idx_vector[index]];
+            if row.get_bytes(1)[0] != 0 {
+                segment.valid_join_key_pos.push(segment.hash_values.len());
+            }
+            segment.hash_values.push(self.hash_value[index]);
+            segment.row_start_offset.push(segment.raw_data.len() as u64);
+            segment.raw_data.extend_from_slice(&row.get_bytes(2));
+        }
+        for segment in &mut segments {
+            segment.finalize();
+        }
+        Ok(segments)
     }
 
     /// `calculateSerializedKeyAndKeyLength`.
@@ -658,9 +567,9 @@ impl RowTableBuilder {
     fn pre_alloc_for_segments(
         &mut self,
         segments: &mut [RowTableSegment],
-        chunk: &BuildChunk,
+        chunk: &Chunk,
         context: &mut BuildContext<'_>,
-    ) {
+    ) -> Result<(), RowTableBuildError> {
         for helper in &mut self.helpers {
             helper.reset();
         }
@@ -691,9 +600,11 @@ impl RowTableBuilder {
         for helper in &self.helpers {
             total_mem_usage += helper.raw_data_len
                 + (helper.total_row_num + helper.total_row_num) * UINT64_LEN as i64
-                + helper.valid_row_num * INT_LEN as i64;
+                + helper.valid_row_num * INT_LEN as i64
+                + helper.total_row_num * meta.col_offset_in_null_map as i64;
         }
-        context.consumed_memory += total_mem_usage;
+        context.consume(total_mem_usage);
+        context.check_killed()?;
 
         for (part_idx, segment) in segments.iter_mut().enumerate() {
             let helper = self.helpers[part_idx];
@@ -701,22 +612,30 @@ impl RowTableBuilder {
             segment.hash_values = Vec::with_capacity(helper.total_row_num as usize);
             segment.row_start_offset = Vec::with_capacity(helper.total_row_num as usize);
             segment.valid_join_key_pos = Vec::with_capacity(helper.valid_row_num as usize);
+            if meta.col_offset_in_null_map != 0 {
+                segment.allocate_used_flags(helper.total_row_num as usize);
+            }
         }
+        Ok(())
     }
 
     /// `appendToRowTable`: writes every kept row of the chunk.
     fn append_to_row_table(
         &mut self,
-        chunk: &BuildChunk,
+        chunk: &Chunk,
         context: &mut BuildContext<'_>,
-    ) -> Vec<RowTableSegment> {
+    ) -> Result<Vec<RowTableSegment>, RowTableBuildError> {
         let mut segments: Vec<RowTableSegment> = (0..self.partition_number)
             .map(|_| RowTableSegment::new())
             .collect();
-        self.pre_alloc_for_segments(&mut segments, chunk, context);
+        self.pre_alloc_for_segments(&mut segments, chunk, context)?;
 
         let meta = context.meta;
         for logical_row_index in 0..self.used_rows.len() {
+            // Go appendToRowTable checks every ten rows and the final row.
+            if logical_row_index % 10 == 0 || logical_row_index + 1 == self.used_rows.len() {
+                context.check_killed()?;
+            }
             let physical_row_index = self.used_rows[logical_row_index];
             let has_valid_key = self.has_valid_key(physical_row_index);
             if !has_valid_key && !self.keep_filtered_rows {
@@ -752,7 +671,7 @@ impl RowTableBuilder {
         for segment in &mut segments {
             segment.finalize();
         }
-        segments
+        Ok(segments)
     }
 }
 
@@ -765,7 +684,7 @@ fn fill_next_row_ptr(segment: &mut RowTableSegment) -> usize {
 /// `fillNullMap`: writes one bit per stored column, MSB first inside a byte.
 fn fill_null_map(
     meta: &RowLayoutMeta,
-    chunk: &BuildChunk,
+    chunk: &Chunk,
     logical_row_index: usize,
     segment: &mut RowTableSegment,
     bitmap: &mut [u8],
@@ -777,7 +696,7 @@ fn fill_null_map(
     bitmap[..null_map_length].fill(0);
     for (col_index_in_row_table, &col_index_in_row) in meta.row_columns_order.iter().enumerate() {
         let col_index_in_bitmap = col_index_in_row_table + meta.col_offset_in_null_map;
-        if chunk.is_null(logical_row_index, col_index_in_row) {
+        if chunk.get_row(logical_row_index).is_null(col_index_in_row) {
             bitmap[col_index_in_bitmap / 8] |= 1 << (7 - col_index_in_bitmap % 8);
         }
     }
@@ -790,20 +709,20 @@ fn fill_null_map(
 /// `fillRowData`: fixed columns raw, variable columns length-prefixed.
 fn fill_row_data(
     meta: &RowLayoutMeta,
-    chunk: &BuildChunk,
+    chunk: &Chunk,
     logical_row_index: usize,
     segment: &mut RowTableSegment,
 ) -> i64 {
     let mut append_row_length = 0_i64;
     for (index, &col_idx) in meta.row_columns_order.iter().enumerate() {
-        let raw = chunk.get_raw(logical_row_index, col_idx);
+        let raw = chunk.get_row(logical_row_index).get_raw(col_idx);
         if let Some(size) = meta.columns_size[index] {
-            segment.raw_data.extend_from_slice(raw);
+            segment.raw_data.extend_from_slice(&raw);
             append_row_length += size as i64;
         } else {
             let length = raw.len() as u32;
             segment.raw_data.extend_from_slice(&length.to_le_bytes());
-            segment.raw_data.extend_from_slice(raw);
+            segment.raw_data.extend_from_slice(&raw);
             append_row_length += i64::from(length) + SIZE_OF_ELEMENT_SIZE as i64;
         }
     }
@@ -811,17 +730,13 @@ fn fill_row_data(
 }
 
 /// `calculateRowDataLength`.
-fn calculate_row_data_length(
-    meta: &RowLayoutMeta,
-    chunk: &BuildChunk,
-    logical_row_index: usize,
-) -> i64 {
+fn calculate_row_data_length(meta: &RowLayoutMeta, chunk: &Chunk, logical_row_index: usize) -> i64 {
     let mut append_row_length = 0_i64;
     for (index, &col_idx) in meta.row_columns_order.iter().enumerate() {
         if let Some(size) = meta.columns_size[index] {
             append_row_length += size as i64;
         } else {
-            append_row_length += chunk.get_raw(logical_row_index, col_idx).len() as i64
+            append_row_length += chunk.get_row(logical_row_index).get_raw(col_idx).len() as i64
                 + SIZE_OF_ELEMENT_SIZE as i64;
         }
     }

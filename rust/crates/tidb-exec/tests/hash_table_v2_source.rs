@@ -36,6 +36,10 @@
 //!   its segment.
 
 use std::collections::HashMap;
+use tidb_chunk::chunk::Chunk;
+use tidb_codec::{JoinKeyColumns, SerializeMode};
+
+use tidb_datatype::{FieldType, FieldTypeCode};
 
 use tidb_exec::hash_table_v2::{
     get_hash_table_length_by_row_len, get_hash_table_length_by_row_table,
@@ -44,9 +48,7 @@ use tidb_exec::hash_table_v2::{
 };
 use tidb_exec::join_row_table::{next_row_address, RowLayoutMeta, RowTable, RowTableSegment};
 use tidb_exec::join_table_meta::{ColumnType, JoinTableMeta};
-use tidb_exec::row_table_builder::{
-    BuildChunk, BuildColumn, BuildContext, PartitionInfo, RowTableBuilder,
-};
+use tidb_exec::row_table_builder::{BuildContext, PartitionInfo, RowTableBuilder};
 use tidb_exec::tagged_ptr::TagPtrHelper;
 
 /// Deterministic stand-in for `math/rand`, which the Go fixtures use only to
@@ -122,8 +124,7 @@ fn create_row_table(rows: usize) -> (RowTable, u8) {
         false,
         layout.null_map_length,
     );
-    let key_serializer =
-        |chunk: &BuildChunk, row: usize| -> Vec<u8> { chunk.get_raw(row, 0).to_vec() };
+    let key_serializer = key_columns(FieldTypeCode::LongLong);
     let mut context = BuildContext::new(&layout, partition, &key_serializer);
 
     let mut table = RowTable::new();
@@ -133,10 +134,11 @@ fn create_row_table(rows: usize) -> (RowTable, u8) {
     while remaining > 0 {
         let chunk_rows = remaining.min(chunk_size);
         remaining -= chunk_rows;
-        let values: Vec<(Vec<u8>, bool)> = (0..chunk_rows)
-            .map(|_| (rng.next_u64().to_le_bytes().to_vec(), false))
-            .collect();
-        let chunk = BuildChunk::new(vec![BuildColumn::fixed(8, &values)]);
+        let mut chunk =
+            Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], chunk_rows);
+        for _ in 0..chunk_rows {
+            chunk.append_int64(0, rng.next_u64() as i64);
+        }
         let segments = builder
             .process_one_chunk(&chunk, &mut context)
             .expect("row table build");
@@ -396,6 +398,7 @@ fn check_row_iter(table: &HashTableV2, scan_concurrency: u64) {
 
 #[test]
 fn row_iter_covers_every_row_once() {
+    use tidb_exec::base_join_probe::BuildRowSource;
     // Source: pkg/executor/join/hash_table_v2.go:146-229 (rowPos, rowIter,
     // createRowPos, createRowIter).
     // Direct Go coverage: pkg/executor/join/hash_table_v2_test.go:255
@@ -409,6 +412,18 @@ fn row_iter_covers_every_row_once() {
             .map(|_| create_mock_row_table(1024, 16, false, &mut rng))
             .collect();
         let joined_hash_table = HashTableV2::new_for_test(row_tables);
+        for table in joined_hash_table.tables.iter().flatten() {
+            for segment in &table.row_data.segments {
+                for (index, &offset) in segment.row_start_offset.iter().enumerate() {
+                    assert_eq!(
+                        joined_hash_table
+                            .row_bytes(segment.get_row_pointer(index))
+                            .as_ptr(),
+                        segment.raw_data[offset as usize..].as_ptr(),
+                    );
+                }
+            }
+        }
         check_row_iter(&joined_hash_table, partition_number as u64);
     }
     // case with empty row table
@@ -451,4 +466,12 @@ fn partition_helpers_report_and_clear_built_partitions() {
     assert_eq!(table.get_partition_memory_usage(0), 0);
     table.tables[0] = None;
     assert_eq!(table.get_partition_memory_usage(0), 0);
+}
+
+fn key_columns(code: FieldTypeCode) -> JoinKeyColumns {
+    JoinKeyColumns {
+        indices: vec![0],
+        types: vec![FieldType::new(code)],
+        modes: vec![SerializeMode::Normal],
+    }
 }

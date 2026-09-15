@@ -295,6 +295,22 @@ enum ColumnReadInner<'a> {
     Shared(RwLockReadGuard<'a, Column>),
 }
 
+/// A chunk-bound column address. Resolving it once avoids repeated slot
+/// indexing, without promoting the column or extending a shared read lock
+/// across other input evaluation.
+#[derive(Clone, Copy)]
+pub struct ColumnRef<'a> {
+    pub(crate) slot: &'a ColumnSlot,
+}
+
+impl ColumnRef<'_> {
+    /// Borrow the column for one operation. Shared aliases retain the same
+    /// synchronization and visibility as `Chunk::column`.
+    pub fn read(&self) -> ColumnRead<'_> {
+        self.slot.read()
+    }
+}
+
 /// A read borrow of a chunk column. Owned slots remain an ordinary borrowed
 /// reference; promoted slots retain their shared-owner read guard.
 pub struct ColumnRead<'a> {

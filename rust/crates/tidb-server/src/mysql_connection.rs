@@ -124,12 +124,12 @@ fn open_prepared_cursor<O: ConnectionPacketOutput + ?Sized>(
     framing: WireFraming,
     result_encoder: ResultEncoder,
 ) -> Result<CursorState, PreparedCursorOpenError> {
+    let cursor = CursorState::materialize_result(result).map_err(PreparedCursorOpenError::Query)?;
     let warnings = result.warning_count();
     let status = result.wire_status();
     let affected_rows = result.affected_rows();
     let last_insert_id = result.last_insert_id();
     let info = result.info().to_vec();
-    let cursor = CursorState::materialize_result(result).map_err(PreparedCursorOpenError::Query)?;
     let options = framing.result_set_with_output(
         status.with(SERVER_STATUS_CURSOR_EXISTS),
         warnings,

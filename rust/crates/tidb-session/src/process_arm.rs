@@ -14,7 +14,7 @@
 
 //! The `SHOW [FULL] PROCESSLIST` / `information_schema.PROCESSLIST` rows and
 //! `KILL`: the arms `Session::dispatch_admin_stmt` delegates to, plus the
-//! helpers `run_information_schema_select` (in `lib.rs`) calls to build the
+//! helpers `open_information_schema_query` (in `dispatch.rs`) calls to build the
 //! virtual `PROCESSLIST` table.
 //!
 //! This is distinct from the `process` module, which owns the process

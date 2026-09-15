@@ -21,7 +21,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Wake, Waker};
 
 use tidb_txnkv::rpc::{
-    go_max_procs, query_worker_runtime, CompletionError, CompletionNotifier, UnaryCallContext,
+    go_max_procs, query_worker_runtime, wait_with_call, CompletionError, UnaryCallContext,
 };
 
 use crate::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
@@ -197,7 +197,7 @@ struct State<R> {
 /// Workers own transport state; this lock never covers RPCs or recovery.
 struct WorkerGroup<R> {
     state: Mutex<State<R>>,
-    ready: CompletionNotifier,
+    ready: tokio::sync::Notify,
     available: tokio::sync::Notify,
     spaces: Vec<tokio::sync::Notify>,
     worker_wakes: Vec<Arc<tokio::sync::Notify>>,
@@ -303,7 +303,7 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
             };
             if let Some(wake_reader) = published {
                 if wake_reader {
-                    self.ready.notify(0);
+                    self.ready.notify_one();
                 }
                 return true;
             }
@@ -321,7 +321,7 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
             }
             state.ready.push_back((index, event));
         }
-        self.ready.notify(0);
+        self.ready.notify_one();
         // Exactly one consumer acknowledgment permits this worker's next
         // send. Notify retains an early acknowledgment; no second copy of
         // channel state or polling of the iterator mutex is needed.
@@ -340,7 +340,7 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
             index == state.current
         };
         if wake_reader {
-            self.ready.notify(0);
+            self.ready.notify_one();
         }
     }
 
@@ -419,7 +419,7 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
                 state = self.joined.wait(state).unwrap_or_else(|p| p.into_inner());
             }
         });
-        self.ready.notify(0);
+        self.ready.notify_one();
     }
 }
 
@@ -481,19 +481,13 @@ impl<R: CopTaskSource + Send + 'static> QueryResponse for ConcurrentResponse<R> 
 
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         let result = (|| loop {
-            while self
-                .group
-                .ready
-                .try_take()
-                .map_err(completion_error)?
-                .is_some()
-            {}
             if let Some(result) = self.group.receive() {
                 return result;
             }
-            self.group
-                .ready
-                .wait(&self.group.call)
+            // This reader has one consumer. Notify retains a permit if a
+            // producer publishes between the queue check and this wait;
+            // actual rows and task completions remain in the response queues.
+            wait_with_call(self.group.ready.notified(), &self.group.call)
                 .map_err(completion_error)?;
         })();
         if !matches!(&result, Ok(Some(_))) {
@@ -575,7 +569,7 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
             live_workers: workers,
             limiter_wait,
         }),
-        ready: CompletionNotifier::new(),
+        ready: tokio::sync::Notify::new(),
         available: tokio::sync::Notify::new(),
         worker_wakes: (0..workers)
             .map(|_| Arc::new(tokio::sync::Notify::new()))

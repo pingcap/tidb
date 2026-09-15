@@ -73,7 +73,7 @@ mod tests_mutrow;
 #[cfg(test)]
 mod tests_pool;
 
-pub use column_slot::{ColumnHandle, ColumnRead, ColumnWrite};
+pub use column_slot::{ColumnHandle, ColumnRead, ColumnRef, ColumnWrite};
 pub use column_view::{CellBytes, ColumnBytes};
 
 /// The spill tests all point the process-wide temporary-storage path at their

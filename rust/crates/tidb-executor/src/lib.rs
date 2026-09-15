@@ -41,6 +41,16 @@
 //! DEFERRED (documented): the Go `context.Context`/`sessionctx` propagation,
 //! runtime stats, the SQL killer, `Detach`, and parallel projection.
 
+pub mod base_join_probe;
+pub mod concurrent_entry_map;
+pub mod hash_join_v2;
+pub mod hash_join_version;
+pub mod hash_table_v2;
+pub mod join_row_table;
+pub mod join_table_meta;
+pub mod row_table_builder;
+pub mod tagged_ptr;
+
 pub mod access_cost;
 pub mod access_path;
 pub mod admin_check;
@@ -220,9 +230,9 @@ pub(crate) use driver::access::run_prepared_select_for_test;
 pub use driver::infoschema_meta;
 pub use driver::{
     access::{
-        build_prepared_point_get_plan, build_prepared_select_plan, run_prepared_point_get,
-        PreparedPlanCacheEnvironment, PreparedPointGetExecution, PreparedPointGetPlan,
-        PreparedSelectExecution, PreparedSelectPlan,
+        build_prepared_point_get_plan, build_prepared_select_plan, open_prepared_point_get,
+        run_prepared_point_get, PreparedPlanCacheEnvironment, PreparedPointGetExecution,
+        PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
     },
     bind_parameters, bind_prepared_statement, bind_statement, bound_parameter_values,
     build_prepared_dml_plan, fts_columns_are_strings, parameter_count, parsed_parameter_count,

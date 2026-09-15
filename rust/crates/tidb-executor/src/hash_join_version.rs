@@ -17,7 +17,7 @@
 //! TiDB distinguishes the legacy hash join (v1) from the optimized hash join
 //! (v2). This leaf preserves the source literals and the case-insensitive
 //! optimized-version predicate; system-variable validation, session mutation,
-//! planner GA gates, and runtime join implementation remain external.
+//! planner GA gates, and runtime join implementation remain separate consumers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

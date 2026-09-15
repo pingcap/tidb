@@ -52,9 +52,8 @@
 //! count is exactly the row count a materializing path would have reported;
 //! with one it reports the truncation, as Go's does.
 
-use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, Decimal, FieldType, SessionTimeZone};
@@ -815,7 +814,7 @@ pub struct HandleSourceExec {
     /// The next handle to read.
     cursor: usize,
     /// Rows produced so far, which the trace reads as this node's `actRows`.
-    produced: Rc<Cell<u64>>,
+    produced: crate::executor::RowCount,
     /// The statement-class flags for an origin default plus the session zone
     /// a stored `TIMESTAMP` is read back into, captured where the statement's
     /// context is (`Executor` has none).
@@ -856,7 +855,7 @@ impl HandleSourceExec {
             handles,
             cursor: 0,
             preloaded: None,
-            produced: Rc::new(Cell::new(0)),
+            produced: crate::executor::RowCount::default(),
             decode_context,
             output_columns: None,
             extra_handle_slot: None,
@@ -897,7 +896,7 @@ impl HandleSourceExec {
             table,
             handles,
             cursor: 0,
-            produced: Rc::new(Cell::new(0)),
+            produced: crate::executor::RowCount::default(),
             decode_context,
             output_columns: Some(
                 output_offsets
@@ -927,7 +926,7 @@ impl HandleSourceExec {
             table,
             handles,
             cursor: 0,
-            produced: Rc::new(Cell::new(0)),
+            produced: crate::executor::RowCount::default(),
             decode_context,
             output_columns: Some(output_columns),
             extra_handle_slot: None,
@@ -952,7 +951,7 @@ impl HandleSourceExec {
             table,
             handles: vec![handle],
             cursor: 0,
-            produced: Rc::new(Cell::new(0)),
+            produced: crate::executor::RowCount::default(),
             decode_context,
             output_columns: Some(output_columns),
             extra_handle_slot: None,
@@ -969,8 +968,8 @@ impl HandleSourceExec {
 
     /// The live count of rows this source produced.
     #[must_use]
-    pub fn produced_rows(&self) -> Rc<Cell<u64>> {
-        Rc::clone(&self.produced)
+    pub fn produced_rows(&self) -> crate::executor::RowCount {
+        self.produced.clone()
     }
 }
 
@@ -1423,10 +1422,10 @@ pub struct IndexRangeSourceExec {
     cursor: Option<IndexRangeCursor>,
     /// Rows produced so far, which the trace reads as this node's `actRows`
     /// when no filter was pushed into it.
-    produced: Rc<Cell<u64>>,
+    produced: crate::executor::RowCount,
     /// Rows read from the range before any pushed filter -- the `actRows` the
     /// access operator reports once it filters internally.
-    scanned: Rc<Cell<u64>>,
+    scanned: crate::executor::RowCount,
     /// Conjuncts this source took over from the `Selection` above it.
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// The same conjunct descriptions, lowered into an index-side
@@ -1772,8 +1771,8 @@ impl IndexRangeSourceExec {
             ranges,
             next_range: 0,
             cursor: None,
-            produced: Rc::new(Cell::new(0)),
-            scanned: Rc::new(Cell::new(0)),
+            produced: crate::executor::RowCount::default(),
+            scanned: crate::executor::RowCount::default(),
             filter: None,
             pushed: Vec::new(),
             index_filter: false,
@@ -1900,8 +1899,8 @@ impl IndexRangeSourceExec {
 
     /// The live count of rows this source produced.
     #[must_use]
-    pub fn produced_rows(&self) -> Rc<Cell<u64>> {
-        Rc::clone(&self.produced)
+    pub fn produced_rows(&self) -> crate::executor::RowCount {
+        self.produced.clone()
     }
 
     /// Declares that this read's answer IS its index walk, so no handle batch
@@ -4141,8 +4140,8 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         accepted
     }
 
-    fn scanned_rows_counter(&self) -> Option<Rc<Cell<u64>>> {
-        Some(Rc::clone(&self.scanned))
+    fn scanned_rows_counter(&self) -> Option<crate::executor::RowCount> {
+        Some(self.scanned.clone())
     }
 
     /// Go's `keep order:true` on the `IndexRangeScan` of an `IndexLookUp`.
@@ -4295,12 +4294,14 @@ impl PrefetchedDrain {
 
 /// What a lane thread needs to rebuild one forked common-handle lookup task
 /// for an outer batch: the immutable lookup description without the
-/// session reader's `Rc` state. See [`IndexJoinLookupExec::fork_template`].
+/// original reader's cursor and counters. See [`IndexJoinLookupExec::fork_template`].
 pub(crate) struct LookupForkTemplate {
     meta: ExecutorMeta,
     table: KvTable,
     object: LookupObject,
     covering: bool,
+    keep_order: bool,
+    descending: bool,
     probe_parts: Vec<LookupProbePart>,
     probe_key_prefix_lengths: Vec<i64>,
     decode_context: crate::kv_table::RowDecodeContext,
@@ -4326,6 +4327,8 @@ impl LookupForkTemplate {
             table: self.table.clone(),
             object: self.object.clone(),
             covering: self.covering,
+            keep_order: self.keep_order,
+            descending: self.descending,
             probe_parts: self.probe_parts.clone(),
             probe_key_prefix_lengths: self.probe_key_prefix_lengths.clone(),
             probes: Vec::new(),
@@ -4338,7 +4341,7 @@ impl LookupForkTemplate {
             remote_handles: None,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
-            produced: Rc::new(Cell::new(0)),
+            produced: crate::executor::RowCount::default(),
             decode_context: self.decode_context.clone(),
             statement: self.statement.clone(),
             filters: self.filters.clone(),
@@ -4376,6 +4379,10 @@ pub struct IndexJoinLookupExec {
     /// reader consumes projected index rows directly; `false` is the
     /// double-read `PhysicalIndexLookUpReader` path.
     covering: bool,
+    /// Go's inner physical scan contract. A stream aggregate above this
+    /// reader relies on equal group keys remaining contiguous.
+    keep_order: bool,
+    descending: bool,
     /// The complete object-key template. Empty preserves the legacy contract
     /// where the dynamic join-key tuple already is the complete probe.
     probe_parts: Vec<LookupProbePart>,
@@ -4414,7 +4421,7 @@ pub struct IndexJoinLookupExec {
     lookup_rows: Vec<Option<Vec<Datum>>>,
     lookup_row_at: usize,
     /// Rows produced since `open`, which the trace reads as `actRows`.
-    produced: Rc<Cell<u64>>,
+    produced: crate::executor::RowCount,
     /// See [`HandleSourceExec`].
     decode_context: crate::kv_table::RowDecodeContext,
     /// Statement flags, warning sink, and time zone carried by a batched
@@ -4433,7 +4440,7 @@ pub struct IndexJoinLookupExec {
     output_offsets: Option<Vec<usize>>,
     /// Optional probe channel used when this leaf is nested inside a
     /// composite IndexHashJoin inner subtree.
-    shared_probes: Option<Rc<RefCell<SharedIndexJoinProbes>>>,
+    shared_probes: Option<Arc<Mutex<SharedIndexJoinProbes>>>,
     shared_generation: u64,
     /// The comparisons each probe's next object-key slot must satisfy. Empty
     /// keeps the point-probe path; set once at build time alongside
@@ -4477,6 +4484,8 @@ impl IndexJoinLookupExec {
             table,
             object,
             covering: false,
+            keep_order: false,
+            descending: false,
             probe_parts: Vec::new(),
             probe_key_prefix_lengths: Vec::new(),
             probes: Vec::new(),
@@ -4489,7 +4498,7 @@ impl IndexJoinLookupExec {
             remote_handles: None,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
-            produced: Rc::new(Cell::new(0)),
+            produced: crate::executor::RowCount::default(),
             decode_context,
             statement,
             filters: Vec::new(),
@@ -4580,8 +4589,8 @@ impl IndexJoinLookupExec {
         // Go rebuilds the exact reader family in the completed inner task.
         // A PhysicalIndexReader returns its covered projection from this
         // stream; a PhysicalIndexLookUpReader consumes only handles and then
-        // opens the table-side reader. Both are unordered here because the
-        // join matches inner rows by key values.
+        // opens the table-side reader. Preserve the physical scan's order
+        // whenever its parent requires it.
         match self.table.pushdown_index_handle_cursor(
             index_id,
             &ranges,
@@ -4590,11 +4599,10 @@ impl IndexJoinLookupExec {
             None,
             self.decode_context.zone(),
             &self.statement,
-            false,
+            self.descending,
             None,
             None,
-            // Unordered: the join matches rows by value.
-            true,
+            !self.keep_order,
             !self.covering,
             self.covering.then_some(keep.as_slice()),
         ) {
@@ -4613,7 +4621,7 @@ impl IndexJoinLookupExec {
     /// `buildExecutorForIndexJoin`). A lane thread rebuilds the task's reader
     /// from this template and opens its cursor there, so the ranges, region
     /// tasks and requests of a batch are prepared off the session thread;
-    /// the statement-local `Rc` counters stay with the session's own reader.
+    /// each fork keeps its own cursor and row counters.
     pub(crate) fn fork_template(&self) -> Option<LookupForkTemplate> {
         let complete_common_handle = matches!(self.object, LookupObject::CommonHandle)
             && (self.probe_parts.is_empty()
@@ -4629,6 +4637,8 @@ impl IndexJoinLookupExec {
             table: self.table.clone(),
             object: self.object.clone(),
             covering: self.covering,
+            keep_order: self.keep_order,
+            descending: self.descending,
             probe_parts: self.probe_parts.clone(),
             probe_key_prefix_lengths: self.probe_key_prefix_lengths.clone(),
             decode_context: self.decode_context.clone(),
@@ -4648,7 +4658,7 @@ impl IndexJoinLookupExec {
     }
 
     /// Connects this leaf to the outer join's shared probe channel.
-    pub(crate) fn set_shared_probes(&mut self, probes: Rc<RefCell<SharedIndexJoinProbes>>) {
+    pub(crate) fn set_shared_probes(&mut self, probes: Arc<Mutex<SharedIndexJoinProbes>>) {
         self.shared_probes = Some(probes);
         self.shared_generation = 0;
     }
@@ -4657,7 +4667,7 @@ impl IndexJoinLookupExec {
         let Some(shared) = self.shared_probes.as_ref().cloned() else {
             return;
         };
-        let shared = shared.borrow();
+        let shared = shared.lock().unwrap();
         if self.shared_generation != shared.generation {
             self.set_probes(shared.probes.clone());
             self.shared_generation = shared.generation;
@@ -4680,6 +4690,13 @@ impl IndexJoinLookupExec {
     pub(crate) fn mark_covering(&mut self) {
         debug_assert!(matches!(self.object, LookupObject::Index(_)));
         self.covering = true;
+    }
+
+    /// Preserves the ordering contract of the physical scan embedded in the
+    /// index join's rebuilt inner reader.
+    pub(crate) fn set_keep_order(&mut self, descending: bool) {
+        self.keep_order = true;
+        self.descending = descending;
     }
 
     /// Installs the outer-derived comparisons each probe must honor past its
@@ -4717,8 +4734,8 @@ impl IndexJoinLookupExec {
 
     /// The live count of rows this source produced.
     #[must_use]
-    pub fn produced_rows(&self) -> Rc<Cell<u64>> {
-        Rc::clone(&self.produced)
+    pub fn produced_rows(&self) -> crate::executor::RowCount {
+        self.produced.clone()
     }
 
     /// Assembles the next object's leading key from one dynamic probe and its
@@ -4963,9 +4980,9 @@ impl IndexJoinLookupExec {
     /// (`buildRangesForIndexJoin` over the whole chunk, one DistSQL request
     /// per region set), so walking one range per outer row would multiply
     /// the round trips by the outer row count and dominate these joins.
-    /// [`KvTable::index_lookup_ranges_cursor`] is the unordered multi-range
-    /// form Go's task read uses; the join matches rows by key values, so the
-    /// probe-major ordering it gives up is unobservable here.
+    /// The physical scan decides whether this multi-range walk is ordered.
+    /// Go retains that decision while rebuilding the index-join inner reader;
+    /// in particular, StreamAgg requires equal group keys to stay contiguous.
     fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         loop {
             if let Some(cursor) = self.cursor.as_mut() {
@@ -4994,10 +5011,12 @@ impl IndexJoinLookupExec {
                     }
                     self.cursor = Some(
                         self.table
-                            .index_lookup_ranges_cursor(
+                            .index_ranges_cursor_with_direction(
                                 index_id,
                                 &ranges,
                                 self.decode_context.zone(),
+                                self.descending,
+                                self.keep_order,
                             )
                             .map_err(|error| {
                                 ExecError::unsupported(format!(
@@ -5088,8 +5107,8 @@ impl IndexJoinLookupExec {
                 None,
                 Some(&ranges),
                 None,
-                false,
-                false,
+                self.descending,
+                self.keep_order,
                 true,
                 &self.decode_context,
                 &self.statement,
@@ -5104,9 +5123,11 @@ impl IndexJoinLookupExec {
         } else {
             self.record_cursor = Some(
                 self.table
-                    .row_cursor_projected_with_context(
+                    .row_cursor_projected_directed_with_context(
                         Some(&keep),
                         Some(&ranges),
+                        self.descending,
+                        self.keep_order,
                         &self.decode_context,
                     )
                     .map_err(|_| ExecError::unsupported("common handle range is not scannable"))?,
@@ -5296,8 +5317,8 @@ impl IndexJoinLookupExec {
                 None,
                 Some(&ranges),
                 None,
-                false,
-                false,
+                self.descending,
+                self.keep_order,
                 true,
                 &self.decode_context,
                 &self.statement,
@@ -6130,6 +6151,7 @@ mod tests {
         );
         source.set_column_projection(Some(vec![1]), []);
         source.mark_covering();
+        source.set_keep_order(true);
         source.open().unwrap();
         source.set_probes(IndexJoinProbes {
             keys: vec![vec![Datum::Int(7)]],
@@ -6154,6 +6176,11 @@ mod tests {
             request.output_offsets.is_none(),
             "the index response retains covered values instead of projecting handles only"
         );
+        assert!(
+            request.keep_order,
+            "the physical scan order must reach TiKV"
+        );
+        assert!(request.desc, "the physical scan direction must reach TiKV");
         source.close().unwrap();
     }
 

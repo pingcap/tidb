@@ -18,9 +18,8 @@
 //! reader shares that producer and its complete result table; the recursive
 //! plan reads the producer's current delta through a shared CTE-table reader.
 
-use std::cell::RefCell;
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
@@ -30,8 +29,8 @@ use crate::cte_storage::CteStorage;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::StmtContext;
 
-pub(crate) type SharedCteStorage = Rc<RefCell<CteStorage>>;
-pub(crate) type SharedCteProducer = Rc<RefCell<CteProducer>>;
+pub(crate) type SharedCteStorage = Arc<Mutex<CteStorage>>;
+pub(crate) type SharedCteProducer = Arc<Mutex<CteProducer>>;
 
 /// Go `CTETableReaderExec`: scan the current recursive delta, restarting from
 /// chunk zero whenever the producer advances the iteration marker.
@@ -66,7 +65,7 @@ impl Executor for CteTableReaderExec {
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        let iteration = self.iter_in.borrow().iter();
+        let iteration = self.iter_in.lock().unwrap().iter();
         if self.current_iteration != iteration {
             if self.current_iteration > iteration {
                 return Err(ExecError::internal(format!(
@@ -78,7 +77,7 @@ impl Executor for CteTableReaderExec {
             self.current_iteration = iteration;
         }
         let chunk = {
-            let storage = self.iter_in.borrow();
+            let storage = self.iter_in.lock().unwrap();
             if self.chunk_index >= storage.num_chunks() {
                 return Ok(());
             }
@@ -173,7 +172,7 @@ impl CteProducer {
     }
 
     fn has_result(&self) -> bool {
-        self.result.borrow().done()
+        self.result.lock().unwrap().done()
     }
 
     fn open(&mut self) -> Result<(), ExecError> {
@@ -224,10 +223,10 @@ impl CteProducer {
         }
         self.executor_opened = false;
         if !self.has_result() {
-            if let Err(error) = self.result.borrow_mut().reopen() {
+            if let Err(error) = self.result.lock().unwrap().reopen() {
                 first_error.get_or_insert(error);
             }
-            if let Err(error) = self.iter_in.borrow_mut().reopen() {
+            if let Err(error) = self.iter_in.lock().unwrap().reopen() {
                 first_error.get_or_insert(error);
             }
             self.result_error = None;
@@ -284,9 +283,9 @@ impl CteProducer {
 
     fn compute_seed(&mut self) -> Result<(), ExecError> {
         self.current_iteration = 0;
-        self.iter_in.borrow_mut().set_iter(0);
+        self.iter_in.lock().unwrap().set_iter(0);
         loop {
-            if self.limit_done(&self.iter_in.borrow()) {
+            if self.limit_done(&self.iter_in.lock().unwrap()) {
                 break;
             }
             let mut chunk = self.seed.new_chunk();
@@ -296,12 +295,16 @@ impl CteProducer {
             }
             let admitted = self.deduplicate(&chunk)?;
             self.iter_in
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .add_chunk(admitted.copy_construct_sel())?;
-            self.result.borrow_mut().add_chunk(admitted)?;
+            self.result.lock().unwrap().add_chunk(admitted)?;
         }
         self.current_iteration += 1;
-        self.iter_in.borrow_mut().set_iter(self.current_iteration);
+        self.iter_in
+            .lock()
+            .unwrap()
+            .set_iter(self.current_iteration);
         Ok(())
     }
 
@@ -321,22 +324,24 @@ impl CteProducer {
             for chunk in chunks {
                 let chunk = self.deduplicate(&chunk)?;
                 self.result
-                    .borrow_mut()
+                    .lock()
+                    .unwrap()
                     .add_chunk(chunk.copy_construct_sel())?;
                 admitted.push(chunk);
             }
-            self.iter_in.borrow_mut().reopen()?;
+            self.iter_in.lock().unwrap().reopen()?;
             for chunk in admitted {
-                self.iter_in.borrow_mut().add_chunk(chunk)?;
+                self.iter_in.lock().unwrap().add_chunk(chunk)?;
             }
         } else {
             for chunk in &chunks {
                 self.result
-                    .borrow_mut()
+                    .lock()
+                    .unwrap()
                     .add_chunk(chunk.copy_construct_sel())?;
             }
-            self.iter_in.borrow_mut().reopen()?;
-            self.iter_in.borrow_mut().swap_data(
+            self.iter_in.lock().unwrap().reopen()?;
+            self.iter_in.lock().unwrap().swap_data(
                 self.iter_out
                     .as_mut()
                     .ok_or_else(|| ExecError::internal("recursive CTE output storage is absent"))?,
@@ -350,7 +355,7 @@ impl CteProducer {
     }
 
     fn compute_recursive(&mut self) -> Result<(), ExecError> {
-        if self.recursive.is_none() || self.iter_in.borrow().num_chunks() == 0 {
+        if self.recursive.is_none() || self.iter_in.lock().unwrap().num_chunks() == 0 {
             return Ok(());
         }
         if self.current_iteration > self.context.cte_max_recursion_depth() as usize {
@@ -358,7 +363,7 @@ impl CteProducer {
                 self.current_iteration as u64,
             ));
         }
-        if self.limit_done(&self.result.borrow()) {
+        if self.limit_done(&self.result.lock().unwrap()) {
             return Ok(());
         }
 
@@ -381,11 +386,16 @@ impl CteProducer {
             }
 
             self.finish_iteration()?;
-            if self.limit_done(&self.result.borrow()) || self.iter_in.borrow().num_chunks() == 0 {
+            if self.limit_done(&self.result.lock().unwrap())
+                || self.iter_in.lock().unwrap().num_chunks() == 0
+            {
                 break;
             }
             self.current_iteration += 1;
-            self.iter_in.borrow_mut().set_iter(self.current_iteration);
+            self.iter_in
+                .lock()
+                .unwrap()
+                .set_iter(self.current_iteration);
             if self.current_iteration > self.context.cte_max_recursion_depth() as usize {
                 return Err(ExecError::CteMaxRecursionDepth(
                     self.current_iteration as u64,
@@ -405,14 +415,18 @@ impl CteProducer {
         if let Some(error) = &self.result_error {
             return Err(error.clone());
         }
-        let result = self.compute_seed().and_then(|()| self.compute_recursive());
+        // Go computeSeedPart/computeRecursivePart turn panics into the error
+        // cached by genCTEResult, before releasing shared materialization.
+        let result = crate::sort_util::recover_worker_panic(|| {
+            self.compute_seed().and_then(|()| self.compute_recursive())
+        });
         match result {
             Ok(()) => {
-                self.result.borrow_mut().set_done();
+                self.result.lock().unwrap().set_done();
                 Ok(())
             }
             Err(error) => {
-                self.result.borrow_mut().set_error(format!("{error:?}"));
+                self.result.lock().unwrap().set_error(format!("{error:?}"));
                 self.result_error = Some(error.clone());
                 Err(error)
             }
@@ -461,8 +475,8 @@ impl CteExec {
 
     fn next_unlimited(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         let chunk = {
-            let producer = self.producer.borrow();
-            let result = producer.result.borrow();
+            let producer = self.producer.lock().unwrap();
+            let result = producer.result.lock().unwrap();
             if self.chunk_index >= result.num_chunks() {
                 return Ok(());
             }
@@ -478,8 +492,8 @@ impl CteExec {
         if !self.met_first_batch {
             loop {
                 let chunk = {
-                    let producer = self.producer.borrow();
-                    let result = producer.result.borrow();
+                    let producer = self.producer.lock().unwrap();
+                    let result = producer.result.lock().unwrap();
                     if self.chunk_index >= result.num_chunks() {
                         return Ok(());
                     }
@@ -509,8 +523,8 @@ impl CteExec {
         }
 
         let chunk = {
-            let producer = self.producer.borrow();
-            let result = producer.result.borrow();
+            let producer = self.producer.lock().unwrap();
+            let result = producer.result.lock().unwrap();
             if self.chunk_index >= result.num_chunks() || self.cursor >= self.limit_end {
                 return Ok(());
             }
@@ -532,13 +546,13 @@ impl CteExec {
 impl Executor for CteExec {
     fn open(&mut self) -> Result<(), ExecError> {
         self.reset();
-        self.producer.borrow_mut().open()
+        self.producer.lock().unwrap().open()
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         {
-            let mut producer = self.producer.borrow_mut();
+            let mut producer = self.producer.lock().unwrap();
             if !producer.has_result() {
                 if !producer.executor_opened {
                     producer.open()?;
@@ -554,7 +568,7 @@ impl Executor for CteExec {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
-        self.producer.borrow_mut().close()
+        self.producer.lock().unwrap().close()
     }
 
     fn schema(&self) -> &Schema {
@@ -575,5 +589,112 @@ impl Executor for CteExec {
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::RowCount;
+
+    struct CteInput {
+        meta: ExecutorMeta,
+        panic_on_next: bool,
+        calls: RowCount,
+    }
+
+    impl Executor for CteInput {
+        fn open(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            self.calls.set(self.calls.get() + 1);
+            assert!(!self.panic_on_next, "CTE input panic");
+            req.reset();
+            req.set_num_virtual_rows(usize::from(self.calls.get() == 1));
+            Ok(())
+        }
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    /// Go computeSeedPart/computeRecursivePart recover and genCTEResult
+    /// caches the error. Other readers and Close still acquire the same lock.
+    #[test]
+    fn cte_input_panic_is_cached_and_does_not_poison_shared_producer() {
+        for recursive_panic in [false, true] {
+            let context = StmtContext::for_query();
+            let meta = ExecutorMeta::new(Schema::new(vec![]), 1, 32, 1024);
+            let storage = || {
+                let mut storage = CteStorage::new(vec![], 1024, context.statement_memory());
+                storage.open_and_ref().unwrap();
+                Arc::new(Mutex::new(storage))
+            };
+            let failed_calls = RowCount::default();
+            let input = |panic_on_next| {
+                Box::new(CteInput {
+                    meta: meta.clone(),
+                    panic_on_next,
+                    calls: if panic_on_next {
+                        failed_calls.clone()
+                    } else {
+                        RowCount::default()
+                    },
+                }) as Box<dyn Executor>
+            };
+            let producer = Arc::new(Mutex::new(CteProducer::new(
+                input(!recursive_panic),
+                recursive_panic.then(|| input(true)),
+                storage(),
+                storage(),
+                false,
+                false,
+                0,
+                context.clone(),
+                vec![],
+                1024,
+            )));
+            let mut reader = CteExec::new(meta.clone(), producer.clone(), false, 0, 0);
+            reader.open().unwrap();
+            let mut output = reader.new_chunk();
+            let first = crate::sort_util::recover_worker_panic(|| reader.next(&mut output));
+            assert!(
+                matches!(first, Err(ExecError::Internal(ref message)) if message.contains("CTE input panic"))
+            );
+            assert!(
+                !producer.is_poisoned(),
+                "a recovered child panic must not poison CTE ownership"
+            );
+            let mut peer = CteExec::new(meta, producer.clone(), false, 0, 0);
+            peer.open().unwrap();
+            let second = peer.next(&mut output);
+            assert!(
+                matches!(second, Err(ExecError::Internal(ref message)) if message.contains("CTE input panic"))
+            );
+            assert_eq!(
+                failed_calls.get(),
+                1,
+                "another reader sees the cached error"
+            );
+            reader.close().unwrap();
+            peer.close().unwrap();
+            assert!(!producer.lock().unwrap().executor_opened);
+        }
     }
 }

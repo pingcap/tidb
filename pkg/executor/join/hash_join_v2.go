@@ -938,7 +938,7 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 }
 
 func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
-	if w.HashJoinCtx.spillHelper.areAllPartitionsSpilled() {
+	if w.JoinProbe.IsCurrentChunkProbeDone() {
 		if intest.InTest && w.HashJoinCtx.spillHelper.hashJoinExec.inRestore {
 			w.HashJoinCtx.spillHelper.skipProbeInRestoreForTest.Store(true)
 		}

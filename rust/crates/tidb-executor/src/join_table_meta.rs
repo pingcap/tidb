@@ -155,16 +155,7 @@ impl ColumnType {
     }
 }
 
-/// Serializer mode for one join key.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SerializeMode {
-    /// Normal codec encoding.
-    Normal,
-    /// Mixed signed/unsigned integer encoding needs a sign marker.
-    NeedSignFlag,
-    /// Variable values retain a length marker to disambiguate key columns.
-    KeepVarColumnLength,
-}
+pub use tidb_codec::SerializeMode;
 
 /// Physical key representation selected for a join table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -337,7 +328,8 @@ impl JoinTableMeta {
                 append_unique_column(&mut meta.row_columns_order, &mut used, index);
             }
         }
-        if let Some(other) = columns_used_by_other_condition {
+        let other = columns_used_by_other_condition.unwrap_or_default();
+        if !other.is_empty() {
             for &index in other {
                 append_unique_column(&mut meta.row_columns_order, &mut used, index);
             }

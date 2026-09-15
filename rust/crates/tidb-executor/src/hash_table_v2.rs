@@ -49,8 +49,9 @@
 //!   [`crate::join_row_table`]) in an [`AtomicUsize`], not a Go `taggedPtr`
 //!   over a real heap pointer. Untagging goes through
 //!   [`row_address_of`] instead of `tagHelper.toUnsafePointer`, and a row is
-//!   reached through its owning [`RowTableSegment`] instead of by
-//!   dereferencing.
+//!   reached by decoding its owning partition, segment and row index in
+//!   constant time. The handle widths are derived when the merged table is
+//!   sealed, before buckets or probe workers can retain addresses.
 //! * Go writes a row's `next_row_ptr` through the same raw pointer it stores
 //!   in the bucket. Here the writer needs `&mut` on the segment, so a
 //!   concurrent build is expressed as
@@ -67,9 +68,8 @@
 //! * `clearPartitionSegments` empties the bucket vector rather than setting
 //!   it to `nil`; both leave a zero-length hash table behind.
 
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::join_row_table::{RowTable, RowTableSegment};
 use crate::tagged_ptr::TagPtrHelper;
@@ -130,6 +130,23 @@ pub fn row_address_of(tag_helper: &TagPtrHelper, tagged: usize) -> usize {
 pub struct HashTableSlots<'a> {
     slots: &'a [AtomicUsize],
     pos_mask: u64,
+}
+
+/// An owned bucket handle for a batch on the shared executor pool. Readers
+/// continue to use the borrowed view; sharing never copies the bucket array.
+#[derive(Clone)]
+pub(crate) struct SharedHashTableSlots {
+    slots: Arc<Vec<AtomicUsize>>,
+    pos_mask: u64,
+}
+
+impl SharedHashTableSlots {
+    pub(crate) fn as_slots(&self) -> HashTableSlots<'_> {
+        HashTableSlots {
+            slots: &self.slots,
+            pos_mask: self.pos_mask,
+        }
+    }
 }
 
 impl HashTableSlots<'_> {
@@ -219,8 +236,17 @@ impl HashTableSlots<'_> {
     /// the source's `build`, exposed so several threads can each own a
     /// disjoint slice of segments while sharing one bucket array.
     pub fn build_segments(&self, segments: &mut [RowTableSegment], tag_helper: &TagPtrHelper) {
+        self.build_segments_with_mode(segments, tag_helper, true);
+    }
+
+    pub(crate) fn build_segments_with_mode(
+        &self,
+        segments: &mut [RowTableSegment],
+        tag_helper: &TagPtrHelper,
+        atomic: bool,
+    ) {
         for segment in segments {
-            build_one_segment(*self, segment, tag_helper, true);
+            build_one_segment(*self, segment, tag_helper, atomic);
         }
     }
 }
@@ -251,7 +277,7 @@ fn build_one_segment(
 pub struct SubTable {
     /// The rows this hash table indexes.
     pub row_data: RowTable,
-    hash_table: Vec<AtomicUsize>,
+    hash_table: Arc<Vec<AtomicUsize>>,
     pos_mask: u64,
     is_row_table_empty: bool,
     is_hash_table_empty: bool,
@@ -266,9 +292,11 @@ impl SubTable {
         let hash_table_length = next_power_of_two(table.valid_key_count()).max(32);
         Self {
             row_data: table,
-            hash_table: (0..hash_table_length)
-                .map(|_| AtomicUsize::new(0))
-                .collect(),
+            hash_table: Arc::new(
+                (0..hash_table_length)
+                    .map(|_| AtomicUsize::new(0))
+                    .collect(),
+            ),
             pos_mask: hash_table_length - 1,
             is_row_table_empty,
             is_hash_table_empty,
@@ -304,6 +332,13 @@ impl SubTable {
     pub fn slots(&self) -> HashTableSlots<'_> {
         HashTableSlots {
             slots: &self.hash_table,
+            pos_mask: self.pos_mask,
+        }
+    }
+
+    pub(crate) fn shared_slots(&self) -> SharedHashTableSlots {
+        SharedHashTableSlots {
+            slots: Arc::clone(&self.hash_table),
             pos_mask: self.pos_mask,
         }
     }
@@ -373,7 +408,7 @@ impl SubTable {
     /// Drops the rows and the buckets, as `clearPartitionSegments` does.
     pub fn clear_segments(&mut self) {
         self.row_data.clear_segments();
-        self.hash_table = Vec::new();
+        self.hash_table = Arc::default();
     }
 }
 
@@ -384,10 +419,12 @@ pub struct HashTableV2 {
     pub tables: Vec<Option<SubTable>>,
     /// Number of partitions, kept alongside `tables` as the source does.
     pub partition_number: u64,
-    /// Sequential equivalent of Go's atomic used flags for preserved-build
-    /// anti-semi probes. The row bytes themselves remain immutable in Rust;
-    /// sharing this set lets multiple probe workers observe one match mark.
-    matched_build_rows: Arc<Mutex<HashSet<usize>>>,
+    /// Native row handles pack (partition, segment, aligned row index). The widths
+    /// derive from the sealed build, not a fixed row/segment size limit.
+    row_offset_bits: u32,
+    row_offset_mask: usize,
+    segment_bits: u32,
+    segment_mask: usize,
 }
 
 impl HashTableV2 {
@@ -397,47 +434,91 @@ impl HashTableV2 {
         Self {
             tables: (0..partition_number).map(|_| None).collect(),
             partition_number: partition_number as u64,
-            matched_build_rows: Arc::new(Mutex::new(HashSet::new())),
+            row_offset_bits: 0,
+            row_offset_mask: 0,
+            segment_bits: 0,
+            segment_mask: 0,
         }
     }
 
     /// `newJoinHashTableForTest`: one sub table per partitioned row table.
     #[must_use]
     pub fn new_for_test(partitioned_row_tables: Vec<RowTable>) -> Self {
-        let partition_number = partitioned_row_tables.len() as u64;
-        Self {
-            tables: partitioned_row_tables
-                .into_iter()
-                .map(|table| Some(SubTable::new(table)))
-                .collect(),
-            partition_number,
-            matched_build_rows: Arc::new(Mutex::new(HashSet::new())),
+        let mut table = Self::new_empty(partitioned_row_tables.len());
+        for (slot, rows) in table.tables.iter_mut().zip(partitioned_row_tables) {
+            *slot = Some(SubTable::new(rows));
         }
+        table.bind_row_addresses();
+        table
     }
 
-    /// Clears the preserved-build match marks before a new probe round.
-    pub fn clear_matched_build_rows(&self) {
-        self.matched_build_rows
-            .lock()
-            .expect("matched build rows mutex poisoned")
-            .clear();
+    /// Seal row ownership before building any bucket chains. Go's pointers
+    /// access rows directly; safe Rust encodes the owning indices instead.
+    /// Only the segment headers change: row bytes and spill records do not.
+    pub(crate) fn bind_row_addresses(&mut self) -> u8 {
+        let max_segments = self
+            .tables
+            .iter()
+            .flatten()
+            .map(|table| table.row_data.segments.len())
+            .max()
+            .unwrap_or(0);
+        let max_row_handles = self
+            .tables
+            .iter()
+            .flatten()
+            .flat_map(|table| &table.row_data.segments)
+            .map(|segment| segment.row_start_offset.len() * 8)
+            .max()
+            .unwrap_or(0);
+        self.segment_bits = usize::BITS - max_segments.saturating_sub(1).leading_zeros();
+        self.row_offset_bits = usize::BITS - max_row_handles.saturating_sub(1).leading_zeros();
+        self.segment_mask = (1usize << self.segment_bits) - 1;
+        self.row_offset_mask = (1usize << self.row_offset_bits) - 1;
+        let mut tagged_bits = crate::tagged_ptr::MAX_TAGGED_BITS;
+        for (partition, table) in self.tables.iter_mut().enumerate() {
+            let Some(table) = table else { continue };
+            for (index, segment) in table.row_data.segments.iter_mut().enumerate() {
+                // Slot zero is reserved for the end-of-chain sentinel.
+                let slot = partition
+                    .checked_mul(1usize << self.segment_bits)
+                    .and_then(|base| base.checked_add(index + 1))
+                    .expect("hash join segment handle exceeds the native address space");
+                let base = slot
+                    .checked_mul(1usize << self.row_offset_bits)
+                    .expect("hash join row handle exceeds the native address space");
+                segment.bind_address(base);
+                tagged_bits = tagged_bits.min(segment.tagged_bits());
+            }
+        }
+        tagged_bits
     }
 
-    /// Marks one build row as matched, returning whether it was newly marked.
-    pub fn mark_build_row_matched(&self, address: usize) -> bool {
-        self.matched_build_rows
-            .lock()
-            .expect("matched build rows mutex poisoned")
-            .insert(address)
+    /// Resolve a nonzero, untagged row handle with no search or allocation.
+    #[inline]
+    pub(crate) fn row_location(&self, address: usize) -> (&RowTableSegment, usize) {
+        let slot = (address >> self.row_offset_bits) - 1;
+        let partition = slot >> self.segment_bits;
+        let segment = slot & self.segment_mask;
+        (
+            &self.sub_table(partition).row_data.segments[segment],
+            (address & self.row_offset_mask) / 8,
+        )
+    }
+
+    /// Go setUsedFlag: each row owns an atomic flag, with no shared set.
+    #[inline]
+    pub fn mark_build_row_matched(&self, address: usize) {
+        let (segment, row) = self.row_location(address);
+        segment.mark_row_used(row);
     }
 
     /// Reports whether a build row has already been matched.
     #[must_use]
+    #[inline]
     pub fn is_build_row_matched(&self, address: usize) -> bool {
-        self.matched_build_rows
-            .lock()
-            .expect("matched build rows mutex poisoned")
-            .contains(&address)
+        let (segment, row) = self.row_location(address);
+        segment.is_row_used(row)
     }
 
     /// `getPartitionMemoryUsage`, zero for a partition that was never built.

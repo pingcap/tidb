@@ -50,7 +50,7 @@ use super::{
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
 where
     C: TransactionCommandClient + LockRecoveryClient,
-    L: RegionRecoveryLoader,
+    L: RegionRecoveryLoader + Send + 'static,
     T: TimestampSource,
 {
     /// Consumes this snapshot into one normal optimistic two-phase commit.
@@ -876,6 +876,7 @@ where
         for batch in &batches {
             let holds_primary = batch.keys().iter().any(|key| key.as_slice() == primary_key);
             requests.push(OwnedTransactionCommitRequest {
+                attempt: batch.attempt().clone(),
                 completion: self.detached_commit_observer.clone(),
                 address: batch.address().to_owned(),
                 request: KvrpcCommitRequest {
@@ -897,7 +898,7 @@ where
         let client_authority = self.runtime.client_handle();
         let taken = match client_authority.try_lock() {
             Ok(mut client) => {
-                let authority = std::sync::Arc::clone(&client_authority);
+                let authority = self.runtime.clone();
                 client.publish_commits_detached(requests, authority)
             }
             Err(_) => false,

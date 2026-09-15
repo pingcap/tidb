@@ -13,6 +13,7 @@ build = "../../scripts/aggregate-tests.rs"
 [dependencies]
 bytes.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-codec = { path = "../tidb-codec" }
 tidb-util = { path = "../tidb-util" }
 tracing = "0.1"
 

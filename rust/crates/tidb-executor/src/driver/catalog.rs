@@ -1248,6 +1248,11 @@ impl Catalog {
             .map(|entry| &**entry)
     }
 
+    /// Retains immutable statement metadata without cloning the table or its store.
+    pub(crate) fn table_handle_by_key(&self, key: &CatalogTableKey) -> Option<Arc<TableEntry>> {
+        self.databases.get(&key.database)?.tables.get(&key.table).cloned()
+    }
+
     fn get(&self, name: &str) -> Option<&TableEntry> {
         self.get_in(DEFAULT_DATABASE, name)
     }

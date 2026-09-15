@@ -16,6 +16,8 @@
 //! shared base state.
 
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
@@ -127,7 +129,7 @@ impl From<EvalError> for ExecError {
 /// The observability/control surface of Go's interface (`RuntimeStats`,
 /// `HandleSQLKillerSignal`, `RegisterSQLAndPlanInExecForTopProfiling`, `Detach`)
 /// and the `context.Context` argument are intentionally omitted from this seed.
-pub trait Executor {
+pub trait Executor: Send {
     /// Go `Open`: prepare the operator (and, by convention, its children).
     fn open(&mut self) -> Result<(), ExecError>;
 
@@ -177,6 +179,24 @@ pub trait Executor {
     /// is not an aggregation and does not forward reports `false`.
     fn agg_tree_input_empty(&self) -> bool {
         false
+    }
+}
+
+/// A row counter owned by one executor and observed by its statement.
+/// Moving the executor to a worker does not move or invalidate the observer.
+/// Counts carry no data-publication ordering; chunk/worker handoffs do that.
+#[derive(Clone, Debug, Default)]
+pub struct RowCount(Arc<AtomicU64>);
+
+impl RowCount {
+    /// Read the current count without synchronizing executor data.
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Replace the count from its single owning executor.
+    pub fn set(&self, rows: u64) {
+        self.0.store(rows, Ordering::Relaxed);
     }
 }
 

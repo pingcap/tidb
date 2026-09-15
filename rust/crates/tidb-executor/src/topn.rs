@@ -70,7 +70,9 @@
 //!   sharing the boundary prefix, matching Go's `RankInfo` short-circuit.
 
 use std::cmp::Ordering;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
@@ -131,9 +133,6 @@ pub struct TopNExec<C: Columns> {
     enable_tmp_storage_on_oom: bool,
     /// Raised by the spill action; see [`crate::topn_spill`].
     need_spill: Arc<AtomicBool>,
-    /// Monotonic generations let post-spill workers coordinate repeated
-    /// requests without losing a trigger between chunks.
-    spill_generation: Arc<AtomicUsize>,
     /// The action registered on the session tracker, kept so `close` can
     /// unbind it.
     registered_action: Option<ArcAction>,
@@ -164,17 +163,6 @@ pub struct TopNExec<C: Columns> {
 struct ParallelTopNWorkerResult {
     runs: Vec<SpilledRun>,
     chunks: usize,
-}
-
-/// Shared state for Go's repeated `topNSpillHelper.spill` rounds. The action
-/// raises `need_spill` and advances `generation`; each worker spills once for
-/// that generation, and the last worker clears the flag so a later quota
-/// crossing can request another round.
-struct ParallelTopNSpillState {
-    need_spill: Arc<AtomicBool>,
-    generation: Arc<AtomicUsize>,
-    completed_workers: Arc<AtomicUsize>,
-    worker_count: usize,
 }
 
 fn spill_parallel_worker_heap(
@@ -213,44 +201,6 @@ fn spill_parallel_worker_heap(
     Ok(())
 }
 
-fn maybe_spill_parallel_worker_heap(
-    heap: &mut TopNChunkHeap,
-    field_types: &[FieldType],
-    spill_chunk_size: usize,
-    disk_tracker: &Arc<tidb_util::disk::Tracker>,
-    memory: &StatementMemory,
-    tracker: &Arc<Tracker>,
-    accounted: &mut i64,
-    runs: &mut Vec<SpilledRun>,
-    state: &ParallelTopNSpillState,
-    seen_generation: &mut Option<usize>,
-) -> Result<(), ExecError> {
-    if !state.need_spill.load(SeqCst) {
-        return Ok(());
-    }
-    let generation = state.generation.load(SeqCst);
-    if *seen_generation == Some(generation) {
-        return Ok(());
-    }
-    spill_parallel_worker_heap(
-        heap,
-        field_types,
-        spill_chunk_size,
-        disk_tracker,
-        memory,
-        tracker,
-        accounted,
-        runs,
-    )?;
-    *seen_generation = Some(generation);
-    let completed = state.completed_workers.fetch_add(1, SeqCst) + 1;
-    if completed == state.worker_count {
-        state.completed_workers.store(0, SeqCst);
-        state.need_spill.store(false, SeqCst);
-    }
-    Ok(())
-}
-
 struct TopNMergeHead {
     run_id: usize,
     key: Vec<Datum>,
@@ -277,98 +227,104 @@ struct RankPrefixColumn {
     field_type: FieldType,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_parallel_topn_worker<C>(
-    input: std::sync::mpsc::Receiver<Chunk>,
+struct ParallelTopNWorker<C> {
+    heap: TopNChunkHeap,
     by_items: Vec<SortByItem>,
     field_types: Vec<FieldType>,
-    init_cap: usize,
-    max_chunk_size: usize,
     total_limit: u64,
     ctx: C,
     tracker: Arc<Tracker>,
     memory: StatementMemory,
     disk_tracker: Arc<tidb_util::disk::Tracker>,
     spill_chunk_size: usize,
-    spill_state: Arc<ParallelTopNSpillState>,
-) -> Result<ParallelTopNWorkerResult, ExecError>
+    chunks: usize,
+    accounted: i64,
+    runs: Vec<SpilledRun>,
+}
+
+impl<C> ParallelTopNWorker<C>
 where
     C: Columns + Clone + Send + Sync + 'static,
 {
-    let mut heap = TopNChunkHeap::new();
-    heap.init(
-        by_items.clone(),
-        field_types.clone(),
-        init_cap,
-        max_chunk_size,
-        total_limit,
-        0,
-    );
-    let mut chunks = 0usize;
-    let mut accounted = 0i64;
-    let mut seen_generation = None;
-    let mut runs = Vec::new();
-    let result = (|| -> Result<ParallelTopNWorkerResult, ExecError> {
-        while let Ok(chunk) = input.recv() {
-            chunks += 1;
-            let keys = (0..chunk.num_rows())
-                .map(|row| eval_sort_key(&by_items, &ctx, chunk.get_row(row)))
-                .collect::<Result<Vec<_>, _>>()?;
-            if (heap.stored_len() as u64) < total_limit {
-                heap.add_chunk(chunk, keys);
-            } else {
-                if !heap.is_row_ptrs_init() {
-                    heap.init_ptrs();
-                    heap.heap_init();
-                }
-                heap.process_chk(&chunk, keys);
-                heap.take_cmp_err()?;
-                if heap.stored_len() > heap.len() * TOP_N_COMPACTION_FACTOR {
-                    heap.do_compaction();
-                }
+    fn process_chunk(&mut self, chunk: Chunk) -> Result<(), ExecError> {
+        self.memory.check()?;
+        self.chunks += 1;
+        let keys = (0..chunk.num_rows())
+            .map(|row| eval_sort_key(&self.by_items, &self.ctx, chunk.get_row(row)))
+            .collect::<Result<Vec<_>, _>>()?;
+        if (self.heap.stored_len() as u64) < self.total_limit {
+            self.heap.add_chunk(chunk, keys);
+        } else {
+            if !self.heap.is_row_ptrs_init() {
+                self.heap.init_ptrs();
+                self.heap.heap_init();
             }
-            let bytes = heap.memory_usage();
-            tracker.consume(bytes - accounted);
-            accounted = bytes;
-            memory.check()?;
-            maybe_spill_parallel_worker_heap(
-                &mut heap,
-                &field_types,
-                spill_chunk_size,
-                &disk_tracker,
-                &memory,
-                &tracker,
-                &mut accounted,
-                &mut runs,
-                &spill_state,
-                &mut seen_generation,
-            )?;
+            self.heap.process_chk(&chunk, keys);
+            self.heap.take_cmp_err()?;
+            if self.heap.stored_len() > self.heap.len() * TOP_N_COMPACTION_FACTOR {
+                self.heap.do_compaction();
+            }
         }
-        maybe_spill_parallel_worker_heap(
-            &mut heap,
-            &field_types,
-            spill_chunk_size,
-            &disk_tracker,
-            &memory,
-            &tracker,
-            &mut accounted,
-            &mut runs,
-            &spill_state,
-            &mut seen_generation,
-        )?;
+        let bytes = self.heap.memory_usage();
+        let delta = bytes - self.accounted;
+        self.accounted = bytes;
+        self.tracker.consume(delta);
+        self.memory.check()
+    }
+
+    fn spill(&mut self) -> Result<(), ExecError> {
         spill_parallel_worker_heap(
-            &mut heap,
-            &field_types,
-            spill_chunk_size,
-            &disk_tracker,
-            &memory,
-            &tracker,
-            &mut accounted,
-            &mut runs,
-        )?;
-        Ok(ParallelTopNWorkerResult { runs, chunks })
-    })();
-    tracker.consume(-accounted);
+            &mut self.heap,
+            &self.field_types,
+            self.spill_chunk_size,
+            &self.disk_tracker,
+            &self.memory,
+            &self.tracker,
+            &mut self.accounted,
+            &mut self.runs,
+        )
+    }
+}
+
+impl<C> Drop for ParallelTopNWorker<C> {
+    fn drop(&mut self) {
+        self.heap.clear();
+        self.tracker.consume(-self.accounted);
+    }
+}
+
+type TopNCompletion<C> = (ParallelTopNWorker<C>, Result<(), ExecError>);
+
+fn receive_topn_worker<C>(
+    completed: &crossbeam_channel::Receiver<TopNCompletion<C>>,
+    idle: &mut Vec<ParallelTopNWorker<C>>,
+    in_flight: &mut usize,
+) -> Result<(), ExecError> {
+    let (worker, result) = match completed.recv() {
+        Ok(completion) => completion,
+        Err(_) => {
+            // Every publishing task has exited; there is nothing left to join.
+            *in_flight = 0;
+            return Err(ExecError::internal(
+                "parallel TopN worker dropped its result",
+            ));
+        }
+    };
+    *in_flight -= 1;
+    idle.push(worker);
+    result
+}
+
+fn join_topn_workers<C>(
+    completed: &crossbeam_channel::Receiver<TopNCompletion<C>>,
+    idle: &mut Vec<ParallelTopNWorker<C>>,
+    in_flight: &mut usize,
+) -> Result<(), ExecError> {
+    let mut result = Ok(());
+    while *in_flight > 0 {
+        let next = receive_topn_worker(completed, idle, in_flight);
+        result = result.and(next);
+    }
     result
 }
 
@@ -420,7 +376,6 @@ where
             disk_tracker,
             enable_tmp_storage_on_oom,
             need_spill: Arc::new(AtomicBool::new(false)),
-            spill_generation: Arc::new(AtomicUsize::new(0)),
             registered_action: None,
             runs: Vec::new(),
             spilled_runs: 0,
@@ -711,8 +666,8 @@ where
     }
 
     /// Go `executeTopNWhenSpillTriggered`: the caller keeps fetching child
-    /// chunks while persistent executor-pool tasks each maintain a bounded
-    /// TopN heap. Each shared spill request drains every worker heap once;
+    /// chunks while runnable chunk tasks each retain a bounded TopN heap.
+    /// The fetcher joins admitted work before spilling every worker heap;
     /// after input EOF each worker's final heap becomes another sorted run,
     /// and the ordinary run merger combines all runs with the pre-spill run.
     fn fetch_parallel_remainder(&mut self) -> Result<(), ExecError> {
@@ -720,71 +675,102 @@ where
         let field_types = self.child.ret_field_types().to_vec();
         let init_cap = self.child.init_cap();
         let max_chunk_size = self.child.max_chunk_size();
-        let mut senders = Vec::with_capacity(workers);
-        let mut results = Vec::with_capacity(workers);
-        let spill_state = Arc::new(ParallelTopNSpillState {
-            need_spill: Arc::clone(&self.need_spill),
-            generation: Arc::clone(&self.spill_generation),
-            completed_workers: Arc::new(AtomicUsize::new(0)),
-            worker_count: workers,
-        });
+        let mut idle = Vec::with_capacity(workers);
+        let (completed_tx, completed) = crossbeam_channel::bounded(workers);
+        let mut in_flight = 0;
         for _ in 0..workers {
-            let (sender, input) = std::sync::mpsc::sync_channel(1);
-            senders.push(sender);
-            let by_items = self.by_items.clone();
-            let field_types = field_types.clone();
-            let ctx = self.ctx.clone();
-            let tracker = Arc::clone(&self.tracker);
-            let memory = self.memory.clone();
-            let disk_tracker = Arc::clone(&self.disk_tracker);
-            let total_limit = self.total_limit;
-            let spill_chunk_size = self.spill_chunk_size;
-            let spill_state = Arc::clone(&spill_state);
-            results.push(crate::worker_pool::spawn(move || {
-                recover_worker_panic(|| {
-                    run_parallel_topn_worker(
-                        input,
-                        by_items,
-                        field_types,
-                        init_cap,
-                        max_chunk_size,
-                        total_limit,
-                        ctx,
-                        tracker,
-                        memory,
-                        disk_tracker,
-                        spill_chunk_size,
-                        spill_state,
-                    )
-                })
-            }));
+            let mut heap = TopNChunkHeap::new();
+            heap.init(
+                self.by_items.clone(),
+                field_types.clone(),
+                init_cap,
+                max_chunk_size,
+                self.total_limit,
+                0,
+            );
+            idle.push(ParallelTopNWorker {
+                heap,
+                by_items: self.by_items.clone(),
+                field_types: field_types.clone(),
+                total_limit: self.total_limit,
+                ctx: self.ctx.clone(),
+                tracker: Arc::clone(&self.tracker),
+                memory: self.memory.clone(),
+                disk_tracker: Arc::clone(&self.disk_tracker),
+                spill_chunk_size: self.spill_chunk_size,
+                chunks: 0,
+                accounted: 0,
+                runs: Vec::new(),
+            });
         }
 
-        let mut next_worker = 0usize;
-        let fetch_result = loop {
-            let mut chunk = self.child.new_chunk();
-            if let Err(error) = self.child.next(&mut chunk) {
-                break Err(error);
+        let fetch_result = recover_worker_panic(|| {
+            loop {
+                self.memory.check()?;
+                let mut chunk = self.child.new_chunk();
+                self.child.next(&mut chunk)?;
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                if idle.is_empty() {
+                    receive_topn_worker(&completed, &mut idle, &mut in_flight)?;
+                }
+                let mut worker = idle.pop().expect("an available TopN heap");
+                let completion_sender = completed_tx.clone();
+                in_flight += 1;
+                crate::worker_pool::enqueue_public(Box::new(move || {
+                    let result = recover_worker_panic(|| worker.process_chunk(chunk));
+                    // Exactly one completion per admitted worker, and capacity
+                    // for all workers: publication never parks a CPU thread.
+                    let _ = completion_sender.send((worker, result));
+                }));
+                // Go checkSpillAndExecute: no new input crosses a spill
+                // barrier until every admitted chunk and every spill finishes.
+                if self.need_spill.load(SeqCst) {
+                    join_topn_workers(&completed, &mut idle, &mut in_flight)?;
+                    let outcomes = crate::worker_pool::map(
+                        std::mem::take(&mut idle).into_iter().map(|mut worker| {
+                            move || {
+                                let result = recover_worker_panic(|| worker.spill());
+                                (worker, result)
+                            }
+                        }),
+                        workers,
+                    );
+                    self.need_spill.store(false, SeqCst);
+                    let mut spilled = Ok(());
+                    for (worker, result) in outcomes {
+                        idle.push(worker);
+                        spilled = spilled.and(result);
+                    }
+                    spilled?;
+                }
             }
-            if chunk.num_rows() == 0 {
-                break Ok(());
-            }
-            if senders[next_worker].send(chunk).is_err() {
-                break Err(ExecError::internal(
-                    "parallel TopN worker stopped before input EOF",
-                ));
-            }
-            next_worker = (next_worker + 1) % workers;
-        };
-        drop(senders);
+            Ok(())
+        });
+        drop(completed_tx);
+        let joined = join_topn_workers(&completed, &mut idle, &mut in_flight);
 
+        // Go's deferred spillRemainingRowsWhenNeeded runs after the final
+        // input barrier, even if fetching failed. All heaps join before their
+        // memory is released, and the original fetch error remains primary.
+        let results = crate::worker_pool::map(
+            idle.into_iter().map(|mut worker| {
+                move || {
+                    recover_worker_panic(|| {
+                        worker.spill()?;
+                        Ok(ParallelTopNWorkerResult {
+                            runs: std::mem::take(&mut worker.runs),
+                            chunks: worker.chunks,
+                        })
+                    })
+                }
+            }),
+            workers,
+        );
         let mut worker_result = Ok(());
         self.parallel_worker_chunks.clear();
         for result in results {
-            let result = result
-                .recv()
-                .map_err(|_| ExecError::internal("parallel TopN worker dropped its result"))
-                .and_then(|result| result);
             match result {
                 Ok(result) => {
                     self.parallel_worker_chunks.push(result.chunks);
@@ -798,7 +784,7 @@ where
             }
         }
         self.need_spill.store(false, SeqCst);
-        fetch_result.and(worker_result)
+        fetch_result.and(joined).and(worker_result)
     }
 
     /// One segment. Returns `true` when the child is exhausted (no spill is
@@ -1044,7 +1030,6 @@ where
         self.merge_heads.clear();
         self.merge_initialized = false;
         self.need_spill.store(false, SeqCst);
-        self.spill_generation.store(0, SeqCst);
         // Go `TopNExec.Open`: an operator re-opened by an Apply's inner side
         // must not keep charging for the rows it just dropped.
         self.tracker.replace_bytes_used(0);
@@ -1059,7 +1044,6 @@ where
         if self.enable_tmp_storage_on_oom {
             let (action, need_spill) = TopNSpillAction::new(&self.tracker);
             self.need_spill = need_spill;
-            self.spill_generation = action.spill_generation();
             let action: ArcAction = action;
             self.memory
                 .session_tracker()
@@ -2340,7 +2324,10 @@ mod spill_tests {
         let mut reference = topn(&rows, &items, 37, 300, StatementMemory::default());
         let expected = drain(&mut reference);
 
-        let mut exec = topn(&rows, &items, 37, 300, tight(&dir)).with_parallelism(4);
+        // Go workers may outnumber runnable CPU threads. Waiting for input
+        // must not occupy the pool and prevent later workers from starting.
+        let concurrency = std::thread::available_parallelism().map_or(4, usize::from) + 1;
+        let mut exec = topn(&rows, &items, 37, 300, tight(&dir)).with_parallelism(concurrency);
         exec.set_spill_chunk_size_for_test(64);
         let got = drain(&mut exec);
 

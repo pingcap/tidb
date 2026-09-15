@@ -163,7 +163,7 @@ impl From<ExecError> for MemReaderError {
 /// error to [`MemReaderError`] and is otherwise the same contract; the blanket
 /// [`KvIterator`] impl below is what lets a `Box<dyn ScanIter>` be fed
 /// straight into [`UnionIter`].
-pub trait ScanIter {
+pub trait ScanIter: Send {
     /// Go `Valid`.
     fn valid(&self) -> bool;
     /// Go `Key`.
@@ -260,7 +260,7 @@ impl ScanIter for VecScanIter {
 /// `cacheTable` a cached table read carries. This tier has no session context,
 /// so both halves are asked of the caller. Everything above this trait --
 /// range order, the union, the tombstone rule, decoding -- is ported.
-pub trait MemBufferSource {
+pub trait MemBufferSource: Sync {
     /// Go `txn.GetMemBuffer().SnapshotIter(start, end)`, or
     /// `SnapshotIterReverse(end, start)` when `reverse`.
     ///
@@ -546,7 +546,7 @@ where
 }
 
 /// Go `memRowsIter` (:882): the cursor `UnionScanExec` pulls added rows from.
-pub trait MemRowsIter {
+pub trait MemRowsIter: Send {
     /// Go `Next`. `None` is Go's `nil, nil` end of iteration.
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, MemReaderError>;
     /// Go `Close`, which releases the snapshot the cursor holds.

@@ -224,7 +224,7 @@ pub struct PartialHandleBatch {
 /// `w.batchSize` up to `maxBatchSize`) and the per-path `pushedLimit`
 /// short-circuit inside it belong to the implementor, because they are
 /// properties of the scan, not of the merge.
-pub trait PartialHandleSource {
+pub trait PartialHandleSource: Send {
     /// Go `partial*Worker.fetchHandles` start-up (the `startPartial*Worker`
     /// wrappers, :380 / :518).
     fn open(&mut self) -> Result<(), ExecError> {

@@ -19,9 +19,9 @@
 //! access, aggregation, join, sort, or reader policy; the AST is used only
 //! for client-visible result-column labels.
 
-use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::access_path::{
     HandleOutputColumn, HandleSourceExec, IndexJoinLookupExec, IndexRangeSourceExec, LookupObject,
@@ -32,6 +32,7 @@ use crate::apply::NestedLoopApplyExec;
 use crate::driver::index_usage_reporter::{CopIndexUsageExec, PointCommand, PointIndexUsageExec};
 use crate::executor::{Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
+use crate::hash_join_v2::executor::{HashJoinV2Executor, HashJoinV2Plan};
 use crate::index_merge_reader::{
     ExecutorPartialHandleSource, IndexMergeReaderExec, MergeByItem, PartialHandleColumns,
     PartialHandleSource, PushedDownLimit as ExecutorPushedDownLimit,
@@ -69,7 +70,7 @@ use tidb_planner::physical::{
     PhysicalTableSample, PhysicalTableScan,
 };
 
-use super::{Catalog, DriverError, SelectMeta, INIT_CAP, MAX_CHUNK_SIZE};
+use super::{Catalog, DriverError};
 
 struct CteBuildSlot {
     result: SharedCteStorage,
@@ -98,7 +99,50 @@ struct BuildState {
     has_lock: bool,
 }
 
-pub(crate) type PhysicalRuntimeStats = HashMap<usize, Rc<Cell<u64>>>;
+pub(crate) type PhysicalRuntimeStats = HashMap<usize, PhysicalRuntimeCounter>;
+
+pub(crate) struct PhysicalRuntimeCounter {
+    rows: crate::executor::RowCount,
+    calls: Option<Arc<Mutex<PhysicalCallStats>>>,
+}
+
+impl From<crate::executor::RowCount> for PhysicalRuntimeCounter {
+    fn from(rows: crate::executor::RowCount) -> Self {
+        Self { rows, calls: None }
+    }
+}
+
+impl PhysicalRuntimeCounter {
+    pub(crate) fn get(&self) -> u64 {
+        self.rows.get()
+    }
+
+    pub(crate) fn execution_info(&self) -> Option<String> {
+        let calls = *self.calls.as_ref()?.lock().unwrap();
+        let format = |elapsed: Duration| {
+            tidb_model::go_duration::format_explain_duration(
+                i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX),
+            )
+        };
+        Some(format!(
+            "time:{}, open:{}, close:{}, loops:{}",
+            format(calls.open + calls.next + calls.close),
+            format(calls.open),
+            format(calls.close),
+            calls.loops,
+        ))
+    }
+}
+
+/// Go BasicRuntimeStats' lifecycle counters. The existing EXPLAIN builder
+/// owns these records; ordinary execution installs no metering wrapper.
+#[derive(Clone, Copy, Default)]
+struct PhysicalCallStats {
+    open: Duration,
+    next: Duration,
+    close: Duration,
+    loops: u64,
+}
 
 pub(crate) fn runtime_plan_key(plan: &PhysicalPlan) -> usize {
     std::ptr::from_ref(plan).addr()
@@ -117,41 +161,62 @@ impl BuildState {
                 .table_access()
                 .and_then(|access| access.scanned_rows_counter())
             {
-                counters.insert(runtime_plan_key(plan), counter);
+                counters.insert(runtime_plan_key(plan), counter.into());
                 return executor;
             }
         }
-        let counter = Rc::new(Cell::new(0));
-        counters.insert(runtime_plan_key(plan), Rc::clone(&counter));
+        let counter = crate::executor::RowCount::default();
+        let calls = Arc::new(Mutex::new(PhysicalCallStats::default()));
+        counters.insert(
+            runtime_plan_key(plan),
+            PhysicalRuntimeCounter {
+                rows: counter.clone(),
+                calls: Some(Arc::clone(&calls)),
+            },
+        );
         Box::new(PhysicalCountExec {
             child: executor,
             counter,
+            calls,
         })
     }
 }
 
-/// Go's per-physical-operator runtime-stat registration. The wrapper counts
-/// rows produced by the executor built for exactly one retained physical
-/// node; it never selects or rebuilds a plan.
+/// Go's per-physical-operator runtime-stat registration. The wrapper records
+/// rows, Next calls and inclusive Open/Next/Close time for the executor built
+/// for one retained physical node; it never selects or rebuilds a plan.
 struct PhysicalCountExec {
     child: Box<dyn Executor>,
-    counter: Rc<Cell<u64>>,
+    counter: crate::executor::RowCount,
+    calls: Arc<Mutex<PhysicalCallStats>>,
 }
 
 impl Executor for PhysicalCountExec {
     fn open(&mut self) -> Result<(), crate::ExecError> {
-        self.child.open()
+        let start = Instant::now();
+        let result = self.child.open();
+        let mut calls = self.calls.lock().unwrap();
+        calls.open += start.elapsed();
+        result
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
-        self.child.next(req)?;
+        let start = Instant::now();
+        let result = self.child.next(req);
+        let mut calls = self.calls.lock().unwrap();
+        calls.next += start.elapsed();
+        calls.loops += 1;
         self.counter
             .set(self.counter.get().saturating_add(req.num_rows() as u64));
-        Ok(())
+        result
     }
 
     fn close(&mut self) -> Result<(), crate::ExecError> {
-        self.child.close()
+        let start = Instant::now();
+        let result = self.child.close();
+        let mut calls = self.calls.lock().unwrap();
+        calls.close += start.elapsed();
+        result
     }
 
     fn schema(&self) -> &Schema {
@@ -326,12 +391,13 @@ fn inline_projection_offsets(output: &Schema, child: &Schema) -> Option<Vec<usiz
     .then_some(offsets)
 }
 
-fn meta(plan: &PhysicalPlan, schema: Schema) -> ExecutorMeta {
+fn meta(ctx: &crate::StmtContext, plan: &PhysicalPlan, schema: Schema) -> ExecutorMeta {
+    let (init_cap, max_chunk_size) = ctx.executor_chunk_sizes();
     ExecutorMeta::new(
         schema,
         i64::from(plan.base().base.id()),
-        INIT_CAP,
-        MAX_CHUNK_SIZE,
+        init_cap,
+        max_chunk_size,
     )
 }
 
@@ -467,7 +533,7 @@ fn build_table_scan(
         .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
     let (schema, keep, extra_handle_slot, extra_commit_ts_slot) = table_scan_schema(scan, &table)?;
     let mut source = TableScanExec::new_with_context(
-        meta(plan, schema.clone()),
+        meta(ctx, plan, schema.clone()),
         table.clone(),
         RowDecodeContext::for_query(ctx),
         PushdownStatementContext::from_stmt(ctx).with_plan_id(i64::from(scan.base.base.id())),
@@ -585,7 +651,7 @@ fn build_table_sample(
     }
     if tables.is_empty() {
         return Ok(Box::new(TableSampleExec::new(
-            meta(plan, plan_schema(plan)?),
+            meta(ctx, plan, plan_schema(plan)?),
             tables,
             Vec::new(),
             sample.desc,
@@ -620,7 +686,7 @@ fn build_table_sample(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Box::new(TableSampleExec::new(
-        meta(plan, schema),
+        meta(ctx, plan, schema),
         tables,
         output_columns,
         sample.desc,
@@ -632,6 +698,7 @@ fn build_mem_table(
     plan: &PhysicalPlan,
     scan: &PhysicalMemTable,
     catalog: &Catalog,
+    ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let super::TableEntry::Mem(table) = catalog
         .table_in(&scan.db_name, &scan.table_name)
@@ -676,7 +743,7 @@ fn build_mem_table(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Box::new(MemTableSourceExec::new(
-        meta(plan, plan_schema(plan)?),
+        meta(ctx, plan, plan_schema(plan)?),
         rows,
     )))
 }
@@ -801,7 +868,7 @@ fn build_aggregation_over_child(
                     .map(Expression::Column)
                     .collect();
                 return Ok(Box::new(ProjectionExec::new(
-                    meta(plan, output_schema),
+                    meta(ctx, plan, output_schema),
                     expressions,
                     child,
                     ctx.clone(),
@@ -809,7 +876,7 @@ fn build_aggregation_over_child(
             }
         }
     }
-    let executor_meta = meta(plan, output_schema);
+    let executor_meta = meta(ctx, plan, output_schema);
     if stream {
         if group_by.is_empty() {
             Ok(Box::new(StreamAggExec::new(
@@ -980,7 +1047,7 @@ fn build_window(
         funcs.push(crate::window::WindowFuncSpec { func, output_type });
     }
     Ok(Box::new(crate::window::WindowExec::new(
-        meta(plan, output_schema),
+        meta(ctx, plan, output_schema),
         funcs,
         partition_by,
         window
@@ -1187,7 +1254,7 @@ fn materialize_reader_topn_keys(
         ));
     }
     Ok(Box::new(ProjectionExec::new(
-        meta(plan, schema),
+        meta(ctx, plan, schema),
         expressions,
         child,
         ctx.clone(),
@@ -1427,7 +1494,7 @@ fn build_index_reader(
         executor_ranges(&scan.ranges)
     };
     let mut source = IndexRangeSourceExec::new_with_statement(
-        meta(plan, source_schema),
+        meta(ctx, plan, source_schema),
         table.clone(),
         scan.index_id,
         ranges,
@@ -1549,7 +1616,7 @@ fn filtered_join_child(
     let schema = child.schema().clone();
     let filters = resolve_expressions(conditions, &schema)?;
     Ok(Box::new(SelectionExec::new(
-        meta(plan, schema),
+        meta(ctx, plan, schema),
         filters,
         child,
         ctx.clone(),
@@ -1617,7 +1684,7 @@ fn physical_join_output_offsets(
 ) -> Result<Vec<usize>, DriverError> {
     let schema = plan_schema(plan)?;
     match join_type {
-        LogicalJoinType::LeftOuterSemi => {
+        LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi => {
             let mut offsets = schema.columns[..schema.len().saturating_sub(1)]
                 .iter()
                 .map(|output| {
@@ -1885,6 +1952,31 @@ fn index_inner_reader_payload<'a>(plan: &'a PhysicalPlan) -> Option<(&'a Physica
     }
 }
 
+fn index_inner_scan_order(plan: &PhysicalPlan) -> Option<(bool, bool)> {
+    match plan {
+        PhysicalPlan::TableReader(reader) => reader
+            .table_plan
+            .as_deref()
+            .and_then(index_inner_scan_order),
+        PhysicalPlan::IndexReader(reader) => reader
+            .index_plan
+            .as_deref()
+            .and_then(index_inner_scan_order),
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            let desc = reader
+                .index_plan
+                .as_deref()
+                .and_then(index_inner_scan_order)
+                .map(|(_, desc)| desc)
+                .unwrap_or(false);
+            Some((reader.keep_order, desc))
+        }
+        PhysicalPlan::TableScan(scan) => Some((scan.keep_order, scan.desc)),
+        PhysicalPlan::IndexScan(scan) => Some((scan.keep_order, scan.desc)),
+        _ => plan.children().iter().find_map(index_inner_scan_order),
+    }
+}
+
 /// Whether `plan`'s subtree contains the reader that ANSWERS the index-join
 /// runtime probe: the one reading the join's retained inner table. A subtree
 /// can hold several readers (an inner-side `HashJoin` of two aggregated
@@ -1922,7 +2014,7 @@ fn build_index_inner_reader(
     plan: &PhysicalPlan,
     join: &tidb_planner::physical::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
-    shared: Option<&std::rc::Rc<std::cell::RefCell<SharedIndexJoinProbes>>>,
+    shared: Option<&std::sync::Arc<std::sync::Mutex<SharedIndexJoinProbes>>>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     offset_schema: Option<&Schema>,
@@ -1962,7 +2054,7 @@ fn build_index_inner_reader(
     let mut filters = Vec::new();
     collect_index_inner_filters(embedded, &filter_schema, &mut filters)?;
     let mut source = IndexJoinLookupExec::new_with_context(
-        meta(plan, row_schema.clone()),
+        meta(ctx, plan, row_schema.clone()),
         table.clone(),
         object,
         RowDecodeContext::for_query(ctx),
@@ -1981,11 +2073,14 @@ fn build_index_inner_reader(
     }
     source.set_filters(filters, ctx.clone());
     source.set_column_projection(Some(output_offsets), []);
+    if let Some((true, desc)) = index_inner_scan_order(plan) {
+        source.set_keep_order(desc);
+    }
     if covering {
         source.mark_covering();
     }
     if let Some(shared) = shared {
-        source.set_shared_probes(std::rc::Rc::clone(shared));
+        source.set_shared_probes(std::sync::Arc::clone(shared));
     }
     Ok(source)
 }
@@ -1994,7 +2089,7 @@ fn build_index_inner_subtree(
     plan: &PhysicalPlan,
     join: &tidb_planner::physical::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
-    shared: &std::rc::Rc<std::cell::RefCell<SharedIndexJoinProbes>>,
+    shared: &std::sync::Arc<std::sync::Mutex<SharedIndexJoinProbes>>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -2054,7 +2149,7 @@ fn build_index_inner_subtree(
             )?;
             let expressions = resolve_expressions(&projection.exprs, child.schema())?;
             Ok(Box::new(ProjectionExec::new(
-                meta(plan, plan_schema(plan)?),
+                meta(ctx, plan, plan_schema(plan)?),
                 expressions,
                 child,
                 ctx.clone(),
@@ -2073,7 +2168,7 @@ fn build_index_inner_subtree(
             let filters = resolve_expressions(&selection.conditions, child.schema())?;
             let schema = unary_schema(plan, child.as_ref());
             Ok(Box::new(SelectionExec::new(
-                meta(plan, schema),
+                meta(ctx, plan, schema),
                 filters,
                 child,
                 ctx.clone(),
@@ -2210,7 +2305,7 @@ fn build_index_lookup_source(
         return build_index_inner_reader(inner, join, probe_parts, None, catalog, ctx, None)
             .map(IndexLookupSource::Leaf);
     }
-    let probes = std::rc::Rc::new(std::cell::RefCell::new(SharedIndexJoinProbes::default()));
+    let probes = std::sync::Arc::new(std::sync::Mutex::new(SharedIndexJoinProbes::default()));
     let exec = build_index_inner_subtree(inner, join, probe_parts, &probes, catalog, ctx, state)?;
     Ok(IndexLookupSource::Composite { exec, probes })
 }
@@ -2318,7 +2413,7 @@ fn build_index_join(
         probe_bounds,
     };
     let mut executor = JoinExec::new_index_lookup(
-        meta(plan, plan_schema(plan)?),
+        meta(ctx, plan, plan_schema(plan)?),
         join_kind(join.join_type)?,
         conditions,
         outer,
@@ -2471,7 +2566,7 @@ fn build_join_over_children(
         conditions.extend(resolve_expressions(right_conditions, &condition_schema)?);
     }
     let mut executor = JoinExec::new(
-        meta(plan, plan_schema(plan)?),
+        meta(ctx, plan, plan_schema(plan)?),
         join_kind(join_type)?,
         conditions,
         left,
@@ -2484,6 +2579,206 @@ fn build_join_over_children(
     executor
         .set_output_offsets(output_offsets)
         .map_err(DriverError::Exec)?;
+    Ok(executor)
+}
+
+/// Go `PhysicalHashJoin.CanUseHashJoinV2`: capability, not query size or workload.
+fn can_use_hash_join_v2(join: &tidb_planner::physical::PhysicalHashJoin) -> bool {
+    !join.left_join_keys.is_empty()
+        && join.na_equal_conditions.is_empty()
+        && !join.is_null_eq.iter().any(|&null_eq| null_eq)
+        && (matches!(
+            join.join_type,
+            LogicalJoinType::Inner
+                | LogicalJoinType::LeftOuter
+                | LogicalJoinType::RightOuter
+                | LogicalJoinType::Semi
+                | LogicalJoinType::AntiSemi
+        ) || crate::hash_join_version::use_hash_join_v2_for_non_ga_join())
+}
+
+/// Go `buildHashJoinV2FromChildExecs`: preserve build/probe filters and compare
+/// keys using the equality expression's collation and the logical key flags.
+fn build_hash_join_v2(
+    plan: &PhysicalPlan,
+    join: &tidb_planner::physical::PhysicalHashJoin,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    state: &mut BuildState,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let [left_plan, right_plan] = plan.children() else {
+        return Err(DriverError::unsupported(
+            "a physical hash join has the wrong child count",
+        ));
+    };
+    if join.inner_child_idx > 1 || join.left_join_keys.len() != join.right_join_keys.len() {
+        return Err(DriverError::unsupported(
+            "a physical hash join has invalid children or keys",
+        ));
+    }
+    let left = build_with_state(left_plan, catalog, ctx, state)?;
+    let right = build_with_state(right_plan, catalog, ctx, state)?;
+    let (outer_conditions, outer_schema, inner_conditions) = if join.inner_child_idx == 1 {
+        (&join.left_conditions, left.schema(), &join.right_conditions)
+    } else {
+        (
+            &join.right_conditions,
+            right.schema(),
+            &join.left_conditions,
+        )
+    };
+    if !inner_conditions.is_empty() {
+        return Err(DriverError::unsupported(
+            "hash join's inner condition should be empty",
+        ));
+    }
+    let outer_filter = resolve_expressions(outer_conditions, outer_schema)?;
+    let (build_filter, probe_filter) = if join.use_outer_to_build {
+        (outer_filter, vec![])
+    } else {
+        (vec![], outer_filter)
+    };
+    let keys = join_key_offsets(
+        &join.left_join_keys,
+        &join.right_join_keys,
+        left.schema(),
+        right.schema(),
+    )?;
+    let mut left_types = Vec::with_capacity(keys.len());
+    let mut right_types = Vec::with_capacity(keys.len());
+    for (index, key) in keys.iter().enumerate() {
+        let mut left_type = left.ret_field_types()[key.left].clone().with_flags(
+            join.left_join_keys[index]
+                .ret_type
+                .as_ref()
+                .ok_or_else(|| DriverError::unsupported("a left hash join key has no type"))?
+                .flags(),
+        );
+        let mut right_type = right.ret_field_types()[key.right].clone().with_flags(
+            join.right_join_keys[index]
+                .ret_type
+                .as_ref()
+                .ok_or_else(|| DriverError::unsupported("a right hash join key has no type"))?
+                .flags(),
+        );
+        if let Some(equality) = join.equal_conditions.get(index) {
+            let collation = equality.derived_collation();
+            left_type = left_type.with_collation(collation);
+            right_type = right_type.with_collation(collation);
+        }
+        left_types.push(left_type);
+        right_types.push(right_type);
+    }
+    let right_as_build_side = (join.inner_child_idx == 1) != join.use_outer_to_build;
+    let (build_key_indices, probe_key_indices, build_key_types, probe_key_types) =
+        if right_as_build_side {
+            (
+                keys.iter().map(|key| key.right).collect(),
+                keys.iter().map(|key| key.left).collect(),
+                right_types,
+                left_types,
+            )
+        } else {
+            (
+                keys.iter().map(|key| key.left).collect(),
+                keys.iter().map(|key| key.right).collect(),
+                left_types,
+                right_types,
+            )
+        };
+    let condition_schema =
+        tidb_expr::schema::merge_schema(Some(left.schema()), Some(right.schema())).ok_or_else(
+            || DriverError::unsupported("a physical hash join has no condition schema"),
+        )?;
+    let other_condition = resolve_expressions(&join.other_conditions, &condition_schema)?;
+    let mut l_used_in_other_condition = vec![];
+    let mut r_used_in_other_condition = vec![];
+    for column in tidb_expr::simple_expr::extract_columns_from_expressions(&other_condition, None) {
+        let index = usize::try_from(column.index).map_err(|_| {
+            DriverError::unsupported("a hash join condition has a negative column index")
+        })?;
+        if index < left.schema().len() {
+            l_used_in_other_condition.push(index);
+        } else {
+            r_used_in_other_condition.push(index - left.schema().len());
+        }
+    }
+
+    let output_schema = plan_schema(plan)?;
+    let offsets =
+        physical_join_output_offsets(plan, join.join_type, left.schema(), right.schema())?;
+    let outer_semi = matches!(
+        join.join_type,
+        LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+    );
+    let child_output_count = offsets.len() - usize::from(outer_semi);
+    // Keep each side's requested order, as Go markChildrenUsedCols does.
+    let (left_outputs, right_outputs): (Vec<_>, Vec<_>) = offsets[..child_output_count]
+        .iter()
+        .copied()
+        .enumerate()
+        .partition(|&(_, index)| index < left.schema().len());
+    let l_used = left_outputs.iter().map(|&(_, index)| index).collect();
+    let r_used = right_outputs
+        .iter()
+        .map(|&(_, index)| index - left.schema().len())
+        .collect();
+    let mut output_order: Vec<_> = left_outputs
+        .iter()
+        .chain(&right_outputs)
+        .map(|&(index, _)| index)
+        .collect();
+    if outer_semi {
+        output_order.push(child_output_count);
+    }
+    let native_schema = Schema::new(
+        output_order
+            .iter()
+            .map(|&index| output_schema.columns[index].clone())
+            .collect(),
+    );
+    let mut executor: Box<dyn Executor> = Box::new(HashJoinV2Executor::new(
+        meta(ctx, plan, native_schema),
+        HashJoinV2Plan {
+            concurrency: join.concurrency,
+            join_type: joiner_type(join.join_type),
+            right_as_build_side,
+            build_key_indices,
+            probe_key_indices,
+            build_key_types,
+            probe_key_types,
+            l_used,
+            r_used,
+            l_used_in_other_condition,
+            r_used_in_other_condition,
+            build_filter,
+            probe_filter,
+            other_condition,
+            vectorized: ctx.enable_vectorized_expression(),
+        },
+        left,
+        right,
+        ctx.clone(),
+        ctx.statement_memory(),
+    ));
+    if output_order
+        .iter()
+        .enumerate()
+        .any(|(index, &source)| index != source)
+    {
+        let mut expressions = vec![None; output_order.len()];
+        for (source, &target) in output_order.iter().enumerate() {
+            let mut column = output_schema.columns[target].clone();
+            column.index = source as i64;
+            expressions[target] = Some(Expression::Column(column));
+        }
+        executor = Box::new(ProjectionExec::new(
+            meta(ctx, plan, output_schema),
+            expressions.into_iter().map(Option::unwrap).collect(),
+            executor,
+            ctx.clone(),
+        ));
+    }
     Ok(executor)
 }
 
@@ -2552,8 +2847,8 @@ fn build_apply(
         None,
         false,
         JoinerChunkSizes {
-            init_chunk_size: INIT_CAP,
-            max_chunk_size: MAX_CHUNK_SIZE,
+            init_chunk_size: ctx.executor_chunk_sizes().0,
+            max_chunk_size: ctx.executor_chunk_sizes().1,
         },
     );
     let (outer, inner, outer_filter, inner_filter) = if apply.hash_join.inner_child_idx == 0 {
@@ -2571,7 +2866,7 @@ fn build_apply(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let executor = NestedLoopApplyExec::new(
-        meta(plan, plan_schema(plan)?),
+        meta(ctx, plan, plan_schema(plan)?),
         outer,
         inner,
         outer_filter,
@@ -2869,7 +3164,7 @@ fn build_point_get(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let Some(physical_id) = point_partition_id(point, catalog, ctx)? else {
         return Ok(Box::new(TableDualExec::new(
-            meta(plan, plan_schema(plan)?),
+            meta(ctx, plan, plan_schema(plan)?),
             0,
         )));
     };
@@ -2939,6 +3234,10 @@ fn build_batch_point_get(
         .ok_or_else(|| DriverError::unsupported("physical batch-point table ID is absent"))?;
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
+    // Go buildBatchPointGet sizes both capacities to the retained access keys.
+    let capacity = batch.ranges.len();
+    let executor_meta =
+        ExecutorMeta::new(schema, i64::from(plan.base().base.id()), capacity, capacity);
     if let Some(index_id) = batch.index_id {
         let index_values = unique_index_point_values(
             &table,
@@ -2950,7 +3249,7 @@ fn build_batch_point_get(
             batch.desc,
         )?;
         let child = Box::new(UniqueIndexPointSourceExec::new(
-            meta(plan, schema),
+            executor_meta,
             table.clone(),
             index_id,
             index_values,
@@ -2996,7 +3295,7 @@ fn build_batch_point_get(
     let partition_ids = routes.map(|routes| handles.iter().map(|handle| routes[handle]).collect());
     let child = Box::new(
         HandleSourceExec::new_mapped_with_context(
-            meta(plan, schema),
+            executor_meta,
             table.clone(),
             handles,
             output_columns,
@@ -3178,7 +3477,7 @@ fn build_index_merge_reader(
         })
         .collect();
     let mut executor = IndexMergeReaderExec::new(
-        meta(plan, schema.clone()),
+        meta(ctx, plan, schema.clone()),
         table.clone(),
         RowDecodeContext::for_query(ctx),
         partials,
@@ -3285,9 +3584,10 @@ fn cte_reader(
     plan: &PhysicalPlan,
     cte: &tidb_planner::physical::PhysicalCTE,
     producer: SharedCteProducer,
+    ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     Ok(Box::new(CteExec::new(
-        meta(plan, plan_schema(plan)?),
+        meta(ctx, plan, plan_schema(plan)?),
         producer,
         cte.has_limit,
         cte.limit_beg,
@@ -3308,7 +3608,7 @@ fn build_cte(
         .and_then(|slot| slot.producer.as_ref())
         .cloned()
     {
-        return cte_reader(plan, cte, producer);
+        return cte_reader(plan, cte, producer, ctx);
     }
     if state.cte_slots.contains_key(&cte.id_for_storage) {
         return Err(DriverError::unsupported(format!(
@@ -3321,26 +3621,26 @@ fn build_cte(
     let output_types = seed.ret_field_types().to_vec();
     let mut result_storage = crate::cte_storage::CteStorage::new(
         output_types.clone(),
-        MAX_CHUNK_SIZE,
+        ctx.executor_chunk_sizes().1,
         ctx.statement_memory(),
     );
     result_storage.open_and_ref()?;
-    let result = Rc::new(RefCell::new(result_storage));
+    let result = Arc::new(Mutex::new(result_storage));
     let mut iter_in_storage = crate::cte_storage::CteStorage::new(
         output_types.clone(),
-        MAX_CHUNK_SIZE,
+        ctx.executor_chunk_sizes().1,
         ctx.statement_memory(),
     );
     if let Err(error) = iter_in_storage.open_and_ref() {
-        result.borrow_mut().deref_and_close()?;
+        result.lock().unwrap().deref_and_close()?;
         return Err(error.into());
     }
-    let iter_in = Rc::new(RefCell::new(iter_in_storage));
+    let iter_in = Arc::new(Mutex::new(iter_in_storage));
     state.cte_slots.insert(
         cte.id_for_storage,
         CteBuildSlot {
-            result: Rc::clone(&result),
-            iter_in: Rc::clone(&iter_in),
+            result: Arc::clone(&result),
+            iter_in: Arc::clone(&iter_in),
             producer: None,
         },
     );
@@ -3359,9 +3659,9 @@ fn build_cte(
         .cte_slots
         .get(&cte.id_for_storage)
         .expect("CTE slot inserted before recursive executor build");
-    let result = Rc::clone(&slot.result);
-    let iter_in = Rc::clone(&slot.iter_in);
-    let producer = Rc::new(RefCell::new(CteProducer::new(
+    let result = Arc::clone(&slot.result);
+    let iter_in = Arc::clone(&slot.iter_in);
+    let producer = Arc::new(Mutex::new(CteProducer::new(
         seed,
         recursive,
         result,
@@ -3371,20 +3671,21 @@ fn build_cte(
         cte.limit_end,
         ctx.clone(),
         output_types,
-        MAX_CHUNK_SIZE,
+        ctx.executor_chunk_sizes().1,
     )));
     state
         .cte_slots
         .get_mut(&cte.id_for_storage)
         .expect("CTE slot inserted before recursive executor build")
-        .producer = Some(Rc::clone(&producer));
-    cte_reader(plan, cte, producer)
+        .producer = Some(Arc::clone(&producer));
+    cte_reader(plan, cte, producer, ctx)
 }
 
 fn build_cte_table(
     plan: &PhysicalPlan,
     table: &tidb_planner::physical::PhysicalCTETable,
     state: &BuildState,
+    ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let slot = state.cte_slots.get(&table.id_for_storage).ok_or_else(|| {
         DriverError::unsupported(format!(
@@ -3393,8 +3694,8 @@ fn build_cte_table(
         ))
     })?;
     Ok(Box::new(CteTableReaderExec::new(
-        meta(plan, plan_schema(plan)?),
-        Rc::clone(&slot.iter_in),
+        meta(ctx, plan, plan_schema(plan)?),
+        Arc::clone(&slot.iter_in),
     )))
 }
 
@@ -3406,7 +3707,7 @@ fn build_with_state(
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let executor: Box<dyn Executor> = match plan {
-        PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog),
+        PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
         PhysicalPlan::TableScan(scan) => build_table_scan(plan, scan, catalog, ctx),
         PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
         PhysicalPlan::IndexScan(scan) => build_index_reader(
@@ -3597,7 +3898,7 @@ fn build_with_state(
                 }
             }
             let expressions = resolve_expressions(&projection.exprs, child.schema())?;
-            let meta = meta(plan, plan_schema(plan)?);
+            let meta = meta(ctx, plan, plan_schema(plan)?);
             // Go `newProjectionExec`: `tidb_projection_concurrency` workers,
             // none when the estimated row count is under one chunk ("to
             // reduce the goroutine overhead"), inside a writing statement or
@@ -3653,7 +3954,7 @@ fn build_with_state(
                             DriverError::unsupported("selection output column is absent from child")
                         })?;
                     return Ok(Box::new(ProjectionExec::new(
-                        meta(plan, output),
+                        meta(ctx, plan, output),
                         expressions,
                         child,
                         ctx.clone(),
@@ -3663,7 +3964,7 @@ fn build_with_state(
             } else {
                 let schema = unary_schema(plan, child.as_ref());
                 Ok::<Box<dyn Executor>, DriverError>(Box::new(SelectionExec::new(
-                    meta(plan, schema),
+                    meta(ctx, plan, schema),
                     filters,
                     child,
                     ctx.clone(),
@@ -3683,8 +3984,15 @@ fn build_with_state(
                     .is_some_and(|access| access.accept_scan_limit(cap));
             }
             let schema = unary_schema(plan, child.as_ref());
+            let max_chunk_size = ctx.executor_chunk_sizes().1;
+            let init_cap = limit.count.min(max_chunk_size as u64) as usize;
             Ok(Box::new(LimitExec::new(
-                meta(plan, schema),
+                ExecutorMeta::new(
+                    schema,
+                    i64::from(plan.base().base.id()),
+                    init_cap,
+                    max_chunk_size,
+                ),
                 limit.offset,
                 limit.count,
                 child,
@@ -3711,7 +4019,7 @@ fn build_with_state(
             let schema = unary_schema(plan, child.as_ref());
             Ok(Box::new(
                 SortExec::new(
-                    meta(plan, schema),
+                    meta(ctx, plan, schema),
                     by_items,
                     child,
                     ctx.clone(),
@@ -3744,7 +4052,7 @@ fn build_with_state(
             let child_schema = child.schema().clone();
             let child_field_types = child.ret_field_types().to_vec();
             let mut executor = TopNExec::new(
-                meta(plan, schema),
+                meta(ctx, plan, schema),
                 by_items,
                 child,
                 ctx.clone(),
@@ -3799,7 +4107,7 @@ fn build_with_state(
                 super::planner_bridge::materialize_physical_expression(expression);
             }
             Ok(Box::new(crate::expand::ExpandExec::new(
-                meta(plan, plan_schema(plan)?),
+                meta(ctx, plan, plan_schema(plan)?),
                 levels,
                 child,
                 ctx.clone(),
@@ -3808,6 +4116,13 @@ fn build_with_state(
         }
         PhysicalPlan::Window(window) => build_window(plan, window, catalog, ctx, state),
         PhysicalPlan::HashJoin(join) => {
+            if ctx.optimizer_cost_env().session.use_hash_join_v2
+                && crate::hash_join_version::is_hash_join_v2_supported()
+                && can_use_hash_join_v2(join)
+            {
+                return build_hash_join_v2(plan, join, catalog, ctx, state)
+                    .map(|executor| state.meter(plan, executor));
+            }
             let mut executor = build_join(
                 plan,
                 join.join_type,
@@ -3872,13 +4187,15 @@ fn build_with_state(
         PhysicalPlan::IndexJoin(join) => build_index_join(plan, join, catalog, ctx, state),
         PhysicalPlan::Apply(apply) => build_apply(plan, apply, catalog, ctx, state),
         PhysicalPlan::TableDual(dual) => Ok(Box::new(TableDualExec::new(
-            meta(
-                plan,
+            ExecutorMeta::new(
                 plan.base()
                     .base
                     .schema()
                     .cloned()
                     .unwrap_or_else(|| Schema::new(Vec::new())),
+                i64::from(plan.base().base.id()),
+                dual.row_count,
+                ctx.executor_chunk_sizes().1,
             ),
             dual.row_count,
         )) as Box<dyn Executor>),
@@ -3889,7 +4206,7 @@ fn build_with_state(
                 .map(|child| build_with_state(child, catalog, ctx, state))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Box::new(crate::union_all::UnionAllExec::new(
-                meta(plan, plan_schema(plan)?),
+                meta(ctx, plan, plan_schema(plan)?),
                 children,
             )) as Box<dyn Executor>)
         }
@@ -3901,7 +4218,7 @@ fn build_with_state(
         }
         PhysicalPlan::NominalSort(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
         PhysicalPlan::CTE(cte) => build_cte(plan, cte, catalog, ctx, state),
-        PhysicalPlan::CTETable(table) => build_cte_table(plan, table, state),
+        PhysicalPlan::CTETable(table) => build_cte_table(plan, table, state, ctx),
         _ => Err(DriverError::unsupported(format!(
             "physical executor construction for {} is not implemented",
             plan.base().base.tp()
@@ -3935,7 +4252,7 @@ pub(super) fn build(
                 DriverError::unsupported("root output column is absent from executor")
             })?;
         return Ok(Box::new(ProjectionExec::new(
-            meta(plan, output),
+            meta(ctx, plan, output),
             expressions,
             child,
             ctx.clone(),
@@ -4060,12 +4377,12 @@ pub(super) fn planned_query_result_columns(
 
 /// Go's common query execution seam: both SELECT and set-operation logical
 /// roots are already physical plans before executor construction begins.
-pub(super) fn execute_query(
+pub(super) fn open_query(
     query: &tidb_ast::QueryStmt,
     physical: &mut PhysicalPlan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
-) -> Result<SelectMeta, DriverError> {
+) -> Result<super::QueryRecordSet, DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
     ctx.publish_physical_process_info(physical, catalog);
     let root = build(physical, catalog, ctx)?;
@@ -4076,7 +4393,7 @@ pub(super) fn execute_query(
         tidb_ast::QueryStmt::SetOpr(_) => physical_result_columns(physical, root.schema()),
     };
     ctx.notify_before_executor_first_run();
-    super::drain_root_executor(root, columns, ctx)
+    super::QueryRecordSet::open(root, columns, ctx.statement_memory())
 }
 
 /// Builds and drains the target of `EXPLAIN ANALYZE` through the same

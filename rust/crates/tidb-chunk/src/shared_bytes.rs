@@ -19,6 +19,7 @@
 //! growth of either view detaches it using Rust's native allocation policy.
 //! This is an aliasing abstraction, not an emulation of Go slice headers.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::mem;
 use std::ops::{Deref, Range};
@@ -148,6 +149,15 @@ impl SharedBytes {
 
     pub(crate) fn snapshot(&self) -> Vec<u8> {
         self.read().to_vec()
+    }
+
+    /// Borrow ordinary/frozen column bytes for a copy. Shallow mutable aliases
+    /// need a snapshot so no source read lock survives into a destination write.
+    pub(crate) fn copy_source(&self, range: Range<usize>) -> Cow<'_, [u8]> {
+        match self.read() {
+            SharedBytesRead::Owned(bytes) => Cow::Borrowed(&bytes[range]),
+            bytes @ SharedBytesRead::Shared { .. } => Cow::Owned(bytes[range].to_vec()),
+        }
     }
 
     pub(crate) fn reset(&mut self) {
