@@ -156,6 +156,9 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 
 func (s *Syncer) cleanupFailedRegistration(session *concurrency.Session) {
 	lease := session.Lease()
+	// Keep the failed replacement session in a terminal state. ServerInfoSyncLoop
+	// observes s.Done() again and retries registration instead of waiting on a
+	// live lease that has no server-info key.
 	session.Orphan()
 
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
