@@ -192,6 +192,7 @@ var (
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
+		diskQuotaOption:       {},
 		threadOption:          {},
 		disablePrecheckOption: {},
 	}

@@ -435,9 +435,9 @@ allow-expression-index = false
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
 
-# RU v2 TiDB-side weights and RU v3 reporting.
+# Legacy RU v2 TiDB-side weights and statement RU v2 reporting.
 [ru-v2]
-# RU v3 reporting: "result" publishes total, SQL-type and per-engine RU; "full" also publishes
+# Statement RU v2 reporting: "result" publishes total, SQL-type and per-engine RU; "full" also publishes
 # raw units by engine/opclass and calculation status for calibration.
 report-mode = "result"
 
