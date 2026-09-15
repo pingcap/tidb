@@ -113,6 +113,7 @@ func TestBackfillRetryableErrors(t *testing.T) {
 			require.False(t, isRetryableJobError(err, vardef.GetDDLErrorCountLimit()-1))
 		}
 
+		require.False(t, isRetryableError(errdef.ErrKVEpochNotMatch.GenWithStack("epoch mismatch"), false))
 		require.False(t, isRetryableJobError(errdef.ErrKVDiskFull.GenWithStack("store disk full"), 0))
 	})
 }
