@@ -165,7 +165,7 @@ func (s *PartitionProcessor) getUsedHashPartitions(ctx base.PlanContext,
 		return nil, err
 	}
 	partCols, colLen := getPartColumnsForHashPartition(hashExpr)
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize, ctx.GetSessionVars().RangeMaxCount)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,7 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 	// Copy the existing pruning state to preserve its captured collation mode.
 	pe := *partExpr.ForKeyPruning
 	pe.KeyPartCols = partCols
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize, ctx.GetSessionVars().RangeMaxCount)
 	if err != nil {
 		return nil, err
 	}
@@ -749,7 +749,7 @@ func (l *listPartitionPruner) detachCondAndBuildRange(conds []expression.Express
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
 
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx.GetRangerCtx(), conds, cols, colLen, l.ctx.GetSessionVars().RangeMaxSize)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx.GetRangerCtx(), conds, cols, colLen, l.ctx.GetSessionVars().RangeMaxSize, l.ctx.GetSessionVars().RangeMaxCount)
 	if err != nil {
 		return nil, err
 	}
@@ -1331,7 +1331,7 @@ func multiColumnRangeColumnsPruner(sctx base.PlanContext, exprs []expression.Exp
 		lens = append(lens, columnsPruner.PartCols[i].RetType.GetFlen())
 	}
 
-	res, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), exprs, columnsPruner.PartCols, lens, sctx.GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), exprs, columnsPruner.PartCols, lens, sctx.GetSessionVars().RangeMaxSize, sctx.GetSessionVars().RangeMaxCount)
 	if err != nil {
 		return GetFullRange(len(columnsPruner.LessThan))
 	}

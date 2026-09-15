@@ -43,13 +43,14 @@ go_test(
     srcs = [
         "bench_test.go",
         "main_test.go",
+        "range_count_test.go",
         "ranger_test.go",
         "types_test.go",
     ],
+    embed = [":ranger"],
     flaky = True,
     shard_count = 26,
     deps = [
-        ":ranger",
         "//pkg/config",
         "//pkg/domain",
         "//pkg/expression",
