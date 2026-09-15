@@ -3991,15 +3991,27 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 candidates.extend(table.probe(key));
             }
             if table_spilled && !candidates.is_empty() {
-                // `with_row` resets this worker-owned chunk for every
-                // candidate. The last read therefore leaves exactly one
-                // decoded row, just like Go's per-worker `chkBuf`.
+                // `with_rows` still resets this worker-owned chunk for every
+                // spilled candidate, just like Go's per-worker `chkBuf`, but
+                // keeps the in-memory row-container read scope across the
+                // complete candidate chain.
                 build_buf_rows = 1;
             }
             let mut matched = false;
-            for &ptr in candidates.iter() {
-                let accepted = table
-                    .with_row(ptr, build_buf, |build_row| {
+            let mut stop_after_match = false;
+            let mut candidate_index = 0;
+            table
+                .with_rows(candidates.as_slice(), build_buf, |build_row| {
+                    let ptr = candidates[candidate_index];
+                    candidate_index += 1;
+                    // A semi/anti probe stops after its first accepted row.
+                    // The batch reader still visits the remaining pointers,
+                    // but this guard avoids decoding, evaluating, or emitting
+                    // them after the source loop would have broken.
+                    if stop_after_match {
+                        return Ok(());
+                    }
+                    let accepted = (|| {
                         let (left, left_types, right, right_types) = if probe_is_left {
                             (probe_row, probe_types, build_row, build_types)
                         } else {
@@ -4050,27 +4062,32 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
                         }
                         Ok(true)
-                    })
-                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
-                if builds_preserved && accepted {
-                    matched_build_rows.push(ptr);
-                }
-                matched |= accepted;
-                if output.is_full() {
-                    let fresh =
-                        Chunk::new(&shared.output_types, shared.init_cap, shared.max_chunk_size);
-                    extra_outputs.push(std::mem::replace(&mut output, fresh));
-                }
-                if accepted
-                    && !builds_preserved
-                    && matches!(
-                        kind,
-                        JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
-                    )
-                {
-                    break;
-                }
-            }
+                    })()?;
+                    if accepted {
+                        if builds_preserved {
+                            matched_build_rows.push(ptr);
+                        }
+                        matched = true;
+                        if output.is_full() {
+                            let fresh = Chunk::new(
+                                &shared.output_types,
+                                shared.init_cap,
+                                shared.max_chunk_size,
+                            );
+                            extra_outputs.push(std::mem::replace(&mut output, fresh));
+                        }
+                        if !builds_preserved
+                            && matches!(
+                                kind,
+                                JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
+                            )
+                        {
+                            stop_after_match = true;
+                        }
+                    }
+                    Ok::<(), ExecError>(())
+                })
+                .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
             if !matched && !builds_preserved {
                 match kind {
                     JoinKind::Left | JoinKind::Right => output_layout.unmatched(
