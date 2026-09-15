@@ -3949,9 +3949,6 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
 func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog bool) {
-	if sv.InRestrictedSQL {
-		return
-	}
 	sv.TxnCtxMu.Lock()
 	defer sv.TxnCtxMu.Unlock()
 	if sv.TxnCtx == nil {

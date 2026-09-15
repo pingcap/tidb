@@ -345,7 +345,7 @@ func (w *ttlDeleteWorker) loop() error {
 	}()
 
 	tracer.EnterPhase(metrics.PhaseOther)
-	return withSession(w.sessionPool, func(s session.Session) error {
+	return withSession(w.baseWorker.ctx, w.sessionPool, func(s session.Session) error {
 		ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
 		return w.loopWithSession(ctx, tracer, s)
 	})
