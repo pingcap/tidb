@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -128,6 +130,12 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
+	// DXF propagates add-index reorganization RU v2 through:
+	// BackfillTaskMeta.Summary.IndexKVSize -> recordDistTaskRU -> reorgCtx.ru ->
+	// reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
+	// accountPendingReorgRU -> Job.RU. It is persisted only after the matching
+	// table-state transition succeeds.
+	pendingReorgRU float64
 	// Keep storage-class history changes pending until a batched multi-schema
 	// step is known to commit its TableInfo changes.
 	deferStorageClassTransitionStaging bool
@@ -205,9 +213,13 @@ const (
 	backgroundWorker workerType = 2
 )
 
-// TODO: Refactor this weight and the statement RU weights in
-// pkg/executor/statement_ru_result.go into a shared location, then make them configurable.
-const ddlTxnRUKVBytesWeight = 1.0
+func currentDDLRUWeights() ruv2.DDLWeights {
+	weights := ruv2.DefaultDDLWeights()
+	if cfg := config.GetGlobalConfig(); cfg != nil {
+		weights = cfg.RUV2.DDLWeights
+	}
+	return weights
+}
 
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
@@ -596,25 +608,32 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 		metrics.RUV2Total.Add(job.RU)
 		metrics.RUV2BySQLTypeDDL.Add(job.RU)
 		metrics.RUV2ByEngineTiKV.Add(job.RU)
-		w.reportJobRUV2Consumption(job.RU)
+		w.reportJobRUConsumption(job)
 	}
 	cleanupDDLReorgHandles(job, w.sess)
 	jobCtx.notifyDone()
 	return nil
 }
 
-func (w *worker) reportJobRUV2Consumption(totalRU float64) {
-	if totalRU <= 0 {
+func (w *worker) reportJobRUConsumption(job *model.Job) {
+	if job.RU <= 0 {
 		return
 	}
 	dctx := w.sess.GetDistSQLCtx()
-	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
+	if dctx == nil || dctx.RUConsumptionReporter == nil {
 		return
 	}
-	// General DDL jobs do not persist the submitter's resource group yet. The
-	// internal DDL worker session therefore reports them to its default group.
+	resourceGroupName := dctx.ResourceGroupName
+	if job.ReorgMeta != nil && len(job.ReorgMeta.ResourceGroupName) > 0 {
+		resourceGroupName = job.ReorgMeta.ResourceGroupName
+	}
+	if len(resourceGroupName) == 0 {
+		return
+	}
+	// Reorganization jobs persist the submitter's resource group. General DDL
+	// jobs do not, so continue to fall back to the internal worker session's group.
 	// DDL RU is derived from transaction KV bytes, so attribute it to TiKV.
-	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, totalRU, 0, 0)
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(resourceGroupName, job.RU, 0, 0)
 }
 
 func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
@@ -649,17 +668,19 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 }
 
 func (w *worker) accountJobRU(job *model.Job) error {
-	// Only general DDL jobs on NextGen calculate RU for now.
-	if !kerneltype.IsNextGen() || w.tp != generalWorker {
+	if !kerneltype.IsNextGen() {
 		return nil
 	}
+	// For reorganization jobs, only distributed add-index currently accounts
+	// the reorganization workload itself. Other reorganization jobs account the
+	// DDL transaction below, but their reorganization RU v2 is not fully accounted.
 	txn, err := w.sess.Txn()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// The DDL job-table update happens after this sample, and the history-table
 	// writes happen in the final transaction. These internal writes are excluded.
-	job.RU += float64(txn.Size()) * ddlTxnRUKVBytesWeight
+	job.RU += float64(txn.Size()) * currentDDLRUWeights().TxnKVBytes
 	return nil
 }
 
@@ -728,6 +749,10 @@ func (w *worker) transitOneJobStep(
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
 	restoreStorageClassTransitionStep := checkpointStorageClassTransitionStep(w.sess, txn, job)
+	jobCtx.pendingReorgRU = 0
+	defer func() {
+		jobCtx.pendingReorgRU = 0
+	}()
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
 	if restoreStorageClassTransitionStep != nil {
 		var stagingErr *storageClassTransitionStagingError

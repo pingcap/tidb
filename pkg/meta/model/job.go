@@ -481,6 +481,10 @@ type Job struct {
 	// RU stores the resource units accounted for this DDL job. The calculated RU,
 	// rather than the raw buffered KV byte count, is stored so it stays fixed after
 	// the job finishes even if the accounting weight or formula changes later.
+	// A multi-schema change keeps cumulative RU on its parent Job, not its SubJobs:
+	// parent Job.RU -> SubJob.ToProxyJob -> proxy Job.RU ->
+	// updateParentJobFromProxy -> parent Job.RU. The next SubJob's proxy therefore
+	// starts with the RU accumulated by all preceding SubJobs.
 	RU float64 `json:"ru,omitempty"`
 }
 
@@ -1087,6 +1091,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:             parentJob.Collate,
 		AdminOperator:       parentJob.AdminOperator,
 		ResumeReason:        parentJob.ResumeReason,
+		RU:                  parentJob.RU,
 		TraceInfo:           parentJob.TraceInfo,
 		SQLMode:             parentJob.SQLMode,
 		SessionVars:         parentJob.SessionVars,
