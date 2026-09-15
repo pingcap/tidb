@@ -118,16 +118,22 @@ impl EliminateUnionAllDualItem {
 /// Applies the source recursive rewrite over an owned structural plan.
 #[must_use]
 pub fn eliminate_union_all_dual_item(mut plan: UnionAllPlan) -> (UnionAllPlan, bool) {
-    let mut changed = false;
-
     if matches!(plan.kind, UnionAllNodeKind::UnionAll) {
         let mut retained = Vec::with_capacity(plan.children.len());
         for child in plan.children.drain(..) {
-            if is_zero_row_dual(&child) || is_projection_over_zero_row_dual(&child) {
-                changed = true;
-            } else {
-                retained.push(child);
+            // case 1: direct table dual child item.
+            if is_zero_row_dual(&child) {
+                continue;
             }
+            // case 2: indirect projection + table dual item. Go indexes
+            // `proj.Children()[0]` directly, so a childless projection panics
+            // here exactly as the source rule does.
+            if matches!(child.kind, UnionAllNodeKind::Projection)
+                && is_zero_row_dual(&child.children[0])
+            {
+                continue;
+            }
+            retained.push(child);
         }
 
         if retained.is_empty() {
@@ -144,21 +150,19 @@ pub fn eliminate_union_all_dual_item(mut plan: UnionAllPlan) -> (UnionAllPlan, b
         plan.children = retained;
     }
 
+    // Go's in-place child pruning never raises the changed flag: only the
+    // empty-union replacement (here or deeper in the tree) does.
+    let mut flag = false;
     let mut rewritten_children = Vec::with_capacity(plan.children.len());
     for child in plan.children.drain(..) {
-        let (rewritten, child_changed) = eliminate_union_all_dual_item(child);
-        changed |= child_changed;
+        let (rewritten, changed) = eliminate_union_all_dual_item(child);
+        flag |= changed;
         rewritten_children.push(rewritten);
     }
     plan.children = rewritten_children;
-    (plan, changed)
+    (plan, flag)
 }
 
 fn is_zero_row_dual(plan: &UnionAllPlan) -> bool {
     matches!(plan.kind, UnionAllNodeKind::TableDual { row_count: 0 })
-}
-
-fn is_projection_over_zero_row_dual(plan: &UnionAllPlan) -> bool {
-    matches!(plan.kind, UnionAllNodeKind::Projection)
-        && plan.children.first().is_some_and(is_zero_row_dual)
 }
