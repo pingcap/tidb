@@ -82,6 +82,10 @@ func (s *mockImportServer) MultiIngest(_ context.Context, req *import_sstpb.Mult
 	return &import_sstpb.IngestResponse{Error: &errorpb.Error{Message: req.Context.RequestSource}}, nil
 }
 
+func (s *mockImportServer) RestoreRegion(_ context.Context, req *import_sstpb.RestoreRegionRequest) (*import_sstpb.IngestResponse, error) {
+	return &import_sstpb.IngestResponse{Error: &errorpb.Error{Message: req.Context.RequestSource}}, nil
+}
+
 func TestImportClient(t *testing.T) {
 	ctx := context.Background()
 	lis, err := net.Listen("tcp", ":0")
@@ -99,6 +103,13 @@ func TestImportClient(t *testing.T) {
 	}()
 
 	client := importclient.NewImportClient(&storeClient{addr: addr}, nil, keepalive.ClientParameters{})
+	t.Run("RestoreRegion", func(t *testing.T) {
+		resp, err := client.RestoreRegion(ctx, 1, &import_sstpb.RestoreRegionRequest{
+			Context: &kvrpcpb.Context{RequestSource: "restore-region-test"},
+		})
+		require.NoError(t, err)
+		require.Equal(t, "restore-region-test", resp.GetError().GetMessage())
+	})
 
 	{
 		resp, err := client.ClearFiles(ctx, 1, &import_sstpb.ClearRequest{Prefix: "test"})
