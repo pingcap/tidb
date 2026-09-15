@@ -92,18 +92,20 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
 		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
 			idx := testutil.FindIdxInfo(dom, "test", "t", "primary")
-			if idx == nil || idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer == 0 {
+			if idx == nil {
 				return
 			}
-			if !backfillDone {
-				// Wait another round so that the backfill process is finished, but
-				// the info schema is not updated.
+			if !backfillDone && idx.BackfillState == model.BackfillStateReadyToMerge {
+				// The backfill phase just completed and the state transitioned to ReadyToMerge.
+				// Wait one more round for it to enter Merging state.
 				backfillDone = true
 				return
 			}
-			runDML = true
-			// Add delete record 4 to the temporary index.
-			_, checkErr = tk2.Exec("delete from t where c1 = 4;")
+			if backfillDone && !runDML && idx.BackfillState == model.BackfillStateMerging {
+				// The merge phase is starting. Delete record 4 to test merge correctness.
+				runDML = true
+				_, checkErr = tk2.Exec("delete from t where c1 = 4;")
+			}
 		}
 	})
 	tk.MustExec("alter table t add primary key idx(c1);")
