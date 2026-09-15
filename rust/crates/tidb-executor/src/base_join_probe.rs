@@ -67,7 +67,7 @@ use std::collections::HashMap;
 use crate::joiner::JoinType;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::{copy_selected_rows, copy_selected_rows_with_row_id_func};
-use tidb_chunk::column::{append_cell_from_raw_data, Column};
+use tidb_chunk::column::Column;
 use tidb_codec::{JoinKeyColumns, SerializedJoinKeys};
 
 use crate::hash_table_v2::{HashTableV2, RowIter};
@@ -1137,18 +1137,69 @@ impl BaseJoinProbe {
                 let destination_index = relative_destination + col_offset;
                 let mut destination = chk.column_mut(destination_index);
                 let destination = &mut *destination;
-                for (row, cached) in row_data[..live]
-                    .iter()
-                    .zip(&mut self.cached_build_rows[..live])
-                {
-                    // Narrowing: Go picks `isColumnNull` or
-                    // `isColumnNullThreadSafe` from
-                    // `meta.isReadNullMapThreadSafe(columnIndex)`; the two
-                    // differ only in atomicity of the null-map read.
-                    let not_null = !meta.is_column_null(row, column_index);
-                    destination.append_null_bitmap(not_null);
-                    cached.build_row_offset =
-                        append_cell_from_raw_data(destination, row, cached.build_row_offset);
+                if destination.is_fixed() {
+                    let width = meta.columns_size[column_index]
+                        .expect("fixed destination has a fixed row-column width");
+                    let cells = row_data[..live]
+                        .iter()
+                        .zip(self.cached_build_rows[..live].iter())
+                        .map(|(row, cached)| {
+                            // Narrowing: Go picks `isColumnNull` or
+                            // `isColumnNullThreadSafe` from
+                            // `meta.isReadNullMapThreadSafe(columnIndex)`;
+                            // the two differ only in atomicity of the
+                            // null-map read.
+                            let not_null = !meta.is_column_null(row, column_index);
+                            let end = cached
+                                .build_row_offset
+                                .checked_add(width)
+                                .expect("fixed raw-cell offset overflow");
+                            (not_null, &row[cached.build_row_offset..end])
+                        });
+                    destination.append_raw_cells(cells);
+                    for cached in &mut self.cached_build_rows[..live] {
+                        cached.build_row_offset += width;
+                    }
+                } else {
+                    let mut cells: [&[u8]; BATCH_BUILD_ROW_SIZE] = [&[]; BATCH_BUILD_ROW_SIZE];
+                    let mut not_null = [false; BATCH_BUILD_ROW_SIZE];
+                    let mut advances = [0usize; BATCH_BUILD_ROW_SIZE];
+                    for (index, (row, cached)) in row_data[..live]
+                        .iter()
+                        .zip(self.cached_build_rows[..live].iter())
+                        .enumerate()
+                    {
+                        // Variable raw cells carry a native-endian length
+                        // prefix in the row table; the chunk stores only the
+                        // payload and appends the new end offset.
+                        let offset = cached.build_row_offset;
+                        let length_end = offset
+                            .checked_add(SIZE_OF_ELEMENT_SIZE)
+                            .expect("variable raw-cell length offset overflow");
+                        let length = u32::from_ne_bytes(
+                            row[offset..length_end]
+                                .try_into()
+                                .expect("four-byte variable cell length"),
+                        ) as usize;
+                        let end = length_end
+                            .checked_add(length)
+                            .expect("variable raw-cell offset overflow");
+                        cells[index] = &row[length_end..end];
+                        not_null[index] = !meta.is_column_null(row, column_index);
+                        advances[index] = end - offset;
+                    }
+                    destination.append_raw_cells(
+                        not_null[..live]
+                            .iter()
+                            .copied()
+                            .zip(cells[..live].iter().copied()),
+                    );
+                    for (cached, &advance) in self.cached_build_rows[..live]
+                        .iter_mut()
+                        .zip(&advances[..live])
+                    {
+                        cached.build_row_offset += advance;
+                    }
                 }
             } else {
                 // Not used downstream, so nothing is appended -- but the row

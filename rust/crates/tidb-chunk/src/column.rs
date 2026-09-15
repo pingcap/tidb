@@ -381,6 +381,47 @@ impl Column {
         }
     }
 
+    /// Appends already-sliced raw cells in one column-wide pass.
+    ///
+    /// Go's join reconstruction keeps the destination column append-only while
+    /// it visits a batch of build rows. Keep the backing vector and null
+    /// bitmap borrowed once for that same pass instead of re-entering the
+    /// single-cell `AppendCellFromRawData` path for every row.
+    pub fn append_raw_cells<'a, I>(&mut self, cells: I)
+    where
+        I: Iterator<Item = (bool, &'a [u8])> + Clone,
+    {
+        let fixed = self.is_fixed();
+        let Self {
+            data,
+            null_bitmap,
+            offsets,
+            length,
+            ..
+        } = self;
+        let appended = data.append_owned(|data| {
+            for (not_null, cell) in cells.clone() {
+                append_null_bit(null_bitmap, *length, not_null);
+                data.extend_from_slice(cell);
+                if !fixed {
+                    offsets.push(data.len() as i64);
+                }
+                *length += 1;
+            }
+        });
+        if appended {
+            return;
+        }
+        for (not_null, cell) in cells {
+            append_null_bit(null_bitmap, *length, not_null);
+            data.extend_from_slice(cell);
+            if !fixed {
+                offsets.push(data.len() as i64);
+            }
+            *length += 1;
+        }
+    }
+
     /// Go `reset` (lowercase): drop all rows but keep the element type. A
     /// var-length column keeps its leading `0` offset.
     pub fn reset(&mut self) {
