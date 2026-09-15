@@ -166,16 +166,63 @@ func TestExternalHashAgg(t *testing.T) {
 			}
 		})
 	}
+	t.Run("batched_spill", func(t *testing.T) {
+		rows := make([][]types.Datum, 8192)
+		for i := range rows {
+			rows[i] = []types.Datum{types.NewIntDatum(int64(i)), types.NewIntDatum(1)}
+		}
+		sctx, source, schema, descs, groups := externalAggTestInput(t, aggregation.CompleteMode, rows)
+		sctx.GetSessionVars().MaxChunkSize = 8
+		e, err := NewExternalHashAgg(sctx, schema, 3, source, descs, groups, objstore.NewMemStorage(), "batched", 16<<20)
+		require.NoError(t, err)
+		ctx := context.Background()
+		require.NoError(t, e.Open(ctx))
+		defer func() { require.NoError(t, e.Close()) }()
+		require.NoError(t, e.readInput(ctx))
+		require.NoError(t, e.spill(ctx))
+		e.drained = true
+		files := 0
+		for _, count := range e.fileCounts {
+			files += count
+		}
+		// Several SQL chunks per partition fit in one storage object.
+		require.LessOrEqual(t, files, externalAggPartitions)
+		seen := make(map[int64]bool, len(rows))
+		out := chunk.New(e.RetFieldTypes(), 8, 8)
+		for {
+			require.NoError(t, e.Next(ctx, out))
+			if out.NumRows() == 0 {
+				break
+			}
+			for i := range out.NumRows() {
+				row := out.GetRow(i)
+				id := row.GetInt64(0)
+				require.False(t, seen[id])
+				seen[id] = true
+				require.EqualValues(t, 1, row.GetInt64(1))
+				require.Zero(t, row.GetMyDecimal(2).Compare(types.NewDecFromInt(1)))
+			}
+		}
+		require.Len(t, seen, len(rows))
+		require.LessOrEqual(t, e.tracker.MaxConsumed(), e.memoryLimit)
+	})
 }
 
 type externalAggFailStore struct {
 	storeapi.Storage
-	writeErr, readErr error
+	writeErr, readErr           error
+	writeStarted, writeFinished chan struct{}
 }
 
 func (s *externalAggFailStore) WriteFile(ctx context.Context, name string, data []byte) error {
 	if s.writeErr != nil {
 		return s.writeErr
+	}
+	if s.writeStarted != nil {
+		s.writeStarted <- struct{}{}
+		<-ctx.Done()
+		s.writeFinished <- struct{}{}
+		return ctx.Err()
 	}
 	return s.Storage.WriteFile(ctx, name, data)
 }
@@ -292,6 +339,40 @@ func TestExternalHashAggCloseDuringNext(t *testing.T) {
 		t.Fatal("Close failed to cancel reader")
 	}
 	require.ErrorIs(t, <-done, context.Canceled)
+	t.Run("spill", func(t *testing.T) {
+		rows := make([][]types.Datum, 1000)
+		for i := range rows {
+			rows[i] = []types.Datum{types.NewIntDatum(int64(i)), types.NewIntDatum(1)}
+		}
+		sctx, source, schema, descs, groups := externalAggTestInput(t, aggregation.CompleteMode, rows)
+		store := &externalAggFailStore{
+			Storage:      objstore.NewMemStorage(),
+			writeStarted: make(chan struct{}, 16), writeFinished: make(chan struct{}, 16),
+		}
+		e, err := NewExternalHashAgg(sctx, schema, 3, source, descs, groups, store, "cancel-spill", 64<<10)
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, e.Open(ctx))
+		defer func() { require.NoError(t, e.Close()) }()
+		done := make(chan error, 1)
+		go func() { done <- e.Next(ctx, chunk.New(e.RetFieldTypes(), 32, 32)) }()
+		for range 2 {
+			select {
+			case <-store.writeStarted:
+			case <-ctx.Done():
+				t.Fatal("concurrent uploads did not start")
+			}
+		}
+		require.NoError(t, e.Close())
+		require.ErrorIs(t, <-done, context.Canceled)
+		writes := 0
+		for _, count := range e.fileCounts {
+			writes += count
+		}
+		require.Equal(t, writes, len(store.writeFinished), "Close must join all attempted uploads")
+		require.Zero(t, e.tracker.BytesConsumed())
+	})
 }
 
 func TestExternalHashAggCollationSpill(t *testing.T) {
