@@ -111,6 +111,12 @@ func TestEngineManager(t *testing.T) {
 	err = local.SetTSBeforeImportEngine(canceledCtx, engine1ID, 0)
 	require.ErrorIs(t, err, context.Canceled)
 	require.NotErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+	nonRetryablePDCli := &mockPdClient{tsErrors: []error{errors.New("invalid TSO request")}}
+	local.pdCli = nonRetryablePDCli
+	err = local.SetTSBeforeImportEngine(ctx, engine1ID, 0)
+	require.ErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+	require.ErrorContains(t, err, "after 1 attempts")
+	require.Equal(t, int64(1), nonRetryablePDCli.tsCalls.Load())
 	// close non-existent engine
 	require.ErrorContains(t, em.closeEngine(ctx, &backend.EngineConfig{}, uuid.New()), "does not exist")
 
