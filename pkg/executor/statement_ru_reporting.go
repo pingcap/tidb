@@ -178,30 +178,6 @@ func (report *statementRUFullReport) addStatementUnits(units ruv2.StmtUnits) {
 	}
 }
 
-// statementRUSQLTypeForPlan classifies a successfully calculated statement by
-// its executed plan. Prepared statements have already been unwrapped, and the
-// type is independent of affected rows or whether a transaction wrote any keys.
-func statementRUSQLTypeForPlan(plan base.Plan) string {
-	switch plan := plan.(type) {
-	case *physicalop.Insert:
-		if plan.IsReplace {
-			return "replace"
-		}
-		return "insert"
-	case *physicalop.Update:
-		return "update"
-	case *physicalop.Delete:
-		return "delete"
-	case *plannercore.Analyze:
-		return "analyze"
-	case *plannercore.Simple:
-		// COMMIT is the only supported Simple plan.
-		return "commit"
-	default:
-		return "select"
-	}
-}
-
 func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
 	for engine, operators := range finalized.report.units {
 		for operator, units := range operators {
