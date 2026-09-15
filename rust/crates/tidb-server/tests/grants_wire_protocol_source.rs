@@ -161,12 +161,36 @@ fn try_authenticate_with_plugin(
 /// secure-transport gate before it calls `handleAuthPlugin`. Skip-grant-table
 /// does not weaken that ordering: a client offering another plugin must see
 /// 3159 directly, never an AuthSwitchRequest first.
+/// Restores the process-wide `require_secure_transport` policy when the test
+/// ends. The policy lives in one process atomic
+/// (`tidb_util::tls::REQUIRE_SECURE_TRANSPORT`) that
+/// `ConfiguredUserStore::authenticate` reads for EVERY login in this test
+/// binary, so a test that enables it must undo its own enable -- otherwise
+/// every later plaintext-login test in the shared process sees errno 3159.
+struct RestoreRequireSecureTransport(bool);
+
+impl RestoreRequireSecureTransport {
+    fn snapshot() -> Self {
+        Self(tidb_util::tls::REQUIRE_SECURE_TRANSPORT.load(
+            std::sync::atomic::Ordering::SeqCst,
+        ))
+    }
+}
+
+impl Drop for RestoreRequireSecureTransport {
+    fn drop(&mut self) {
+        tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+            .store(self.0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 #[test]
 fn skip_grant_table_still_rejects_insecure_transport_before_auth_switch() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users().with_skip_grant_table(true));
+    let _restore_transport = RestoreRequireSecureTransport::snapshot();
     store
         .global_vars()
         .set("require_secure_transport", "ON".to_owned())

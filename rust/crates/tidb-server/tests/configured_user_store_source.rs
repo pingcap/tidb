@@ -39,6 +39,29 @@ const SOURCE_SALT: [u8; 20] = [
     85, 92, 45, 22, 58, 79, 107, 6, 122, 125, 58, 80, 12, 90, 103, 32, 90, 10, 74, 82,
 ];
 
+/// Restores the process-wide `require_secure_transport` policy when the test
+/// ends. The policy lives in one process atomic
+/// (`tidb_util::tls::REQUIRE_SECURE_TRANSPORT`) that
+/// `ConfiguredUserStore::authenticate` reads for EVERY login in this test
+/// binary, so a test that enables it must undo its own enable -- otherwise
+/// every later plaintext-login test in the shared process sees errno 3159.
+struct RestoreRequireSecureTransport(bool);
+
+impl RestoreRequireSecureTransport {
+    fn snapshot() -> Self {
+        Self(tidb_util::tls::REQUIRE_SECURE_TRANSPORT.load(
+            std::sync::atomic::Ordering::SeqCst,
+        ))
+    }
+}
+
+impl Drop for RestoreRequireSecureTransport {
+    fn drop(&mut self) {
+        tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+            .store(self.0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 #[test]
 fn strict_file_load_authenticates_the_most_specific_canonical_host() {
     let file = AuthFile::new(&format!(
@@ -94,6 +117,7 @@ fn skip_grant_table_bypasses_rows_and_passwords_but_not_secure_transport() {
         ConfiguredUserStore::parse(&format!("alice\t%\tmysql_native_password\t{ABC_HASH}\n"))
             .expect("catalog")
             .with_skip_grant_table(true);
+    let _restore_transport = RestoreRequireSecureTransport::snapshot();
     store
         .global_vars()
         .set("require_secure_transport", "ON".to_owned())

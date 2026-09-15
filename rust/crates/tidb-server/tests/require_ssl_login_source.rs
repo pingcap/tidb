@@ -250,6 +250,29 @@ fn login_over_tls(address: SocketAddr, cert_path: &Path, user: &str, password: &
 /// An account with `REQUIRE SSL` is refused over plaintext and admitted over
 /// TLS, with the same password both times -- which is what makes this a test
 /// of the transport rule and not of the password.
+/// Restores the process-wide `require_secure_transport` policy when the test
+/// ends. The policy lives in one process atomic
+/// (`tidb_util::tls::REQUIRE_SECURE_TRANSPORT`) that
+/// `ConfiguredUserStore::authenticate` reads for EVERY login in this test
+/// binary, so a test that enables it must undo its own enable -- otherwise
+/// every later plaintext-login test in the shared process sees errno 3159.
+struct RestoreRequireSecureTransport(bool);
+
+impl RestoreRequireSecureTransport {
+    fn snapshot() -> Self {
+        Self(tidb_util::tls::REQUIRE_SECURE_TRANSPORT.load(
+            std::sync::atomic::Ordering::SeqCst,
+        ))
+    }
+}
+
+impl Drop for RestoreRequireSecureTransport {
+    fn drop(&mut self) {
+        tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+            .store(self.0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 #[test]
 fn a_require_ssl_account_is_refused_in_the_clear_and_admitted_over_tls() {
     let server = serve("require-ssl", store(GlobalSysvars::default()));
@@ -290,6 +313,7 @@ fn an_ordinary_account_still_logs_in_over_plaintext() {
 #[test]
 fn require_secure_transport_refuses_every_plaintext_login() {
     let global_vars = GlobalSysvars::default();
+    let _restore_transport = RestoreRequireSecureTransport::snapshot();
     global_vars
         .set("require_secure_transport", "ON".to_owned())
         .expect("the sysvar exists and takes ON");
