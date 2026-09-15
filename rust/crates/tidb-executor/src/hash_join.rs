@@ -918,6 +918,114 @@ pub(crate) fn row_hash_chunk(
     Ok(Some(encoded.finish()))
 }
 
+/// Hashes a chunk's numeric key columns in Go's column-major order while
+/// retaining the byte framing used by [`row_hash_chunk`]. The FNV state still
+/// belongs to each logical row, but each key column is resolved once and then
+/// scanned across the whole batch, so fixed-width reads do not rebuild a row
+/// cursor for every key part.
+///
+/// `None` means that one of the key columns needs the general datum path
+/// (currently hybrid integer and string columns). Callers can then fall back
+/// to [`row_hash_chunk`] without changing the accepted key domain.
+pub(crate) fn row_hash_chunk_batched(
+    chunk: &Chunk,
+    keys: &[EquiKey],
+    types: &[FieldType],
+    offset: impl Fn(&EquiKey) -> usize,
+    selected: &[bool],
+) -> Result<Option<Vec<Option<u64>>>, KeyError> {
+    for key in keys {
+        let at = offset(key);
+        let field_type = types.get(at).ok_or(KeyError)?;
+        let supported = match key.class {
+            KeyClass::Int => !field_type.is_hybrid(),
+            KeyClass::Real => matches!(
+                field_type.code(),
+                tidb_datatype::FieldTypeCode::Float | tidb_datatype::FieldTypeCode::Double
+            ),
+            KeyClass::Decimal => is_decimal_cell(field_type),
+            KeyClass::Str(_) => false,
+        };
+        if !supported {
+            return Ok(None);
+        }
+    }
+
+    let rows = chunk.num_rows();
+    let selection = chunk.sel();
+    let mut hashers = (0..rows)
+        .map(|_| FastBytesHasher::default())
+        .collect::<Vec<_>>();
+    let mut active = vec![true; rows];
+    if !selected.is_empty() {
+        for row_idx in 0..rows {
+            if !selected[row_idx] {
+                active[row_idx] = false;
+            }
+        }
+    }
+
+    for key in keys {
+        let at = offset(key);
+        let field_type = types.get(at).ok_or(KeyError)?;
+        let column = chunk.column(at);
+        for row_idx in 0..rows {
+            if !active[row_idx] {
+                continue;
+            }
+            let physical_row = selection.map_or(row_idx, |selection| selection[row_idx]);
+            if column.is_null(physical_row) {
+                if key.null_safe {
+                    hashers[row_idx].write(&u64::MAX.to_be_bytes());
+                } else {
+                    active[row_idx] = false;
+                }
+                continue;
+            }
+            match key.class {
+                KeyClass::Int => {
+                    hashers[row_idx].write(&16u64.to_be_bytes());
+                    let value = if field_type.is_unsigned() {
+                        i128::from(column.get_uint64(physical_row))
+                    } else {
+                        i128::from(column.get_int64(physical_row))
+                    };
+                    hashers[row_idx].write(&value.to_be_bytes());
+                }
+                KeyClass::Real => {
+                    let value = if field_type.code() == tidb_datatype::FieldTypeCode::Float {
+                        f64::from(column.get_float32(physical_row))
+                    } else {
+                        column.get_float64(physical_row)
+                    };
+                    if value.is_nan() {
+                        active[row_idx] = false;
+                        continue;
+                    }
+                    hashers[row_idx].write(&8u64.to_be_bytes());
+                    hashers[row_idx].write(&(if value == 0.0 { 0.0 } else { value }).to_be_bytes());
+                }
+                KeyClass::Decimal => {
+                    let part = column
+                        .get_my_decimal(physical_row)
+                        .to_hash_key()
+                        .map_err(|_| KeyError)?;
+                    hashers[row_idx].write(&(part.len() as u64).to_be_bytes());
+                    hashers[row_idx].write(&part);
+                }
+                KeyClass::Str(_) => unreachable!("string keys are filtered above"),
+            }
+        }
+    }
+    Ok(Some(
+        hashers
+            .into_iter()
+            .zip(active)
+            .map(|(hasher, active)| active.then(|| hasher.finish()))
+            .collect(),
+    ))
+}
+
 /// Whether a chunk column stores Go `MyDecimal` cells, so a decimal join key
 /// can be read as one instead of through a datum.
 fn is_decimal_cell(field_type: &FieldType) -> bool {
@@ -1251,6 +1359,12 @@ impl BuildTable {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(bitmap);
         }
+        let batched_hashes = if exact_int.is_none() {
+            row_hash_chunk_batched(&chunk, keys, types, |key| offset(key), selected)
+                .map_err(|_| BuildError::Key)?
+        } else {
+            None
+        };
         let chains = &mut self.chains;
         let buckets = &mut self.buckets;
         let mut exact_buckets = self.exact_int_buckets.as_mut();
@@ -1258,12 +1372,12 @@ impl BuildTable {
             if !selected.is_empty() && !selected[row_idx] {
                 continue;
             }
-            let chunk_row = chunk.get_row(row_idx);
             // An ordinary equality key containing NULL is not indexed. A
             // NULL-safe key is indexed under row_key's dedicated NULL
             // identity, matching Go's `ignoreNulls[keyIdx]` path. Every row
             // is still stored because the container owns the build data.
             if let Some(exact_key) = exact_int {
+                let chunk_row = chunk.get_row(row_idx);
                 if let Some(key) =
                     exact_int_key_chunk(chunk_row, offset(exact_key), &types[offset(exact_key)])
                 {
@@ -1289,8 +1403,11 @@ impl BuildTable {
                 }
                 continue;
             }
-            let key = row_hash_chunk(keys, chunk_row, types, |key| offset(key))
-                .map_err(|_| BuildError::Key)?;
+            let key = match batched_hashes.as_ref() {
+                Some(hashes) => hashes[row_idx],
+                None => row_hash_chunk(keys, chunk.get_row(row_idx), types, |key| offset(key))
+                    .map_err(|_| BuildError::Key)?,
+            };
             if let Some(key) = key {
                 let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
                 let pointer = RowPtr { chk_idx, row_idx };

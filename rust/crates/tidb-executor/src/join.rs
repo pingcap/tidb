@@ -155,7 +155,8 @@
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::{
     equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, row_hash, row_hash_chunk,
-    row_key, row_key_by, BuildError, BuildTable, Chain, EquiKey, FastBytesMap, KeyClass, KeyError,
+    row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable, Chain, EquiKey,
+    FastBytesMap, KeyClass, KeyError,
 };
 use crate::mem_quota::StatementMemory;
 mod index_hash;
@@ -3966,15 +3967,24 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         } else {
             // Keep the row loop shared with the exact path. The table lookup
             // fills this vector only for exact keys; a general hash key gets
-            // its candidate chain from `row_hash_chunk` below.
+            // its candidate chain from the batched key pass below.
             exact_found.resize(input.num_rows(), None);
         }
+        let batched_hashes = if exact_int.is_none() {
+            row_hash_chunk_batched(&input, keys, probe_types, offset, &[]).map_err(key_error)?
+        } else {
+            None
+        };
         for probe_index in 0..input.num_rows() {
             let found = exact_found[probe_index];
             let probe_row = input.get_row(probe_index);
             candidates.clear();
             if exact_int.is_some() {
                 candidates.extend(table.exact_int_chain(found));
+            } else if let Some(hashes) = batched_hashes.as_ref() {
+                if let Some(key) = hashes[probe_index] {
+                    candidates.extend(table.probe(key));
+                }
             } else if let Some(key) =
                 row_hash_chunk(keys, probe_row, probe_types, offset).map_err(key_error)?
             {
