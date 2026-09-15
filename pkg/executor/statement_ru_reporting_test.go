@@ -46,7 +46,8 @@ func requireStatementRUReportConservation(t *testing.T, finalized statementRUFin
 	require.Equal(t, finalized.units, total)
 	require.InDelta(t, finalized.engineRU.TiDB, engineRU[statementRUTiDB], 1e-9)
 	require.InDelta(t, finalized.engineRU.TiKV, engineRU[statementRUTiKV], 1e-9)
-	require.InDelta(t, finalized.result.TotalRU, finalized.engineRU.TiDB+finalized.engineRU.TiKV, 1e-9)
+	require.InDelta(t, finalized.engineRU.TiFlash, engineRU[statementRUTiFlash], 1e-9)
+	require.InDelta(t, finalized.result.TotalRU, finalized.engineRU.TiDB+finalized.engineRU.TiKV+finalized.engineRU.TiFlash, 1e-9)
 }
 
 func TestStatementRUReportingModes(t *testing.T) {

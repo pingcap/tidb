@@ -134,3 +134,28 @@ func TestStmtUnitsArithmetic(t *testing.T) {
 		t.Fatalf("StmtUnits.Sub() = %+v, want %+v", got, left)
 	}
 }
+
+func TestCrossAZNetwork(t *testing.T) {
+	units := StmtUnits{NetBytes: 150, CrossAZNetBytes: 50}
+	weights := DefaultWeights()
+	result, ok := Calculate(units, weights)
+	if !ok || result.TotalRU != 150 {
+		t.Fatalf("default: %+v, %v", result, ok)
+	}
+	weights.CrossAZNetByte = 2
+	result, ok = Calculate(units, weights)
+	if !ok || result.TotalRU != 250 {
+		t.Fatalf("cross-AZ: %+v, %v", result, ok)
+	}
+	if !units.Add(units).Sub(units).Valid() || units.Add(units).Sub(units) != units {
+		t.Fatal("network unit arithmetic")
+	}
+	units.CrossAZNetBytes = 151
+	if units.Valid() {
+		t.Fatal("cross-AZ is a subset of total network bytes")
+	}
+	weights.CrossAZNetByte = -1
+	if _, ok := Calculate(StmtUnits{}, weights); ok {
+		t.Fatal("negative cross-AZ weight")
+	}
+}

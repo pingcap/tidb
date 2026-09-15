@@ -40,17 +40,18 @@ import (
 )
 
 // GenSelectResultFromMPPResponse generates an iterator from response.
-func GenSelectResultFromMPPResponse(dctx *distsqlctx.DistSQLContext, fieldTypes []*types.FieldType, planIDs []int, rootID int, resp kv.Response) SelectResult {
+func GenSelectResultFromMPPResponse(dctx *distsqlctx.DistSQLContext, fieldTypes []*types.FieldType, planIDs []int, rootID int, resp kv.Response, reportsDirectly func() bool) SelectResult {
 	// TODO: Add metric label and set open tracing.
 	return &selectResult{
-		label:      "mpp",
-		resp:       resp,
-		rowLen:     len(fieldTypes),
-		fieldTypes: fieldTypes,
-		ctx:        dctx,
-		copPlanIDs: planIDs,
-		rootPlanID: rootID,
-		storeType:  kv.TiFlash,
+		label:              "mpp",
+		resp:               resp,
+		rowLen:             len(fieldTypes),
+		fieldTypes:         fieldTypes,
+		ctx:                dctx,
+		copPlanIDs:         planIDs,
+		rootPlanID:         rootID,
+		storeType:          kv.TiFlash,
+		mppReportsDirectly: reportsDirectly,
 	}
 }
 
