@@ -1250,6 +1250,73 @@ fn modify_column_option_charset_and_references_match_go() {
     );
 }
 
+/// Go `checkModifyTypes` always applies `checkModifyCharsetAndCollation`.
+/// A binary-charset `VARCHAR` renders as `VARBINARY`; accepting a later text
+/// charset would reinterpret its bytes and mutate the schema even though Go
+/// refuses each conversion with 8200.
+#[test]
+fn modify_column_refuses_binary_charset_conversion_without_mutation() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    run_create_table_on(
+        "create table binary_column (a varchar(10) character set binary)",
+        &mut catalog,
+    )
+    .expect("create binary-charset source");
+
+    for (charset, collation) in [
+        ("utf8", "utf8_bin"),
+        ("utf8mb4", "utf8mb4_bin"),
+        ("latin1", "latin1_bin"),
+    ] {
+        let sql = format!(
+            "alter table binary_column modify column a varchar(10) character set {charset} collate {collation}"
+        );
+        let error = ddl::run_alter_table_in(&sql, &mut catalog, "test", &ctx)
+            .expect_err("Go refuses a binary-to-text charset conversion")
+            .to_mysql_error();
+        assert_eq!(error.code, 8200, "{sql}: {}", error.message);
+        assert_eq!(
+            error.message,
+            format!("Unsupported modify charset from binary to {charset}"),
+            "{sql}"
+        );
+
+        let stored = column(&catalog, "test", "binary_column", "a");
+        assert_eq!(stored.field_type.charset_name(), "binary", "{sql}");
+        assert_eq!(stored.field_type.collation_name(), "binary", "{sql}");
+    }
+
+    // The adjacent widening Go permits remains admitted.
+    run_create_table_on(
+        "create table latin1_column (a varchar(10) character set latin1)",
+        &mut catalog,
+    )
+    .expect("create latin1 source");
+    ddl::run_alter_table_in(
+        "alter table latin1_column modify column a varchar(10) character set utf8mb4",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect("Go permits latin1 to utf8mb4");
+
+    // An actual row reorganization may perform the otherwise unsupported
+    // charset change while it converts between VARCHAR and CHAR.
+    run_create_table_on(
+        "create table binary_reorg (a varchar(10) character set binary)",
+        &mut catalog,
+    )
+    .expect("create binary reorganization source");
+    ddl::run_alter_table_in(
+        "alter table binary_reorg modify column a char(5) character set utf8mb4",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect("Go permits the charset change during a row reorganization");
+}
+
 // --- go-parity-gap documentaries -------------------------------------------------
 
 // go-parity-gap: needs the afterRunOneJobStep failpoint to strip a job's

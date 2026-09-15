@@ -2943,6 +2943,104 @@ fn check_type_change_supported(origin: &FieldType, to: &FieldType) -> Result<(),
     Ok(())
 }
 
+/// Go `types.CheckModifyTypeCompatible`'s `canReorg` result for a supported
+/// type pair. `checkModifyTypes` uses this bit to distinguish an unsupported
+/// metadata-only charset change from a charset change that the row rewrite
+/// can perform while converting the type.
+fn modify_type_needs_reorganization(origin: &FieldType, to: &FieldType) -> bool {
+    if origin.code() == to.code() {
+        if matches!(origin.code(), FieldTypeCode::Enum | FieldTypeCode::Set) {
+            let old = origin.elems_snapshot();
+            let new = to.elems_snapshot();
+            if new.len() < old.len() || !new.starts_with(&old) {
+                return true;
+            }
+        }
+        if origin.code() == FieldTypeCode::NewDecimal
+            && (origin.flen() != to.flen()
+                || origin.decimal() != to.decimal()
+                || origin.is_unsigned() != to.is_unsigned())
+        {
+            return true;
+        }
+    } else if !(origin.code().is_string() && to.code().is_string()
+        || origin.code().is_integer_type() && to.code().is_integer_type())
+    {
+        return true;
+    }
+
+    if origin.code().converts_between_char_and_varchar(to.code()) {
+        return true;
+    }
+
+    let (mut old_flen, mut new_flen) = (origin.flen(), to.flen());
+    if origin.code().is_integer_type() && to.code().is_integer_type() {
+        old_flen = i64::from(origin.code().default_field_length_and_decimal().0);
+        new_flen = i64::from(to.code().default_field_length_and_decimal().0);
+    }
+    if new_flen > 0 && new_flen != old_flen {
+        if new_flen < old_flen {
+            return true;
+        }
+        if origin.code() == FieldTypeCode::String
+            && to.code() == FieldTypeCode::String
+            && origin.is_binary_string()
+            && to.is_binary_string()
+        {
+            return true;
+        }
+    }
+    (to.decimal() > 0 && to.decimal() < origin.decimal())
+        || origin.is_unsigned() != to.is_unsigned()
+}
+
+/// Go `checkModifyCharsetAndCollation`'s metadata-only charset/collation
+/// admission, reached from `checkModifyTypes` after type-pair validation and
+/// before the catalog or any row is changed. Indexed collation rewrites are a
+/// separate new-collation-mode concern; this guard closes the unsupported
+/// metadata reinterpretation regardless of that mode.
+fn check_modify_charset_and_collation(
+    origin: &FieldType,
+    to: &FieldType,
+    can_reorganize: bool,
+) -> Result<(), DriverError> {
+    let allowed = matches!(
+        (origin.charset_name(), to.charset_name()),
+        ("utf8", "utf8mb4") | ("utf8", "utf8") | ("utf8mb4", "utf8mb4") | ("latin1", "utf8mb4")
+    );
+    if allowed {
+        return Ok(());
+    }
+
+    let reason = if origin.charset_name() != to.charset_name() {
+        Some(format!(
+            "charset from {} to {}",
+            origin.charset_name(),
+            to.charset_name()
+        ))
+    } else if origin.collation_name() != to.collation_name() {
+        Some(format!(
+            "change collate from {} to {}",
+            origin.collation_name(),
+            to.collation_name()
+        ))
+    } else {
+        None
+    };
+    match reason {
+        Some(_)
+            if can_reorganize && origin.charset_name() != "gbk" && to.charset_name() != "gbk" =>
+        {
+            Ok(())
+        }
+        Some(reason) => Err(DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            message: format!("Unsupported modify {reason}"),
+        }),
+        None => Ok(()),
+    }
+}
+
 fn integer_type_widens(origin: &FieldType, to: &FieldType) -> bool {
     origin.code().is_type_integer()
         && to.code().is_type_integer()
@@ -3384,6 +3482,13 @@ fn modify_column_action(
         .auto_random()
         .is_some_and(|spec| spec.offset == offset);
     check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
+    let can_reorganize =
+        modify_type_needs_reorganization(&table.columns[offset].field_type, &field_type);
+    check_modify_charset_and_collation(
+        &table.columns[offset].field_type,
+        &field_type,
+        can_reorganize,
+    )?;
     if let Some(index_name) = table.partial_index_condition_dependency(old_name) {
         return Err(super::indexes::partial_index_column_dependency(
             old_name,
