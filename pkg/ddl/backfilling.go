@@ -316,17 +316,21 @@ type backfillWorker struct {
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
 	ctx      context.Context
-	cancel   func()
-	wg       *sync.WaitGroup
+	// resultCtx stays active when this worker is retired during a downscale, so
+	// the collector still receives the result of any task already in flight.
+	resultCtx context.Context
+	cancel    func()
+	wg        *sync.WaitGroup
 }
 
-func newBackfillWorker(ctx context.Context, bf backfiller) *backfillWorker {
+func newBackfillWorker(ctx, resultCtx context.Context, bf backfiller) *backfillWorker {
 	bfCtx, cancel := context.WithCancel(ctx)
 	return &backfillWorker{
 		backfiller: bf,
 		taskCh:     make(chan *reorgBackfillTask, 1),
 		resultCh:   make(chan *backfillResult, 1),
 		ctx:        bfCtx,
+		resultCtx:  resultCtx,
 		cancel:     cancel,
 	}
 }
@@ -428,7 +432,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 func (w *backfillWorker) sendResult(result *backfillResult) {
 	select {
-	case <-w.ctx.Done():
+	case <-w.resultCtx.Done():
 	case w.resultCh <- result:
 	}
 }
