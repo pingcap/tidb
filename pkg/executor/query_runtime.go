@@ -109,6 +109,9 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 	); err != nil {
 		return nil, err
 	}
+	if ret.IsStaleness {
+		return nil, errors.New("import query does not support stale reads")
+	}
 
 	seen := make(map[int64]bool)
 	for _, tableName := range nodeW.GetResolveContext().GetTableNames() {

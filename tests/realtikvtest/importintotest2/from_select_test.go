@@ -23,13 +23,25 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 )
 
-func (s *mockGCSSuite) TestImportFromSelectBasic() {
+func (s *mockGCSSuite) prepareImportFromSelect() {
+	s.tk = testkit.NewTestKit(s.T(), s.store)
 	s.prepareAndUseDB("from_select")
+	if kerneltype.IsNextGen() {
+		previousURI := vardef.CloudStorageURI.Load()
+		vardef.CloudStorageURI.Store(realtikvtest.GetNextGenObjStoreURI("from-select"))
+		s.T().Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+	}
+}
+
+func (s *mockGCSSuite) TestImportFromSelectBasic() {
+	s.prepareImportFromSelect()
 	s.tk.MustExec("create table src(id int, v varchar(64))")
 	s.tk.MustExec("create table dst(id int, v varchar(64))")
 	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
@@ -76,7 +88,7 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 }
 
 func (s *mockGCSSuite) TestImportFromSelectColumnList() {
-	s.prepareAndUseDB("from_select")
+	s.prepareImportFromSelect()
 	s.tk.MustExec("create table src(id int, a varchar(64))")
 	s.tk.MustExec("create table dst(id int auto_increment primary key, a varchar(64), b int default 10, c int)")
 	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
@@ -91,14 +103,14 @@ func (s *mockGCSSuite) TestImportFromSelectColumnList() {
 }
 
 func (s *mockGCSSuite) TestWriteAfterImportFromSelect() {
-	s.prepareAndUseDB("from_select")
+	s.prepareImportFromSelect()
 	s.tk.MustExec("create table dt(id int, v varchar(64))")
 	s.tk.MustExec("insert into dt values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
 	s.testWriteAfterImport(`import into t FROM select * from from_select.dt`, importer.DataSourceTypeQuery)
 }
 
 func (s *mockGCSSuite) TestImportFromSelectStaleRead() {
-	s.prepareAndUseDB("from_select")
+	s.prepareImportFromSelect()
 	// set tidb_snapshot might fail without this, not familiar about this part.
 	s.tk.MustExec(`replace into mysql.tidb(variable_name, variable_value) values ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800')`)
 	s.tk.MustExec("create table src(id int, v varchar(64))")
@@ -111,6 +123,10 @@ func (s *mockGCSSuite) TestImportFromSelectStaleRead() {
 	staleReadSQL := fmt.Sprintf("select * from src as of timestamp '%s'", now)
 	s.tk.MustQuery(staleReadSQL).Check(testkit.Rows("1 a"))
 	s.tk.MustExec("create table dst(id int, v varchar(64))")
+	if vardef.CloudStorageURI.Load() != "" {
+		s.ErrorContains(s.tk.ExecToErr("import into dst from "+staleReadSQL), "import query does not support stale reads")
+		return
+	}
 
 	//
 	// in below cases, dst table not exists at time 'now'
@@ -162,7 +178,7 @@ func (s *mockGCSSuite) TestImportFromSelectStaleRead() {
 }
 
 func (s *mockGCSSuite) TestCastNegativeToUnsigned() {
-	s.prepareAndUseDB("from_select")
+	s.prepareImportFromSelect()
 	s.tk.MustExec("create table dt(id int unsigned)")
 	s.ErrorContains(s.tk.ExecToErr("import into dt from select -1"), "constant -1 overflows int")
 	s.tk.MustExec("set sql_mode=''")
