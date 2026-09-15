@@ -3077,6 +3077,29 @@ impl KvTable {
     /// Compiles and records a partial-index predicate beside the index
     /// metadata. The predicate is evaluated for every backfill and row write;
     /// a false/NULL result means that row has no entry in the partial index.
+    /// Go `IndexInfo.ConditionExprString`: the partial-index predicate as
+    /// SHOW CREATE TABLE prints it, restored with Go's index-condition flags
+    /// (`RestoreStringSingleQuotes | RestoreKeyWordLowercase |
+    /// RestoreNameBackQuotes | RestoreSpacesAroundBinaryOperation |
+    /// RestoreWithoutSchemaName | RestoreWithoutTableName` in
+    /// `pkg/ddl/index.go::CheckAndBuildIndexConditionString`). `None` when the
+    /// index carries no predicate.
+    #[must_use]
+    pub fn partial_index_condition_string(&self, index_id: i64) -> Option<String> {
+        self.partial_index_conditions
+            .get(&index_id)
+            .map(|condition| {
+                condition.source.restore_with_flags(
+                    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
+                        | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
+                        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
+                        | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+                        | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
+                        | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME,
+                )
+            })
+    }
+
     pub(crate) fn add_partial_index_condition(
         &mut self,
         index_id: i64,

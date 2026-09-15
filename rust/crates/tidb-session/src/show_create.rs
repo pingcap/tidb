@@ -309,6 +309,9 @@ pub(super) fn show_create_table_text(
         if index.name.eq_ignore_ascii_case("PRIMARY") && primary_emitted_from_handles {
             continue;
         }
+        // Go `show.go`: a partial index prints its stored condition
+        // (`ConditionExprString`) after the key parts.
+        let mut condition = table.partial_index_condition_string(index.id);
         let columns = index
             .column_offsets
             .iter()
@@ -333,6 +336,11 @@ pub(super) fn show_create_table_text(
         } else {
             format!("  KEY {} ({columns})", escape_name(&index.name))
         };
+        // Go `show.go`: a partial index prints its stored condition right
+        // after the key parts, before the visibility and comment suffixes.
+        if let Some(restored) = condition.as_deref() {
+            clause.push_str(&format!(" WHERE {restored}"));
+        }
         if !index.visible {
             clause.push_str(" /*!80000 INVISIBLE */");
         }

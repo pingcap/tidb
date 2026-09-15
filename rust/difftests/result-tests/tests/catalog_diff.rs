@@ -454,7 +454,7 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// 28 -> 27 at the merge with the `SHARD_ROW_ID_BITS` line of work: the
 /// `SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3` read agrees now. Compare count
 /// unchanged at 307; the floor rose with it.
-const KNOWN_CATALOG_DIVERGENCES: usize = 14;
+const KNOWN_CATALOG_DIVERGENCES: usize = 11;
 
 /// Exact lower bound for definitions already matching TiDB.
 // 257 -> 259: the partition clause of `SHOW CREATE TABLE` now matches Go's
@@ -534,7 +534,16 @@ const MATCHED_FLOOR: usize = 333;
 // the view `Name_exp_*` naming, `AUTO_INCREMENT=`, partial-index WHERE,
 // case-sensitive information_schema reads, `desc`-view nullability, the
 // latin1 `varbinary` charset resolution and `tidb_index_usage` gaps.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 11_403_873_438_976_122_415;
+//
+// 14 -> 13: PRE_SPLIT_REGIONS is clamped to the table's sharding bit count
+// (Go `create_table.go:1019-1022`), so the AUTO_RANDOM table created with
+// PRE_SPLIT_REGIONS=4 reads back Go's PRE_SPLIT_REGIONS=2.
+//
+// 13 -> 11: both partial-index reads now print their stored predicate --
+// SHOW CREATE TABLE renders ` WHERE <restored condition>` from the same
+// index-condition flags Go's `CheckAndBuildIndexConditionString` restores
+// with (`_utf8mb4'100'` for the varchar case included).
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 10_012_683_786_986_185_662;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.

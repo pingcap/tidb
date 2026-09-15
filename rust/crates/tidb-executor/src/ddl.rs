@@ -1723,6 +1723,18 @@ pub fn run_create_table_in(
             table.init_auto_id_cache(cache);
         }
     }
+    // Go `create_table.go:1019-1022`: PRE_SPLIT_REGIONS is clamped to the
+    // table's sharding bit count (SHARD_ROW_ID_BITS, else AUTO_RANDOM's shard
+    // bits) -- an AUTO_RANDOM(2) table created with PRE_SPLIT_REGIONS=4 stores
+    // and shows 2.
+    let sharding_bits = if table.shard_row_id_bits() > 0 {
+        table.shard_row_id_bits()
+    } else {
+        table.auto_random().map(|spec| spec.shard_bits).unwrap_or(0)
+    };
+    if table.pre_split_regions() > sharding_bits {
+        table.set_pre_split_regions(sharding_bits);
+    }
     let (indexes, hidden_columns, partial_conditions) = table_indexes(
         create,
         &columns,
