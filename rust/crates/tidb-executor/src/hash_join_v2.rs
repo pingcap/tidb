@@ -976,8 +976,11 @@ fn collect_outer_join_candidates(
             base.set_current_probe_row(probe_row + 1);
         } else {
             let hash = base.matched_rows_hash_value()[probe_row];
+            let partition =
+                crate::row_table_builder::generate_partition_index(hash, ctx.partition_mask_offset)
+                    as usize;
             let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-            let build_row = ctx.hash_table.row_bytes(address);
+            let build_row = ctx.hash_table.row_bytes_in_partition(partition, address);
             if is_key_matched(
                 ctx.meta.key_mode,
                 &base.serialized_keys()[probe_row],

@@ -517,6 +517,25 @@ impl HashTableV2 {
         )
     }
 
+    /// Resolves a row handle when the owning partition is already known.
+    ///
+    /// Go's probe chain walks keep the partition selected from the probe hash
+    /// and dereference the build row directly. Reuse that partition here so
+    /// each candidate does not decode it and repeat the table lookup.
+    #[inline]
+    pub(crate) fn row_bytes_in_partition(&self, partition: usize, address: usize) -> &[u8] {
+        let slot = (address >> self.row_offset_bits) - 1;
+        let segment = slot & self.segment_mask;
+        let row = (address & self.row_offset_mask) / 8;
+        let segment = &self.tables[partition]
+            .as_ref()
+            .expect("sub table of a built partition")
+            .row_data
+            .segments[segment];
+        let offset = segment.row_start_offset[row] as usize;
+        &segment.raw_data[offset..]
+    }
+
     /// Go setUsedFlag: each row owns an atomic flag, with no shared set.
     #[inline]
     pub fn mark_build_row_matched(&self, address: usize) {
