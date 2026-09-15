@@ -17,11 +17,16 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"math"
+	"net"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -49,6 +54,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestDoneTaskKeeper(t *testing.T) {
@@ -98,6 +105,21 @@ func TestBackfillRetryableErrors(t *testing.T) {
 	t.Run("confirmed insufficient local-sort disk is not retryable", func(t *testing.T) {
 		err := dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space")
 		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("modify column retries transient connection errors", func(t *testing.T) {
+		retryableErrs := []error{
+			driver.ErrBadConn,
+			gmysql.ErrInvalidConn,
+			&net.OpError{Op: "read", Err: &os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET}},
+			status.Error(codes.Unavailable, "service unavailable"),
+		}
+		for _, err := range retryableErrs {
+			require.True(t, isRetryableModifyColumnReorgJobError(err, 0))
+			require.True(t, isRetryableModifyColumnReorgJobError(errors.Annotate(err, "wrapped"), 0))
+			require.False(t, isRetryableModifyColumnReorgJobError(err, vardef.GetDDLErrorCountLimit()-1))
+		}
+		require.False(t, isRetryableModifyColumnReorgJobError(errors.New("deterministic conversion error"), 0))
 	})
 }
 
