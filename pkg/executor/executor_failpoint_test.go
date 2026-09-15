@@ -90,6 +90,24 @@ func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
 	require.Equal(t, "false", rows[0][1])
 	require.Equal(t, "false", rows[0][2])
 
+	// Without metadata locks, async commit and 1PC cannot safely pass schema
+	// changes that happen before prewrite. They must fall back to 2PC.
+	tk.MustExec("set global tidb_enable_metadata_lock = off")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_metadata_lock = on")
+	})
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode')").Rows()
+	require.Equal(t, `"2pc"`, rows[0][0])
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 1")
+	tk.MustExec("update t set v = v + 1 where a = 1")
+	rows = tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode')").Rows()
+	require.Equal(t, `"2pc"`, rows[0][0])
+	tk.MustExec("set global tidb_enable_metadata_lock = on")
+
 	require.NoError(t, failpoint.Enable("tikvclient/invalidMaxCommitTS", "return"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/invalidMaxCommitTS"))
