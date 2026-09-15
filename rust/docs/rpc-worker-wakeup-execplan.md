@@ -42,6 +42,7 @@ Reduce synchronization and fragmented batching on the generic RPC-to-query respo
 - [x] Wire the existing native chunk/List Apply into the physical builder, remove the superseded one-row joiner executor and duplicate scalar filter, and validate child filtering, correlation cache and result continuation together.
 - [x] Borrow raw join-key column storage once per sizing/encoding pass, following Go's column access; validate serialized bytes, NULL discovery, selection and spill restore across owned/shared/frozen backing.
 - [x] Batch contiguous chunk range appends with exact capacity reservation and aligned NULL-bitmap copying; keep alias-overlap and arbitrary bitmap offsets on the source-equivalent safe path.
+- [x] Replace per-key index-hash `Vec` allocations with a contiguous linked outer-entry slab; retain the probe cursor across residual/output batches and validate grouped executor/distsql checks.
 
 ## Context and Source Evidence
 
@@ -259,6 +260,16 @@ The wider failures from the setup-cost milestone are resolved by the follow-up a
 
 ## Outcomes & Retrospective
 
+
+Index-hash outer-entry batching (2026-09-16): the unordered and ordered index-hash paths now store duplicate outer-key rows in one hash map plus a contiguous linked entry slab, matching Go's `unsafeHashTable`/`entryStore` ownership shape without a `Vec` allocation per hash key. The probe keeps an entry cursor across RequiredRows and residual-filter boundaries, resets it only when the inner row/window advances, and still verifies equality after hash collisions. Ordered preparation walks the same slab before releasing it; outer-row order and semi/anti match flags remain unchanged. This removes per-key allocator/hash-value indirection from the build and probe path; no workload benchmark or 25% gain is claimed.
+
+The focused index-hash matrix passes 10 tests, including duplicate keys, NULL-safe keys, injected collisions, residual candidate batching, incremental windows and worker/synchronous paths. Grouped package checks pass 30 distsql unit, 249 distsql integration, 1327 executor unit and 329 executor integration tests with no failures (`/private/tmp/index-hash-slab-grouped.log`). Repository lint and diff checks pass. The untracked `rust/docs/plan-cache-jit-design.md` remains excluded. Exact checks:
+
+    RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib index_hash_ -j12 -- --test-threads=12
+    RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-executor -p tidb-distsql --lib --test all -j12 --no-fail-fast -- --test-threads=12
+    make -j12 lint
+    rustfmt --check --edition 2021 --config skip_children=true rust/crates/tidb-executor/src/join/index_hash.rs
+    git diff --check
 
 Range-copy batching (2026-09-16): the existing `Chunk::append_range_from` path now reserves the exact null-bitmap, fixed/variable payload and offset deltas before copying. Equal source/destination bit alignment copies complete NULL-bitmap bytes in one slice operation; arbitrary alignment updates only the affected bits. Shared but distinct column owners hold one read/write borrow for the whole range, while true owner overlap retains the alias-safe row path. This keeps Go's physical-range and selection-ignoring semantics while removing repeated allocator growth and per-row storage-lock work from response, scan, limit, aggregate and join chunk folding. A fixed/variable, aligned/misaligned and shared-owner regression compares the resulting bitmap, offsets and bytes with cell-by-cell appends. No workload benchmark or 25% gain is claimed.
 

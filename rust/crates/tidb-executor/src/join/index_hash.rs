@@ -13,11 +13,100 @@
 
 use super::*;
 
-type OuterHash = std::collections::HashMap<
+type OuterHashMap = std::collections::HashMap<
     u64,
-    Vec<usize>,
+    OuterBucket,
     std::hash::BuildHasherDefault<crate::hash_join::IdentityU64Hasher>,
 >;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct OuterBucket {
+    first: Option<usize>,
+    last: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OuterEntry {
+    row: usize,
+    next: Option<usize>,
+}
+
+/// Go's `unsafeHashTable` equivalent for one index-hash task. Hash-map values
+/// name a chain in one contiguous slab, so duplicate keys do not allocate a
+/// separate `Vec` and the probe can retain its next entry across output
+/// requests.
+#[derive(Debug, Default)]
+struct OuterHash {
+    buckets: OuterHashMap,
+    entries: Vec<OuterEntry>,
+}
+
+impl OuterHash {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            buckets: OuterHashMap::with_capacity_and_hasher(
+                capacity,
+                std::hash::BuildHasherDefault::default(),
+            ),
+            entries: Vec::with_capacity(capacity),
+        }
+    }
+
+    fn insert(&mut self, hash: u64, row: usize) {
+        let entry_index = self.entries.len();
+        self.entries.push(OuterEntry { row, next: None });
+        match self.buckets.entry(hash) {
+            std::collections::hash_map::Entry::Occupied(mut bucket) => {
+                let bucket = bucket.get_mut();
+                let last = bucket.last.expect("outer hash bucket has a last entry");
+                self.entries[last].next = Some(entry_index);
+                bucket.last = Some(entry_index);
+            }
+            std::collections::hash_map::Entry::Vacant(bucket) => {
+                bucket.insert(OuterBucket {
+                    first: Some(entry_index),
+                    last: Some(entry_index),
+                });
+            }
+        }
+    }
+
+    fn first(&self, hash: u64) -> Option<usize> {
+        self.buckets.get(&hash).and_then(|bucket| bucket.first)
+    }
+
+    fn entry(&self, index: usize) -> OuterEntry {
+        self.entries[index]
+    }
+
+    fn rows(&self, hash: u64) -> OuterRows<'_> {
+        OuterRows {
+            entries: &self.entries,
+            next: self.first(hash),
+        }
+    }
+
+    fn memory_usage(&self) -> usize {
+        self.buckets.capacity() * (std::mem::size_of::<(u64, OuterBucket)>() + 1)
+            + self.entries.capacity() * std::mem::size_of::<OuterEntry>()
+    }
+}
+
+struct OuterRows<'a> {
+    entries: &'a [OuterEntry],
+    next: Option<usize>,
+}
+
+impl Iterator for OuterRows<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.next?;
+        let entry = self.entries[index];
+        self.next = entry.next;
+        Some(entry.row)
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct IndexHashOutput {
@@ -41,6 +130,7 @@ pub(super) struct IndexHashState {
     inner_chunk: usize,
     inner_row: usize,
     candidate: usize,
+    unordered_candidate_entry: Option<usize>,
     probe_hash: Option<Option<u64>>,
     outer_row: usize,
     scratch: Chunk,
@@ -180,7 +270,7 @@ impl IndexHashState {
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
     ) -> Result<Self, ExecError> {
-        let mut buckets = OuterHash::with_capacity_and_hasher(outer.len(), Default::default());
+        let mut buckets = OuterHash::with_capacity(outer.len());
         for index in 0..outer.len() {
             if let Some(hash) =
                 row_hash_chunk(keys, outer.row(index), output.outer_types(), |key| {
@@ -192,7 +282,7 @@ impl IndexHashState {
                 })
                 .map_err(key_error)?
             {
-                buckets.entry(hash).or_default().push(index);
+                buckets.insert(hash, index);
             }
         }
         let mut state = Self {
@@ -203,6 +293,7 @@ impl IndexHashState {
             inner_chunk: 0,
             inner_row: 0,
             candidate: 0,
+            unordered_candidate_entry: None,
             probe_hash: None,
             outer_row: 0,
             scratch: Chunk::new_with_capacity(&output.condition_types, 1),
@@ -243,7 +334,7 @@ impl IndexHashState {
                     else {
                         continue;
                     };
-                    for &at in self.buckets.get(&hash).into_iter().flatten() {
+                    for at in self.buckets.rows(hash) {
                         if output.equal(&self.keys, outer.row(at), row)? {
                             self.ordered.as_mut().expect("ordered variant")[at].push(ptr);
                         }
@@ -259,12 +350,7 @@ impl IndexHashState {
     }
 
     fn account(&mut self, memory: &StatementMemory) -> Result<(), ExecError> {
-        let bytes = self.buckets.capacity() * (size_of::<(u64, Vec<usize>)>() + 1)
-            + self
-                .buckets
-                .values()
-                .map(|v| v.capacity() * size_of::<usize>())
-                .sum::<usize>()
+        let bytes = self.buckets.memory_usage()
             + self.ordered.as_ref().map_or(0, |v| {
                 v.capacity() * size_of::<Vec<RowPtr>>()
                     + v.iter()
@@ -286,6 +372,7 @@ impl IndexHashState {
         self.inner_chunk = 0;
         self.inner_row = 0;
         self.candidate = 0;
+        self.unordered_candidate_entry = None;
         self.probe_hash = None;
         self.inner_done = done;
     }
@@ -309,6 +396,23 @@ impl IndexHashState {
         self.scratch.append_partial_row(0, left);
         self.scratch.append_partial_row(left.len(), right);
         self.candidate_outer.push(at);
+    }
+
+    /// Returns the next outer row for an unordered inner-row probe. The entry
+    /// cursor is retained across residual-filter and output-capacity batches;
+    /// `candidate == 0` distinguishes a fresh hash lookup from an exhausted
+    /// chain whose cursor is `None`.
+    fn next_unordered_candidate(&mut self, hash: Option<u64>) -> Option<usize> {
+        let hash = hash?;
+        let entry_index = if self.candidate == 0 {
+            self.buckets.first(hash)?
+        } else {
+            self.unordered_candidate_entry?
+        };
+        let entry = self.buckets.entry(entry_index);
+        self.unordered_candidate_entry = entry.next;
+        self.candidate += 1;
+        Some(entry.row)
     }
 
     fn filter_candidates<C: Columns>(
@@ -395,6 +499,9 @@ impl IndexHashState {
             if self.inner_row == inner.num_rows_of_chunk(self.inner_chunk) {
                 self.inner_chunk += 1;
                 self.inner_row = 0;
+                self.candidate = 0;
+                self.unordered_candidate_entry = None;
+                self.probe_hash = None;
                 continue;
             }
             let row = inner.get_row(RowPtr::new(self.inner_chunk as u32, self.inner_row as u32));
@@ -413,24 +520,19 @@ impl IndexHashState {
                     hash
                 }
             };
-            let at = hash
-                .and_then(|hash| self.buckets.get(&hash))
-                .and_then(|v| v.get(self.candidate))
-                .copied();
+            let at = self.next_unordered_candidate(hash);
             if let Some(at) = at {
                 if !output.conditions.is_empty() && !output.semi() {
                     self.scratch.reset();
                     self.candidate_outer.clear();
                     let budget = req.required_rows() - req.num_rows();
+                    if output.equal(&self.keys, outer.row(at), row)? {
+                        self.append_candidate(output, at, outer.row(at), row);
+                    }
                     while self.candidate_outer.len() < budget {
-                        let Some(at) = hash
-                            .and_then(|hash| self.buckets.get(&hash))
-                            .and_then(|v| v.get(self.candidate))
-                            .copied()
-                        else {
+                        let Some(at) = self.next_unordered_candidate(hash) else {
                             break;
                         };
-                        self.candidate += 1;
                         if output.equal(&self.keys, outer.row(at), row)? {
                             self.append_candidate(output, at, outer.row(at), row);
                         }
@@ -447,10 +549,10 @@ impl IndexHashState {
                     self.matched[at] = true;
                     output.matched(req, outer.row(at), row);
                 }
-                self.candidate += 1;
             } else {
                 self.inner_row += 1;
                 self.candidate = 0;
+                self.unordered_candidate_entry = None;
                 self.probe_hash = None;
             }
         }
@@ -861,7 +963,7 @@ mod tests {
                     .unwrap()
                     .unwrap();
                 // A deliberately colliding unequal row must not be matched.
-                state.buckets.get_mut(&hash).unwrap().push(3);
+                state.buckets.insert(hash, 3);
                 state
                     .prepare_ordered(&output, &outer, &inner, &memory)
                     .unwrap();
