@@ -123,6 +123,15 @@ func (p *HandParser) parseTableOption() *ast.TableOption {
 		} else if tok, ok := p.expectIdentLike(); ok {
 			opt.StrValue = tok.Lit
 		}
+	case storageClass:
+		// Yacc: STORAGE_CLASS EqOpt StringName — the value normalizes to upper
+		// case (IA, STANDARD, ...), matching upstream's strings.ToUpper($3).
+		p.next()
+		p.accept(eq)
+		opt.Tp = ast.TableOptionStorageClass
+		if tok, ok := p.acceptStringName(); ok {
+			opt.StrValue = strings.ToUpper(tok.Lit)
+		}
 	case comment, connection, password, encryption, secondaryEngineAttribute:
 		optTypes := map[int]ast.TableOptionType{
 			comment:                  ast.TableOptionComment,
