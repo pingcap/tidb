@@ -5427,6 +5427,8 @@ func TestPrivilege(t *testing.T) {
 		{"GRANT PROXY ON ''@'' TO 'root'@'localhost' WITH GRANT OPTION", true, "GRANT PROXY ON ``@`` TO `root`@`localhost` WITH GRANT OPTION"},
 		{"GRANT PROXY ON 'proxied_user' TO 'proxy_user1', 'proxy_user2'", true, "GRANT PROXY ON `proxied_user`@`%` TO `proxy_user1`@`%`, `proxy_user2`@`%`"},
 		{"grant grant option on *.* to u1", true, "GRANT GRANT OPTION ON *.* TO `u1`@`%`"}, // not typical syntax, but supported
+		{"GRANT OPERATE VIEW ON *.* TO 'dev1'@'localhost';", true, "GRANT OPERATE VIEW ON *.* TO `dev1`@`localhost`"},
+		{"GRANT SELECT, OPERATE VIEW ON mydb.* TO 'dev1'@'localhost';", true, "GRANT SELECT, OPERATE VIEW ON `mydb`.* TO `dev1`@`localhost`"},
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'LOCalhost';", true, "REVOKE ALL ON `db1`.* FROM `jeffrey`@`localhost`"},
@@ -5447,8 +5449,32 @@ func TestPrivilege(t *testing.T) {
 		{"REVOKE APPLICATION_PASSWORD_ADMIN,AUDIT_ADMIN ON *.* FROM 'root'@'localhost'", true, "REVOKE APPLICATION_PASSWORD_ADMIN, AUDIT_ADMIN ON *.* FROM `root`@`localhost`"},
 		{"revoke all privileges, grant option from u1", true, "REVOKE ALL, GRANT OPTION ON *.* FROM `u1`@`%`"},                             // special case syntax
 		{"revoke all privileges, grant option from u1, u2, u3", true, "REVOKE ALL, GRANT OPTION ON *.* FROM `u1`@`%`, `u2`@`%`, `u3`@`%`"}, // special case syntax
+		{"REVOKE OPERATE VIEW ON *.* FROM 'dev1'@'localhost';", true, "REVOKE OPERATE VIEW ON *.* FROM `dev1`@`localhost`"},
 	}
 	RunTest(t, table, false, false)
+}
+
+// TestOperateViewGrantRevokeStatement pins the statement-level parse of the
+// registry's OperateViewPriv: GRANT/REVOKE OPERATE VIEW must yield the STATIC
+// privilege (mysql.OperateViewPriv), not a dynamic ExtendedPriv symbol, and
+// must reach the executor's db-scope grant path.
+func TestOperateViewGrantRevokeStatement(t *testing.T) {
+	stmt, err := parser.New().ParseOneStmt("GRANT OPERATE VIEW ON db1.* TO 'u1'@'localhost'", "", "")
+	require.NoError(t, err)
+	grant, ok := stmt.(*ast.GrantStmt)
+	require.True(t, ok)
+	require.Len(t, grant.Privs, 1)
+	require.Equal(t, mysql.OperateViewPriv, grant.Privs[0].Priv)
+	require.Equal(t, "", grant.Privs[0].Name)
+	require.Equal(t, ast.GrantLevelDB, grant.Level.Level)
+
+	stmt, err = parser.New().ParseOneStmt("REVOKE OPERATE VIEW ON db1.* FROM 'u1'@'localhost'", "", "")
+	require.NoError(t, err)
+	revoke, ok := stmt.(*ast.RevokeStmt)
+	require.True(t, ok)
+	require.Len(t, revoke.Privs, 1)
+	require.Equal(t, mysql.OperateViewPriv, revoke.Privs[0].Priv)
+	require.Equal(t, "", revoke.Privs[0].Name)
 }
 
 func TestPrivilegeMariaDBEnabled(t *testing.T) {

@@ -516,6 +516,18 @@ func (p *HandParser) tryParsePrivilege() *ast.PrivElem {
 		p.next()
 		p.expect(tables)
 		priv.Priv = mysql.LockTablesPriv
+	case identifier:
+		// OPERATE VIEW is the registry's static privilege spelled with two
+		// identifier words (mysql.Priv2Str[OperateViewPriv] == "Operate View").
+		// Without this branch it would fall through to the ExtendedPriv
+		// (dynamic) path and never reach mysql.OperateViewPriv.
+		if tok.IsKeyword("OPERATE") && p.peekN(1).IsKeyword("VIEW") {
+			p.next()
+			p.next()
+			priv.Priv = mysql.OperateViewPriv
+			break
+		}
+		return nil
 	default:
 		return nil
 	}
