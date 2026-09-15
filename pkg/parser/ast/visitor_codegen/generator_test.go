@@ -433,7 +433,7 @@ func TestGenerateCurrentASTReceiverInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const expectedReceiverCount = 221
+	const expectedReceiverCount = 223
 	if len(result.Receivers) != expectedReceiverCount {
 		t.Fatalf("got %d Accept receivers, want %d", len(result.Receivers), expectedReceiverCount)
 	}
