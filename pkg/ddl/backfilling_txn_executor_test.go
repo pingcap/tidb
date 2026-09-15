@@ -15,10 +15,49 @@
 package ddl
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestBackfillWorkerSendsInFlightResultAfterClose(t *testing.T) {
+	t.Run("worker downscale preserves result", func(t *testing.T) {
+		worker := newBackfillWorker(context.Background(), context.Background(), nil)
+		worker.resultCh = make(chan *backfillResult)
+		worker.Close()
+
+		want := &backfillResult{taskID: 1}
+		go worker.sendResult(want)
+
+		select {
+		case got := <-worker.resultCh:
+			require.Same(t, want, got)
+		case <-time.After(time.Second):
+			t.Fatal("in-flight backfill result was dropped after worker close")
+		}
+	})
+
+	t.Run("executor shutdown can discard result", func(t *testing.T) {
+		resultCtx, cancelResult := context.WithCancel(context.Background())
+		worker := newBackfillWorker(context.Background(), resultCtx, nil)
+		worker.resultCh = make(chan *backfillResult)
+		cancelResult()
+
+		done := make(chan struct{})
+		go func() {
+			worker.sendResult(&backfillResult{taskID: 1})
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("backfill worker blocked while discarding a result during executor shutdown")
+		}
+	})
+}
 
 func TestExpectedIngestWorkerCnt(t *testing.T) {
 	tests := []struct {
