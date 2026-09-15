@@ -150,7 +150,10 @@ func TestPagingSizeBytesGlobalUpdate(t *testing.T) {
 	if !kerneltype.IsNextGen() || !*realtikvtest.WithRealTiKV {
 		t.Skip("byte-budget pagination requires a real Cloud Storage Engine")
 	}
-	defer config.RestoreFunc()()
+	originalConfig := config.GetGlobalConfig()
+	// Check after all fixture cleanups that the test leaves the global config intact.
+	t.Cleanup(func() { require.Equal(t, originalConfig, config.GetGlobalConfig()) })
+	t.Cleanup(config.RestoreFunc())
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.CoprCache.CapacityMB = 0
 	})
