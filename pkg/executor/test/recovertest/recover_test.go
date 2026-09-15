@@ -268,6 +268,29 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustExec("flashback table t")
 	tk.MustExec("insert into t values (3)")
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+
+	// A standalone flashback cannot prove that historical child rows still
+	// match the current parent table. In particular, a newly created table that
+	// reuses the historical parent name is a different object.
+	tk.MustExec("drop database if exists fk_flashback")
+	tk.MustExec("create database fk_flashback")
+	tk.MustExec("use fk_flashback")
+	tk.MustExec("create table p (id int primary key)")
+	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+	tk.MustExec("insert into p values (1)")
+	tk.MustExec("insert into c values (1, 1)")
+	tk.MustExec("drop table c")
+	tk.MustExec("drop table p")
+	tk.MustExec("create table p (id int primary key)")
+	tk.MustGetErrCode("flashback table c", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("show tables like 'c'").Check(testkit.Rows())
+
+	// The same guard applies when recovering a parent that is currently
+	// referenced by another table.
+	tk.MustExec("drop table p")
+	tk.MustExec("set foreign_key_checks = 0")
+	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+	tk.MustGetErrCode("recover table p", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestRecoverTempTable(t *testing.T) {
