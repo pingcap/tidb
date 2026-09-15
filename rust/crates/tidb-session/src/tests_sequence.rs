@@ -209,15 +209,27 @@ fn show_create_reports_a_sequence_under_either_keyword() {
     let expected_text = "CREATE SEQUENCE `s1` start with 1 minvalue 1 \
                          maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle \
                          ENGINE=InnoDB";
-    for sql in ["show create sequence s1", "show create table s1"] {
-        let (columns, rows) = query_text(&mut session, sql);
-        assert_eq!(columns, ["Sequence", "Create Sequence"], "{sql}");
-        assert_eq!(
-            rows,
-            vec![vec!["s1".to_owned(), expected_text.to_owned()]],
-            "{sql}"
-        );
-    }
+    // `SHOW CREATE SEQUENCE` prints the sequence text. `SHOW CREATE TABLE`
+    // looks the name up with `TableByName`, which does not see sequences, so
+    // Go master answers ERROR 1146 there (the recorded oracle output for
+    // `show create table seq1` over the sequence `seq1`).
+    let (columns, rows) = query_text(&mut session, "show create sequence s1");
+    assert_eq!(columns, ["Sequence", "Create Sequence"]);
+    assert_eq!(rows, vec![vec!["s1".to_owned(), expected_text.to_owned()]]);
+    let error = session
+        .run("show create table s1")
+        .expect_err("show create table s1");
+    let mysql = error.to_mysql_error();
+    assert_eq!(mysql.code, 1146, "{mysql:?}");
+    assert_eq!(
+        std::str::from_utf8(&mysql.state).unwrap_or("?"),
+        "42S02",
+        "{mysql:?}"
+    );
+    assert!(
+        mysql.message.contains("Table 'test.s1' doesn't exist"),
+        "{mysql:?}"
+    );
 }
 
 /// A sequence lives in the TABLE namespace but is not a row source, and every

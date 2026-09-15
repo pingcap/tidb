@@ -1479,16 +1479,19 @@ impl Session {
                     )));
                 }
                 // `SHOW CREATE SEQUENCE` and `SHOW CREATE TABLE` take the
-                // SAME path: Go's `buildShow` picks the column names from
-                // whether the object IS a sequence, not from the keyword
-                // written (captured: `show create table s1` over a sequence
-                // answers `Sequence | Create Sequence` with the
-                // `CREATE SEQUENCE` text).
+                // SAME path for VIEWS: Go's `buildShow` picks the column names
+                // from whether the object IS a sequence, not from the keyword
+                // written. A SEQUENCE object under `SHOW CREATE TABLE` is
+                // different: Go looks the name up with `TableByName`, which
+                // does not see sequences, and answers ERROR 1146 — the
+                // recorded oracle output for `show create sequence seq1`'s
+                // `SHOW CREATE TABLE seq1` sibling.
                 let want_view = match kind {
                     tidb_ast::ShowCreateKind::Table | tidb_ast::ShowCreateKind::Sequence => false,
                     tidb_ast::ShowCreateKind::View => true,
                     _ => return Ok(None),
                 };
+                let want_sequence = matches!(kind, tidb_ast::ShowCreateKind::Sequence);
                 let current = self.require_current_database()?.to_owned();
                 let (database, table_name) = match name.as_slice() {
                     [table] => (current, table.clone()),
@@ -1519,17 +1522,23 @@ impl Session {
                             name: format!("{database}.{table_name}"),
                             expected: "VIEW",
                         })),
-                        tidb_executor::TableEntry::Sequence(sequence) => Ok((
+                        tidb_executor::TableEntry::Sequence(sequence) if want_sequence => Ok((
                             tidb_executor::show_create_sequence(sequence),
                             sequence.name.clone(),
                             None,
                             true,
                         )),
-                        tidb_executor::TableEntry::Kv(table) => Ok((
+                        tidb_executor::TableEntry::Sequence(_) => Err(DriverError::Schema(
+                            SchemaErrorKind::UnknownTable(format!("{database}.{table_name}")),
+                        )),
+                        tidb_executor::TableEntry::Kv(table) if !want_sequence => Ok((
                             show_create_table_text(&database, &table_name, table, &ctx)?,
                             table_name.clone(),
                             None,
                             false,
+                        )),
+                        tidb_executor::TableEntry::Kv(_) => Err(DriverError::Schema(
+                            SchemaErrorKind::UnknownTable(format!("{database}.{table_name}")),
                         )),
                         tidb_executor::TableEntry::Mem(_) => Err(DriverError::unsupported(
                             "SHOW CREATE TABLE needs a storage-backed table",
