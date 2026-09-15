@@ -1051,6 +1051,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	AlterMaterializedViewLogStmt  "ALTER MATERIALIZED VIEW LOG statement"
 	DropMaterializedViewStmt      "DROP MATERIALIZED VIEW statement"
 	DropMaterializedViewLogStmt   "DROP MATERIALIZED VIEW LOG statement"
+	PurgeMaterializedViewLogStmt  "PURGE MATERIALIZED VIEW LOG statement"
+	CancelMaterializedViewJobStmt "CANCEL MATERIALIZED VIEW LOG PURGE JOB statement"
 	CreateUserStmt                "CREATE User statement"
 	CreateRoleStmt                "CREATE Role statement"
 	CreateDatabaseStmt            "Create Database Statement"
@@ -5955,6 +5957,21 @@ DropMaterializedViewLogStmt:
 	"DROP" "MATERIALIZED" "VIEW" "LOG" IfExists "ON" TableName
 	{
 		$$ = &ast.DropMaterializedViewLogStmt{IfExists: $5.(bool), Table: $7.(*ast.TableName)}
+	}
+
+PurgeMaterializedViewLogStmt:
+	"PURGE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
+	{
+		$$ = &ast.PurgeMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
+	}
+
+CancelMaterializedViewJobStmt:
+	"CANCEL" "MATERIALIZED" "VIEW" "LOG" "PURGE" "JOB" Int64Num
+	{
+		$$ = &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobTypeLogPurge,
+			JobID: $7.(int64),
+		}
 	}
 
 /******************************************************************
@@ -13503,6 +13520,8 @@ Statement:
 |	DoStmt
 |	DropMaterializedViewStmt
 |	DropMaterializedViewLogStmt
+|	PurgeMaterializedViewLogStmt
+|	CancelMaterializedViewJobStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt

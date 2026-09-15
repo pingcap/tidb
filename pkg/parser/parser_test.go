@@ -445,6 +445,8 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		{"ALTER MATERIALIZED VIEW mv REFRESH", true, "ALTER MATERIALIZED VIEW \x60mv\x60 REFRESH"},
 		{"ALTER MATERIALIZED VIEW LOG ON t PURGE, ADD COLUMN (b,c)", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE, ADD COLUMN (\x60b\x60, \x60c\x60)"},
 		{"ALTER MATERIALIZED VIEW LOG ON t PURGE", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE"},
+		{"PURGE MATERIALIZED VIEW LOG ON t", true, "PURGE MATERIALIZED VIEW LOG ON \x60t\x60"},
+		{"PURGE MATERIALIZED VIEW LOG ON test.t", true, "PURGE MATERIALIZED VIEW LOG ON \x60test\x60.\x60t\x60"},
 		{"DROP MATERIALIZED VIEW IF EXISTS mv", true, "DROP MATERIALIZED VIEW IF EXISTS \x60mv\x60"},
 		{"DROP MATERIALIZED VIEW LOG IF EXISTS ON t", true, "DROP MATERIALIZED VIEW LOG IF EXISTS ON \x60t\x60"},
 	}
@@ -454,6 +456,7 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
 		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{},
 		&ast.AlterMaterializedViewLogStmt{}, &ast.AlterMaterializedViewLogStmt{},
+		&ast.PurgeMaterializedViewLogStmt{}, &ast.PurgeMaterializedViewLogStmt{},
 		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
 	}
 	p := parser.New()
@@ -1275,6 +1278,10 @@ AAAAAAAAAAAA5gm5Mg==
 		// for cancel distribution job JOBID
 		{"cancel distribution job", false, ""},
 		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
+
+		// for cancel materialized view log purge job
+		{"cancel materialized view log purge job", false, ""},
+		{"cancel materialized view log purge job 1", true, "CANCEL MATERIALIZED VIEW LOG PURGE JOB 1"},
 
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
