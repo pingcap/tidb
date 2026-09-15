@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"encoding/hex"
 	goerrors "errors"
 	"fmt"
 	"io"
@@ -112,10 +113,13 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      common.IngestData
-	regionSplitSize int64
-	regionSplitKeys int64
-	metrics         *metric.Common
+	ingestData         common.IngestData
+	regionSplitSize    int64
+	regionSplitKeys    int64
+	metrics            *metric.Common
+	ticiWriteEnabled   bool
+	ticiIndexID        int64
+	ticiHeaderCommitTS uint64
 
 	retryCount       int
 	waitUntil        time.Time
@@ -132,6 +136,7 @@ func (*regionJob) RecoverArgs() (metricsLabel string, funcInfo string, err error
 
 type tikvWriteResult struct {
 	sstMeta           []*sst.SSTMeta
+	skipIngest        bool
 	count             int64
 	totalBytes        int64
 	remainingStartKey []byte
@@ -160,6 +165,9 @@ func newRegionJob(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 	metrics *metric.Common,
+	ticiWriteEnabled bool,
+	ticiIndexID int64,
+	ticiHeaderCommitTS uint64,
 ) *regionJob {
 	log.L().Debug("new region job",
 		zap.Binary("jobStart", jobStart),
@@ -170,13 +178,16 @@ func newRegionJob(
 		zap.Binary("regionEnd", region.Region.GetEndKey()),
 		zap.Reflect("peers", region.Region.GetPeers()))
 	return &regionJob{
-		keyRange:        common.Range{Start: jobStart, End: jobEnd},
-		region:          region,
-		stage:           regionScanned,
-		ingestData:      data,
-		regionSplitSize: regionSplitSize,
-		regionSplitKeys: regionSplitKeys,
-		metrics:         metrics,
+		keyRange:           common.Range{Start: jobStart, End: jobEnd},
+		region:             region,
+		stage:              regionScanned,
+		ingestData:         data,
+		regionSplitSize:    regionSplitSize,
+		regionSplitKeys:    regionSplitKeys,
+		metrics:            metrics,
+		ticiWriteEnabled:   ticiWriteEnabled,
+		ticiIndexID:        ticiIndexID,
+		ticiHeaderCommitTS: ticiHeaderCommitTS,
 	}
 }
 
@@ -194,6 +205,9 @@ func newRegionJobs(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 	metrics *metric.Common,
+	ticiWriteEnabled bool,
+	ticiIndexID int64,
+	ticiHeaderCommitTS uint64,
 ) []*regionJob {
 	var (
 		lenRegions   = len(sortedRegions)
@@ -223,6 +237,9 @@ func newRegionJobs(
 				regionSplitSize,
 				regionSplitKeys,
 				metrics,
+				ticiWriteEnabled,
+				ticiIndexID,
+				ticiHeaderCommitTS,
 			))
 
 			curRegionIdx++
@@ -252,6 +269,9 @@ func newRegionJobs(
 				regionSplitSize,
 				regionSplitKeys,
 				metrics,
+				ticiWriteEnabled,
+				ticiIndexID,
+				ticiHeaderCommitTS,
 			))
 		}
 	}
@@ -394,6 +414,136 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (err error) {
 	firstKey = codec.EncodeBytes([]byte{}, firstKey)
 	lastKey = codec.EncodeBytes([]byte{}, lastKey)
 
+	dataCommitTS := j.ingestData.GetTS()
+	intest.AssertFunc(func() bool {
+		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
+		now := time.Now()
+		if timeOfTS.After(now) {
+			return false
+		}
+		if now.Sub(timeOfTS) > 24*time.Hour {
+			return false
+		}
+		return true
+	}, "TS used in import should in [now-1d, now], but got %d", dataCommitTS)
+	if dataCommitTS == 0 {
+		return errors.New("data commitTS is 0")
+	}
+
+	if local.ticiWriteGroup != nil && j.ticiWriteEnabled {
+		ticiHeaderCommitTS := dataCommitTS
+		if j.ticiHeaderCommitTS != 0 {
+			ticiHeaderCommitTS = j.ticiHeaderCommitTS
+		}
+		fileWriter, err := local.ticiWriteGroup.CreateFileWriter(ctx)
+		if err != nil {
+			return errors.Annotatef(err, "failed to create tici file writer, startKey=%s endKey=%s", hex.EncodeToString(firstKey), hex.EncodeToString(lastKey))
+		}
+		if err := local.ticiWriteGroup.WriteHeader(ctx, fileWriter, ticiHeaderCommitTS); err != nil {
+			return errors.Annotate(err, "failed to write header to tici file writer")
+		}
+
+		kvBatchSize := local.KVWriteBatchSize
+		bufferPool := local.engineMgr.getBufferPool()
+		pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
+		count := 0
+		size := int64(0)
+		totalSize := int64(0)
+		totalCount := int64(0)
+		regionMaxSize := j.regionSplitSize
+		if j.regionSplitSize <= int64(config.SplitRegionSize) {
+			regionMaxSize = j.regionSplitSize * 4 / 3
+		}
+
+		flushKVs := func() error {
+			if count == 0 {
+				return nil
+			}
+			if err := local.ticiWriteGroup.WritePairs(ctx, fileWriter, pairs, count); err != nil {
+				return errors.Annotate(err, "failed to write pairs to tici file writer")
+			}
+			count = 0
+			size = 0
+			return nil
+		}
+
+		iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End, bufferPool)
+		//nolint: errcheck
+		defer iter.Close()
+		var remainingStartKey []byte
+		var lastWrittenKey []byte
+		for iter.First(); iter.Valid(); iter.Next() {
+			k, v := iter.Key(), iter.Value()
+			lastWrittenKey = append(lastWrittenKey[:0], k...)
+			kvSize := int64(len(k) + len(v))
+			if count < len(pairs) {
+				pairs[count].Key = k
+				pairs[count].Value = v
+			} else {
+				pairs = append(pairs, &sst.Pair{Key: k, Value: v})
+			}
+			count++
+			totalCount++
+			size += kvSize
+			totalSize += kvSize
+
+			if size >= kvBatchSize {
+				if err := flushKVs(); err != nil {
+					return errors.Trace(err)
+				}
+				iter.ReleaseBuf()
+			}
+			if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
+				if iter.Next() {
+					remainingStartKey = append([]byte{}, iter.Key()...)
+					log.FromContext(ctx).Info("write to tici partial finish",
+						zap.Int64("count", totalCount),
+						zap.Int64("size", totalSize),
+						logutil.Key("startKey", j.keyRange.Start),
+						logutil.Key("endKey", j.keyRange.End),
+						logutil.Key("remainStart", remainingStartKey),
+						logutil.Region(region),
+						logutil.Leader(j.region.Leader),
+						zap.Uint64("commitTS", dataCommitTS))
+				}
+				break
+			}
+		}
+		if iter.Error() != nil {
+			return errors.Trace(iter.Error())
+		}
+		if err := flushKVs(); err != nil {
+			return errors.Trace(err)
+		}
+		iter.ReleaseBuf()
+		if err := local.ticiWriteGroup.CloseFileWriters(ctx, fileWriter); err != nil {
+			return errors.Annotate(err, "failed to close tici file writer")
+		}
+		upperBound := lastKey
+		if lastWrittenKey != nil {
+			upperBound = codec.EncodeBytes([]byte{}, lastWrittenKey)
+		}
+		if err := local.ticiWriteGroup.FinishPartitionUpload(ctx, fileWriter, j.ticiIndexID, firstKey, upperBound); err != nil {
+			return errors.Annotate(err, "failed to finish upload for tici file writer")
+		}
+
+		takeTime := time.Since(begin)
+		log.FromContext(ctx).Debug("write to tici", zap.Reflect("region", j.region),
+			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
+			zap.Stringer("takeTime", takeTime))
+		if m, ok := metric.FromContext(ctx); ok {
+			m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
+		}
+		j.writeResult = &tikvWriteResult{
+			skipIngest:        true,
+			count:             totalCount,
+			totalBytes:        totalSize,
+			remainingStartKey: remainingStartKey,
+		}
+		j.convertStageTo(ingested)
+		return nil
+	}
+
 	u := uuid.New()
 	meta := &sst.SSTMeta{
 		Uuid:        u[:],
@@ -464,21 +614,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (err error) {
 		clients = append(clients, wstream)
 		allPeers = append(allPeers, peer)
 	}
-	dataCommitTS := j.ingestData.GetTS()
-	intest.AssertFunc(func() bool {
-		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
-		now := time.Now()
-		if timeOfTS.After(now) {
-			return false
-		}
-		if now.Sub(timeOfTS) > 24*time.Hour {
-			return false
-		}
-		return true
-	}, "TS used in import should in [now-1d, now], but got %d", dataCommitTS)
-	if dataCommitTS == 0 {
-		return errors.New("data commitTS is 0")
-	}
+
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
 			CommitTs: dataCommitTS,
@@ -1408,6 +1544,9 @@ func (w *regionJobWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err er
 			[]common.Range{job.keyRange},
 			job.regionSplitSize,
 			job.regionSplitKeys,
+			job.ticiWriteEnabled,
+			job.ticiIndexID,
+			job.ticiHeaderCommitTS,
 		)
 		if err2 != nil {
 			// Don't need to put the job back to retry, because generateJobForRange

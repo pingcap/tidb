@@ -509,7 +509,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	canUseFastCheck := true
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.VectorInfo != nil {
+		if idx.MVIndex || idx.IsNonKVIndex() {
 			canUseFastCheck = false
 			break
 		}
@@ -690,6 +690,10 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 	}
 	if index.Meta().VectorInfo != nil {
 		b.err = errors.Errorf("vector index `%v` is not supported for cleanup index", v.IndexName)
+		return nil
+	}
+	if index.Meta().FullTextInfo != nil {
+		b.err = errors.Errorf("fulltext index `%v` is not supported for cleanup index", v.IndexName)
 		return nil
 	}
 	e := &CleanupIndexExec{
@@ -4040,11 +4044,17 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, err := builder.ConstructDAGReq(b.sctx, v.IndexPlans, kv.TiKV)
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	indexPlans := v.IndexPlans
+	storeType := kv.TiKV
+	if is.Index.IsTiCIIndex() {
+		indexPlans = []base.PhysicalPlan{v.IndexPlans[len(v.IndexPlans)-1]}
+		storeType = kv.TiFlash
+	}
+	dagReq, err := builder.ConstructDAGReq(b.sctx, indexPlans, storeType)
 	if err != nil {
 		return nil, err
 	}
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	tbl, _ := b.is.TableByID(context.Background(), is.Table.ID)
 	isPartition, physicalTableID := is.IsPartition()
 	if isPartition {
@@ -4211,12 +4221,15 @@ func buildIndexLookUpPushDownDAGReq(ctx sessionctx.Context, columns []*model.Ind
 
 // buildIndexReq is designed to create a DAG for index request.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
-	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
+	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+	if idxScan.Index.IsTiCIIndex() {
+		plans = plans[len(plans)-1:]
+	}
+	indexReq, err := builder.ConstructDAGReq(ctx, plans, idxScan.StoreType)
 	if err != nil {
 		return nil, err
 	}
 
-	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
 	outputOffsets, err := buildIndexScanOutputOffsets(idxScan, columns, handleLen)
 	if err != nil {
 		return nil, err
@@ -4257,6 +4270,16 @@ func buildIndexScanOutputOffsets(p *plannercore.PhysicalIndexScan, columns []*mo
 		}
 	}
 
+	if p.Index.IsTiCIIndex() {
+		return handleOutputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen, p.Schema().Len(), needExtraOutputCol), nil
+	}
+
+	return handleOutputOffsetsForTiKVIndexLookUp(outputOffsets, handleLen, columns, needExtraOutputCol), nil
+}
+
+// handleOutputOffsetsForTiKVIndexLookUp handles the output offsets for TiKV index look up requests.
+// See initSchemaForTiKVIndex for the row layout.
+func handleOutputOffsetsForTiKVIndexLookUp(outputOffsets []uint32, handleLen int, columns []*model.IndexColumn, needExtraOutputCol bool) []uint32 {
 	for i := range handleLen {
 		outputOffsets = append(outputOffsets, uint32(len(columns)+i))
 	}
@@ -4265,7 +4288,22 @@ func buildIndexScanOutputOffsets(p *plannercore.PhysicalIndexScan, columns []*mo
 		// need add one more column for pid or physical table id
 		outputOffsets = append(outputOffsets, uint32(len(columns)+handleLen))
 	}
-	return outputOffsets, nil
+	return outputOffsets
+}
+
+// handleOutputOffsetsForTiCIIndexLookUp handles the output offsets for TiCI index look up requests.
+// See initSchemaForTiCIIndex for the row layout.
+func handleOutputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int, schemaLen int, needExtraOutputCol bool) []uint32 {
+	for i := range handleLen {
+		outputOffsets = append(outputOffsets, uint32(i))
+	}
+	if needExtraOutputCol {
+		// When TiCI index scan includes `ExtraPhysTblID`, it's appended right before the version column.
+		outputOffsets = append(outputOffsets, uint32(schemaLen-2))
+	}
+	// TiCI index scan always appends the per-row MVCC version (`_tidb_mvcc_version`) as the last column.
+	outputOffsets = append(outputOffsets, uint32(schemaLen-1))
+	return outputOffsets
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
@@ -4336,6 +4374,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		avgRowSize:                 v.GetAvgTableRowSize(),
 		indexLookUpPushDown:        v.IndexLookUpPushDown,
 		groupedRanges:              is.GroupedRanges,
+		storeType:                  v.IndexStoreType,
+		batchCop:                   v.ReadReqType == plannercore.BatchCop,
+		indexReadReqType:           v.ReadReqType,
+		mppInfoSchema:              b.is,
+		mppSession:                 b.sctx,
 	}
 
 	if v.ExtraHandleCol != nil {
@@ -4722,7 +4765,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
 		handles, _ := dedupHandles(lookUpContents)
-		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
+		return builder.buildTableReaderFromHandles(ctx, e, handles, nil, canReorderHandles)
 	}
 	tbl, _ := builder.is.TableByID(ctx, tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
@@ -4810,12 +4853,12 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				continue
 			}
 			handle := kv.IntHandle(content.Keys[0].GetInt64())
-			ranges, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
+			ranges, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle}, nil)
 			kvRanges = append(kvRanges, ranges...)
 		}
 	} else {
 		for _, p := range usedPartitionList {
-			ranges, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
+			ranges, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles, nil)
 			kvRanges = append(kvRanges, ranges...)
 		}
 	}
@@ -4940,7 +4983,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	return e, nil
 }
 
-func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, canReorderHandles bool) (*TableReaderExecutor, error) {
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, handleVersionMap *kv.HandleMap, canReorderHandles bool) (*TableReaderExecutor, error) {
 	if canReorderHandles {
 		slices.SortFunc(handles, func(i, j kv.Handle) int {
 			return i.Compare(j)
@@ -4949,9 +4992,9 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	var b distsql.RequestBuilder
 	if len(handles) > 0 {
 		if _, ok := handles[0].(kv.PartitionHandle); ok {
-			b.SetPartitionsAndHandles(handles)
+			b.SetPartitionsAndHandles(handles, handleVersionMap)
 		} else {
-			b.SetTableHandles(getPhysicalTableID(e.table), handles)
+			b.SetTableHandles(getPhysicalTableID(e.table), handles, handleVersionMap)
 		}
 	} else {
 		b.SetKeyRanges(nil)

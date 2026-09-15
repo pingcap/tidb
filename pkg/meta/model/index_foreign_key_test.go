@@ -79,5 +79,17 @@ func TestIsIndexPrefixCoveredForForeignKey(t *testing.T) {
 	badCondition.ConditionExprString = "`c_0` is"
 	require.False(t, metamodel.IsIndexPrefixCoveredForForeignKey(tbl, badCondition, pmodel.NewCIStr("c_0")))
 
-	require.Same(t, safePartial, metamodel.FindIndexByColumnsForForeignKey(tbl, []*metamodel.IndexInfo{unsafePartialOnNonFKCol, safePartial}, pmodel.NewCIStr("c_0"), pmodel.NewCIStr("c_1")))
+	fullTextIndex := newIndexForForeignKeyTest(8, c0, c1)
+	fullTextIndex.FullTextInfo = &metamodel.FullTextIndexInfo{ParserType: metamodel.FullTextParserTypeStandardV1}
+	hybridIndex := newIndexForForeignKeyTest(9, c0, c1)
+	hybridIndex.HybridInfo = &metamodel.HybridIndexInfo{}
+	vectorIndex := newIndexForForeignKeyTest(10, c0, c1)
+	vectorIndex.VectorInfo = &metamodel.VectorIndexInfo{}
+	for _, nonKVIndex := range []*metamodel.IndexInfo{fullTextIndex, hybridIndex, vectorIndex} {
+		t.Run(fmt.Sprintf("non-KV index %d", nonKVIndex.ID), func(t *testing.T) {
+			require.False(t, metamodel.IsIndexPrefixCoveredForForeignKey(tbl, nonKVIndex, pmodel.NewCIStr("c_0"), pmodel.NewCIStr("c_1")))
+			require.Nil(t, metamodel.FindIndexByColumnsForForeignKey(tbl, []*metamodel.IndexInfo{nonKVIndex}, pmodel.NewCIStr("c_0"), pmodel.NewCIStr("c_1")))
+			require.Same(t, safePartial, metamodel.FindIndexByColumnsForForeignKey(tbl, []*metamodel.IndexInfo{nonKVIndex, unsafePartialOnNonFKCol, safePartial}, pmodel.NewCIStr("c_0"), pmodel.NewCIStr("c_1")))
+		})
+	}
 }

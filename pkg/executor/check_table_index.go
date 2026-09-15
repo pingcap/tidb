@@ -145,7 +145,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
-		if idx.MVIndex || idx.VectorInfo != nil {
+		if idx.MVIndex || idx.IsNonKVIndex() {
 			continue
 		}
 		if idx.HasCondition() {
