@@ -65,6 +65,7 @@ func TestRUV3MetricDefinitions(t *testing.T) {
 
 	InitRUV3Metrics()
 	RUV3Total.Add(1)
+	RUV3TTLTotal.Add(1)
 	RUV3BySQLTypeDDL.Add(2)
 	RUV3ByEngineTiKV.Add(3)
 	RUV3BySQLType.WithLabelValues("select").Add(2)
@@ -74,6 +75,7 @@ func TestRUV3MetricDefinitions(t *testing.T) {
 
 	registry := prometheus.NewRegistry()
 	require.NoError(t, registry.Register(RUV3Total))
+	require.NoError(t, registry.Register(RUV3TTLTotal))
 	require.NoError(t, registry.Register(RUV3BySQLType))
 	require.NoError(t, registry.Register(RUV3ByEngine))
 	require.NoError(t, registry.Register(RUV3Unit))
@@ -82,6 +84,7 @@ func TestRUV3MetricDefinitions(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_ru_total"))
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_ttl_ru_total"))
 	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, LblSQLTypeDDL)
 	requireMetricFamilyHasLabel(
 		t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, "select",

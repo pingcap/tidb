@@ -37,6 +37,7 @@ var (
 	ruv3Commit       prometheus.Counter
 	ruv3Analyze      prometheus.Counter
 	ruv3Other        prometheus.Counter
+	RUV3TTLTotal     prometheus.Counter
 )
 
 // RUV3 unit label constants define the label name and values for RU v3 raw unit metrics.
@@ -57,6 +58,14 @@ const (
 
 // InitRUV3Metrics initializes RUv3 metrics.
 func InitRUV3Metrics() {
+	RUV3TTLTotal = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv3",
+			Name:      "ttl_ru_total",
+			Help:      "Counter of RU v3 consumption attributable to TTL jobs, included in ru_total. Excludes global TTL maintenance.",
+		},
+	)
 	RUV3Total = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

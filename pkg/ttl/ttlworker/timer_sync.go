@@ -130,7 +130,7 @@ func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.
 		jobID := timer.ManualEventID
 		found := false
 		err = withSession(g.pool, func(se session.Session) error {
-			rows, err := se.ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
+			rows, err := session.WithJob(se, jobID).ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
 			if err != nil {
 				return err
 			}

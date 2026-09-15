@@ -233,6 +233,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		return err
 	}
 	defer terror.Call(restoreSession)
+	sess.Session = session.WithJob(sess.Session, t.JobID)
 
 	var index *model.IndexInfo
 	if t.ScanIndexID != nil {

@@ -137,7 +137,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		}
 	}()
 
-	se := newTableSession(rawSe, t.tbl, t.expire)
+	se := newTableSession(session.WithJob(rawSe, t.jobID), t.tbl, t.expire)
 	for len(leftRows) > 0 && ctx.Err() == nil {
 		maxBatch := vardef.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
