@@ -19,7 +19,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 )
 
 type statementRUEngine uint8
@@ -87,11 +87,11 @@ var statementRUOperatorNames = [...]string{
 // numeric values, never plans or runtime statistics. Finalization freezes a copy
 // for the publisher; result mode never allocates either report.
 type statementRUFullReport struct {
-	units [statementRUEngineCount][statementRUOperatorCount]ruv3.StmtUnits
+	units [statementRUEngineCount][statementRUOperatorCount]ruv2.StmtUnits
 	seen  [statementRUEngineCount][statementRUOperatorCount]bool
 }
 
-func (report *statementRUFullReport) add(engine statementRUEngine, operator statementRUOperator, units ruv3.StmtUnits) {
+func (report *statementRUFullReport) add(engine statementRUEngine, operator statementRUOperator, units ruv2.StmtUnits) {
 	report.units[engine][operator] = report.units[engine][operator].Add(units)
 	report.seen[engine][operator] = true
 }
@@ -143,10 +143,10 @@ func statementRUOperatorForPlan(plan base.Plan) statementRUOperator {
 	}
 }
 
-func (report *statementRUFullReport) addOperator(engine statementRUEngine, operator statementRUOperator, units ruv3.StmtUnits) {
+func (report *statementRUFullReport) addOperator(engine statementRUEngine, operator statementRUOperator, units ruv2.StmtUnits) {
 	// A root Reader/PointGet owns the evidence, but the scan and payload are
 	// TiKV work. Keep that ownership distinct from the local executor work.
-	remote := ruv3.StmtUnits{ScanBytes: units.ScanBytes, NetBytes: units.NetBytes}
+	remote := ruv2.StmtUnits{ScanBytes: units.ScanBytes, NetBytes: units.NetBytes}
 	units.ScanBytes, units.NetBytes = 0, 0
 	report.add(engine, operator, units)
 	if remote.ScanBytes != 0 || remote.NetBytes != 0 {
@@ -154,7 +154,7 @@ func (report *statementRUFullReport) addOperator(engine statementRUEngine, opera
 	}
 }
 
-func (calculator statementRUCalculator) engineResult(weights ruv3.StmtWeights) statementRUEngineResult {
+func (calculator statementRUCalculator) engineResult(weights ruv2.StmtWeights) statementRUEngineResult {
 	tidb, tikv := calculator.compute[statementRUTiDB], calculator.compute[statementRUTiKV]
 	units := calculator.units
 	return statementRUEngineResult{
@@ -168,13 +168,13 @@ func (calculator statementRUCalculator) engineResult(weights ruv3.StmtWeights) s
 }
 
 // addStatementUnits accounts for evidence outside individual operators once.
-func (report *statementRUFullReport) addStatementUnits(units ruv3.StmtUnits) {
-	report.add(statementRUTiDB, statementRUFrontend, ruv3.StmtUnits{FrontendCompileBytes: units.FrontendCompileBytes})
+func (report *statementRUFullReport) addStatementUnits(units ruv2.StmtUnits) {
+	report.add(statementRUTiDB, statementRUFrontend, ruv2.StmtUnits{FrontendCompileBytes: units.FrontendCompileBytes})
 	if units.WriteStatement != 0 {
-		report.add(statementRUTiDB, statementRUWrite, ruv3.StmtUnits{WriteStatement: units.WriteStatement})
+		report.add(statementRUTiDB, statementRUWrite, ruv2.StmtUnits{WriteStatement: units.WriteStatement})
 	}
 	if units.WriteKeys != 0 || units.WriteBytes != 0 {
-		report.add(statementRUTiKV, statementRUKVWrite, ruv3.StmtUnits{WriteKeys: units.WriteKeys, WriteBytes: units.WriteBytes})
+		report.add(statementRUTiKV, statementRUKVWrite, ruv2.StmtUnits{WriteKeys: units.WriteKeys, WriteBytes: units.WriteBytes})
 	}
 }
 

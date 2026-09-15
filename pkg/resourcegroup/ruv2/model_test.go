@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ruv3
+package ruv2
 
 import (
 	"math"
@@ -21,6 +21,13 @@ import (
 )
 
 func TestDefaultWeights(t *testing.T) {
+	if !DefaultWeights().valid() {
+		t.Fatal("default statement weights should be valid")
+	}
+	if (StmtWeights{CPUWork: -1}).valid() {
+		t.Fatal("negative statement weights should be invalid")
+	}
+
 	want := StmtWeights{
 		CPUWork: 1, ScanByte: 1, NetByte: 1, FrontendCompileByte: 1,
 		HashStateRow: 1, JoinOutputRow: 1, WriteStatement: 1,

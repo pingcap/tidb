@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -213,8 +213,8 @@ const (
 	backgroundWorker workerType = 2
 )
 
-func currentDDLRUWeights() ruv3.DDLWeights {
-	weights := ruv3.DefaultDDLWeights()
+func currentDDLRUWeights() ruv2.DDLWeights {
+	weights := ruv2.DefaultDDLWeights()
 	if cfg := config.GetGlobalConfig(); cfg != nil {
 		weights = cfg.RUV2.DDLWeights
 	}
