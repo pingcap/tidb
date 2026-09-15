@@ -102,6 +102,10 @@ func (mock *Cluster) Start() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Go master sets the bootstrapped domain on the server before Run: the
+	// advertised-status path reads s.dom.DDL().GetID(), so a nil domain (the
+	// old mock contract) panics there.
+	svr.SetDomain(mock.Domain)
 	mock.Server = svr
 	go func() {
 		if err1 := svr.Run(nil); err1 != nil {
