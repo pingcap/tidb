@@ -1770,6 +1770,13 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	var finishReq tici.FinishImportIndexUploadRequest
 	require.NoError(t, json.Unmarshal(raw, &finishReq))
 	require.Equal(t, expectedTaskID, finishReq.TidbTaskId)
+
+	// Adapt the metadata-only source regression to the TiCI DDL fixture.
+	tk.MustExec("alter table t drop column c")
+	tk.MustQuery("show create table t").CheckNotContain("FULLTEXT INDEX `fts_idx`")
+	tbl := external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Nil(t, model.FindColumnInfo(tbl.Columns, "c"))
+	require.Nil(t, tbl.FindIndexByName("fts_idx"))
 }
 
 // A retried CREATE must publish the settings captured by its job, even when

@@ -365,12 +365,20 @@ func TestDropColumnNonKVIndexErrors(t *testing.T) {
 		message string
 	}{
 		{"vector", &model.IndexInfo{VectorInfo: &model.VectorIndexInfo{}}, "with Vector Key covered now"},
-		{"fulltext", &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{}}, "with non-KV index covered now"},
+		{"fulltext", &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{}}, ""},
 		{"hybrid", &model.IndexInfo{HybridInfo: &model.HybridIndexInfo{}}, "with non-KV index covered now"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.index.Columns = []*model.IndexColumn{{Name: pmodel.NewCIStr("b")}}
-			require.ErrorContains(t, isColumnCanDropWithIndex("b", []*model.IndexInfo{tt.index}), tt.message)
+			err := isColumnCanDropWithIndex("b", []*model.IndexInfo{tt.index})
+			if tt.message == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tt.message)
+			}
+			// Multi-column FULLTEXT remains protected, as in the source regression.
+			tt.index.Columns = append(tt.index.Columns, &model.IndexColumn{Name: pmodel.NewCIStr("c")})
+			require.Error(t, isColumnCanDropWithIndex("b", []*model.IndexInfo{tt.index}))
 			require.NoError(t, isColumnCanDropWithIndex("a", []*model.IndexInfo{tt.index}))
 		})
 	}
