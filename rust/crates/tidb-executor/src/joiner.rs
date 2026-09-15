@@ -78,20 +78,10 @@
 //!   same evaluation result; strictly a per-row allocation cost, because
 //!   `MutRow::shallow_copy_partial_row` needs `&mut Chunk` on the SOURCE and
 //!   an inner row here is borrowed from an iterator.
-//! - `expression.VectorizedFilter` / `VectorizedFilterConsiderNull` are
-//!   replaced by [`row_based_filter`], a port of Go's own
-//!   `rowBasedFilter` (`pkg/expression/chunk_executor.go:465`) -- the branch
-//!   Go itself takes when the filter is not vectorizable. It is filter-major
-//!   and skips already-deselected rows, exactly as Go's is, so the
-//!   `isNull` accumulation matches. Go's vectorized fast path is not ported;
-//!   it is a performance path with the same result. Within `rowBasedFilter`,
-//!   Go has two branches, `EvalInt` for an `ETInt` filter and `EvalBool` for
-//!   everything else, and they do NOT agree on `isNull` (the `EvalBool`
-//!   branch reports NULL only for an EQ-from-IN condition, and otherwise
-//!   leaves the previous row's flag in place). This port implements the
-//!   `EvalInt` branch's rule uniformly -- a NULL result sets `is_null` and
-//!   deselects -- because a join condition is `ETInt` and so takes that
-//!   branch in Go.
+//! - Candidate-chunk filtering uses `tidb_expr::evaluator`'s vectorized
+//!   filter and its scalar fallback, selected by the session setting and
+//!   expression support. Semi/anti joiners retain Go's row-wise short circuit.
+//!   The local [`row_based_filter`] remains for Apply's child filters only.
 //! - `Joiner::join_type` replaces Go's `JoinerType` type switch: Rust has no
 //!   equivalent of a type switch over trait objects, so each implementation
 //!   reports its own type. Go's function maps every non-listed joiner to
@@ -289,6 +279,7 @@ fn make_join_row_to_chunk(
 /// Go `baseJoiner`: the state every join type shares.
 pub struct BaseJoiner<C: Columns> {
     ctx: C,
+    vectorized: bool,
     /// Go `conditions`: the non-equality `ON` predicates ("other conditions").
     conditions: Vec<Expression>,
     /// Go `defaultInner`: the all-NULL (or default) inner row an outer join
@@ -361,29 +352,27 @@ impl<C: Columns + Clone> BaseJoiner<C> {
     /// non-empty (Go's "reach here, chkForJoin is j.chk"), so the input is
     /// always `self.chk` and the projection is always the joiner's own.
     fn filter(&mut self, output: &mut Chunk, outer_col_len: usize) -> Result<bool, ExecError> {
-        let input = self
+        let mut input = self
             .chk
             .take()
             .expect("filter runs only on the conditional path, which owns chk");
-        let result = self.filter_inner(input, output, outer_col_len);
-        result.map(|(matched, input)| {
-            self.chk = Some(input);
-            matched
-        })
+        let result = self.filter_inner(&mut input, output, outer_col_len);
+        self.chk = Some(input);
+        result
     }
 
     fn filter_inner(
         &mut self,
-        mut input: Chunk,
+        input: &mut Chunk,
         output: &mut Chunk,
         outer_col_len: usize,
-    ) -> Result<(bool, Chunk), ExecError> {
-        row_based_filter(
+    ) -> Result<bool, ExecError> {
+        self.selected = tidb_expr::evaluator::vectorized_filter(
             &self.ctx,
+            self.vectorized,
             &self.conditions,
-            &input,
-            &mut self.selected,
-            None,
+            input,
+            std::mem::take(&mut self.selected),
         )?;
 
         let mut outer_col_len = outer_col_len;
@@ -421,7 +410,7 @@ impl<C: Columns + Clone> BaseJoiner<C> {
             }
         }
 
-        let source = pruned.as_ref().unwrap_or(&input);
+        let source = pruned.as_ref().unwrap_or(input);
         let matched = copy_selected_join_rows_with_same_outer_rows(
             source,
             inner_col_offset,
@@ -432,7 +421,7 @@ impl<C: Columns + Clone> BaseJoiner<C> {
             output,
         )
         .map_err(ExecError::internal)?;
-        Ok((matched, input))
+        Ok(matched)
     }
 
     /// Go `baseJoiner.filterAndCheckOuterRowStatus`: filter the candidate rows
@@ -461,13 +450,16 @@ impl<C: Columns + Clone> BaseJoiner<C> {
         inner_cols_len: usize,
         outer_row_status: &mut [OuterRowStatusFlag],
     ) -> Result<(), ExecError> {
-        row_based_filter(
+        let (selected, nulls) = tidb_expr::evaluator::vectorized_filter_consider_null(
             &self.ctx,
+            self.vectorized,
             &self.conditions,
             input,
-            &mut self.selected,
-            Some(&mut self.is_null),
+            std::mem::take(&mut self.selected),
+            std::mem::take(&mut self.is_null),
         )?;
+        self.selected = selected;
+        self.is_null = nulls;
         for index in 0..self.selected.len().min(outer_row_status.len()) {
             if self.is_null[index] {
                 outer_row_status[index] = OuterRowStatusFlag::HasNull;
@@ -502,6 +494,7 @@ impl<C: Columns + Clone> BaseJoiner<C> {
     fn clone_base(&self) -> BaseJoiner<C> {
         BaseJoiner {
             ctx: self.ctx.clone(),
+            vectorized: self.vectorized,
             conditions: self.conditions.clone(),
             default_inner: self.default_inner.clone(),
             outer_is_right: self.outer_is_right,
@@ -1584,6 +1577,8 @@ impl<C: Columns + Clone + Send + 'static> Joiner for InnerJoiner<C> {
 /// see the module header.
 #[derive(Clone, Copy, Debug)]
 pub struct JoinerChunkSizes {
+    /// Go SessionVars.EnableVectorizedExpression.
+    pub vectorized: bool,
     /// Go `SessionVars.InitChunkSize`.
     pub init_chunk_size: usize,
     /// Go `SessionVars.MaxChunkSize`.
@@ -1618,6 +1613,7 @@ pub fn new_joiner<C: Columns + Clone + Send + 'static>(
     };
     let mut base = BaseJoiner {
         ctx,
+        vectorized: sizes.vectorized,
         conditions: filter,
         default_inner: None,
         outer_is_right,

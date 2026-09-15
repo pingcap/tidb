@@ -158,9 +158,12 @@ use crate::hash_join::{
     row_key, row_key_by, BuildError, BuildTable, Chain, EquiKey, FastBytesMap, KeyClass, KeyError,
 };
 use crate::mem_quota::StatementMemory;
-mod output;
 mod index_hash;
-use index_hash::{send_index_task, IndexHashChunk, IndexHashOutput, IndexHashState, IndexResultSender, IndexUnordered};
+mod output;
+use index_hash::{
+    send_index_task, IndexHashChunk, IndexHashOutput, IndexHashState, IndexResultSender,
+    IndexUnordered,
+};
 use output::JoinOutput;
 
 use std::cell::Cell;
@@ -565,6 +568,13 @@ pub(crate) enum IndexLookupSource {
 }
 
 impl IndexLookupSource {
+    fn executor(&mut self) -> &mut dyn Executor {
+        match self {
+            Self::Leaf(source) => source,
+            Self::Composite { exec, .. } => exec.as_mut(),
+        }
+    }
+
     fn set_probes(&mut self, probes: crate::access_path::IndexJoinProbes) -> Result<(), ExecError> {
         match self {
             Self::Leaf(source) => {
@@ -589,13 +599,6 @@ impl IndexLookupSource {
         }
     }
 
-    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        match self {
-            Self::Leaf(source) => source.next(req),
-            Self::Composite { exec, .. } => exec.next(req),
-        }
-    }
-
     fn close(&mut self) -> Result<(), ExecError> {
         match self {
             Self::Leaf(source) => source.close(),
@@ -607,13 +610,6 @@ impl IndexLookupSource {
         match self {
             Self::Leaf(source) => source.ret_field_types(),
             Self::Composite { exec, .. } => exec.ret_field_types(),
-        }
-    }
-
-    fn new_chunk(&self) -> Chunk {
-        match self {
-            Self::Leaf(source) => source.new_chunk(),
-            Self::Composite { exec, .. } => exec.new_chunk(),
         }
     }
 }
@@ -804,7 +800,10 @@ struct IndexTaskShared<C: Columns> {
 /// What the pool worker of one index task hands back.
 enum IndexTaskOutcome {
     HashChunk(IndexHashChunk),
-    HashFinished { inner_rows: u64, evaluations: u64 },
+    HashFinished {
+        inner_rows: u64,
+        evaluations: u64,
+    },
     /// Go's completed lookUpJoinTask, ready for demand-driven probing.
     Prepared {
         outer: OuterBatch,
@@ -830,7 +829,10 @@ fn run_index_task<C: Columns>(shared: &IndexTaskShared<C>, outer: OuterBatch) ->
 }
 
 enum FetchedIndexTask {
-    Prepared { inner: PreparedIndexInner, inner_rows: u64 },
+    Prepared {
+        inner: PreparedIndexInner,
+        inner_rows: u64,
+    },
     Unforked(Vec<IndexTaskProbe>),
 }
 
@@ -856,6 +858,19 @@ fn fetch_index_task<C: Columns>(
     shared: &IndexTaskShared<C>,
     outer: &OuterBatch,
 ) -> Result<FetchedIndexTask, ExecError> {
+    let mut task = match open_index_task(shared, outer)? {
+        Ok(task) => task,
+        Err(probes) => return Ok(FetchedIndexTask::Unforked(probes)),
+    };
+    let fetched = fetch_index_inner(shared, &mut task, None, None);
+    let (inner, inner_rows, _) = fetched?;
+    Ok(FetchedIndexTask::Prepared { inner, inner_rows })
+}
+
+fn open_index_task<C: Columns>(
+    shared: &IndexTaskShared<C>,
+    outer: &OuterBatch,
+) -> Result<Result<crate::access_path::IndexJoinLookupExec, Vec<IndexTaskProbe>>, ExecError> {
     let probes = index_task_probes(
         &shared.ctx,
         &shared.keys,
@@ -865,13 +880,13 @@ fn fetch_index_task<C: Columns>(
         shared.outer_is_left,
     )?;
     let Some(template) = shared.template.as_ref() else {
-        return Ok(FetchedIndexTask::Unforked(probes));
+        return Ok(Err(probes));
     };
     let (keys, bound_values) = probes
         .into_iter()
         .map(|probe| (probe.key, probe.bounds))
         .unzip();
-    let mut task = match template.open(crate::access_path::IndexJoinProbes { keys, bound_values }) {
+    let task = match template.open(crate::access_path::IndexJoinProbes { keys, bound_values }) {
         Ok(Ok(task)) => task,
         Ok(Err(probes)) => {
             let probes = probes
@@ -880,37 +895,11 @@ fn fetch_index_task<C: Columns>(
                 .zip(probes.bound_values)
                 .map(|(key, bounds)| IndexTaskProbe { key, bounds })
                 .collect();
-            return Ok(FetchedIndexTask::Unforked(probes));
+            return Ok(Err(probes));
         }
         Err(error) => return Err(error),
     };
-    let mut chunks = Vec::new();
-    // A cop worker sends a task's next page only once the previous one was
-    // taken, so the drain keeps the task's pages flowing while the session
-    // thread serves earlier tasks.
-    let drained = match task.take_prefetched_drain() {
-        Some(drain) => {
-            let (drained, cursor) = drain.run();
-            match drained {
-                Ok(drained) => chunks = drained,
-                Err(error) => return Err(error),
-            }
-            match cursor {
-                Some(cursor) => {
-                    task.restore_cursor(cursor);
-                    drain_lookup_task(&mut task, &mut chunks)
-                }
-                None => Ok(()),
-            }
-        }
-        None => drain_lookup_task(&mut task, &mut chunks),
-    };
-    drained?;
-    let inner_rows = chunks.iter().map(|chunk| chunk.num_rows() as u64).sum();
-    Ok(FetchedIndexTask::Prepared {
-        inner: prepare_index_inner(shared, chunks)?,
-        inner_rows,
-    })
+    Ok(Ok(task))
 }
 
 /// Go `constructLookupContent` and `sortAndDedupLookUpContents` for one
@@ -1054,22 +1043,6 @@ fn index_task_probes<C: Columns>(
     Ok(probes_by_key.into_values().collect())
 }
 
-/// Reads the rest of a forked task through its row path, the part of a
-/// lookup its cursor could not hand over as whole batches.
-fn drain_lookup_task(
-    task: &mut crate::access_path::IndexJoinLookupExec,
-    chunks: &mut Vec<Chunk>,
-) -> Result<(), ExecError> {
-    loop {
-        let mut chunk = task.new_chunk();
-        task.next(&mut chunk)?;
-        if chunk.num_rows() == 0 {
-            return Ok(());
-        }
-        chunks.push(chunk);
-    }
-}
-
 /// A prepared task owns its memory charge until installed in the consumer.
 /// Dropping a queued result (including failed channel delivery) releases it.
 struct PreparedIndexInner {
@@ -1080,6 +1053,36 @@ struct PreparedIndexInner {
 }
 
 impl PreparedIndexInner {
+    fn take(
+        state: &mut IndexLookupState,
+        shared: &IndexTaskShared<impl Columns>,
+    ) -> Result<Self, ExecError> {
+        let mut inner = prepare_index_inner(shared, Vec::new())?;
+        std::mem::swap(&mut inner.rows, &mut state.inner);
+        inner.bytes = std::mem::take(&mut state.inner_bytes);
+        inner.matched = std::mem::take(&mut state.matched);
+        Ok(inner)
+    }
+
+    fn account(&mut self, memory: &StatementMemory) -> Result<(), ExecError> {
+        let bytes = self.rows.mem_tracker().bytes_consumed();
+        self.tracker.consume(bytes - self.bytes);
+        self.bytes = bytes;
+        memory.check()
+    }
+
+    fn append<C: Columns>(
+        &mut self,
+        shared: &IndexTaskShared<C>,
+        mut chunk: Chunk,
+    ) -> Result<(), ExecError> {
+        filter_index_inner_chunk(&mut chunk, &shared.inner_not_null)?;
+        if chunk.num_rows() > 0 {
+            self.rows.add(chunk);
+        }
+        self.account(&shared.memory)
+    }
+
     fn install(mut self, state: &mut IndexLookupState) {
         debug_assert_eq!(state.inner_bytes, 0);
         std::mem::swap(&mut state.inner, &mut self.rows);
@@ -1105,16 +1108,8 @@ fn prepare_index_inner<C: Columns>(
         bytes: 0,
         tracker: Arc::clone(&shared.tracker),
     };
-    for mut chunk in prefetched {
-        filter_index_inner_chunk(&mut chunk, &shared.inner_not_null)?;
-        if chunk.num_rows() == 0 {
-            continue;
-        }
-        let bytes = chunk.memory_usage();
-        prepared.rows.add(chunk);
-        prepared.bytes += bytes;
-        prepared.tracker.consume(bytes);
-        shared.memory.check()?;
+    for chunk in prefetched {
+        prepared.append(shared, chunk)?;
     }
     if shared.hash_output.is_none() {
         prepared.matched = build_index_lookup_map(
@@ -1125,6 +1120,56 @@ fn prepare_index_inner<C: Columns>(
         )?;
     }
     Ok(prepared)
+}
+
+/// Go fetchInnerResults keeps the same executor between windows. A full
+/// window is not EOF: only an empty Next can settle unmatched outer rows.
+fn fetch_index_inner<C: Columns>(
+    shared: &IndexTaskShared<C>,
+    source: &mut dyn Executor,
+    max_rows: Option<usize>,
+    reuse: Option<PreparedIndexInner>,
+) -> Result<(PreparedIndexInner, u64, bool), ExecError> {
+    let fetched = (|| {
+        let mut inner = match reuse {
+            Some(mut inner) => {
+                inner.rows.reset();
+                inner.matched.clear();
+                inner
+            }
+            None => prepare_index_inner(shared, Vec::new())?,
+        };
+        let mut rows = 0;
+        let done = loop {
+            shared.memory.check()?;
+            let mut chunk = inner.rows.alloc_chunk();
+            source.next(&mut chunk)?;
+            if chunk.num_rows() == 0 {
+                drop(chunk);
+                inner.account(&shared.memory)?;
+                break true;
+            }
+            rows += chunk.num_rows() as u64;
+            inner.append(shared, chunk)?;
+            if max_rows.is_some_and(|max| inner.rows.len() >= max) {
+                break false;
+            }
+        };
+        if shared.hash_output.is_none() {
+            inner.matched = build_index_lookup_map(
+                &inner.rows,
+                &shared.keys,
+                &shared.inner_types,
+                shared.outer_is_left,
+            )?;
+        }
+        Ok((inner, rows, done))
+    })();
+    // Go logs Close errors without replacing the fetch result/error.
+    if !matches!(&fetched, Ok((_, _, false))) {
+        let _ = source.close();
+    }
+    fetched
 }
 
 /// Both worker and synchronous readers index retained chunk rows identically.
@@ -1265,6 +1310,7 @@ pub struct JoinExec<C: Columns> {
     index_lookup: Option<IndexLookupPlan>,
     /// The physical index-hash variant and its outer-order contract.
     index_hash: Option<bool>,
+    vectorized: bool,
     /// The index strategy's live state; absent until the first `next()`.
     index_state: Option<IndexLookupState>,
     /// What a pool worker needs to join one index task on its own (Go's
@@ -1386,6 +1432,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             merge_state: None,
             index_lookup: None,
             index_hash: None,
+            vectorized: true,
             index_state: None,
             index_task_shared: None,
             condition_evals: Cell::new(0),
@@ -1891,19 +1938,24 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     fn index_hash_output(&self) -> Option<IndexHashOutput> {
         self.index_hash.map(|ordered| IndexHashOutput {
             ordered,
+            vectorized: self.vectorized,
             kind: self.kind,
             outer_is_left: self.outer_is_left(),
             output: self.output.clone(),
-            conditions: if self.keys.is_empty() || !self.residual_conditions.is_empty() {
+            conditions: if self.keys.is_empty() {
                 self.conditions.clone()
             } else {
-                Vec::new()
+                self.residual_conditions.clone()
             },
             condition_types: self.condition_types.clone(),
             left_types: self.left_types.clone(),
             right_types: self.right_types.clone(),
             output_types: self.meta.ret_field_types().to_vec(),
         })
+    }
+
+    pub(crate) fn set_vectorized_expression(&mut self, enabled: bool) {
+        self.vectorized = enabled;
     }
 
     /// The index strategy: stream the outer side in batches, and read only
@@ -2096,7 +2148,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 INDEX_LOOKUP_JOIN_CONCURRENCY,
             )?;
         }
-        let inner_not_null = plan.inner_not_null.clone();
         let synchronous = |plan: &mut IndexLookupPlan,
                            state: &mut IndexLookupState,
                            probes: Vec<IndexTaskProbe>|
@@ -2110,16 +2161,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     keys: keys_seeded,
                     bound_values,
                 })?;
-            Self::materialize_index_inner(
-                &mut plan.source,
-                state,
-                keys,
-                outer_is_left,
-                &inner_not_null,
-                tracker,
-                memory,
-                shared.hash_output.is_none(),
+            let (inner, _, done) = fetch_index_inner(
+                shared,
+                plan.source.executor(),
+                shared
+                    .hash_output
+                    .as_ref()
+                    .and_then(IndexHashOutput::max_fetch_rows),
+                None,
             )?;
+            inner.install(state);
             if let Some(output) = &shared.hash_output {
                 state.matched.clear();
                 state.hash = Some(IndexHashState::new(
@@ -2130,6 +2181,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     tracker,
                     memory,
                 )?);
+                state
+                    .hash
+                    .as_mut()
+                    .expect("hash initialized")
+                    .begin_inner_window(done);
             }
             Ok(())
         };
@@ -2254,7 +2310,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         target: usize,
     ) -> Result<(), ExecError> {
         let outer_types = outer_child.ret_field_types().to_vec();
-        while state.pending.len() + state.unordered.as_ref().map_or(0, |tasks| tasks.active) < target {
+        while state.pending.len() + state.unordered.as_ref().map_or(0, |tasks| tasks.active)
+            < target
+        {
             let (mut outer, outer_bytes) = Self::read_index_outer_task(
                 outer_child,
                 &outer_types,
@@ -2356,42 +2414,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         Ok((outer, bytes))
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn materialize_index_inner(
-        source: &mut IndexLookupSource,
-        state: &mut IndexLookupState,
-        keys: &[EquiKey],
-        outer_is_left: bool,
-        inner_not_null: &[usize],
-        tracker: &Arc<Tracker>,
-        memory: &StatementMemory,
-        build_inner_map: bool,
-    ) -> Result<(), ExecError> {
-        let inner_types = source.ret_field_types().to_vec();
-        let mut chunk = source.new_chunk();
-        loop {
-            source.next(&mut chunk)?;
-            if chunk.num_rows() == 0 {
-                break;
-            }
-            filter_index_inner_chunk(&mut chunk, inner_not_null)?;
-            if chunk.num_rows() == 0 {
-                continue;
-            }
-            let bytes = chunk.memory_usage();
-            state.inner_bytes += bytes;
-            state
-                .inner
-                .add(std::mem::replace(&mut chunk, source.new_chunk()));
-            tracker.consume(bytes);
-            memory.check()?;
-        }
-        if build_inner_map {
-            state.matched = build_index_lookup_map(&state.inner, keys, &inner_types, outer_is_left)?;
-        }
-        Ok(())
-    }
-
     /// Emits the loaded batch's outer rows, in the order the child produced
     /// them, until `req` is full or the batch runs out.
     fn drain_index_batch(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
@@ -2421,13 +2443,46 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 }
                 state.matched.clear();
             }
-            let hash = state.hash.as_mut().expect("hash variant initialized");
-            let before = hash.evaluations;
-            let result = hash.drain(&output, &self.ctx, &state.outer, &state.inner, req);
-            self.condition_evals
-                .set(self.condition_evals.get() + hash.evaluations - before);
-            if hash.done {
+            let result = (|| loop {
+                let hash = state.hash.as_mut().expect("hash variant initialized");
+                let before = hash.evaluations;
+                let result = hash.drain(&output, &self.ctx, &state.outer, &state.inner, req);
+                self.condition_evals
+                    .set(self.condition_evals.get() + hash.evaluations - before);
+                result?;
+                if hash.done {
+                    state.cursor = state.outer.len();
+                }
+                if req.is_full() || !hash.needs_inner_window(&state.inner) {
+                    return Ok(());
+                }
+                let shared = self.index_task_shared.as_ref().expect("index task context");
+                let previous = PreparedIndexInner::take(&mut state, shared)?;
+                let (inner, _, done) = fetch_index_inner(
+                    shared,
+                    self.index_lookup
+                        .as_mut()
+                        .expect("index plan")
+                        .source
+                        .executor(),
+                    output.max_fetch_rows(),
+                    Some(previous),
+                )?;
+                inner.install(&mut state);
+                state
+                    .hash
+                    .as_mut()
+                    .expect("retained outer hash")
+                    .begin_inner_window(done);
+            })();
+            if result.is_err() {
+                // A failed inner task is terminal. Its consumed window must
+                // not be probed again or mistaken for an unmatched-row EOF.
                 state.cursor = state.outer.len();
+                state.hash.as_mut().expect("hash variant initialized").done = true;
+                if let Some(plan) = self.index_lookup.as_mut() {
+                    let _ = plan.source.close();
+                }
             }
             result
         } else {
@@ -2475,7 +2530,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 .as_ref()
                 .expect("active hash worker")
                 .recv()
-                .map_err(|_| ExecError::internal("the index-hash worker stopped without completion"))?;
+                .map_err(|_| {
+                    ExecError::internal("the index-hash worker stopped without completion")
+                })?;
             match outcome {
                 IndexTaskOutcome::HashChunk(chunk) => state.hash_chunk = Some(chunk),
                 IndexTaskOutcome::HashFinished {
@@ -2540,7 +2597,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     matched: false,
                 });
             }
-            let probe = state.probe.as_mut().expect("the outer probe is initialized");
+            let probe = state
+                .probe
+                .as_mut()
+                .expect("the outer probe is initialized");
             let positions = probe
                 .key
                 .as_ref()

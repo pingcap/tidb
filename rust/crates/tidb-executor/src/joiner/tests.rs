@@ -51,6 +51,8 @@ fn long() -> FieldType {
 
 fn sizes() -> JoinerChunkSizes {
     JoinerChunkSizes {
+        // These NULL-status cases exercise Go's row-based filter branch.
+        vectorized: false,
         init_chunk_size: 8,
         max_chunk_size: MAX_CHUNK,
     }
@@ -725,7 +727,10 @@ fn eval_bool_treats_a_plain_null_as_false_and_an_eq_from_in_null_as_unknown() {
 #[test]
 fn other_condition_chunk_uses_init_chunk_size() {
     let init_chunk_size = 8;
-    for join_type in [JoinType::Inner, JoinType::LeftOuter, JoinType::RightOuter] {
+    for (join_type, vectorized) in [JoinType::Inner, JoinType::LeftOuter, JoinType::RightOuter]
+        .into_iter()
+        .flat_map(|kind| [(kind, false), (kind, true)])
+    {
         let mut joiner = new_joiner(
             TestCtx,
             join_type,
@@ -737,6 +742,7 @@ fn other_condition_chunk_uses_init_chunk_size() {
             None,
             false,
             JoinerChunkSizes {
+                vectorized,
                 init_chunk_size,
                 max_chunk_size: MAX_CHUNK,
             },

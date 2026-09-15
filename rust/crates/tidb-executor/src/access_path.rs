@@ -4300,64 +4300,6 @@ pub(crate) struct IndexJoinProbes {
     pub(crate) bound_values: Vec<Vec<Datum>>,
 }
 
-/// The inner side of an index join: the rows of one table whose join-key
-/// columns equal one of a batch of probe values.
-///
-/// This is Go's inner executor, the one `IndexJoinExecutorBuilder
-/// .BuildExecutorForIndexJoin` rebuilds for every outer batch. Here it is
-/// built once and *re-seeded* per batch ([`Self::set_probes`]), which is the
-/// same contract -- the probe list is the only thing that changes between
-/// batches -- without rebuilding the storage handle each time.
-///
-/// The probe list is the caller's promise: it must already be the DEDUPED,
-/// SORTED, inner-column-typed key list Go's `sortAndDedupLookUpContents`
-/// produces. This source does not re-check it, because the encoding that
-/// makes two probes equal is the caller's (`constructDatumLookupKey`'s
-/// `ConvertTo` + `Compare`), and a second answer here could only disagree.
-/// A prefetched lookup task's remote cursor on its way to a pool worker; see
-/// [`IndexJoinLookupExec::take_prefetched_drain`].
-pub(crate) struct PrefetchedDrain {
-    cursor: RemoteRowCursor,
-    field_types: Vec<FieldType>,
-    output_columns: Vec<usize>,
-    output_types: Vec<FieldType>,
-    cap: usize,
-}
-
-impl PrefetchedDrain {
-    /// Drains whole clean batches into request-shaped chunks. Returns the
-    /// chunks and, when the cursor could not hand a batch over, the cursor
-    /// itself so the row path finishes it on the session thread.
-    pub(crate) fn run(mut self) -> (Result<Vec<Chunk>, ExecError>, Option<RemoteRowCursor>) {
-        let mut chunks = Vec::new();
-        loop {
-            let mut scratch = Chunk::new_with_capacity(&self.field_types, self.cap);
-            match self
-                .cursor
-                .append_clean_chunk(&mut scratch, self.cap, false)
-            {
-                Ok(Some(0)) => return (Ok(chunks), None),
-                Ok(Some(rows)) => {
-                    let mut output = Chunk::new_with_capacity(&self.output_types, rows);
-                    for (target, source) in self.output_columns.iter().copied().enumerate() {
-                        output.append_column_range_from(target, &scratch, source, 0, rows);
-                    }
-                    chunks.push(output);
-                }
-                Ok(None) => return (Ok(chunks), Some(self.cursor)),
-                Err(error) => {
-                    return (
-                        Err(ExecError::unsupported(format!(
-                            "common-handle remote lookup failed: {error:?}"
-                        ))),
-                        None,
-                    )
-                }
-            }
-        }
-    }
-}
-
 /// What a lane thread needs to rebuild one forked common-handle lookup task
 /// for an outer batch: the immutable lookup description without the
 /// original reader's cursor and counters. See [`IndexJoinLookupExec::fork_template`].
@@ -4436,6 +4378,11 @@ impl LookupForkTemplate {
     }
 }
 
+/// The inner side of an index join: the rows of one table whose join-key
+/// columns equal one batch of sorted, deduplicated, inner-typed probes.
+/// Go rebuilds this reader per outer batch; the synchronous Rust path
+/// re-seeds it with [`Self::set_probes`]. Both paths retain the same cursor
+/// between chunk fetches, including incremental index-hash join windows.
 pub struct IndexJoinLookupExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -5200,40 +5147,6 @@ impl IndexJoinLookupExec {
             );
         }
         Ok(true)
-    }
-
-    /// Go `indexHashJoinInnerWorker.fetchInnerResults` off the session
-    /// thread: takes the prefetched task's remote cursor, with the projection
-    /// its batches need, for a pool worker to drain while the session thread
-    /// probes earlier tasks. `None` when the batches would need local work
-    /// (a filter the coprocessor did not take, an output column outside the
-    /// decoded set, a staged cursor), in which case the task is read here.
-    pub(crate) fn take_prefetched_drain(&mut self) -> Option<PrefetchedDrain> {
-        if !self.common_handle_prefix_lookup() || !self.remote_filters_complete {
-            return None;
-        }
-        let output_columns = self.chunk_output_columns()?;
-        let ready = self.remote_cursor.as_ref().is_some_and(|cursor| {
-            cursor.supports_lookup_chunks()
-                && (self.filters.is_empty() || cursor.predicates_applied())
-        });
-        if !ready {
-            return None;
-        }
-        let cursor = self.remote_cursor.take()?;
-        Some(PrefetchedDrain {
-            field_types: cursor.field_types().to_vec(),
-            cursor,
-            output_columns,
-            output_types: self.meta.ret_field_types().to_vec(),
-            cap: self.meta.max_chunk_size(),
-        })
-    }
-
-    /// Puts back a cursor the worker could not finish; the row path reads
-    /// the rest of it here.
-    pub(crate) fn restore_cursor(&mut self, cursor: RemoteRowCursor) {
-        self.remote_cursor = Some(cursor);
     }
 
     /// Accounts rows a worker produced for this lookup.

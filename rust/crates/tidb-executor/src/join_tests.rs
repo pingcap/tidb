@@ -303,8 +303,134 @@ fn index_hash_join_builds_outer_and_probes_inner_rows() {
     }
 }
 
-/// Go's result chunk channel bounds fanout and Close releases a worker that
-/// is waiting for the consumer. Ordered and unordered workers share ownership.
+/// Go fetchInnerResults retains the reader and outer match status across windows.
+#[test]
+fn index_hash_fetches_inner_windows_before_final_unmatched_rows() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Go supportIncrementalLookUp/fetchInnerResults: preserve match status
+    // across fetch windows; a match in the last window is not an early miss.
+    for kind in [
+        JoinKind::Left,
+        JoinKind::Inner,
+        JoinKind::Right,
+        JoinKind::AntiSemi,
+        JoinKind::Semi,
+    ] {
+        for (ordered, fail) in [false, true]
+            .into_iter()
+            .flat_map(|ordered| [false, true].map(|fail| (ordered, fail)))
+        {
+            let outer = vec![
+                vec![Datum::Int(1)],
+                vec![Datum::Int(2)],
+                vec![Datum::Int(3)],
+            ];
+            let (left, right) = if kind == JoinKind::Right {
+                (vec![], outer)
+            } else {
+                (outer, vec![])
+            };
+            let mut join = join_of(kind, vec![eq_on(0, 0, 1)], left, right, 1);
+            join.index_hash = Some(ordered);
+            let read_rows = Arc::new(AtomicUsize::new(0));
+            let mut rows = vec![vec![Datum::Int(1)]; 8192];
+            rows.push(vec![Datum::Int(2)]);
+            let mut source = RowSource::new(rows, 1);
+            source.read_rows = Some(Arc::clone(&read_rows));
+            source.fail_after = fail.then_some(8192);
+            join.index_lookup = Some(IndexLookupPlan {
+                lookup_is_left: kind == JoinKind::Right,
+                probe_keys: vec![0],
+                probe_key_domains: vec![IndexProbeKeyDomain {
+                    field_type: long(),
+                    prefix_length: -1,
+                }],
+                source: IndexLookupSource::Composite {
+                    exec: Box::new(source),
+                    probes: Arc::new(std::sync::Mutex::new(Default::default())),
+                },
+                outer_not_null: vec![],
+                inner_not_null: vec![],
+                probe_bounds: vec![],
+            });
+            join.open().unwrap();
+            let incremental = !ordered && kind != JoinKind::Semi;
+            let loaded = join.fill_index_batch(3);
+            if fail && !incremental {
+                assert!(loaded.is_err());
+                join.close().unwrap();
+                assert_eq!(join.tracker.bytes_consumed(), 0);
+                continue;
+            }
+            assert!(loaded.unwrap());
+            assert_eq!(
+                read_rows.load(Ordering::SeqCst),
+                if incremental { 4096 } else { 8193 }
+            );
+            let mut result = Vec::new();
+            loop {
+                let mut chunk = join.new_chunk();
+                chunk.set_required_rows(17, CHUNK);
+                if let Err(error) = join.next(&mut chunk) {
+                    assert!(fail && format!("{error:?}").contains("inner reader failed"));
+                    // Go TestIndexLookupJoinHang calls Next repeatedly after
+                    // an error: the failed task cannot strand the consumer.
+                    for _ in 0..3 {
+                        join.next(&mut chunk).unwrap();
+                        assert_eq!(chunk.num_rows(), 0);
+                    }
+                    break;
+                }
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                assert!(chunk.num_rows() <= 17);
+                result.extend(
+                    (0..chunk.num_rows())
+                        .map(|i| chunk.get_row(i).get_datum_row(join.ret_field_types())),
+                );
+            }
+            if fail {
+                assert_eq!(read_rows.load(Ordering::SeqCst), 8192);
+                assert!(result.iter().all(|row| !row.contains(&Datum::Null)));
+                join.close().unwrap();
+                assert_eq!(join.tracker.bytes_consumed(), 0);
+                continue;
+            }
+            assert_eq!(read_rows.load(Ordering::SeqCst), 8193);
+            match kind {
+                JoinKind::AntiSemi => assert_eq!(result, vec![vec![Datum::Int(3)]]),
+                JoinKind::Semi => {
+                    assert_eq!(result, vec![vec![Datum::Int(1)], vec![Datum::Int(2)]])
+                }
+                _ => {
+                    assert_eq!(
+                        result.len(),
+                        if kind == JoinKind::Inner { 8193 } else { 8194 }
+                    );
+                    assert_eq!(
+                        result
+                            .iter()
+                            .filter(|row| **row == vec![Datum::Int(2), Datum::Int(2)])
+                            .count(),
+                        1
+                    );
+                    assert_eq!(
+                        result
+                            .iter()
+                            .filter(|row| row.contains(&Datum::Null))
+                            .count(),
+                        usize::from(kind != JoinKind::Inner)
+                    );
+                }
+            }
+            join.close().unwrap();
+            assert_eq!(join.tracker.bytes_consumed(), 0);
+        }
+    }
+}
+
 #[test]
 fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
     for ordered in [false, true] {
@@ -314,6 +440,7 @@ fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
             let mut shared = index_task_shared_for_test(&join);
             shared.max_chunk_size = 2;
             let types = [long()];
+            shared.inner_types = types.to_vec();
             let mut outer = OuterBatch::new(&types, 2, CHUNK);
             let mut outer_chunk = Chunk::new_with_capacity(&types, 2);
             for key in [1, 1, 2] {
@@ -326,11 +453,18 @@ fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
             if ordered {
                 join.tracker.consume(bytes);
             }
-            let mut chunk = Chunk::new_with_capacity(&types, 4);
-            for _ in 0..9 {
-                chunk.append_int64(0, 1);
-            }
-            let inner = prepare_index_inner(&shared, vec![chunk]).unwrap();
+            let read_rows = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let mut input = vec![vec![Datum::Int(1)]; 8192];
+            input.push(vec![Datum::Int(2)]);
+            let mut source = RowSource::new(input, 1);
+            source.read_rows = Some(Arc::clone(&read_rows));
+            let (inner, inner_rows, done) = fetch_index_inner(
+                &shared,
+                &mut source,
+                shared.hash_output.as_ref().unwrap().max_fetch_rows(),
+                None,
+            )
+            .unwrap();
             assert!(
                 inner.matched.is_empty(),
                 "hash variant must not build the inner map"
@@ -338,7 +472,7 @@ fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
             let outcome = IndexTaskOutcome::Prepared {
                 outer,
                 inner,
-                inner_rows: 9,
+                inner_rows,
             };
             let (sender, receiver, mut unordered) = if ordered {
                 let (sender, receiver) = std::sync::mpsc::sync_channel(1);
@@ -348,7 +482,14 @@ fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
                 (tasks.admit(bytes), None, Some(tasks))
             };
             let worker = std::thread::spawn(move || {
-                index_hash::send_prepared_index_task(&shared, outcome, sender)
+                index_hash::send_prepared_with_hash(
+                    &shared,
+                    outcome,
+                    sender,
+                    None,
+                    (!done).then_some(&mut source as &mut dyn Executor),
+                );
+                source.close().unwrap();
             });
             let first = if let Some(tasks) = unordered.as_mut() {
                 tasks.recv().unwrap()
@@ -359,6 +500,10 @@ fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
                 panic!("worker must return chunk output");
             };
             assert_eq!(chunk.chunk.num_rows(), 2);
+            assert_eq!(
+                read_rows.load(std::sync::atomic::Ordering::SeqCst),
+                if ordered { 8193 } else { 4096 }
+            );
             let first_buffer = chunk.chunk.column(0).get_raw(0).as_ptr();
             join.index_state = Some(IndexLookupState {
                 unordered,
@@ -418,11 +563,15 @@ fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
                 }
             }
             if !early_close {
-                assert_eq!(rows.len(), 19);
-                assert_eq!(rows.last().unwrap(), &vec![Datum::Int(2), Datum::Null]);
+                assert_eq!(rows.len(), 16385);
+                assert_eq!(rows.last().unwrap(), &vec![Datum::Int(2), Datum::Int(2)]);
             }
             join.close().unwrap();
             worker.join().unwrap();
+            assert_eq!(
+                read_rows.load(std::sync::atomic::Ordering::SeqCst),
+                if early_close && !ordered { 4096 } else { 8193 }
+            );
             assert_eq!(join.tracker.bytes_consumed(), 0);
         }
     }
@@ -430,6 +579,95 @@ fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
 
 /// Go innerWorker.handleTask prepares the inner lookup; ON evaluation belongs
 /// to IndexLookUpJoin.Next. A later output error must not run in preparation.
+#[test]
+fn index_inner_windows_reuse_buffers_and_close_on_fetch_error() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut join = join_of(JoinKind::Left, vec![eq_on(0, 0, 1)], vec![], vec![], 1);
+    join.index_hash = Some(false);
+    let mut shared = index_task_shared_for_test(&join);
+    shared.inner_types = vec![long()];
+    let closes = Arc::new(AtomicUsize::new(0));
+    let mut source = RowSource::new(vec![vec![Datum::Int(1)]; 12288], 1);
+    source.fail_after = Some(8192);
+    source.closes = Some(Arc::clone(&closes));
+    let (first, count, done) = fetch_index_inner(&shared, &mut source, Some(4096), None).unwrap();
+    assert_eq!((count, done), (4096, false));
+    let pointers = |inner: &PreparedIndexInner| {
+        let mut pointers = (0..inner.rows.num_chunks())
+            .map(|i| inner.rows.get_chunk(i).column(0).get_raw(0).as_ptr() as usize)
+            .collect::<Vec<_>>();
+        pointers.sort_unstable();
+        pointers
+    };
+    let first_pointers = pointers(&first);
+    let bytes = join.tracker.bytes_consumed();
+    let (second, count, done) =
+        fetch_index_inner(&shared, &mut source, Some(4096), Some(first)).unwrap();
+    assert_eq!((count, done), (4096, false));
+    assert_eq!(pointers(&second), first_pointers);
+    assert_eq!(join.tracker.bytes_consumed(), bytes);
+    assert_eq!(closes.load(Ordering::SeqCst), 0);
+    assert!(fetch_index_inner(&shared, &mut source, Some(4096), Some(second)).is_err());
+    assert_eq!(closes.load(Ordering::SeqCst), 1);
+    assert_eq!(join.tracker.bytes_consumed(), 0);
+}
+
+#[test]
+fn index_hash_worker_fetch_error_does_not_emit_unmatched_rows() {
+    let mut join = join_of(JoinKind::Left, vec![eq_on(0, 0, 1)], vec![], vec![], 1);
+    join.index_hash = Some(false);
+    let mut shared = index_task_shared_for_test(&join);
+    shared.inner_types = vec![long()];
+    let mut source = RowSource::new(vec![vec![Datum::Int(1)]; 8192], 1);
+    source.fail_after = Some(4096);
+    let (inner, inner_rows, done) =
+        fetch_index_inner(&shared, &mut source, Some(4096), None).unwrap();
+    assert!(!done);
+    let mut outer = OuterBatch::new(&[long()], 2, CHUNK);
+    let mut chunk = Chunk::new_with_capacity(&[long()], 2);
+    chunk.append_int64(0, 1);
+    chunk.append_int64(0, 2);
+    for i in 0..2 {
+        outer.push(chunk.get_row(i));
+    }
+    let mut tasks = IndexUnordered::new(2, &join.tracker);
+    let sender = tasks.admit(outer.settle_bytes());
+    let worker = std::thread::spawn(move || {
+        index_hash::send_prepared_with_hash(
+            &shared,
+            IndexTaskOutcome::Prepared {
+                outer,
+                inner,
+                inner_rows,
+            },
+            sender,
+            None,
+            Some(&mut source),
+        );
+    });
+    let mut count = 0;
+    loop {
+        match tasks.recv() {
+            Ok(IndexTaskOutcome::HashChunk(chunk)) => {
+                for i in 0..chunk.chunk.num_rows() {
+                    assert!(!chunk.chunk.get_row(i).is_null(1));
+                }
+                count += chunk.chunk.num_rows();
+            }
+            Err(error) => {
+                assert!(format!("{error:?}").contains("inner reader failed"));
+                break;
+            }
+            _ => panic!("failed fetch must not finish the task"),
+        }
+    }
+    assert_eq!(count, 4096);
+    assert_eq!(tasks.active, 0);
+    worker.join().unwrap();
+    drop(tasks);
+    assert_eq!(join.tracker.bytes_consumed(), 0);
+}
+
 #[test]
 fn index_worker_preparation_does_not_evaluate_join_residuals() {
     let mut column = Column::new(4, long());
@@ -484,7 +722,10 @@ fn index_worker_preparation_does_not_evaluate_join_residuals() {
     let prepared = prepare_index_inner(&shared, vec![input]).unwrap();
     join.index_state = Some(IndexLookupState {
         unordered: None,
-        hash: None, hash_results: None, hash_chunk: None, hash_task_bytes: 0,
+        hash: None,
+        hash_results: None,
+        hash_chunk: None,
+        hash_task_bytes: 0,
         outer,
         cursor: 0,
         probe: None,
@@ -583,6 +824,9 @@ struct RowSource {
     meta: ExecutorMeta,
     rows: Vec<Vec<Datum>>,
     cursor: usize,
+    read_rows: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    fail_after: Option<usize>,
+    closes: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl RowSource {
@@ -595,6 +839,9 @@ impl RowSource {
             meta: ExecutorMeta::new(schema_with_types(types), 0, CHUNK, CHUNK),
             rows,
             cursor: 0,
+            read_rows: None,
+            fail_after: None,
+            closes: None,
         }
     }
 }
@@ -606,6 +853,11 @@ impl Executor for RowSource {
     }
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
+        if self.fail_after.is_some_and(|limit| self.cursor >= limit) {
+            return Err(ExecError::internal(
+                "inner reader failed after its first window",
+            ));
+        }
         let end = (self.cursor + CHUNK).min(self.rows.len());
         for row in &self.rows[self.cursor..end] {
             for (c, value) in row.iter().enumerate() {
@@ -613,9 +865,15 @@ impl Executor for RowSource {
             }
         }
         self.cursor = end;
+        if let Some(read_rows) = &self.read_rows {
+            read_rows.store(end, std::sync::atomic::Ordering::SeqCst);
+        }
         Ok(())
     }
     fn close(&mut self) -> Result<(), ExecError> {
+        if let Some(closes) = &self.closes {
+            closes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         Ok(())
     }
     fn schema(&self) -> &Schema {

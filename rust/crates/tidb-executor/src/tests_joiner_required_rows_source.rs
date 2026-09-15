@@ -97,6 +97,7 @@ fn required_rows_truncate_joiner_output_to_the_requested_count() {
                     None,
                     false,
                     JoinerChunkSizes {
+                        vectorized: true,
                         init_chunk_size: 32,
                         max_chunk_size: max_chunk_size(),
                     },

@@ -24,6 +24,7 @@ pub(super) struct IndexHashOutput {
     pub kind: JoinKind,
     pub outer_is_left: bool,
     pub ordered: bool,
+    pub vectorized: bool,
     pub output: JoinOutput,
     pub conditions: Vec<Expression>,
     pub condition_types: Vec<FieldType>,
@@ -43,8 +44,13 @@ pub(super) struct IndexHashState {
     probe_hash: Option<Option<u64>>,
     outer_row: usize,
     scratch: Chunk,
+    candidate_outer: Vec<usize>,
+    selected: Vec<bool>,
+    nulls: Vec<bool>,
+    memory: StatementMemory,
     pub evaluations: u64,
     pub done: bool,
+    inner_done: bool,
     tracker: Arc<Tracker>,
     bytes: i64,
 }
@@ -56,6 +62,16 @@ impl Drop for IndexHashState {
 }
 
 impl IndexHashOutput {
+    pub fn max_fetch_rows(&self) -> Option<usize> {
+        // Go supportIncrementalLookUp / maxRowsPerFetch.
+        (!self.ordered
+            && matches!(
+                self.kind,
+                JoinKind::Inner | JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi
+            ))
+        .then_some(4096)
+    }
+
     fn outer_types(&self) -> &[FieldType] {
         if self.outer_is_left {
             &self.left_types
@@ -190,8 +206,13 @@ impl IndexHashState {
             probe_hash: None,
             outer_row: 0,
             scratch: Chunk::new_with_capacity(&output.condition_types, 1),
+            candidate_outer: Vec::new(),
+            selected: Vec::new(),
+            nulls: Vec::new(),
+            memory: memory.clone(),
             evaluations: 0,
             done: false,
+            inner_done: true,
             tracker: Arc::clone(tracker),
             bytes: 0,
         };
@@ -251,11 +272,70 @@ impl IndexHashState {
                         .sum::<usize>()
             })
             + self.matched.capacity()
-            + self.keys.capacity() * size_of::<EquiKey>();
+            + self.keys.capacity() * size_of::<EquiKey>()
+            + self.candidate_outer.capacity() * size_of::<usize>()
+            + self.selected.capacity()
+            + self.nulls.capacity();
         let bytes = bytes as i64 + self.scratch.memory_usage();
         self.tracker.consume(bytes - self.bytes);
         self.bytes = bytes;
         memory.check()
+    }
+
+    pub fn begin_inner_window(&mut self, done: bool) {
+        self.inner_chunk = 0;
+        self.inner_row = 0;
+        self.candidate = 0;
+        self.probe_hash = None;
+        self.inner_done = done;
+    }
+
+    pub fn needs_inner_window(&self, inner: &List) -> bool {
+        !self.inner_done && self.inner_chunk == inner.num_chunks()
+    }
+
+    fn append_candidate(
+        &mut self,
+        output: &IndexHashOutput,
+        at: usize,
+        outer: Row<'_>,
+        inner: Row<'_>,
+    ) {
+        let (left, right) = if output.outer_is_left {
+            (outer, inner)
+        } else {
+            (inner, outer)
+        };
+        self.scratch.append_partial_row(0, left);
+        self.scratch.append_partial_row(left.len(), right);
+        self.candidate_outer.push(at);
+    }
+
+    fn filter_candidates<C: Columns>(
+        &mut self,
+        output: &IndexHashOutput,
+        ctx: &C,
+        req: &mut Chunk,
+    ) -> Result<(), ExecError> {
+        self.evaluations += self.scratch.num_rows() as u64;
+        let (selected, nulls) = tidb_expr::evaluator::vectorized_filter_consider_null(
+            ctx,
+            output.vectorized,
+            &output.conditions,
+            &self.scratch,
+            std::mem::take(&mut self.selected),
+            std::mem::take(&mut self.nulls),
+        )?;
+        self.selected = selected;
+        self.nulls = nulls;
+        self.account(&self.memory.clone())?;
+        for (index, &at) in self.candidate_outer.iter().enumerate() {
+            self.matched[at] |= self.selected[index];
+        }
+        output
+            .output
+            .joined_selected(req, &self.scratch, &self.selected);
+        Ok(())
     }
 
     pub fn drain<C: Columns>(
@@ -274,6 +354,20 @@ impl IndexHashState {
                     .get(self.candidate)
                     .copied();
                 if let Some(ptr) = ptr {
+                    if !output.conditions.is_empty() && !output.semi() {
+                        self.scratch.reset();
+                        self.candidate_outer.clear();
+                        let end = (self.candidate + req.required_rows() - req.num_rows())
+                            .min(self.ordered.as_ref().expect("ordered variant")[at].len());
+                        while self.candidate < end {
+                            let ptr =
+                                self.ordered.as_ref().expect("ordered variant")[at][self.candidate];
+                            self.append_candidate(output, at, row, inner.get_row(ptr));
+                            self.candidate += 1;
+                        }
+                        self.filter_candidates(output, ctx, req)?;
+                        continue;
+                    }
                     let inner_row = inner.get_row(ptr);
                     if output.matches(ctx, row, inner_row, self)? {
                         self.matched[at] = true;
@@ -324,6 +418,28 @@ impl IndexHashState {
                 .and_then(|v| v.get(self.candidate))
                 .copied();
             if let Some(at) = at {
+                if !output.conditions.is_empty() && !output.semi() {
+                    self.scratch.reset();
+                    self.candidate_outer.clear();
+                    let budget = req.required_rows() - req.num_rows();
+                    while self.candidate_outer.len() < budget {
+                        let Some(at) = hash
+                            .and_then(|hash| self.buckets.get(&hash))
+                            .and_then(|v| v.get(self.candidate))
+                            .copied()
+                        else {
+                            break;
+                        };
+                        self.candidate += 1;
+                        if output.equal(&self.keys, outer.row(at), row)? {
+                            self.append_candidate(output, at, outer.row(at), row);
+                        }
+                    }
+                    if !self.candidate_outer.is_empty() {
+                        self.filter_candidates(output, ctx, req)?;
+                    }
+                    continue;
+                }
                 if !(output.semi() && self.matched[at])
                     && output.equal(&self.keys, outer.row(at), row)?
                     && output.matches(ctx, outer.row(at), row, self)?
@@ -338,7 +454,7 @@ impl IndexHashState {
                 self.probe_hash = None;
             }
         }
-        if self.inner_chunk == inner.num_chunks() {
+        if self.inner_done && self.inner_chunk == inner.num_chunks() {
             while self.outer_row < outer.len() && !req.is_full() {
                 if !self.matched[self.outer_row] {
                     output.unmatched(req, outer.row(self.outer_row));
@@ -411,7 +527,28 @@ pub(super) fn send_index_task<C: Columns + Send + Sync + 'static>(
         drop(build_outer);
         result
     });
-    let fetched = fetch_index_task(shared, &outer);
+    let mut reader = None;
+    let fetched = (|| {
+        let task = match open_index_task(shared, &outer)? {
+            Ok(task) => task,
+            Err(probes) => return Ok(FetchedIndexTask::Unforked(probes)),
+        };
+        reader = Some(task);
+        let (inner, inner_rows, done) = fetch_index_inner(
+            shared,
+            reader.as_mut().expect("opened reader"),
+            shared
+                .hash_output
+                .as_ref()
+                .expect("hash variant")
+                .max_fetch_rows(),
+            None,
+        )?;
+        if done {
+            reader = None;
+        }
+        Ok(FetchedIndexTask::Prepared { inner, inner_rows })
+    })();
     let built = build.recv().unwrap_or_else(|_| {
         Err(ExecError::internal(
             "index-hash build worker stopped without a result",
@@ -419,7 +556,16 @@ pub(super) fn send_index_task<C: Columns + Send + Sync + 'static>(
     });
     let outer = Arc::into_inner(outer).expect("build completion releases its outer rows");
     let outcome = fetched_index_task_outcome(outer, fetched);
-    send_prepared_with_hash(shared, outcome, sender, Some(built));
+    send_prepared_with_hash(
+        shared,
+        outcome,
+        sender,
+        Some(built),
+        reader.as_mut().map(|reader| reader as &mut dyn Executor),
+    );
+    if let Some(reader) = reader.as_mut() {
+        let _ = reader.close();
+    }
 }
 
 pub(super) fn send_prepared_index_task<C: Columns>(
@@ -427,14 +573,15 @@ pub(super) fn send_prepared_index_task<C: Columns>(
     outcome: IndexTaskOutcome,
     sender: IndexResultSender,
 ) {
-    send_prepared_with_hash(shared, outcome, sender, None);
+    send_prepared_with_hash(shared, outcome, sender, None, None);
 }
 
-fn send_prepared_with_hash<C: Columns>(
+pub(super) fn send_prepared_with_hash<C: Columns>(
     shared: &IndexTaskShared<C>,
     outcome: IndexTaskOutcome,
     sender: IndexResultSender,
     built: Option<Result<IndexHashState, ExecError>>,
+    mut reader: Option<&mut dyn Executor>,
 ) {
     let Some(output) = &shared.hash_output else {
         let _ = sender.send(outcome);
@@ -442,8 +589,8 @@ fn send_prepared_with_hash<C: Columns>(
     };
     let IndexTaskOutcome::Prepared {
         outer,
-        inner,
-        inner_rows,
+        mut inner,
+        mut inner_rows,
     } = outcome
     else {
         let _ = sender.send(outcome);
@@ -461,6 +608,7 @@ fn send_prepared_with_hash<C: Columns>(
             )?,
         };
         hash.prepare_ordered(output, &outer, &inner.rows, &shared.memory)?;
+        hash.begin_inner_window(reader.is_none());
         let (recycle, recycled) = std::sync::mpsc::sync_channel(1);
         let mut buffer = Chunk::new(
             &output.output_types,
@@ -469,7 +617,7 @@ fn send_prepared_with_hash<C: Columns>(
         );
         while !hash.done {
             hash.drain(output, &shared.ctx, &outer, &inner.rows, &mut buffer)?;
-            if buffer.num_rows() > 0 {
+            if buffer.is_full() || hash.done && buffer.num_rows() > 0 {
                 let mut chunk = IndexHashChunk::new(buffer, &shared.tracker);
                 chunk.recycle = Some(recycle.clone());
                 shared.memory.check()?;
@@ -479,6 +627,19 @@ fn send_prepared_with_hash<C: Columns>(
                 buffer = recycled
                     .recv()
                     .map_err(|_| ExecError::internal("index-hash output resource closed"))?;
+            }
+            if hash.needs_inner_window(&inner.rows) {
+                // Go List.Reset reuses the previous window's chunks, while
+                // retaining the outer hash, match flags and partial output.
+                let (next, rows, done) = fetch_index_inner(
+                    shared,
+                    reader.as_deref_mut().expect("unfinished inner reader"),
+                    output.max_fetch_rows(),
+                    Some(inner),
+                )?;
+                inner = next;
+                inner_rows += rows;
+                hash.begin_inner_window(done);
             }
         }
         Ok::<_, ExecError>(Some(hash.evaluations))
@@ -503,6 +664,73 @@ fn send_prepared_with_hash<C: Columns>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go Constant.VecEval reads a prepared value once per candidate chunk.
+    #[test]
+    fn index_hash_conditions_evaluate_a_candidate_batch() {
+        struct Parameters(Cell<usize>);
+        impl Columns for Parameters {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn param_value(&self, _: usize) -> Result<Datum, tidb_expr::EvalError> {
+                self.0.set(self.0.get() + 1);
+                Ok(Datum::Int(1))
+            }
+        }
+        for (ordered, vectorized) in [(false, false), (false, true), (true, false), (true, true)] {
+            let ty = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+            let mut parameter = tidb_expr::constant::Constant::new(Datum::Int(1), ty.clone());
+            parameter.param_marker = Some(tidb_expr::constant::ParamMarker { order: 0 });
+            let output = IndexHashOutput {
+                kind: JoinKind::Left,
+                outer_is_left: true,
+                ordered,
+                vectorized,
+                output: JoinOutput::all(JoinKind::Left, 1, 1),
+                conditions: vec![Expression::Constant(parameter)],
+                condition_types: vec![ty.clone(), ty.clone()],
+                left_types: vec![ty.clone()],
+                right_types: vec![ty.clone()],
+                output_types: vec![ty.clone(), ty.clone()],
+            };
+            let mut chunk = Chunk::new_with_capacity(&[ty.clone()], 4);
+            for _ in 0..4 {
+                chunk.append_int64(0, 1);
+            }
+            let mut outer = OuterBatch::new(&[ty.clone()], 4, 4);
+            for i in 0..if ordered { 1 } else { 4 } {
+                outer.push(chunk.get_row(i));
+            }
+            if !ordered {
+                chunk.truncate_to(1);
+            }
+            let mut inner = List::new(&[ty], 4, 4);
+            inner.add(chunk);
+            let memory = StatementMemory::default();
+            let tracker = memory.operator_tracker(1);
+            let keys = [EquiKey {
+                left: 0,
+                right: 0,
+                class: KeyClass::Int,
+                null_safe: false,
+            }];
+            let mut state =
+                IndexHashState::new(&output, &keys, &outer, &inner, &tracker, &memory).unwrap();
+            let ctx = Parameters(Cell::new(0));
+            let mut result = Chunk::new(&output.output_types, 4, 4);
+            result.set_required_rows(3, 4);
+            state
+                .drain(&output, &ctx, &outer, &inner, &mut result)
+                .unwrap();
+            assert_eq!(result.num_rows(), 3);
+            assert_eq!(
+                ctx.0.get(),
+                if vectorized { 1 } else { 3 },
+                "honor the session vectorization setting"
+            );
+        }
+    }
 
     /// Go runUnordered consumes resultCh, not the head task's resultCh.
     #[test]
@@ -595,6 +823,7 @@ mod tests {
                     kind: JoinKind::LeftOuterSemi,
                     outer_is_left: true,
                     ordered,
+                    vectorized: true,
                     output: JoinOutput::all(JoinKind::LeftOuterSemi, 1, 1),
                     conditions: Vec::new(),
                     condition_types: vec![ty.clone(), ty.clone()],
