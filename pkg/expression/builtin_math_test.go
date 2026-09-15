@@ -448,6 +448,14 @@ func TestRound(t *testing.T) {
 		{[]any{-1.5, 0}, -2},
 		{[]any{1.5, 0}, 2},
 		{[]any{23.298, -1}, 20},
+		// Integers are exact-value numbers, so they round half away from zero
+		// rather than half to even, and they must not lose digits on the way.
+		{[]any{25, -1}, 30},
+		{[]any{-25, -1}, -30},
+		{[]any{24, -1}, 20},
+		{[]any{-24, -1}, -20},
+		{[]any{1234567890123456789, -1}, 1234567890123456790},
+		{[]any{int64(math.MaxInt64), 0}, int64(math.MaxInt64)},
 		{[]any{newDec("-1.23")}, newDec("-1")},
 		{[]any{newDec("-1.23"), 1}, newDec("-1.2")},
 		{[]any{newDec("-1.58")}, newDec("-2")},
