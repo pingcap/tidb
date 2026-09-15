@@ -38,6 +38,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/set",
+        "@com_github_golang_snappy//:snappy",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

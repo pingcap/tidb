@@ -287,6 +287,18 @@ func TestExternalHashAggFailure(t *testing.T) {
 			require.NoError(t, e.Close())
 		})
 	}
+	t.Run("invalid_compressed_state", func(t *testing.T) {
+		sctx, source, schema, descs, groups := externalAggTestInput(t, aggregation.CompleteMode, nil)
+		e, err := NewExternalHashAgg(sctx, schema, 3, source, descs, groups, objstore.NewMemStorage(), "invalid", 64<<10)
+		require.NoError(t, err)
+		require.NoError(t, e.Open(context.Background()))
+		defer func() { require.NoError(t, e.Close()) }()
+		require.Error(t, e.restoreBatch([]byte{0x80}))
+		// A declared 256 MiB decoded length must be rejected before allocation.
+		require.ErrorContains(t, e.restoreBatch([]byte{0x80, 0x80, 0x80, 0x80, 0x01}), "memory budget")
+		require.Zero(t, e.tracker.BytesConsumed())
+	})
+
 }
 
 func TestExternalHashAggEmptyAndCanceled(t *testing.T) {

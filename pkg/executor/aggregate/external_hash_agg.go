@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/golang/snappy"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
@@ -43,7 +44,7 @@ const (
 	externalAggPartitions           = 256
 	externalAggMinMemory            = 64 << 10
 	externalAggIOConcurrency        = 32
-	externalAggFileVersion   uint32 = 2
+	externalAggFileVersion   uint32 = 3
 )
 
 // ExternalHashAgg keeps the original aggregate modes and spills state to object
@@ -331,7 +332,13 @@ func (e *ExternalHashAgg) spill(ctx context.Context) error {
 		data := e.codec.Encode(batch)
 		e.tracker.Consume(int64(cap(data)))
 		defer e.tracker.Consume(-int64(cap(data)))
-		// Each object has a version followed by length/checksum/chunk frames.
+		if int64(snappy.MaxEncodedLen(len(data))) > e.memoryLimit-e.tracker.BytesConsumed() {
+			return errors.New("ExternalHashAgg compression exceeds memory budget")
+		}
+		data = snappy.Encode(nil, data)
+		e.tracker.Consume(int64(cap(data)))
+		defer e.tracker.Consume(-int64(cap(data)))
+		// Each object has a version followed by length/checksum/compressed-chunk frames.
 		// SQL chunk size controls decoding work, not the number of S3 objects.
 		if len(payload)+8+len(data) > objectLimit {
 			if err := writeObject(); err != nil {
@@ -649,15 +656,25 @@ func (e *ExternalHashAgg) restoreBatch(data []byte) (err error) {
 			err = errors.Errorf("invalid ExternalHashAgg state: %v", r)
 		}
 	}()
-	if e.tracker.BytesConsumed() > e.memoryLimit {
+	decodedLen, err := snappy.DecodedLen(data)
+	if err != nil {
+		return errors.Annotate(err, "decode ExternalHashAgg state")
+	}
+	if int64(decodedLen) > e.memoryLimit-e.tracker.BytesConsumed() {
 		return errors.New("ExternalHashAgg restore exceeds memory budget")
+	}
+	temporaryBytes = int64(decodedLen)
+	e.tracker.Consume(temporaryBytes)
+	data, err = snappy.Decode(nil, data)
+	if err != nil {
+		return errors.Annotate(err, "decode ExternalHashAgg state")
 	}
 	batch, remaining := e.codec.Decode(data)
 	if len(remaining) != 0 || batch.NumCols() != len(e.spillTypes) {
 		return errors.New("invalid ExternalHashAgg state layout")
 	}
-	temporaryBytes = batch.MemoryUsage()
-	e.tracker.Consume(temporaryBytes)
+	temporaryBytes += batch.MemoryUsage()
+	e.tracker.Consume(batch.MemoryUsage())
 	partials := make([][]aggfuncs.PartialResult, len(e.funcs))
 	var partialBytes int64
 	for i, fn := range e.funcs {
