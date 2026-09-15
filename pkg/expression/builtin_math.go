@@ -448,6 +448,45 @@ func (b *builtinRoundWithFracRealSig) evalReal(ctx EvalContext, row chunk.Row) (
 	return types.Round(val, int(frac)), false, nil
 }
 
+// uint64Pow10 holds 10^i for every power of ten representable as a uint64.
+var uint64Pow10 = [...]uint64{
+	1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9,
+	1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19,
+}
+
+// roundIntWithFrac rounds val at the frac-th digit, where a negative frac
+// counts digits to the left of the decimal point. Integers are exact-value
+// numbers, so MySQL rounds them half away from zero rather than half to even:
+// https://dev.mysql.com/doc/refman/8.0/en/precision-math-rounding.html
+//
+// The value is shifted with integer arithmetic instead of float64 so that
+// magnitudes above 2^53 keep every digit, and overflow wraps the way
+// Item_func_round::int_op does in MySQL.
+func roundIntWithFrac(val, frac int64, unsigned bool) int64 {
+	if frac >= 0 {
+		return val
+	}
+	if maxFrac := int64(len(uint64Pow10)) - 1; frac < -maxFrac {
+		// Every digit of val lies right of the rounding position.
+		return 0
+	}
+	unit := uint64Pow10[-frac]
+	negative := !unsigned && val < 0
+	abs := uint64(val)
+	if negative {
+		abs = -abs
+	}
+	rem := abs % unit
+	abs -= rem
+	if rem >= unit/2 {
+		abs += unit
+	}
+	if negative {
+		return -int64(abs)
+	}
+	return int64(abs)
+}
+
 type builtinRoundWithFracIntSig struct {
 	baseBuiltinFunc
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
@@ -472,7 +511,7 @@ func (b *builtinRoundWithFracIntSig) evalInt(ctx EvalContext, row chunk.Row) (in
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return int64(types.Round(float64(val), int(frac))), false, nil
+	return roundIntWithFrac(val, frac, mysql.HasUnsignedFlag(b.tp.GetFlag())), false, nil
 }
 
 type builtinRoundWithFracDecSig struct {
