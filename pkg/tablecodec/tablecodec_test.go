@@ -986,3 +986,92 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 			"legacy (v0) global index key should NOT contain partition ID flag")
 	}
 }
+
+func TestClusteredGlobalIndexV1HandleInKey(t *testing.T) {
+	const (
+		tableID     int64 = 100
+		partitionID int64 = 42
+	)
+
+	commonHandleBytes, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(7), types.NewStringDatum("pk"))
+	require.NoError(t, err)
+	commonHandle, err := kv.NewCommonHandle(commonHandleBytes)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name    string
+		handle  kv.Handle
+		tblInfo *model.TableInfo
+	}{
+		{
+			name:   "int handle",
+			handle: kv.IntHandle(99),
+			tblInfo: &model.TableInfo{
+				ID: tableID, PKIsHandle: true,
+				Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: *types.NewFieldType(mysql.TypeLong)}},
+			},
+		},
+		{
+			name:   "common handle",
+			handle: commonHandle,
+			tblInfo: &model.TableInfo{
+				ID: tableID, IsCommonHandle: true, CommonHandleVersion: 1,
+				Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: *types.NewFieldType(mysql.TypeLong)}},
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			idxInfo := &model.IndexInfo{
+				ID: 1, Name: ast.NewCIStr("idx_c"), Global: true,
+				GlobalIndexVersion: model.GlobalIndexVersionV1,
+				Columns:            []*model.IndexColumn{{Name: ast.NewCIStr("c"), Offset: 0, Length: types.UnspecifiedLength}},
+			}
+			indexedValues := []types.Datum{types.NewIntDatum(123)}
+			partitionHandle := kv.NewPartitionHandle(partitionID, testCase.handle)
+
+			key, distinct, err := GenIndexKey(defaultCodecEncoder(), time.UTC, testCase.tblInfo, idxInfo,
+				tableID, indexedValues, partitionHandle, nil)
+			require.NoError(t, err)
+			require.False(t, distinct)
+
+			expectedSuffix := []byte{PartitionIDFlag}
+			expectedSuffix = codec.EncodeInt(expectedSuffix, partitionID)
+			if testCase.handle.IsInt() {
+				expectedSuffix = append(expectedSuffix, codec.IntHandleFlag)
+				expectedSuffix = codec.EncodeInt(expectedSuffix, testCase.handle.IntValue())
+			} else {
+				expectedSuffix = append(expectedSuffix, testCase.handle.Encoded()...)
+			}
+			require.Equal(t, expectedSuffix, key[len(key)-len(expectedSuffix):])
+
+			value, err := GenIndexValuePortal(false, time.UTC, testCase.tblInfo, idxInfo, false, false, false,
+				indexedValues, testCase.handle, partitionID, nil, nil)
+			require.NoError(t, err)
+			decodedHandle, err := DecodeIndexHandle(key, value, len(idxInfo.Columns))
+			require.NoError(t, err)
+			decodedPartitionHandle, ok := decodedHandle.(kv.PartitionHandle)
+			require.True(t, ok)
+			require.Equal(t, partitionID, decodedPartitionHandle.PartitionID)
+			require.True(t, decodedPartitionHandle.Handle.Equal(testCase.handle))
+
+			if !testCase.handle.IsInt() {
+				columns := []rowcodec.ColInfo{
+					{ID: 1, Ft: types.NewFieldType(mysql.TypeLong)},
+					{ID: 2, Ft: types.NewFieldType(mysql.TypeLong)},
+					{ID: 3, Ft: types.NewFieldType(mysql.TypeVarchar)},
+					{ID: model.ExtraPhysTblID, Ft: types.NewFieldType(mysql.TypeLonglong)},
+				}
+				decodedValues, err := DecodeIndexKV(key, value, len(idxInfo.Columns), HandleDefault, columns)
+				require.NoError(t, err)
+				require.Len(t, decodedValues, 4)
+				require.Equal(t, testCase.handle.EncodedCol(0), decodedValues[1])
+				require.Equal(t, testCase.handle.EncodedCol(1), decodedValues[2])
+				partitionIDBytes, err := codec.EncodeValue(time.UTC, nil, types.NewIntDatum(partitionID))
+				require.NoError(t, err)
+				require.Equal(t, partitionIDBytes, decodedValues[3])
+			}
+		})
+	}
+}
