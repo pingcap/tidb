@@ -1482,6 +1482,11 @@ struct PartialLaneState<C: Columns + Send + Sync + Clone + 'static> {
 
 struct PartialLane<C: Columns + Send + Sync + Clone + 'static>(Arc<Mutex<PartialLaneState<C>>>);
 
+/// Go's partial worker stays in its receive loop while work is available.
+/// Keep a small run on one compute-pool dispatch before yielding so the Rust
+/// queue does not pay one boxed closure and wakeup for every input chunk.
+const PARTIAL_LANE_BATCH: usize = 8;
+
 impl<C: Columns + Send + Sync + Clone + 'static> PartialLane<C> {
     fn send(&self, command: PartialInput) -> bool {
         let mut state = self
@@ -1512,34 +1517,60 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialLane<C> {
 
     fn schedule(queue: Arc<Mutex<PartialLaneState<C>>>, mut worker: PartialWorker<C>) {
         crate::worker_pool::enqueue_public(Box::new(move || {
-            let command = queue
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .pending
-                .pop_front()
-                .expect("scheduled partial input");
-            if let Err(error) = crate::sort_util::recover_worker_panic(|| {
-                worker.process(command);
-                Ok(())
-            }) {
-                worker.error = Some(error);
-                worker.abort.raise();
+            // Drain a bounded prefix outside the queue lock. New commands
+            // can arrive while this batch folds; yielding after the prefix
+            // keeps concurrent queries from being held behind one hot lane.
+            let mut commands = Vec::with_capacity(PARTIAL_LANE_BATCH);
+            {
+                let mut state = queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                for _ in 0..PARTIAL_LANE_BATCH {
+                    let Some(command) = state.pending.pop_front() else {
+                        break;
+                    };
+                    commands.push(command);
+                }
+            }
+            if commands.is_empty() {
+                // A sender may have raced with the previous task's final
+                // state check. Reschedule rather than dropping the worker.
+                let mut state = queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if state.pending.is_empty() {
+                    if state.closed {
+                        let done = state.done.take();
+                        drop(state);
+                        drop(worker);
+                        if let Some(done) = done {
+                            let _ = done.send(());
+                        }
+                    } else {
+                        state.worker = Some(worker);
+                    }
+                } else {
+                    drop(state);
+                    Self::schedule(queue, worker);
+                }
+                return;
+            }
+            for command in commands {
+                if let Err(error) = crate::sort_util::recover_worker_panic(|| {
+                    worker.process(command);
+                    Ok(())
+                }) {
+                    worker.error = Some(error);
+                    worker.abort.raise();
+                }
             }
             let mut state = queue
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            // Complete control barriers after this chunk in FIFO order. Each
-            // reply is a fresh capacity-one channel with exactly one send;
-            // publishing cannot park while holding the lane lock. Expression
-            // evaluation stays outside this lock and still yields per chunk.
-            while matches!(state.pending.front(), Some(PartialInput::TakeMaps(_))) {
-                if let Some(PartialInput::TakeMaps(reply)) = state.pending.pop_front() {
-                    let _ = reply.send(worker.take_maps());
-                }
-            }
             if !state.pending.is_empty() {
                 drop(state);
-                // Yield between batches so concurrent queries share the pool.
+                // Yield between bounded batches so concurrent queries share
+                // the pool, like Go's worker goroutine at a scheduler point.
                 Self::schedule(queue, worker);
             } else if state.closed {
                 let done = state.done.take();
