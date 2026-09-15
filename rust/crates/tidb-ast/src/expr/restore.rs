@@ -858,12 +858,7 @@ impl Expr {
                     } else {
                         out.push_str(" AS ");
                     }
-                    super::cast::restore_cast_type_kw(
-                        &cast.cast_type,
-                        cast.array,
-                        lowercase,
-                        out,
-                    );
+                    super::cast::restore_cast_type_kw(&cast.cast_type, cast.array, lowercase, out);
                     out.push(')');
                 }
                 CastStyle::Convert => {
@@ -879,12 +874,7 @@ impl Expr {
                     } else {
                         out.push_str(", ");
                     }
-                    super::cast::restore_cast_type_kw(
-                        &cast.cast_type,
-                        cast.array,
-                        lowercase,
-                        out,
-                    );
+                    super::cast::restore_cast_type_kw(&cast.cast_type, cast.array, lowercase, out);
                     out.push(')');
                 }
                 CastStyle::BinaryOperator => {
