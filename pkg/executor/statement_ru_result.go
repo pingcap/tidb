@@ -317,7 +317,7 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 			publishStatementRUFailureSafely(statementRUPanic)
 		}
 	}()
-	metrics.AddRUV3Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.result.TotalRU, finalized.sqlType)
+	metrics.AddRUV2Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.result.TotalRU, finalized.sqlType)
 	if finalized.report != nil {
 		publishStatementRUFullMetrics(finalized)
 	}
