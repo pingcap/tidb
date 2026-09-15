@@ -369,10 +369,7 @@ impl Column {
                         }
                     }
                 } else {
-                    for _ in 0..times {
-                        data.extend_from_slice(cell);
-                        offsets.push(data.len() as i64);
-                    }
+                    append_variable_copies(data, offsets, cell, times);
                 }
                 *length += times;
             }
@@ -1461,10 +1458,46 @@ impl Column {
 }
 
 fn append_fixed_copies<const N: usize>(data: &mut Vec<u8>, cell: &[u8], times: usize) {
-    let cell: &[u8; N] = cell.try_into().expect("fixed cell width");
-    for _ in 0..times {
-        data.extend_from_slice(cell);
+    if times == 0 {
+        return;
     }
+    let cell: &[u8; N] = cell.try_into().expect("fixed cell width");
+    let start = data.len();
+    data.reserve(N.saturating_mul(times));
+    data.extend_from_slice(cell);
+    let mut copied = 1;
+    while copied < times {
+        let count = copied.min(times - copied);
+        data.extend_from_within(start..start + count * N);
+        copied += count;
+    }
+}
+
+/// Repeats one variable-width cell while rebasing all destination offsets.
+///
+/// The first payload copy seeds an owned block; subsequent copies use the
+/// already-written block, so the `times` loop does not repeatedly dispatch
+/// through `extend_from_slice`. Offset entries still remain one per logical
+/// row, exactly as Go's variable column representation requires.
+fn append_variable_copies(data: &mut Vec<u8>, offsets: &mut Vec<i64>, cell: &[u8], times: usize) {
+    if times == 0 {
+        return;
+    }
+    let cell_len = cell.len();
+    let start = data.len();
+    data.reserve(cell_len.saturating_mul(times));
+    data.extend_from_slice(cell);
+    let mut copied = 1;
+    while copied < times {
+        let count = copied.min(times - copied);
+        data.extend_from_within(start..start + count * cell_len);
+        copied += count;
+    }
+    offsets.reserve(times);
+    offsets.extend(
+        (1..=times)
+            .map(|index| i64::try_from(start + index * cell_len).expect("column offset overflow")),
+    );
 }
 
 fn append_null_bit(bitmap: &mut Vec<u8>, length: usize, not_null: bool) {
