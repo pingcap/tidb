@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 19,
-=======
-    shard_count = 21,
->>>>>>> 6cd05e3741d (executor: fix IndexMerge union truncating at 1024 rows with ORDER BY and LIMIT (#70912))
+    shard_count = 20,
     deps = [
         "//pkg/config",
         "//pkg/executor",
