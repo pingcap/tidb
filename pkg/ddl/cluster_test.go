@@ -116,6 +116,47 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 }
 
+func TestFlashbackClusterRejectsTableCacheStateDDL(t *testing.T) {
+	testCases := []struct {
+		name       string
+		beforeTS   string
+		afterTS    string
+		actionType model.ActionType
+	}{
+		{name: "cache", afterTS: "alter table cache_t cache", actionType: model.ActionAlterCacheTable},
+		{name: "nocache", beforeTS: "alter table cache_t cache", afterTS: "alter table cache_t nocache", actionType: model.ActionAlterNoCacheTable},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table cache_t (id int primary key)")
+			if testCase.beforeTS != "" {
+				tk.MustExec(testCase.beforeTS)
+			}
+
+			time.Sleep(10 * time.Millisecond)
+			ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+			require.NoError(t, err)
+			tk.MustExec(testCase.afterTS)
+
+			injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", "return(true)")
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS", fmt.Sprintf("return(%v)", injectSafeTS))
+
+			timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+			defer resetGC()
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+			flashbackTime := oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)
+			errMsg := fmt.Sprintf("Detected unsupported DDL job type(%s) during [%s, now), can't do flashback", testCase.actionType.String(), flashbackTime)
+			tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTime), errMsg)
+		})
+	}
+}
+
 func TestGlobalVariablesOnFlashback(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
