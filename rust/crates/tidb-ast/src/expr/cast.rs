@@ -293,9 +293,24 @@ pub(crate) fn restore_typed_literal(keyword: &str, expr: &Expr, out: &mut String
 /// type` form, [`CastStyle::Convert`]'s `, type` form, and
 /// [`CastStyle::JsonSumCrc32`]'s own `AS type` form.
 pub(crate) fn restore_cast_type(ty: &CastType, array: bool, out: &mut String) {
+    restore_cast_type_kw(ty, array, false, out);
+}
+
+/// [`restore_cast_type`] with Go `RestoreKeyWordLowercase` semantics: every
+/// type keyword prints in lower case (and the charset value with it), exactly
+/// what a generated column's stored expression carries in Go
+/// (`format.RestoreKeyWordLowercase` in `pkg/ddl/add_column.go`).
+pub(crate) fn restore_cast_type_kw(ty: &CastType, array: bool, lowercase: bool, out: &mut String) {
+    let mut kw = |name: &str, out: &mut String| {
+        if lowercase {
+            out.push_str(&name.to_ascii_lowercase());
+        } else {
+            out.push_str(name);
+        }
+    };
     match ty {
-        CastType::Signed => out.push_str("SIGNED"),
-        CastType::Unsigned | CastType::UnsignedInUnion => out.push_str("UNSIGNED"),
+        CastType::Signed => kw("SIGNED", out),
+        CastType::Unsigned | CastType::UnsignedInUnion => kw("UNSIGNED", out),
         CastType::Char { len, charset } => {
             // See this variant's own doc: `CHARSET BINARY` prints the type
             // keyword itself as `BINARY` (real TiDB's own restore rule, a
@@ -303,7 +318,11 @@ pub(crate) fn restore_cast_type(ty: &CastType, array: bool, out: &mut String) {
             // at evaluation time). `len` restores independently of
             // `charset` either way.
             let charset_is_binary = charset.as_deref() == Some("BINARY");
-            out.push_str(if charset_is_binary { "BINARY" } else { "CHAR" });
+            if charset_is_binary {
+                kw("BINARY", out);
+            } else {
+                kw("CHAR", out);
+            }
             if let Some(n) = len {
                 out.push('(');
                 out.push_str(&n.to_string());
@@ -314,15 +333,19 @@ pub(crate) fn restore_cast_type(ty: &CastType, array: bool, out: &mut String) {
                     // The default charset is never printed — real TiDB's
                     // own restore omits `CHARSET` entirely when it equals
                     // `mysql.DefaultCharset` (`UTF8MB4`).
-                    if cs != "UTF8MB4" {
-                        out.push_str(" CHARSET ");
-                        out.push_str(cs);
+                    if !cs.eq_ignore_ascii_case("UTF8MB4") {
+                        kw(" CHARSET ", out);
+                        if lowercase {
+                            out.push_str(&cs.to_ascii_lowercase());
+                        } else {
+                            out.push_str(cs);
+                        }
                     }
                 }
             }
         }
         CastType::Binary { len } => {
-            out.push_str("BINARY");
+            kw("BINARY", out);
             if let Some(n) = len {
                 out.push('(');
                 out.push_str(&n.to_string());
@@ -330,7 +353,7 @@ pub(crate) fn restore_cast_type(ty: &CastType, array: bool, out: &mut String) {
             }
         }
         CastType::Decimal { flen, scale } => {
-            out.push_str("DECIMAL");
+            kw("DECIMAL", out);
             if *flen > 0 {
                 out.push('(');
                 out.push_str(&flen.to_string());
@@ -341,9 +364,9 @@ pub(crate) fn restore_cast_type(ty: &CastType, array: bool, out: &mut String) {
                 out.push(')');
             }
         }
-        CastType::Date => out.push_str("DATE"),
+        CastType::Date => kw("DATE", out),
         CastType::DateTime { fsp } => {
-            out.push_str("DATETIME");
+            kw("DATETIME", out);
             if let Some(n) = fsp {
                 out.push('(');
                 out.push_str(&n.to_string());
@@ -351,21 +374,25 @@ pub(crate) fn restore_cast_type(ty: &CastType, array: bool, out: &mut String) {
             }
         }
         CastType::Time { fsp } => {
-            out.push_str("TIME");
+            kw("TIME", out);
             if let Some(n) = fsp {
                 out.push('(');
                 out.push_str(&n.to_string());
                 out.push(')');
             }
         }
-        CastType::Year => out.push_str("YEAR"),
-        CastType::Double => out.push_str("DOUBLE"),
-        CastType::Float => out.push_str("FLOAT"),
-        CastType::Vector { .. } => out.push_str("VECTOR"),
-        CastType::Json => out.push_str("JSON"),
+        CastType::Year => kw("YEAR", out),
+        CastType::Double => kw("DOUBLE", out),
+        CastType::Float => kw("FLOAT", out),
+        CastType::Vector { .. } => kw("VECTOR", out),
+        CastType::Json => kw("JSON", out),
     }
     if array {
-        out.push_str(" ARRAY");
+        if lowercase {
+            out.push_str(" array");
+        } else {
+            out.push_str(" ARRAY");
+        }
     }
 }
 

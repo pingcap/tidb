@@ -412,11 +412,22 @@ pub(super) fn show_create_table_text(
     }
 
     out.push_str(&clauses.join(",\n"));
-    out.push_str(&format!(
-        "\n) ENGINE=InnoDB DEFAULT CHARSET={} COLLATE={}",
-        table_charset.charset.name(),
-        table_charset.collation.name()
-    ));
+    // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1407-1413`):
+    // when no default collation was found for the charset, or the collation
+    // is `binary` (MySQL-5.7 compatibility, upstream #15633), the COLLATE
+    // part is omitted entirely.
+    if table_charset.collation.name() == "binary" {
+        out.push_str(&format!(
+            "\n) ENGINE=InnoDB DEFAULT CHARSET={}",
+            table_charset.charset.name(),
+        ));
+    } else {
+        out.push_str(&format!(
+            "\n) ENGINE=InnoDB DEFAULT CHARSET={} COLLATE={}",
+            table_charset.charset.name(),
+            table_charset.collation.name()
+        ));
+    }
     if !table.comment().is_empty() {
         out.push_str(&format!(
             " COMMENT='{}'",
@@ -459,6 +470,15 @@ pub(super) fn show_create_table_text(
             out.push_str(&format!("PRE_SPLIT_REGIONS={} ", table.pre_split_regions()));
         }
         out.push_str("*/");
+    }
+    // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1452-1454`):
+    // an AUTO_RANDOM table (no SHARD_ROW_ID_BITS clause to join) still prints
+    // its own comment when the DDL pre-split regions.
+    if table.auto_random().is_some() && table.pre_split_regions() > 0 {
+        out.push_str(&format!(
+            " /*T! PRE_SPLIT_REGIONS={} */",
+            table.pre_split_regions()
+        ));
     }
     // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1421`) prints
     // the clause for every GLOBAL temporary table UNCONDITIONALLY, after the

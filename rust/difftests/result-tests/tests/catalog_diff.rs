@@ -454,7 +454,7 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// 28 -> 27 at the merge with the `SHARD_ROW_ID_BITS` line of work: the
 /// `SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3` read agrees now. Compare count
 /// unchanged at 307; the floor rose with it.
-const KNOWN_CATALOG_DIVERGENCES: usize = 27;
+const KNOWN_CATALOG_DIVERGENCES: usize = 19;
 
 /// Exact lower bound for definitions already matching TiDB.
 // 257 -> 259: the partition clause of `SHOW CREATE TABLE` now matches Go's
@@ -502,7 +502,17 @@ const MATCHED_FLOOR: usize = 280;
 // unrelated ones broke would have held the count at 28 and moved only this.
 // Moved at the same merge; the set was diffed, not re-recorded -- one member
 // left (the shard clause) and none arrived.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 1_504_921_099_516_786_878;
+// 27 -> 19 with the generated-column restore and SHOW CREATE TABLE parity
+// batch: the two `cast(...)` generated-expression reads now carry Go's
+// lowercase keyword spelling (RestoreKeyWordLowercase in the CAST restore),
+// both `binary_collate` reads drop the `COLLATE=binary` suffix Go omits
+// (#15633), and the AUTO_RANDOM table's `PRE_SPLIT_REGIONS` comment prints.
+// The set was dumped with CATALOG_SHOW_DIVERGENCES=1: the 19 that remain are
+// the view `Name_exp_*` column naming, `AUTO_INCREMENT=`, decimal-default
+// precision, partial-index WHERE, sequence SHOW rejection, case-sensitive
+// information_schema reads and `tidb_index_usage` gaps that were already
+// carried.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 15_383_731_271_978_343_441;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.

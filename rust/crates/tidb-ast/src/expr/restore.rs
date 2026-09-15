@@ -15,7 +15,7 @@
 //! to, mirroring the `Restore`/`Format` methods Go hangs off its expression
 //! nodes in `pkg/parser/ast/expressions.go`.
 
-use super::cast::{restore_cast_type, restore_typed_literal};
+use super::cast::{restore_cast_type, restore_cast_type_kw, restore_typed_literal};
 use super::*;
 use tidb_mysql::to_lowercase as identifier_to_lower;
 
@@ -843,17 +843,48 @@ impl Expr {
             }
             Expr::Cast(cast) => match cast.style {
                 CastStyle::Cast => {
-                    out.push_str("CAST(");
+                    // Go `RestoreKeyWordLowercase` (`pkg/ddl/add_column.go`'s
+                    // generated-column restore) prints the CAST keywords lower
+                    // case; every other caller keeps the default upper case.
+                    let lowercase = context.flags().has_keyword_lowercase();
+                    if lowercase {
+                        out.push_str("cast(");
+                    } else {
+                        out.push_str("CAST(");
+                    }
                     cast.expr.restore_into_with_context(out, context);
-                    out.push_str(" AS ");
-                    restore_cast_type(&cast.cast_type, cast.array, out);
+                    if lowercase {
+                        out.push_str(" as ");
+                    } else {
+                        out.push_str(" AS ");
+                    }
+                    super::cast::restore_cast_type_kw(
+                        &cast.cast_type,
+                        cast.array,
+                        lowercase,
+                        out,
+                    );
                     out.push(')');
                 }
                 CastStyle::Convert => {
-                    out.push_str("CONVERT(");
+                    let lowercase = context.flags().has_keyword_lowercase();
+                    if lowercase {
+                        out.push_str("convert(");
+                    } else {
+                        out.push_str("CONVERT(");
+                    }
                     cast.expr.restore_into_with_context(out, context);
-                    out.push_str(", ");
-                    restore_cast_type(&cast.cast_type, cast.array, out);
+                    if lowercase {
+                        out.push_str(", ");
+                    } else {
+                        out.push_str(", ");
+                    }
+                    super::cast::restore_cast_type_kw(
+                        &cast.cast_type,
+                        cast.array,
+                        lowercase,
+                        out,
+                    );
                     out.push(')');
                 }
                 CastStyle::BinaryOperator => {
