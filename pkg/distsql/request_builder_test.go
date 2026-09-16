@@ -239,7 +239,7 @@ func TestIndexRangesToKVRanges(t *testing.T) {
 		},
 	}
 
-	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 12, 15, ranges)
+	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 12, 15, ranges, NoIntHandleSuffix)
 	require.NoError(t, err)
 	for i := range actual.FirstPartitionRange() {
 		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
@@ -364,7 +364,7 @@ func TestRequestBuilder2(t *testing.T) {
 		},
 	}
 
-	actual, err := (&RequestBuilder{}).SetIndexRanges(DefaultDistSQLContext, 12, 15, ranges).
+	actual, err := (&RequestBuilder{}).SetIndexRanges(DefaultDistSQLContext, 12, 15, ranges, NoIntHandleSuffix).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
@@ -747,7 +747,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 	}
-	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 0, 0, ranges)
+	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 0, 0, ranges, NoIntHandleSuffix)
 	require.NoError(t, err)
 	expect := []kv.KeyRange{
 		{
