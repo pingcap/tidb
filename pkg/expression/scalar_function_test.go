@@ -115,6 +115,33 @@ func TestScalarFunction(t *testing.T) {
 	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
+
+	t.Run("substitute explicit collation", func(t *testing.T) {
+		tp := types.NewFieldType(mysql.TypeVarString)
+		tp.SetCharset("utf8mb4")
+		tp.SetCollate("utf8mb4_bin")
+		col := &Column{UniqueID: 10, RetType: tp}
+		replacement := &Column{UniqueID: 11, RetType: tp}
+		for _, arg := range []Expression{replacement, &Constant{Value: types.NewStringDatum("A"), RetType: tp}} {
+			original, err := NewFunction(ctx, ast.Lower, tp, col)
+			require.NoError(t, err)
+			original.GetType(ctx).SetCollate("utf8mb4_unicode_ci")
+			original.SetCharsetAndCollation("utf8mb4", "utf8mb4_unicode_ci")
+			original.SetCoercibility(CoercibilityExplicit)
+			changed, failed, got := ColumnSubstituteImpl(ctx, original, NewSchema(col), []Expression{arg}, false)
+			require.True(t, changed)
+			require.False(t, failed)
+			require.Equal(t, CoercibilityExplicit, got.Coercibility())
+			require.Equal(t, "utf8mb4_unicode_ci", got.GetType(ctx).GetCollate())
+			require.Equal(t, "utf8mb4", got.GetType(ctx).GetCharset())
+			if sf, ok := got.(*ScalarFunction); ok {
+				chs, coll := sf.CharsetAndCollation()
+				require.Equal(t, "utf8mb4", chs)
+				require.Equal(t, "utf8mb4_unicode_ci", coll)
+			}
+			require.Equal(t, "utf8mb4_bin", arg.GetType(ctx).GetCollate())
+		}
+	})
 }
 
 func TestScalarFunctionEqualAfterCleanHashCode(t *testing.T) {
