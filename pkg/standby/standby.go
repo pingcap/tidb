@@ -331,10 +331,6 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 				if options.skipAutoIDOwner && svr.IsAutoIDOwner() {
 					logutil.BgLogger().Info("auto id service is owner, skip exit")
 					w.WriteHeader(http.StatusNotModified)
-					_, err := w.Write([]byte("auto id service is owner"))
-					if err != nil {
-						logutil.BgLogger().Warn("failed to write response", zap.Error(err))
-					}
 					return
 				}
 				if !options.graceful {
