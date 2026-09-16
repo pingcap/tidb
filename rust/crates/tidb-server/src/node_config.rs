@@ -802,6 +802,27 @@ impl NodeConfig {
             }
         }
 
+        // Drop-in compatibility for cluster supervisors (tiup cluster,
+        // playground) that start a tikv-backed node with Go's flag surface
+        // only: no --auth-file and no bounded --read-table/--load-table
+        // means the node serves the cluster's whole catalog with accounts
+        // from mysql.* -- exactly what `--cluster-session --load-privileges`
+        // names explicitly. Explicit choices are never overridden.
+        let store_is_tikv = store
+            .as_deref()
+            .map(|value| value.eq_ignore_ascii_case("tikv"))
+            .unwrap_or(true);
+        if store_is_tikv
+            && auth_file.is_none()
+            && !load_privileges
+            && !cluster_session
+            && read_tables.is_empty()
+            && load_tables.is_empty()
+            && !file_skip_grant_table
+        {
+            load_privileges = true;
+            cluster_session = true;
+        }
         let host = parse_ip("--host", host.as_deref().unwrap_or("127.0.0.1"))?;
         // Cluster privilege mode is used behind TiProxy on a private network.
         // The configured auth-file mode keeps the original loopback-only
