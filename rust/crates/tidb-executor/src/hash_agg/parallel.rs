@@ -2431,6 +2431,7 @@ fn fold_chunk<C: Columns>(
     memory.check()?;
     let inputs = input::bind_inputs(input_modes, chunk);
     let decimal_cache = input::prepare_decimal_cache(input_modes, chunk);
+    let integer_cache = input::prepare_integer_cache(input_modes, chunk);
     if let Some(selection) = chunk.sel() {
         debug_assert_eq!(selection.len(), num_rows);
         for (row_index, &(bucket, index)) in keys.partial_results.iter().enumerate() {
@@ -2441,6 +2442,7 @@ fn fold_chunk<C: Columns>(
                 &mut maps[bucket].groups[index].states,
                 chunk.physical_row(selection[row_index]),
                 &decimal_cache,
+                &integer_cache,
             )?;
         }
     } else {
@@ -2452,6 +2454,7 @@ fn fold_chunk<C: Columns>(
                 &mut maps[bucket].groups[index].states,
                 chunk.physical_row(row_index),
                 &decimal_cache,
+                &integer_cache,
             )?;
         }
     }

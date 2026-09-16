@@ -19,10 +19,13 @@
 use super::*;
 use std::sync::Arc;
 use tidb_chunk::ColumnRead;
+use tidb_codec::JoinKeyColumn;
 use tidb_datatype::MYDECIMAL_STRUCT_SIZE;
 
 type DecimalBatch = Arc<[Option<(i128, u32)>]>;
 type DecimalCache = smallvec::SmallVec<[Option<DecimalBatch>; 4]>;
+type IntegerBatch = Arc<[Option<i64>]>;
+type IntegerCache = smallvec::SmallVec<[Option<IntegerBatch>; 4]>;
 
 #[derive(Clone, Copy)]
 pub(super) enum AggInputMode<T = usize> {
@@ -128,6 +131,7 @@ impl AggInputMode<ColumnRead<'_>> {
         state: &mut AggState,
         row: usize,
         decimal_data: Option<&[Option<(i128, u32)>]>,
+        integer_data: Option<&[Option<i64>]>,
     ) -> Option<i64> {
         match self {
             Self::Expression => None,
@@ -135,13 +139,20 @@ impl AggInputMode<ColumnRead<'_>> {
             Self::CountAll => state.update_count_fast(true).then_some(0),
             Self::Count(column) => state.update_count_fast(!column.is_null(row)).then_some(0),
             Self::CountDistinctInt(column) => {
-                let value = (!column.is_null(row)).then(|| column.get_int64(row));
+                let value = integer_data
+                    .map(|values| values[row])
+                    .unwrap_or_else(|| (!column.is_null(row)).then(|| column.get_int64(row)));
                 state.update_count_distinct_int_fast(value)
             }
-            Self::FinalCount { column, unsigned } => match read_count(column, row, *unsigned)? {
-                None => Some(0),
-                Some(value) => state.update_final_count_fast(value).then_some(0),
-            },
+            Self::FinalCount { column, unsigned } => {
+                let value = integer_data
+                    .map(|values| read_count_value(values[row], *unsigned))
+                    .unwrap_or_else(|| read_count(column, row, *unsigned));
+                match value? {
+                    None => Some(0),
+                    Some(value) => state.update_final_count_fast(value).then_some(0),
+                }
+            }
             Self::Decimal(column) => {
                 if column.is_null(row) {
                     return Some(0);
@@ -167,11 +178,16 @@ impl AggInputMode<ColumnRead<'_>> {
                 };
                 let count = match count {
                     None => 1,
-                    Some((column, unsigned)) => match read_count(column, row, *unsigned)? {
-                        None => return Some(0),
-                        Some(count) if count >= 0 => count,
-                        Some(_) => return None,
-                    },
+                    Some((column, unsigned)) => {
+                        let value = integer_data
+                            .map(|values| read_count_value(values[row], *unsigned))
+                            .unwrap_or_else(|| read_count(column, row, *unsigned));
+                        match value? {
+                            None => return Some(0),
+                            Some(count) if count >= 0 => count,
+                            Some(_) => return None,
+                        }
+                    }
                 };
                 if state.update_avg_decimal_fast(coefficient.0, coefficient.1, count) {
                     Some(0)
@@ -190,7 +206,7 @@ impl AggInputMode<ColumnRead<'_>> {
         state: &mut AggState,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<i64, ExecError> {
-        self.update_with_decimal_data(func, ctx, state, row, None)
+        self.update_with_decimal_data(func, ctx, state, row, None, None)
     }
 
     fn update_with_decimal_data<C: Columns>(
@@ -200,8 +216,9 @@ impl AggInputMode<ColumnRead<'_>> {
         state: &mut AggState,
         row: tidb_chunk::row::Row<'_>,
         decimal_data: Option<&[Option<(i128, u32)>]>,
+        integer_data: Option<&[Option<i64>]>,
     ) -> Result<i64, ExecError> {
-        if let Some(delta) = self.update_cell(state, row.idx(), decimal_data) {
+        if let Some(delta) = self.update_cell(state, row.idx(), decimal_data, integer_data) {
             return Ok(delta);
         }
         let mut extra_values = Vec::new();
@@ -218,7 +235,11 @@ fn read_count(column: &ColumnRead<'_>, row: usize, unsigned: bool) -> Option<Opt
     if column.is_null(row) {
         return Some(None);
     }
-    let value = column.get_int64(row);
+    read_count_value(Some(column.get_int64(row)), unsigned)
+}
+
+fn read_count_value(value: Option<i64>, unsigned: bool) -> Option<Option<i64>> {
+    let value = value?;
     if unsigned {
         i64::try_from(value as u64).ok().map(Some)
     } else {
@@ -274,6 +295,51 @@ pub(super) fn prepare_decimal_cache(modes: &[AggInputMode], chunk: &Chunk) -> De
         .collect()
 }
 
+/// Decode the fixed-width integer inputs used by the typed aggregate modes
+/// once per physical chunk. Go's `Int64s`/`Uint64s` accessors return a view of
+/// the whole column; retaining the values here avoids reopening the Rust
+/// backing lock for every row while preserving the same signed storage bits
+/// for unsigned SQL columns.
+pub(super) fn prepare_integer_cache(modes: &[AggInputMode], chunk: &Chunk) -> IntegerCache {
+    let mut batches: smallvec::SmallVec<[(usize, IntegerBatch); 4]> = smallvec::SmallVec::new();
+    modes
+        .iter()
+        .map(|mode| {
+            let index = match mode {
+                AggInputMode::CountDistinctInt(index) => Some(*index),
+                AggInputMode::FinalCount { column, .. } => Some(*column),
+                AggInputMode::AvgDecimal {
+                    count: Some((index, _)),
+                    ..
+                } => Some(*index),
+                _ => None,
+            }?;
+            if let Some((_, batch)) = batches.iter().find(|(cached, _)| *cached == index) {
+                return Some(Arc::clone(batch));
+            }
+            let column = chunk.column(index);
+            let rows = column.rows();
+            let mut values = Vec::with_capacity(rows);
+            column.with_raw(|raw| {
+                for row in 0..rows {
+                    if column.is_null(row) {
+                        values.push(None);
+                    } else {
+                        values.push(Some(i64::from_ne_bytes(
+                            raw.row(row)
+                                .try_into()
+                                .expect("integer aggregate cell is 8 bytes"),
+                        )));
+                    }
+                }
+            });
+            let batch: IntegerBatch = values.into();
+            batches.push((index, Arc::clone(&batch)));
+            Some(batch)
+        })
+        .collect()
+}
+
 pub(super) fn update_row<C: Columns>(
     modes: &[AggInputMode<ColumnRead<'_>>],
     funcs: &[AggFunc],
@@ -295,11 +361,14 @@ pub(super) fn update_row_with_decimal_cache<C: Columns>(
     states: &mut [AggState],
     row: tidb_chunk::row::Row<'_>,
     decimal_cache: &DecimalCache,
+    integer_cache: &IntegerCache,
 ) -> Result<i64, ExecError> {
     let mut delta = 0;
     for (mode_index, ((mode, func), state)) in modes.iter().zip(funcs).zip(states).enumerate() {
         let decimal_data = decimal_cache.get(mode_index).and_then(Option::as_deref);
-        delta += mode.update_with_decimal_data(func, ctx, state, row, decimal_data)?;
+        let integer_data = integer_cache.get(mode_index).and_then(Option::as_deref);
+        delta +=
+            mode.update_with_decimal_data(func, ctx, state, row, decimal_data, integer_data)?;
     }
     Ok(delta)
 }
