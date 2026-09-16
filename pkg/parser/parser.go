@@ -20450,7 +20450,7 @@ yynewstate:
 		}
 	case 1686:
 		{
-			parser.yyVAL.expr = &ast.BinaryOperationExpr{Op: opcode.Mod, L: yyS[yypt-3].expr, R: yyS[yypt-1].expr}
+			parser.yyVAL.expr = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Mod), Args: []ast.ExprNode{yyS[yypt-3].expr, yyS[yypt-1].expr}}
 		}
 	case 1687:
 		{
