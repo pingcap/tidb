@@ -103,6 +103,27 @@ func TestUnmarshalDirReturnsWalkError(t *testing.T) {
 	}
 }
 
+func TestUnmarshalDirReturnsWorkerError(t *testing.T) {
+	workerErr := errors.New("unsupported metadata version")
+	s := &unmarshalDirTestStorage{
+		walk: func(_ context.Context, _ *storeapi.WalkOption, f func(string, int64) error) error {
+			return f("meta", 4)
+		},
+		read: func(context.Context, string) ([]byte, error) { return []byte("data"), nil },
+	}
+	for range 100 {
+		returned := make(chan struct{})
+		items := objstore.UnmarshalDir(context.Background(), nil, s, func(*string, string, []byte) error {
+			defer close(returned)
+			return workerErr
+		})
+		<-returned
+		// Also exercise a consumer that resumes after error publication and channel closure.
+		time.Sleep(time.Millisecond)
+		require.ErrorIs(t, items.TryNext(context.Background()).Err, workerErr)
+	}
+}
+
 func TestDefaultHttpTransport(t *testing.T) {
 	transport, ok := objstore.CloneDefaultHTTPTransport()
 	require.True(t, ok)
