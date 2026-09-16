@@ -18,6 +18,8 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/plannersession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -116,7 +119,7 @@ func newImportQuerySession(
 	if err != nil {
 		return nil, nil, err
 	}
-	hint.BindHint(node, &hint.HintsSet{})
+	ast.Walk(node, importQueryMemoryHint(memoryLimit))
 	if err := ResetContextOfStmt(sctx, node); err != nil {
 		return nil, nil, err
 	}
@@ -132,3 +135,24 @@ func newImportQuerySession(
 	querySession.PlanCtxExtended = plannersession.NewPlanCtxExtended(querySession)
 	return querySession, node, nil
 }
+
+// importQueryMemoryHint keeps the worker resource budget while preserving query hints.
+type importQueryMemoryHint int64
+
+func (limit importQueryMemoryHint) Enter(node ast.Node) bool {
+	if h, ok := node.(*ast.TableOptimizerHint); ok {
+		switch h.HintName.L {
+		case hint.HintMemoryQuota:
+			h.HintData = int64(limit)
+		case "set_var":
+			setting := h.HintData.(ast.HintSetVar)
+			if strings.EqualFold(setting.VarName, vardef.TiDBMemQuotaQuery) {
+				setting.Value = strconv.FormatInt(int64(limit), 10)
+				h.HintData = setting
+			}
+		}
+	}
+	return false
+}
+
+func (importQueryMemoryHint) Leave(ast.Node) bool { return true }

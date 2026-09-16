@@ -51,6 +51,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		`select hex(_binary'\0\\a'), _latin1'a', 'a''b'`,
 		"select 'a' = 'A'",
 		"select /*+ SET_VAR(tidb_distsql_scan_concurrency=2) */ count(*) from query_src",
+		"select /*+ READ_FROM_STORAGE(TIFLASH[query_src]) MPP_2PHASE_AGG() */ g,count(*) from query_src group by g",
 		"select /*+ SET_VAR(tidb_mem_quota_query=1073741824) */ count(*) from query_src",
 		"select /*+ MEMORY_QUOTA(1 GB) */ count(*) from query_src",
 		"select /*+ HASH_AGG() */ g,count(*),count(v),sum(v),min(v),max(v) from query_src group by g",
@@ -67,7 +68,14 @@ func TestImportQueryPlanExecution(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "import into unused_target from ("+sql+") with thread=1", captured.SQL)
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
-					require.EqualValues(t, 32<<20, p.SCtx().GetSessionVars().MemQuotaQuery)
+					vars := p.SCtx().GetSessionVars()
+					require.EqualValues(t, 32<<20, vars.MemQuotaQuery)
+					if strings.Contains(sql, "/*+") {
+						require.True(t, vars.StmtCtx.StmtHints.QueryHasHints)
+					}
+					if strings.Contains(sql, "tidb_distsql_scan_concurrency=2") {
+						require.Equal(t, 2, vars.DistSQLScanConcurrency())
+					}
 				})
 				data, err := json.Marshal(captured)
 				require.NoError(t, err)
