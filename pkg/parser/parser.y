@@ -714,6 +714,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	traditional                "TRADITIONAL"
 	transaction                "TRANSACTION"
 	transactional              "TRANSACTIONAL"
+	transitions                "TRANSITIONS"
 	triggers                   "TRIGGERS"
 	truncate                   "TRUNCATE"
 	tsoType                    "TSO"
@@ -1050,6 +1051,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	AlterMaterializedViewLogStmt  "ALTER MATERIALIZED VIEW LOG statement"
 	DropMaterializedViewStmt      "DROP MATERIALIZED VIEW statement"
 	DropMaterializedViewLogStmt   "DROP MATERIALIZED VIEW LOG statement"
+	PurgeMaterializedViewLogStmt  "PURGE MATERIALIZED VIEW LOG statement"
+	CancelMaterializedViewJobStmt "CANCEL MATERIALIZED VIEW LOG PURGE JOB statement"
 	CreateUserStmt                "CREATE User statement"
 	CreateRoleStmt                "CREATE Role statement"
 	CreateDatabaseStmt            "Create Database Statement"
@@ -1231,6 +1234,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ConstraintColumnarIndex                "columnar index"
 	ConstraintWithColumnarIndex            "table constraint with columnar index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
+	CreateSequenceTableOptionListOpt       "create sequence table option list opt"
+	CreateTableOption                      "CREATE TABLE-specific option"
+	CreateTableOptionList                  "CREATE TABLE-specific option list"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
 	DatabaseOption                         "CREATE Database specification"
@@ -3757,6 +3763,22 @@ AnalyzeOption:
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate, Value: ast.NewValueExpr($1, "", "")}
 	}
+|	"DEFAULT" "BUCKETS"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets}
+	}
+|	"DEFAULT" "TOPN"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumTopN}
+	}
+|	"DEFAULT" "SAMPLES"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumSamples}
+	}
+|	"DEFAULT" "SAMPLERATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate}
+	}
 
 /*******************************************************************************************/
 Assignment:
@@ -5953,6 +5975,21 @@ DropMaterializedViewLogStmt:
 		$$ = &ast.DropMaterializedViewLogStmt{IfExists: $5.(bool), Table: $7.(*ast.TableName)}
 	}
 
+PurgeMaterializedViewLogStmt:
+	"PURGE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
+	{
+		$$ = &ast.PurgeMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
+	}
+
+CancelMaterializedViewJobStmt:
+	"CANCEL" "MATERIALIZED" "VIEW" "LOG" "PURGE" "JOB" Int64Num
+	{
+		$$ = &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobTypeLogPurge,
+			JobID: $7.(int64),
+		}
+	}
+
 /******************************************************************
  * Do statement
  * See https://dev.mysql.com/doc/refman/5.7/en/do.html
@@ -7743,6 +7780,7 @@ UnReservedKeyword:
 |	"ENGINE_ATTRIBUTE"
 |	"SECONDARY_ENGINE_ATTRIBUTE"
 |	"STORAGE_CLASS"
+|	"TRANSITIONS"
 |	"ENUM"
 |	"ERROR"
 |	"ERRORS"
@@ -12980,6 +13018,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowEngines}
 	}
+|	"STORAGE_CLASS" "TRANSITIONS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowStorageClassTransitions}
+	}
 |	"DATABASES"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
@@ -13494,6 +13536,8 @@ Statement:
 |	DoStmt
 |	DropMaterializedViewStmt
 |	DropMaterializedViewLogStmt
+|	PurgeMaterializedViewLogStmt
+|	CancelMaterializedViewJobStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
@@ -14056,7 +14100,32 @@ CreateTableOptionListOpt:
 	{
 		$$ = []*ast.TableOption{}
 	}
-|	TableOptionList %prec lowerThanComma
+|	CreateTableOptionList %prec lowerThanComma
+
+CreateTableOptionList:
+	CreateTableOption
+	{
+		$$ = []*ast.TableOption{$1.(*ast.TableOption)}
+	}
+|	CreateTableOptionList CreateTableOption
+	{
+		$$ = append($1.([]*ast.TableOption), $2.(*ast.TableOption))
+	}
+|	CreateTableOptionList ',' CreateTableOption
+	{
+		$$ = append($1.([]*ast.TableOption), $3.(*ast.TableOption))
+	}
+
+CreateTableOption:
+	TableOption
+|	"START" "TRANSACTION"
+	{
+		if !parser.enableUnsupportedMySQLSyntax {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionStartTransaction}
+	}
 
 TableOptionList:
 	TableOption
@@ -14071,6 +14140,13 @@ TableOptionList:
 	{
 		$$ = append($1.([]*ast.TableOption), $3.(*ast.TableOption))
 	}
+
+CreateSequenceTableOptionListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
+	{
+		$$ = []*ast.TableOption{}
+	}
+|	TableOptionList %prec lowerThanComma
 
 OptTable:
 	{}
@@ -17039,7 +17115,7 @@ AlterPolicyStmt:
  *	[table_options]
  ********************************************************************************************/
 CreateSequenceStmt:
-	"CREATE" "SEQUENCE" IfNotExists TableName CreateSequenceOptionListOpt CreateTableOptionListOpt
+	"CREATE" "SEQUENCE" IfNotExists TableName CreateSequenceOptionListOpt CreateSequenceTableOptionListOpt
 	{
 		$$ = &ast.CreateSequenceStmt{
 			IfNotExists: $3.(bool),

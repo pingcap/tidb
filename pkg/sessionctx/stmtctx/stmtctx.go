@@ -137,6 +137,11 @@ func (r *ReservedRowIDAlloc) Reset(base int64, maxv int64) {
 	r.max = maxv
 }
 
+// Current returns the current base and max of reserved rowIDs.
+func (r *ReservedRowIDAlloc) Current() (base int64, maxv int64) {
+	return r.base, r.max
+}
+
 // Consume consumes a reserved rowID.
 // If the second return value is false, it means the reserved rowID is exhausted.
 func (r *ReservedRowIDAlloc) Consume() (int64, bool) {

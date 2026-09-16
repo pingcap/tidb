@@ -186,7 +186,7 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 	}
 	snapshot, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashJoinExec.ID())
 	require.True(t, found)
-	require.True(t, snapshot.Complete())
+	require.False(t, snapshot.Invalid())
 	require.Positive(t, snapshot.Rows)
 }
 
@@ -452,10 +452,10 @@ func TestHashJoinV2HashStateAcrossRepeatedOpen(t *testing.T) {
 	snapshot, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashJoinExec.ID())
 	require.True(t, found)
 	require.Equal(t, int64(18), snapshot.Rows)
-	require.True(t, snapshot.Complete())
+	require.False(t, snapshot.Invalid())
 
-	// A failed repeated execution must poison the merged evidence instead of
-	// preserving the previously complete state.
+	// A later attempt failing before lookup construction must retain the rows
+	// already built. Statement outcome, not the counter, controls publication.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue51998", "return(true)")
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
@@ -463,6 +463,6 @@ func TestHashJoinV2HashStateAcrossRepeatedOpen(t *testing.T) {
 	require.EqualError(t, err, "issue51998 build return error")
 	snapshot, found = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashJoinExec.ID())
 	require.True(t, found)
-	require.False(t, snapshot.Complete())
-	require.True(t, snapshot.Invalid())
+	require.False(t, snapshot.Invalid())
+	require.Equal(t, int64(18), snapshot.Rows)
 }

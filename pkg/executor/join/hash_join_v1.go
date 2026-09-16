@@ -1147,6 +1147,10 @@ func (e *HashJoinV1Exec) handleFetchAndBuildHashTablePanic(r any) {
 }
 
 func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
+	if e.hashStateStats != nil {
+		// A parent may cancel the fetcher after some lookup entries were built.
+		defer func() { e.hashStateStats.AddRows(e.RowContainer.hashStateRows()) }()
+	}
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {
@@ -1185,10 +1189,6 @@ func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
 		if err = <-fetchBuildSideRowsOk; err != nil {
 			e.buildFinished <- err
 		}
-	}
-	if err == nil && e.hashStateStats != nil {
-		e.hashStateStats.AddRows(e.RowContainer.hashStateRows())
-		e.hashStateStats.Complete()
 	}
 }
 

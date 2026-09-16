@@ -1657,10 +1657,8 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	}
 	if e.CoarseTimeRange != nil && p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
 		stmtCtx := p.SCtx().GetSessionVars().StmtCtx
-		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone())
-		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone())
-		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
-		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
+		startTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.StartTime, stmtCtx.TimeZone())
+		endTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.EndTime, stmtCtx.TimeZone())
 		fmt.Fprintf(buf, "start_time: %v, end_time: %v, ", startTimeStr, endTimeStr)
 	}
 	// remove the last ", " in the message info
@@ -1669,6 +1667,19 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 		return s[:len(s)-2]
 	}
 	return s
+}
+
+func formatStatementsSummaryTime(t time.Time, timezone *time.Location) string {
+	minDatetime, _ := types.MinDatetime.GoTime(time.UTC)
+	if t.Equal(minDatetime) {
+		return types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.MaxFsp).String()
+	}
+	maxDatetime, _ := types.MaxDatetime.GoTime(time.UTC)
+	if t.Equal(maxDatetime) {
+		return types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp).String()
+	}
+	t = t.In(timezone)
+	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp).String()
 }
 
 func (e *StatementsSummaryExtractor) findCoarseTimeRange(
@@ -1684,22 +1695,19 @@ func (e *StatementsSummaryExtractor) findCoarseTimeRange(
 }
 
 func (e *StatementsSummaryExtractor) buildTimeRange(start, end int64) *TimeRange {
-	const defaultStatementsDuration = time.Hour
 	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		return nil
 	}
 	if start != 0 {
 		startTime = e.convertToTime(start)
+	} else {
+		startTime, _ = types.MinDatetime.GoTime(time.UTC)
 	}
 	if end != 0 {
 		endTime = e.convertToTime(end)
-	}
-	if start == 0 {
-		startTime = endTime.Add(-defaultStatementsDuration)
-	}
-	if end == 0 {
-		endTime = startTime.Add(defaultStatementsDuration)
+	} else {
+		endTime, _ = types.MaxDatetime.GoTime(time.UTC)
 	}
 	return &TimeRange{StartTime: startTime, EndTime: endTime}
 }

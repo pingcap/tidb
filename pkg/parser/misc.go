@@ -892,6 +892,7 @@ var tokenMap = map[string]int{
 	"TRAILING":                       trailing,
 	"TRANSACTION":                    transaction,
 	"TRANSACTIONAL":                  transactional,
+	"TRANSITIONS":                    transitions,
 	"TRIGGER":                        trigger,
 	"TRIGGERS":                       triggers,
 	"TRIM":                           trim,

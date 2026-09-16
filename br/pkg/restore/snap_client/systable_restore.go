@@ -136,6 +136,8 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb_mview_refresh_hist":  {},
 		"tidb_mview_refresh_alert": {},
 		"tidb_mlog_purge_hist":     {},
+		// Storage-class transition history uses cluster-local table IDs and TSOs.
+		"tidb_storage_class_transition_history": {},
 
 		// gc info don't need to recover.
 		"gc_delete_range":       {},

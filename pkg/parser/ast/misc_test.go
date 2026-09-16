@@ -26,20 +26,20 @@ import (
 
 type visitor struct{}
 
-func (v visitor) Enter(in ast.Node) (ast.Node, bool) {
-	return in, false
+func (visitor) Enter(ast.Node) bool {
+	return false
 }
 
-func (v visitor) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (visitor) Leave(ast.Node) bool {
+	return true
 }
 
 type visitor1 struct {
 	visitor
 }
 
-func (visitor1) Enter(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (visitor1) Enter(ast.Node) bool {
+	return true
 }
 
 func TestMiscVisitorCover(t *testing.T) {
@@ -80,13 +80,25 @@ func TestMiscVisitorCover(t *testing.T) {
 				{},
 			},
 		},
+		&ast.PurgeMaterializedViewLogStmt{Table: &ast.TableName{}},
+		&ast.CancelMaterializedViewJobStmt{Tp: ast.CancelMaterializedViewJobTypeLogPurge},
 		&ast.ShutdownStmt{},
 	}
 
 	for _, v := range stmts {
-		v.Accept(visitor{})
-		v.Accept(visitor1{})
+		ast.Walk(v, visitor{})
+		ast.Walk(v, visitor1{})
 	}
+}
+
+func TestPurgeMaterializedViewLogStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.PurgeMaterializedViewLogStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestCancelMaterializedViewJobStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.CancelMaterializedViewJobStmt{}).(ast.StmtNode)
+	require.True(t, ok)
 }
 
 func TestDDLVisitorCoverMisc(t *testing.T) {
@@ -109,8 +121,8 @@ constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cas
 	stmts, _, err := parse.Parse(sql, "", "")
 	require.NoError(t, err)
 	for _, stmt := range stmts {
-		stmt.Accept(visitor{})
-		stmt.Accept(visitor1{})
+		ast.Walk(stmt, visitor{})
+		ast.Walk(stmt, visitor1{})
 	}
 }
 
@@ -129,8 +141,8 @@ import into t from '/file.csv'`
 	stmts, _, err := p.Parse(sql, "", "")
 	require.NoError(t, err)
 	for _, stmt := range stmts {
-		stmt.Accept(visitor{})
-		stmt.Accept(visitor1{})
+		ast.Walk(stmt, visitor{})
+		ast.Walk(stmt, visitor1{})
 	}
 }
 

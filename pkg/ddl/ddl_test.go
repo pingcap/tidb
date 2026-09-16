@@ -18,12 +18,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -67,11 +74,210 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
 }
 
+type ddlJobRUReport struct {
+	resourceGroupName string
+	tikvRUV2          float64
+	tidbRUV2          float64
+	tiflashRUV2       float64
+}
+
+type ddlJobRUReporter struct {
+	reports []ddlJobRUReport
+	panic   bool
+}
+
+func (*ddlJobRUReporter) ReportConsumption(string, *rmpb.Consumption) {}
+
+func (r *ddlJobRUReporter) ReportRUV2Consumption(
+	resourceGroupName string,
+	tikvRUV2, tidbRUV2, tiflashRUV2 float64,
+) {
+	if r.panic {
+		panic("reporter panic")
+	}
+	r.reports = append(r.reports, ddlJobRUReport{
+		resourceGroupName: resourceGroupName,
+		tikvRUV2:          tikvRUV2,
+		tidbRUV2:          tidbRUV2,
+		tiflashRUV2:       tiflashRUV2,
+	})
+}
+
+type ddlJobRUReportingContext struct {
+	*mock.Context
+	dctx *distsqlctx.DistSQLContext
+}
+
+func (c *ddlJobRUReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	return c.dctx
+}
+
+func TestAccountJobRU(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.DDLWeights.TxnKVBytes = 2
+	})
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	sessCtx := mock.NewContext()
+	sessCtx.Store = store
+	w := worker{tp: generalWorker, sess: sess.NewSession(sessCtx)}
+
+	require.NoError(t, w.sess.Begin(context.Background()))
+	discardedTxn, err := w.sess.Txn()
+	require.NoError(t, err)
+	require.NoError(t, discardedTxn.Set(kv.Key("discarded-key"), []byte("discarded-payload-is-longer")))
+	discardedSize := discardedTxn.Size()
+	w.sess.Rollback()
+
+	require.NoError(t, w.sess.Begin(context.Background()))
+	t.Cleanup(w.sess.Rollback)
+	activeTxn, err := w.sess.Txn()
+	require.NoError(t, err)
+	require.NoError(t, activeTxn.Set(kv.Key("active"), []byte("value")))
+	require.NotEqual(t, discardedSize, activeTxn.Size())
+
+	job := &model.Job{RU: 7}
+	require.NoError(t, w.accountJobRU(job))
+	expectedRU := float64(7)
+	if kerneltype.IsNextGen() {
+		expectedRU += 2 * float64(activeTxn.Size())
+	}
+	require.Equal(t, expectedRU, job.RU)
+
+	accountedRU := job.RU
+	w.tp = addIdxWorker
+	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += 2 * float64(activeTxn.Size())
+	}
+	require.Equal(t, accountedRU, job.RU)
+
+	w.tp = backgroundWorker
+	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += 2 * float64(activeTxn.Size())
+	}
+	require.Equal(t, accountedRU, job.RU)
+
+	t.Run("reports through the DDL session resource group", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUConsumption(&model.Job{RU: 42})
+
+		require.Equal(t, []ddlJobRUReport{{
+			resourceGroupName: resourcegroup.DefaultResourceGroupName,
+			tikvRUV2:          42,
+			tidbRUV2:          0,
+			tiflashRUV2:       0,
+		}}, reporter.reports)
+	})
+
+	t.Run("reports reorganization jobs through the persisted resource group", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUConsumption(&model.Job{
+			RU: 42,
+			ReorgMeta: &model.DDLReorgMeta{
+				ResourceGroupName: "non-default-group",
+			},
+		})
+
+		require.Equal(t, []ddlJobRUReport{{
+			resourceGroupName: "non-default-group",
+			tikvRUV2:          42,
+			tidbRUV2:          0,
+			tiflashRUV2:       0,
+		}}, reporter.reports)
+	})
+
+	t.Run("skips invalid reporting contexts", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUConsumption(&model.Job{RU: 42})
+		sessCtx.dctx = nil
+		w.reportJobRUConsumption(&model.Job{RU: 42})
+
+		require.Empty(t, reporter.reports)
+	})
+
+	t.Run("propagates reporter panics", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{panic: true}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		require.Panics(t, func() {
+			w.reportJobRUConsumption(&model.Job{RU: 42})
+		})
+	})
+}
+
 func NewJobSubmitterForTest() *JobSubmitter {
 	syncMap := generic.NewSyncMap[int64, chan struct{}](8)
 	return &JobSubmitter{
 		ddlJobDoneChMap: &syncMap,
 	}
+}
+
+// PruneStorageClassTransitionHistoryForTest exposes history pruning to external tests.
+func PruneStorageClassTransitionHistoryForTest(ctx context.Context, se *sess.Session) error {
+	return pruneStorageClassTransitionHistory(ctx, se)
+}
+
+// PollStorageClassTransitionsForTest runs one owner polling iteration.
+func PollStorageClassTransitionsForTest(ctx context.Context, d DDL, se *sess.Session) (bool, error) {
+	dd, ok := d.(*ddl)
+	if !ok {
+		return false, fmt.Errorf("unexpected DDL implementation %T", d)
+	}
+	return dd.storageClassTransitionManager.poll(ctx, se, false)
+}
+
+// ReconcileStorageClassTransitionTopologyForTest exposes topology reconciliation to external tests.
+func ReconcileStorageClassTransitionTopologyForTest(
+	ctx context.Context,
+	se *sess.Session,
+	tblInfo *model.TableInfo,
+) error {
+	operations, err := loadRunningStorageClassTransitionsForTable(ctx, se, tblInfo.ID)
+	if err != nil {
+		return err
+	}
+	if len(operations) != 1 {
+		return fmt.Errorf("expected one running storage class transition, got %d", len(operations))
+	}
+	return reconcileStorageClassTransitionTopology(ctx, se, tblInfo, operations[0], operations[0].schemaVersion)
 }
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
@@ -596,4 +802,105 @@ func TestSetGlobalIndexVersionFlag(t *testing.T) {
 	model.SetGlobalIndexV1Supported(true)
 	setGlobalIndexVersion(tblInfo, idxInfo)
 	require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+}
+
+func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
+	val, changed := getJobCheckInterval(model.ActionCreateMaterializedView, 0)
+	require.Equal(t, slowDDLIntervalPolicy[0], val)
+	require.True(t, changed)
+
+	val, changed = getJobCheckInterval(model.ActionCreateMaterializedView, len(slowDDLIntervalPolicy))
+	require.Equal(t, slowDDLIntervalPolicy[len(slowDDLIntervalPolicy)-1], val)
+	require.False(t, changed)
+}
+
+func TestIsCreateMaterializedViewBaseCheckCancelledErr(t *testing.T) {
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(infoschema.ErrDatabaseNotExists.GenWithStackByArgs("test")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("invalid job")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrWrongObject.GenWithStackByArgs("test", "t", "BASE TABLE")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", model.StateDeleteOnly)))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")))
+	require.False(t, isCreateMaterializedViewBaseCheckCancelledErr(fmt.Errorf("retry later")))
+}
+
+func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
+	compactSQL := func(sql string) string { return strings.Join(strings.Fields(sql), " ") }
+
+	lastSuccessRefreshEndUnixSeconds := int64(1_767_312_304)
+	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, nil, false))
+	require.NotContains(t, sqlNoUpdate, "NEXT_REFRESH_UNIX_SECONDS")
+	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
+	require.Contains(t, sqlNoUpdate, "LAST_SUCCESS_REFRESH_END_UNIX_SECONDS")
+	require.Contains(t, sqlNoUpdate, "1767312304")
+
+	sqlPrewrite := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, nil, nil, false))
+	require.NotContains(t, sqlPrewrite, "1767312304")
+	require.Contains(t, sqlPrewrite, "NULL")
+
+	nextRefreshUnixSeconds := int64(1_767_312_305)
+	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, &nextRefreshUnixSeconds, true))
+	require.Contains(t, sqlWithValue, "NEXT_REFRESH_UNIX_SECONDS")
+	require.Contains(t, sqlWithValue, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
+	require.Contains(t, sqlWithValue, "1767312305")
+
+	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, nil, true))
+	require.Contains(t, sqlWithNull, "NEXT_REFRESH_UNIX_SECONDS")
+	require.Contains(t, sqlWithNull, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
+	require.Contains(t, sqlWithNull, ", NULL)")
+}
+
+func TestBuildCreateMaterializedViewLogPurgeInfoUpsertSQL(t *testing.T) {
+	compactSQL := func(sql string) string { return strings.Join(strings.Fields(sql), " ") }
+
+	sqlNoUpdate := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, nil, false))
+	require.NotContains(t, sqlNoUpdate, "NEXT_PURGE_UNIX_SECONDS")
+	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
+
+	nextPurgeUnixSeconds := int64(1_767_312_305)
+	sqlWithValue := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, &nextPurgeUnixSeconds, true))
+	require.Contains(t, sqlWithValue, "NEXT_PURGE_UNIX_SECONDS")
+	require.Contains(t, sqlWithValue, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
+	require.Contains(t, sqlWithValue, "1767312305")
+
+	sqlWithNull := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, nil, true))
+	require.Contains(t, sqlWithNull, "NEXT_PURGE_UNIX_SECONDS")
+	require.Contains(t, sqlWithNull, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
+	require.Contains(t, sqlWithNull, ", NULL)")
+}
+
+func TestBuildCreateMaterializedViewImportSQL(t *testing.T) {
+	mvTblInfo := &model.TableInfo{
+		Name: ast.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+
+	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "")
+	require.NoError(t, err)
+	require.Contains(t, sql, "IMPORT INTO `test`.`mv` FROM (")
+	require.Contains(t, sql, "WITH disable_precheck")
+	require.NotContains(t, strings.ToUpper(sql), "AS OF TIMESTAMP")
+
+	sql, err = buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "100gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "WITH disable_precheck, disk_quota='100gib'")
+
+	sql, err = buildCreateMaterializedViewImportSQL("test", mvTblInfo, 12, "64gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "WITH disable_precheck, thread=12, disk_quota='64gib'")
+}
+
+func TestNormalizeMVDefinitionHintDBNames(t *testing.T) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("select /*+ read_from_storage(tiflash[src]) hash_join_probe(src) */ a, count(1) from t src group by a", "", "")
+	require.NoError(t, err)
+
+	selectStmt := stmt.(*ast.SelectStmt)
+	normalizeMVDefinitionHintDBNames(selectStmt, ast.NewCIStr("test"))
+	sql, err := restoreNodeToCanonicalSQL(selectStmt)
+	require.NoError(t, err)
+	require.Contains(t, sql, "READ_FROM_STORAGE(TIFLASH[`test`.`src`])")
+	require.Contains(t, sql, "HASH_JOIN_PROBE(`test`.`src`)")
 }
