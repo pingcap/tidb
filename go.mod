@@ -368,7 +368,6 @@ replace (
 	cloud.google.com/go/storage => cloud.google.com/go/storage v1.39.1
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-	github.com/tikv/client-go/v2 => github.com/lhy1024/client-go v0.0.0-20260916073115-c5f5f93b66fe
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
