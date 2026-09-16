@@ -1772,35 +1772,13 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
-func recordDMLRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowCount, columnCount int64) {
-	if rowCount <= 0 || columnCount <= 0 {
-		return
-	}
-
-	rowsColMultiply := rowCount * columnCount
-	if rowCount > math.MaxInt64/columnCount {
-		rowsColMultiply = math.MaxInt64
-	}
-	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddExecutorL5InsertRows(rowsColMultiply)
-	}
-}
-
-func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
-	recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)
-}
-
-// finalizeStatementRUV2Metrics is the sole drain of raw RUv2 counters. In-flight
-// TopRU samples see ResourceManager{Read,Write}Cnt as zero until this runs;
-// per-statement totals telescope correctly across the post-finalize sample.
+// finalizeStatementRUV2Metrics transfers pending TiKV coprocessor response bytes
+// into statement metrics.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
 	}
-
-	execDetail := sessVars.StmtCtx.GetExecDetails()
-	execdetails.UpdateRUV2MetricsFromCommitDetails(sessVars.RUV2Metrics, execDetail.CommitDetail)
 
 	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
 	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
@@ -1808,31 +1786,6 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 		return
 	}
 	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
-
-	weights := sessVars.RUV2Weights()
-	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
-
-	dctx := a.Ctx.GetDistSQLCtx()
-	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
-		return
-	}
-	tikvRU := ruDetail.TiKVRUV2()
-	tiflashRU := ruDetail.TiflashRU()
-	if tikvRU > 0 || tidbRU > 0 || tiflashRU > 0 {
-		dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, tikvRU, tidbRU, tiflashRU)
-	}
-}
-
-func calculateStatementTotalRUV2(metrics *execdetails.RUV2Metrics, weights execdetails.RUV2Weights, ruDetail *util.RUDetails) float64 {
-	var tiKVRU, tiFlashRU float64
-	if ruDetail != nil {
-		tiKVRU = ruDetail.TiKVRUV2()
-		tiFlashRU = ruDetail.TiflashRU()
-	}
-	if metrics == nil {
-		return tiKVRU + tiFlashRU
-	}
-	return metrics.TotalRU(weights, tiKVRU, tiFlashRU)
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
@@ -2279,7 +2232,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
 	stmtExecInfo.RUDetail = ruDetail
-	stmtExecInfo.TotalRUV2 = calculateStatementTotalRUV2(sessVars.RUV2Metrics, sessVars.RUV2Weights(), ruDetail)
+	stmtExecInfo.TotalRUV2 = 0
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
@@ -2423,8 +2376,6 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 		}
 		if topRU {
 			beginInfo.Ctx = a.GoCtx
-			beginInfo.RUV2Metrics = vars.RUV2Metrics
-			beginInfo.RUV2Weights = vars.RUV2Weights()
 			if vars.User != nil {
 				beginInfo.User = vars.User.String()
 			}

@@ -222,7 +222,6 @@ type Config struct {
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
 	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
-	RUV2                       RUV2Config              `toml:"ru-v2" json:"ru-v2"`
 	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
@@ -343,59 +342,6 @@ type Config struct {
 
 	// CSE contains columnar-store related configuration.
 	CSE CSE `toml:"cse" json:"cse"`
-}
-
-// RUV2Config is the configuration for RU v2 weight calculation.
-// The default values are experimentally fitted so they stay stable under the
-// same workload while remaining numerically aligned with RU v1.
-type RUV2Config struct {
-	// RUScale is the scale factor used to convert RU v2 float values into scaled integer values.
-	// It is intentionally chosen to match legacy RU values for compatibility.
-	RUScale float64 `toml:"ru-scale" json:"ru-scale"`
-
-	// ResultChunkCells is the weight for cells materialized into result chunks.
-	ResultChunkCells float64 `toml:"result-chunk-cells" json:"result-chunk-cells"`
-	// ExecutorL1 is the weight for fast-path executors that scale by cells:
-	// BatchPointGet, PointGet, and Limit.
-	ExecutorL1 float64 `toml:"executor-l1" json:"executor-l1"`
-	// ExecutorL2 is the weight for general executors, including Expand, HashAgg,
-	// HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
-	// MemTableReaderExec, MergeJoin, Projection, SelectionExec, SelectLockExec,
-	// TableDualExec, TableReaderExecutor, TopN, UnionScanExec, and Window.
-	ExecutorL2 float64 `toml:"executor-l2" json:"executor-l2"`
-	// ExecutorL3 is the weight for heavier operators: Sort and StreamAgg.
-	ExecutorL3 float64 `toml:"executor-l3" json:"executor-l3"`
-	// ExecutorL5InsertRows is the weight for insert rows multiplied by inserted
-	// column count. Level 4 is intentionally unused today because only L1/L2/L3
-	// executor groups and this insert-specific tier are currently modeled.
-	ExecutorL5InsertRows    float64 `toml:"executor-l5-insert-rows" json:"executor-l5-insert-rows"`
-	PlanCnt                 float64 `toml:"plan-cnt" json:"plan-cnt"`
-	PlanDeriveStatsPaths    float64 `toml:"plan-derive-stats-paths" json:"plan-derive-stats-paths"`
-	ResourceManagerReadCnt  float64 `toml:"resource-manager-read-cnt" json:"resource-manager-read-cnt"`
-	ResourceManagerWriteCnt float64 `toml:"resource-manager-write-cnt" json:"resource-manager-write-cnt"`
-	WriteKeys               float64 `toml:"write-keys" json:"write-keys"`
-	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
-	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
-}
-
-// DefaultRUV2Config returns the default RU v2 configuration.
-func DefaultRUV2Config() RUV2Config {
-	return RUV2Config{
-		RUScale: 2.01,
-
-		ResultChunkCells:        0.00010000,
-		ExecutorL1:              0.00013278,
-		ExecutorL2:              0.00000383,
-		ExecutorL3:              0.00141739,
-		ExecutorL5InsertRows:    0.00472572,
-		PlanCnt:                 0.15392217,
-		PlanDeriveStatsPaths:    0.24968182,
-		ResourceManagerReadCnt:  0.02072003,
-		ResourceManagerWriteCnt: 0.07179779,
-		WriteKeys:               0.330760861554226,
-		SessionParserTotal:      0.19230499,
-		TxnCnt:                  0.03013709,
-	}
 }
 
 // CSE is the config collection for the cloud storage engine.
@@ -1082,7 +1028,6 @@ var defaultConf = Config{
 	TiDBReleaseVersion:           "",
 	DeployMode:                   deploymode.Premium,
 	DXFResourceLimit:             DefDXFResourceLimit,
-	RUV2:                         DefaultRUV2Config(),
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
