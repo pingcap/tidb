@@ -993,6 +993,62 @@ func TestClientErrors(t *testing.T) {
 func TestInitConnect(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 	ts.RunTestInitConnect(t)
+	admin, err := sql.Open("mysql", ts.GetDSN())
+	require.NoError(t, err)
+	defer admin.Close()
+	_, err = admin.Exec("create user idle_init")
+	require.NoError(t, err)
+	_, err = admin.Exec("grant select on test.* to idle_init")
+	require.NoError(t, err)
+	defer func() {
+		_, err := admin.Exec("set global init_connect=''")
+		require.NoError(t, err)
+	}()
+	for _, initSQL := range []string{"", "set @handshake_marker=1"} {
+		t.Run("idle after "+initSQL, func(t *testing.T) {
+			_, err := admin.Exec("set global init_connect=?", initSQL)
+			require.NoError(t, err)
+			db, err := sql.Open("mysql", ts.GetDSN(func(cfg *mysql.Config) {
+				cfg.User = "idle_init"
+			}))
+			require.NoError(t, err)
+			defer db.Close()
+			// Conn completes the handshake without sending a command that could clear its state.
+			conn, err := db.Conn(context.Background())
+			require.NoError(t, err)
+			defer conn.Close()
+			var connectionID uint64
+			require.Eventually(t, func() bool {
+				for id, info := range ts.Server.ShowProcessList() {
+					if info.User == "idle_init" {
+						connectionID = id
+						return true
+					}
+				}
+				return false
+			}, 5*time.Second, 10*time.Millisecond)
+			info := ts.Server.ShowProcessList()[connectionID]
+			require.NotNil(t, info)
+			require.Empty(t, info.Info)
+			require.Equal(t, byte(tmysql.ComSleep), info.Command)
+			var database string
+			require.NoError(t, conn.QueryRowContext(context.Background(), "select database()").Scan(&database))
+			require.Equal(t, "test", database)
+			if initSQL != "" {
+				var marker int
+				require.NoError(t, conn.QueryRowContext(context.Background(), "select @handshake_marker").Scan(&marker))
+				require.Equal(t, 1, marker)
+			}
+		})
+		require.Eventually(t, func() bool {
+			for _, info := range ts.Server.ShowProcessList() {
+				if info.User == "idle_init" {
+					return false
+				}
+			}
+			return true
+		}, 5*time.Second, 10*time.Millisecond)
+	}
 }
 
 func TestSumAvg(t *testing.T) {
