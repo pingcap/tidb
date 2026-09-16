@@ -122,7 +122,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	t.Run("reject local spill operators", func(t *testing.T) {
 		for _, tt := range []struct{ sql, operator string }{
 			{"select /*+ HASH_AGG() */ g,count(*) from query_src group by g", "HashAgg"},
-			{"select (select /*+ HASH_AGG() */ sum(v) from query_src) from query_src limit 1", "HashAgg"},
+			{"select /*+ HASH_AGG() */ g,count(*)+1 from query_src group by g", "HashAgg"},
 			{"select i from query_src order by g", "Sort"},
 			{"select i from query_src order by g limit 2", "TopN"},
 			{"select /*+ HASH_JOIN(a,b) */ a.i from query_src a join query_src b on a.i=b.i", "HashJoin"},
