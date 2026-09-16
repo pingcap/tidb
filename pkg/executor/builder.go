@@ -204,7 +204,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 			*physicalop.PhysicalHashJoin, *physicalop.PhysicalMergeJoin,
 			*physicalop.PhysicalCTE, *physicalop.PhysicalCTETable:
 			b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
-				"IMPORT INTO FROM SELECT with TiDB " + p.TP() + " (local spilling)")
+				"TiDB " + p.TP() + " with local spilling on an import worker")
 			return nil
 		}
 	}
