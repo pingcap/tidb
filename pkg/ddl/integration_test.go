@@ -91,6 +91,9 @@ func TestDDLStatementsBackFill(t *testing.T) {
 }
 
 func TestPartialIndexLegacyJobVersion(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("legacy Job V1 rolling upgrades and configurable fast reorg are classic-only")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
