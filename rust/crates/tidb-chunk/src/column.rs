@@ -1472,11 +1472,88 @@ impl Column {
         end: usize,
         row_id_fn: impl Fn(usize) -> usize,
     ) {
+        let mut row_ids = Vec::new();
         for (i, sel) in selected.iter().enumerate().take(end).skip(start) {
-            if *sel != expected_result {
-                continue;
+            if *sel == expected_result {
+                row_ids.push(row_id_fn(i));
             }
-            self.append_cell_from(src, row_id_fn(i));
+        }
+        self.copy_row_ids_from(src, &row_ids);
+    }
+
+    /// Append arbitrary source rows in one column-wide pass.
+    ///
+    /// Go's `CopyRows` and `CopyExpectedRowsWithRowIDFunc` append one row at a
+    /// time.  Keep their row order and null semantics, but borrow the source
+    /// byte buffer and grow the destination once for the whole batch.  This
+    /// removes a lock/read and a capacity check from every selected row while
+    /// preserving the copy-on-write fallback for shallow columns.
+    fn copy_row_ids_from(&mut self, src: &Column, row_ids: &[usize]) {
+        if row_ids.is_empty() {
+            return;
+        }
+        if std::ptr::eq(self, src) {
+            for &row in row_ids {
+                self.append_cell_from(src, row);
+            }
+            return;
+        }
+
+        let fixed = src.is_fixed();
+        debug_assert_eq!(self.is_fixed(), fixed);
+        let width = src.elem_buffer_len();
+        let data_len = if fixed {
+            width
+                .checked_mul(row_ids.len())
+                .expect("fixed column data length overflow")
+        } else {
+            row_ids.iter().fold(0usize, |data_len, &row| {
+                let cell_len = (src.offsets[row + 1] - src.offsets[row]) as usize;
+                data_len.saturating_add(cell_len)
+            })
+        };
+        let destination_end = self
+            .length
+            .checked_add(row_ids.len())
+            .expect("column row count overflow");
+        let null_bitmap_len = (destination_end + 7) >> 3;
+        self.null_bitmap
+            .reserve(null_bitmap_len.saturating_sub(self.null_bitmap.len()));
+        if !fixed {
+            self.offsets.reserve(row_ids.len());
+        }
+
+        let source_data = src.data.read();
+        let Self {
+            data,
+            null_bitmap,
+            offsets,
+            length,
+            ..
+        } = self;
+        let appended = data.append_owned(|data| {
+            data.reserve(data_len);
+            for &row in row_ids {
+                append_null_bit(null_bitmap, *length, !src.is_null(row));
+                let (start, end) = if fixed {
+                    (row * width, (row + 1) * width)
+                } else {
+                    (src.offsets[row] as usize, src.offsets[row + 1] as usize)
+                };
+                data.extend_from_slice(&source_data[start..end]);
+                if !fixed {
+                    offsets.push(data.len() as i64);
+                }
+                *length += 1;
+            }
+        });
+        if appended {
+            return;
+        }
+
+        drop(source_data);
+        for &row in row_ids {
+            self.append_cell_from(src, row);
         }
     }
 
@@ -1563,9 +1640,7 @@ impl Column {
     }
 
     pub(crate) fn copy_rows_from(&mut self, src: &Column, selected: &[usize]) {
-        for &row_id in selected {
-            self.append_cell_from(src, row_id);
-        }
+        self.copy_row_ids_from(src, selected);
     }
 
     /// Go `copySameOuterRows`' per-column body: append `num_rows` copies of the
@@ -1604,36 +1679,34 @@ fn append_fixed_copies<const N: usize>(data: &mut Vec<u8>, cell: &[u8], times: u
         return;
     }
     let cell: &[u8; N] = cell.try_into().expect("fixed cell width");
-    let start = data.len();
-    data.reserve(N.saturating_mul(times));
-    data.extend_from_slice(cell);
-    let mut copied = 1;
-    while copied < times {
-        let count = copied.min(times - copied);
-        data.extend_from_within(start..start + count * N);
-        copied += count;
+    data.reserve(
+        N.checked_mul(times)
+            .expect("fixed repeated cell data length overflow"),
+    );
+    for _ in 0..times {
+        data.extend_from_slice(cell);
     }
 }
 
 /// Repeats one variable-width cell while rebasing all destination offsets.
 ///
-/// The first payload copy seeds an owned block; subsequent copies use the
-/// already-written block, so the `times` loop does not repeatedly dispatch
-/// through `extend_from_slice`. Offset entries still remain one per logical
-/// row, exactly as Go's variable column representation requires.
+/// Reserve the complete payload before appending. Each copy is a direct
+/// slice append, avoiding the extra read/write traffic of doubling an
+/// already-written block with an overlapping move. Offset entries still
+/// remain one per logical row, exactly as Go's variable column representation
+/// requires.
 fn append_variable_copies(data: &mut Vec<u8>, offsets: &mut Vec<i64>, cell: &[u8], times: usize) {
     if times == 0 {
         return;
     }
     let cell_len = cell.len();
     let start = data.len();
-    data.reserve(cell_len.saturating_mul(times));
-    data.extend_from_slice(cell);
-    let mut copied = 1;
-    while copied < times {
-        let count = copied.min(times - copied);
-        data.extend_from_within(start..start + count * cell_len);
-        copied += count;
+    let total_len = cell_len
+        .checked_mul(times)
+        .expect("variable repeated cell data length overflow");
+    data.reserve(total_len);
+    for _ in 0..times {
+        data.extend_from_slice(cell);
     }
     offsets.reserve(times);
     offsets.extend(

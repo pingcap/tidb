@@ -628,6 +628,81 @@ fn append_cell_n_times_and_copy_reconstruct_cover_fixed_var_and_null() {
 }
 
 #[test]
+fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
+    let mut fixed_source = Column::new_fixed_len(8, 8);
+    for row in 0..8 {
+        if row % 3 == 1 {
+            fixed_source.append_null();
+        } else {
+            fixed_source.append_int64(100 + row as i64);
+        }
+    }
+    let selected = [false, true, true, false, true, false, true, true];
+    let row_ids = [6, 2, 5, 1, 7, 0, 3, 4];
+
+    let mut fixed_expected = Column::new_fixed_len(8, 8);
+    fixed_expected.append_int64(-1);
+    for (i, &is_selected) in selected.iter().enumerate().take(7).skip(1) {
+        if is_selected {
+            fixed_expected.append_cell_from(&fixed_source, row_ids[i]);
+        }
+    }
+    let mut fixed_actual = Column::new_fixed_len(8, 8);
+    fixed_actual.append_int64(-1);
+    fixed_actual.copy_expected_rows_with_row_id_func(&fixed_source, &selected, true, 1, 7, |i| {
+        row_ids[i]
+    });
+    assert_eq!(fixed_actual, fixed_expected);
+
+    let copied_rows = [7, 0, 4, 2];
+    let mut fixed_rows_expected = Column::new_fixed_len(8, 4);
+    for &row in &copied_rows {
+        fixed_rows_expected.append_cell_from(&fixed_source, row);
+    }
+    let mut fixed_rows_actual = Column::new_fixed_len(8, 4);
+    fixed_rows_actual.copy_rows_from(&fixed_source, &copied_rows);
+    assert_eq!(fixed_rows_actual, fixed_rows_expected);
+
+    let mut variable_source = Column::new_var_len(8);
+    variable_source.append_string("zero");
+    variable_source.append_null();
+    variable_source.append_bytes(b"");
+    variable_source.append_string("three");
+    variable_source.append_string("four-four");
+    variable_source.append_null();
+    variable_source.append_string("six");
+    variable_source.append_bytes(b"last");
+
+    let mut variable_expected = Column::new_var_len(8);
+    variable_expected.append_string("prefix");
+    for (i, &is_selected) in selected.iter().enumerate().take(8).skip(1) {
+        if is_selected {
+            variable_expected.append_cell_from(&variable_source, row_ids[i]);
+        }
+    }
+    let mut variable_actual = Column::new_var_len(8);
+    variable_actual.append_string("prefix");
+    variable_actual
+        .copy_expected_rows_with_row_id_func(&variable_source, &selected, true, 1, 8, |i| {
+            row_ids[i]
+        });
+    assert_eq!(variable_actual, variable_expected);
+
+    // A frozen destination must take the same scalar copy-on-write fallback
+    // as Go's append path while producing identical offsets and null bits.
+    let mut frozen_actual = Column::new_var_len(8);
+    frozen_actual.append_string("prefix");
+    frozen_actual.data = SharedBytes::from_bytes(bytes::Bytes::from(frozen_actual.data.snapshot()));
+    frozen_actual.copy_rows_from(&variable_source, &copied_rows);
+    let mut frozen_expected = Column::new_var_len(8);
+    frozen_expected.append_string("prefix");
+    for &row in &copied_rows {
+        frozen_expected.append_cell_from(&variable_source, row);
+    }
+    assert_eq!(frozen_actual, frozen_expected);
+}
+
+#[test]
 fn copy_reconstruct_reuses_destination_and_preserves_avoid_reusing() {
     let mut fixed = Column::new_fixed_len(8, 3);
     fixed.append_int64(10);
