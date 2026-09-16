@@ -69,6 +69,7 @@ use tidb_chunk::column::Column;
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row::Row;
 use tidb_chunk::row_container::{RowContainer, SpillDiskAction};
+use tidb_codec::{JoinKeyBytes, JoinKeyColumn};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_util::memory::Tracker;
@@ -986,37 +987,47 @@ pub(crate) fn row_hash_chunk_batched(
         let at = offset(key);
         let field_type = types.get(at).ok_or(KeyError)?;
         let column = chunk.column(at);
-        if let Some(selection) = selection {
-            for (row_idx, &physical_row) in selection.iter().enumerate() {
-                if !active[row_idx] {
-                    continue;
+        // Hold one backing-data read guard for the entire key column, as Go's
+        // `Int64s`/`Float64s`/`GetBytes` accessors do. The old per-row typed
+        // access reacquired that guard for every cell, which made the Rust
+        // column-major loop pay synchronization and bounds work that Go
+        // avoids.
+        column.with_raw(|raw| {
+            if let Some(selection) = selection {
+                for (row_idx, &physical_row) in selection.iter().enumerate() {
+                    if !active[row_idx] {
+                        continue;
+                    }
+                    hash_chunk_key_row(
+                        key,
+                        field_type,
+                        &column,
+                        &raw,
+                        row_idx,
+                        physical_row,
+                        &mut hashers,
+                        &mut active,
+                    )?;
                 }
-                hash_chunk_key_row(
-                    key,
-                    field_type,
-                    &column,
-                    row_idx,
-                    physical_row,
-                    &mut hashers,
-                    &mut active,
-                )?;
-            }
-        } else {
-            for row_idx in 0..rows {
-                if !active[row_idx] {
-                    continue;
+            } else {
+                for row_idx in 0..rows {
+                    if !active[row_idx] {
+                        continue;
+                    }
+                    hash_chunk_key_row(
+                        key,
+                        field_type,
+                        &column,
+                        &raw,
+                        row_idx,
+                        row_idx,
+                        &mut hashers,
+                        &mut active,
+                    )?;
                 }
-                hash_chunk_key_row(
-                    key,
-                    field_type,
-                    &column,
-                    row_idx,
-                    row_idx,
-                    &mut hashers,
-                    &mut active,
-                )?;
             }
-        }
+            Ok::<(), KeyError>(())
+        })?;
     }
     Ok(Some(
         hashers
@@ -1036,6 +1047,7 @@ fn hash_chunk_key_row(
     key: &EquiKey,
     field_type: &FieldType,
     column: &Column,
+    raw: &JoinKeyBytes<'_>,
     row_idx: usize,
     physical_row: usize,
     hashers: &mut [FastBytesHasher],
@@ -1053,18 +1065,20 @@ fn hash_chunk_key_row(
     match key.class {
         KeyClass::Int => {
             hasher.write(&16u64.to_be_bytes());
+            let raw = raw.row(physical_row);
             let value = if field_type.is_unsigned() {
-                i128::from(column.get_uint64(physical_row))
+                i128::from(u64::from_ne_bytes(raw.try_into().map_err(|_| KeyError)?))
             } else {
-                i128::from(column.get_int64(physical_row))
+                i128::from(i64::from_ne_bytes(raw.try_into().map_err(|_| KeyError)?))
             };
             hasher.write(&value.to_be_bytes());
         }
         KeyClass::Real => {
+            let raw = raw.row(physical_row);
             let value = if field_type.code() == tidb_datatype::FieldTypeCode::Float {
-                f64::from(column.get_float32(physical_row))
+                f64::from(f32::from_ne_bytes(raw.try_into().map_err(|_| KeyError)?))
             } else {
-                column.get_float64(physical_row)
+                f64::from_ne_bytes(raw.try_into().map_err(|_| KeyError)?)
             };
             if value.is_nan() {
                 active[row_idx] = false;
@@ -1074,16 +1088,16 @@ fn hash_chunk_key_row(
             hasher.write(&(if value == 0.0 { 0.0 } else { value }).to_be_bytes());
         }
         KeyClass::Decimal => {
-            let part = column
-                .get_my_decimal(physical_row)
-                .to_hash_key()
-                .map_err(|_| KeyError)?;
+            let value = tidb_datatype::MyDecimal::from_raw_bytes(
+                raw.row(physical_row).try_into().map_err(|_| KeyError)?,
+            )
+            .map_err(|_| KeyError)?;
+            let part = value.to_hash_key().map_err(|_| KeyError)?;
             hasher.write(&(part.len() as u64).to_be_bytes());
             hasher.write(&part);
         }
         KeyClass::Str(collation) => {
-            let bytes = column.get_bytes(physical_row);
-            let part = collation.immutable_key(bytes.as_ref());
+            let part = collation.immutable_key(raw.row(physical_row));
             hasher.write(&(part.len() as u64).to_be_bytes());
             hasher.write(part.as_ref());
         }
@@ -1123,6 +1137,67 @@ pub(crate) fn exact_int_key_chunk(
     field_type: &FieldType,
 ) -> Option<i128> {
     chunk_int_key(row, offset, field_type)
+}
+
+/// Extracts one exact integer key column for a complete logical chunk. Go's
+/// exact-key path reads the column vector once and then probes every row;
+/// doing the same here avoids rebuilding a [`Row`] and reacquiring the packed
+/// data guard for each lookup. Hybrid integer cells stay on the scalar datum
+/// path because their variable-width storage is not an eight-byte integer.
+pub(crate) fn exact_int_keys_chunk(
+    chunk: &Chunk,
+    offset: usize,
+    field_type: &FieldType,
+) -> Vec<Option<i128>> {
+    let rows = chunk.num_rows();
+    let column = chunk.column(offset);
+    let mut keys = Vec::with_capacity(rows);
+    if field_type.is_hybrid() {
+        keys.extend(
+            (0..rows).map(|row| exact_int_key_chunk(chunk.get_row(row), offset, field_type)),
+        );
+        return keys;
+    }
+    column.with_raw(|raw| {
+        if let Some(selection) = chunk.sel() {
+            keys.extend(selection.iter().map(|&physical| {
+                if column.is_null(physical) {
+                    None
+                } else if field_type.is_unsigned() {
+                    Some(i128::from(u64::from_ne_bytes(
+                        raw.row(physical)
+                            .try_into()
+                            .expect("non-hybrid integer key cells are eight bytes wide"),
+                    )))
+                } else {
+                    Some(i128::from(i64::from_ne_bytes(
+                        raw.row(physical)
+                            .try_into()
+                            .expect("non-hybrid integer key cells are eight bytes wide"),
+                    )))
+                }
+            }));
+        } else {
+            keys.extend((0..rows).map(|row| {
+                if column.is_null(row) {
+                    None
+                } else if field_type.is_unsigned() {
+                    Some(i128::from(u64::from_ne_bytes(
+                        raw.row(row)
+                            .try_into()
+                            .expect("non-hybrid integer key cells are eight bytes wide"),
+                    )))
+                } else {
+                    Some(i128::from(i64::from_ne_bytes(
+                        raw.row(row)
+                            .try_into()
+                            .expect("non-hybrid integer key cells are eight bytes wide"),
+                    )))
+                }
+            }));
+        }
+    });
+    keys
 }
 
 /// The integer a `KeyClass::Int` column holds at `offset`, or `None` for SQL
@@ -1447,6 +1522,10 @@ impl BuildTable {
         } else {
             None
         };
+        let exact_keys = exact_int.map(|key| {
+            let at = offset(key);
+            exact_int_keys_chunk(&chunk, at, &types[at])
+        });
         let chains = &mut self.chains;
         let buckets = &mut self.buckets;
         let mut exact_buckets = self.exact_int_buckets.as_mut();
@@ -1458,11 +1537,8 @@ impl BuildTable {
             // NULL-safe key is indexed under row_key's dedicated NULL
             // identity, matching Go's `ignoreNulls[keyIdx]` path. Every row
             // is still stored because the container owns the build data.
-            if let Some(exact_key) = exact_int {
-                let chunk_row = chunk.get_row(row_idx);
-                if let Some(key) =
-                    exact_int_key_chunk(chunk_row, offset(exact_key), &types[offset(exact_key)])
-                {
+            if exact_int.is_some() {
+                if let Some(key) = exact_keys.as_ref().and_then(|keys| keys[row_idx]) {
                     let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
                     let pointer = RowPtr { chk_idx, row_idx };
                     let table = exact_buckets

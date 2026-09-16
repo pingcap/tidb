@@ -154,9 +154,9 @@
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::{
-    equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, row_hash, row_hash_chunk,
-    row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable, Chain, EquiKey,
-    FastBytesMap, KeyClass, KeyError,
+    equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, exact_int_keys_chunk,
+    row_hash, row_hash_chunk, row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable,
+    Chain, EquiKey, FastBytesMap, KeyClass, KeyError,
 };
 use crate::mem_quota::StatementMemory;
 mod index_hash;
@@ -3963,13 +3963,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         // An exact-integer key is looked up for the whole chunk before the
         // row loop, so the table's cache misses overlap across rows.
         if let Some(key) = exact_int {
-            exact_keys.extend((0..input.num_rows()).map(|probe_index| {
-                exact_int_key_chunk(
-                    input.get_row(probe_index),
-                    offset(key),
-                    &probe_types[offset(key)],
-                )
-            }));
+            let at = offset(key);
+            exact_keys.extend(exact_int_keys_chunk(&input, at, &probe_types[at]));
             table.probe_exact_int_many(exact_keys, home_slots, exact_found);
         } else {
             // Keep the row loop shared with the exact path. The table lookup
@@ -4276,32 +4271,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         };
         let table_spilled = table.already_spilled();
         let mut build_buf_rows = 0;
-        // Probe chunks produced by the coprocessor scan normally have no
-        // selection vector. Keep the key column borrowed once in that shape;
-        // the generic selected-chunk path below still uses the logical Row
-        // accessor so selection semantics remain unchanged.
-        // A HYBRID key column (Go `FieldType.Hybrid()`) is variable-length in
-        // the chunk even though it compares as an integer, so the borrowed
-        // fixed-width accessors below cannot read it. Those keys take the
-        // generic row path, which goes through `Row::get_datum` exactly as
-        // Go's `Column.EvalInt` does.
-        let probe_key_values = (input.sel().is_none() && !probe_types[key_offset].is_hybrid())
-            .then(|| input.column(key_offset));
-        let exact_key_at = |row_index: usize| {
-            if let Some(values) = probe_key_values.as_ref() {
-                if values.is_null(row_index) {
-                    None
-                } else if probe_types[key_offset].is_unsigned() {
-                    Some(i128::from(values.get_uint64(row_index)))
-                } else {
-                    Some(i128::from(values.get_int64(row_index)))
-                }
-            } else {
-                let probe_row = input.get_row(row_index);
-                exact_int_key_chunk(probe_row, key_offset, &probe_types[key_offset])
-            }
-        };
-
         // The common unique-key dimension join has one build candidate for
         // every probe row. Preflight that shape once, then retain the build
         // container's records read lock across the whole window instead of
@@ -4312,7 +4281,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         // for the post-probe scan.
         // Every key of the chunk is looked up at once, so the table's cache
         // misses overlap across rows instead of stalling one row at a time.
-        exact_keys.extend((0..input.num_rows()).map(exact_key_at));
+        exact_keys.extend(exact_int_keys_chunk(
+            &input,
+            key_offset,
+            &probe_types[key_offset],
+        ));
         table.probe_exact_int_many(exact_keys, home_slots, exact_found);
         batch_ptrs.extend(
             exact_found
@@ -4334,7 +4307,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     if builds_preserved {
                         matched_build_rows.extend(batch_ptrs.iter().copied());
                     }
-                    drop(probe_key_values);
                     return Ok(ParallelProbeResult {
                         input,
                         output,
@@ -4382,7 +4354,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             Ok::<(), ExecError>(())
                         })
                         .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
-                    drop(probe_key_values);
                     return Ok(ParallelProbeResult {
                         input,
                         output,
@@ -4428,7 +4399,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 if builds_preserved {
                     matched_build_rows.extend(batch_ptrs.iter().copied());
                 }
-                drop(probe_key_values);
                 return Ok(ParallelProbeResult {
                     input,
                     output,
@@ -4538,7 +4508,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 }
             }
         }
-        drop(probe_key_values);
         Ok(ParallelProbeResult {
             input,
             output,
