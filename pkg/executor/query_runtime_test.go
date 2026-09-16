@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -89,7 +90,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 				require.NoError(t, err)
 				defer se.Close()
 				output := make(chan importer.QueryChunk, len(expected)+1)
-				err = importer.RunImportQuery(context.Background(), se, captured, 32<<20, output)
+				err = importer.RunImportQuery(context.Background(), captured, importer.QueryRuntime{Session: se, Storage: objstore.NewMemStorage(), Prefix: "query-test", TotalMemoryLimit: 32 << 20, MemoryLimit: 1 << 19}, output)
 				require.NoError(t, err)
 				close(output)
 				var got []string
@@ -173,7 +174,9 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			planID = p.ID()
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockProjectionExecBaseExecutorOpenReturnedError", `return(true)`)
 		})
-		err = importer.RunImportQuery(context.Background(), se, q, 1<<20, nil)
+		err = importer.RunImportQuery(context.Background(), q, importer.QueryRuntime{
+			Session: se, Storage: objstore.NewMemStorage(), Prefix: "open-error", TotalMemoryLimit: 1 << 20, MemoryLimit: 1 << 19,
+		}, nil)
 		require.ErrorContains(t, err, "mock ProjectionExec.baseExecutor.Open returned error")
 		// Projection publishes its concurrency statistics only when Close runs.
 		require.Contains(t, se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(planID).String(), "Concurrency:")
@@ -190,7 +193,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.NoError(t, err)
 		defer se.Close()
 		output := make(chan importer.QueryChunk, 1)
-		err = importer.RunImportQuery(context.Background(), se, q, 1<<20, output)
+		err = importer.RunImportQuery(context.Background(), q, importer.QueryRuntime{Session: se, Storage: objstore.NewMemStorage(), Prefix: "query-test", TotalMemoryLimit: 1 << 20, MemoryLimit: 1 << 19}, output)
 		require.NoError(t, err)
 		close(output)
 		var rows []int64
@@ -234,7 +237,7 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 	})
 	// Validate the real optimizer output without dispatching to a TiFlash server.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/failAfterImportQueryOptimize", `return(true)`)
-	err = importer.RunImportQuery(context.Background(), se, captured, 1<<20, nil)
+	err = importer.RunImportQuery(context.Background(), captured, importer.QueryRuntime{Session: se, Storage: objstore.NewMemStorage(), Prefix: "query-test", TotalMemoryLimit: 1 << 20, MemoryLimit: 1 << 19}, nil)
 	require.ErrorContains(t, err, "injected failure after import query optimization")
 	require.True(t, optimized)
 }

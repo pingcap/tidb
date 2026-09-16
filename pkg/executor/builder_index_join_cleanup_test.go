@@ -19,9 +19,14 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/executor/aggregate"
+	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -40,6 +45,41 @@ type closeCountExecutor struct {
 func (e *closeCountExecutor) Close() error {
 	e.closed.Add(1)
 	return e.BaseExecutorV2.Close()
+}
+
+func TestBuildExecutorForIndexJoinExternalHashAgg(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := context.Background()
+	stats := &property.StatsInfo{RowCount: 1}
+	dual := physicalop.PhysicalTableDual{RowCount: 1}.Init(sctx, stats, 0)
+	dual.SetSchema(expression.NewSchema())
+	spillOption := &builder.HashAggSpill{Storage: objstore.NewMemStorage(), Prefix: "index-join", MemoryLimit: 1 << 20}
+	b := newExecutorBuilder(ctx, sctx, nil, nil, spillOption)
+	b.forDataReaderBuilder, b.dataReaderTS = true, 1
+	child := b.build(dual)
+	require.NoError(t, exec.Open(ctx, child))
+	defer func() { require.NoError(t, exec.Close(child)) }()
+	input := exec.NewFirstChunk(child)
+	require.NoError(t, exec.Next(ctx, child, input))
+	require.Equal(t, 1, input.NumRows())
+
+	count, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+	require.NoError(t, err)
+	baseAgg := physicalop.BasePhysicalAgg{AggFuncs: []*aggregation.AggFuncDesc{count}}
+	plan := baseAgg.InitForHash(sctx, stats, 0, expression.NewSchema(&expression.Column{UniqueID: 1, RetType: count.RetTp}))
+	plan.SetChildren(&mockPhysicalIndexReader{PhysicalPlan: dual, e: child})
+	reader, err := b.newDataReaderBuilder(plan)
+	require.NoError(t, err)
+	agg, err := reader.BuildExecutorForIndexJoin(ctx, nil, nil, nil, nil, true, nil, nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, exec.Close(agg)) }()
+	require.IsType(t, &aggregate.ExternalHashAgg{}, agg)
+	result := exec.NewFirstChunk(agg)
+	require.NoError(t, exec.Next(ctx, agg, result))
+	require.Equal(t, 1, result.NumRows())
+	// The child was already consumed; opening only the aggregate must not rewind it.
+	require.Zero(t, result.GetRow(0).GetInt64(0))
 }
 
 func TestBuildExecutorForIndexJoinHashJoinErrorCleansChildren(t *testing.T) {
@@ -81,7 +121,7 @@ func TestBuildExecutorForIndexJoinHashJoinErrorCleansChildren(t *testing.T) {
 	hashJoinPlan.SetSchema(expression.MergeSchema(lookupSchema, otherSchema))
 	hashJoinPlan.SetChildren(lookupMockPlan, otherMockPlan)
 
-	execBuilder := newExecutorBuilder(context.Background(), ctx, nil, nil)
+	execBuilder := newExecutorBuilder(context.Background(), ctx, nil, nil, nil)
 	execBuilder.forDataReaderBuilder = true
 	execBuilder.dataReaderTS = 1
 	readerBuilder, err := execBuilder.newDataReaderBuilder(hashJoinPlan)
@@ -106,7 +146,7 @@ func TestBuildExecutorForIndexJoinHashJoinErrorCleansChildren(t *testing.T) {
 func TestBuildCTEStorageProducerCleansStoragesOnRecursiveBuildError(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx.CTEStorageMap = map[int]*CTEStorages{}
-	builder := newExecutorBuilder(context.Background(), ctx, nil, nil)
+	builder := newExecutorBuilder(context.Background(), ctx, nil, nil, nil)
 
 	stats := &property.StatsInfo{RowCount: 1}
 	schema := expression.NewSchema(&expression.Column{

@@ -79,6 +79,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
+        "//pkg/objstore",
         "//pkg/parser/ast",
         "//pkg/sessionctx",
         "//pkg/store",

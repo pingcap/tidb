@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -508,7 +509,9 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		defer pool.Destroy(resource)
 		output := make(chan importer.QueryChunk, 4)
-		err = importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, 1<<20, output)
+		err = importer.RunImportQuery(ctx, captured, importer.QueryRuntime{
+			Session: resource.(sessionctx.Context), Storage: objstore.NewMemStorage(), Prefix: "query-prototype", TotalMemoryLimit: 1 << 20, MemoryLimit: 1 << 19,
+		}, output)
 		require.NoError(t, err)
 		close(output)
 		result := make(map[int64]int64)
@@ -547,7 +550,9 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			panic("stop before MPP dispatch")
 		})
 		require.PanicsWithValue(t, "stop before MPP dispatch", func() {
-			_ = importer.RunImportQuery(context.Background(), se, q, 1<<20, nil)
+			_ = importer.RunImportQuery(context.Background(), q, importer.QueryRuntime{
+				Session: se, Storage: objstore.NewMemStorage(), Prefix: "mpp-identity", TotalMemoryLimit: 1 << 20, MemoryLimit: 1 << 19,
+			}, nil)
 		})
 		require.True(t, checked)
 	})
