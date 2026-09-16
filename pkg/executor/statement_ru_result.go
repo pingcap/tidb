@@ -302,7 +302,7 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 		return statementRUFailed(statementRUOperatorInvalid), false
 	}
 	engineRU := calculator.engineResult(weights)
-	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV} {
+	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV, engineRU.TiFlash} {
 		if ru < 0 || math.IsNaN(ru) || math.IsInf(ru, 0) {
 			return statementRUFailed(statementRUOperatorInvalid), false
 		}
@@ -342,14 +342,14 @@ func reportStatementRUV2ConsumptionSafely(stmt *ExecStmt, result statementRUEngi
 	defer func() {
 		_ = recover()
 	}()
-	if stmt == nil || stmt.Ctx == nil || (result.TiDB <= 0 && result.TiKV <= 0) {
+	if stmt == nil || stmt.Ctx == nil || (result.TiDB <= 0 && result.TiKV <= 0 && result.TiFlash <= 0) {
 		return
 	}
 	dctx := stmt.Ctx.GetDistSQLCtx()
 	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
 		return
 	}
-	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, result.TiKV, result.TiDB, 0)
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, result.TiKV, result.TiDB, result.TiFlash)
 }
 
 // publishStatementRUMetricsSafely publishes result metrics using cached counters.
@@ -363,7 +363,7 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 	if finalized.ttlJob {
 		metrics.RUV2TTLTotal.Add(finalized.result.TotalRU)
 	}
-	metrics.AddRUV2Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.result.TotalRU, finalized.sqlType)
+	metrics.AddRUV2Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.engineRU.TiFlash, finalized.result.TotalRU, finalized.sqlType)
 	if finalized.report != nil {
 		publishStatementRUFullMetrics(finalized)
 	}
@@ -396,5 +396,6 @@ func publishStatementRUCalibrationSafely(
 		snapshot.Units.OperatorNum,
 		snapshot.Units.WriteKeys,
 		snapshot.Units.WriteBytes,
+		snapshot.Units.CrossAZNetBytes,
 	)
 }

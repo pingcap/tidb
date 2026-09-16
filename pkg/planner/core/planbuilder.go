@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -4814,18 +4815,26 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
 		}
-		// a nextgen cluster might be shared by multiple tenants, and they might
-		// share the same AWS role to access import-into source data bucket, this
-		// external ID can be used to restrict the access only to the current tenant.
-		// when SEM enabled, we need set it.
+		// A NextGen cluster might be shared by multiple tenants that use the
+		// same AWS role. The external ID restricts access to the intended tenant.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
+			isStarter := deploymode.IsStarter()
+			// TODO: Unify Starter external ID handling with other NextGen deployment modes.
+			if isStarter {
+				if err := checkStarterS3Path(u); err != nil {
+					return nil, err
+				}
+			}
 			if err := checkNextGenS3PathWithSem(u); err != nil {
 				return nil, err
 			}
-			values := u.Query()
-			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
-			u.RawQuery = values.Encode()
-			ld.Path = u.String()
+			// Non-Starter deployments derive the external ID from the keyspace.
+			if !isStarter {
+				values := u.Query()
+				values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
+				u.RawQuery = values.Encode()
+				ld.Path = u.String()
+			}
 		}
 	}
 
@@ -6606,12 +6615,32 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
-// disallow explicit S3 external ID unless it is the keyspace name. The keyspace
-// name is used as the S3 external ID.
+// checkStarterS3Path requires every normalized external ID alias to have a
+// non-empty effective value. The caller preserves the original path.
+func checkStarterS3Path(u *url.URL) error {
+	values := u.Query()
+	hasExternalID := false
+	for k, vs := range values {
+		if objstore.NormalizeQueryParameterKey(k) != s3like.S3ExternalID {
+			continue
+		}
+		hasExternalID = len(vs) > 0 && vs[0] != ""
+		if !hasExternalID {
+			break
+		}
+	}
+	if !hasExternalID {
+		return exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, "external ID is required for Starter deployments")
+	}
+	return nil
+}
+
+// For nextgen IMPORT INTO with SEM, require explicit S3 authentication. For
+// non-Starter deployments, only allow the keyspace name as the external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	expectedExternalID := config.GetGlobalKeyspaceName()
+	isStarter := deploymode.IsStarter()
 	hasAccessKey := false
 	hasSecretAccessKey := false
 	hasRoleARN := false
@@ -6619,9 +6648,11 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 		normalizedK := objstore.NormalizeQueryParameterKey(k)
 		switch normalizedK {
 		case s3like.S3ExternalID:
-			for _, v := range vs {
-				if v != expectedExternalID {
-					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+			if !isStarter {
+				for _, v := range vs {
+					if v != expectedExternalID {
+						return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+					}
 				}
 			}
 		case s3like.S3AccessKey:

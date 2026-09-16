@@ -76,7 +76,7 @@ func TestSessionTTLJobRU(t *testing.T) {
 	var publications int
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUCalibrationUnitsForTest", func(
 		connectionID uint64, _ string, _, _, _, _, _, _ float64,
-		_ float64, _ float64, keys, bytes float64,
+		_ float64, _ float64, keys, bytes float64, _ float64,
 	) {
 		if connectionID == vars.ConnectionID {
 			publications++

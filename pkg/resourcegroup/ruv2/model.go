@@ -33,16 +33,20 @@ type StmtUnits struct {
 	// CPUWork is the sum of occurrence-local operator work from the supported
 	// root and coprocessor operators in the flat plan.
 	CPUWork float64
-	// ScanBytes is the sum of physical-byte estimates from supported Reader
-	// request components. Each contribution is collected once per request.
+	// ScanBytes combines TiKV physical-byte estimates with TiFlash user_read_bytes,
+	// preserving each producer's byte definition. Reader boundaries count each
+	// request component's contribution once.
 	ScanBytes float64
 	// NetBytes is statement transport evidence, not operator attribution. It is
-	// the finalized TiKV coprocessor response-body byte count.
+	// the finalized TiKV response-body and TiFlash remote connection byte counts.
 	NetBytes float64
+	// CrossAZNetBytes is the subset of NetBytes identified as cross-AZ TiFlash traffic.
+	CrossAZNetBytes float64
 	// FrontendCompileBytes is the UTF-8 byte length of the normalized SQL text.
 	FrontendCompileBytes float64
-	// HashStateRows counts entries admitted to completed, operator-owned hash
-	// lookup or group-state structures.
+	// HashStateRows measures constructed hash lookup or group state. TiFlash
+	// contributions retain their producer's size definition: distinct keys,
+	// build rows, or aggregation map entries, summed without normalization.
 	HashStateRows float64
 	// JoinOutputRows counts rows produced by supported Join occurrences after
 	// their join conditions and join-type semantics are applied.
@@ -51,6 +55,12 @@ type StmtUnits struct {
 
 // StmtWeights contains the coefficient for each RU v3 raw unit.
 type StmtWeights struct {
+	// CrossAZNetByte is reserved for an additional cross-AZ charge. Cross-AZ
+	// traffic is already included in NetBytes at the ordinary NetByte weight;
+	// current accounting does not price it differently, so this defaults to zero.
+	// The "-" tags deliberately exclude it from TOML/JSON until separate pricing
+	// is supported; raw CrossAZNetBytes remain available for observation.
+	CrossAZNetByte      float64 `toml:"-" json:"-"`
 	CPUWork             float64 `toml:"cpu-work" json:"cpu-work"`
 	ScanByte            float64 `toml:"scan-byte" json:"scan-byte"`
 	NetByte             float64 `toml:"net-byte" json:"net-byte"`
@@ -118,7 +128,8 @@ func (weights DDLWeights) Validate() error {
 
 // Valid reports whether every raw unit is finite and nonnegative.
 func (units StmtUnits) Valid() bool {
-	return validValues(
+	return units.CrossAZNetBytes <= units.NetBytes && validValues(
+		units.CrossAZNetBytes,
 		units.CPUWork,
 		units.ScanBytes,
 		units.NetBytes,
@@ -134,6 +145,7 @@ func (units StmtUnits) Valid() bool {
 
 func (weights StmtWeights) valid() bool {
 	return validValues(
+		weights.CrossAZNetByte,
 		weights.CPUWork,
 		weights.ScanByte,
 		weights.NetByte,
@@ -156,6 +168,7 @@ func (weights StmtWeights) Validate() error {
 		{"cpu-work", weights.CPUWork},
 		{"scan-byte", weights.ScanByte},
 		{"net-byte", weights.NetByte},
+		{"cross-az-net-byte", weights.CrossAZNetByte},
 		{"frontend-compile-byte", weights.FrontendCompileByte},
 		{"hash-state-row", weights.HashStateRow},
 		{"join-output-row", weights.JoinOutputRow},
@@ -186,6 +199,7 @@ func (units StmtUnits) Add(other StmtUnits) StmtUnits {
 	units.CPUWork += other.CPUWork
 	units.ScanBytes += other.ScanBytes
 	units.NetBytes += other.NetBytes
+	units.CrossAZNetBytes += other.CrossAZNetBytes
 	units.FrontendCompileBytes += other.FrontendCompileBytes
 	units.HashStateRows += other.HashStateRows
 	units.JoinOutputRows += other.JoinOutputRows
@@ -202,6 +216,7 @@ func (units StmtUnits) Sub(other StmtUnits) StmtUnits {
 	units.CPUWork -= other.CPUWork
 	units.ScanBytes -= other.ScanBytes
 	units.NetBytes -= other.NetBytes
+	units.CrossAZNetBytes -= other.CrossAZNetBytes
 	units.FrontendCompileBytes -= other.FrontendCompileBytes
 	units.HashStateRows -= other.HashStateRows
 	units.JoinOutputRows -= other.JoinOutputRows
@@ -221,6 +236,7 @@ func Calculate(units StmtUnits, weights StmtWeights) (StmtResult, bool) {
 	totalRU := weights.CPUWork*units.CPUWork +
 		weights.ScanByte*units.ScanBytes +
 		weights.NetByte*units.NetBytes +
+		weights.CrossAZNetByte*units.CrossAZNetBytes +
 		weights.FrontendCompileByte*units.FrontendCompileBytes +
 		weights.HashStateRow*units.HashStateRows +
 		weights.JoinOutputRow*units.JoinOutputRows +

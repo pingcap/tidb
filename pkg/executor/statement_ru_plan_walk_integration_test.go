@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -155,7 +157,7 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, _, _, _, _ float64,
-		_, _, _, _ float64,
+		_, _, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -240,7 +242,7 @@ func TestStatementRUWrappedStatements(t *testing.T) {
 	var writeStatement, writeKeys, writeBytes, scanBytes, operatorNum float64
 	connectionID := tk.Session().GetSessionVars().ConnectionID
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
-		observedID uint64, _ string, _, scan, _, _, _, _, ws, operators, keys, bytes float64,
+		observedID uint64, _ string, _, scan, _, _, _, _, ws, operators, keys, bytes, _ float64,
 	) {
 		if observedID == connectionID {
 			count++
@@ -406,7 +408,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		connectionID := tk.Session().GetSessionVars().ConnectionID
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 			id uint64, state string, _, observedScanBytes, _, _, observedHashRows, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if id == connectionID {
 				require.Equal(t, "incomplete", state)
@@ -635,7 +637,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1236,7 +1238,7 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, netBytes, _, _, _ float64,
-		_, _, _, _ float64,
+		_, _, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -1375,7 +1377,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1421,7 +1423,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1472,7 +1474,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1506,7 +1508,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			observedCPUWork, _, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1756,7 +1758,7 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 
 		var publications atomic.Int64
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
-			connectionID uint64, _ string, _, _, _, _, _, _, _, _, _, _ float64,
+			connectionID uint64, _ string, _, _, _, _, _, _, _, _, _, _, _ float64,
 		) {
 			if fmt.Sprint(connectionID) == retryingConnectionID {
 				publications.Add(1)
@@ -1813,7 +1815,7 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 		connectionID := tk1.Session().GetSessionVars().ConnectionID
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 			observedConnectionID uint64, _ string, _, _, _, _, _, _ float64,
-			writeStatement, _, _, _ float64,
+			writeStatement, _, _, _, _ float64,
 		) {
 			if observedConnectionID == connectionID {
 				chargedWrites.Add(int64(writeStatement))
@@ -1849,7 +1851,7 @@ func TestStatementRUWriteLifecycle(t *testing.T) {
 	connectionID := tk.Session().GetSessionVars().ConnectionID
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 		observedConnectionID uint64, _ string, cpu, _, _, _, _, _ float64,
-		ws, operators, keys, bytes float64,
+		ws, operators, keys, bytes, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -1966,6 +1968,34 @@ func TestStatementRUWriteLifecycle(t *testing.T) {
 	})
 }
 
+func TestLastQueryInfoRUV2(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_last_query_info (id int primary key, v int)")
+	tk.MustExec("insert into ru_last_query_info values (1, 2), (2, 3), (3, 4)")
+	const sql = "select * from ru_last_query_info where id > 0 order by id"
+	for _, mode := range []string{config.RUReportModeResult, config.RUReportModeFull} {
+		t.Run(mode, func(t *testing.T) {
+			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
+			explainRows := tk.MustQuery("explain analyze format='ru' " + sql).Rows()
+			require.NotEmpty(t, explainRows)
+			require.Len(t, explainRows[0], 7)
+			require.Equal(t, "100.00%", explainRows[0][5])
+			explainRU := explainRows[0][4].(string)
+
+			tk.MustQuery(sql).Check(testkit.Rows("1 2", "2 3", "3 4"))
+			rows := tk.MustQuery("select @@tidb_last_query_info").Rows()
+			var info sessionstates.QueryInfo
+			require.NoError(t, json.Unmarshal([]byte(rows[0][0].(string)), &info))
+			require.Positive(t, info.RUV2Consumption)
+			// EXPLAIN displays RU with two decimal places.
+			require.Equal(t, explainRU, fmt.Sprintf("%.2f", info.RUV2Consumption))
+		})
+	}
+}
+
 func TestStatementRUReportModesSQL(t *testing.T) {
 	enableStatementRUExecutionInfo(t)
 	store := testkit.CreateMockStore(t)
@@ -1978,7 +2008,7 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
 			var observed atomic.Int64
 			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(_ uint64, _ string,
-				_, _, _, _, _, _, _, _, _, _ float64) {
+				_, _, _, _, _, _, _, _, _, _, _ float64) {
 				observed.Add(1)
 			})
 			totalBefore := testutil.ToFloat64(metrics.RUV2Total)

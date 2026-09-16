@@ -1757,7 +1757,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 	}
 	a.updatePrevStmt()
-	a.recordLastQueryInfo(err)
+	a.recordLastQueryInfo(err, statementRUTotal)
 	a.recordAffectedRows2Metrics()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := sessVars.GetExecuteDuration()
@@ -1852,7 +1852,7 @@ func firstStatementRUTotal(statementRUTotal []float64) float64 {
 	return statementRUTotal[0]
 }
 
-func (a *ExecStmt) recordLastQueryInfo(err error) {
+func (a *ExecStmt) recordLastQueryInfo(err error, statementRUTotal float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	// Record diagnostic information for DML statements
 	recordLastQuery := false
@@ -1873,10 +1873,11 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 		})
 		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
 		sessVars.LastQueryInfo = sessionstates.QueryInfo{
-			TxnScope:      sessVars.CheckAndGetTxnScope(),
-			StartTS:       sessVars.TxnCtx.StartTS,
-			ForUpdateTS:   sessVars.TxnCtx.GetForUpdateTS(),
-			RUConsumption: lastRUConsumption,
+			TxnScope:        sessVars.CheckAndGetTxnScope(),
+			StartTS:         sessVars.TxnCtx.StartTS,
+			ForUpdateTS:     sessVars.TxnCtx.GetForUpdateTS(),
+			RUConsumption:   lastRUConsumption,
+			RUV2Consumption: statementRUTotal,
 		}
 		if err != nil {
 			sessVars.LastQueryInfo.ErrMsg = err.Error()
