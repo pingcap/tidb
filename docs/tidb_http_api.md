@@ -800,6 +800,39 @@ curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?{i
 
 ## APIs unique to TiDB-X
 
+### Get global system variables
+
+`GET /variables/global` returns global system variables for operator inspection. It is available only in NextGen (TiDB-X), on the status port of both SYSTEM-keyspace and tenant-keyspace TiDB instances. It reports the current keyspace of the TiDB process handling the request, not an aggregation across keyspaces.
+
+Method: `GET` only. Parameters: none.
+
+```shell
+curl http://{TiDBIP}:10080/variables/global
+```
+
+The response is a JSON object mapping variable names to string values. Example response excerpt:
+
+```json
+{
+ "autocommit": "ON",
+ "max_connections": "0",
+ "tidb_exp_embed_openai_api_key": "******",
+ "validate_password.length": "8"
+}
+```
+
+Variable selection follows `SHOW GLOBAL VARIABLES`, including read-only and instance-scoped variables, but excluding session-only variables and disabled no-op variables. With Security Enhanced Mode (SEM v1 or v2) enabled, invisible variables are omitted; the API does not bypass SEM visibility through SQL privileges.
+
+Every included variable marked `SysVar.IsSensitive` is replaced with the literal `******` before its value getter is called, even when the value is empty or unset. This includes:
+
+- Embedding API keys: `tidb_exp_embed_jina_ai_api_key`, `tidb_exp_embed_openai_api_key`, `tidb_exp_embed_cohere_api_key`, `tidb_exp_embed_huggingface_api_key`, `tidb_exp_embed_nvidia_nim_api_key`, and `tidb_exp_embed_gemini_api_key`.
+- LDAP bind passwords: `authentication_ldap_sasl_bind_root_pwd` and `authentication_ldap_simple_bind_root_pwd`.
+- The entire values of `tidb_cloud_storage_uri`, `tidb_config`, `tidb_trace_event`, `init_connect`, `init_slave` (when no-op variables are enabled), and `validate_password.dictionary`.
+
+There is no option to return raw sensitive values, and `tidb_redact_log` does not affect this masking. Ordinary password-policy settings, such as `validate_password.length`, remain visible. Sensitivity is opt-in metadata: custom variable authors must set `SysVar.IsSensitive`; unannotated extensions are not guaranteed to be masked.
+
+Responses include `Cache-Control: no-store`. If reading a variable fails, the API returns HTTP 500 with a generic error instead of a partial result. The endpoint inherits the status port's trusted access controls and does not authenticate SQL users; restrict status-port access to trusted operators.
+
 ### Run ADMIN CHECK for an index
 ```shell
 # curl -XPOST "http://{TiDBIP}:10080/ddl/check/{db}/{table}/{index}"

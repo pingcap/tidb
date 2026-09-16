@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "dxf.go",
         "flash_replica.go",
+        "global_variables.go",
         "tikv_handler.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server/handler/tikvhandler",
@@ -52,6 +53,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/naming",
+        "//pkg/util/sem/compat",
         "//pkg/util/sqlexec",
         "@com_github_gorilla_mux//:mux",
         "@com_github_pingcap_errors//:errors",
