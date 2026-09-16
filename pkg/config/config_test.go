@@ -961,6 +961,24 @@ engines = ["tikv", "tiflash", "tidb"]
 }
 
 func TestConfig(t *testing.T) {
+	t.Run("cross AZ weight is not configurable", func(t *testing.T) {
+		conf := NewConfig()
+		_, err := toml.Decode("[ru-v2.stmt-weights]\nCrossAZNetByte = 2\ncross-az-net-byte = 2\n", conf)
+		require.NoError(t, err)
+		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
+		require.NoError(t, json.Unmarshal([]byte(`{"ru-v2":{"stmt-weights":{"CrossAZNetByte":2,"cross-az-net-byte":2}}}`), conf))
+		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
+		conf.RUV2.StmtWeights.CrossAZNetByte = 2
+		data, err := json.Marshal(conf.RUV2.StmtWeights)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), "CrossAZ")
+		require.NotContains(t, string(data), "cross-az")
+		var encoded bytes.Buffer
+		require.NoError(t, toml.NewEncoder(&encoded).Encode(conf.RUV2.StmtWeights))
+		require.NotContains(t, encoded.String(), "CrossAZ")
+		require.NotContains(t, encoded.String(), "cross-az")
+	})
+
 	t.Run("RU v2 statement weights", func(t *testing.T) {
 		field, ok := reflect.TypeOf(RUV2Config{}).FieldByName("StmtWeights")
 		require.True(t, ok)

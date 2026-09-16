@@ -134,7 +134,7 @@ func observeStatementRUCalibrationForTest(
 	testfailpoint.EnableCall(t, statementRUCalibrationFailpointForTest, func(
 		_ uint64,
 		stateName string,
-		cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows, writeStatement, operatorNum, writeKeys, writeBytes float64,
+		cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows, writeStatement, operatorNum, writeKeys, writeBytes, crossAZNetBytes float64,
 	) {
 		state := statementRUCalibrationUnknown
 		switch stateName {
@@ -151,6 +151,7 @@ func observeStatementRUCalibrationForTest(
 				CPUWork:              cpuWork,
 				ScanBytes:            scanBytes,
 				NetBytes:             netBytes,
+				CrossAZNetBytes:      crossAZNetBytes,
 				FrontendCompileBytes: frontendCompileBytes,
 				HashStateRows:        hashStateRows,
 				JoinOutputRows:       joinOutputRows,
@@ -622,7 +623,7 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		unitsType := reflect.TypeOf(ruv2.StmtUnits{})
 		require.Equal(t, []string{
 			"WriteStatement", "OperatorNum", "WriteKeys", "WriteBytes",
-			"CPUWork", "ScanBytes", "NetBytes", "FrontendCompileBytes", "HashStateRows", "JoinOutputRows",
+			"CPUWork", "ScanBytes", "NetBytes", "CrossAZNetBytes", "FrontendCompileBytes", "HashStateRows", "JoinOutputRows",
 		}, statementRUFieldNames(unitsType))
 		resultType := reflect.TypeOf(ruv2.StmtResult{})
 		require.Equal(t, []string{"TotalRU"}, statementRUFieldNames(resultType))

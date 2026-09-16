@@ -68,7 +68,7 @@ func TestRUV2MetricDefinitions(t *testing.T) {
 	RUV2BySQLTypeDDL.Add(2)
 	RUV2ByEngineTiKV.Add(3)
 	RUV2BySQLType.WithLabelValues("select").Add(2)
-	AddRUV2Results(3, 4, 7, "select")
+	AddRUV2Results(3, 4, 5, 12, "select")
 	RUV2Unit.WithLabelValues("tikv", "hash_agg", LblRUV2UnitCPUWork).Add(5)
 	RUV2Statements.WithLabelValues("success", "incomplete").Inc()
 

@@ -650,3 +650,32 @@ func TestSelectResultIter(t *testing.T) {
 		"If a response contains intermediate outputs, you should use the SelectResultIter to read the data",
 	)
 }
+
+func TestStatementRUMPPStreamRoute(t *testing.T) {
+	for _, mode := range []string{"stream", "direct", "batchcop"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := mock.NewContext()
+			stats := execdetails.NewRuntimeStatsColl(nil)
+			ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = stats
+			id, rows := "TableScan_1", uint64(12)
+			// Missing time/iterations must not discard usable rows.
+			data, err := (&tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{{ExecutorId: &id, NumProducedRows: &rows}}}).Marshal()
+			require.NoError(t, err)
+			resp := &analyzeTestResponse{result: &mockResultSubset{data: data}}
+			r := GenSelectResultFromMPPResponse(ctx.GetDistSQLCtx(), nil, []int{1}, 2, resp, func() bool { return mode == "direct" }).(*selectResult)
+			if mode == "batchcop" {
+				r.mppReportsDirectly = nil
+			}
+			require.NoError(t, r.fetchResp(context.Background()))
+			require.NoError(t, r.fetchResp(context.Background()))
+			units, found := stats.GetTiFlashExecutionUnits(1)
+			require.Equal(t, mode == "stream", found)
+			if found {
+				require.Equal(t, uint64(12), units.Rows)
+			}
+			require.NoError(t, r.Close())
+			after, _ := stats.GetTiFlashExecutionUnits(1)
+			require.Equal(t, units, after)
+		})
+	}
+}

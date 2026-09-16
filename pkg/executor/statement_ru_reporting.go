@@ -27,22 +27,28 @@ type statementRUEngine uint8
 const (
 	statementRUTiDB statementRUEngine = iota
 	statementRUTiKV
+	statementRUTiFlash
 	statementRUEngineCount
 )
 
-var statementRUEngineNames = [...]string{"tidb", "tikv"}
+var statementRUEngineNames = [...]string{"tidb", "tikv", "tiflash"}
 
-// Only computation has location-dependent ownership. Storage/transport units
-// always belong to TiKV; frontend and write-statement units belong to TiDB.
+// Operator work follows its execution engine. A TiDB Reader additionally owns
+// remote scan evidence, which is attributed to the corresponding storage engine.
 type statementRUComputeUnits struct {
-	cpuWork       float64
-	hashStateRows float64
-	operatorNum   float64
+	cpuWork         float64
+	hashStateRows   float64
+	operatorNum     float64
+	joinOutputRows  float64
+	scanBytes       float64
+	netBytes        float64
+	crossAZNetBytes float64
 }
 
 type statementRUEngineResult struct {
-	TiDB float64
-	TiKV float64
+	TiDB    float64
+	TiKV    float64
+	TiFlash float64
 }
 
 // statementRUOperator groups physical operators for RU reporting and includes
@@ -144,6 +150,10 @@ func statementRUOperatorForPlan(plan base.Plan) statementRUOperator {
 }
 
 func (report *statementRUFullReport) addOperator(engine statementRUEngine, operator statementRUOperator, units ruv2.StmtUnits) {
+	if engine == statementRUTiFlash {
+		report.add(engine, operator, units)
+		return
+	}
 	// A root Reader/PointGet owns the evidence, but the scan and payload are
 	// TiKV work. Keep that ownership distinct from the local executor work.
 	remote := ruv2.StmtUnits{ScanBytes: units.ScanBytes, NetBytes: units.NetBytes}
@@ -155,15 +165,18 @@ func (report *statementRUFullReport) addOperator(engine statementRUEngine, opera
 }
 
 func (calculator statementRUCalculator) engineResult(weights ruv2.StmtWeights) statementRUEngineResult {
-	tidb, tikv := calculator.compute[statementRUTiDB], calculator.compute[statementRUTiKV]
+	tidb, tikv, tiflash := calculator.compute[statementRUTiDB], calculator.compute[statementRUTiKV], calculator.compute[statementRUTiFlash]
 	units := calculator.units
 	return statementRUEngineResult{
 		TiDB: weights.CPUWork*tidb.cpuWork + weights.HashStateRow*tidb.hashStateRows +
-			weights.OperatorNum*tidb.operatorNum + weights.JoinOutputRow*units.JoinOutputRows +
+			weights.OperatorNum*tidb.operatorNum + weights.JoinOutputRow*(units.JoinOutputRows-tiflash.joinOutputRows) +
 			weights.FrontendCompileByte*units.FrontendCompileBytes + weights.WriteStatement*units.WriteStatement,
 		TiKV: weights.CPUWork*tikv.cpuWork + weights.HashStateRow*tikv.hashStateRows +
-			weights.OperatorNum*tikv.operatorNum + weights.ScanByte*units.ScanBytes +
-			weights.NetByte*units.NetBytes + weights.WriteKey*units.WriteKeys + weights.WriteByte*units.WriteBytes,
+			weights.OperatorNum*tikv.operatorNum + weights.ScanByte*(units.ScanBytes-tiflash.scanBytes) +
+			weights.NetByte*(units.NetBytes-tiflash.netBytes) + weights.WriteKey*units.WriteKeys + weights.WriteByte*units.WriteBytes,
+		TiFlash: weights.CPUWork*tiflash.cpuWork + weights.HashStateRow*tiflash.hashStateRows +
+			weights.OperatorNum*tiflash.operatorNum + weights.JoinOutputRow*tiflash.joinOutputRows +
+			weights.ScanByte*tiflash.scanBytes + weights.NetByte*tiflash.netBytes + weights.CrossAZNetByte*tiflash.crossAZNetBytes,
 	}
 }
 
@@ -191,6 +204,7 @@ func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
 				{metrics.LblRUV2UnitCPUWork, units.CPUWork},
 				{metrics.LblRUV2UnitScanBytes, units.ScanBytes},
 				{metrics.LblRUV2UnitNetBytes, units.NetBytes},
+				{metrics.LblRUV2UnitCrossAZNetBytes, units.CrossAZNetBytes},
 				{metrics.LblRUV2UnitFrontendCompileBytes, units.FrontendCompileBytes},
 				{metrics.LblRUV2UnitHashStateRows, units.HashStateRows},
 				{metrics.LblRUV2UnitJoinOutputRows, units.JoinOutputRows},

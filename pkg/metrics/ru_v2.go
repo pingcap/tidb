@@ -29,6 +29,7 @@ var (
 	RUV2Unit         *prometheus.CounterVec
 	RUV2Statements   *prometheus.CounterVec
 	ruv2TiDB         prometheus.Counter
+	ruv2TiFlash      prometheus.Counter
 	ruv2Select       prometheus.Counter
 	ruv2Insert       prometheus.Counter
 	ruv2Replace      prometheus.Counter
@@ -46,6 +47,7 @@ const (
 	LblRUV2UnitCPUWork              = "cpu_work"
 	LblRUV2UnitScanBytes            = "scan_bytes"
 	LblRUV2UnitNetBytes             = "net_bytes"
+	LblRUV2UnitCrossAZNetBytes      = "cross_az_net_bytes"
 	LblRUV2UnitFrontendCompileBytes = "frontend_compile_bytes"
 	LblRUV2UnitHashStateRows        = "hash_state_rows"
 	LblRUV2UnitJoinOutputRows       = "join_output_rows"
@@ -94,6 +96,7 @@ func InitRUV2Metrics() {
 		}, []string{LblEngine},
 	)
 	ruv2TiDB = RUV2ByEngine.WithLabelValues("tidb")
+	ruv2TiFlash = RUV2ByEngine.WithLabelValues(LblEngineTiFlash)
 	RUV2ByEngineTiKV = RUV2ByEngine.WithLabelValues(LblEngineTiKV)
 
 	RUV2Unit = metricscommon.NewCounterVec(
@@ -115,8 +118,8 @@ func InitRUV2Metrics() {
 }
 
 // AddRUV2Results records total, SQL-type and supported engine results without
-// a label lookup on the statement hot path. TiFlash has no RU v2 model yet.
-func AddRUV2Results(tikvRU, tidbRU, totalRU float64, sqlType string) {
+// a label lookup on the statement hot path.
+func AddRUV2Results(tikvRU, tidbRU, tiflashRU, totalRU float64, sqlType string) {
 	counter := ruv2Other
 	switch sqlType {
 	case "select":
@@ -138,4 +141,5 @@ func AddRUV2Results(tikvRU, tidbRU, totalRU float64, sqlType string) {
 	counter.Add(totalRU)
 	RUV2ByEngineTiKV.Add(tikvRU)
 	ruv2TiDB.Add(tidbRU)
+	ruv2TiFlash.Add(tiflashRU)
 }
