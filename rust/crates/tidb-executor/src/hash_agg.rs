@@ -729,6 +729,103 @@ impl AggState {
         true
     }
 
+    /// Folds a direct REAL cell into Go's `sum4Float64` state without
+    /// materializing a [`Datum`] or evaluating the expression tree. The lazy
+    /// `SumDecimal(None)` seed is the initial representation for every SUM;
+    /// a REAL input switches it to the floating-point domain on the first
+    /// non-NULL row, exactly as `calculateSum` does.
+    fn update_sum_real_fast(&mut self, value: f64) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        match &mut self.partial {
+            Partial::SumDecimal(None) => {
+                self.partial = Partial::SumReal(Some(value));
+                true
+            }
+            Partial::SumReal(sum) => {
+                *sum = Some(sum.unwrap_or(0.0) + value);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Folds a direct REAL cell into Go's `avgOriginal4Float64` state. The
+    /// first row changes the lazy decimal seed to the REAL accumulator; later
+    /// rows stay in primitive `f64`/count storage.
+    fn update_avg_real_fast(&mut self, value: f64) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        match &mut self.partial {
+            Partial::AvgDecimal { count: 0, .. } => {
+                self.partial = Partial::AvgReal {
+                    sum: value,
+                    count: 1,
+                };
+                true
+            }
+            Partial::AvgReal { sum, count } => {
+                *sum += value;
+                *count += 1;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Folds a direct FLOAT/DOUBLE cell into Go's typed `maxMin4Float32`/
+    /// `maxMin4Float64` state. The datum is materialized only for the first
+    /// value or when an extremum improves, preserving the result's original
+    /// FLOAT-versus-DOUBLE representation.
+    fn update_real_fast(&mut self, value: f64, float32: bool, is_max: bool) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        let Partial::MaxMin {
+            value: current,
+            is_max: state_is_max,
+        } = &mut self.partial
+        else {
+            return false;
+        };
+        if *state_is_max != is_max {
+            return false;
+        }
+        match current {
+            None => {
+                *current = Some(if float32 {
+                    Datum::Float32(value)
+                } else {
+                    Datum::Real(value)
+                });
+            }
+            Some(Datum::Float32(current)) if float32 => {
+                let improves = if is_max {
+                    value > *current
+                } else {
+                    value < *current
+                };
+                if improves {
+                    *current = value;
+                }
+            }
+            Some(Datum::Real(current)) if !float32 => {
+                let improves = if is_max {
+                    value > *current
+                } else {
+                    value < *current
+                };
+                if improves {
+                    *current = value;
+                }
+            }
+            Some(_) => return false,
+        }
+        true
+    }
+
     fn update_count_fast(&mut self, input_is_non_null: bool) -> bool {
         if self.seen.is_some() {
             return false;

@@ -26,6 +26,8 @@ type DecimalBatch = Arc<[Option<(i128, u32)>]>;
 type DecimalCache = smallvec::SmallVec<[Option<DecimalBatch>; 4]>;
 type IntegerBatch = Arc<[Option<i64>]>;
 type IntegerCache = smallvec::SmallVec<[Option<IntegerBatch>; 4]>;
+type RealBatch = Arc<[Option<f64>]>;
+type RealCache = smallvec::SmallVec<[Option<RealBatch>; 4]>;
 
 #[derive(Clone, Copy)]
 pub(super) enum IntegerAggOp {
@@ -48,6 +50,11 @@ pub(super) enum AggInputMode<T = usize> {
     Integer {
         column: T,
         unsigned: bool,
+        op: IntegerAggOp,
+    },
+    Real {
+        column: T,
+        float32: bool,
         op: IntegerAggOp,
     },
     Decimal(T),
@@ -87,6 +94,12 @@ impl AggInputMode {
             let index = column(expr)?;
             (expr.static_type()?.code() == FieldTypeCode::NewDecimal).then_some(index)
         };
+        let real = |expr: &Expression| {
+            let index = column(expr)?;
+            let field_type = expr.static_type()?;
+            (field_type.eval_type() == EvalType::Real)
+                .then_some((index, field_type.code() == FieldTypeCode::Float))
+        };
         if count_distinct_int(func) {
             return Some(Self::CountDistinctInt(column(func.arg.as_ref()?)?));
         }
@@ -109,6 +122,12 @@ impl AggInputMode {
                         unsigned,
                         op: IntegerAggOp::Sum,
                     })
+                } else if let Some((index, float32)) = real(func.arg.as_ref()?) {
+                    Some(Self::Real {
+                        column: index,
+                        float32,
+                        op: IntegerAggOp::Sum,
+                    })
                 } else {
                     Some(Self::Decimal(decimal(func.arg.as_ref()?)?))
                 }
@@ -122,6 +141,14 @@ impl AggInputMode {
                             is_max: matches!(func.kind, AggKind::Max),
                         },
                     })
+                } else if let Some((index, float32)) = real(func.arg.as_ref()?) {
+                    Some(Self::Real {
+                        column: index,
+                        float32,
+                        op: IntegerAggOp::MinMax {
+                            is_max: matches!(func.kind, AggKind::Max),
+                        },
+                    })
                 } else {
                     Some(Self::Decimal(decimal(func.arg.as_ref()?)?))
                 }
@@ -131,6 +158,12 @@ impl AggInputMode {
                     Some(Self::Integer {
                         column: index,
                         unsigned,
+                        op: IntegerAggOp::Avg,
+                    })
+                } else if let Some((index, float32)) = real(func.arg.as_ref()?) {
+                    Some(Self::Real {
+                        column: index,
+                        float32,
                         op: IntegerAggOp::Avg,
                     })
                 } else {
@@ -172,6 +205,15 @@ impl AggInputMode {
                 unsigned,
                 op,
             },
+            Self::Real {
+                column,
+                float32,
+                op,
+            } => AggInputMode::Real {
+                column: chunk.column(column),
+                float32,
+                op,
+            },
             Self::Decimal(index) => AggInputMode::Decimal(chunk.column(index)),
             Self::AvgDecimal { sum, count } => AggInputMode::AvgDecimal {
                 sum: chunk.column(sum),
@@ -190,6 +232,7 @@ impl AggInputMode<ColumnRead<'_>> {
         row: usize,
         decimal_data: Option<&[Option<(i128, u32)>]>,
         integer_data: Option<&[Option<i64>]>,
+        real_data: Option<&[Option<f64>]>,
     ) -> Option<i64> {
         match self {
             Self::Expression => None,
@@ -231,6 +274,31 @@ impl AggInputMode<ColumnRead<'_>> {
                         .then_some(0),
                     IntegerAggOp::MinMax { is_max } => state
                         .update_integer_fast(value, *unsigned, *is_max)
+                        .then_some(0),
+                }
+            }
+            Self::Real {
+                column,
+                float32,
+                op,
+            } => {
+                let value = real_data.map(|values| values[row]).unwrap_or_else(|| {
+                    (!column.is_null(row)).then(|| {
+                        if *float32 {
+                            f64::from(column.get_float32(row))
+                        } else {
+                            column.get_float64(row)
+                        }
+                    })
+                });
+                let Some(value) = value else {
+                    return Some(0);
+                };
+                match op {
+                    IntegerAggOp::Sum => state.update_sum_real_fast(value).then_some(0),
+                    IntegerAggOp::Avg => state.update_avg_real_fast(value).then_some(0),
+                    IntegerAggOp::MinMax { is_max } => state
+                        .update_real_fast(value, *float32, *is_max)
                         .then_some(0),
                 }
             }
@@ -287,7 +355,7 @@ impl AggInputMode<ColumnRead<'_>> {
         state: &mut AggState,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<i64, ExecError> {
-        self.update_with_decimal_data(func, ctx, state, row, None, None)
+        self.update_with_decimal_data(func, ctx, state, row, None, None, None)
     }
 
     fn update_with_decimal_data<C: Columns>(
@@ -298,8 +366,11 @@ impl AggInputMode<ColumnRead<'_>> {
         row: tidb_chunk::row::Row<'_>,
         decimal_data: Option<&[Option<(i128, u32)>]>,
         integer_data: Option<&[Option<i64>]>,
+        real_data: Option<&[Option<f64>]>,
     ) -> Result<i64, ExecError> {
-        if let Some(delta) = self.update_cell(state, row.idx(), decimal_data, integer_data) {
+        if let Some(delta) =
+            self.update_cell(state, row.idx(), decimal_data, integer_data, real_data)
+        {
             return Ok(delta);
         }
         let mut extra_values = Vec::new();
@@ -422,6 +493,51 @@ pub(super) fn prepare_integer_cache(modes: &[AggInputMode], chunk: &Chunk) -> In
         .collect()
 }
 
+/// Decode direct REAL inputs once per physical chunk. Go's `Float32s`/
+/// `Float64s` accessors expose the typed column to `sum4Float64`,
+/// `avgOriginal4Float64`, and `maxMin4Float*`; keeping the values here avoids
+/// reopening the Rust backing byte view for every row and aggregate.
+pub(super) fn prepare_real_cache(modes: &[AggInputMode], chunk: &Chunk) -> RealCache {
+    let mut batches: smallvec::SmallVec<[(usize, RealBatch); 4]> = smallvec::SmallVec::new();
+    modes
+        .iter()
+        .map(|mode| {
+            let index = match mode {
+                AggInputMode::Real { column, .. } => Some(*column),
+                _ => None,
+            }?;
+            if let Some((_, batch)) = batches.iter().find(|(cached, _)| *cached == index) {
+                return Some(Arc::clone(batch));
+            }
+            let column = chunk.column(index);
+            let rows = column.rows();
+            let mut values = Vec::with_capacity(rows);
+            column.with_raw(|raw| {
+                for row in 0..rows {
+                    if column.is_null(row) {
+                        values.push(None);
+                    } else {
+                        let cell = raw.row(row);
+                        let value = match cell.len() {
+                            4 => f64::from(f32::from_ne_bytes(
+                                cell.try_into().expect("Float cell is 4 bytes"),
+                            )),
+                            8 => {
+                                f64::from_ne_bytes(cell.try_into().expect("Double cell is 8 bytes"))
+                            }
+                            _ => panic!("real aggregate cell is 4 or 8 bytes"),
+                        };
+                        values.push(Some(value));
+                    }
+                }
+            });
+            let batch: RealBatch = values.into();
+            batches.push((index, Arc::clone(&batch)));
+            Some(batch)
+        })
+        .collect()
+}
+
 fn integer_coefficient(value: i64, unsigned: bool) -> i128 {
     if unsigned {
         i128::from(value as u64)
@@ -452,13 +568,22 @@ pub(super) fn update_row_with_decimal_cache<C: Columns>(
     row: tidb_chunk::row::Row<'_>,
     decimal_cache: &DecimalCache,
     integer_cache: &IntegerCache,
+    real_cache: &RealCache,
 ) -> Result<i64, ExecError> {
     let mut delta = 0;
     for (mode_index, ((mode, func), state)) in modes.iter().zip(funcs).zip(states).enumerate() {
         let decimal_data = decimal_cache.get(mode_index).and_then(Option::as_deref);
         let integer_data = integer_cache.get(mode_index).and_then(Option::as_deref);
-        delta +=
-            mode.update_with_decimal_data(func, ctx, state, row, decimal_data, integer_data)?;
+        let real_data = real_cache.get(mode_index).and_then(Option::as_deref);
+        delta += mode.update_with_decimal_data(
+            func,
+            ctx,
+            state,
+            row,
+            decimal_data,
+            integer_data,
+            real_data,
+        )?;
     }
     Ok(delta)
 }

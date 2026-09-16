@@ -2452,6 +2452,7 @@ fn fold_chunk<C: Columns>(
     let inputs = input::bind_inputs(input_modes, chunk);
     let decimal_cache = input::prepare_decimal_cache(input_modes, chunk);
     let integer_cache = input::prepare_integer_cache(input_modes, chunk);
+    let real_cache = input::prepare_real_cache(input_modes, chunk);
     if let Some(selection) = chunk.sel() {
         debug_assert_eq!(selection.len(), num_rows);
         for (row_index, &(bucket, index)) in keys.partial_results.iter().enumerate() {
@@ -2463,6 +2464,7 @@ fn fold_chunk<C: Columns>(
                 chunk.physical_row(selection[row_index]),
                 &decimal_cache,
                 &integer_cache,
+                &real_cache,
             )?;
         }
     } else {
@@ -2475,6 +2477,7 @@ fn fold_chunk<C: Columns>(
                 chunk.physical_row(row_index),
                 &decimal_cache,
                 &integer_cache,
+                &real_cache,
             )?;
         }
     }
