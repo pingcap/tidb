@@ -38,17 +38,30 @@ func NewRegionCacheHandler(tool *handler.TikvHandlerTool) *RegionCacheHandler {
 	return &RegionCacheHandler{tool}
 }
 
-type regionCacheHTTPResult struct {
-	StoreID    uint64   `json:"store_id"`
+type regionCacheStoreResult struct {
 	Keyspace   string   `json:"keyspace,omitempty"`
 	ClusterID  uint64   `json:"cluster_id,omitempty"`
 	Scanned    int      `json:"scanned"`
 	Matched    int      `json:"matched"`
 	Updated    int      `json:"updated"`
+	Failed     int      `json:"failed"`
 	Remaining  int      `json:"remaining"`
 	Ready      bool     `json:"ready"`
+	InProgress bool     `json:"in_progress,omitempty"`
 	Errors     []string `json:"errors,omitempty"`
-	ObservedAt int64    `json:"observed_at"`
+}
+
+type regionCacheHTTPResult struct {
+	StoreID    uint64                   `json:"store_id"`
+	Scanned    int                      `json:"scanned"`
+	Matched    int                      `json:"matched"`
+	Updated    int                      `json:"updated"`
+	Failed     int                      `json:"failed"`
+	Remaining  int                      `json:"remaining"`
+	Ready      bool                     `json:"ready"`
+	Errors     []string                 `json:"errors,omitempty"`
+	ObservedAt int64                    `json:"observed_at"`
+	Stores     []regionCacheStoreResult `json:"stores"`
 }
 
 func parseStoreID(req *http.Request) (uint64, error) {
@@ -97,47 +110,61 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	var out regionCacheHTTPResult
-	out.StoreID = storeID
+	out := regionCacheHTTPResult{StoreID: storeID, Ready: true, Stores: make([]regionCacheStoreResult, 0, len(stores))}
 	switch req.Method {
 	case http.MethodGet:
-		ready := true
 		for _, st := range stores {
 			status := st.GetStoreCacheStatus(storeID)
-			out.Matched += status.Matched
-			out.Remaining += status.Matched
-			out.ObservedAt = status.ObservedAt
-			out.ClusterID = st.GetClusterID()
-			if st.GetKeyspace() != "" && out.Keyspace == "" {
-				out.Keyspace = st.GetKeyspace()
+			item := regionCacheStoreResult{
+				Keyspace:   st.GetKeyspace(),
+				ClusterID:  st.GetClusterID(),
+				Matched:    status.Matched,
+				Failed:     status.Failed,
+				Remaining:  status.Matched,
+				Ready:      status.Ready,
+				InProgress: status.InProgress,
 			}
-			if !status.Ready {
-				ready = false
+			out.Stores = append(out.Stores, item)
+			out.Matched += item.Matched
+			out.Failed += item.Failed
+			out.Remaining += item.Remaining
+			out.ObservedAt = status.ObservedAt
+			if !item.Ready {
+				out.Ready = false
 			}
 		}
-		out.Ready = ready
 	case http.MethodPost:
-		ready := true
 		for _, st := range stores {
 			res := st.RefreshStoreCache(req.Context(), storeID)
-			out.Scanned += res.Scanned
-			out.Matched += res.Matched
-			out.Updated += res.Updated
-			out.Remaining += res.Remaining
-			out.Errors = append(out.Errors, res.Errors...)
-			out.ObservedAt = res.ObservedAt
-			out.ClusterID = st.GetClusterID()
-			if st.GetKeyspace() != "" && out.Keyspace == "" {
-				out.Keyspace = st.GetKeyspace()
+			item := regionCacheStoreResult{
+				Keyspace:  st.GetKeyspace(),
+				ClusterID: st.GetClusterID(),
+				Scanned:   res.Scanned,
+				Matched:   res.Matched,
+				Updated:   res.Updated,
+				Failed:    res.Failed,
+				Remaining: res.Remaining,
+				Ready:     res.Ready,
+				Errors:    res.Errors,
 			}
-			if !res.Ready {
-				ready = false
+			out.Stores = append(out.Stores, item)
+			out.Scanned += item.Scanned
+			out.Matched += item.Matched
+			out.Updated += item.Updated
+			out.Failed += item.Failed
+			out.Remaining += item.Remaining
+			out.Errors = append(out.Errors, item.Errors...)
+			out.ObservedAt = res.ObservedAt
+			if !item.Ready {
+				out.Ready = false
 			}
 		}
 		if len(out.Errors) > 8 {
 			out.Errors = out.Errors[:8]
 		}
-		out.Ready = ready && out.Remaining == 0
+		if out.Remaining != 0 || out.Failed != 0 {
+			out.Ready = false
+		}
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

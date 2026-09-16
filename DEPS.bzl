@@ -4527,14 +4527,12 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "dc90dddb0b27210d1934909460c3e3379c97394668b8adb4135bba914eb56e54",
-        strip_prefix = "client-go-31e5d2b014fa29fc0fc0defeab412d1490f05f9a",
-        urls = ["https://github.com/lhy1024/client-go/archive/31e5d2b014fa29fc0fc0defeab412d1490f05f9a.tar.gz"],
-        version = "v2.0.8-0.20260916075115-31e5d2b014fa",
+        replace = "github.com/lhy1024/client-go/v2",
+        sum = "h1:2D8Dw+af1Ax0uyQLKJs7bXRGN0TO7GXkuTo0nQMVeXE=",
+        version = "v2.0.0-20260916081908-6f2dad383f5d",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
-        build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
         sum = "h1:q5NgKsvuOdEHspG/pZEpKhWlPLrIfmO8P/lDFjTEdok=",
@@ -5832,8 +5830,8 @@ def go_deps():
         version = "v0.25.1",
     )
     go_repository(
-        name = "ht_sr_git_~sbinet_gg",
-        build_file_proto_mode = "disable_global",
+        name = "ht_sr_git_sbinet_gg",
+        build_file_proto_mode = "disable",
         importpath = "git.sr.ht/~sbinet/gg",
         sum = "h1:LNhjNn8DerC8f9DHLz6lS0YYul/b602DUxDgGkd/Aik=",
         version = "v0.3.1",

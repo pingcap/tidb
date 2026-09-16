@@ -1211,3 +1211,78 @@ Example response:
  ]
 }
 ```
+
+### Region cache status and refresh
+
+These APIs let an operator inspect and refresh TiDB's local region cache for one TiKV store after leader eviction, while the old TiKV is still online. They are registered on the status port for both classic and TiDB-X. `GET` only reads local cache state. `POST` is synchronous: it probes the old store with a one-shot Get, updates leaders from `NotLeader` responses, and returns when the job finishes or the request context / 2-minute job deadline expires. Concurrent `POST`s for the same store share one in-flight job.
+
+`ready` is true only when no matching cache entries remain, no unresolved refresh failures remain, and no refresh is in progress. Cache entries that expire or are deleted during a failed probe are not treated as successfully refreshed.
+
+Usage:
+
+```shell
+curl "http://{TiDBIP}:10080/regions/cache/status?store_id={id}"
+curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}"
+```
+
+Parameters:
+
+- `store_id`: required positive integer. Missing, zero, or non-integer values return HTTP 400.
+
+The status route accepts only `GET`. The refresh route accepts only `POST`. Other methods return HTTP 405.
+
+Example `GET` response:
+
+```json
+{
+  "store_id": 1,
+  "scanned": 0,
+  "matched": 9,
+  "updated": 0,
+  "failed": 0,
+  "remaining": 9,
+  "ready": false,
+  "observed_at": 1720000000,
+  "stores": [
+    {
+      "keyspace": "",
+      "cluster_id": 123,
+      "scanned": 0,
+      "matched": 9,
+      "updated": 0,
+      "failed": 0,
+      "remaining": 9,
+      "ready": false
+    }
+  ]
+}
+```
+
+`stores` is one entry per in-process TiKV store (each keyspace / PD cluster). Top-level counters are the sum of those entries and are not labeled with a single keyspace.
+
+Example `POST` response:
+
+```json
+{
+  "store_id": 1,
+  "scanned": 9,
+  "matched": 9,
+  "updated": 9,
+  "failed": 0,
+  "remaining": 0,
+  "ready": true,
+  "observed_at": 1720000000,
+  "stores": [
+    {
+      "cluster_id": 123,
+      "scanned": 9,
+      "matched": 9,
+      "updated": 9,
+      "failed": 0,
+      "remaining": 0,
+      "ready": true
+    }
+  ]
+}
+```
+
