@@ -20,6 +20,20 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
+func TestWindowDerivedConstantOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int not null)")
+	tk.MustExec("insert into t values (1), (2)")
+	tk.MustQuery(`select d.tile, first_value(1) over (order by d.v)
+		from (select ntile(2) over (order by a) as tile, 2 as v from t) d
+		order by d.tile`).Check(testkit.Rows("1 1", "2 1"))
+	tk.MustQuery(`select d.tile, sum(d.tile) over (order by d.v range between 1 preceding and 1 following)
+		from (select ntile(2) over (order by a) as tile, 2 as v from t) d
+		order by d.tile`).Check(testkit.Rows("1 3", "2 3"))
+}
+
 func TestWindowWithCorrelatedSubQuery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
