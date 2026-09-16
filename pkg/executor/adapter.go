@@ -1502,6 +1502,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback(ctx, true)
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
+	// Only the successful pessimistic attempt may publish LAST_INSERT_ID(expr).
+	// Keep the statement-entry PrevLastInsertID for attempts that set no value.
+	a.Ctx.GetSessionVars().StmtCtx.LastInsertID = 0
+	a.Ctx.GetSessionVars().StmtCtx.LastInsertIDSet = false
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
 	failpoint.Inject("assertTxnManagerAfterPessimisticLockErrorRetry", func() {
