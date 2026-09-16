@@ -42,6 +42,7 @@ pub(super) fn for_each_logical_row(
 #[derive(Default)]
 pub(super) struct GroupKeyBuffer {
     pub(super) encoded: Vec<Vec<u8>>,
+    active_rows: usize,
     values: Vec<Datum>,
     // Only cop partial output needs evaluated grouping datums. Retain them
     // column-wise so a new group never evaluates its expressions twice.
@@ -57,6 +58,10 @@ impl GroupKeyBuffer {
         retain_values: bool,
     ) -> Result<(), ExecError> {
         let rows = chunk.num_rows();
+        // Keep the backing Vec sized for reuse, but expose only this chunk's
+        // logical length for accounting. Go's GetGroupKey returns
+        // groupKey[:numRows] while retaining the backing capacity.
+        self.active_rows = rows;
         self.encoded.resize_with(self.encoded.len().max(rows), || {
             Vec::with_capacity(10 * group_by.len())
         });
@@ -183,7 +188,10 @@ impl GroupKeyBuffer {
                     .sum::<usize>()
         }
         self.encoded.capacity() * std::mem::size_of::<Vec<u8>>()
-            + self.encoded.iter().map(Vec::capacity).sum::<usize>()
+            + self.encoded[..self.active_rows]
+                .iter()
+                .map(Vec::capacity)
+                .sum::<usize>()
             + datum_bytes(&self.values)
             + self.output_values.capacity() * std::mem::size_of::<Vec<Datum>>()
             + self.output_values.iter().map(datum_bytes).sum::<usize>()

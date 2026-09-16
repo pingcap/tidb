@@ -2298,6 +2298,7 @@ struct PipelineKeyBuffer {
     partial_results: Vec<(usize, usize)>,
     tracker: Arc<Tracker>,
     charged: i64,
+    partial_results_charged: i64,
 }
 
 impl PipelineKeyBuffer {
@@ -2308,16 +2309,29 @@ impl PipelineKeyBuffer {
             partial_results: Vec::new(),
             tracker,
             charged: 0,
+            partial_results_charged: 0,
         }
     }
 
     fn account(&mut self) {
+        let partial_results_bytes =
+            (self.partial_results.capacity() * std::mem::size_of::<(usize, usize)>()) as i64;
         let bytes = (self.group_keys.memory_usage()
             + self.integers.capacity() * std::mem::size_of::<(Option<i64>, usize)>()
-            + self.partial_results.capacity() * std::mem::size_of::<(usize, usize)>())
-            as i64;
+            + partial_results_bytes as usize) as i64;
         self.tracker.consume(bytes - self.charged);
         self.charged = bytes;
+        self.partial_results_charged = partial_results_bytes;
+    }
+
+    /// The map-resolution pass only grows this row-to-state index buffer. Go
+    /// does not rescan the already-accounted key columns for that change.
+    fn account_partial_results(&mut self) {
+        let bytes =
+            (self.partial_results.capacity() * std::mem::size_of::<(usize, usize)>()) as i64;
+        self.tracker.consume(bytes - self.partial_results_charged);
+        self.charged += bytes - self.partial_results_charged;
+        self.partial_results_charged = bytes;
     }
 
     fn prepare<C: Columns>(
@@ -2433,7 +2447,7 @@ fn fold_chunk<C: Columns>(
     if new_group_bytes_total > 0 {
         tracker.consume(new_group_bytes_total);
     }
-    keys.account();
+    keys.account_partial_results();
     memory.check()?;
     let inputs = input::bind_inputs(input_modes, chunk);
     let decimal_cache = input::prepare_decimal_cache(input_modes, chunk);
