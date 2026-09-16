@@ -25,6 +25,7 @@ use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
+use crate::StmtResult;
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{
     infoschema, privilege, statement_kind_of, statement_priority_of, Session, StatementKind,
@@ -2250,6 +2251,104 @@ impl Session {
                         self.drain_eval_warnings(&ctx);
                         output
                     }
+                    tidb_ast::DmlStmt::ImportInto(import) => {
+                        // Minimal server-side file import. Go routes IMPORT
+                        // INTO through the dist-task framework (pkg/dxf/
+                        // importinto) with job rows in mysql.tidb_import_jobs;
+                        // this tier executes the same data path directly --
+                        // pre-check the target is empty (Go's pre-check
+                        // failure text), read the node-local CSV file, and
+                        // apply every row through the ordinary text-INSERT
+                        // pipeline so typing, coercion, defaults and
+                        // auto-increment follow the tested INSERT semantics.
+                        let (path, format) = match &import.source {
+                            tidb_ast::ImportSource::File { path, format } => {
+                                (path.clone(), format.clone())
+                            }
+                            tidb_ast::ImportSource::Select { .. } => {
+                                return Err(DriverError::unsupported(
+                                    "IMPORT INTO ... FROM SELECT is not supported yet",
+                                ));
+                            }
+                        };
+                        if let Some(format) = format.as_deref() {
+                            if !format.eq_ignore_ascii_case("csv") {
+                                return Err(DriverError::unsupported(format!(
+                                    "IMPORT INTO FORMAT '{format}' is not supported yet"
+                                )));
+                            }
+                        }
+                        let mut name_path = import.table.clone();
+                        if name_path.len() == 1 {
+                            name_path.insert(0, self.current_db.clone());
+                        }
+                        let quoted: Vec<String> = name_path
+                            .iter()
+                            .map(|part| format!("`{}`", part.replace('`', "``")))
+                            .collect();
+                        let target = quoted.join(".");
+                        // Go's pre-check (`pkg/dxf/importinto/scheduler.go`):
+                        // the target table must be empty.
+                        if let StmtResult::Rows(rows) =
+                            self.run(&format!("SELECT COUNT(*) FROM {target}"))?
+                        {
+                            if let Some(first) = rows.first() {
+                                if let Some(count) = first.first() {
+                                    if crate::variables::datum_text(count).as_deref() != Some("0") {
+                                        return Err(DriverError::unsupported(
+                                            "target table is not empty",
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        let csv = std::fs::read_to_string(&path).map_err(|error| {
+                            DriverError::unsupported(format!(
+                                "failed to read import file '{path}': {error}"
+                            ))
+                        })?;
+                        let records = parse_csv_records(&csv);
+                        let column_list = import
+                            .columns_and_user_vars
+                            .iter()
+                            .map(|entry| {
+                                let name = match entry {
+                                    tidb_ast::ColumnOrUserVar::Column(column) => {
+                                        column.clone()
+                                    }
+                                    tidb_ast::ColumnOrUserVar::UserVar(name) => {
+                                        name.trim_start_matches('@').to_owned()
+                                    }
+                                };
+                                format!("`{}`", name.replace('`', "``"))
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let column_clause = if column_list.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ({column_list})")
+                        };
+                        let mut imported = 0u64;
+                        for record in records {
+                            if record.is_empty() {
+                                continue;
+                            }
+                            let values = record
+                                .iter()
+                                .map(|field| {
+                                    format!("'{}'", field.replace('\\', "\\\\").replace('\'', "''"))
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            let insert_sql =
+                                format!("INSERT INTO {target}{column_clause} VALUES ({values})");
+                            if let StmtResult::Affected(count) = self.run(&insert_sql)? {
+                                imported += count;
+                            }
+                        }
+                        Ok(StmtOutput::Affected(imported))
+                    }
                     other => Err(DriverError::unsupported(format!(
                         "this DML statement kind ({}) is not supported yet",
                         variant_name(other)
@@ -2674,4 +2773,54 @@ impl Session {
         }
         Ok(())
     }
+}
+
+
+
+/// Minimal RFC 4180 record reader: quoted fields may contain separators,
+/// escaped (`""`) quotes and newlines; blank trailing records are dropped.
+fn parse_csv_records(input: &str) -> Vec<Vec<String>> {
+    let mut records = Vec::new();
+    let mut record: Vec<String> = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if in_quotes {
+            if ch == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                field.push(ch);
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_quotes = true,
+            ',' => {
+                record.push(std::mem::take(&mut field));
+            }
+            '\n' => {
+                if field.ends_with('\r') {
+                    field.pop();
+                }
+                record.push(std::mem::take(&mut field));
+                if record.len() != 1 || !record[0].is_empty() {
+                    records.push(std::mem::take(&mut record));
+                } else {
+                    record.clear();
+                }
+            }
+            other => field.push(other),
+        }
+    }
+    if !field.is_empty() || !record.is_empty() {
+        record.push(field);
+        records.push(record);
+    }
+    records
 }
