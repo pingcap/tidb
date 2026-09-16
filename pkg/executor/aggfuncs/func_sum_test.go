@@ -45,6 +45,30 @@ func TestMergePartialResult4Sum(t *testing.T) {
 			testMergePartialResult(t, test)
 		})
 	}
+	t.Run("reset_then_merge", func(t *testing.T) {
+		ctx := mock.NewContext()
+		tp := types.NewFieldType(mysql.TypeNewDecimal)
+		desc, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncSum,
+			[]expression.Expression{&expression.Column{Index: 0, RetType: tp}}, false)
+		require.NoError(t, err)
+		fn := aggfuncs.Build(ctx.GetExprCtx(), desc, 0)
+		input := chunk.New([]*types.FieldType{tp}, 1, 1)
+		input.AppendMyDecimal(0, types.NewDecFromInt(1))
+		rows := []chunk.Row{input.GetRow(0)}
+		dst, _ := fn.AllocPartialResult()
+		_, err = fn.UpdatePartialResult(ctx.GetExprCtx().GetEvalCtx(), rows, dst)
+		require.NoError(t, err)
+		fn.ResetPartialResult(dst)
+		src, _ := fn.AllocPartialResult()
+		_, err = fn.UpdatePartialResult(ctx.GetExprCtx().GetEvalCtx(), rows, src)
+		require.NoError(t, err)
+		_, err = fn.MergePartialResult(ctx.GetExprCtx().GetEvalCtx(), src, dst)
+		require.NoError(t, err)
+		out := chunk.New([]*types.FieldType{tp}, 1, 1)
+		require.NoError(t, fn.AppendFinalResult2Chunk(ctx.GetExprCtx().GetEvalCtx(), dst, out))
+		require.Zero(t, out.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(1)))
+	})
+
 }
 
 func TestSum(t *testing.T) {
