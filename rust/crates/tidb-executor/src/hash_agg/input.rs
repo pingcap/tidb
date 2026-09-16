@@ -355,7 +355,8 @@ impl AggInputMode<ColumnRead<'_>> {
         state: &mut AggState,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<i64, ExecError> {
-        self.update_with_decimal_data(func, ctx, state, row, None, None, None)
+        let mut extra_values = Vec::new();
+        self.update_with_decimal_data(func, ctx, state, row, None, None, None, &mut extra_values)
     }
 
     fn update_with_decimal_data<C: Columns>(
@@ -367,19 +368,20 @@ impl AggInputMode<ColumnRead<'_>> {
         decimal_data: Option<&[Option<(i128, u32)>]>,
         integer_data: Option<&[Option<i64>]>,
         real_data: Option<&[Option<f64>]>,
+        extra_values: &mut Vec<Datum>,
     ) -> Result<i64, ExecError> {
         if let Some(delta) =
             self.update_cell(state, row.idx(), decimal_data, integer_data, real_data)
         {
             return Ok(delta);
         }
-        let mut extra_values = Vec::new();
-        let input = eval_agg_input(func, ctx, row, &mut extra_values)?;
+        extra_values.clear();
+        let input = eval_agg_input(func, ctx, row, &mut *extra_values)?;
         let mut sort_key = Vec::with_capacity(func.order_by.len());
         for (expr, _) in &func.order_by {
             sort_key.push(expr.eval(ctx, row)?);
         }
-        state.update(input.value, &extra_values, sort_key, input.distinct_key)
+        state.update(input.value, extra_values, sort_key, input.distinct_key)
     }
 }
 
@@ -571,6 +573,7 @@ pub(super) fn update_row_with_decimal_cache<C: Columns>(
     real_cache: &RealCache,
 ) -> Result<i64, ExecError> {
     let mut delta = 0;
+    let mut extra_values = Vec::new();
     for (mode_index, ((mode, func), state)) in modes.iter().zip(funcs).zip(states).enumerate() {
         let decimal_data = decimal_cache.get(mode_index).and_then(Option::as_deref);
         let integer_data = integer_cache.get(mode_index).and_then(Option::as_deref);
@@ -583,6 +586,7 @@ pub(super) fn update_row_with_decimal_cache<C: Columns>(
             decimal_data,
             integer_data,
             real_data,
+            &mut extra_values,
         )?;
     }
     Ok(delta)
