@@ -363,6 +363,14 @@ impl Parser {
             self.expect_kw("SET")?;
             CharsetSetKind::Charset
         };
+        if kind == CharsetSetKind::Charset && self.is_op("=") {
+            // go-sql-driver v1.9.3's connect sequence renders lightning's
+            // `charset` connection parameter as `SET charset = utf8mb4, ...`
+            // (connection.go handleParams joins every DSN param into one
+            // multi-assignment SET). Accept the `=` so the statement parses
+            // and the charset applies, matching the tool's intent.
+            self.bump();
+        }
         let charset = if self.is_kw("DEFAULT") {
             self.bump();
             None
@@ -386,6 +394,15 @@ impl Parser {
     fn parse_set_charset_name(&mut self) -> PResult<String> {
         let name = if self.peek().kind == TokenKind::Str {
             self.bumped_string()
+        } else if self.peek().kind == TokenKind::Op {
+            // Go's grammar accepts an operator token as the charset name and
+            // defers the failure to execution: `SET charset = utf8mb4` (the
+            // connect sequence go-sql-driver v1.9.3 emits) surfaces from Go
+            // TiDB as 1115 "Unknown character set: '='" at run time, not as
+            // a parse error. Take the token's text verbatim and let the
+            // session's charset validation raise the coded error.
+            let name = self.bump().text.to_string();
+            return Ok(name);
         } else {
             self.parse_charset_name()?
         };
