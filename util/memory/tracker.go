@@ -510,6 +510,37 @@ func (t *Tracker) Consume(bs int64) {
 	}
 }
 
+// HandleKillSignal checks whether the session root tracker has been marked for kill.
+func (t *Tracker) HandleKillSignal() {
+	var sessionRootTracker *Tracker
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.IsRootTrackerOfSess {
+			sessionRootTracker = tracker
+		}
+	}
+	if sessionRootTracker == nil || !sessionRootTracker.NeedKill.Load() {
+		return
+	}
+
+	sessionRootTracker.NeedKillReceived.Do(
+		func() {
+			logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
+				zap.Uint64("connID", sessionRootTracker.SessionID.Load()))
+		})
+	sessionRootTracker.actionMuForHardLimit.Lock()
+	defer sessionRootTracker.actionMuForHardLimit.Unlock()
+	if currentAction := sessionRootTracker.actionMuForHardLimit.actionOnExceed; currentAction != nil {
+		for nextAction := currentAction.GetFallback(); nextAction != nil; {
+			currentAction = nextAction
+			nextAction = currentAction.GetFallback()
+		}
+		if action, ok := currentAction.(ActionCareInvoker); ok {
+			action.SetInvoker(Instance)
+		}
+		currentAction.Action(sessionRootTracker)
+	}
+}
+
 // BufferedConsume is used to buffer memory usage and do late consume
 // not thread-safe, should be called in one goroutine
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {

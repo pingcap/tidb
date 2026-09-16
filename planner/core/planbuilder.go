@@ -529,6 +529,9 @@ type PlanBuilder struct {
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []*tableHintInfo
+	// partitionRowIDWarningTables deduplicates `_tidb_rowid` warnings for partitioned
+	// tables within a single statement build.
+	partitionRowIDWarningTables set.StringSet
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
@@ -734,10 +737,11 @@ func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 	builder := &PlanBuilder{
-		outerCTEs:           make([]*cteInfo, 0),
-		colMapper:           make(map[*ast.ColumnNameExpr]int),
-		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		outerCTEs:                   make([]*cteInfo, 0),
+		colMapper:                   make(map[*ast.ColumnNameExpr]int),
+		handleHelper:                &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		correlatedAggMapper:         make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		partitionRowIDWarningTables: set.NewStringSet(),
 	}
 	for _, opt := range opts {
 		opt.Apply(builder)
@@ -781,6 +785,10 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	for k := range saveCorrelateAggMapper {
 		delete(saveCorrelateAggMapper, k)
 	}
+	savePartitionRowIDWarningTables := b.partitionRowIDWarningTables
+	for key := range savePartitionRowIDWarningTables {
+		delete(savePartitionRowIDWarningTables, key)
+	}
 
 	// Reset ALL the fields.
 	*b = PlanBuilder{}
@@ -791,10 +799,67 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
+	b.partitionRowIDWarningTables = savePartitionRowIDWarningTables
 
 	// Add more fields if they are safe to be reused.
 
 	return b
+}
+
+func (b *PlanBuilder) fieldNameToColumnName(fieldName *types.FieldName) *ast.ColumnName {
+	if b == nil || fieldName == nil {
+		return nil
+	}
+	colNameCI := fieldName.OrigColName
+	if colNameCI.L == "" {
+		colNameCI = fieldName.ColName
+	}
+	tblNameCI := fieldName.OrigTblName
+	if tblNameCI.L == "" {
+		tblNameCI = fieldName.TblName
+	}
+	colName := &ast.ColumnName{
+		Name:   colNameCI,
+		Table:  tblNameCI,
+		Schema: fieldName.DBName,
+	}
+	if b.is != nil && b.is.TableIsView(fieldName.DBName, fieldName.TblName) {
+		colName.Name = fieldName.ColName
+		colName.Table = fieldName.TblName
+	} else if b.is != nil {
+		// A view alias can leave DBName pointing at the view and OrigTblName pointing
+		// at an underlying table from another schema. In that case skip the warning.
+		if _, err := b.is.TableByName(fieldName.DBName, tblNameCI); err != nil {
+			return nil
+		}
+	}
+	return colName
+}
+
+func (b *PlanBuilder) appendPartitionRowIDWarningByFieldName(fieldName *types.FieldName) {
+	colName := b.fieldNameToColumnName(fieldName)
+	if colName == nil {
+		return
+	}
+	b.appendPartitionRowIDWarning(colName)
+}
+
+func (b *PlanBuilder) appendPartitionRowIDWarning(colName *ast.ColumnName) {
+	if b == nil || b.is == nil || colName == nil || colName.Name.L != model.ExtraHandleName.L {
+		return
+	}
+	tbl, err := b.is.TableByName(colName.Schema, colName.Table)
+	if err != nil || tbl.Meta().GetPartitionInfo() == nil {
+		return
+	}
+	key := colName.Schema.L + "." + colName.Table.L
+	if b.partitionRowIDWarningTables.Exist(key) {
+		return
+	}
+	b.partitionRowIDWarningTables.Insert(key)
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+		"`_tidb_rowid` in a partitioned table is not globally unique; combine it with the partition ID to guarantee uniqueness",
+	))
 }
 
 // Build builds the ast node to a Plan.

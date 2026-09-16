@@ -212,15 +212,15 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
-	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
+	mergeConcurrency, err := getSamplingStatsConcurrencyWithBudget(e.ctx, e.tableID, l, e.partitionConcurrencyBudget, e.analyzeTaskConcurrency)
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
-	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
-	mergeTaskCh := make(chan []byte, statsConcurrency)
+	mergeResultCh := make(chan *samplingMergeResult, mergeConcurrency)
+	mergeTaskCh := make(chan []byte, mergeConcurrency)
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
-	e.samplingMergeWg.Add(statsConcurrency)
-	for i := 0; i < statsConcurrency; i++ {
+	e.samplingMergeWg.Add(mergeConcurrency)
+	for i := 0; i < mergeConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
 	}
 	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
@@ -228,7 +228,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	}
 
 	mergeWorkerPanicCnt := 0
-	for mergeWorkerPanicCnt < statsConcurrency {
+	for mergeWorkerPanicCnt < mergeConcurrency {
 		mergeResult, ok := <-mergeResultCh
 		if !ok {
 			break
@@ -300,14 +300,29 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
 	buildResultChan := make(chan error, totalLen)
 	buildTaskChan := make(chan *samplingBuildTask, totalLen)
-	if totalLen < statsConcurrency {
-		statsConcurrency = totalLen
+	buildConcurrency, err := getSamplingStatsConcurrencyWithBudget(e.ctx, e.tableID, totalLen, e.partitionConcurrencyBudget, e.analyzeTaskConcurrency)
+	if err != nil {
+		return 0, nil, nil, nil, nil, err
 	}
 	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
-	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
+	var sampleCollectors []*statistics.SampleCollector
+	if needExtStats {
+		sampleCollectors = make([]*statistics.SampleCollector, len(e.colsInfo))
+	}
+	defer func() {
+		totalSampleCollectorSize := int64(0)
+		for i, sampleCollector := range sampleCollectors {
+			if sampleCollector != nil {
+				totalSampleCollectorSize += sampleCollector.MemSize
+				sampleCollector.Destroy()
+				sampleCollectors[i] = nil
+			}
+		}
+		e.memTracker.Release(totalSampleCollectorSize)
+	}()
 	exitCh := make(chan struct{})
-	e.samplingBuilderWg.Add(statsConcurrency)
-	for i := 0; i < statsConcurrency; i++ {
+	e.samplingBuilderWg.Add(buildConcurrency)
+	for i := 0; i < buildConcurrency; i++ {
 		e.samplingBuilderWg.Run(func() {
 			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
 		})
@@ -348,7 +363,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	}
 	close(buildTaskChan)
 	panicCnt := 0
-	for panicCnt < statsConcurrency {
+	for panicCnt < buildConcurrency {
 		err1, ok := <-buildResultChan
 		if !ok {
 			break
@@ -361,15 +376,6 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			continue
 		}
 	}
-	defer func() {
-		totalSampleCollectorSize := int64(0)
-		for _, sampleCollector := range sampleCollectors {
-			if sampleCollector != nil {
-				totalSampleCollectorSize += sampleCollector.MemSize
-			}
-		}
-		e.memTracker.Release(totalSampleCollectorSize)
-	}()
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -396,7 +402,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		}
 	}()
 	tasks := e.buildSubIndexJobForSpecialIndex(indexInfos)
-	statsConcurrncy, err := getBuildStatsConcurrency(e.ctx)
+	statsConcurrncy, err := getSamplingStatsConcurrencyWithBudget(e.ctx, e.tableID, len(tasks), e.partitionConcurrencyBudget, e.analyzeTaskConcurrency)
 	taskCh := make(chan *analyzeTask, len(tasks))
 	for _, task := range tasks {
 		AddNewAnalyzeJob(e.ctx, task.job)
@@ -733,12 +739,19 @@ workLoop:
 					MemSize:   collectorMemSize,
 				}
 			}
-			if task.isColumn {
+			if task.isColumn && collectors != nil {
 				collectors[task.slicePos] = collector
 			}
 			releaseCollectorMemory := func() {
-				if !task.isColumn {
-					e.memTracker.Release(collector.MemSize)
+				if task.isColumn && collectors != nil {
+					return
+				}
+				if !task.isColumn || collectors == nil {
+					collectorMemSize := collector.MemSize
+					failpoint.InjectCall("analyzeSamplingBuildBeforeReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
+					e.memTracker.Release(collectorMemSize)
+					collector.Destroy()
+					failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
 				}
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker)

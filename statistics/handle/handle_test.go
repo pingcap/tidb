@@ -1789,10 +1789,9 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.Update(is))
-	// The value of global.count will not be updated automatically when we truncate the table partition.
-	// Because the partition-stats in the partition table which have been truncated has not been updated.
+	// The global count is updated after truncating partitions.
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(11), globalStats.Count)
+	require.Equal(t, int64(7), globalStats.Count)
 
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()

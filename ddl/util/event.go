@@ -24,6 +24,7 @@ import (
 type Event struct {
 	TableInfo   *model.TableInfo
 	PartInfo    *model.PartitionInfo
+	OldPartInfo *model.PartitionInfo
 	IndexInfo   *model.IndexInfo
 	ColumnInfos []*model.ColumnInfo
 	Tp          model.ActionType

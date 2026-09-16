@@ -15,6 +15,7 @@
 package infosync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -422,11 +423,34 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 }
 
 func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
+	var bodyFactory func() io.Reader
+	if body != nil {
+		bodyFactory = func() io.Reader {
+			return body
+		}
+	}
+	return doRequestWithBodyFactory(ctx, apiName, addrs, route, method, bodyFactory)
+}
+
+func doRequestWithBodyBytes(ctx context.Context, apiName string, addrs []string, route, method string, body []byte) ([]byte, error) {
+	if body == nil {
+		return doRequestWithBodyFactory(ctx, apiName, addrs, route, method, nil)
+	}
+	return doRequestWithBodyFactory(ctx, apiName, addrs, route, method, func() io.Reader {
+		return bytes.NewReader(body)
+	})
+}
+
+func doRequestWithBodyFactory(ctx context.Context, apiName string, addrs []string, route, method string, bodyFactory func() io.Reader) ([]byte, error) {
 	var err error
 	var req *http.Request
 	var res *http.Response
 	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
+		var body io.Reader
+		if bodyFactory != nil {
+			body = bodyFactory()
+		}
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
 			return nil, err

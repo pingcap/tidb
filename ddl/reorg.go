@@ -309,31 +309,41 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	}
 	progress := float64(0)
 	if addedRowCount != 0 {
-		totalCount := getTableTotalCount(w, tblInfo)
-		if totalCount > 0 {
+		totalCount := getTableEstimatedCount(w, tblInfo)
+		if totalCount > 0 && totalCount != statistics.PseudoRowCount {
 			progress = float64(addedRowCount) / float64(totalCount)
-		} else {
-			progress = 1
 		}
 		if progress > 1 {
 			progress = 1
 		}
 	}
+
+	label := backfillProgressLabel(reorgInfo.Type, reorgInfo.mergingTmpIdx)
+	if label == "" {
+		return
+	}
+
+	colOrIdxName := ""
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		var label string
-		if reorgInfo.mergingTmpIdx {
-			label = metrics.LblAddIndexMerge
-		} else {
-			label = metrics.LblAddIndex
+		if idxInfo := model.FindIndexInfoByID(tblInfo.Indices, reorgInfo.currElement.ID); idxInfo != nil {
+			colOrIdxName = idxInfo.Name.O
 		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	case model.ActionModifyColumn:
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		for _, changingCol := range tblInfo.Columns {
+			if changingCol.ID == reorgInfo.currElement.ID {
+				colOrIdxName = getChangingColumnOriginName(changingCol)
+				break
+			}
+		}
+	case model.ActionReorganizePartition:
 	}
+
+	metricTableID := backfillMetricsTableID(reorgInfo, label)
+	getBackfillProgressByTableID(metricTableID, label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
 }
 
-func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
+func getTableEstimatedCount(w *worker, tblInfo *model.TableInfo) int64 {
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
 	if err != nil {
@@ -354,7 +364,11 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if len(rows) != 1 {
 		return statistics.PseudoRowCount
 	}
-	return rows[0].GetInt64(0)
+	count := rows[0].GetInt64(0)
+	if count == 0 {
+		return statistics.PseudoRowCount
+	}
+	return count
 }
 
 func (dc *ddlCtx) isReorgRunnable(job *model.Job) error {
@@ -845,6 +859,9 @@ func CleanupDDLReorgHandles(job *model.Job, w *worker, t *meta.Meta) {
 	if err != nil {
 		// ignore error, cleanup is not that critical
 		logutil.BgLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
+	}
+	if job != nil {
+		metrics.DDLClearBackfillMetrics(job.TableID)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -617,6 +618,10 @@ func TestColumnPruning(t *testing.T) {
 		output []map[int][]string
 	)
 	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/assertNoZeroColumnLayoutAfterColumnPruning", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/assertNoZeroColumnLayoutAfterColumnPruning"))
+	}()
 
 	s := createPlannerSuite()
 	ctx := context.Background()
@@ -633,6 +638,45 @@ func TestColumnPruning(t *testing.T) {
 			output[i] = make(map[int][]string)
 		})
 		checkDataSourceCols(lp, t, output[i], comment)
+	}
+}
+
+func TestColumnPruningRefreshesLimitSchema(t *testing.T) {
+	s := createPlannerSuite()
+	ctx := context.Background()
+	stmt, err := s.p.ParseOneStmt("select count(*) from (select * from (select a / 0 as x from t) q limit 10) s", "", "")
+	require.NoError(t, err)
+
+	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	require.NoError(t, err)
+	lp, err := (&columnPruner{}).optimize(ctx, p.(LogicalPlan), &logicalOptimizeOp{})
+	require.NoError(t, err)
+	require.NoError(t, noZeroColumnLayOut(lp))
+}
+
+func TestColumnPruningKeepsJoinSchemaPruned(t *testing.T) {
+	s := createPlannerSuite()
+	ctx := context.Background()
+	stmt, err := s.p.ParseOneStmt("select t1.a from t t1 join (select b / 0 x from t) r on true", "", "")
+	require.NoError(t, err)
+
+	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	require.NoError(t, err)
+	lp, err := (&columnPruner{}).optimize(ctx, p.(LogicalPlan), &logicalOptimizeOp{})
+	require.NoError(t, err)
+
+	proj, ok := lp.(*LogicalProjection)
+	require.True(t, ok, ToString(lp))
+	selection, ok := proj.Children()[0].(*LogicalSelection)
+	require.True(t, ok, ToString(lp))
+	join, ok := selection.Children()[0].(*LogicalJoin)
+	require.True(t, ok, ToString(lp))
+	require.Len(t, join.Schema().Columns, 1)
+	require.Equal(t, proj.Schema().Columns[0].UniqueID, join.Schema().Columns[0].UniqueID)
+	rightSchema := join.Children()[1].Schema()
+	require.NotEmpty(t, rightSchema.Columns)
+	for _, rightCol := range rightSchema.Columns {
+		require.False(t, join.Schema().Contains(rightCol))
 	}
 }
 

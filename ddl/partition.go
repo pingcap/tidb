@@ -2003,7 +2003,12 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-	asyncNotifyEvent(d, &util.Event{Tp: model.ActionTruncateTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: newPartitions}})
+	asyncNotifyEvent(d, &util.Event{
+		Tp:          model.ActionTruncateTablePartition,
+		TableInfo:   tblInfo,
+		PartInfo:    &model.PartitionInfo{Definitions: newPartitions},
+		OldPartInfo: &model.PartitionInfo{Definitions: oldPartitions},
+	})
 	// A background job will be created to delete old partition data.
 	job.Args = []interface{}{oldIDs}
 	return ver, nil

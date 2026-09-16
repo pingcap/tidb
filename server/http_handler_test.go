@@ -1021,6 +1021,35 @@ func TestAllHistory(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
+func TestMergeEmptyRegionsResetAPI(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	setMergeEmptyRegionsMinTableIDForTest(t, ts.store, 123)
+
+	resp, err := ts.fetchStatus("/merge-empty-regions/reset")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Contains(t, string(body), "only support POST")
+
+	tableID, ok := getMergeEmptyRegionsMinTableIDForTest(t, ts.store)
+	require.True(t, ok)
+	require.Equal(t, int64(123), tableID)
+
+	resp, err = ts.postStatus("/merge-empty-regions/reset", contentTypeJSON, bytes.NewBuffer(nil))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	tableID, ok = getMergeEmptyRegionsMinTableIDForTest(t, ts.store)
+	require.True(t, ok)
+	require.Equal(t, int64(1), tableID)
+}
+
 func filterSpaces(bs []byte) []byte {
 	if len(bs) == 0 {
 		return nil
@@ -1035,6 +1064,31 @@ func filterSpaces(bs []byte) []byte {
 		}
 	}
 	return tmp
+}
+
+func setMergeEmptyRegionsMinTableIDForTest(t *testing.T, store kv.Storage, tableID int64) {
+	t.Helper()
+
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		return meta.NewMeta(txn).SetMergeEmptyRegionsMinTableID(tableID)
+	})
+	require.NoError(t, err)
+}
+
+func getMergeEmptyRegionsMinTableIDForTest(t *testing.T, store kv.Storage) (int64, bool) {
+	t.Helper()
+
+	var (
+		tableID int64
+		ok      bool
+	)
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		var err error
+		tableID, ok, err = meta.NewMeta(txn).GetMergeEmptyRegionsMinTableID()
+		return err
+	})
+	require.NoError(t, err)
+	return tableID, ok
 }
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {

@@ -129,6 +129,31 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
 		})
 
+	StatsControlPlaneHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "control_plane_duration_seconds",
+			Help:      "Bucketed histogram of control-plane operation duration (s).",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 24), // 0.5ms ~ 1.4h
+		}, []string{LblType, LblResult})
+
+	StatsLockedTableCacheEntriesGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "locked_table_cache_entries",
+			Help:      "Gauge of locked table ids cached in stats handle.",
+		})
+
+	StatsLockedTableCacheLastUpdateGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "locked_table_cache_last_update_timestamp",
+			Help:      "Gauge of the unix timestamp in seconds when the locked table cache was last refreshed.",
+		})
+
 	StatsCacheLRUCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

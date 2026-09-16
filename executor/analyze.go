@@ -153,12 +153,23 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return nil
 	}
 
-	concurrency, err := getBuildStatsConcurrency(e.ctx)
+	partitionTaskCount := getMaxPartitionTaskCount(tasks)
+	activePartitionJobs, releasePartitionBudget := beginAnalyzePartitionConcurrencyBudget(partitionTaskCount)
+	defer releasePartitionBudget()
+	partitionBudget, err := getAnalyzePartitionBudget(e.ctx, activePartitionJobs, partitionTaskCount)
 	if err != nil {
 		return err
 	}
+
+	concurrency, err := getAnalyzeTaskConcurrencyWithBudget(e.ctx, tasks, partitionBudget)
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		setAnalyzeTaskConcurrencyBudget(task, partitionBudget, concurrency)
+	}
 	taskCh := make(chan *analyzeTask, len(tasks))
-	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
+	resultsCh := make(chan *statistics.AnalyzeResults, getAnalyzeResultsChannelCapacity(e.ctx, tasks, concurrency))
 	if len(tasks) < concurrency {
 		concurrency = len(tasks)
 	}
@@ -177,8 +188,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		taskCh <- task
 	}
 	close(taskCh)
-	e.wg.Wait()
-	close(resultsCh)
+	go func() {
+		e.wg.Wait()
+		close(resultsCh)
+	}()
 	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
@@ -276,12 +289,14 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 // handleResultsError will handle the error fetch from resultsCh and record it in log
 func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, needGlobalStats bool,
 	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
-	partitionStatsConcurrency := e.ctx.GetSessionVars().AnalyzePartitionConcurrency
-	// If 'partitionStatsConcurrency' > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
-	// If there is no extra session we can use, we will save analyze results in single-thread.
-	if partitionStatsConcurrency > 1 {
+	saveStatsConcurrency := getAnalyzeStatsPersistConcurrency(e.ctx, concurrency)
+	// Try to demand dedicated analyze sessions for stats persistence so we don't fall back to the
+	// handle-level shared session on the save path. The persistence budget is intentionally smaller
+	// than the analyze worker budget because each save worker executes a multi-statement internal-SQL
+	// transaction per partition.
+	if saveStatsConcurrency > 0 && atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 0 {
 		dom := domain.GetDomain(e.ctx)
-		subSctxs := dom.FetchAnalyzeExec(partitionStatsConcurrency)
+		subSctxs := dom.FetchAnalyzeExec(saveStatsConcurrency)
 		if len(subSctxs) > 0 {
 			defer func() {
 				dom.ReleaseAnalyzeExec(subSctxs)
@@ -293,9 +308,9 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 	}
 
 	// save analyze results in single-thread.
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 	var err error
+	interrupted := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
 	for panicCnt < concurrency {
 		results, ok := <-resultsCh
 		if !ok {
@@ -311,9 +326,14 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			finishJobWithLog(e.ctx, results.Job, err)
 			continue
 		}
+		if interrupted || atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			interrupted = true
+			finishJobWithLog(e.ctx, results.Job, ErrQueryInterrupted)
+			continue
+		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 
-		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
+		if err1 := saveAnalyzeTableStatsWithRetry(ctx, e.ctx, results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot, &e.ctx.GetSessionVars().Killed); err1 != nil {
 			tableID := results.TableID.TableID
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err), zap.Int64("tableID", tableID))
@@ -321,15 +341,14 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)
 			// Dump stats to historical storage.
-			if err := recordHistoricalStats(e.ctx, results.TableID.TableID); err != nil {
+			if err := recordAnalyzeHistoricalStats(e.ctx, results.TableID.TableID); err != nil {
 				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
-		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			finishJobWithLog(e.ctx, results.Job, ErrQueryInterrupted)
-			return errors.Trace(ErrQueryInterrupted)
-		}
+	}
+	if interrupted {
+		return errors.Trace(ErrQueryInterrupted)
 	}
 	return err
 }
@@ -344,18 +363,15 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	errCh := make(chan error, partitionStatsConcurrency)
 	for i := 0; i < partitionStatsConcurrency; i++ {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.ctx.GetSessionVars().Killed)
-		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 		wg.Run(func() {
 			worker.run(ctx1, e.ctx.GetSessionVars().EnableAnalyzeSnapshot)
 		})
 	}
 	panicCnt := 0
 	var err error
+	interrupted := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
 	for panicCnt < statsConcurrency {
-		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			close(saveResultsCh)
-			return errors.Trace(ErrQueryInterrupted)
-		}
 		results, ok := <-resultsCh
 		if !ok {
 			break
@@ -370,6 +386,11 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			finishJobWithLog(e.ctx, results.Job, err)
 			continue
 		}
+		if interrupted || atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			interrupted = true
+			finishJobWithLog(e.ctx, results.Job, ErrQueryInterrupted)
+			continue
+		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 		saveResultsCh <- results
 	}
@@ -382,6 +403,9 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			errMsg = append(errMsg, err1.Error())
 		}
 		err = errors.New(strings.Join(errMsg, ","))
+	}
+	if interrupted {
+		return errors.Trace(ErrQueryInterrupted)
 	}
 	return err
 }
@@ -431,13 +455,15 @@ type analyzeTask struct {
 }
 
 type baseAnalyzeExec struct {
-	ctx         sessionctx.Context
-	tableID     statistics.AnalyzeTableID
-	concurrency int
-	analyzePB   *tipb.AnalyzeReq
-	opts        map[ast.AnalyzeOptionType]uint64
-	job         *statistics.AnalyzeJob
-	snapshot    uint64
+	ctx                        sessionctx.Context
+	tableID                    statistics.AnalyzeTableID
+	concurrency                int
+	partitionConcurrencyBudget int
+	analyzeTaskConcurrency     int
+	analyzePB                  *tipb.AnalyzeReq
+	opts                       map[ast.AnalyzeOptionType]uint64
+	job                        *statistics.AnalyzeJob
+	snapshot                   uint64
 }
 
 // AddNewAnalyzeJob records the new analyze job.

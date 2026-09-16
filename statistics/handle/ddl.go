@@ -57,11 +57,15 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
+	case model.ActionAddTablePartition:
 		for _, def := range t.PartInfo.Definitions {
 			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
 				return err
 			}
+		}
+	case model.ActionTruncateTablePartition:
+		if err := h.onTruncatePartitions(t); err != nil {
+			return err
 		}
 	case model.ActionDropTablePartition:
 		pruneMode := h.CurrentPruneMode()
@@ -77,6 +81,42 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		}
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
+	}
+	return nil
+}
+
+// onTruncatePartitions creates stats for the replacement partitions, removes
+// the truncated partitions' row counts from global stats, and marks their old
+// stats for GC.
+func (h *Handle) onTruncatePartitions(t *util.Event) error {
+	for _, def := range t.PartInfo.Definitions {
+		if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+			return err
+		}
+	}
+
+	var count int64
+	for _, def := range t.OldPartInfo.Definitions {
+		partitionCount, _, err := h.StatsMetaCountAndModifyCount(def.ID)
+		if err != nil {
+			return err
+		}
+		count += partitionCount
+	}
+	if count != 0 {
+		updated, err := h.dumpTableStatCountToKV(t.TableInfo.ID, variable.TableDelta{Count: count, Delta: -count})
+		if err != nil {
+			return err
+		}
+		if !updated {
+			logutil.BgLogger().Warn("global stats were not updated after truncating partitions",
+				zap.Int64("tableID", t.TableInfo.ID), zap.Int64("count", count))
+		}
+	}
+	for _, def := range t.OldPartInfo.Definitions {
+		if err := h.resetTableStats2KVForDrop(def.ID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -163,7 +203,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
 	}
 	// Generate the new column global-stats
-	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, nil, nil)
+	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, nil, nil, h.mu.ctx.GetSessionVars().AnalyzePartitionMergeConcurrency)
 	if err != nil {
 		return err
 	}
@@ -201,7 +241,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if globalIdxStatsBucketNum != 0 {
 			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
 		}
-		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{idx.ID}, nil)
+		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{idx.ID}, nil, h.mu.ctx.GetSessionVars().AnalyzePartitionMergeConcurrency)
 		if err != nil {
 			return err
 		}

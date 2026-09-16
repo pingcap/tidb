@@ -3767,6 +3767,49 @@ func TestPointGetPreparedPlan(t *testing.T) {
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
 }
 
+func TestPreparedCTERemainsInlinedAfterUnrelatedDDL(t *testing.T) {
+	for _, planCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("plan_cache_%t", planCacheEnabled), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %t", planCacheEnabled))
+			tk.MustExec("set tidb_opt_force_inline_cte = off")
+			tk.MustExec("create table source (a int)")
+			tk.MustExec("insert into source values (1)")
+
+			stmtID, _, _, err := tk.Session().PrepareStmt("with cte as (select * from source) select * from cte where a = ?")
+			require.NoError(t, err)
+
+			currentPlan := func() string {
+				stmtPlan := tk.Session().GetSessionVars().StmtCtx.GetPlan()
+				plan, ok := stmtPlan.(plannercore.Plan)
+				require.Truef(t, ok, "statement plan has type %T, want core.Plan", stmtPlan)
+				return plannercore.ToString(plan)
+			}
+			executePrepared := func() string {
+				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, expression.Args2Expressions4Test(1))
+				require.NoError(t, err)
+				tk.ResultSetToResult(rs, "execute prepared CTE").Check(testkit.Rows("1"))
+				return currentPlan()
+			}
+
+			initialPlan := executePrepared()
+			require.NotContains(t, initialPlan, "CTEReader(")
+
+			ddlTK := testkit.NewTestKit(t, store)
+			ddlTK.MustExec("use test")
+			ddlTK.MustExec("create table unrelated (a int)")
+
+			planAfterDDL := executePrepared()
+			tk.MustQuery("with cte as (select * from source) select * from cte where a = 1").Check(testkit.Rows("1"))
+			directQueryPlanAfterDDL := currentPlan()
+			require.NotContains(t, directQueryPlanAfterDDL, "CTEReader(")
+			require.NotContains(t, planAfterDDL, "CTEReader(")
+		})
+	}
+}
+
 func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

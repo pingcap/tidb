@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -105,6 +106,18 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 	testJoinKeyTypeConvert(t, bigIntType, bigIntType, bigIntType, false, false)
 	testJoinKeyTypeConvert(t, unsignedBigIntType, bigIntType, decimalType, true, true)
 	testJoinKeyTypeConvert(t, bigIntType, unsignedBigIntType, decimalType, true, true)
+}
+
+func TestMaxMinEliminateSkipsEmptyScalarAgg(t *testing.T) {
+	sctx := MockContext()
+	agg := LogicalAggregation{}.Init(sctx, 0)
+	opt := &maxMinEliminator{}
+
+	require.NotPanics(t, func() {
+		p, err := opt.optimize(context.Background(), agg, nil)
+		require.NoError(t, err)
+		require.Same(t, agg, p)
+	})
 }
 
 // Test for core.handleFineGrainedShuffle()
