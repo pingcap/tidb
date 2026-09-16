@@ -78,6 +78,34 @@ pub(crate) fn run_cluster_session_node_with_spill(
         config.pd_endpoints.clone(),
         COPROCESSOR_QUERY_TIMEOUT,
         |opener| {
+            // tiup's deploy->patch->start flow boots this node against a
+            // FRESH keyspace before any Go TiDB ever ran, so `mysql.*` does
+            // not exist yet. The convergence node owns the cluster's system
+            // catalog from then on, so bootstrap it right here -- the same
+            // transaction path the mysql-bootstrap tool uses -- and let the
+            // catalog load below read the schema just published. A cluster a
+            // TiDB already bootstrapped skips the publish entirely.
+            let accounts = tidb_exec::real_tikv_privileges::load_accounts_from_cluster(
+                opener,
+                COPROCESSOR_QUERY_TIMEOUT,
+            )
+            .map_err(|error| error.to_string())?;
+            if !accounts.bootstrap.already_bootstrapped() {
+                let (outcome, schema_version) = crate::bootstrap_publish::publish_bootstrap(
+                    opener,
+                    COPROCESSOR_QUERY_TIMEOUT,
+                )
+                .map_err(|error| error.to_string())?;
+                let schema_version = crate::bootstrap_publish::notify_committed_bootstrap(
+                    &outcome,
+                    schema_version,
+                    None,
+                )
+                .map_err(|error| error.to_string())?;
+                eprintln!(
+                    "{{\"event\":\"cluster_bootstrap_published\",\"schema_version\":{schema_version}}}"
+                );
+            }
             loaded = Some(
                 load_catalog_from_cluster(opener, COPROCESSOR_QUERY_TIMEOUT)
                     .map_err(|error| error.to_string())?,
