@@ -76,26 +76,10 @@ type session struct {
 
 type jobContextKey struct{}
 
-type jobSession struct {
-	Session
-	jobID string
-}
-
-// WithJob attributes user-table scans/deletes and their commits to a concrete TTL job.
-// Use the original session for metadata operations and session setup.
-func WithJob(se Session, jobID string) Session {
-	if previous, ok := se.(*jobSession); ok {
-		se = previous.Session
-	}
-	return &jobSession{Session: se, jobID: jobID}
-}
-
-func (s *jobSession) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
-	return s.Session.ExecuteSQL(context.WithValue(ctx, jobContextKey{}, s.jobID), sql, args...)
-}
-
-func (s *jobSession) RunInTxn(ctx context.Context, fn func() error, mode TxnMode) error {
-	return s.Session.RunInTxn(context.WithValue(ctx, jobContextKey{}, s.jobID), fn, mode)
+// WithJobContext attributes user-table scans/deletes and their commits to a TTL job.
+// Use the original context for metadata operations and session setup.
+func WithJobContext(ctx context.Context, jobID string) context.Context {
+	return context.WithValue(ctx, jobContextKey{}, jobID)
 }
 
 // NewSession creates a new Session
@@ -167,7 +151,7 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 			// Using another timeout context to avoid that this behavior will be changed in the future.
 			jobID, _ := ctx.Value(jobContextKey{}).(string)
 			rollbackCtx, cancel := context.WithTimeout(
-				context.WithValue(context.Background(), jobContextKey{}, jobID), time.Second,
+				WithJobContext(context.Background(), jobID), time.Second,
 			)
 			_, rollbackErr := s.ExecuteSQL(rollbackCtx, "ROLLBACK")
 			terror.Log(rollbackErr)
