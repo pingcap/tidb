@@ -18,11 +18,13 @@ import (
 
 type fakeCacheStore struct {
 	helper.Storage
-	status      tikv.StoreCacheStatus
-	refresh     tikv.StoreCacheRefreshResult
-	ks          string
-	cid         uint64
-	resetCalled bool
+	status        tikv.StoreCacheStatus
+	refresh       tikv.StoreCacheRefreshResult
+	ks            string
+	cid           uint64
+	resetCalled   bool
+	refreshCalled bool
+	resetErr      error
 }
 
 func (f *fakeCacheStore) GetStoreCacheStatus(storeID uint64) tikv.StoreCacheStatus {
@@ -32,15 +34,20 @@ func (f *fakeCacheStore) GetStoreCacheStatus(storeID uint64) tikv.StoreCacheStat
 
 func (f *fakeCacheStore) RefreshStoreCache(ctx context.Context, storeID uint64) tikv.StoreCacheRefreshResult {
 	_ = ctx
+	f.refreshCalled = true
 	f.refresh.StoreID = storeID
 	return f.refresh
 }
 
-func (f *fakeCacheStore) ResetStoreCacheRefresh(storeID uint64) {
+func (f *fakeCacheStore) ResetStoreCacheRefresh(storeID uint64) error {
 	_ = storeID
 	f.resetCalled = true
+	if f.resetErr != nil {
+		return f.resetErr
+	}
 	f.status.Failed = 0
 	f.refresh.Failed = 0
+	return nil
 }
 
 func (f *fakeCacheStore) GetClusterID() uint64 { return f.cid }
@@ -164,7 +171,50 @@ func TestRegionCacheHandlerResetThenRefresh(t *testing.T) {
 	h.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.True(t, fake.resetCalled)
+	require.True(t, fake.refreshCalled)
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.True(t, got.Ready)
+}
+
+func TestRegionCacheHandlerResetBusySkipsRefresh(t *testing.T) {
+	fake := &fakeCacheStore{
+		status:   tikv.StoreCacheStatus{Matched: 1, Failed: 1, Ready: false},
+		refresh:  tikv.StoreCacheRefreshResult{Matched: 1, Updated: 1, Ready: true},
+		resetErr: tikv.ErrStoreCacheRefreshBusy,
+		ks:       "ks1",
+		cid:      1,
+	}
+	h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: fake}})
+	req := httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7&reset=1", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.True(t, fake.resetCalled)
+	require.False(t, fake.refreshCalled)
+	var got regionCacheHTTPResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.False(t, got.Ready)
+	require.Contains(t, got.Errors, tikv.ErrStoreCacheRefreshBusy.Error())
+}
+
+func TestRegionCacheHandlerResetRespectsCancel(t *testing.T) {
+	fake := &fakeCacheStore{
+		refresh: tikv.StoreCacheRefreshResult{Matched: 1, Updated: 1, Ready: true},
+		ks:      "ks1",
+		cid:     1,
+	}
+	h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: fake}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7&reset=1", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.False(t, fake.resetCalled)
+	require.False(t, fake.refreshCalled)
+	var got regionCacheHTTPResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.False(t, got.Ready)
+	require.Contains(t, got.Errors, context.Canceled.Error())
 }

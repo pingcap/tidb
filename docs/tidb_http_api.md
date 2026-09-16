@@ -1256,7 +1256,7 @@ These APIs let an operator inspect and refresh TiDB's local region cache for one
 
 `ready` is true only when no matching cache entries remain, no unresolved refresh failures remain, and no refresh is in progress. Cache entries that expire or are deleted during a failed probe are not treated as successfully refreshed. Region-cache TTL expiry is also not refresh success: if the operator times out, stop waiting for `ready`, wait the original region-cache TTL, then restart. Do not treat a later `ready=true` caused only by expiry as a completed refresh.
 
-Leftover failures from that fallback stay until the original range is fully covered off-store, or until the next rolling posts `reset=1`. `reset=1` drops unresolved failures and the idle task, then runs a new refresh. It is not a success signal. Do not pass `reset=1` while polling the same rolling.
+Leftover failures from that fallback stay until the original range is fully covered off-store, or until the next rolling posts `reset=1`. `reset=1` drops unresolved failures and the idle task, then runs a new refresh. If a refresh is already running for that store, reset does not cancel it and the POST returns `store cache refresh is in progress` so the caller can retry. It is not a success signal. Do not pass `reset=1` while polling the same rolling.
 
 Usage:
 
@@ -1269,7 +1269,7 @@ curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}&reset=1"
 Parameters:
 
 - `store_id`: required positive integer. Missing, zero, or non-integer values return HTTP 400.
-- `reset`: optional on `POST` only. `1` or `true` clears leftover failures from a previous rolling or TTL fallback, then refreshes. Omit it during an in-progress rolling.
+- `reset`: optional on `POST` only. `1` or `true` clears leftover failures from a previous rolling or TTL fallback, then refreshes. If a refresh is in progress, the store is left running and the response is not ready. Omit it during an in-progress rolling.
 
 The status route accepts only `GET`. The refresh route accepts only `POST`. Other methods return HTTP 405.
 
