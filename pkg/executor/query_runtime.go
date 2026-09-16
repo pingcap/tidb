@@ -61,7 +61,7 @@ func parseImportQuery(sctx sessionctx.Context, sql string) (ast.StmtNode, error)
 	return node, nil
 }
 
-// CaptureImportQuery records the original SQL, source metadata and read TS after privilege checks.
+// CaptureImportQuery records source metadata and read TS after privilege checks.
 func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPlan, error) {
 	node, err := parseImportQuery(sctx, sql)
 	if err != nil {
@@ -76,7 +76,6 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 		CurrentDB:   sctx.GetSessionVars().CurrentDB,
 		Timestamp:   time.Now().Unix(),
 		Keyspace:    sctx.GetStore().GetKeyspace(),
-		SQL:         sql,
 		SessionVars: make(map[string]string),
 		Databases:   make(map[int64]*model.DBInfo),
 		Tables:      make(map[int64][]*model.TableInfo),
@@ -158,10 +157,10 @@ func (c *importQueryVariableChecker) Leave(node ast.Node) bool {
 
 func runImportQuery(
 	ctx context.Context, sctx sessionctx.Context,
-	q *importer.QueryPlan, memoryLimit int64,
+	q *importer.QueryPlan, sql string, memoryLimit int64,
 	output chan<- importer.QueryChunk,
 ) (err error) {
-	workerSession, node, err := newImportQuerySession(ctx, sctx, q, memoryLimit)
+	workerSession, node, err := newImportQuerySession(ctx, sctx, q, sql, memoryLimit)
 	if err != nil {
 		return err
 	}

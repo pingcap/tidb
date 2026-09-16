@@ -102,7 +102,6 @@ func TestImportFromQueryGlobalSort(t *testing.T) {
 	require.NoError(t, json.Unmarshal(task.Meta, &meta))
 	require.NotNil(t, meta.Plan.Query)
 	require.Equal(t, readTS.Load(), meta.Plan.Query.ReadTS)
-	require.Contains(t, meta.Plan.Query.SQL, query)
 	require.Nil(t, meta.ChunkMap)
 	require.EqualValues(t, 7, meta.Summary.ImportedRows)
 	require.Empty(t, meta.EligibleInstances)

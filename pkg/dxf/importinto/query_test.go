@@ -32,8 +32,8 @@ import (
 func TestImportQueryPlanning(t *testing.T) {
 	plan := &LogicalPlan{Plan: importer.Plan{
 		DataSourceType: importer.DataSourceTypeQuery, CloudStorageURI: "noop://sort/query", MaxNodeCnt: 1,
-		Query: &importer.QueryPlan{Keyspace: "tenant", SQL: "select count(*) from src"},
-	}}
+		Query: &importer.QueryPlan{Keyspace: "tenant"},
+	}, Stmt: "IMPORT INTO dst FROM SELECT count(*) FROM src"}
 	require.False(t, ShouldUseAsyncPrepare(&plan.Plan))
 	// There is no file path, file list, or chunk map to initialize or partition.
 	physical, err := plan.ToPhysicalPlan(planner.PlanCtx{
@@ -51,6 +51,17 @@ func TestImportQueryPlanning(t *testing.T) {
 	var decoded TaskMeta
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	require.Equal(t, plan.Plan.Query, decoded.Plan.Query)
+	require.Equal(t, plan.Stmt, decoded.Stmt)
+	t.Run("redact legacy query SQL", func(t *testing.T) {
+		// Old task metadata may contain the SQL in both locations.
+		data := []byte(`{"Stmt":"IMPORT INTO dst FROM SELECT 'query-secret'", "Plan":{"Query":{"SQL":"IMPORT INTO dst FROM SELECT 'query-secret'"}}}`)
+		var meta TaskMeta
+		require.NoError(t, json.Unmarshal(data, &meta))
+		task := &proto.Task{Meta: data}
+		redactSensitiveInfo(task, &meta)
+		require.NotContains(t, string(task.Meta), "query-secret")
+		require.Empty(t, meta.Stmt)
+	})
 	require.Equal(t, 1, decoded.Plan.MaxNodeCnt)
 	sch := &importScheduler{GlobalSort: true, sourceStep: proto.ImportStepQuery}
 	task := &proto.TaskBase{Step: proto.StepInit}

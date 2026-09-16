@@ -487,11 +487,12 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	t.Run("execute query in target keyspace", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, targetStore)
 		tk.MustExec("use test")
-		tk.MustExec("create table query_source(id bigint auto_increment primary key, g bigint not null, v bigint not null) auto_id_cache=1")
+		tk.MustExec("create table query_source(id bigint auto_increment primary key, g bigint not null, v bigint not null, key idx_g(g)) auto_id_cache=1")
 		tk.MustExec("insert into query_source(g,v) values (1,10),(1,20),(2,30)")
 		tk.MustExec("set tidb_isolation_read_engines='tikv'")
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-		sql := "import into unused_target from select /*+ HASH_AGG() */ g,count(*) from query_source where v >= 10 group by g"
+		sql := "import into unused_target from select /*+ STREAM_AGG() */ g,count(*) from query_source use index(idx_g) where v >= 10 group by g"
+		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
 		captured, err := executor.CaptureImportQuery(tk.Session(), sql)
 		require.NoError(t, err)
 
@@ -508,7 +509,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		defer pool.Destroy(resource)
 		output := make(chan importer.QueryChunk, 4)
-		err = importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, 1<<20, output)
+		err = importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
 		require.NoError(t, err)
 		close(output)
 		result := make(map[int64]int64)
@@ -526,8 +527,9 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	t.Run("MPP server ID without a query Domain", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, targetStore)
 		tk.MustExec("use test")
-		q, err := executor.CaptureImportQuery(tk.Session(),
-			"import into unused_target from select g,count(*) from query_source group by g")
+		sql := "import into unused_target from select /*+ MPP_1PHASE_AGG() */ g,count(*) from query_source group by g"
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		q, err := executor.CaptureImportQuery(tk.Session(), sql)
 		require.NoError(t, err)
 		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
 		require.True(t, ok)
@@ -547,7 +549,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			panic("stop before MPP dispatch")
 		})
 		require.PanicsWithValue(t, "stop before MPP dispatch", func() {
-			_ = importer.RunImportQuery(context.Background(), se, q, 1<<20, nil)
+			_ = importer.RunImportQuery(context.Background(), se, q, sql, 1<<20, nil)
 		})
 		require.True(t, checked)
 	})

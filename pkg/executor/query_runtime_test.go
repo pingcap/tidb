@@ -67,9 +67,9 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		for _, sql := range queries {
 			t.Run(mode+"/"+sql, func(t *testing.T) {
 				require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-				captured, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+sql+") with thread=1")
+				stmtSQL := "import into unused_target from (" + sql + ") with thread=1"
+				captured, err := executor.CaptureImportQuery(tk.Session(), stmtSQL)
 				require.NoError(t, err)
-				require.Equal(t, "import into unused_target from ("+sql+") with thread=1", captured.SQL)
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 					vars := p.SCtx().GetSessionVars()
 					require.EqualValues(t, 32<<20, vars.MemQuotaQuery)
@@ -82,6 +82,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 				})
 				data, err := json.Marshal(captured)
 				require.NoError(t, err)
+				require.NotContains(t, string(data), `"SQL":`)
 				captured = &importer.QueryPlan{}
 				require.NoError(t, json.Unmarshal(data, captured))
 				var expected []string
@@ -92,7 +93,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 				require.NoError(t, err)
 				defer se.Close()
 				output := make(chan importer.QueryChunk, len(expected)+1)
-				err = importer.RunImportQuery(context.Background(), se, captured, 32<<20, output)
+				err = importer.RunImportQuery(context.Background(), se, captured, stmtSQL, 32<<20, output)
 				require.NoError(t, err)
 				close(output)
 				var got []string
@@ -130,13 +131,14 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		} {
 			t.Run(tt.operator+"/"+tt.sql, func(t *testing.T) {
 				require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-				q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+tt.sql+")")
+				sql := "import into unused_target from (" + tt.sql + ")"
+				q, err := executor.CaptureImportQuery(tk.Session(), sql)
 				require.NoError(t, err)
 				se, err := session.CreateSession4Test(store)
 				require.NoError(t, err)
 				defer se.Close()
 				output := make(chan importer.QueryChunk, 16)
-				err = importer.RunImportQuery(context.Background(), se, q, 1<<20, output)
+				err = importer.RunImportQuery(context.Background(), se, q, sql, 1<<20, output)
 				require.ErrorIs(t, err, plannererrors.ErrNotSupportedYet)
 				require.ErrorContains(t, err, "TiDB "+tt.operator)
 			})
@@ -168,7 +170,8 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	})
 	t.Run("close after open error", func(t *testing.T) {
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from select i+1 from query_src")
+		sql := "import into unused_target from select i+1 from query_src"
+		q, err := executor.CaptureImportQuery(tk.Session(), sql)
 		require.NoError(t, err)
 		se, err := session.CreateSession4Test(store)
 		require.NoError(t, err)
@@ -179,14 +182,15 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			planID = p.ID()
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockProjectionExecBaseExecutorOpenReturnedError", `return(true)`)
 		})
-		err = importer.RunImportQuery(context.Background(), se, q, 1<<20, nil)
+		err = importer.RunImportQuery(context.Background(), se, q, sql, 1<<20, nil)
 		require.ErrorContains(t, err, "mock ProjectionExec.baseExecutor.Open returned error")
 		// Projection publishes its concurrency statistics only when Close runs.
 		require.Contains(t, se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(planID).String(), "Concurrency:")
 	})
 	t.Run("submitted table definitions", func(t *testing.T) {
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from select /*+ STREAM_AGG() */ count(*) from query_src")
+		sql := "import into unused_target from select /*+ STREAM_AGG() */ count(*) from query_src"
+		q, err := executor.CaptureImportQuery(tk.Session(), sql)
 		require.NoError(t, err)
 		data, err := json.Marshal(q)
 		require.NoError(t, err)
@@ -199,7 +203,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.NoError(t, err)
 		defer se.Close()
 		output := make(chan importer.QueryChunk, 1)
-		err = importer.RunImportQuery(context.Background(), se, q, 1<<20, output)
+		err = importer.RunImportQuery(context.Background(), se, q, sql, 1<<20, output)
 		require.NoError(t, err)
 		close(output)
 		var rows []int64
@@ -211,7 +215,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.Equal(t, []int64{7}, rows)
 		// Retrying the persisted query must keep the same snapshot.
 		output = make(chan importer.QueryChunk, 1)
-		require.NoError(t, importer.RunImportQuery(context.Background(), se, q, 1<<20, output))
+		require.NoError(t, importer.RunImportQuery(context.Background(), se, q, sql, 1<<20, output))
 		close(output)
 		require.Len(t, output, 1)
 		for result := range output {
@@ -253,7 +257,7 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 	})
 	// Validate the real optimizer output without dispatching to a TiFlash server.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/failAfterImportQueryOptimize", `return(true)`)
-	err = importer.RunImportQuery(context.Background(), se, captured, 1<<20, nil)
+	err = importer.RunImportQuery(context.Background(), se, captured, sql, 1<<20, nil)
 	require.ErrorContains(t, err, "injected failure after import query optimization")
 	require.True(t, optimized)
 }

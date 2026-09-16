@@ -400,7 +400,7 @@ func (s *importStepExecutor) readQuery(
 	se := resource.(sessionctx.Context)
 	// Limit the SELECT to half the subtask memory to leave room for encoding and sort writers.
 	return importer.RunImportQuery(
-		ctx, se, s.taskMeta.Plan.Query,
+		ctx, se, s.taskMeta.Plan.Query, s.taskMeta.Stmt,
 		s.GetResource().Mem.Capacity()/2, selected)
 }
 

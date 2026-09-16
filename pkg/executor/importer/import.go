@@ -259,8 +259,8 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
-// QueryPlan records SQL and its source metadata after tenant privilege checks.
-// The worker optimizes it against the captured source schema.
+// QueryPlan records source metadata and session settings after tenant privilege checks.
+// The worker optimizes the task statement against this captured source schema.
 type QueryPlan struct {
 	// ReadTS is the submitting SELECT snapshot, reused by every worker attempt.
 	ReadTS    uint64
@@ -271,7 +271,6 @@ type QueryPlan struct {
 	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
 	// Persist table definitions grouped by database ID explicitly.
 	Tables map[int64][]*model.TableInfo
-	SQL    string
 	// SessionVars is an explicit subset of SELECT settings inherited from the submitter.
 	// Extend the subset when another setting must be preserved on the worker.
 	// TiDB worker memory limits are configured separately.

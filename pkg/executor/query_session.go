@@ -85,7 +85,7 @@ func (c *importQuerySession) GetPlanCtx() base.PlanContext { return c }
 // newImportQuerySession prepares and wraps the caller-owned session for one query attempt.
 func newImportQuerySession(
 	ctx context.Context, sctx sessionctx.Context,
-	q *importer.QueryPlan, memoryLimit int64,
+	q *importer.QueryPlan, sql string, memoryLimit int64,
 ) (*importQuerySession, ast.StmtNode, error) {
 	if sctx.GetStore().GetKeyspace() != q.Keyspace {
 		return nil, nil, errors.New("import query runtime keyspace mismatch")
@@ -110,7 +110,7 @@ func newImportQuerySession(
 	}
 	vars.InRestrictedSQL, vars.InternalSQLScanUserTable = true, false
 	vars.RequestSourceType = kv.InternalDistTask
-	node, err := parseImportQuery(sctx, q.SQL)
+	node, err := parseImportQuery(sctx, sql)
 	if err != nil {
 		return nil, nil, err
 	}
