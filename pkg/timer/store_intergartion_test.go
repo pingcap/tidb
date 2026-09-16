@@ -902,6 +902,35 @@ func TestTimerStoreWithTimeZone(t *testing.T) {
 	testTimerStoreWithTimeZone(t, api.NewMemoryTimerStore(), timeutil.SystemLocation().String())
 
 	// table store
+	tk, pool, timerStore := createTimerStoreWithTimeZoneTestContext(t)
+	defer timerStore.Close()
+
+	testTimerStoreWithTimeZone(t, timerStore, timeutil.SystemLocation().String())
+
+	// check time zone should be set back to the previous one.
+	require.Equal(t, "America/Los_Angeles", tk.Session().GetSessionVars().Location().String())
+
+	// check pool
+	require.False(t, pool.inuse.Load())
+}
+
+func TestTimerStoreWithTimeZoneAfterClusterTimeZoneChange(t *testing.T) {
+	tk, pool, timerStore := createTimerStoreWithTimeZoneTestContext(t)
+	defer timerStore.Close()
+
+	tk.MustExec("set @@global.time_zone='Asia/Tokyo'")
+	testTimerStoreWithTimeZone(t, timerStore, "Asia/Tokyo")
+
+	// check time zone should be set back to the previous one.
+	require.Equal(t, "America/Los_Angeles", tk.Session().GetSessionVars().Location().String())
+
+	// check pool
+	require.False(t, pool.inuse.Load())
+}
+
+func createTimerStoreWithTimeZoneTestContext(t *testing.T) (*testkit.TestKit, *mockSessionPool, *api.TimerStore) {
+	t.Helper()
+
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	dbName := "test"
@@ -912,18 +941,7 @@ func TestTimerStoreWithTimeZone(t *testing.T) {
 
 	pool := &mockSessionPool{t: t, pool: do.AdvancedSysSessionPool()}
 	timerStore := tablestore.NewTableTimerStore(1, pool, dbName, tblName, nil)
-	defer timerStore.Close()
-
-	testTimerStoreWithTimeZone(t, timerStore, timeutil.SystemLocation().String())
-	tk.MustExec("set @@global.time_zone='Asia/Tokyo'")
-	tk.MustExec(fmt.Sprintf("truncate table %s.%s", dbName, tblName))
-	testTimerStoreWithTimeZone(t, timerStore, "Asia/Tokyo")
-
-	// check time zone should be set back to the previous one.
-	require.Equal(t, "America/Los_Angeles", tk.Session().GetSessionVars().Location().String())
-
-	// check pool
-	require.False(t, pool.inuse.Load())
+	return tk, pool, timerStore
 }
 
 func testTimerStoreWithTimeZone(t *testing.T, timerStore *api.TimerStore, defaultTZ string) {
