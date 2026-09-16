@@ -355,7 +355,10 @@ type selectResult struct {
 	rootPlanID int
 
 	storeType kv.StoreType
-	// Non-nil only for MPP. The current retry coordinator selects one raw summary route.
+	// Non-nil only for MPP; follows the current coordinator after recovery.
+	// Direct ReportMPPTaskStatus reporting is selected when a Limit lies on the
+	// path above this TableReader and the coordinator address is available.
+	// Skip streamed raw summaries in that case to avoid counting both routes.
 	mppReportsDirectly func() bool
 
 	fetchDuration    time.Duration

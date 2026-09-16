@@ -66,8 +66,9 @@ func collectStatementRUOperatorHashStateRows(operator *plannercore.FlatOperator,
 // including both sides of a join. Each scan snapshot already combines received
 // task/stream reports, so no task-count multiplier or child-byte propagation is
 // needed. The TableScan's own RU does not add these bytes again.
-// user_read_bytes retains TiFlash's late-materialization/MVCC producer semantics;
-// this path does not reconstruct physical disk bytes or apply a key-size ratio.
+// user_read_bytes retains each scan producer's semantics: traditional TiFlash
+// late-materialization/MVCC read bytes or columnar returned-block bytes. Neither
+// is converted to physical disk bytes, and no key-size ratio is applied.
 func collectStatementRUMPPScanBytes(tree plannercore.FlatPlanTree, index int, stats *execdetails.RuntimeStatsColl, calculator *statementRUCalculator) statementRUOperatorState {
 	operator := tree[index]
 	if !statementRUOperatorRunsAtMPP(operator) {
@@ -75,9 +76,6 @@ func collectStatementRUMPPScanBytes(tree plannercore.FlatPlanTree, index int, st
 	}
 	if _, scan := operator.Origin.(*physicalop.PhysicalTableScan); scan && stats != nil {
 		units, _ := stats.GetTiFlashExecutionUnits(operator.Origin.ID())
-		if units.UnsupportedScan {
-			return statementRUOperatorUnsupported
-		}
 		if units.Invalid || !addStatementRUScanBytes(calculator, float64(units.UserReadBytes)) {
 			return statementRUOperatorInvalid
 		}

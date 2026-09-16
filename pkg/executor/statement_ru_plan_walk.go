@@ -589,9 +589,6 @@ func calculateStatementRUPlanChildFirst(
 			outputRows = snapshot.Rows
 		} else if statementRUOperatorRunsAtMPP(operator) {
 			snapshot, _ := runtimeStatsColl.GetTiFlashExecutionUnits(operator.Origin.ID())
-			if snapshot.UnsupportedScan {
-				return statementRUOperatorResult{state: statementRUOperatorUnsupported}
-			}
 			if snapshot.Invalid || snapshot.Rows > math.MaxInt64 {
 				return statementRUOperatorResult{state: statementRUOperatorInvalid}
 			}

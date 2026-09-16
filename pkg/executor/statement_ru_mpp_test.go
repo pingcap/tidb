@@ -84,18 +84,33 @@ func TestStatementRUMPPUnits(t *testing.T) {
 	require.True(t, valid)
 	require.InDelta(t, finalized.result.TotalRU+120, result.TotalRU, 1e-9)
 
-	// Missing stats still produce a best-effort value; known unsupported scan does not.
+	// Missing stats still produce a best-effort value.
 	partial, ok := calculateStatementRU(flat, nil, nil, statementRUWriteSnapshot{}, statementRUCalculationSetup{}, true)
 	require.True(t, ok)
 	require.Equal(t, float64(4), partial.result.TotalRU)
 	require.Equal(t, statementRUCalibrationIncomplete, partial.calibrationState)
 	_, ok = calculateStatementRU(flat, stats, nil, statementRUWriteSnapshot{}, statementRUCalculationSetup{}, false)
 	require.False(t, ok)
-	id := fmt.Sprintf("TableScan_%d", scan.ID())
-	stats.RecordTiFlashExecutionSummaries(plans, []*tipb.ExecutorExecutionSummary{{ExecutorId: &id, DetailInfo: &tipb.ExecutorExecutionSummary_ColumnarScanContext{ColumnarScanContext: &tipb.ColumnarScanContext{}}}})
-	failed, ok := calculateStatementRU(flat, stats, nil, statementRUWriteSnapshot{}, statementRUCalculationSetup{}, true)
-	require.False(t, ok)
-	require.Equal(t, statementRUUnsupported, failed.failure)
+	// Columnar scan bytes follow the same Reader ownership and TiFlash attribution.
+	for _, readBytes := range []uint64{0, 300} {
+		stats = execdetails.NewRuntimeStatsColl(nil)
+		record(scan, 200, readBytes, 0, 0)
+		expected, ok := calculateStatementRU(flat, stats, nil, statementRUWriteSnapshot{}, statementRUCalculationSetup{fullReport: true}, true)
+		require.True(t, ok)
+		columnarStats := execdetails.NewRuntimeStatsColl(nil)
+		id, rows := fmt.Sprintf("TableScan_%d", scan.ID()), uint64(200)
+		columnarStats.RecordTiFlashExecutionSummaries(plans, []*tipb.ExecutorExecutionSummary{{
+			ExecutorId: &id, NumProducedRows: &rows,
+			DetailInfo: &tipb.ExecutorExecutionSummary_ColumnarScanContext{ColumnarScanContext: &tipb.ColumnarScanContext{UserReadBytes: &readBytes}},
+		}})
+		actual, ok := calculateStatementRU(flat, columnarStats, nil, statementRUWriteSnapshot{}, statementRUCalculationSetup{fullReport: true}, true)
+		require.True(t, ok)
+		require.Equal(t, expected.units, actual.units)
+		require.Equal(t, expected.engineRU, actual.engineRU)
+		require.Equal(t, expected.report.units, actual.report.units)
+		require.Equal(t, float64(readBytes), actual.units.ScanBytes)
+		require.Equal(t, statementRUCalibrationIncomplete, actual.calibrationState)
+	}
 	reader.ReadReqType = physicalop.BatchCop
 	_, ok = calculateStatementRU(plannercore.FlattenPhysicalPlan(reader, false), nil, nil, statementRUWriteSnapshot{}, statementRUCalculationSetup{}, true)
 	require.False(t, ok)

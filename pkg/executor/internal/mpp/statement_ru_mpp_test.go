@@ -20,11 +20,14 @@ import (
 	"testing"
 
 	mpppb "github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestStatementRUMPPPartialReports(t *testing.T) {
@@ -117,4 +120,50 @@ func TestStatementRUMPPConcurrentReports(t *testing.T) {
 	require.NoError(t, c.handleAllReports())
 	after, _ := stats.GetTiFlashExecutionUnits(1)
 	require.Equal(t, frozen, after)
+}
+
+func TestStatementRUMPPReportsCompleteAtTimeout(t *testing.T) {
+	ctx := mock.NewContext()
+	stats := execdetails.NewRuntimeStatsColl(nil)
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = stats
+	ruDetails := clientutil.NewRUDetails()
+	c := &localMppCoordinator{
+		ctx:        context.WithValue(context.Background(), clientutil.RUDetailsCtxKey, ruDetails),
+		sessionCtx: ctx, reportExecutionInfo: true,
+		reportStatusCh: make(chan struct{}), planIDs: []int{1},
+		reqMap:  map[int64]*mppRequestReport{1: {}, 2: {}},
+		mppReqs: []*kv.MPPDispatchRequest{{ID: 1}, {ID: 2}},
+	}
+	id, rows, elapsed, iterations := "TableScan_1", uint64(7), uint64(1), uint64(1)
+	consumption, err := (&resource_manager.Consumption{RRU: 3, WRU: 2}).Marshal()
+	require.NoError(t, err)
+	data, err := (&tipb.TiFlashExecutionInfo{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{{
+		ExecutorId: &id, NumProducedRows: &rows, TimeProcessedNs: &elapsed,
+		NumIterations: &iterations, RuConsumption: consumption,
+	}}}).Marshal()
+	require.NoError(t, err)
+	report := func(taskID int64) {
+		require.NoError(t, c.ReportStatus(kv.ReportStatusRequest{Request: &mpppb.ReportTaskStatusRequest{
+			Meta: &mpppb.TaskMeta{TaskId: taskID}, Data: data,
+		}}))
+	}
+	report(1)
+	// The final report cannot arrive until the timeout branch has been selected.
+	// Deliver it before the snapshot, without relying on goroutine scheduling.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/internal/mpp/beforeMPPReportSnapshot", func() { report(2) })
+	require.NoError(t, c.handleAllReports())
+	units, found := stats.GetTiFlashExecutionUnits(1)
+	require.True(t, found)
+	require.Equal(t, uint64(14), units.Rows)
+	require.Equal(t, float64(6), ruDetails.RRU())
+	require.Equal(t, float64(4), ruDetails.WRU())
+	require.NotNil(t, stats.GetCopStats(1))
+	require.Equal(t, int64(14), stats.GetCopStats(1).GetActRows())
+	require.NoError(t, c.handleAllReports())
+	after, _ := stats.GetTiFlashExecutionUnits(1)
+	require.Equal(t, units, after)
+	require.Equal(t, float64(6), ruDetails.RRU())
+	require.Equal(t, float64(4), ruDetails.WRU())
+	require.NotNil(t, stats.GetCopStats(1))
+	require.Equal(t, int64(14), stats.GetCopStats(1).GetActRows())
 }

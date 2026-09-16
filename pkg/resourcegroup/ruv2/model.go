@@ -55,8 +55,11 @@ type StmtUnits struct {
 
 // StmtWeights contains the coefficient for each RU v3 raw unit.
 type StmtWeights struct {
-	// CrossAZNetByte is an internal model coefficient, excluded from configuration.
-	// Current statement accounting leaves this additional cost at zero.
+	// CrossAZNetByte is reserved for an additional cross-AZ charge. Cross-AZ
+	// traffic is already included in NetBytes at the ordinary NetByte weight;
+	// current accounting does not price it differently, so this defaults to zero.
+	// The "-" tags deliberately exclude it from TOML/JSON until separate pricing
+	// is supported; raw CrossAZNetBytes remain available for observation.
 	CrossAZNetByte      float64 `toml:"-" json:"-"`
 	CPUWork             float64 `toml:"cpu-work" json:"cpu-work"`
 	ScanByte            float64 `toml:"scan-byte" json:"scan-byte"`

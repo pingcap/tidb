@@ -67,28 +67,26 @@ func TestTiFlashExecutionUnits(t *testing.T) {
 	require.NotZero(t, units.Observed&TiFlashUnitRows)
 }
 
-func TestTiFlashExecutionUnitsInvalidAndUnsupported(t *testing.T) {
+func TestTiFlashExecutionUnitsInvalid(t *testing.T) {
 	id, other := "TableScan_1", "TableScan_2"
 	one, tooMany := uint64(1), uint64(math.MaxInt64)+1
 	tests := []struct {
-		name                 string
-		summaries            []*tipb.ExecutorExecutionSummary
-		invalid, unsupported bool
+		name      string
+		summaries []*tipb.ExecutorExecutionSummary
+		invalid   bool
 	}{
-		{"duplicate", []*tipb.ExecutorExecutionSummary{{ExecutorId: &id}, {ExecutorId: &id}}, true, false},
-		{"row conversion overflow", []*tipb.ExecutorExecutionSummary{{ExecutorId: &id, NumProducedRows: &tooMany}}, true, false},
-		{"columnar", []*tipb.ExecutorExecutionSummary{{ExecutorId: &id, DetailInfo: &tipb.ExecutorExecutionSummary_ColumnarScanContext{ColumnarScanContext: &tipb.ColumnarScanContext{}}}}, false, true},
-		{"unrelated and nil", []*tipb.ExecutorExecutionSummary{nil, {ExecutorId: &other, NumProducedRows: &tooMany}, {ExecutorId: &id, NumProducedRows: &one}}, false, false},
+		{"duplicate", []*tipb.ExecutorExecutionSummary{{ExecutorId: &id}, {ExecutorId: &id}}, true},
+		{"row conversion overflow", []*tipb.ExecutorExecutionSummary{{ExecutorId: &id, NumProducedRows: &tooMany}}, true},
+		{"unrelated and nil", []*tipb.ExecutorExecutionSummary{nil, {ExecutorId: &other, NumProducedRows: &tooMany}, {ExecutorId: &id, NumProducedRows: &one}}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			stats := NewRuntimeStatsColl(nil)
 			stats.RecordTiFlashExecutionSummaries([]int{1}, tc.summaries)
-			// Later normal evidence must not erase invalid/unsupported state.
+			// Later normal evidence must not erase invalid state.
 			stats.RecordTiFlashExecutionSummaries([]int{1}, []*tipb.ExecutorExecutionSummary{{ExecutorId: &id, NumProducedRows: &one}})
 			units, _ := stats.GetTiFlashExecutionUnits(1)
 			require.Equal(t, tc.invalid, units.Invalid)
-			require.Equal(t, tc.unsupported, units.UnsupportedScan)
 			_, found := stats.GetTiFlashExecutionUnits(2)
 			require.False(t, found)
 		})
@@ -109,4 +107,38 @@ func TestTiFlashExecutionUnitsInvalidAndUnsupported(t *testing.T) {
 	require.Equal(t, one, units.Rows)
 	require.NotZero(t, units.Missing&TiFlashUnitHash)
 	require.Zero(t, units.HashDistinctEntries+units.HashBuildRows)
+}
+
+func TestTiFlashExecutionUnitsColumnar(t *testing.T) {
+	id := "TableScan_1"
+	zero, readBytes, mvccBytes, maxBytes := uint64(0), uint64(20), uint64(100), uint64(math.MaxUint64)
+	for _, tc := range []struct {
+		name              string
+		bytes             *uint64
+		wantBytes         uint64
+		observed, invalid bool
+	}{
+		{"missing", nil, 0, false, false},
+		{"zero", &zero, 0, true, false},
+		{"nonzero", &readBytes, 40, true, false},
+		{"overflow", &maxBytes, math.MaxUint64, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := NewRuntimeStatsColl(nil)
+			summary := &tipb.ExecutorExecutionSummary{ExecutorId: &id,
+				DetailInfo: &tipb.ExecutorExecutionSummary_ColumnarScanContext{ColumnarScanContext: &tipb.ColumnarScanContext{
+					UserReadBytes: tc.bytes, MvccInputBytes: &mvccBytes,
+				}},
+			}
+			// Task contributions merge, but MVCC input bytes are not added to user-read bytes.
+			stats.RecordTiFlashExecutionSummaries([]int{1}, []*tipb.ExecutorExecutionSummary{summary})
+			stats.RecordTiFlashExecutionSummaries([]int{1}, []*tipb.ExecutorExecutionSummary{summary})
+			units, found := stats.GetTiFlashExecutionUnits(1)
+			require.True(t, found)
+			require.Equal(t, tc.wantBytes, units.UserReadBytes)
+			require.Equal(t, tc.observed, units.Observed&TiFlashUnitScan != 0)
+			require.Equal(t, !tc.observed, units.Missing&TiFlashUnitScan != 0)
+			require.Equal(t, tc.invalid, units.Invalid)
+		})
+	}
 }

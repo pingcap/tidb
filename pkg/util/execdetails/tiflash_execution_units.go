@@ -44,7 +44,6 @@ type TiFlashExecutionUnits struct {
 	InterZoneSendBytes  uint64
 	Observed            TiFlashUnitFields
 	Missing             TiFlashUnitFields
-	UnsupportedScan     bool
 	Invalid             bool
 }
 
@@ -67,8 +66,12 @@ func tiFlashExecutionUnits(summary *tipb.ExecutorExecutionSummary) TiFlashExecut
 	if scan := summary.GetTiflashScanContext(); scan != nil && scan.UserReadBytes != nil {
 		units.UserReadBytes = scan.GetUserReadBytes()
 		units.Observed |= TiFlashUnitScan
+	} else if scan := summary.GetColumnarScanContext(); scan != nil && scan.UserReadBytes != nil {
+		// Columnar user_read_bytes is the producer's returned-block byte count,
+		// not physical storage I/O. Do not add its separate mvcc_input_bytes.
+		units.UserReadBytes = scan.GetUserReadBytes()
+		units.Observed |= TiFlashUnitScan
 	}
-	units.UnsupportedScan = summary.GetColumnarScanContext() != nil
 	if network := summary.GetTiflashNetworkSummary(); network != nil {
 		units.InnerZoneSendBytes = network.GetInnerZoneSendBytes()
 		units.InterZoneSendBytes = network.GetInterZoneSendBytes()
@@ -83,7 +86,6 @@ func tiFlashExecutionUnits(summary *tipb.ExecutorExecutionSummary) TiFlashExecut
 func (u *TiFlashExecutionUnits) merge(other TiFlashExecutionUnits) {
 	u.Observed |= other.Observed
 	u.Missing |= other.Missing
-	u.UnsupportedScan = u.UnsupportedScan || other.UnsupportedScan
 	u.Invalid = u.Invalid || other.Invalid
 	add := func(dst *uint64, n uint64) {
 		if n > math.MaxUint64-*dst {
