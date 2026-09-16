@@ -151,9 +151,6 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.resultChkCh = make(chan result, e.concurrency+1) // innerWorkers + outerWorker
 	e.outerRowCh = make(chan outerRow)
 	e.exit = make(chan struct{})
-<<<<<<< HEAD
-	for i := 0; i < e.concurrency; i++ {
-=======
 
 	if e.keepOrder {
 		// In ordered mode, freeChkCh is consumed by the reorder worker.
@@ -169,7 +166,6 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	}
 
 	for range e.concurrency {
->>>>>>> 3a75c2262c9 (planner: parallel apply keep order (#66714))
 		e.freeChkCh <- exec.NewFirstChunk(e)
 	}
 
@@ -192,12 +188,6 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
 		e.workerWg.Add(1)
 		go e.outerWorker(ctx)
-<<<<<<< HEAD
-		for i := 0; i < e.concurrency; i++ {
-			e.workerWg.Add(1)
-			workID := i
-			go e.innerWorker(ctx, workID)
-=======
 		if e.keepOrder {
 			for i := range e.concurrency {
 				e.workerWg.Add(1)
@@ -223,7 +213,6 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 			}
 			e.notifyWg.Add(1)
 			go e.notifyWorker(ctx)
->>>>>>> 3a75c2262c9 (planner: parallel apply keep order (#66714))
 		}
 	}
 	result := <-e.resultChkCh
@@ -302,9 +291,6 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 			e.putResult(nil, err)
 			return
 		}
-<<<<<<< HEAD
-		for i := 0; i < chk.NumRows(); i++ {
-=======
 		for i := range chk.NumRows() {
 			// In ordered mode, acquire a pace token to bound how far
 			// ahead we dispatch relative to the reorder worker's
@@ -316,7 +302,6 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 					return
 				}
 			}
->>>>>>> 3a75c2262c9 (planner: parallel apply keep order (#66714))
 			row := chk.GetRow(i)
 			or := outerRow{row: row, selected: selected[i], seq: seq}
 			seq++

@@ -983,23 +983,14 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	// 2. If one Apply is in the inner side of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
-<<<<<<< HEAD
-	if apply, ok := plan.(*PhysicalApply); ok {
-		outerIdx := 1 - apply.InnerChildIdx
-		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
-		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
-		supportClone := err == nil // limitation 2
-		if noOrder && supportClone {
-=======
 	// Note: ordering is now preserved via a reorder buffer (KeepOrder=true)
 	// when the outer side requires sorted output, so order is no longer a limitation.
-	if apply, ok := plan.(*physicalop.PhysicalApply); ok {
+	if apply, ok := plan.(*PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
 		hasOrder := apply.GetChildReqProps(outerIdx).NeedKeepOrder()
-		_, err := physicalop.SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
+		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
 		supportClone := err == nil // limitation 1
 		if supportClone {
->>>>>>> 3a75c2262c9 (planner: parallel apply keep order (#66714))
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
 			// When the outer side requires ordering, use a reorder buffer
 			// in the executor to preserve row order while still running
