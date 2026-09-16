@@ -390,7 +390,7 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
 func DefineRestoreFlags(flags *pflag.FlagSet) {
-	flags.Bool(flagRestoreRegion, false, "(experimental) restore a full snapshot through CSE Workers; automatic retry and checkpoint resume are unsupported")
+	flags.Bool(flagRestoreRegion, false, "(experimental) restore a full snapshot through CSE Workers; checkpoint resume is unsupported")
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
 	flags.Bool(flagFastLoadSysTables, true, "load system tables (including statistics) by renaming the temporary system tables")

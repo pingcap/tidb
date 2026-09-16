@@ -17,9 +17,13 @@ package snapclient
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -27,19 +31,120 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-// restoreRegions deliberately has no restore retry: a failed RPC can already
-// have applied. In particular, do not replay successful Regions in a file group.
+// restoreRegions retries a logical file batch with the same planned task ID.
+// Every attempt refreshes Region routing; committed tasks are deduplicated by TiKV.
 func (importer *SnapFileImporter) restoreRegions(
 	ctx context.Context, startKey, endKey []byte, files []restore.BackupFileSet,
+) error {
+	backoff := utils.InitialRetryState(15, 40*time.Millisecond, 10*time.Second)
+	outcomeUnknown := false
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return restoreBatchError(err, outcomeUnknown)
+		}
+		err := importer.restoreRegionBatch(ctx, startKey, endKey, files, &outcomeUnknown)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return restoreBatchError(ctx.Err(), outcomeUnknown)
+		}
+		if !retryRestoreRegion(err) || !backoff.ShouldRetry() {
+			return restoreBatchError(err, outcomeUnknown)
+		}
+		delay := backoff.ExponentialBackoff()
+		failpoint.Inject("restoreRegionRetryDelay", func(_ failpoint.Value) { delay = 0 })
+		logutil.CL(ctx).Warn("retry RestoreRegion batch", zap.Int("attempt", attempt), zap.Duration("backoff", delay), zap.Error(err))
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return restoreBatchError(ctx.Err(), outcomeUnknown)
+		case <-timer.C:
+		}
+	}
+}
+
+func restoreBatchError(err error, outcomeUnknown bool) error {
+	if outcomeUnknown {
+		return errors.Annotate(err, "RestoreRegion batch failed; a previous RPC may have applied")
+	}
+	return errors.Trace(err)
+}
+
+// Keep the Region error structured: parsing its diagnostic would lose the
+// distinction between routing/admission failures and permanent ingest errors.
+type restoreRegionError struct{ region *errorpb.Error }
+
+func (e *restoreRegionError) Error() string { return "RestoreRegion error: " + e.region.String() }
+
+type restoreRegionRPCError struct{ error }
+
+func (e *restoreRegionRPCError) Unwrap() error { return e.error }
+
+func retryRestoreRegion(err error) bool {
+	var region *restoreRegionError
+	if stderrors.As(err, &region) {
+		e := region.region
+		return e.NotLeader != nil || e.EpochNotMatch != nil || e.RegionNotFound != nil ||
+			e.ServerIsBusy != nil || e.IsWitness != nil || e.RegionNotInitialized != nil
+	}
+	if errors.ErrorEqual(err, berrors.ErrPDLeaderNotFound) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+func (importer *SnapFileImporter) checkRestoreRegionCapability(ctx context.Context, storeID uint64) error {
+	rpcCtx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
+	defer cancel()
+	client, err := importer.importClient.GetImportClient(rpcCtx, storeID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	response, err := client.GetMode(rpcCtx, &import_sstpb.GetModeRequest{})
+	if err != nil {
+		return errors.Annotatef(err, "check RestoreRegion retry capability on store %d", storeID)
+	}
+	if response == nil || !response.SupportsRestoreRegionRetry {
+		return errors.Errorf("store %d does not support safe RestoreRegion retries; upgrade every replica before restoring", storeID)
+	}
+	return nil
+}
+
+func (importer *SnapFileImporter) restoreRegionBatch(
+	ctx context.Context, startKey, endKey []byte, files []restore.BackupFileSet, outcomeUnknown *bool,
 ) error {
 	regions, err := importer.paginateScanRegion(ctx, startKey, endKey)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	checked := make(map[uint64]struct{})
+	// Include learners: any replica can apply the command and persist its identity.
+	// Recheck on every round so membership changes do not reuse stale capability data.
+	for _, region := range regions {
+		for _, peer := range region.Region.Peers {
+			if _, ok := checked[peer.StoreId]; ok {
+				continue
+			}
+			if err := importer.checkRestoreRegionCapability(ctx, peer.StoreId); err != nil {
+				return err
+			}
+			checked[peer.StoreId] = struct{}{}
+		}
 	}
 	for _, region := range regions {
 		if err := ctx.Err(); err != nil {
@@ -52,8 +157,18 @@ func (importer *SnapFileImporter) restoreRegions(
 		if len(req.Sources) == 0 {
 			continue
 		}
+		if _, ok := checked[req.Context.Peer.StoreId]; !ok {
+			if err := importer.checkRestoreRegionCapability(ctx, req.Context.Peer.StoreId); err != nil {
+				return err
+			}
+			checked[req.Context.Peer.StoreId] = struct{}{}
+		}
 		if err := importer.restoreOneRegion(ctx, req); err != nil {
-			return errors.Annotatef(err, "RestoreRegion %d failed; automatic retry is disabled because the restore may have applied", req.Context.RegionId)
+			var rpcError *restoreRegionRPCError
+			if stderrors.As(err, &rpcError) {
+				*outcomeUnknown = true
+			}
+			return err
 		}
 	}
 	return nil
@@ -155,13 +270,13 @@ func (importer *SnapFileImporter) restoreOneRegion(ctx context.Context, req *imp
 	}
 	resp, err := importer.importClient.RestoreRegion(rpcCtx, storeID, req)
 	if err != nil {
-		return errors.Trace(err)
+		return &restoreRegionRPCError{errors.Trace(err)}
 	}
 	if resp == nil {
-		return errors.New("RestoreRegion returned no response")
+		return &restoreRegionRPCError{errors.New("RestoreRegion returned no response")}
 	}
 	if resp.GetError() != nil {
-		return errors.Annotatef(berrors.ErrKVIngestFailed, "RestoreRegion error: %s", resp.GetError())
+		return &restoreRegionError{region: resp.GetError()}
 	}
 	logger.Info("RestoreRegion completed")
 	return nil

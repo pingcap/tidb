@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/pd/client/opt"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -59,11 +61,24 @@ func (pd *restoreRegionTestPD) ScanRegions(_ context.Context, start, end []byte,
 
 type restoreRegionTestClient struct {
 	importclient.ImporterClient // Calling any old RPC is a test failure (nil interface).
+	capability                  func(uint64) bool
 	send                        func(context.Context, uint64, *import_sstpb.RestoreRegionRequest) (*import_sstpb.IngestResponse, error)
 }
 
 func (c *restoreRegionTestClient) RestoreRegion(ctx context.Context, store uint64, req *import_sstpb.RestoreRegionRequest) (*import_sstpb.IngestResponse, error) {
 	return c.send(ctx, store, req)
+}
+
+type restoreRegionModeClient struct {
+	import_sstpb.ImportSSTClient
+	supported bool
+}
+
+func (c *restoreRegionModeClient) GetMode(context.Context, *import_sstpb.GetModeRequest, ...grpc.CallOption) (*import_sstpb.GetModeResponse, error) {
+	return &import_sstpb.GetModeResponse{SupportsRestoreRegionRetry: c.supported}, nil
+}
+func (c *restoreRegionTestClient) GetImportClient(_ context.Context, store uint64) (import_sstpb.ImportSSTClient, error) {
+	return &restoreRegionModeClient{supported: c.capability == nil || c.capability(store)}, nil
 }
 
 func restoreRegionFixture(t *testing.T) (*SnapFileImporter, *restoreRegionTestClient, restore.BackupFileSet, []*split.RegionInfo) {
@@ -83,6 +98,7 @@ func restoreRegionFixture(t *testing.T) (*SnapFileImporter, *restoreRegionTestCl
 	regions := make([]*split.RegionInfo, 2)
 	for i := range regions {
 		regions[i] = &split.RegionInfo{Region: &metapb.Region{Id: uint64(i + 1), StartKey: bounds[i], EndKey: bounds[i+1],
+			Peers:       []*metapb.Peer{{Id: uint64(i + 10), StoreId: 1}},
 			RegionEpoch: &metapb.RegionEpoch{Version: 5, ConfVer: 2}}, Leader: &metapb.Peer{Id: uint64(i + 10), StoreId: 1}}
 	}
 	client := &restoreRegionTestClient{send: func(context.Context, uint64, *import_sstpb.RestoreRegionRequest) (*import_sstpb.IngestResponse, error) {
@@ -146,7 +162,11 @@ func TestRestoreRegionRequest(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestRestoreRegionCompletionAndNoRetry(t *testing.T) {
+func TestRestoreRegionCompletionAndRetry(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/restoreRegionRetryDelay", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/restoreRegionRetryDelay"))
+	}()
 	for _, test := range []struct {
 		name     string
 		response *import_sstpb.IngestResponse
@@ -166,7 +186,8 @@ func TestRestoreRegionCompletionAndNoRetry(t *testing.T) {
 				require.Equal(t, uint64(1), store)
 				require.Len(t, req.Sources, 2)
 				calls = append(calls, req.Context.RegionId)
-				if req.Context.RegionId == 1 {
+				require.Equal(t, set.RestoreTaskID[:], req.RestoreTaskId)
+				if req.Context.RegionId == 1 || len(calls) > 2 {
 					return &import_sstpb.IngestResponse{}, nil
 				}
 				return test.response, test.err
@@ -177,14 +198,18 @@ func TestRestoreRegionCompletionAndNoRetry(t *testing.T) {
 					return func() error { completed = true; return nil }, nil
 				})
 			err := importer.Import(context.Background(), set)
-			if test.name == "success" {
+			if test.name != "nil-response" {
 				require.NoError(t, err)
 				require.True(t, completed)
 			} else {
 				require.Error(t, err)
 				require.False(t, completed)
 			}
-			require.Equal(t, []uint64{1, 2}, calls) // The first Region must never be replayed.
+			if test.name == "success" || test.name == "nil-response" {
+				require.Equal(t, []uint64{1, 2}, calls)
+			} else {
+				require.Equal(t, []uint64{1, 2, 1, 2}, calls) // Replayed Regions retain the same identity.
+			}
 			require.False(t, importer.ShouldBlock())
 		})
 	}
@@ -227,4 +252,54 @@ func TestRestoreRegionAdmission(t *testing.T) {
 	wg.Add(1)
 	go func() { defer wg.Done(); importer.PauseForBackpressure() }()
 	wg.Wait()
+}
+
+func TestRestoreRegionRetryBudgetAndCapability(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/restoreRegionRetryDelay", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/restoreRegionRetryDelay"))
+	}()
+	importer, client, set, regions := restoreRegionFixture(t)
+	calls := 0
+	client.send = func(_ context.Context, _ uint64, req *import_sstpb.RestoreRegionRequest) (*import_sstpb.IngestResponse, error) {
+		calls++
+		require.Equal(t, set.RestoreTaskID[:], req.RestoreTaskId)
+		return nil, status.Error(codes.Unavailable, "response lost")
+	}
+	err := importer.Import(context.Background(), set)
+	require.ErrorContains(t, err, "may have applied")
+	require.Equal(t, 16, calls)
+	require.False(t, importer.ShouldBlock())
+	// An unsupported learner prevents sending even the first restore RPC.
+	calls = 0
+	regions[1].Region.Peers = append(regions[1].Region.Peers, &metapb.Peer{Id: 12, StoreId: 2, Role: metapb.PeerRole_Learner})
+	client.capability = func(store uint64) bool { return store != 2 }
+	require.ErrorContains(t, importer.Import(context.Background(), set), "store 2 does not support")
+	require.Zero(t, calls)
+}
+
+func TestRestoreRegionRetryReroutesAndStopsOnPermanentError(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/restoreRegionRetryDelay", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/restoreRegionRetryDelay"))
+	}()
+	importer, client, set, regions := restoreRegionFixture(t)
+	calls := 0
+	client.send = func(_ context.Context, store uint64, req *import_sstpb.RestoreRegionRequest) (*import_sstpb.IngestResponse, error) {
+		calls++
+		require.Equal(t, set.RestoreTaskID[:], req.RestoreTaskId)
+		if calls == 1 {
+			regions[0].Leader = &metapb.Peer{Id: 22, StoreId: 2}
+			regions[0].Region.Peers = []*metapb.Peer{regions[0].Leader}
+			regions[0].Region.RegionEpoch.Version++
+			return nil, status.Error(codes.Unavailable, "response lost")
+		}
+		require.Equal(t, uint64(2), store)
+		require.Equal(t, uint64(6), req.Context.RegionEpoch.Version)
+		return nil, status.Error(codes.PermissionDenied, "denied")
+	}
+	err := importer.Import(context.Background(), set)
+	require.ErrorContains(t, err, "may have applied")
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, 2, calls)
 }

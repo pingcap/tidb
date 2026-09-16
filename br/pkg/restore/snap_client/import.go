@@ -254,6 +254,11 @@ func NewSnapFileImporter(
 		restoreRegion:           options.restoreRegion,
 	}
 	if options.restoreRegion {
+		for _, store := range options.tikvStores {
+			if err := fileImporter.checkRestoreRegionCapability(ctx, store.Id); err != nil {
+				return nil, err
+			}
+		}
 		// The experimental path runs one complete restore at a time per Store.
 		// Download tokens no longer represent work on the Store.
 		fileImporter.concurrencyPerStore = 1

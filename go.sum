@@ -1350,6 +1350,8 @@ github.com/Masterminds/sprig/v3 v3.2.2/go.mod h1:UoaO7Yp8KlPnJIYWTFkMaqPUYKTfGFP
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/RidRisR/kvproto v0.0.0-20260908090938-d51dc4098c86 h1:tCzbOI8Wmp85NMpGvrKVs3inCvTJCDRUk9EVj+JdU2k=
 github.com/RidRisR/kvproto v0.0.0-20260908090938-d51dc4098c86/go.mod h1:z6+aAHB7dBkA+LyinEX+48/ImRJ3jag0Hg0c7wkhEvE=
+github.com/RidRisR/kvproto v0.0.0-20260916105254-698a8958f774 h1:bWNxy3CyzRiB1VBINFs9wp6Ze697giPLV9wkiuknDmk=
+github.com/RidRisR/kvproto v0.0.0-20260916105254-698a8958f774/go.mod h1:z6+aAHB7dBkA+LyinEX+48/ImRJ3jag0Hg0c7wkhEvE=
 github.com/VividCortex/ewma v1.1.1/go.mod h1:2Tkkvm3sRDVXaiyucHiACn4cqf7DpdyLvmxzcbUokwA=
 github.com/VividCortex/ewma v1.2.0 h1:f58SaIzcDXrSy3kWaHNvuJgJ3Nmz59Zji6XoJR/q1ow=
 github.com/VividCortex/ewma v1.2.0/go.mod h1:nz4BbCtbLyFDeC9SUHbtcT5644juEuWfUAUnGx7j5l4=
