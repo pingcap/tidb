@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -134,8 +135,15 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			}
 		}
 	case http.MethodPost:
+		ctx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
+		defer cancel()
 		for _, st := range stores {
-			res := st.RefreshStoreCache(req.Context(), storeID)
+			if ctx.Err() != nil {
+				out.Ready = false
+				out.Errors = append(out.Errors, ctx.Err().Error())
+				break
+			}
+			res := st.RefreshStoreCache(ctx, storeID)
 			item := regionCacheStoreResult{
 				Keyspace:  st.GetKeyspace(),
 				ClusterID: st.GetClusterID(),
