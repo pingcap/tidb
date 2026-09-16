@@ -462,6 +462,16 @@ create or replace view v  as select * from t_v2;
 select * from information_schema.views where table_name ='v' and table_schema='executor__ddl';
 TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	VIEW_DEFINITION	CHECK_OPTION	IS_UPDATABLE	DEFINER	SECURITY_TYPE	CHARACTER_SET_CLIENT	COLLATION_CONNECTION
 def	executor__ddl	v	SELECT `executor__ddl`.`t_v2`.`a` AS `a`,`executor__ddl`.`t_v2`.`b` AS `b` FROM `executor__ddl`.`t_v2`	CASCADED	NO	root@%	DEFINER	utf8mb4	utf8mb4_general_ci
+drop view if exists v_check_bare, v_check_cascaded, v_check_local;
+create view v_check_bare as select * from t_v1 with check option;
+create view v_check_cascaded as select * from t_v1 with cascaded check option;
+create view v_check_local as select * from t_v1 with local check option;
+select table_name, check_option from information_schema.views where table_schema='executor__ddl' and table_name in ('v_check_bare','v_check_cascaded','v_check_local') order by table_name;
+table_name	check_option
+v_check_bare	CASCADED
+v_check_cascaded	CASCADED
+v_check_local	LOCAL
+drop view v_check_bare, v_check_cascaded, v_check_local;
 drop database if exists aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
 create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
 drop database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
