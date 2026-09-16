@@ -15,6 +15,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/pkg/utils/tlsutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
 const tidbServerInformationPath = "/tidb/server/info"
@@ -57,7 +58,11 @@ func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string, secu
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	defer cli.Close()
+	defer func() {
+		if err := cli.Close(); err != nil {
+			tctx.L().Warn("close cluster-check etcd client failed", zap.Error(err))
+		}
+	}()
 	tidbDDLIDs, err := GetTiDBDDLIDs(tctx, db)
 	if err != nil {
 		return false, err
