@@ -2125,7 +2125,9 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), srcCol, dstType)
+				// CAST can infer an unspecified string length from this branch.
+				// Do not narrow the shared UNION type or other branches' casts.
+				exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), srcCol, dstType.Clone())
 			} else {
 				exprs[i] = srcCol
 			}
