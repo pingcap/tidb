@@ -25,7 +25,7 @@ import (
 type regionCacheStore interface {
 	GetStoreCacheStatus(storeID uint64) tikv.StoreCacheStatus
 	RefreshStoreCache(ctx context.Context, storeID uint64) tikv.StoreCacheRefreshResult
-	ResetStoreCacheRefresh(storeID uint64)
+	ResetStoreCacheRefresh(storeID uint64) error
 	GetClusterID() uint64
 	GetKeyspace() string
 }
@@ -151,7 +151,18 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 				break
 			}
 			if reset {
-				st.ResetStoreCacheRefresh(storeID)
+				if err := st.ResetStoreCacheRefresh(storeID); err != nil {
+					item := regionCacheStoreResult{
+						Keyspace:  st.GetKeyspace(),
+						ClusterID: st.GetClusterID(),
+						Ready:     false,
+						Errors:    []string{err.Error()},
+					}
+					out.Stores = append(out.Stores, item)
+					out.Errors = append(out.Errors, err.Error())
+					out.Ready = false
+					continue
+				}
 			}
 			res := st.RefreshStoreCache(ctx, storeID)
 			item := regionCacheStoreResult{
