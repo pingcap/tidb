@@ -598,11 +598,14 @@ impl AggState {
                     }
                 };
                 let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
-                let retained_key = self.distinct_inputs.is_some().then(|| key.clone());
                 let key = GoString::from_bytes(key);
                 if seen.contains(&key) {
                     return Ok(0);
                 }
+                let retained_key = self
+                    .distinct_inputs
+                    .is_some()
+                    .then(|| key.as_bytes().to_vec());
                 let map_delta = seen.insert(key);
                 delta += key_bytes + map_delta;
                 if let Some(inputs) = &mut self.distinct_inputs {
@@ -703,13 +706,16 @@ impl AggState {
         if !matches!(self.partial, Partial::Count(_)) {
             return None;
         }
-        let retained_key = self.distinct_inputs.is_some().then(|| key.clone());
         let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
         let key = GoString::from_bytes(key);
         let seen = self.seen.as_mut()?;
         if seen.contains(&key) {
             return Some(0);
         }
+        let retained_key = self
+            .distinct_inputs
+            .is_some()
+            .then(|| key.as_bytes().to_vec());
         let mut delta = seen.insert(key);
         if key_memory {
             delta = delta.saturating_add(key_bytes);
