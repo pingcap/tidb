@@ -593,6 +593,12 @@ func TestTransactionContextSavepoint(t *testing.T) {
 
 func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	sessVars := variable.NewSessionVars(nil)
+	sessVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	for _, name := range []string{"sql_mode", "character_set_client", "character_set_connection", "collation_connection"} {
+		value, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		require.NoError(t, err)
+		require.NoError(t, sessVars.SetSystemVar(name, value))
+	}
 	sessVars.SessionPlanCacheSize = 100
 	sql1 := "select * from t where a>?"
 	sql2 := "select * from t where a<?"
@@ -606,6 +612,26 @@ func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
+	for _, setting := range []struct{ name, value string }{
+		{"sql_mode", "ANSI_QUOTES"},
+		{"character_set_client", "gbk"},
+		{"character_set_connection", "latin1"},
+		{"collation_connection", "utf8mb4_unicode_ci"},
+	} {
+		original, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), setting.name)
+		require.NoError(t, err)
+		require.NoError(t, sessVars.SetSystemVar(setting.name, setting.value))
+		require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1), setting.name)
+		require.NoError(t, sessVars.SetSystemVar(setting.name, original))
+		require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1), setting.name)
+	}
+	sessVars.EnableWindowFunction = !sessVars.EnableWindowFunction
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	sessVars.EnableWindowFunction = !sessVars.EnableWindowFunction
+	sessVars.EnableStrictDoubleTypeCheck = !sessVars.EnableStrictDoubleTypeCheck
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	sessVars.EnableStrictDoubleTypeCheck = !sessVars.EnableStrictDoubleTypeCheck
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
 }
 
 func TestHookContext(t *testing.T) {
