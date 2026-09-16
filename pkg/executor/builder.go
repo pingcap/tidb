@@ -2287,7 +2287,7 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 				ordinal = append(ordinal, partialOrdinal+1)
 				partialOrdinal++
 			}
-			partialAggDesc, finalDesc := aggDesc.Split(ordinal)
+			partialAggDesc, finalDesc := aggDesc.Split(exprCtx.GetEvalCtx(), ordinal)
 			partialAggFunc := aggfuncs.Build(exprCtx, partialAggDesc, i)
 			finalAggFunc := aggfuncs.Build(exprCtx, finalDesc, i)
 			e.PartialAggFuncs = append(e.PartialAggFuncs, partialAggFunc)
