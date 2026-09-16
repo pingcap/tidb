@@ -3613,6 +3613,199 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
     })
 }
 
+/// Plans one execution step of a persisted `ACTION_CREATE_TABLES` job (the
+/// batch form BR restore submits: one job carrying every restored table).
+///
+/// Pinned Go `onCreateTables` (`pkg/ddl/create_table.go`): the submitter
+/// allocated every `TableInfo.ID` up front and packed the per-table args
+/// (`tables: [{table_info, fk_check}, ...]`) into the job's raw args; the
+/// owner re-checks the target schema and each table's name/ID against the
+/// catalog (any conflict cancels the whole job, Go cancels on the first
+/// failing table), publishes every table `PUBLIC` in one meta write, bumps
+/// the schema version once with a `CREATE TABLES` diff, and finishes the job
+/// into history as `synced`. No backfill: one step is terminal.
+pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    use serde_json::Value as Json;
+
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_CREATE_TABLES {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} has unsupported action {}",
+            active.job.type_
+        )));
+    }
+    if active.job.real_start_ts == 0 {
+        active.job.real_start_ts = start_ts;
+    }
+    if active.job.state != JobState::ROLLINGBACK {
+        active.job.state = JobState::RUNNING;
+    }
+
+    // Pinned Go `GetBatchCreateTableArgs`: the v2 envelope is
+    // `{"tables": [{"table_info": <Go TableInfo JSON>, "fk_check": bool}]}`
+    // decoded through the same serde surface as the single-table args.
+    let args = tidb_model::get_batch_create_table_args(&mut active.job)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .ok_or_else(|| DdlPlanError::Encode("CREATE TABLES job has nil args".to_owned()))?;
+
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+
+    let handles: Vec<Option<GoShared<tidb_model::CreateTableArgs>>> = args.read().tables.get().handles();
+    let mut table_infos = Vec::new();
+    let mut cancel_reason: Option<String> = None;
+    for handle in handles {
+        let Some(table_args) = handle else {
+            cancel_reason = Some("CREATE TABLES job carries a nil table args entry".to_owned());
+            break;
+        };
+        let Some(info_handle) = table_args.read().table_info.get() else {
+            cancel_reason = Some("CREATE TABLES job carries a table with nil table_info".to_owned());
+            break;
+        };
+        let mut table_info = info_handle.read().clone();
+        // Go `onCreateTables`: the submitter already allocated every
+        // `TableInfo.ID` (the batch job's own TableID stays 0); the owner
+        // keeps the submitted IDs verbatim.
+        let name_taken = database
+            .tables
+            .iter()
+            .any(|table| table.name.lowercase() == table_info.name.lowercase());
+        let id_taken = database
+            .tables
+            .iter()
+            .any(|table| table.id == table_info.id);
+        if name_taken || id_taken {
+            cancel_reason = Some(format!(
+                "table '{}.{}' already exists (id {})",
+                database.info.name.original(),
+                table_info.name.original(),
+                table_info.id
+            ));
+            break;
+        }
+        table_infos.push(table_info);
+    }
+
+    let cancelled = cancel_reason.is_some();
+
+    let schema_version = if cancelled { 0 } else { catalog.schema_version + 1 };
+    let mut mutations = Vec::new();
+    let first_id = table_infos.first().map(|info| info.id).unwrap_or(0);
+    let diff = if cancelled {
+        SchemaDiff::default()
+    } else {
+        for info in &table_infos {
+            let mut info = info.clone();
+            info.state = SchemaState::PUBLIC;
+            info.update_ts = start_ts;
+            mutations.push(OptimisticMutation::meta_put(
+                key::table_kv_key(database.info.id, info.id),
+                value::serialize_table_info(&info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+        }
+        let diff = SchemaDiff {
+            version: schema_version,
+            action_type: active.job.type_,
+            schema_id: database.info.id,
+            table_id: first_id,
+            ..SchemaDiff::default()
+        };
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_version_kv_key(),
+            value::encode_int_value(schema_version),
+        )?);
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_diff_kv_key(schema_version),
+            value::serialize_schema_diff(&diff)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        active.job.last_schema_version = schema_version;
+        diff
+    };
+
+    if !cancelled {
+        if let Some(first) = table_infos.first() {
+            active.job.finish_table_job(
+                JobState::DONE,
+                SchemaState::PUBLIC,
+                schema_version,
+                Some(GoShared::new(first.clone())),
+            );
+            // Go's owner flips the history job from `done` to `synced` once
+            // every peer has applied the version; the submitter's wait loop
+            // only accepts `synced` (or a cancelled job with a non-nil
+            // error). One atomic transaction publishes every table and the
+            // final synced state together.
+            active.job.state = JobState::SYNCED;
+        }
+    } else if let Some(reason) = &cancel_reason {
+        active.job.error = Some(GoShared::new(
+            tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(1050),
+                reason.clone(),
+            ),
+        ));
+    }
+    if let Some(binlog) = active.job.binlog_info.as_ref() {
+        binlog.write().finished_ts = start_ts;
+    }
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ =
+            history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    let _ = first_id;
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
+    })
+}
+
 /// Plans pinned Go `onCreateMaterializedViewLog` (master `94a9cbedab`):
 /// the one owner transaction that turns a submitted create-log job into the
 /// created `$mlog$` table, the base table's `MLogID` back-reference, the
