@@ -615,46 +615,48 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 		IsCommonHandle: false,
 	}
 
-	tbl := tables.MockTableFromMeta(tblInfo)
-	require.NotNil(t, tbl)
-
-	pt, ok := tbl.(table.PartitionedTable)
-	require.True(t, ok)
-
-	// a=1 => 1%2=1 => partition index 1 => part1ID.
-	row := []types.Datum{
-		types.NewIntDatum(1),
-		types.NewDatum(nil), // NULL => distinct=false for UNIQUE index
+	for _, newID := range []int64{0, newTableID} {
+		t.Run(fmt.Sprintf("newTableID=%d", newID), func(t *testing.T) {
+			tblInfo.Partition.NewTableID = newID
+			tbl := tables.MockTableFromMeta(tblInfo)
+			require.NotNil(t, tbl)
+			wantTableID := tableID
+			if newID != 0 {
+				wantTableID = newID
+			}
+			for _, value := range []types.Datum{types.NewDatum(nil), types.NewIntDatum(7)} {
+				t.Run(fmt.Sprintf("null=%t", value.IsNull()), func(t *testing.T) {
+					var keys []kv.Key
+					for a, physicalID := range []int64{part0ID, part1ID} {
+						sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()
+						row := []types.Datum{types.NewIntDatum(int64(a)), value}
+						h := kv.IntHandle(handleID)
+						// Use the logical index with an explicit partition handle as the oracle:
+						// it must match the physical index selected by the helper.
+						expectedKey, _, err := tbl.Indices()[0].GenIndexKey(
+							errctx.StrictNoWarningContext, sctx.GetSessionVars().StmtCtx.TimeZone(),
+							[]types.Datum{value}, kv.NewPartitionHandle(physicalID, h), nil)
+						require.NoError(t, err)
+						count, err := addUnchangedKeysForLockByRow(sctx, tbl, h, row, lockUniqueKeys)
+						require.NoError(t, err)
+						require.Equal(t, 1, count)
+						gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
+						require.Len(t, gotKeys, 1)
+						require.Equal(t, expectedKey, []byte(gotKeys[0]))
+						require.Equal(t, wantTableID, tablecodec.DecodeTableID(gotKeys[0]))
+						keys = append(keys, gotKeys[0])
+					}
+					// NULL keys include the partition ID even when handles are identical;
+					// non-NULL unique keys must conflict across partitions.
+					if value.IsNull() {
+						require.NotEqual(t, keys[0], keys[1])
+					} else {
+						require.Equal(t, keys[0], keys[1])
+					}
+				})
+			}
+		})
 	}
-	h := kv.IntHandle(handleID)
-
-	physicalTbl, err := pt.GetPartitionByRow(sctx.GetExprCtx().GetEvalCtx(), row)
-	require.NoError(t, err)
-	physicalID := physicalTbl.GetPhysicalID()
-	require.Equal(t, part1ID, physicalID)
-
-	// Expected: same key as idx.GenIndexKey, which switches to pi.NewTableID when
-	// pi.DDLChangedIndex[idx.ID] is true.
-	idx := tbl.Indices()[0]
-	ukVals, err := idx.FetchValues(row, nil)
-	require.NoError(t, err)
-	fullHandle := kv.NewPartitionHandle(physicalID, h)
-	expectedKey, _, err := idx.GenIndexKey(
-		errctx.StrictNoWarningContext,
-		sctx.GetSessionVars().StmtCtx.TimeZone(),
-		ukVals,
-		fullHandle,
-		nil,
-	)
-	require.NoError(t, err)
-
-	count, err := addUnchangedKeysForLockByRow(sctx, tbl, h, row, lockUniqueKeys)
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
-
-	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
-	require.Len(t, gotKeys, 1)
-	require.Equal(t, expectedKey, []byte(gotKeys[0]))
 }
 
 func TestUnchangedPartialAndMultiValueIndexKeys(t *testing.T) {
