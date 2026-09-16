@@ -4533,6 +4533,7 @@ def go_deps():
     )
     go_repository(
         name = "com_github_tikv_pd_client",
+        build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
         sum = "h1:q5NgKsvuOdEHspG/pZEpKhWlPLrIfmO8P/lDFjTEdok=",
@@ -5830,8 +5831,8 @@ def go_deps():
         version = "v0.25.1",
     )
     go_repository(
-        name = "ht_sr_git_sbinet_gg",
-        build_file_proto_mode = "disable",
+        name = "ht_sr_git_~sbinet_gg",
+        build_file_proto_mode = "disable_global",
         importpath = "git.sr.ht/~sbinet/gg",
         sum = "h1:LNhjNn8DerC8f9DHLz6lS0YYul/b602DUxDgGkd/Aik=",
         version = "v0.3.1",

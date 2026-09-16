@@ -79,7 +79,7 @@ go_test(
     ],
     embed = [":tikvhandler"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/schstatus",
