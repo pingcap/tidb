@@ -10,3 +10,14 @@ select cast(v as double) x from float_probe;
 select s.x from (select cast(v as double) x from float_probe) s;
 select distinct s.x from (select cast(v as double) x from float_probe) s;
 drop table float_probe;
+
+create table fixed_float(v float(8,2));
+select 1 v where false union select ln(45) union all select v from fixed_float where false;
+select v from (select 1 v where false union select ln(45) union all select v from fixed_float where false)d;
+with c as(select 1 v where false union select ln(45) union all select v from fixed_float where false)select v from c;
+insert into fixed_float values(12.34);
+--sorted_result
+select 1 v where false union select ln(45) union all select v from fixed_float;
+--sorted_result
+select v from (select 1 v where false union select ln(45) union all select v from fixed_float)d;
+drop table fixed_float;
