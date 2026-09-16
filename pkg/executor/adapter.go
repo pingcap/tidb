@@ -1152,6 +1152,8 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e exec.Exe
 			break
 		}
 		if req.NumRows() == 0 {
+			// The returned record set only drains buffered rows; execution ends here.
+			a.recordStatementRURootEOF()
 			return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
@@ -1193,9 +1195,10 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := a.Plan.(*plannercore.Analyze); ok || statementRUIsWritePlan(a.Plan) || statementRUIsCommitPlan(a.Plan) {
-		// ANALYZE, DML and COMMIT complete in their only Next call, so there
-		// is no RecordSet EOF callback to record later.
+	switch classifyStatementRUPlan(a.Plan).kind {
+	case statementRUPlanAnalyze, statementRUPlanWrite, statementRUPlanCommit:
+		// These targets complete in their only Next call. Any EXPLAIN result
+		// set reports work that has already finished executing.
 		a.recordStatementRURootEOF()
 	}
 	err = a.handleStmtForeignKeyTrigger(ctx, e)
@@ -1826,35 +1829,13 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
-func recordDMLRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowCount, columnCount int64) {
-	if rowCount <= 0 || columnCount <= 0 {
-		return
-	}
-
-	rowsColMultiply := rowCount * columnCount
-	if rowCount > math.MaxInt64/columnCount {
-		rowsColMultiply = math.MaxInt64
-	}
-	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddExecutorL5InsertRows(rowsColMultiply)
-	}
-}
-
-func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
-	recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)
-}
-
-// finalizeStatementRUV2Metrics is the sole drain of raw RUv2 counters. In-flight
-// TopRU samples see ResourceManager{Read,Write}Cnt as zero until this runs;
-// per-statement totals telescope correctly across the post-finalize sample.
+// finalizeStatementRUV2Metrics transfers pending TiKV coprocessor response bytes
+// into statement metrics before RUv2 calculation.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
 	}
-
-	execDetail := sessVars.StmtCtx.GetExecDetails()
-	execdetails.UpdateRUV2MetricsFromCommitDetails(sessVars.RUV2Metrics, execDetail.CommitDetail)
 
 	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
 	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
@@ -2463,8 +2444,6 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 		}
 		if topRU {
 			beginInfo.Ctx = a.GoCtx
-			beginInfo.RUV2Metrics = vars.RUV2Metrics
-			beginInfo.RUV2Weights = vars.RUV2Weights()
 			if vars.User != nil {
 				beginInfo.User = vars.User.String()
 			}

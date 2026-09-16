@@ -770,7 +770,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 				zap.Int("expectCount", len(c.mppReqs)), zap.Int("actualCount", received))
 		}
 		stats := c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		// RUv3 accepts partial raw evidence independently of legacy RU consumption.
+		// Statement RU accepts partial raw evidence independently of legacy RU consumption.
 		if stats != nil {
 			for _, summaries := range reports {
 				stats.RecordTiFlashExecutionSummaries(c.planIDs, summaries)

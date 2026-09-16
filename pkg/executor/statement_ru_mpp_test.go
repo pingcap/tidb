@@ -200,7 +200,7 @@ func TestStatementRUMPPPublication(t *testing.T) {
 	fixture.stmt.Ctx = &statementRUReportingContextForTest{Context: ctx, reporter: reporter}
 	var before [statementRUEngineCount]float64
 	for i, name := range statementRUEngineNames {
-		before[i] = testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(name))
+		before[i] = testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues(name))
 	}
 	observed := 0
 	observeStatementRUCalibrationForTest(t, func(snapshot statementRUCalibrationSnapshot) {
@@ -214,6 +214,6 @@ func TestStatementRUMPPPublication(t *testing.T) {
 	require.Equal(t, 1, reporter.calls)
 	require.Equal(t, [3]float64{finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.engineRU.TiFlash}, reporter.ru)
 	for i, want := range []float64{finalized.engineRU.TiDB, finalized.engineRU.TiKV, finalized.engineRU.TiFlash} {
-		require.InDelta(t, want, testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(statementRUEngineNames[i]))-before[i], 1e-9)
+		require.InDelta(t, want, testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues(statementRUEngineNames[i]))-before[i], 1e-9)
 	}
 }

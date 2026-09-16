@@ -115,11 +115,13 @@ func newStatementRUCalculationSetup(stmt *ExecStmt) (statementRUCalculationSetup
 		return statementRUCalculationSetup{}, false
 	}
 	sessVars := stmt.Ctx.GetSessionVars()
-	_, isAnalyze := stmt.Plan.(*plannercore.Analyze)
+	planInfo := classifyStatementRUPlan(stmt.Plan)
 	if sessVars == nil || sessVars.StmtCtx == nil {
 		return statementRUCalculationSetup{}, false
 	}
-	eligible := sessVars.StmtCtx.IsReadOnly || isAnalyze || statementRUIsWritePlan(stmt.Plan) || statementRUIsCommitPlan(stmt.Plan)
+	// Locking SELECTs still perform reads even though they are not read-only.
+	eligible := sessVars.StmtCtx.IsReadOnly || sessVars.StmtCtx.InSelectStmt ||
+		planInfo.kind == statementRUPlanAnalyze || planInfo.kind == statementRUPlanWrite || planInfo.kind == statementRUPlanCommit
 	if !eligible ||
 		sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) ||
 		sessVars.StmtCtx.GetFlatPlan() != nil {
@@ -131,26 +133,60 @@ func newStatementRUCalculationSetup(stmt *ExecStmt) (statementRUCalculationSetup
 	}, true
 }
 
-// statementRUIsWritePlan classifies DML independently of affected rows.
-func statementRUIsWritePlan(plan base.Plan) bool {
-	// Prepared statements are unwrapped by Exec after owner installation.
-	if execute, ok := plan.(*plannercore.Execute); ok {
-		plan = execute.Plan
-	}
-	switch plan.(type) {
-	case *physicalop.Insert, *physicalop.Update, *physicalop.Delete:
-		return true
-	}
-	return false
+type statementRUPlanKind uint8
+
+const (
+	statementRUPlanOther statementRUPlanKind = iota
+	statementRUPlanWrite
+	statementRUPlanCommit
+	statementRUPlanAnalyze
+	statementRUPlanPointLookup
+)
+
+// statementRUPlanInfo is local to an execution phase: retries can rebuild the plan.
+// Other plans still use the statement context for read eligibility.
+type statementRUPlanInfo struct {
+	plan    base.Plan
+	kind    statementRUPlanKind
+	sqlType string
 }
 
-func statementRUIsCommitPlan(plan base.Plan) bool {
-	simple, ok := plan.(*plannercore.Simple)
-	if !ok {
-		return false
+// classifyStatementRUPlan resolves executing wrappers and classifies the target
+// in one traversal, independently of affected rows or committed keys. A plain
+// EXPLAIN only renders a plan and must never charge its unexecuted target.
+func classifyStatementRUPlan(plan base.Plan) statementRUPlanInfo {
+	info := statementRUPlanInfo{plan: plan, sqlType: "select"}
+	for {
+		switch plan := info.plan.(type) {
+		case *plannercore.Execute:
+			// Owner installation happens before Exec unwraps prepared statements.
+			info.plan = plan.Plan
+			continue
+		case *plannercore.Explain:
+			if plan.Analyze {
+				info.plan = plan.TargetPlan
+				continue
+			}
+		case *physicalop.Insert:
+			info.kind, info.sqlType = statementRUPlanWrite, "insert"
+			if plan.IsReplace {
+				info.sqlType = "replace"
+			}
+		case *physicalop.Update:
+			info.kind, info.sqlType = statementRUPlanWrite, "update"
+		case *physicalop.Delete:
+			info.kind, info.sqlType = statementRUPlanWrite, "delete"
+		case *plannercore.Analyze:
+			info.kind, info.sqlType = statementRUPlanAnalyze, "analyze"
+		case *plannercore.Simple:
+			if _, ok := plan.Statement.(*ast.CommitStmt); ok {
+				info.kind, info.sqlType = statementRUPlanCommit, "commit"
+			}
+		case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+			info.kind = statementRUPlanPointLookup
+		}
+		return info
 	}
-	_, ok = simple.Statement.(*ast.CommitStmt)
-	return ok
 }
 
 func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
@@ -284,7 +320,7 @@ func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
 	finalized statementRUFinalizedSnapshot,
 ) {
-	reportStatementRUV3ConsumptionSafely(stmt, finalized.engineRU)
+	reportStatementRUV2ConsumptionSafely(stmt, finalized.engineRU)
 	publishStatementRUMetricsSafely(finalized)
 	if finalized.report == nil {
 		return
@@ -295,7 +331,7 @@ func publishStatementRUFinalizedSnapshot(
 	})
 }
 
-func reportStatementRUV3ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
+func reportStatementRUV2ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
 	defer func() {
 		_ = recover()
 	}()
@@ -317,7 +353,7 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 			publishStatementRUFailureSafely(statementRUPanic)
 		}
 	}()
-	metrics.AddRUV3Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.engineRU.TiFlash, finalized.result.TotalRU, finalized.sqlType)
+	metrics.AddRUV2Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.engineRU.TiFlash, finalized.result.TotalRU, finalized.sqlType)
 	if finalized.report != nil {
 		publishStatementRUFullMetrics(finalized)
 	}

@@ -73,6 +73,12 @@ type StmtWeights struct {
 	WriteByte           float64 `toml:"write-byte" json:"write-byte"`
 }
 
+// DDLWeights contains the coefficient for each DDL RU v2 byte unit.
+type DDLWeights struct {
+	TxnKVBytes    float64 `toml:"txn-kv-bytes" json:"txn-kv-bytes"`
+	IngestKVBytes float64 `toml:"ingest-kv-bytes" json:"ingest-kv-bytes"`
+}
+
 // StmtResult contains the weighted RU v3 total.
 type StmtResult struct {
 	TotalRU float64
@@ -93,6 +99,31 @@ func DefaultWeights() StmtWeights {
 		WriteKey:            1,
 		WriteByte:           1,
 	}
+}
+
+// DefaultDDLWeights returns the deliberately uncalibrated DDL weights used by
+// the current RU v2 model. They are placeholders, not billing values.
+func DefaultDDLWeights() DDLWeights {
+	return DDLWeights{
+		TxnKVBytes:    1,
+		IngestKVBytes: 1,
+	}
+}
+
+// Validate checks that every DDL weight is finite and nonnegative.
+func (weights DDLWeights) Validate() error {
+	for _, weight := range []struct {
+		name  string
+		value float64
+	}{
+		{"txn-kv-bytes", weights.TxnKVBytes},
+		{"ingest-kv-bytes", weights.IngestKVBytes},
+	} {
+		if !validValues(weight.value) {
+			return fmt.Errorf("%s must be finite and non-negative, got %v", weight.name, weight.value)
+		}
+	}
+	return nil
 }
 
 // Valid reports whether every raw unit is finite and nonnegative.

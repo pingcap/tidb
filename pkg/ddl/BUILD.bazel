@@ -153,6 +153,7 @@ go_library(
         "//pkg/parser/types",
         "//pkg/privilege",
         "//pkg/resourcegroup",
+        "//pkg/resourcegroup/ruv2",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/resourcemanager/util",
         "//pkg/sessionctx",

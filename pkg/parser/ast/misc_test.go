@@ -80,6 +80,8 @@ func TestMiscVisitorCover(t *testing.T) {
 				{},
 			},
 		},
+		&ast.PurgeMaterializedViewLogStmt{Table: &ast.TableName{}},
+		&ast.CancelMaterializedViewJobStmt{Tp: ast.CancelMaterializedViewJobTypeLogPurge},
 		&ast.ShutdownStmt{},
 	}
 
@@ -87,6 +89,16 @@ func TestMiscVisitorCover(t *testing.T) {
 		ast.Walk(v, visitor{})
 		ast.Walk(v, visitor1{})
 	}
+}
+
+func TestPurgeMaterializedViewLogStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.PurgeMaterializedViewLogStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestCancelMaterializedViewJobStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.CancelMaterializedViewJobStmt{}).(ast.StmtNode)
+	require.True(t, ok)
 }
 
 func TestDDLVisitorCoverMisc(t *testing.T) {

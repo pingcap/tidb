@@ -191,30 +191,6 @@ func (report *statementRUFullReport) addStatementUnits(units ruv2.StmtUnits) {
 	}
 }
 
-// statementRUSQLTypeForPlan classifies a successfully calculated statement by
-// its executed plan. Prepared statements have already been unwrapped, and the
-// type is independent of affected rows or whether a transaction wrote any keys.
-func statementRUSQLTypeForPlan(plan base.Plan) string {
-	switch plan := plan.(type) {
-	case *physicalop.Insert:
-		if plan.IsReplace {
-			return "replace"
-		}
-		return "insert"
-	case *physicalop.Update:
-		return "update"
-	case *physicalop.Delete:
-		return "delete"
-	case *plannercore.Analyze:
-		return "analyze"
-	case *plannercore.Simple:
-		// COMMIT is the only supported Simple plan.
-		return "commit"
-	default:
-		return "select"
-	}
-}
-
 func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
 	for engine, operators := range finalized.report.units {
 		for operator, units := range operators {
@@ -225,26 +201,26 @@ func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
 				name  string
 				value float64
 			}{
-				{metrics.LblRUV3UnitCPUWork, units.CPUWork},
-				{metrics.LblRUV3UnitScanBytes, units.ScanBytes},
-				{metrics.LblRUV3UnitNetBytes, units.NetBytes},
-				{metrics.LblRUV3UnitCrossAZNetBytes, units.CrossAZNetBytes},
-				{metrics.LblRUV3UnitFrontendCompileBytes, units.FrontendCompileBytes},
-				{metrics.LblRUV3UnitHashStateRows, units.HashStateRows},
-				{metrics.LblRUV3UnitJoinOutputRows, units.JoinOutputRows},
-				{metrics.LblRUV3UnitWriteStatement, units.WriteStatement},
-				{metrics.LblRUV3UnitOperatorNum, units.OperatorNum},
-				{metrics.LblRUV3UnitWriteKeys, units.WriteKeys},
-				{metrics.LblRUV3UnitWriteBytes, units.WriteBytes},
+				{metrics.LblRUV2UnitCPUWork, units.CPUWork},
+				{metrics.LblRUV2UnitScanBytes, units.ScanBytes},
+				{metrics.LblRUV2UnitNetBytes, units.NetBytes},
+				{metrics.LblRUV2UnitCrossAZNetBytes, units.CrossAZNetBytes},
+				{metrics.LblRUV2UnitFrontendCompileBytes, units.FrontendCompileBytes},
+				{metrics.LblRUV2UnitHashStateRows, units.HashStateRows},
+				{metrics.LblRUV2UnitJoinOutputRows, units.JoinOutputRows},
+				{metrics.LblRUV2UnitWriteStatement, units.WriteStatement},
+				{metrics.LblRUV2UnitOperatorNum, units.OperatorNum},
+				{metrics.LblRUV2UnitWriteKeys, units.WriteKeys},
+				{metrics.LblRUV2UnitWriteBytes, units.WriteBytes},
 			} {
 				if unit.value == 0 {
 					continue
 				}
-				metrics.RUV3Unit.WithLabelValues(statementRUEngineNames[engine], statementRUOperatorNames[operator], unit.name).Add(unit.value)
+				metrics.RUV2Unit.WithLabelValues(statementRUEngineNames[engine], statementRUOperatorNames[operator], unit.name).Add(unit.value)
 			}
 		}
 	}
-	metrics.RUV3Statements.WithLabelValues("success", finalized.calibrationState.String()).Inc()
+	metrics.RUV2Statements.WithLabelValues("success", finalized.calibrationState.String()).Inc()
 }
 
 // These reasons are terminal calculation outcomes, not claims of complete
@@ -281,5 +257,5 @@ func publishStatementRUFailureSafely(reason statementRUFailureReason) {
 	if reason == statementRUIneligible || reason == statementRUUnsupported {
 		status = "skipped"
 	}
-	metrics.RUV3Statements.WithLabelValues(status, string(reason)).Inc()
+	metrics.RUV2Statements.WithLabelValues(status, string(reason)).Inc()
 }

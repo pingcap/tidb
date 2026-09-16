@@ -59,6 +59,8 @@ var (
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
+	_ StmtNode = &PurgeMaterializedViewLogStmt{}
+	_ StmtNode = &CancelMaterializedViewJobStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 	_ StmtNode = &TrafficStmt{}
 	_ StmtNode = &RecommendIndexStmt{}
@@ -649,6 +651,68 @@ func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Table = node.(*TableName)
+	return v.Leave(n)
+}
+
+// PurgeMaterializedViewLogStmt is a statement to purge a materialized view log on a base table.
+type PurgeMaterializedViewLogStmt struct {
+	stmtNode
+
+	Table *TableName
+}
+
+// CancelMaterializedViewJobType identifies the materialized-view job targeted by CANCEL.
+type CancelMaterializedViewJobType uint8
+
+const (
+	// CancelMaterializedViewJobTypeLogPurge targets materialized view log purge jobs.
+	CancelMaterializedViewJobTypeLogPurge CancelMaterializedViewJobType = iota + 1
+)
+
+// CancelMaterializedViewJobStmt represents CANCEL MATERIALIZED VIEW LOG PURGE JOB.
+type CancelMaterializedViewJobStmt struct {
+	stmtNode
+
+	Tp    CancelMaterializedViewJobType
+	JobID int64
+}
+
+// Restore implements Node interface.
+func (n *CancelMaterializedViewJobStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.Tp != CancelMaterializedViewJobTypeLogPurge {
+		return errors.Errorf("invalid materialized view job cancel type: %d", n.Tp)
+	}
+	ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW LOG PURGE JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// Accept implements Node interface.
+func (n *CancelMaterializedViewJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+// Restore implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PURGE MATERIALIZED VIEW LOG ON ")
+	return n.Table.Restore(ctx)
+}
+
+// Accept implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PurgeMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 

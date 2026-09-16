@@ -163,10 +163,10 @@ func (observation *StatementRUOwnerObservationForTest) RecordedSuccessForTest() 
 
 func TestStatementRUCalculationTraversal(t *testing.T) {
 	// A large total from earlier tests can lose precision when measuring increments.
-	oldTotal := metrics.RUV3Total
-	metrics.RUV3Total = prometheus.NewCounter(prometheus.CounterOpts{Name: "test_statement_ru_total"})
+	oldTotal := metrics.RUV2Total
+	metrics.RUV2Total = prometheus.NewCounter(prometheus.CounterOpts{Name: "test_statement_ru_total"})
 	t.Cleanup(func() {
-		metrics.RUV3Total = oldTotal
+		metrics.RUV2Total = oldTotal
 	})
 	t.Run("MemTable and Lock preserve child work", func(t *testing.T) {
 		ctx := mock.NewContext()
@@ -360,7 +360,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
 		require.True(t, ok)
 		requireStatementRUReportConservation(t, finalized)
-		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		totalBefore := testutil.ToFloat64(metrics.RUV2Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
 		fixture.stmt.finishStatementRUForTest(nil)
@@ -381,7 +381,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		wantResult, valid := ruv2.Calculate(wantUnits, ruv2.DefaultWeights())
 		require.True(t, valid)
 		require.InDelta(t, wantResult.TotalRU,
-			testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
+			testutil.ToFloat64(metrics.RUV2Total)-totalBefore, 1e-9)
 		require.Zero(t, fixture.owner.calculationSetup)
 	}
 	requireNoPublication := func(t *testing.T, fixture statementRUSimpleSelectFixture) {
@@ -389,10 +389,10 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
 		})
-		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		totalBefore := testutil.ToFloat64(metrics.RUV2Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
-		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV2Total))
 		require.Zero(t, calibrationCount.Load())
 	}
 	calculateFixtureState := func(fixture statementRUSimpleSelectFixture) statementRUOperatorState {
@@ -624,6 +624,9 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		stmt.recordStatementRURootEOF()
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 1000)
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 9)
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddTiKVCoprocessorResponseBytes(29)
+		ctx.GetSessionVars().RUV2Metrics = metrics
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopStats(
 			plan.ID(),
 			kv.TiKV,
@@ -635,6 +638,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 
 		requirePublication(t, statementRUSimpleSelectFixture{stmt: stmt, owner: stmt.statementRUOwner}, ruv2.StmtUnits{
 			ScanBytes: 1009,
+			NetBytes:  29,
 		})
 	})
 

@@ -212,7 +212,7 @@ func TestLogSlowLogIndex(t *testing.T) {
 		Check(testkit.Rows("[t:idx]"))
 }
 
-func TestLogSlowLogRUV3(t *testing.T) {
+func TestLogSlowLogRUV2(t *testing.T) {
 	enableStatementRUExecutionInfo(t)
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
