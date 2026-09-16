@@ -242,11 +242,13 @@ impl BuildRowSource for RowBytesMap {
 /// Statement expressions shared by the build or probe workers. Evaluation
 /// borrows a whole chunk and returns the worker's reusable physical-row mask.
 pub struct JoinFilter<'a> {
-    evaluate: Box<dyn Fn(&Chunk, Vec<bool>) -> Result<Vec<bool>, tidb_expr::EvalError> + Sync + 'a>,
+    evaluate: Box<
+        dyn Fn(&Chunk, Vec<bool>) -> Result<Vec<bool>, tidb_expr::EvalError> + Send + Sync + 'a,
+    >,
 }
 
 impl<'a> JoinFilter<'a> {
-    pub fn new<C: tidb_expr::Columns + Sync + 'a>(
+    pub fn new<C: tidb_expr::Columns + Send + Sync + 'a>(
         context: C,
         predicates: Vec<tidb_expr::expression::Expression>,
         vectorized: bool,

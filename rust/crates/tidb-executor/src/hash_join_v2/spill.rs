@@ -157,7 +157,7 @@ pub struct HashJoinSpill {
     build_types: Vec<FieldType>,
     probe_types: Vec<FieldType>,
     concurrency: usize,
-    lanes: Vec<Mutex<SpillLane>>,
+    lanes: Vec<Arc<Mutex<SpillLane>>>,
     spilled: Vec<bool>,
     stack: Vec<RestorePartition>,
     valid_rows: u64,
@@ -301,7 +301,7 @@ impl HashJoinSpill {
             if self.lanes.is_empty() {
                 self.lanes = (0..self.concurrency)
                     .map(|_| {
-                        Mutex::new(SpillLane {
+                        Arc::new(Mutex::new(SpillLane {
                             files: (0..self.spilled.len()).map(|_| None).collect(),
                             chunk: Chunk::new(
                                 &self.build_types,
@@ -309,7 +309,7 @@ impl HashJoinSpill {
                                 SPILL_CHUNK_SIZE,
                             ),
                             valid_keys: Vec::new(),
-                        })
+                        }))
                     })
                     .collect();
             }
@@ -333,64 +333,105 @@ impl HashJoinSpill {
                 (control.consumed, control.limit)
             };
             tracing::info!(consumed, quota, "memory exceeds quota, spill to disk now.");
-            let memory = &self.memory;
-            let disk_tracker = &self.disk_tracker;
-            let build_types = &self.build_types;
-            let probe_types = &self.probe_types;
-            let valid_rows = std::thread::scope(|scope| {
-                let mut workers = Vec::new();
-                for (lane, tables) in self.lanes.iter_mut().zip(tables.iter_mut()) {
-                    let lane = lane
-                        .get_mut()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    let selected = &selected;
-                    workers.push(scope.spawn(move || {
-                        recover_worker_panic(|| {
+            let memory = self.memory.clone();
+            let disk_tracker = Arc::clone(&self.disk_tracker);
+            let build_types = self.build_types.clone();
+            let probe_types = self.probe_types.clone();
+            let spill_lanes =
+                crate::worker_pool::LanePool::new("hash-join-spill", self.concurrency);
+
+            // Take only the selected row-table options out of the caller's
+            // slices. The spill lanes themselves stay in `self` and retain
+            // their disk handles and reusable chunks between barriers.
+            let mut jobs = Vec::with_capacity(tables.len());
+            for (worker, worker_tables) in tables.iter_mut().enumerate() {
+                let owned_tables = selected
+                    .iter()
+                    .map(|&id| (id, worker_tables[id].take()))
+                    .collect::<Vec<_>>();
+                jobs.push((worker, owned_tables));
+            }
+
+            let (result_tx, result_rx) = std::sync::mpsc::sync_channel(tables.len());
+            for (worker, mut owned_tables) in jobs {
+                let lane = Arc::clone(&self.lanes[worker]);
+                let selected = selected.clone();
+                let memory = memory.clone();
+                let disk_tracker = Arc::clone(&disk_tracker);
+                let build_types = build_types.clone();
+                let probe_types = probe_types.clone();
+                let result_tx = result_tx.clone();
+                spill_lanes
+                    .submit(move || {
+                        let outcome = recover_worker_panic(|| {
                             let mut valid = 0;
-                            for &id in selected {
+                            let mut lane =
+                                lane.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                            let SpillLane {
+                                files: lane_files,
+                                chunk: lane_chunk,
+                                valid_keys: lane_valid_keys,
+                            } = &mut *lane;
+                            for &id in &selected {
                                 memory.check()?;
-                                let files = lane.files[id].get_or_insert_with(|| {
+                                let mut files = lane_files[id].take().unwrap_or_else(|| {
                                     let build = DataInDiskByChunks::new(
                                         build_types.clone(),
                                         "hash-join-v2-build-",
                                         memory.spill_storage(),
                                     );
-                                    build.disk_tracker().attach_to(disk_tracker);
+                                    build.disk_tracker().attach_to(&disk_tracker);
                                     let probe = DataInDiskByChunks::new(
                                         probe_types.clone(),
                                         "hash-join-v2-probe-",
                                         memory.spill_storage(),
                                     );
-                                    probe.disk_tracker().attach_to(disk_tracker);
+                                    probe.disk_tracker().attach_to(&disk_tracker);
                                     PartitionFiles { build, probe }
                                 });
-                                if let Some(table) = tables[id].take() {
-                                    valid += spill_segments(
-                                        &mut files.build,
-                                        &mut lane.chunk,
-                                        &mut lane.valid_keys,
-                                        &table.segments,
-                                        memory,
-                                    )?;
+                                if let Some((_, table)) = owned_tables
+                                    .iter_mut()
+                                    .find(|(partition, _)| *partition == id)
+                                {
+                                    if let Some(table) = table.take() {
+                                        valid += spill_segments(
+                                            &mut files.build,
+                                            lane_chunk,
+                                            lane_valid_keys,
+                                            &table.segments,
+                                            &memory,
+                                        )?;
+                                    }
                                 }
+                                lane_files[id] = Some(files);
                             }
                             Ok(valid)
-                        })
-                    }));
+                        });
+                        let _ = result_tx.send((worker, owned_tables, outcome));
+                    })
+                    .map_err(|_| ExecError::internal("hash-join spill worker pool stopped"))?;
+            }
+            drop(result_tx);
+
+            // Every lane reports back, even when an earlier lane failed. This
+            // restores any row table left untouched by a failed spill job
+            // before propagating the first error.
+            let mut error = None;
+            let mut valid_rows = 0;
+            for (worker, owned_tables, outcome) in result_rx {
+                for (partition, table) in owned_tables {
+                    tables[worker][partition] = table;
                 }
-                // Every lane joins, even when an earlier lane failed.
-                let mut error = None;
-                let mut valid = 0;
-                for worker in workers {
-                    match worker.join().expect("spill lane catches panics") {
-                        Ok(rows) => valid += rows,
-                        Err(failure) => {
-                            error.get_or_insert(failure);
-                        }
+                match outcome {
+                    Ok(rows) => valid_rows += rows,
+                    Err(failure) => {
+                        error.get_or_insert(failure);
                     }
                 }
-                error.map_or(Ok(valid), Err)
-            })?;
+            }
+            if let Some(error) = error {
+                return Err(error);
+            }
             self.valid_rows += valid_rows;
             self.tracker.consume(-released);
             self.memory.check()
@@ -435,9 +476,9 @@ impl HashJoinSpill {
             }
             let files: Vec<_> = self
                 .lanes
-                .iter_mut()
+                .iter()
                 .filter_map(|lane| {
-                    lane.get_mut()
+                    lane.lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .files[id]
                         .take()

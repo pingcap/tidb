@@ -146,6 +146,24 @@ impl LanePool {
         }
         result.map_err(|_| ())
     }
+
+    /// Waits for every task currently admitted through this executor view.
+    /// Unlike `Drop`, this keeps the reusable lane set open for a later
+    /// build/restore round.
+    pub fn wait(&self) {
+        let mut state = self
+            .activity
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while state.in_flight != 0 {
+            state = self
+                .activity
+                .done
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
 }
 
 struct LaneActivityGuard {

@@ -58,15 +58,19 @@ pub struct HashJoinV2Plan {
 }
 
 struct Runtime {
-    build: HashJoinV2Exec,
+    build_state: Option<BuildState>,
     table_meta: JoinTableMeta,
     layout: RowLayoutMeta,
     build_keys: JoinKeyColumns,
     probe_keys: JoinKeyColumns,
     joined_types: Vec<FieldType>,
-    spill: HashJoinSpill,
     restored: Vec<Mutex<PartitionFiles>>,
     round: usize,
+}
+
+struct BuildState {
+    build: HashJoinV2Exec,
+    spill: HashJoinSpill,
 }
 
 /// The build coordinator exclusively owns the build child while the caller
@@ -124,10 +128,14 @@ impl<C> HashJoinV2Executor<C> {
             // The only shared owners are the workers, all joined above.
             let mut runtime = Arc::try_unwrap(runtime)
                 .unwrap_or_else(|_| panic!("V2 worker retained build state after Close"));
-            runtime.build.release_build_memory();
+            let mut build_state = runtime
+                .build_state
+                .take()
+                .expect("V2 build state missing before Close");
+            build_state.build.release_build_memory();
             runtime.restored.clear();
-            runtime.spill.close();
-            runtime.build.hash_table_context.memory_tracker.detach();
+            build_state.spill.close();
+            build_state.build.hash_table_context.memory_tracker.detach();
         }
         if std::mem::take(&mut self.children_open) {
             // BaseExecutor.Close visits both children and returns the first
@@ -242,10 +250,9 @@ impl<C> HashJoinV2Executor<C> {
         );
         spill.register();
         self.runtime = Some(Arc::new(Runtime {
-            spill,
+            build_state: Some(BuildState { build, spill }),
             restored: Vec::new(),
             round: 0,
-            build,
             table_meta,
             layout,
             build_keys,
@@ -268,86 +275,101 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
         let build_index = usize::from(plan.right_as_build_side);
         let runtime = Arc::get_mut(self.runtime.as_mut().expect("opened V2 runtime"))
             .expect("build starts before sharing the table");
-        let filter = (!plan.build_filter.is_empty()).then(|| {
-            JoinFilter::new(
+        let filter: Option<Arc<JoinFilter<'static>>> = (!plan.build_filter.is_empty()).then(|| {
+            Arc::new(JoinFilter::new(
                 self.context.clone(),
                 plan.build_filter.clone(),
                 plan.vectorized,
-            )
+            ))
         });
-        let mut build_context = BuildContext::new(
-            &runtime.layout,
-            PartitionInfo::new(plan.concurrency),
-            &runtime.build_keys,
-        );
-        build_context.build_filter = filter.as_ref();
         let first_probe = if runtime.restored.is_empty() {
-            let [left, right] = &mut self.children;
-            let (build, probe) = if plan.right_as_build_side {
-                (
-                    right
-                        .as_deref_mut()
-                        .expect("build child missing before prepare"),
-                    left.as_deref_mut()
-                        .expect("probe child missing before prepare"),
-                )
-            } else {
-                (
-                    left.as_deref_mut()
-                        .expect("build child missing before prepare"),
-                    right
-                        .as_deref_mut()
-                        .expect("probe child missing before prepare"),
-                )
-            };
+            let mut build_child = self.children[build_index]
+                .take()
+                .expect("build child missing before prepare");
+            let probe = self.children[1 - build_index]
+                .as_deref_mut()
+                .expect("probe child missing before prepare");
             let mut first_probe = probe.new_chunk();
             if ProbeStage::should_limit_fetch_size(plan.join_type, plan.right_as_build_side) {
                 first_probe.set_required_rows(required_rows as isize, probe.max_chunk_size());
             }
-            let memory = &self.memory;
+            let mut build_state = runtime
+                .build_state
+                .take()
+                .expect("V2 build state missing before build");
+            let layout = runtime.layout.clone();
+            let build_keys = runtime.build_keys.clone();
+            let memory = self.memory.clone();
+            let build_memory = memory.clone();
+            let build_filter = filter.clone();
+            let concurrency = plan.concurrency;
+            let (build_result_tx, build_result_rx) = std::sync::mpsc::sync_channel::<(
+                BuildState,
+                Box<dyn Executor>,
+                Result<usize, ExecError>,
+            )>(1);
+            let coordinator = crate::worker_pool::LanePool::new("hash-join-build-coordinator", 1);
             // Go starts fetchAndBuildHashTable independently, and its probe
             // fetcher calls Next BEFORE wait4BuildSide. Keep exactly that one
             // chunk (including EOF), and never probe an unfinished table.
-            std::thread::scope(|scope| -> Result<(), ExecError> {
-                let builder = std::thread::Builder::new()
-                    .name("hash-join-build".into())
-                    .spawn_scoped(scope, || {
-                        recover_worker_panic(|| {
-                            runtime.build.fetch_and_build_hash_table_with_spill(
-                                build,
+            coordinator
+                .submit(move || {
+                    let build_result = recover_worker_panic(|| {
+                        let build_context = BuildContext::new(
+                            &layout,
+                            PartitionInfo::new(concurrency),
+                            &build_keys,
+                        );
+                        build_state
+                            .build
+                            .fetch_and_build_hash_table_with_spill_and_filter(
+                                build_child.as_mut(),
                                 &build_context,
-                                memory,
-                                &mut runtime.spill,
+                                &build_memory,
+                                &mut build_state.spill,
+                                build_filter,
                             )
-                        })
-                    })
-                    .map_err(|error| {
-                        ExecError::internal(format!("start hash join build: {error}"))
-                    })?;
-                let probe_result = recover_worker_panic(|| probe.next(&mut first_probe));
-                let build_result = builder.join().map_err(|panic| {
-                    ExecError::internal(format!("hash join build panic: {panic:?}"))
-                });
-                // Fetch errors precede wait4BuildSide in Go. Join ownership
-                // even on failure before returning either error to the parent.
-                probe_result?;
-                build_result??;
-                memory.check()
-            })?;
+                    });
+                    let _ = build_result_tx.send((build_state, build_child, build_result));
+                })
+                .map_err(|_| ExecError::internal("hash join build coordinator stopped"))?;
+            let probe_result = recover_worker_panic(|| probe.next(&mut first_probe));
+            let (build_state, build_child, build_result) =
+                build_result_rx.recv().map_err(|_| {
+                    ExecError::internal("hash join build coordinator exited without a result")
+                })?;
+            runtime.build_state = Some(build_state);
+            self.children[build_index] = Some(build_child);
+            // Fetch errors precede wait4BuildSide in Go. Join ownership even
+            // on failure before returning either error to the parent.
+            probe_result?;
+            build_result?;
+            memory.check()?;
+            drop(coordinator);
             Some(first_probe)
         } else {
-            let fields = runtime.spill.build_field_types().to_vec();
+            let build_state = runtime
+                .build_state
+                .as_mut()
+                .expect("V2 build state missing before restore");
+            let fields = build_state.spill.build_field_types().to_vec();
+            let mut build_context = BuildContext::new(
+                &runtime.layout,
+                PartitionInfo::new(plan.concurrency),
+                &runtime.build_keys,
+            );
+            build_context.build_filter = filter.as_ref().map(|filter| &**filter);
             let files = runtime
                 .restored
                 .iter_mut()
                 .map(|lane| &mut lane.get_mut().unwrap().build)
                 .collect();
-            runtime.build.fetch_and_build_restored_hash_table(
+            build_state.build.fetch_and_build_restored_hash_table(
                 files,
                 &fields,
                 &build_context,
                 &self.memory,
-                &mut runtime.spill,
+                &mut build_state.spill,
             )?;
             None
         };
@@ -357,19 +379,31 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
         let plan = Arc::clone(plan);
         let context = self.context.clone();
         let max_chunk_size = self.meta.max_chunk_size();
+        let build_state = runtime
+            .build_state
+            .as_ref()
+            .expect("V2 build state missing after build");
         self.probe = Some(ProbeStage::new_with_spill(
             &mut self.children[1 - build_index],
             &self.meta,
-            &runtime.build,
+            &build_state.build,
             self.memory.clone(),
-            runtime.spill.spilled_partitions().iter().any(|&part| part),
+            build_state
+                .spill
+                .spilled_partitions()
+                .iter()
+                .any(|&part| part),
             !runtime.restored.is_empty(),
             first_probe,
             move |worker_id, worker, memory| {
                 let runtime = &*shared;
-                let build = &runtime.build;
+                let build_state = runtime
+                    .build_state
+                    .as_ref()
+                    .expect("V2 build state missing during probe");
+                let build = &build_state.build;
                 let ctx = ProbeContext {
-                    spill: Some(&runtime.spill),
+                    spill: Some(&build_state.spill),
                     hash_table: &build.hash_table_context.hash_table,
                     meta: &runtime.layout,
                     column_count_needed_for_other_condition: runtime
@@ -442,7 +476,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
                 } else {
                     let mut lane = runtime.restored[worker_id].lock().unwrap();
                     let chunk = Chunk::new_with_capacity(
-                        runtime.spill.probe_field_types(),
+                        build_state.spill.probe_field_types(),
                         SPILL_CHUNK_SIZE,
                     );
                     worker.run_restored(probe.as_mut(), memory, &mut lane.probe, chunk);
@@ -464,12 +498,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
         }
         let runtime = Arc::get_mut(self.runtime.as_mut().expect("opened V2 runtime"))
             .expect("round workers joined before restore");
-        runtime.build.release_build_memory();
+        let build_state = runtime
+            .build_state
+            .as_mut()
+            .expect("V2 build state missing before restore");
+        build_state.build.release_build_memory();
         runtime.restored.clear();
-        runtime
+        build_state
             .spill
-            .prepare_for_restoring(runtime.round, runtime.build.ctx.max_spill_round)?;
-        let Some(partition) = runtime.spill.pop_restore() else {
+            .prepare_for_restoring(runtime.round, build_state.build.ctx.max_spill_round)?;
+        let Some(partition) = build_state.spill.pop_restore() else {
             return Ok(false);
         };
         runtime.round = partition.round;
