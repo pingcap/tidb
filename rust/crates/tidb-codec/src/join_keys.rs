@@ -176,9 +176,14 @@ impl SerializedJoinKeys {
         self.bytes.resize(offset, 0);
         Ok(())
     }
-    fn append(&mut self, row: usize, data: &[u8]) -> Result<(), CodecError> {
-        let end = self.rows[row]
-            .end
+    #[inline]
+    fn append<const COLLECT_HASHES: bool>(
+        &mut self,
+        row: usize,
+        data: &[u8],
+    ) -> Result<(), CodecError> {
+        let start = self.rows[row].end;
+        let end = start
             .checked_add(data.len())
             .ok_or(CodecError::InvalidEncoding("serialized key too large"))?;
         if end > self.limits[row] {
@@ -186,10 +191,49 @@ impl SerializedJoinKeys {
                 "serialized key exceeds preallocation",
             ));
         }
-        self.bytes[self.rows[row].end..end].copy_from_slice(data);
+        self.bytes[start..end].copy_from_slice(data);
         self.rows[row].end = end;
-        if let Some(hash) = self.hashes.get_mut(row) {
+        if COLLECT_HASHES {
+            let hash = &mut self.hashes[row];
             for &byte in data {
+                *hash = hash.wrapping_mul(FNV64_PRIME) ^ u64::from(byte);
+            }
+        }
+        Ok(())
+    }
+
+    /// Append a length/flag prefix and its payload as one bounded write.
+    ///
+    /// Go's encoder issues two slice appends for these keys. Keeping the
+    /// fragments together here preserves byte and hash order while avoiding a
+    /// second range check and hash loop for every variable-width value.
+    #[inline]
+    fn append_parts<const COLLECT_HASHES: bool>(
+        &mut self,
+        row: usize,
+        prefix: &[u8],
+        payload: &[u8],
+    ) -> Result<(), CodecError> {
+        let start = self.rows[row].end;
+        let size = prefix
+            .len()
+            .checked_add(payload.len())
+            .ok_or(CodecError::InvalidEncoding("serialized key too large"))?;
+        let end = start
+            .checked_add(size)
+            .ok_or(CodecError::InvalidEncoding("serialized key too large"))?;
+        if end > self.limits[row] {
+            return Err(CodecError::InvalidEncoding(
+                "serialized key exceeds preallocation",
+            ));
+        }
+        let bytes = &mut self.bytes[start..end];
+        bytes[..prefix.len()].copy_from_slice(prefix);
+        bytes[prefix.len()..].copy_from_slice(payload);
+        self.rows[row].end = end;
+        if COLLECT_HASHES {
+            let hash = &mut self.hashes[row];
+            for &byte in prefix.iter().chain(payload) {
                 *hash = hash.wrapping_mul(FNV64_PRIME) ^ u64::from(byte);
             }
         }
@@ -434,9 +478,13 @@ impl JoinKeyColumns {
                             {
                                 let signed = !field_type.has_flag(FieldTypeFlags::UNSIGNED)
                                     && i64::from_le_bytes(word) < 0;
-                                keys.append(logical, &[if signed { INT_FLAG } else { UINT_FLAG }])?;
+                                let mut flagged_word = [0_u8; 9];
+                                flagged_word[0] = if signed { INT_FLAG } else { UINT_FLAG };
+                                flagged_word[1..].copy_from_slice(&word);
+                                keys.append::<COLLECT_HASHES>(logical, &flagged_word)?;
+                            } else {
+                                keys.append::<COLLECT_HASHES>(logical, &word)?;
                             }
-                            keys.append(logical, &word)?;
                         }
                         Ok::<(), CodecError>(())
                     })?,
@@ -454,7 +502,7 @@ impl JoinKeyColumns {
                                 })?)
                             };
                             let value = if value == 0.0 { 0.0 } else { value };
-                            keys.append(logical, &value.to_le_bytes())?;
+                            keys.append::<COLLECT_HASHES>(logical, &value.to_le_bytes())?;
                         }
                         Ok::<(), CodecError>(())
                     })?,
@@ -471,9 +519,17 @@ impl JoinKeyColumns {
                             let raw = raws.row(physical);
                             let bytes = collator.immutable_key(raw);
                             if mode == SerializeMode::KeepVarColumnLength {
-                                append_length(keys, logical, bytes.len(), false)?;
+                                let size = u32::try_from(bytes.len()).map_err(|_| {
+                                    CodecError::InvalidEncoding("join key too long")
+                                })?;
+                                keys.append_parts::<COLLECT_HASHES>(
+                                    logical,
+                                    &size.to_le_bytes(),
+                                    &bytes,
+                                )?;
+                            } else {
+                                keys.append::<COLLECT_HASHES>(logical, &bytes)?;
                             }
-                            keys.append(logical, &bytes)?;
                         }
                         Ok::<(), CodecError>(())
                     })?,
@@ -485,13 +541,28 @@ impl JoinKeyColumns {
                             let (_, bytes) = encode_hash_datum(&value, field_type)?;
                             match prefix_size(field_type, mode) {
                                 1 if code == FieldTypeCode::NewDecimal => {
-                                    append_length(keys, logical, bytes.len(), true)?
+                                    append_length_and::<COLLECT_HASHES>(
+                                        keys, logical, bytes.len(), true, &bytes,
+                                    )?;
+                                    continue;
                                 }
-                                1 => keys.append(logical, &[UINT_FLAG])?,
-                                4 => append_length(keys, logical, bytes.len(), false)?,
+                                1 if bytes.len() == 8 => {
+                                    let mut flagged_word = [0_u8; 9];
+                                    flagged_word[0] = UINT_FLAG;
+                                    flagged_word[1..].copy_from_slice(&bytes);
+                                    keys.append::<COLLECT_HASHES>(logical, &flagged_word)?;
+                                    continue;
+                                }
+                                1 => keys.append::<COLLECT_HASHES>(logical, &[UINT_FLAG])?,
+                                4 => {
+                                    append_length_and::<COLLECT_HASHES>(
+                                        keys, logical, bytes.len(), false, &bytes,
+                                    )?;
+                                    continue;
+                                }
                                 _ => {}
                             }
-                            keys.append(logical, &bytes)?;
+                            keys.append::<COLLECT_HASHES>(logical, &bytes)?;
                         }
                     }
                 }
@@ -555,24 +626,20 @@ fn prefix_size(field_type: &FieldType, mode: SerializeMode) -> usize {
     }
 }
 
-fn append_length(
+fn append_length_and<const COLLECT_HASHES: bool>(
     keys: &mut SerializedJoinKeys,
     row: usize,
     size: usize,
     decimal: bool,
+    payload: &[u8],
 ) -> Result<(), CodecError> {
     if decimal {
-        keys.append(
-            row,
-            &[u8::try_from(size)
-                .map_err(|_| CodecError::InvalidEncoding("decimal hash key too long"))?],
-        )
+        let length = u8::try_from(size)
+            .map_err(|_| CodecError::InvalidEncoding("decimal hash key too long"))?;
+        keys.append_parts::<COLLECT_HASHES>(row, &[length], payload)
     } else {
-        keys.append(
-            row,
-            &u32::try_from(size)
-                .map_err(|_| CodecError::InvalidEncoding("join key too long"))?
-                .to_le_bytes(),
-        )
+        let length = u32::try_from(size)
+            .map_err(|_| CodecError::InvalidEncoding("join key too long"))?;
+        keys.append_parts::<COLLECT_HASHES>(row, &length.to_le_bytes(), payload)
     }
 }
