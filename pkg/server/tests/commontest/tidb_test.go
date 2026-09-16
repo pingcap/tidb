@@ -2643,6 +2643,27 @@ func TestExtensionConnEvent(t *testing.T) {
 		require.Equal(t, "alias123", logs.infos[2].SessionAlias)
 	})
 
+	// A rejected password must retain the same connection ID through disconnection.
+	logs.reset()
+	failedDB, err := sql.Open("mysql", ts.GetDSN(func(cfg *mysql.Config) {
+		cfg.Passwd = "wrong-password"
+	}))
+	require.NoError(t, err)
+	defer failedDB.Close()
+	_, err = failedDB.Conn(context.Background())
+	require.Error(t, err)
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
+	logs.check(func() {
+		require.Equal(t, []extension.ConnEventTp{
+			extension.ConnConnected, extension.ConnHandshakeRejected, extension.ConnDisconnected,
+		}, logs.types)
+		connectionID := logs.infos[0].ConnectionID
+		require.NotZero(t, connectionID)
+		for _, info := range logs.infos {
+			require.Equal(t, connectionID, info.ConnectionID)
+		}
+	})
+
 	// test for login failed
 	logs.reset()
 	cfg := mysql.NewConfig()
@@ -2685,6 +2706,32 @@ func TestExtensionConnEvent(t *testing.T) {
 		require.EqualError(t, logs.infos[1].Error, "[server:1045]Access denied for user 'noexist'@'127.0.0.1' (using password: NO)")
 		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
 		require.Empty(t, logs.infos[2].SessionAlias)
+		require.Equal(t, expectedConn2, *(logs.infos[2].ConnectionInfo))
+	})
+
+	// A malformed handshake fails before a session can cache connection information.
+	logs.reset()
+	raw, err := net.DialTimeout("tcp", cfg.Addr, 5*time.Second)
+	require.NoError(t, err)
+	defer raw.Close()
+	require.NoError(t, raw.SetDeadline(time.Now().Add(5*time.Second)))
+	header := make([]byte, 4)
+	_, err = io.ReadFull(raw, header)
+	require.NoError(t, err)
+	_, err = io.CopyN(io.Discard, raw, int64(binary.LittleEndian.Uint32(header)&0xffffff))
+	require.NoError(t, err)
+	_, err = raw.Write([]byte{1, 0, 0, 1, 0}) // Sequence 1, one-byte malformed response.
+	require.NoError(t, err)
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
+	logs.check(func() {
+		require.Equal(t, []extension.ConnEventTp{
+			extension.ConnConnected, extension.ConnHandshakeRejected, extension.ConnDisconnected,
+		}, logs.types)
+		connectionID := logs.infos[0].ConnectionID
+		require.NotZero(t, connectionID)
+		for _, info := range logs.infos {
+			require.Equal(t, connectionID, info.ConnectionID)
+		}
 	})
 }
 
