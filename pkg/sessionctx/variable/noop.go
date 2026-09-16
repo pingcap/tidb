@@ -45,7 +45,6 @@ var noopSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal, Name: vardef.ReadOnly, Value: vardef.Off, Type: vardef.TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.ConnectTimeout, Value: "10", Type: vardef.TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear},
 	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    "sql_buffer_result",

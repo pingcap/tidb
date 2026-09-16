@@ -346,6 +346,10 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		}
 		return err
 	}
+	cc.pkt.SetReadTimeout(0)
+	if err := cc.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
+		return err
+	}
 
 	// MySQL supports an "init_connect" query, which can be run on initial connection.
 	// The query must return a non-error or the client is disconnected.
@@ -516,6 +520,15 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	}
 	cc.authPlugin = defAuthPlugin
 	data = append(data, []byte(defAuthPlugin)...)
+	connectTimeout, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(ctx, vardef.ConnectTimeout)
+	if err != nil {
+		return err
+	}
+	timeoutSeconds, err := strconv.ParseUint(connectTimeout, 10, 64)
+	if err != nil {
+		return err
+	}
+	cc.pkt.SetReadTimeout(time.Duration(timeoutSeconds) * time.Second)
 
 	// Close the session to force this to be re-opened after we parse the response. This is needed
 	// to ensure we use the collation and client flags from the response for the session.

@@ -759,6 +759,7 @@ var defaultSysVars = []*SysVar{
 			vardef.MaxPreparedStmtCountValue.Store(num)
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.ConnectTimeout, Value: "10", Type: vardef.TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear},
 	{Scope: vardef.ScopeGlobal, Name: vardef.InitConnect, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		p := parser.New()
 		p.SetSQLMode(vars.SQLMode)
