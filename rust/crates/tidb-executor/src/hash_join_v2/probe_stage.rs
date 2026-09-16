@@ -19,7 +19,6 @@
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver as CompletionReceiver, SyncSender};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
 use crossbeam_channel::{bounded, select_biased, Receiver, Sender, TryRecvError, TrySendError};
 use tidb_chunk::chunk::Chunk;
@@ -82,7 +81,7 @@ pub struct ProbeStage {
     inputs: Vec<Sender<Chunk>>,
     resources: VecDeque<(usize, Chunk)>,
     first_fetched: bool,
-    workers: Vec<JoinHandle<()>>,
+    workers: Option<Arc<crate::worker_pool::LanePool>>,
     fetcher: Option<FetcherHandle>,
     source: Option<Box<dyn Executor>>,
     probe_done: Vec<bool>,
@@ -152,7 +151,10 @@ impl ProbeStage {
             inputs: Vec::with_capacity(concurrency),
             resources: VecDeque::with_capacity(concurrency),
             first_fetched: first_chunk.is_some(),
-            workers: Vec::with_capacity(concurrency),
+            workers: Some(Arc::new(crate::worker_pool::LanePool::new(
+                "hash-join-probe",
+                concurrency,
+            ))),
             fetcher: None,
             source: None,
             probe_done: vec![false; concurrency],
@@ -191,8 +193,13 @@ impl ProbeStage {
                 events_tx.clone(),
                 close.clone(),
             );
-            let handle = std::thread::Builder::new().name(format!("hash-join-probe-{id}"))
-                .spawn(move || {
+            let worker_pool = stage
+                .workers
+                .as_ref()
+                .expect("probe worker pool installed")
+                .clone();
+            worker_pool
+                .submit(move || {
                     let result = crate::sort_util::recover_worker_panic(|| {
                         run(id, worker, &memory);
                         Ok(())
@@ -203,8 +210,8 @@ impl ProbeStage {
                             send(errors, ProbeWorkerEvent::Error { worker_id: id, error }) -> _ => {},
                         }
                     }
-                }).map_err(|error| ExecError::internal(format!("start hash join probe worker: {error}")))?;
-            stage.workers.push(handle);
+                })
+                .map_err(|_| ExecError::internal("hash join probe worker pool stopped"))?;
         }
         if skip_probe || restored {
             stage.finish_fetch();
@@ -419,13 +426,10 @@ impl ProbeStage {
         self.scan_ready.take();
         self.finish_fetch();
         let mut error = None;
-        for worker in self.workers.drain(..) {
-            if let Err(panic) = worker.join() {
-                error.get_or_insert_with(|| {
-                    ExecError::internal(format!("hash join probe worker panic: {panic:?}"))
-                });
-            }
-        }
+        // The lane handle owns this stage's worker admissions. Dropping it
+        // waits for all queued/running workers, then returns the persistent
+        // lane set to the process-wide registry for the next join.
+        drop(self.workers.take());
         if let Some(fetcher) = self.fetcher.take() {
             match fetcher.completion.recv() {
                 Ok(source) => {
