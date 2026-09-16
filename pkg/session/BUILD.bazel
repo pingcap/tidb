@@ -118,6 +118,7 @@ go_library(
         "//pkg/util/sli",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
+        "//pkg/util/sqlkiller",
         "//pkg/util/syncutil",
         "//pkg/util/timeutil",
         "//pkg/util/topsql",
@@ -168,7 +169,18 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
+<<<<<<< HEAD
         "//pkg/session/types",
+=======
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/session/metrics",
+        "//pkg/session/sessionapi",
+>>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
@@ -184,10 +196,24 @@ go_test(
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
+<<<<<<< HEAD
+=======
+        "//pkg/util/sqlkiller",
+        "@com_github_pingcap_errors//:errors",
+>>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
+<<<<<<< HEAD
+=======
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//http",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_tests_v3//integration",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+>>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
         "@org_uber_go_atomic//:atomic",  #keep
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",

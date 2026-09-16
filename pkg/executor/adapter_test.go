@@ -27,12 +27,20 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	dto "github.com/prometheus/client_model/go"
+>>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -559,3 +567,186 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	testCases := []struct {
+		name             string
+		tsoDelayMs       int
+		maxExecutionTime uint64 // in milliseconds
+		expectTimeout    bool
+		description      string
+	}{
+		{
+			name:             "TSO delay 50ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       50,
+			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (50ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 150ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       150,
+			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (150ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 300ms, timeout 50ms - should timeout",
+			tsoDelayMs:       300,
+			maxExecutionTime: 50,
+			expectTimeout:    true,
+			description:      "TSO wait time (300ms) exceeds timeout (50ms) clearly",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Enable failpoint to inject delay in TSO Wait()
+			failpointName := "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+			require.NoError(t, failpoint.Enable(failpointName, `return(`+fmt.Sprintf("%d", tc.tsoDelayMs)+`)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable(failpointName))
+			}()
+			// Set max_execution_time
+			tk.MustExec("set @@max_execution_time = ?", tc.maxExecutionTime)
+
+			// Execute a SELECT statement that will trigger TSO wait
+			// Use range scan instead of point get to avoid optimization
+			startTime := time.Now()
+			if tc.expectTimeout {
+				rs, err := tk.Exec("select * from t where a >= 1")
+				require.Nil(t, rs)
+				require.ErrorContains(t, err, "maximum statement execution time exceeded")
+			} else {
+				tk.MustQuery("select * from t where a >= 1")
+			}
+			elapsed := time.Since(startTime)
+
+			// Verify that the elapsed time includes the TSO delay
+			// Allow some skew for CI scheduling / overhead.
+			expectedMinTime := time.Duration(tc.tsoDelayMs) * time.Millisecond
+			skew := 200 * time.Millisecond
+			require.GreaterOrEqual(t, elapsed, expectedMinTime-skew,
+				"Elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, elapsed)
+
+			// Check ProcessInfo to verify the start time was set before TSO wait
+			pi := tk.Session().ShowProcess()
+			require.NotNil(t, pi)
+			if pi.MaxExecutionTime > 0 {
+				processElapsed := time.Since(pi.Time)
+				require.GreaterOrEqual(t, processElapsed, expectedMinTime-skew,
+					"ProcessInfo elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, processElapsed)
+			}
+		})
+	}
+}
+
+func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("set @@tidb_dml_max_execution_time = 50")
+	vars := tk.Session().GetSessionVars()
+	checkReleased := func() {
+		require.Empty(t, vars.MemTracker.GetChildrenForTest())
+		require.Empty(t, vars.DiskTracker.GetChildrenForTest())
+		require.Nil(t, vars.StmtCtx.CTEStorageMap)
+	}
+	const cteQuery = "with recursive cte(n) as (select 1 union all select n+1 from cte where n<3) select n from cte"
+
+	const failpointName = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+	func() {
+		require.NoError(t, failpoint.Enable(failpointName, "return(300)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable(failpointName))
+		}()
+
+		rs, err := tk.Exec("insert into t " + cteQuery)
+		require.Nil(t, rs)
+		require.ErrorContains(t, err, "maximum statement execution time exceeded")
+		checkReleased()
+	}()
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	// A returned record set must keep its resources until it is closed.
+	func() {
+		rs, err := tk.Exec(cteQuery)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, rs.Close()) }()
+		require.NotEmpty(t, vars.MemTracker.GetChildrenForTest())
+		require.Len(t, vars.StmtCtx.CTEStorageMap, 1)
+		rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Len(t, rows, 3)
+	}()
+	checkReleased()
+
+	// Other early returns also need statement cleanup, even after executor.Close.
+	tk.MustExec("set tidb_low_resolution_tso = ON")
+	tk.MustExec("begin optimistic")
+	err := tk.ExecToErr("select * from t for update")
+	require.ErrorContains(t, err, "can not execute select for update statement")
+	checkReleased()
+	tk.MustExec("rollback")
+}
+
+type canceledBuildTxnManager struct {
+	sessiontxn.TxnManager
+	onGetForUpdateTS func()
+}
+
+func (m canceledBuildTxnManager) GetStmtForUpdateTS() (uint64, error) {
+	m.onGetForUpdateTS()
+	return 0, context.Canceled
+}
+
+func TestDMLBuildCancellationPreservesTimeout(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setup := testkit.NewTestKit(t, store)
+	setup.MustExec("use test")
+	setup.MustExec("create table build_cancel (a int primary key)")
+	setup.MustExec("insert into build_cancel values (1)")
+	for _, panicOnBuild := range []bool{false, true} {
+		t.Run(fmt.Sprintf("panic=%v", panicOnBuild), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_dml_max_execution_time = 10000")
+			vars := tk.Session().GetSessionVars()
+
+			originalGetTxnManager := sessiontxn.GetTxnManager
+			t.Cleanup(func() { sessiontxn.GetTxnManager = originalGetTxnManager })
+			sessiontxn.GetTxnManager = func(sctx sessionctx.Context) sessiontxn.TxnManager {
+				manager := originalGetTxnManager(sctx)
+				if sctx.GetSessionVars() != vars {
+					return manager
+				}
+				return canceledBuildTxnManager{TxnManager: manager, onGetForUpdateTS: func() {
+					vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+					if panicOnBuild {
+						panic(exeerrors.ErrMaxExecTimeExceeded)
+					}
+				}}
+			}
+
+			// UPDATE requests its for-update timestamp while building the executor.
+			// Cleanup must preserve the kill reason before detaching its trackers.
+			rs, err := tk.Exec("update build_cancel set a = a + 1 where a > 0")
+			sessiontxn.GetTxnManager = originalGetTxnManager
+			require.Nil(t, rs)
+			require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
+			require.Empty(t, vars.MemTracker.GetChildrenForTest())
+			require.Empty(t, vars.DiskTracker.GetChildrenForTest())
+			tk.MustQuery("select * from build_cancel").Check(testkit.Rows("1"))
+		})
+	}
+}
+>>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))

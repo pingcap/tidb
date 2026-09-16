@@ -1729,8 +1729,25 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{
+<<<<<<< HEAD
 		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    TiKVClientReadTimeout,
+=======
+		Scope:    vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:     vardef.TiDBDMLMaxExecutionTime,
+		Value:    strconv.Itoa(vardef.DefTiDBDMLMaxExecutionTime),
+		Type:     vardef.TypeUnsigned,
+		MinValue: 0,
+		MaxValue: math.MaxInt32,
+		SetSession: func(s *SessionVars, val string) error {
+			timeoutMS := tidbOptPositiveInt32(val, vardef.DefTiDBDMLMaxExecutionTime)
+			s.DMLMaxExecutionTime = uint64(timeoutMS)
+			return nil
+		}},
+	{
+		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:                    vardef.TiDBMaxKeysRead,
+>>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 		Value:                   "0",
 		Type:                    TypeUnsigned,
 		MinValue:                0,

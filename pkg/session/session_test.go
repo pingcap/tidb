@@ -18,7 +18,32 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+<<<<<<< HEAD
 	"github.com/stretchr/testify/require"
+=======
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+>>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 )
 
 func TestGetStartMode(t *testing.T) {
@@ -27,3 +52,314 @@ func TestGetStartMode(t *testing.T) {
 	require.Equal(t, ddl.Upgrade, getStartMode(currentBootstrapVersion-1))
 	require.Equal(t, ddl.Bootstrap, getStartMode(0))
 }
+<<<<<<< HEAD
+=======
+
+func TestNormalizeStmtCancellationError(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	require.NoError(t, handlePendingSQLKillerSignal(vars))
+	require.ErrorIs(t, executor.NormalizeStmtCancellationError(vars, context.Canceled), context.Canceled)
+	vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(handlePendingSQLKillerSignal(vars)))
+
+	// A successful or undetermined commit result takes priority over a timeout signal.
+	require.NoError(t, executor.NormalizeStmtCancellationError(vars, nil))
+	require.True(t, terror.ErrResultUndetermined.Equal(
+		executor.NormalizeStmtCancellationError(vars, terror.ErrResultUndetermined),
+	))
+
+	otherErr := errors.New("other error")
+	require.ErrorIs(t, executor.NormalizeStmtCancellationError(vars, otherErr), otherErr)
+
+	err := executor.NormalizeStmtCancellationError(vars, context.Canceled)
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, context.DeadlineExceeded)
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, fmt.Errorf("request canceled: %w", context.Canceled))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, fmt.Errorf("request deadline exceeded: %w", context.DeadlineExceeded))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, status.Error(codes.Canceled, "canceled"))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, status.Error(codes.DeadlineExceeded, "deadline exceeded"))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+
+	vars.SQLKiller.Reset()
+	vars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(handlePendingSQLKillerSignal(vars)))
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(executor.NormalizeStmtCancellationError(vars, context.Canceled)))
+}
+
+func TestSetProcessInfoDuringRetry(t *testing.T) {
+	se := &session{sessionVars: variable.NewSessionVars(nil)}
+	start := time.Unix(1, 0)
+	se.SetProcessInfo("commit", start, mysql.ComQuery, 0)
+
+	// Transaction replay can publish different SQL while retaining the outer statement's start time.
+	se.sessionVars.RetryInfo.Retrying = true
+	se.SetProcessInfo("update t set a = 2", time.Unix(2, 0), mysql.ComQuery, 0)
+	require.Equal(t, start, se.ShowProcess().Time)
+
+	se.sessionVars.RetryInfo.Retrying = false
+	nextStart := time.Unix(3, 0)
+	se.SetProcessInfo("select 1", nextStart, mysql.ComQuery, 0)
+	require.Equal(t, nextStart, se.ShowProcess().Time)
+}
+
+func TestMustGetStoreBootstrapVersionRetriesTransaction(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(currentBootstrapVersion))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn", `return("retry_once")`)
+	conf := new(log.Config)
+	lg, p, err := log.InitLogger(conf, zap.WithFatalHook(zapcore.WriteThenPanic))
+	require.NoError(t, err)
+	restoreLog := log.ReplaceGlobals(lg, p)
+	defer restoreLog()
+
+	require.NotPanics(t, func() {
+		require.Equal(t, currentBootstrapVersion, mustGetStoreBootstrapVersion(store))
+	})
+}
+
+func TestWaitSystemBootVersion(t *testing.T) {
+	const systemKeyspaceID uint32 = 0xFFFFFF - 1
+	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+		mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: systemKeyspaceID},
+			Name:     keyspace.System,
+		}),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	originSystemStore := kvstore.GetSystemStorage()
+	kvstore.SetSystemStorage(store)
+	t.Cleanup(func() {
+		kvstore.SetSystemStorage(originSystemStore)
+	})
+
+	t.Run("get the version after retry", func(t *testing.T) {
+		// Unistore was opened outside the synctest bubble, so keep its write path
+		// outside too to avoid mixing its WaitGroups across the bubble boundary.
+		bootstrapCh := make(chan struct{})
+		bootstrapErrCh := make(chan error, 1)
+		stopCh := make(chan struct{})
+		defer close(stopCh)
+		go func() {
+			select {
+			case <-bootstrapCh:
+			case <-stopCh:
+				return
+			}
+
+			txn, err := store.Begin()
+			if err == nil {
+				err = meta.NewMutator(txn).FinishBootstrap(currentBootstrapVersion)
+			}
+			if err == nil {
+				err = txn.Commit(context.Background())
+			}
+			bootstrapErrCh <- err
+		}()
+
+		synctest.Test(t, func(t *testing.T) {
+			core, logs := observer.New(zap.InfoLevel)
+			restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+			defer restoreLog()
+
+			versionCh := make(chan int64, 1)
+			go func() {
+				versionCh <- waitSystemBootVersion()
+			}()
+
+			require.Eventually(t, func() bool {
+				return logs.FilterMessage("waiting for the SYSTEM keyspace bootstrap to complete").Len() > 0
+			}, 30*time.Second, 10*time.Millisecond)
+
+			bootstrapCh <- struct{}{}
+			require.NoError(t, <-bootstrapErrCh)
+
+			select {
+			case version := <-versionCh:
+				require.Equal(t, currentBootstrapVersion, version)
+			case <-time.After(30 * time.Second):
+				require.Fail(t, "timed out waiting for SYSTEM keyspace bootstrap version")
+			}
+		})
+	})
+
+	t.Run("exhaust all retry budget", func(t *testing.T) {
+		// reset the boot status
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		require.NoError(t, meta.NewMutator(txn).FinishBootstrap(0))
+		require.NoError(t, txn.Commit(context.Background()))
+
+		core, _ := observer.New(zap.InfoLevel)
+		restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+		defer restoreLog()
+
+		synctest.Test(t, func(t *testing.T) {
+			start := time.Now()
+			require.Equal(t, int64(notBootstrapped), waitSystemBootVersion())
+			require.Greater(t, time.Since(start), 29*time.Minute)
+		})
+	})
+}
+
+func TestBootstrapSessionImplUserKSVersionGuard(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("keyspace guard only applies to next-gen kernel")
+	}
+
+	const (
+		systemKeyspaceID uint32 = 0xFFFFFF - 1
+		userKeyspaceID   uint32 = 0xFFFFFF - 2
+	)
+
+	newKSStore := func(t *testing.T, keyspaceID uint32, keyspaceName string) kv.Storage {
+		t.Helper()
+		store, err := mockstore.NewMockStore(
+			mockstore.WithStoreType(mockstore.EmbedUnistore),
+			mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+				Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID},
+				Name:     keyspaceName,
+			}),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, store.Close())
+		})
+		return store
+	}
+
+	setBootstrapVersion := func(t *testing.T, store kv.Storage, ver int64) {
+		t.Helper()
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		err = meta.NewMutator(txn).FinishBootstrap(ver)
+		require.NoError(t, err)
+		require.NoError(t, txn.Commit(context.Background()))
+		store.SetOption(StoreBootstrappedKey, nil)
+	}
+
+	t.Run("fatal when user target version is ahead of system version", func(t *testing.T) {
+		systemStore := newKSStore(t, systemKeyspaceID, keyspace.System)
+		userStore := newKSStore(t, userKeyspaceID, "user_keyspace_guard_fatal")
+		setBootstrapVersion(t, systemStore, currentBootstrapVersion-1)
+		setBootstrapVersion(t, userStore, currentBootstrapVersion-1)
+
+		originSystemStore := kvstore.GetSystemStorage()
+		kvstore.SetSystemStorage(systemStore)
+		t.Cleanup(func() {
+			kvstore.SetSystemStorage(originSystemStore)
+		})
+
+		createSessionCalled := false
+		createSessionStub := func(_ kv.Storage, _ int) ([]*session, error) {
+			createSessionCalled = true
+			return nil, errors.New("must-not-be-called")
+		}
+
+		conf := new(log.Config)
+		lg, p, err := log.InitLogger(conf, zap.WithFatalHook(zapcore.WriteThenPanic))
+		require.NoError(t, err)
+		restoreLog := log.ReplaceGlobals(lg, p)
+		defer restoreLog()
+
+		var panicVal any
+		_, _ = func() (_ *domain.Domain, err error) {
+			defer func() {
+				panicVal = recover()
+			}()
+			return bootstrapSessionImpl(context.Background(), userStore, createSessionStub, nil)
+		}()
+		require.NotNil(t, panicVal)
+		panicMsg := fmt.Sprint(panicVal)
+		require.True(t, strings.HasPrefix(panicMsg, "bootstrap version of user keyspace must be smaller or equal"))
+		require.False(t, createSessionCalled)
+	})
+}
+
+func TestDDLTableVersionTables(t *testing.T) {
+	require.True(t, slices.IsSortedFunc(ddlTableVersionTables, func(a, b versionedDDLTables) int {
+		return cmp.Compare(a.ver, b.ver)
+	}), "ddlTableVersionTables should be sorted by version")
+	allDDLTables := make([]TableBasicInfo, 0, len(ddlTableVersionTables)*2)
+	for _, v := range ddlTableVersionTables {
+		allDDLTables = append(allDDLTables, v.tables...)
+	}
+	testTableBasicInfoSlice(t, allDDLTables, " mysql.%s (")
+}
+
+func testTableBasicInfoSlice(t *testing.T, allTables []TableBasicInfo, sqlFmt string) {
+	t.Helper()
+	require.True(t, slices.IsSortedFunc(allTables, func(a, b TableBasicInfo) int {
+		if a.ID == b.ID {
+			t.Errorf("table IDs should be unique, a=%d, b=%d", a.ID, b.ID)
+		}
+		if a.Name == b.Name {
+			t.Errorf("table names should be unique, a=%s, b=%s", a.Name, b.Name)
+		}
+		return cmp.Compare(b.ID, a.ID)
+	}), "tables should be sorted by table ID in descending order")
+	for _, vt := range allTables {
+		require.Greater(t, vt.ID, metadef.ReservedGlobalIDLowerBound, "table ID should be greater than ReservedGlobalIDLowerBound")
+		require.LessOrEqual(t, vt.ID, metadef.ReservedGlobalIDUpperBound, "table ID should be less than or equal to ReservedGlobalIDUpperBound")
+		require.Equal(t, strings.ToLower(vt.Name), vt.Name, "table name should be in lower case")
+		require.Contains(t, vt.SQL, fmt.Sprintf(sqlFmt, vt.Name),
+			fmt.Sprintf("table SQL should contain table name and follow the format %s", sqlFmt))
+	}
+}
+
+func TestMemArbitratorSession(t *testing.T) {
+	require.Equal(t, int64(15), approxParseSQLTokenCnt("/*select * from **/SELECT x FROM `t\\`` # abc \nwhere a = 1.23 and b = 'abc\"d\\'e' -- abc \nand c_1_2 in \"abc'd\\\"e\" # (1,2,3)\n"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("select @@version @a")) // not select ... from ...
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("set @a=1"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("desc analyze table t"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("analyze table t"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("/*select * from **/explain show warnings"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("/*select * from **/desc show columns from t"))
+	require.Equal(t, int64(5), approxParseSQLTokenCnt("insert into t values 1"))
+	require.Equal(t, int64(5), approxParseSQLTokenCnt("update t set a=1"))
+	require.Equal(t, int64(6), approxParseSQLTokenCnt("delete from t where a=1"))
+	require.Equal(t, int64(5), approxParseSQLTokenCnt("replace into t values 1"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("prepare stmt1 from 'select * from t where a=? and b=?'"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("execute stmt1 using @a,@b,@c"))
+	require.Equal(t, int64(10), approxParseSQLTokenCnt("select * from `a_1`.`b_2` where c1 = ? and c2 = ?"))
+	require.Equal(t, int64(9), approxCompilePlanTokenCnt("select * from `a_1`.`b_2` where c1 = ? and c2 = ?", true))
+	require.Equal(t, int64(0), approxCompilePlanTokenCnt("select @@version @a", true))
+	require.Equal(t, int64(3), approxCompilePlanTokenCnt("select @@version @a", false))
+
+	normalizedSQL := "select * from `t` where `a` = ?"
+	db1DigestID := buildMemArbitratorDigestID(normalizedSQL, []stmtctx.TableEntry{{DB: "db1", Table: "t"}}, "db1")
+	db2DigestID := buildMemArbitratorDigestID(normalizedSQL, []stmtctx.TableEntry{{DB: "db2", Table: "t"}}, "db2")
+	require.NotEqual(t, db1DigestID, db2DigestID)
+
+	explicitDBSQL := "select * from `db3`.`t` where `a` = ?"
+	db3Table := []stmtctx.TableEntry{{DB: "db3", Table: "t"}}
+	require.Equal(t,
+		buildMemArbitratorDigestID(explicitDBSQL, db3Table, "db1"),
+		buildMemArbitratorDigestID(explicitDBSQL, db3Table, "db2"))
+	require.Equal(t,
+		buildMemArbitratorDigestID(explicitDBSQL, db3Table, "db1"),
+		buildMemArbitratorDigestID(explicitDBSQL, []stmtctx.TableEntry{{DB: "DB3", Table: "T"}}, "db1"))
+
+	require.NotEqual(t,
+		buildMemArbitratorDigestID(normalizedSQL, nil, "db1"),
+		buildMemArbitratorDigestID(normalizedSQL, nil, "db2"))
+	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", db3Table, "db1"))
+}
+>>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))

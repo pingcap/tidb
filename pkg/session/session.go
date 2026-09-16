@@ -1139,7 +1139,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 		})
 		if err == nil {
-			err = s.doCommit(ctx)
+			err = handlePendingSQLKillerSignal(sessVars)
+			if err == nil {
+				err = s.doCommit(ctx)
+			}
 			if err == nil {
 				break
 			}
@@ -1226,7 +1229,15 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		err = se.sessionVars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+=======
+		err = se.sessionVars.SetSystemVar(vardef.TiDBDMLMaxExecutionTime, "0")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10))
+>>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1471,8 +1482,9 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
 		}
 	}
-	// We set process info before building plan, so we extended execution time.
-	if oldPi != nil && oldPi.Info == pi.Info && oldPi.Command == pi.Command {
+	// Preserve the statement start time across process-info updates and retries.
+	if oldPi != nil && (oldPi.Info == pi.Info && oldPi.Command == pi.Command ||
+		s.sessionVars.RetryInfo.Retrying) {
 		pi.Time = oldPi.Time
 	}
 	if oldPi != nil && oldPi.CurTxnStartTS != 0 && oldPi.CurTxnStartTS == pi.CurTxnStartTS {
