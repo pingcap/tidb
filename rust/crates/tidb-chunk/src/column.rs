@@ -300,6 +300,58 @@ impl Column {
         if times == 0 {
             return;
         }
+        let fixed = self.is_fixed();
+        let width = src.elem_buffer_len();
+        let Self {
+            data,
+            null_bitmap,
+            offsets,
+            length,
+            ..
+        } = self;
+        let appended = data.append_owned(|data| {
+            let source_data = src.data.read();
+            if times == 1 {
+                append_null_bit(null_bitmap, *length, !src.is_null(row));
+            } else {
+                append_null_run(null_bitmap, *length, !src.is_null(row), times);
+            }
+            let (start, end) = if fixed {
+                (row * width, (row + 1) * width)
+            } else {
+                (src.offsets[row] as usize, src.offsets[row + 1] as usize)
+            };
+            let cell = &source_data[start..end];
+            if fixed {
+                match width {
+                    4 => append_fixed_copies::<4>(data, cell, times),
+                    8 => append_fixed_copies::<8>(data, cell, times),
+                    40 => append_fixed_copies::<40>(data, cell, times),
+                    _ => {
+                        data.reserve(width.checked_mul(times).expect("fixed cell data overflow"));
+                        for _ in 0..times {
+                            data.extend_from_slice(cell);
+                        }
+                    }
+                }
+            } else {
+                append_variable_copies(data, offsets, cell, times);
+            }
+            *length += times;
+        });
+        if appended {
+            return;
+        }
+
+        self.append_cell_n_times_scalar(src, row, times);
+    }
+
+    /// Scalar copy-on-write fallback for `append_cell_n_times`.
+    ///
+    /// Keep this path deliberately close to Go's cell append. It is used only
+    /// when the destination byte storage is shared or frozen; the ordinary
+    /// owned path above handles all repetitions with one source read.
+    fn append_cell_n_times_scalar(&mut self, src: &Column, row: usize, times: usize) {
         let not_null = !src.is_null(row);
         if times == 1 {
             self.append_null_bitmap(not_null);
@@ -325,8 +377,8 @@ impl Column {
     }
 
     /// Appends Go's source-row/count runs for one output column as a batch.
-    /// The owned path borrows both byte buffers once; shallow destinations
-    /// retain per-append alias visibility through `append_cell_n_times`.
+    /// The owned path borrows the source bytes once; shallow destinations
+    /// retain Go's copy-on-write behavior through the scalar fallback.
     pub fn append_cell_runs<I>(&mut self, src: &Column, runs: I)
     where
         I: Iterator<Item = (usize, usize)> + Clone,
@@ -376,7 +428,7 @@ impl Column {
         });
         if !appended {
             for (row, times) in runs {
-                self.append_cell_n_times(src, row, times);
+                self.append_cell_n_times_scalar(src, row, times);
             }
         }
     }

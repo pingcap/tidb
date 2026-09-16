@@ -620,7 +620,23 @@ fn append_cell_n_times_and_copy_reconstruct_cover_fixed_var_and_null() {
                         scalar.append_cell_n_times(&source, row, times);
                     }
                     batch.append_cell_runs(&source, runs.into_iter());
-                    assert_eq!(batch, scalar, "width={width}, frozen_source={frozen_source}, frozen_destination={frozen_destination}, reset={reset}");
+                    assert_eq!(
+                        batch, scalar,
+                        "width={width}, frozen_source={frozen_source}, frozen_destination={frozen_destination}, reset={reset}"
+                    );
+                    if frozen_destination {
+                        let mut scalar_fallback = source.copy_construct();
+                        scalar_fallback.data = SharedBytes::from_bytes(bytes::Bytes::from(
+                            scalar_fallback.data.snapshot(),
+                        ));
+                        if reset {
+                            scalar_fallback.reset();
+                        }
+                        for (row, times) in runs {
+                            scalar_fallback.append_cell_n_times(&source, row, times);
+                        }
+                        assert_eq!(scalar_fallback, scalar);
+                    }
                 }
             }
         }
@@ -649,9 +665,8 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
     }
     let mut fixed_actual = Column::new_fixed_len(8, 8);
     fixed_actual.append_int64(-1);
-    fixed_actual.copy_expected_rows_with_row_id_func(&fixed_source, &selected, true, 1, 7, |i| {
-        row_ids[i]
-    });
+    fixed_actual
+        .copy_expected_rows_with_row_id_func(&fixed_source, &selected, true, 1, 7, |i| row_ids[i]);
     assert_eq!(fixed_actual, fixed_expected);
 
     let copied_rows = [7, 0, 4, 2];
@@ -682,10 +697,14 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
     }
     let mut variable_actual = Column::new_var_len(8);
     variable_actual.append_string("prefix");
-    variable_actual
-        .copy_expected_rows_with_row_id_func(&variable_source, &selected, true, 1, 8, |i| {
-            row_ids[i]
-        });
+    variable_actual.copy_expected_rows_with_row_id_func(
+        &variable_source,
+        &selected,
+        true,
+        1,
+        8,
+        |i| row_ids[i],
+    );
     assert_eq!(variable_actual, variable_expected);
 
     // A frozen destination must take the same scalar copy-on-write fallback
