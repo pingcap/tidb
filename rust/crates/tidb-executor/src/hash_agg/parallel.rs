@@ -359,7 +359,12 @@ impl PipelineMap {
         }
     }
 
-    fn merge(&mut self, key: PipelineMapKey, group: PipelineGroup) -> Result<(), ExecError> {
+    fn merge(
+        &mut self,
+        key: PipelineMapKey,
+        group: PipelineGroup,
+        funcs: &[AggFunc],
+    ) -> Result<(), ExecError> {
         match self.index.entry(key) {
             Entry::Vacant(slot) => {
                 let index = self.groups.len();
@@ -367,7 +372,7 @@ impl PipelineMap {
                 slot.insert(index);
                 Ok(())
             }
-            Entry::Occupied(slot) => merge_groups(&mut self.groups[*slot.get()], group),
+            Entry::Occupied(slot) => merge_groups(&mut self.groups[*slot.get()], group, funcs),
         }
     }
 
@@ -1927,6 +1932,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                     PipelineGroup {
                         states: plan.agg_funcs.iter().map(AggState::new).collect(),
                     },
+                    &plan.agg_funcs,
                 )?;
                 maps[0].push(default);
             }
@@ -1983,7 +1989,7 @@ impl FinalInput {
                         return Ok(None);
                     }
                     memory.check()?;
-                    merge_map(&mut merged, map)?;
+                    merge_map(&mut merged, map, funcs)?;
                 }
                 Ok(Some(merged))
             }
@@ -2012,7 +2018,7 @@ impl FinalInput {
                     for row_index in 0..chunk.num_rows() {
                         let encoded = chunk.get_row(row_index).get_bytes(0);
                         let (key, group) = decode_spill_entry(&encoded, funcs)?;
-                        restored.merge(key, group)?;
+                        restored.merge(key, group, funcs)?;
                     }
                 }
                 Ok(Some(restored))
@@ -2468,7 +2474,11 @@ fn fold_chunk<C: Columns>(
 /// Merges one shuffled sub-map into an accumulator (Go
 /// `mergeInputIntoResultMap`: a fresh accumulator adopts the first map
 /// as-is).
-fn merge_map(global: &mut PipelineMap, incoming: PipelineMap) -> Result<(), ExecError> {
+fn merge_map(
+    global: &mut PipelineMap,
+    incoming: PipelineMap,
+    funcs: &[AggFunc],
+) -> Result<(), ExecError> {
     if global.index.is_empty() {
         *global = incoming;
         return Ok(());
@@ -2479,17 +2489,21 @@ fn merge_map(global: &mut PipelineMap, incoming: PipelineMap) -> Result<(), Exec
     global.index.reserve(incoming.index.len());
     global.groups.reserve(incoming.groups.len());
     for (key, group) in incoming.into_entries() {
-        global.merge(key, group)?;
+        global.merge(key, group, funcs)?;
     }
     Ok(())
 }
 
 /// Merges two copies of one group in final-worker arrival order.
-fn merge_groups(dst: &mut PipelineGroup, mut src: PipelineGroup) -> Result<(), ExecError> {
+fn merge_groups(
+    dst: &mut PipelineGroup,
+    mut src: PipelineGroup,
+    funcs: &[AggFunc],
+) -> Result<(), ExecError> {
     // Go passes source and destination partial-result pointers. Borrow the
     // states in place; only values actually adopted by the destination move.
-    for (c, state) in src.states.iter_mut().enumerate() {
-        merge_state(&mut dst.states[c], state)?;
+    for (c, (state, func)) in src.states.iter_mut().zip(funcs).enumerate() {
+        merge_state(&mut dst.states[c], state, func)?;
     }
     Ok(())
 }
@@ -2498,11 +2512,11 @@ fn merge_groups(dst: &mut PipelineGroup, mut src: PipelineGroup) -> Result<(), E
 /// through: every arm folds EXACTLY (integer/decimal domain or order-free
 /// comparison), so a merged result equals the serial accumulation bit for
 /// bit. Any other pair is an eligibility-gate bug, not a value.
-fn merge_state(dst: &mut AggState, src: &mut AggState) -> Result<(), ExecError> {
+fn merge_state(dst: &mut AggState, src: &mut AggState, func: &AggFunc) -> Result<(), ExecError> {
     // Go's distinct partial implementations merge their retained value sets;
     // adding worker-local COUNT/SUM/AVG scalars would double-count a value
     // present in two workers. Replay only keys newly admitted to `dst`.
-    if dst.seen.is_some() || src.seen.is_some() {
+    if func.distinct && !super::count_distinct_int(func) {
         let Some(inputs) = src.distinct_inputs.take() else {
             return Err(ExecError::unsupported(
                 "parallel DISTINCT state did not retain its partial inputs",
