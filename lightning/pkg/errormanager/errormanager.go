@@ -172,20 +172,20 @@ const (
 	selectIndexConflictKeysReplace = `
 		SELECT id, raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE task_id = ? AND table_name = ? AND kv_type = 0 AND id >= ? and id < ?
+		WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ?
 		ORDER BY id LIMIT ?;
 	`
 
 	selectDataConflictKeysReplace = `
 		SELECT id, raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE task_id = ? AND table_name = ? AND kv_type <> 0 AND id >= ? and id < ?
+		WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ?
 		ORDER BY id LIMIT ?;
 	`
 
 	deleteNullDataRow = `
 		DELETE FROM %s.` + ConflictErrorTableName + `
-		WHERE task_id = ? AND table_name = ? AND kv_type = 2
+		WHERE table_name = ? AND kv_type = 2
 		LIMIT ?;
 	`
 
@@ -527,6 +527,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		HideQueryLog: redact.NeedRedact(),
 	}
 
+	// Incremental imports share conflict records for a table across task IDs.
+	// Resolution must include other tasks' records, not just em.taskID.
 	const rowLimit = 1000
 	indexTaskCh := make(chan [2]int64)
 	indexTaskWg := &sync.WaitGroup{}
@@ -567,7 +569,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			for start < end {
 				indexKvRows, err := em.db.QueryContext(
 					indexGCtx, common.SprintfWithIdentifiers(selectIndexConflictKeysReplace, em.schema),
-					em.taskID, tableName, start, end, rowLimit)
+					tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -771,7 +773,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			for start < end {
 				dataKvRows, err := em.db.QueryContext(
 					dataGCtx, common.SprintfWithIdentifiers(selectDataConflictKeysReplace, em.schema),
-					em.taskID, tableName, start, end, rowLimit)
+					tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -928,7 +930,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err2 != nil {
 					return errors.Trace(err2)
 				}
-				result, err := txn.ExecContext(c, sb.String(), em.taskID, tableName, rowLimit)
+				result, err := txn.ExecContext(c, sb.String(), tableName, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
 				}
