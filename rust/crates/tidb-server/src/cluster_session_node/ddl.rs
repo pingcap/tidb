@@ -45,7 +45,8 @@ use tidb_exec::real_tikv_ddl::{
     run_persisted_create_schema_job_to_completion,
     run_persisted_create_table_job_to_completion,
     run_persisted_create_tables_job_to_completion,
-    run_persisted_drop_schema_job_to_completion, run_persisted_rename_tables_job_to_completion,
+    run_persisted_drop_schema_job_to_completion, run_persisted_drop_table_job_to_completion,
+    run_persisted_rename_tables_job_to_completion,
     submit_check_constraint_job_with_retry,
     CheckConstraintSchemaSync, CheckConstraintValidator, ClusterDdlReport,
     ExchangePartitionValidator, IndexBackfiller, SchemaVersionNotifier,
@@ -294,6 +295,25 @@ where
                             }
                             tidb_model::ActionType::ACTION_CREATE_TABLES => {
                                 if let Err(error) = run_persisted_create_tables_job_to_completion(
+                                    Arc::clone(&opener),
+                                    job.id,
+                                    timeout,
+                                    notifier_ref,
+                                    &KvTableIndexBackfiller,
+                                    &KvTableIndexBackfiller,
+                                    &KvTableIndexBackfiller,
+                                    schema_sync.as_ref(),
+                                ) {
+                                    eprintln!(
+                                        "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
+                                        job.id,
+                                        serde_json::to_string(&error.to_string())
+                                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                                    );
+                                }
+                            }
+                            tidb_model::ActionType::ACTION_DROP_TABLE => {
+                                if let Err(error) = run_persisted_drop_table_job_to_completion(
                                     Arc::clone(&opener),
                                     job.id,
                                     timeout,

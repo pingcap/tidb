@@ -4365,6 +4365,220 @@ fn terminal_drop_landing<S: MetaSnapshot>(
     }
     let _ = job_table.append_delete(active, mutations);
 }
+
+/// Plans one execution step of a persisted `ACTION_DROP_TABLE` job.
+///
+/// Pinned Go `onDropTableOrView` (`pkg/ddl/table.go:62`): the job walks the
+/// table state machine -- `Public` -> `WriteOnly` -> `DeleteOnly` -> `None` --
+/// bumping the schema version at every transition, then deletes the table meta
+/// key and finishes with `FinishTableJob`. A missing table cancels the job
+/// with the recorded error (Go `checkTableExistAndCancelNonExistJob`). Each
+/// call advances exactly one state; the runner loops until the job lands in
+/// history.
+pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_DROP_TABLE {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} has unsupported action {}",
+            active.job.type_
+        )));
+    }
+    if active.job.real_start_ts == 0 {
+        active.job.real_start_ts = start_ts;
+    }
+    if active.job.state != JobState::ROLLINGBACK {
+        active.job.state = JobState::RUNNING;
+    }
+
+    let schema_version = catalog.schema_version;
+    let mut mutations = Vec::new();
+    let diff = SchemaDiff::default();
+
+    let Some(database) = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .cloned()
+    else {
+        active.job.error = Some(GoShared::new(
+            tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(1146),
+                format!(
+                    "[ddl:1146]Table '{}' doesn't exist",
+                    active.job.table_name.to_string()
+                ),
+            ),
+        ));
+        terminal_drop_landing(
+            &catalog, snapshot, &job_table, &mut active, &mut mutations, start_ts,
+        );
+        return Ok(PersistedDdlJobStep {
+            write: DdlWrite {
+                ddl_job_id,
+                mutations,
+                schema_version,
+                diff,
+                created_id: None,
+                backfill: Vec::new(),
+                auto_pre_split: false,
+                exchange_partition_validation: None,
+                check_constraint_validation: None,
+                mdl_info_update: None,
+                exchange_partition_label_swap: None,
+                warning: None,
+                placement_bundles: Vec::new(),
+                placement_rollback_bundles: Vec::new(),
+            },
+            terminal: true,
+        });
+    };
+
+    let Some(mut table) = database
+        .tables
+        .iter()
+        .find(|table| table.id == active.job.table_id)
+        .cloned()
+    else {
+        active.job.error = Some(GoShared::new(
+            tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(1146),
+                format!(
+                    "[ddl:1146]Table '{}' doesn't exist",
+                    active.job.table_name.to_string()
+                ),
+            ),
+        ));
+        terminal_drop_landing(
+            &catalog, snapshot, &job_table, &mut active, &mut mutations, start_ts,
+        );
+        return Ok(PersistedDdlJobStep {
+            write: DdlWrite {
+                ddl_job_id,
+                mutations,
+                schema_version,
+                diff,
+                created_id: None,
+                backfill: Vec::new(),
+                auto_pre_split: false,
+                exchange_partition_validation: None,
+                check_constraint_validation: None,
+                mdl_info_update: None,
+                exchange_partition_label_swap: None,
+                warning: None,
+                placement_bundles: Vec::new(),
+                placement_rollback_bundles: Vec::new(),
+            },
+            terminal: true,
+        });
+    };
+
+    let schema_version = schema_version + 1;
+    match table.state {
+        SchemaState::PUBLIC => table.state = SchemaState::WRITE_ONLY,
+        SchemaState::WRITE_ONLY => table.state = SchemaState::DELETE_ONLY,
+        SchemaState::DELETE_ONLY => table.state = SchemaState::NONE,
+        _ => {}
+    }
+    let diff = SchemaDiff {
+        version: schema_version,
+        action_type: active.job.type_,
+        schema_id: database.info.id,
+        table_id: table.id,
+        old_table_id: table.id,
+        ..SchemaDiff::default()
+    };
+    let mut terminal = false;
+    if table.state != SchemaState::NONE {
+        mutations.push(OptimisticMutation::meta_put(
+            key::table_kv_key(database.info.id, table.id),
+            value::serialize_table_info(&table)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+    } else {
+        mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+            database.info.id,
+            table.id,
+        ))?);
+        active.job.finish_table_job(
+            JobState::DONE,
+            SchemaState::NONE,
+            schema_version,
+            Some(GoShared::new(table.clone())),
+        );
+        active.job.state = JobState::SYNCED;
+        terminal = true;
+    }
+    active.job.schema_state = table.state;
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_version_kv_key(),
+        value::encode_int_value(schema_version),
+    )?);
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_diff_kv_key(schema_version),
+        value::serialize_schema_diff(&diff)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+    active.job.last_schema_version = schema_version;
+
+    if terminal {
+        if let Some(binlog) = active.job.binlog_info.as_ref() {
+            binlog.write().finished_ts = start_ts;
+        }
+        active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+        let encoded = active
+            .job
+            .encode(true)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+            let _ = history_table
+                .append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+        }
+        mutations.push(OptimisticMutation::meta_put(
+            key::ddl_job_history_kv_key(active.job.id),
+            encoded,
+        )?);
+        job_table
+            .append_delete(&active, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    } else {
+        job_table
+            .append_update(&mut active, true, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    }
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal,
+    })
+}
 /// Plans pinned Go `onCreateMaterializedViewLog` (master `94a9cbedab`):
 /// the one owner transaction that turns a submitted create-log job into the
 /// created `$mlog$` table, the base table's `MLogID` back-reference, the
