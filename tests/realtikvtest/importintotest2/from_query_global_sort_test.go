@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -52,12 +53,18 @@ func TestImportFromQueryGlobalSort(t *testing.T) {
 	tk.MustExec("insert into query_import_src values (1,10,1),(1,20,2),(1,NULL,3),(2,7,4),(NULL,3,5),(NULL,NULL,6),(3,NULL,7)")
 	tk.MustExec("analyze table query_import_src all columns")
 	previousURI, previousDist := vardef.CloudStorageURI.Load(), vardef.EnableDistTask.Load()
-	vardef.CloudStorageURI.Store(sortURI)
-	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI); vardef.EnableDistTask.Store(previousDist) })
+	tk.MustExec("set global tidb_cloud_storage_uri = ?", sortURI)
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_cloud_storage_uri = ?", previousURI)
+		tk.MustExec("set global tidb_enable_dist_task = ?", previousDist)
+	})
+	// A background sysvar refresh must retain the configured storage URI.
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
+	require.Equal(t, sortURI, vardef.CloudStorageURI.Load())
 	query := "select g,count(*),count(v),sum(v),min(v),max(v) from query_import_src where i>0 group by g"
 	for _, distributed := range modes {
 		t.Run(fmt.Sprintf("distributed=%t", distributed), func(t *testing.T) {
-			vardef.EnableDistTask.Store(distributed)
+			tk.MustExec("set global tidb_enable_dist_task = ?", distributed)
 			target := fmt.Sprintf("query_import_dst_%t", distributed)
 			tk.MustExec(fmt.Sprintf("create table %s(g bigint, c bigint, cv bigint, s decimal(42,2), lo decimal(20,2), hi decimal(20,2), key(g))", target))
 			for _, unsupported := range []struct{ sql, construct string }{

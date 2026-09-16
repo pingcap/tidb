@@ -35,8 +35,8 @@ func (s *mockGCSSuite) prepareImportFromSelect() {
 	s.prepareAndUseDB("from_select")
 	if kerneltype.IsNextGen() {
 		previousURI := vardef.CloudStorageURI.Load()
-		vardef.CloudStorageURI.Store(realtikvtest.GetNextGenObjStoreURI("from-select"))
-		s.T().Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+		s.tk.MustExec("set global tidb_cloud_storage_uri = ?", realtikvtest.GetNextGenObjStoreURI("from-select"))
+		s.T().Cleanup(func() { s.tk.MustExec("set global tidb_cloud_storage_uri = ?", previousURI) })
 	}
 }
 
