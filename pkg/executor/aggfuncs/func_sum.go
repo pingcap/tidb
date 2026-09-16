@@ -197,6 +197,7 @@ func (*sum4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 
 func (*sum4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDecimal)(pr)
+	p.val = types.MyDecimal{}
 	p.notNullRowCount = 0
 }
 

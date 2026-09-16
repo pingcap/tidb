@@ -106,6 +106,7 @@ import (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
+	hashAggSpill *builder.HashAggSpill
 	// ctx is the statement-scoped context.Context for executor build steps that
 	// can block before Executor.Open/Next receives the execution context.
 	ctx     context.Context
@@ -151,9 +152,13 @@ type CTEStorages struct {
 	initErr error
 }
 
-func newExecutorBuilder(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
+func newExecutorBuilder(
+	ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo,
+	spillOption *builder.HashAggSpill,
+) *executorBuilder {
 	txnManager := sessiontxn.GetTxnManager(sctx)
 	return &executorBuilder{
+		hashAggSpill:     spillOption,
 		ctx:              ctx,
 		sctx:             sctx,
 		is:               is,
@@ -183,7 +188,7 @@ type MockExecutorBuilder struct {
 // NewMockExecutorBuilderForTest is ONLY used in test.
 func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(context.Background(), ctx, is, ti),
+		executorBuilder: newExecutorBuilder(context.Background(), ctx, is, ti, nil),
 	}
 }
 
@@ -2230,7 +2235,22 @@ func (b *executorBuilder) buildHashAgg(v *physicalop.PhysicalHashAgg) exec.Execu
 	return b.buildHashAggFromChildExec(src, v)
 }
 
-func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *physicalop.PhysicalHashAgg) *aggregate.HashAggExec {
+// hashAggExecutor can initialize itself when an IndexJoin child is already open.
+type hashAggExecutor interface {
+	exec.Executor
+	OpenSelf(context.Context) error
+}
+
+func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *physicalop.PhysicalHashAgg) hashAggExecutor {
+	if r := b.hashAggSpill; r != nil {
+		e, err := aggregate.NewExternalHashAgg(b.sctx, v.Schema(), v.ID(), childExec, v.AggFuncs, v.GroupByItems,
+			r.Storage, r.Prefix, r.MemoryLimit)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		return e
+	}
 	sessionVars := b.sctx.GetSessionVars()
 	e := &aggregate.HashAggExec{
 		BaseExecutor:    exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), childExec),
@@ -5133,9 +5153,16 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		if err != nil {
 			return nil, err
 		}
-		exec := builder.buildHashAggFromChildExec(childExec, v)
-		err = exec.OpenSelf()
-		return exec, err
+		agg := builder.buildHashAggFromChildExec(childExec, v)
+		if builder.err != nil {
+			_ = exec.Close(childExec)
+			return nil, builder.err
+		}
+		if err := agg.OpenSelf(ctx); err != nil {
+			_ = exec.Close(agg)
+			return nil, err
+		}
+		return agg, nil
 	case *physicalop.PhysicalStreamAgg:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
