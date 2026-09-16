@@ -503,6 +503,9 @@ func (e *ImportIntoExec) prepareQuery(_ context.Context) error {
 	// Each supported reader must enforce its assigned ranges; subtasks must share
 	// a read TS and allocate non-overlapping generated row IDs. Keep other queries,
 	// including compute-heavy MV construction with aggregation, as a whole query.
+	// TODO: Remove this task-wide cap: the single Query spec already keeps SELECT
+	// on one worker. This also limits merge-sort, ingest and conflict handling to
+	// one node, preventing downstream stages from scaling out.
 	e.controller.Plan.MaxNodeCnt = 1
 	return nil
 }
