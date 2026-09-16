@@ -3386,18 +3386,20 @@ func (s *session) rebuildFromPrepareCache(
 
 		// Fresh ResolveCtx whose tableNames keys match the new AST pointers.
 		ResolveCtx: nodeW.GetResolveContext(),
+		// Read staleness can change between prepares even when the dedup key
+		// and schema version are unchanged.
+		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 
 		// Immutable fields – safe to share with the cached template:
-		StmtDB:              cached.Stmt.StmtDB,
-		StmtText:            cached.Stmt.StmtText,
-		VisitInfos:          cached.Stmt.VisitInfos,
-		NormalizedSQL:       cached.Stmt.NormalizedSQL,
-		SQLDigest:           cached.Stmt.SQLDigest,
-		ForUpdateRead:       cached.Stmt.ForUpdateRead,
-		SnapshotTSEvaluator: cached.Stmt.SnapshotTSEvaluator,
-		StmtCacheable:       cached.Stmt.StmtCacheable,
-		UncacheableReason:   cached.Stmt.UncacheableReason,
-		SchemaVersion:       cached.Stmt.SchemaVersion,
+		StmtDB:            cached.Stmt.StmtDB,
+		StmtText:          cached.Stmt.StmtText,
+		VisitInfos:        cached.Stmt.VisitInfos,
+		NormalizedSQL:     cached.Stmt.NormalizedSQL,
+		SQLDigest:         cached.Stmt.SQLDigest,
+		ForUpdateRead:     cached.Stmt.ForUpdateRead,
+		StmtCacheable:     cached.Stmt.StmtCacheable,
+		UncacheableReason: cached.Stmt.UncacheableReason,
+		SchemaVersion:     cached.Stmt.SchemaVersion,
 
 		// Mutable containers – clone so each stmt has independent state:
 		RelateVersion: maps.Clone(cached.Stmt.RelateVersion),
