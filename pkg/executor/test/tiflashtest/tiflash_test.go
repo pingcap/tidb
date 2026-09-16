@@ -80,6 +80,28 @@ func TestNonsupportCharsetTable(t *testing.T) {
 	tk.MustExec("alter table t set tiflash replica 1")
 }
 
+func TestMPPTopNScalarSortProjection(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint primary key,a int,b int,s varchar(1))")
+	tk.MustExec("insert into t values(1,0,1,'y'),(2,0,1,'A'),(3,0,1,'a'),(4,1,1,'0')")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	require.NoError(t, domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
+	tk.MustExec("set tidb_allow_mpp=1")
+	// The mock TiFlash executor does not support late materialization.
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	for _, engine := range []string{"tikv", "tiflash"} {
+		tk.MustExec("set tidb_isolation_read_engines='" + engine + "'")
+		tk.MustExec(fmt.Sprintf("set tidb_enforce_mpp=%t", engine == "tiflash"))
+		tk.MustQuery("select id from t where a=0 and b=1 order by s collate utf8mb4_general_ci,id limit 1").Check(testkit.Rows("2"))
+		tk.MustQuery("select id,id from t where a=0 and b=1 order by s collate utf8mb4_general_ci,id limit 2 offset 1").Check(testkit.Rows("3 3", "1 1"))
+		tk.MustQuery("select s,id from t where a=0 and b=1 order by s collate utf8mb4_general_ci desc,id desc limit 2").Check(testkit.Rows("y 1", "a 3"))
+		tk.MustQuery("select id from t where a=0 and b=1 order by s collate utf8mb4_general_ci,id").Check(testkit.Rows("2", "3", "1"))
+	}
+}
+
 func TestReadPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
