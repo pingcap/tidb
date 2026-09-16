@@ -30,6 +30,8 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -1290,6 +1292,13 @@ func TestProcessNextGenS3Path(t *testing.T) {
 			conf.KeyspaceName = bak
 		})
 	})
+	if kerneltype.IsNextGen() {
+		originalMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(originalMode))
+		})
+	}
 
 	for _, str := range []string{
 		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
@@ -1335,6 +1344,40 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 		require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
+
+	if kerneltype.IsClassic() {
+		return
+	}
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	for _, str := range []string{
+		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
+		"oss://bucket?External-id=abc&role-arn=arn",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		require.NoError(t, checkStarterS3Path(u))
+		require.NoError(t, checkNextGenS3PathWithSem(u))
+	}
+
+	for _, str := range []string{
+		"s3://bucket?access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=&access-key=ak&secret-access-key=sk",
+		"oss://bucket?role-arn=arn",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkStarterS3Path(u)
+		require.ErrorContains(t, err, "external ID is required for Starter deployments")
+	}
+
+	u, err := url.Parse("s3://bucket?external-id=allowed")
+	require.NoError(t, err)
+	require.NoError(t, checkStarterS3Path(u))
+	err = checkNextGenS3PathWithSem(u)
+	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+	require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 }
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
