@@ -1582,6 +1582,13 @@ func TestTikvRegionPeersExtractor(t *testing.T) {
 		skipRequest         bool
 	}{
 		// Test `region_id`, `store_id` columns.
+		{sql: "select * from information_schema.tikv_region_peers where region_id=-1", skipRequest: true},
+		{sql: "select * from information_schema.tikv_region_peers where store_id=-1", skipRequest: true},
+		{sql: "select * from information_schema.tikv_region_peers where region_id=0", skipRequest: true},
+		{sql: "select * from information_schema.tikv_region_peers where store_id=0", skipRequest: true},
+		{sql: "select * from information_schema.tikv_region_peers where region_id in (-1, 0)", skipRequest: true},
+		{sql: "select * from information_schema.tikv_region_peers where region_id in (-1, 0, 100)", regionIDs: []uint64{100}},
+		{sql: "select * from information_schema.tikv_region_peers where store_id in (-1, 0, 200)", storeIDs: []uint64{200}},
 		{
 			sql:       "select * from information_schema.tikv_region_peers where region_id=100",
 			regionIDs: []uint64{100},
