@@ -185,12 +185,12 @@ Projection	root		tpch50.supplier.s_acctbal, tpch50.supplier.s_name, tpch50.natio
       │ │   └─TableFullScan	cop[tikv]	table:part	keep order:false
       │ └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
       │   ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
-      │   │ ├─IndexJoin(Build)	root		inner join, inner:TableReader, outer key:tpch50.nation.n_regionkey, inner key:tpch50.region.r_regionkey, equal cond:eq(tpch50.nation.n_regionkey, tpch50.region.r_regionkey)
-      │   │ │ ├─TableReader(Build)	root		data:TableFullScan
-      │   │ │ │ └─TableFullScan	cop[tikv]	table:nation	keep order:false
-      │   │ │ └─TableReader(Probe)	root		data:Selection
-      │   │ │   └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
-      │   │ │     └─TableRangeScan	cop[tikv]	table:region	range: decided by [tpch50.nation.n_regionkey], keep order:false
+      │   │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
+      │   │ │ ├─TableReader(Build)	root		data:Selection
+      │   │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
+      │   │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
+      │   │ │ └─TableReader(Probe)	root		data:TableFullScan
+      │   │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
       │   │ └─TableReader(Probe)	root		data:TableFullScan
       │   │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
       │   └─TableReader(Probe)	root		data:TableFullScan
@@ -199,12 +199,12 @@ Projection	root		tpch50.supplier.s_acctbal, tpch50.supplier.s_name, tpch50.natio
         └─HashAgg	root		group by:tpch50.partsupp.ps_partkey, funcs:min(tpch50.partsupp.ps_supplycost)->Column, funcs:firstrow(tpch50.partsupp.ps_partkey)->tpch50.partsupp.ps_partkey
           └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
             ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
-            │ ├─IndexJoin(Build)	root		inner join, inner:TableReader, outer key:tpch50.nation.n_regionkey, inner key:tpch50.region.r_regionkey, equal cond:eq(tpch50.nation.n_regionkey, tpch50.region.r_regionkey)
-            │ │ ├─TableReader(Build)	root		data:TableFullScan
-            │ │ │ └─TableFullScan	cop[tikv]	table:nation	keep order:false
-            │ │ └─TableReader(Probe)	root		data:Selection
-            │ │   └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
-            │ │     └─TableRangeScan	cop[tikv]	table:region	range: decided by [tpch50.nation.n_regionkey], keep order:false
+            │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
+            │ │ ├─TableReader(Build)	root		data:Selection
+            │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
+            │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
+            │ │ └─TableReader(Probe)	root		data:TableFullScan
+            │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
             │ └─TableReader(Probe)	root		data:TableFullScan
             │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
             └─TableReader(Probe)	root		data:TableFullScan
@@ -349,12 +349,12 @@ Sort	root		Column:desc
             │   └─TableFullScan	cop[tikv]	table:orders	keep order:false
             └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.lineitem.l_suppkey)]
               ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
-              │ ├─IndexJoin(Build)	root		inner join, inner:TableReader, outer key:tpch50.nation.n_regionkey, inner key:tpch50.region.r_regionkey, equal cond:eq(tpch50.nation.n_regionkey, tpch50.region.r_regionkey)
-              │ │ ├─TableReader(Build)	root		data:TableFullScan
-              │ │ │ └─TableFullScan	cop[tikv]	table:nation	keep order:false
-              │ │ └─TableReader(Probe)	root		data:Selection
-              │ │   └─Selection	cop[tikv]		eq(tpch50.region.r_name, "MIDDLE EAST")
-              │ │     └─TableRangeScan	cop[tikv]	table:region	range: decided by [tpch50.nation.n_regionkey], keep order:false
+              │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
+              │ │ ├─TableReader(Build)	root		data:Selection
+              │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "MIDDLE EAST")
+              │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
+              │ │ └─TableReader(Probe)	root		data:TableFullScan
+              │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
               │ └─TableReader(Probe)	root		data:TableFullScan
               │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
               └─TableReader(Probe)	root		data:TableFullScan
@@ -528,12 +528,12 @@ Sort	root		Column
               └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)]
                 ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
                 │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.customer.c_nationkey)]
-                │ │ ├─IndexJoin(Build)	root		inner join, inner:TableReader, outer key:tpch50.nation.n_regionkey, inner key:tpch50.region.r_regionkey, equal cond:eq(tpch50.nation.n_regionkey, tpch50.region.r_regionkey)
-                │ │ │ ├─TableReader(Build)	root		data:TableFullScan
-                │ │ │ │ └─TableFullScan	cop[tikv]	table:n1	keep order:false
-                │ │ │ └─TableReader(Probe)	root		data:Selection
-                │ │ │   └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
-                │ │ │     └─TableRangeScan	cop[tikv]	table:region	range: decided by [tpch50.nation.n_regionkey], keep order:false
+                │ │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
+                │ │ │ ├─TableReader(Build)	root		data:Selection
+                │ │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
+                │ │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
+                │ │ │ └─TableReader(Probe)	root		data:TableFullScan
+                │ │ │   └─TableFullScan	cop[tikv]	table:n1	keep order:false
                 │ │ └─TableReader(Probe)	root		data:TableFullScan
                 │ │   └─TableFullScan	cop[tikv]	table:customer	keep order:false
                 │ └─TableReader(Probe)	root		data:Selection

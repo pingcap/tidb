@@ -90,9 +90,9 @@ select t1.id1,t1.id6 ,t2.id3  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
 select @@last_sql_use_alloc;
 create table t3 (id1 int ,id2 char(10),id8 int ,id3 text,id4 blob,id5 json,id6 varchar(1000),id7 varchar(1001), PRIMARY KEY (`id1`) clustered,key id2(id2),key id8(id8));
 insert into t3 (id1,id2,id8)values(1,1,1),(2,2,2),(3,3,3);
-explain format='plan_tree' select /*+ use_index_merge(t3, id2, id8) */ id1 from t3 where id2 > '3' or id8 < 10 union (select /*+ use_index_merge(t3, id2, id8) */ id1 from t3 where id2 > '4' or id8 < 7);
+explain format='plan_tree' select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
 --sorted_result
-select /*+ use_index_merge(t3, id2, id8) */ id1 from t3 where id2 > '3' or id8 < 10 union (select /*+ use_index_merge(t3, id2, id8) */ id1 from t3 where id2 > '4' or id8 < 7);
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
 select @@last_sql_use_alloc;
 --sorted_result
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id3 from t3 where id2 > '4' or id8 < 7);

@@ -807,8 +807,7 @@ func TestIndexMergeReaderIssue45279(t *testing.T) {
 	tk.MustExec("drop table if exists reproduce;")
 	tk.MustExec("CREATE TABLE reproduce (c1 int primary key, c2 int, c3 int, key ci2(c2), key ci3(c3));")
 	tk.MustExec("insert into reproduce values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
-	// Exercise IndexMerge cancellation independently of cost-based plan selection.
-	sql := "select /*+ use_index_merge(reproduce, primary, ci2) */ * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);"
+	sql := "select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);"
 	tk.MustQuery("explain format = 'brief' " + sql).Check(testkit.Rows(
 		"IndexMerge 33.99 root  type: union",
 		"├─TableRangeScan(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",

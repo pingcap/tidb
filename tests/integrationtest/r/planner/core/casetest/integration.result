@@ -1154,10 +1154,11 @@ Limit	1.00	root		offset:0, count:1
       └─TableFullScan	5.00	cop[tikv]	table:t	keep order:true
 explain format = 'brief' select * from t where b = 6 limit 1;
 id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		limit embedded(offset:0, count:1)
-├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:idx_b(b)	range:[6,6], keep order:false
-└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false
+Limit	1.00	root		offset:0, count:1
+└─TableReader	1.00	root		data:Limit
+  └─Limit	1.00	cop[tikv]		offset:0, count:1
+    └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
 set tidb_opt_prefer_range_scan = 1;
 explain format = 'brief' select * from t where b > 5;
 id	estRows	task	access object	operator info
@@ -1173,10 +1174,11 @@ Limit	1.00	root		offset:0, count:1
       └─TableFullScan	5.00	cop[tikv]	table:t	keep order:true
 explain format = 'brief' select * from t where b = 6 limit 1;
 id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		limit embedded(offset:0, count:1)
-├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:idx_b(b)	range:[6,6], keep order:false
-└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false
+Limit	1.00	root		offset:0, count:1
+└─TableReader	1.00	root		data:Limit
+  └─Limit	1.00	cop[tikv]		offset:0, count:1
+    └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
 set @@tidb_enable_chunk_rpc = default;
 set tidb_opt_prefer_range_scan = default;
 drop table if exists t;
@@ -1819,7 +1821,7 @@ create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,
 explain format='plan_tree' update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
 id	task	access object	operator info
 Update	root		N/A
-└─HashJoin	root		inner join, equal:[eq(test.tt.c, Column) eq(test.tt.d, Column)]
+└─IndexJoin	root		inner join, inner:TableReader, outer key:Column, Column, inner key:test.tt.c, test.tt.d, equal cond:eq(Column, test.tt.c), eq(Column, test.tt.d)
   ├─Union(Build)	root		
   │ ├─Projection	root		1->Column, 2->Column, 3->Column, 4->Column
   │ │ └─TableDual	root		rows:1
@@ -1827,7 +1829,9 @@ Update	root		N/A
   │ │ └─TableDual	root		rows:1
   │ └─Projection	root		3->Column, 4->Column, 5->Column, 6->Column
   │   └─TableDual	root		rows:1
-  └─Batch_Point_Get(Probe)	root	table:tt, clustered index:PRIMARY(c, d)	keep order:false, desc:false
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444))))
+      └─TableRangeScan	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column) eq(test.tt.d, Column)], keep order:false, stats:pseudo
 CREATE TABLE test_62564(c0 DECIMAL);
 INSERT INTO test_62564 VALUES (0);
 SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);

@@ -131,13 +131,13 @@ c_int	c_str	c_int	c_str
 1	Alice	1	Bob
 explain format = 'plan_tree' select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t2.c_int, inner key:executor__index_lookup_merge_join.t1.c_int, equal cond:eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+MergeJoin	root		inner join, left key:executor__index_lookup_merge_join.t1.c_int, right key:executor__index_lookup_merge_join.t2.c_int, other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
 ├─TableReader(Build)	root	partition:p0	data:Selection
 │ └─Selection	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
-│   └─TableFullScan	cop[tikv]	table:t2	keep order:false
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:true
 └─TableReader(Probe)	root	partition:all	data:Selection
   └─Selection	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
-    └─TableRangeScan	cop[tikv]	table:t1	range: decided by [executor__index_lookup_merge_join.t2.c_int], keep order:false
+    └─TableFullScan	cop[tikv]	table:t1	keep order:true
 show warnings;
 Level	Code	Message
 Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.

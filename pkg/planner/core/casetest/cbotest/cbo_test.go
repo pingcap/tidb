@@ -926,13 +926,15 @@ func TestReaderCopRequestCost(t *testing.T) {
 
 	indexLookupTrace := traceFor("select c from t force index(idx_b) where b in (1, 2, 3)", "IndexLookUp")
 	require.NotContains(t, indexLookupTrace, "cop-request(")
+	require.NotContains(t, indexLookupTrace, "requestPenalty(")
 	require.Equal(t, 1, strings.Count(indexLookupTrace, "doubleRead("))
 	require.Equal(t, 1, strings.Count(indexLookupTrace, "tidb_request_factor"),
 		"only the table-side handle lookup should charge requests")
 
 	indexMergeTrace := traceFor("select /*+ use_index_merge(t, idx_b, idx_c) */ * from t where b = 1 or c = 2", "IndexMerge")
 	require.NotContains(t, indexMergeTrace, "cop-request(")
-	require.Equal(t, 1, strings.Count(indexMergeTrace, "doubleRead("))
+	require.Equal(t, 1, strings.Count(indexMergeTrace, "requestPenalty("))
+	require.NotContains(t, indexMergeTrace, "doubleRead(")
 	require.Equal(t, 1, strings.Count(indexMergeTrace, "tidb_request_factor"),
 		"IndexMerge should charge its table lookup once, without partial scan requests")
 
@@ -1061,7 +1063,7 @@ func TestLookupRequestFanoutPlanChoice(t *testing.T) {
 		 and subR.referenced_object_id = o.id
 		where o.workspace_id = 1`)
 	require.Contains(t, indexJoinPlan, "IndexHashJoin", "the forced issue:69392 lookup candidate must remain available:\n%s", indexJoinPlan)
-	require.NotContains(t, indexJoinPlan, "cop-request(", "covering index probes should not charge scan requests:\n%s", indexJoinPlan)
+	require.NotContains(t, indexJoinPlan, "probe-startup(", "covering index probes should not charge scan requests:\n%s", indexJoinPlan)
 	require.Contains(t, mppPlan, "tiflash", "the forced issue:69392 MPP candidate must remain available:\n%s", mppPlan)
 	require.Greater(t, indexJoinCost, 2*mppCost,
 		"the existing index join cost should retain the MPP preference: index=%v mpp=%v", indexJoinCost, mppCost)
@@ -1106,9 +1108,9 @@ func TestLookupRequestFanoutPlanChoice(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, nestedApplyTrace, "the forced issue:69092 regression must retain an Apply plan")
-	require.NotContains(t, nestedApplyTrace, "cop-request(")
-	require.Contains(t, nestedApplyTrace, "doubleRead(",
-		"nested Apply should retain handle lookup costs")
+	require.NotContains(t, nestedApplyTrace, "probe-startup(")
+	require.Contains(t, nestedApplyTrace, "requestPenalty(",
+		"nested Apply should retain local lookup penalties")
 
 	// The same SQL without NO_DECORRELATE should prefer the already-enumerated
 	// MPP alternative once the nested lookup requests are priced.

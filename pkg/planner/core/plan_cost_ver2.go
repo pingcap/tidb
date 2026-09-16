@@ -428,7 +428,7 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 // plan-cost = table-side-cost + table-lookup-request-cost + sum(index-side-cost)
 // index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
-// table-lookup-request-cost = double-read-tasks * request-factor / double-read-concurrency
+// table-lookup-request-cost = double-read-tasks * request-factor * g(batch-lookup-rows / capacity) / double-read-concurrency
 func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalIndexMergeReader)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -483,8 +483,13 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 		batchSize := float64(p.SCtx().GetSessionVars().IndexLookupSize)
 		taskPerBatch := 32.0 // TODO: remove this magic number
 		doubleReadConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupConcurrency())
+		quantity := tableLookupRows / batchSize * taskPerBatch
+		// Small handle populations need less request overhead; index scans and
+		// row fetches are already priced separately. Pressure is local to a batch,
+		// while quantity still accounts for every batch of the merged lookup.
+		copPressureNum := min(tableLookupRows, batchSize)
 		tableLookupRequestCost = costusage.DivCostVer2(
-			doubleReadRequestCostVer2(option, tableLookupRows, batchSize, taskPerBatch, requestFactor),
+			costusage.NewRequestPenaltyVer2(option, quantity, copPressureNum, copPressureCapacity, requestFactor),
 			doubleReadConcurrency)
 	}
 
@@ -864,7 +869,7 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	probeConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupJoinConcurrency())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
-	requestFactor := getTaskRequestFactorVer2(p, taskType)
+	factor := getTaskRequestFactorVer2(p, taskType)
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	buildFilterCost := filterCostVer2(option, buildRows, buildFilters, cpuFactor)
@@ -872,9 +877,19 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	if err != nil {
 		return costusage.ZeroCostVer2, err
 	}
-	buildTaskCost := costusage.NewCostVer2(option, cpuFactor,
-		buildRows*10*cpuFactor.Value,
-		func() string { return fmt.Sprintf("cpu(%v*10*%v)", buildRows, cpuFactor) })
+	// Lookup keys are constructed per outer row, then sorted within each batch.
+	// Retain the existing serial placement of this work; a small batch cannot
+	// assume that all probe workers participate in key preparation.
+	batchSize := float64(p.SCtx().GetSessionVars().IndexJoinBatchSize)
+	keyCount := float64(max(1, len(p.OuterHashKeys), len(p.OuterJoinKeys)))
+	keyCost := costusage.NewCostVer2(option, cpuFactor,
+		buildRows*keyCount*cpuFactor.Value,
+		func() string { return fmt.Sprintf("lookupKey(%v*keys(%v)*%v)", buildRows, keyCount, cpuFactor) })
+	batchRows := max(1.0, min(buildRows, batchSize))
+	keyOrderCost := costusage.NewCostVer2(option, cpuFactor,
+		buildRows*math.Log2(batchRows)*cpuFactor.Value,
+		func() string { return fmt.Sprintf("orderCPU(%v*log(%v)*%v)", buildRows, batchRows, cpuFactor) })
+	buildTaskCost := costusage.SumCostVer2(keyCost, keyOrderCost)
 	startCost := costusage.NewCostVer2(option, cpuFactor,
 		10*3*cpuFactor.Value,
 		func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
@@ -914,15 +929,16 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 		}
 	}
 
-	// Double Read Cost
-	doubleReadCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))
-	if p.SCtx().GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 {
-		batchSize := float64(p.SCtx().GetSessionVars().IndexJoinBatchSize)
-		taskPerBatch := 1024.0 // TODO: remove this magic number
-		doubleReadTasks := buildRows / batchSize * taskPerBatch
-		doubleReadCost = doubleReadCostVer2(option, doubleReadTasks, requestFactor)
-		doubleReadCost = costusage.MulCostVer2(doubleReadCost, p.SCtx().GetSessionVars().IndexJoinDoubleReadPenaltyCostRate)
-	}
+	// IndexJoin creates batched probe lookups even when the inner plan is a
+	// TableReader or covering IndexReader. Any second-stage handle fetch is
+	// priced separately by its reader and already included in probeChildCost.
+	// Retain the legacy estimate of request fanout per full probe batch.
+	// This is an empirical work estimate, not a measured physical RPC count.
+	taskPerBatch := 1024.0 // TODO: calibrate request fanout.
+	quantity := buildRows / batchSize * taskPerBatch
+	copPressureNum := min(buildRows, batchSize)
+	probeRequestCost := costusage.NewRequestPenaltyVer2(option, quantity,
+		copPressureNum, copPressureCapacity, factor)
 
 	// consider the seeking cost of the probe side of index join,
 	// since this part of cost might be magnified by index join, see #62499.
@@ -930,7 +946,7 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	seekingCost := indexJoinSeekingCostVer2(option, buildRows, float64(numRanges), scanFactor)
 
 	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost,
-		costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+		costusage.DivCostVer2(costusage.SumCostVer2(probeRequestCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
@@ -960,8 +976,9 @@ func getNumberOfRanges(pp base.PhysicalPlan) (totNumRanges int) {
 }
 
 // getPlanCostVer24PhysicalApply returns the plan-cost of this sub-plan, which is:
-// plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
+// plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost + probe-request-cost
 // probe-cost = probe-child-cost * build-rows
+// probe-request-cost = build-rows * request-factor * g(build-rows / capacity)
 func getPlanCostVer24PhysicalApply(pp base.PhysicalPlan, taskType property.TaskType,
 	option *costusage.PlanCostOption) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalApply)
@@ -986,8 +1003,13 @@ func getPlanCostVer24PhysicalApply(pp base.PhysicalPlan, taskType property.TaskT
 		return costusage.ZeroCostVer2, err
 	}
 	probeCost := costusage.MulCostVer2(probeChildCost, buildRows)
+	// Apply reopens its probe for each outer row. Price this operator's local
+	// executions without changing the pressure already fixed in child costs.
+	// As with probeCost, cache hits and outer-filter selectivity are not modeled.
+	probeRequestCost := costusage.NewRequestPenaltyVer2(option, buildRows,
+		buildRows, copPressureCapacity, getTaskRequestFactorVer2(p, taskType))
 
-	p.PlanCostVer2 = costusage.SumCostVer2(buildChildCost, buildFilterCost, probeCost, probeFilterCost)
+	p.PlanCostVer2 = costusage.SumCostVer2(buildChildCost, buildFilterCost, probeCost, probeFilterCost, probeRequestCost)
 	p.PlanCostInit = true
 	return p.PlanCostVer2, nil
 }
@@ -1211,20 +1233,22 @@ func hashProbeCostVer2(option *costusage.PlanCostOption, probeRows, nKeys float6
 	return costusage.SumCostVer2(hashKeyCost, hashProbeCost)
 }
 
-// For simplicity and robustness, only operators that need double-read, such as
-// IndexLookup, IndexMerge, and IndexJoin, consider this cost.
-func doubleReadCostVer2(option *costusage.PlanCostOption, numTasks float64, requestFactor costusage.CostVer2Factor) costusage.CostVer2 {
-	return costusage.NewCostVer2(option, requestFactor,
-		numTasks*requestFactor.Value,
-		func() string { return fmt.Sprintf("doubleRead(tasks(%v)*%v)", numTasks, requestFactor) })
-}
+// copPressureCapacity is an experimental logical pressure threshold. It does
+// not represent measured concurrent RPCs or depend on physical Region metadata.
+const copPressureCapacity = 4096.0
 
+// doubleReadRequestCostVer2 prices IndexLookUpReader's baseline second-stage requests.
+// Keep this linear: discounting the baseline by local pressure underprices small
+// complete lookups and ordered lookups scaled down by LIMIT. IndexJoin and Apply
+// separately price the additional pressure from repeated probes.
 func doubleReadRequestCostVer2(
 	option *costusage.PlanCostOption,
 	estimatedRows, batchSize, tasksPerBatch float64,
 	requestFactor costusage.CostVer2Factor,
 ) costusage.CostVer2 {
-	return doubleReadCostVer2(option, estimatedRows/batchSize*tasksPerBatch, requestFactor)
+	quantity := estimatedRows / batchSize * tasksPerBatch
+	return costusage.NewCostVer2(option, requestFactor, quantity*requestFactor.Value,
+		func() string { return fmt.Sprintf("doubleRead(tasks(%v)*%v)", quantity, requestFactor) })
 }
 
 func getTableScanPenalty(p *physicalop.PhysicalTableScan, rows float64) (rowPenalty float64) {

@@ -268,11 +268,11 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain format='plan_tree' select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
 id	task	access object	operator info
-IndexJoin	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)
+MergeJoin	root		inner join, left key:planner__core__casetest__index__index.t.a, right key:planner__core__casetest__index__index.t.a
 ├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:t1	keep order:false
-└─TableReader(Probe)	root		data:TableRangeScan
-  └─TableRangeScan	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)], keep order:false
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:true
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:true
 select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
 a	b	c	d	a	b	c	d
 1	111	1.1000000000	11	1	111	1.1000000000	11

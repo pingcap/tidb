@@ -162,13 +162,14 @@ explain format = 'plan_tree' select gad.id as gid,sdk.id as sid,gad.aid as aid,g
 id	task	access object	operator info
 Projection	root		explain_complex_stats.st.id, explain_complex_stats.dd.id, explain_complex_stats.st.aid, explain_complex_stats.st.cm, explain_complex_stats.dd.dic, explain_complex_stats.dd.ip, explain_complex_stats.dd.t, explain_complex_stats.st.p1, explain_complex_stats.st.p2, explain_complex_stats.st.p3, explain_complex_stats.st.p4, explain_complex_stats.st.p5, explain_complex_stats.st.p6_md5, explain_complex_stats.st.p7_md5, explain_complex_stats.st.ext
 └─Limit	root		offset:0, count:3000
-  └─HashJoin	root		inner join, equal:[eq(explain_complex_stats.st.aid, explain_complex_stats.dd.aid) eq(explain_complex_stats.st.dic, explain_complex_stats.dd.mac)], other cond:lt(explain_complex_stats.st.t, explain_complex_stats.dd.t)
+  └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:explain_complex_stats.st.aid, inner key:explain_complex_stats.dd.aid, equal cond:eq(explain_complex_stats.st.aid, explain_complex_stats.dd.aid), eq(explain_complex_stats.st.dic, explain_complex_stats.dd.mac), other cond:lt(explain_complex_stats.st.t, explain_complex_stats.dd.t)
     ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		eq(explain_complex_stats.dd.bm, 0), eq(explain_complex_stats.dd.pt, "ios"), gt(explain_complex_stats.dd.t, 1477971479), not(isnull(explain_complex_stats.dd.mac)), not(isnull(explain_complex_stats.dd.t))
-    │   └─TableFullScan	cop[tikv]	table:sdk	keep order:false
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		eq(explain_complex_stats.st.bm, 0), eq(explain_complex_stats.st.dit, "mac"), eq(explain_complex_stats.st.pt, "ios"), gt(explain_complex_stats.st.t, 1477971479), not(isnull(explain_complex_stats.st.dic))
-        └─TableFullScan	cop[tikv]	table:gad	keep order:false
+    │ └─Selection	cop[tikv]		eq(explain_complex_stats.st.bm, 0), eq(explain_complex_stats.st.dit, "mac"), eq(explain_complex_stats.st.pt, "ios"), gt(explain_complex_stats.st.t, 1477971479), not(isnull(explain_complex_stats.st.dic))
+    │   └─TableFullScan	cop[tikv]	table:gad	keep order:false
+    └─IndexLookUp(Probe)	root		
+      ├─IndexRangeScan(Build)	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(explain_complex_stats.dd.aid, explain_complex_stats.st.aid)], keep order:false
+      └─Selection(Probe)	cop[tikv]		eq(explain_complex_stats.dd.bm, 0), eq(explain_complex_stats.dd.pt, "ios"), gt(explain_complex_stats.dd.t, 1477971479), not(isnull(explain_complex_stats.dd.mac)), not(isnull(explain_complex_stats.dd.t))
+        └─TableRowIDScan	cop[tikv]	table:sdk	keep order:false
 explain format = 'plan_tree' SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	task	access object	operator info
 Projection	root		explain_complex_stats.st.cm, explain_complex_stats.st.p1, explain_complex_stats.st.p2, explain_complex_stats.st.p3, explain_complex_stats.st.p4, explain_complex_stats.st.p5, explain_complex_stats.st.p6_md5, explain_complex_stats.st.p7_md5, Column, Column

@@ -311,14 +311,14 @@ drop table if exists t;
 create table t(a int);
 explain format='verbose' select /*+ stream_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-StreamAgg_14	1.00	704652.01	root		funcs:count(Column#5)->Column#4
-└─TableReader_15	1.00	704602.11	root		data:StreamAgg_8
+StreamAgg_14	1.00	304652.01	root		funcs:count(Column#5)->Column#4
+└─TableReader_15	1.00	304602.11	root		data:StreamAgg_8
   └─StreamAgg_8	1.00	4569000.00	cop[tikv]		funcs:count(1)->Column#5
     └─TableFullScan_13	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='verbose' select /*+ hash_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-HashAgg_9	1.00	686277.54	root		funcs:count(Column#5)->Column#4
-└─TableReader_10	1.00	684742.60	root		data:HashAgg_5
+HashAgg_9	1.00	286277.54	root		funcs:count(Column#5)->Column#4
+└─TableReader_10	1.00	284742.60	root		data:HashAgg_5
   └─HashAgg_5	1.00	4271107.30	cop[tikv]		funcs:count(1)->Column#5
     └─TableFullScan_8	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, pt, vt;
@@ -3349,7 +3349,7 @@ drop table if exists t;
 create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a));
 explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_8	33.33	465346.12	root		
+IndexLookUp_8	33.33	65346.12	root		
 ├─IndexRangeScan_5(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
 └─Selection_7(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
   └─TableRowIDScan_6	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
