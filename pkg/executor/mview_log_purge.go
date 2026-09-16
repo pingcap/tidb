@@ -1385,7 +1385,7 @@ func deriveMLogPurgeThrottleDeadline(
 	evalSctx sessionctx.Context,
 	mlogInfo *model.MaterializedViewLogInfo,
 	isInternalSQL bool,
-	schemaName, mlogName string,
+	_, _ string,
 	fallbackNextTime *time.Time,
 ) (*time.Time, error) {
 	failpoint.Inject("mockMLogPurgeAdaptiveDeadlineErr", func(val failpoint.Value) {
@@ -1546,7 +1546,7 @@ func buildLinearMLogPurgeDeleteRowIDRanges(minRowID, maxRowID, rangeCount int64)
 	}
 	step := span / rangeCount
 	ranges := make([]mlogPurgeDeleteRowIDRange, 0, int(rangeCount))
-	for i := int64(0); i < rangeCount; i++ {
+	for i := range rangeCount {
 		start := minRowID + i*step
 		end := maxRowID
 		if i < rangeCount-1 {
@@ -1571,13 +1571,13 @@ func buildShardedMLogPurgeDeleteRowIDRanges(minRowID, maxRowID int64, shardRowID
 	if rangeCount <= 1 {
 		return []mlogPurgeDeleteRowIDRange{{startRowID: minRowID, endRowID: maxRowID}}
 	}
-	shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), uint64(shardRowIDBits), autoid.RowIDBitLength)
+	shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), shardRowIDBits, autoid.RowIDBitLength)
 	bucketsPerRange := shardBucketCount / rangeCount
 	if bucketsPerRange <= 0 {
 		return []mlogPurgeDeleteRowIDRange{{startRowID: minRowID, endRowID: maxRowID}}
 	}
 	ranges := make([]mlogPurgeDeleteRowIDRange, 0, int(rangeCount))
-	for i := int64(0); i < rangeCount; i++ {
+	for i := range rangeCount {
 		start := int64(uint64(i*bucketsPerRange) << shardFmt.IncrementalBits)
 		end := int64((uint64((i+1)*bucketsPerRange) << shardFmt.IncrementalBits) - 1)
 		if i == rangeCount-1 {
