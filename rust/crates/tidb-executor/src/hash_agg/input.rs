@@ -43,6 +43,10 @@ pub(super) enum AggInputMode<T = usize> {
     CountAll,
     Count(T),
     CountDistinctInt(T),
+    CountDistinctReal {
+        column: T,
+        float32: bool,
+    },
     CountDistinctString {
         column: T,
         collation: tidb_datatype::Collation,
@@ -131,6 +135,15 @@ impl AggInputMode {
         };
         if count_distinct_int(func) {
             return Some(Self::CountDistinctInt(column(func.arg.as_ref()?)?));
+        }
+        if count_distinct_real(func) {
+            let expr = func.arg.as_ref()?;
+            let column = column(expr)?;
+            let field_type = expr.static_type()?;
+            return Some(Self::CountDistinctReal {
+                column,
+                float32: field_type.code() == FieldTypeCode::Float,
+            });
         }
         if matches!(func.kind, AggKind::Count)
             && func.distinct
@@ -268,6 +281,10 @@ impl AggInputMode {
             Self::CountAll => AggInputMode::CountAll,
             Self::Count(index) => AggInputMode::Count(chunk.column(index)),
             Self::CountDistinctInt(index) => AggInputMode::CountDistinctInt(chunk.column(index)),
+            Self::CountDistinctReal { column, float32 } => AggInputMode::CountDistinctReal {
+                column: chunk.column(column),
+                float32,
+            },
             Self::CountDistinctString { column, collation } => AggInputMode::CountDistinctString {
                 column: chunk.column(column),
                 collation,
@@ -353,6 +370,18 @@ impl AggInputMode<ColumnRead<'_>> {
                     .map(|values| values[row])
                     .unwrap_or_else(|| (!column.is_null(row)).then(|| column.get_int64(row)));
                 state.update_count_distinct_int_fast(value)
+            }
+            Self::CountDistinctReal { column, float32 } => {
+                let value = real_data.map(|values| values[row]).unwrap_or_else(|| {
+                    (!column.is_null(row)).then(|| {
+                        if *float32 {
+                            f64::from(column.get_float32(row))
+                        } else {
+                            column.get_float64(row)
+                        }
+                    })
+                });
+                state.update_count_distinct_real_fast(value)
             }
             Self::CountDistinctString { column, collation } => {
                 if column.is_null(row) {
@@ -693,7 +722,8 @@ pub(super) fn prepare_real_cache(modes: &[AggInputMode], chunk: &Chunk) -> RealC
         .iter()
         .map(|mode| {
             let index = match mode {
-                AggInputMode::Real { column, .. } => Some(*column),
+                AggInputMode::CountDistinctReal { column, .. }
+                | AggInputMode::Real { column, .. } => Some(*column),
                 _ => None,
             }?;
             if let Some((_, batch)) = batches.iter().find(|(cached, _)| *cached == index) {

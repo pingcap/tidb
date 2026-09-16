@@ -105,7 +105,9 @@ use tidb_expr::{Columns, SessionTimeZone};
 use tidb_util::disk;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
 use tidb_util::selection::{select, Selectable};
-use tidb_util::set::{Int64SetWithMemoryUsage, StringSetWithMemoryUsage};
+use tidb_util::set::{
+    Float64SetWithMemoryUsage, Int64SetWithMemoryUsage, StringSetWithMemoryUsage,
+};
 
 struct DatumSelection<'a>(&'a mut [Datum]);
 
@@ -308,6 +310,10 @@ enum Partial {
     /// keeps the encoded-key set on the state and, in the parallel partial
     /// phase, its retained inputs.
     CountDistinctInt(Int64SetWithMemoryUsage),
+    /// `COUNT(DISTINCT x)` over one real argument: Go's
+    /// `partialResult4CountDistinctReal`, backed by a float64 map. The set
+    /// preserves Go's signed-zero aliasing and non-equal NaN keys.
+    CountDistinctReal(Float64SetWithMemoryUsage),
     FinalCount(i64),
     /// `None` until the first non-NULL input (an empty sum is NULL). Go
     /// sums an integer or decimal argument exactly, in the decimal domain --
@@ -484,6 +490,21 @@ fn count_distinct_int(func: &AggFunc) -> bool {
             .is_some_and(|ty| ty.eval_type() == EvalType::Int)
 }
 
+/// Go `buildCount` selects `countOriginalWithDistinct4Real` for one REAL
+/// argument. Keep the plan predicate separate from the integer variant so the
+/// partial state can use Go's float64 map equality instead of encoded datums.
+fn count_distinct_real(func: &AggFunc) -> bool {
+    matches!(func.kind, AggKind::Count)
+        && func.distinct
+        && func.extra_args.is_empty()
+        && func.order_by.is_empty()
+        && func
+            .arg
+            .as_ref()
+            .and_then(Expression::static_type)
+            .is_some_and(|ty| ty.eval_type() == EvalType::Real)
+}
+
 impl AggState {
     fn new(func: &AggFunc) -> AggState {
         Self::with_collation(func, state_collation(func))
@@ -494,7 +515,7 @@ impl AggState {
     fn with_collation(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
         AggState {
             partial: Partial::for_func(func),
-            seen: (func.distinct && !count_distinct_int(func))
+            seen: (func.distinct && !count_distinct_int(func) && !count_distinct_real(func))
                 .then(|| Box::new(StringSetWithMemoryUsage::new([]).0)),
             distinct_inputs: None,
             collation,
@@ -521,7 +542,9 @@ impl AggState {
 
     fn new_parallel_with(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
         let mut state = Self::with_collation(func, collation);
-        state.distinct_inputs = (func.distinct && !count_distinct_int(func)).then(Vec::new);
+        state.distinct_inputs =
+            (func.distinct && !count_distinct_int(func) && !count_distinct_real(func))
+                .then(Vec::new);
         state
     }
 
@@ -651,6 +674,16 @@ impl AggState {
     /// the set grew by, or `None` when this state is not the typed set.
     fn update_count_distinct_int_fast(&mut self, value: Option<i64>) -> Option<i64> {
         let Partial::CountDistinctInt(set) = &mut self.partial else {
+            return None;
+        };
+        Some(value.map_or(0, |value| set.insert(value)))
+    }
+
+    /// Go `baseCountDistinct4Real.UpdatePartialResult` on a REAL cell read
+    /// straight from the chunk. A float set intentionally treats every NaN
+    /// insertion as a new key, just like Go's `map[float64]`.
+    fn update_count_distinct_real_fast(&mut self, value: Option<f64>) -> Option<i64> {
+        let Partial::CountDistinctReal(set) = &mut self.partial else {
             return None;
         };
         Some(value.map_or(0, |value| set.insert(value)))
@@ -1260,6 +1293,11 @@ impl Partial {
                 Int64SetWithMemoryUsage::new(std::iter::empty::<i64>()).0,
             );
         }
+        if count_distinct_real(func) {
+            return Partial::CountDistinctReal(
+                Float64SetWithMemoryUsage::new(std::iter::empty::<f64>()).0,
+            );
+        }
         Partial::new(&func.kind)
     }
 
@@ -1720,6 +1758,16 @@ impl Partial {
                     "a typed COUNT(DISTINCT) state is folded by its aggregate state",
                 ));
             }
+            (Partial::CountDistinctReal(_), None | Some(Datum::Null)) => {}
+            (Partial::CountDistinctReal(set), Some(Datum::Real(value)))
+            | (Partial::CountDistinctReal(set), Some(Datum::Float32(value))) => {
+                set.insert(value);
+            }
+            (Partial::CountDistinctReal(_), Some(_)) => {
+                return Err(ExecError::unsupported(
+                    "COUNT(DISTINCT) over this real value is not supported",
+                ));
+            }
             (Partial::MaxMin { .. }, Some(Datum::Null)) => {}
             (Partial::MaxMin { value, is_max }, Some(input)) => match value {
                 None => *value = Some(input),
@@ -2023,6 +2071,9 @@ impl Partial {
                 Datum::Decimal(Decimal::from_scaled_i128(*value, *scale))
             }
             Partial::CountDistinctInt(set) => {
+                Datum::Int(i64::try_from(set.len()).unwrap_or(i64::MAX))
+            }
+            Partial::CountDistinctReal(set) => {
                 Datum::Int(i64::try_from(set.len()).unwrap_or(i64::MAX))
             }
             Partial::MaxMinCount { count, .. } => Datum::Int(*count),
@@ -3651,6 +3702,69 @@ mod tests {
             StatementMemory::default(),
         );
         assert_eq!(run(exec), vec![vec![Datum::Int(2)]]);
+    }
+
+    /// Go's `countOriginalWithDistinct4Real` uses a float64 map: duplicate
+    /// finite values collapse, signed zero aliases, and each NaN insertion is
+    /// a distinct map key. The typed Rust state must keep those rules in both
+    /// the serial and partial/final worker paths.
+    #[test]
+    fn real_count_distinct_uses_go_float_set_semantics() {
+        let field_type = FieldType::new(FieldTypeCode::Double);
+        let values = [
+            Some(1.0),
+            Some(1.0),
+            Some(0.0),
+            Some(-0.0),
+            Some(f64::from_bits(0x7ff8_0000_0000_0001)),
+            Some(f64::from_bits(0x7ff8_0000_0000_0001)),
+            Some(f64::from_bits(0x7ff8_0000_0000_0002)),
+            None,
+        ];
+        let make_source = || {
+            let mut data =
+                Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
+            for value in values {
+                match value {
+                    Some(value) => data.append_float64(0, value),
+                    None => data.append_null(0),
+                }
+            }
+            let mut column = Column::new(1, field_type.clone());
+            column.index = 0;
+            Box::new(OneChunkSource {
+                meta: ExecutorMeta::new(Schema::new(vec![column]), 0, values.len(), values.len()),
+                data: Some(data),
+            }) as Box<dyn Executor>
+        };
+        let make_agg = || {
+            let mut agg = AggFunc::new(AggKind::Count, Some(typed_col(0, field_type.clone())));
+            agg.distinct = true;
+            agg
+        };
+        let output_types = [long()];
+        let serial = HashAggExec::new(
+            out_meta_typed(&output_types),
+            vec![],
+            vec![make_agg()],
+            make_source(),
+            NoColumns,
+            StatementMemory::default(),
+        )
+        .with_pipeline_concurrency_override(1, 1);
+        let parallel = HashAggExec::new(
+            out_meta_typed(&output_types),
+            vec![],
+            vec![make_agg()],
+            make_source(),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert_eq!(run_typed(serial, &output_types), vec![vec![Datum::Int(5)]]);
+        assert_eq!(
+            run_typed(parallel, &output_types),
+            vec![vec![Datum::Int(5)]]
+        );
     }
 
     #[test]

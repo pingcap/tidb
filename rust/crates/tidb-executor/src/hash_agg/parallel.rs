@@ -638,6 +638,15 @@ fn write_partial(writer: &mut SpillWriter, partial: &Partial) -> Result<(), Exec
                 writer.i64(*value);
             }
         }
+        Partial::CountDistinctReal(set) => {
+            writer.u8(20);
+            writer.u32(u32::try_from(set.len()).map_err(|_| {
+                ExecError::SpillFailed("too many HashAgg DISTINCT values".to_owned())
+            })?);
+            for value in set.iter() {
+                writer.f64(value);
+            }
+        }
         Partial::MaxMinCount { value, count, .. } => {
             writer.u8(17);
             writer.optional_datum(value.as_ref())?;
@@ -788,6 +797,14 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
                 set.insert(reader.i64()?);
             }
             Partial::CountDistinctInt(set)
+        }
+        (AggKind::Count, 20) => {
+            let count = reader.u32()? as usize;
+            let mut set = Float64SetWithMemoryUsage::new(std::iter::empty::<f64>()).0;
+            for _ in 0..count {
+                set.insert(reader.f64()?);
+            }
+            Partial::CountDistinctReal(set)
         }
         (AggKind::Min | AggKind::Max, 18) => Partial::MaxMinDecimalFast {
             value: reader.i128()?,
@@ -943,7 +960,7 @@ fn write_state(
     state: &AggState,
     func: &AggFunc,
 ) -> Result<(), ExecError> {
-    if func.distinct && !super::count_distinct_int(func) {
+    if func.distinct && !super::count_distinct_int(func) && !super::count_distinct_real(func) {
         let inputs = state.distinct_inputs.as_ref().ok_or_else(|| {
             ExecError::SpillFailed(
                 "parallel DISTINCT state did not retain its partial inputs".to_owned(),
@@ -961,7 +978,7 @@ fn write_state(
 
 fn read_state(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<AggState, ExecError> {
     let mut state = AggState::new_parallel(func);
-    if func.distinct && !super::count_distinct_int(func) {
+    if func.distinct && !super::count_distinct_int(func) && !super::count_distinct_real(func) {
         let count = reader.u32()? as usize;
         let mut inputs = Vec::with_capacity(count);
         let mut seen = StringSetWithMemoryUsage::new([]).0;
@@ -2533,7 +2550,7 @@ fn merge_state(dst: &mut AggState, src: &mut AggState, func: &AggFunc) -> Result
     // Go's distinct partial implementations merge their retained value sets;
     // adding worker-local COUNT/SUM/AVG scalars would double-count a value
     // present in two workers. Replay only keys newly admitted to `dst`.
-    if func.distinct && !super::count_distinct_int(func) {
+    if func.distinct && !super::count_distinct_int(func) && !super::count_distinct_real(func) {
         let Some(inputs) = src.distinct_inputs.take() else {
             return Err(ExecError::unsupported(
                 "parallel DISTINCT state did not retain its partial inputs",
@@ -2600,6 +2617,11 @@ fn merge_state(dst: &mut AggState, src: &mut AggState, func: &AggFunc) -> Result
         (Partial::CountDistinctInt(dst_set), Partial::CountDistinctInt(src_set)) => {
             for value in src_set.iter() {
                 dst_set.insert(*value);
+            }
+        }
+        (Partial::CountDistinctReal(dst_set), Partial::CountDistinctReal(src_set)) => {
+            for value in src_set.iter() {
+                dst_set.insert(value);
             }
         }
         (Partial::FinalCount(a), Partial::FinalCount(b)) => *a = a.wrapping_add(*b),
