@@ -360,7 +360,9 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 func UpdateTiDBConfig() {
 	// need a real PD
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Path = CurrentPDAddr()
+		// Ignore -tikv-path here: it may be used in `init`,
+		// where flags are not parsed.
+		conf.Path = "127.0.0.1:2379"
 		if kerneltype.IsNextGen() {
 			conf.TiKVWorkerURL = "localhost:19000"
 			conf.KeyspaceName = keyspace.System
