@@ -1364,6 +1364,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	for _, str := range []string{
 		"s3://bucket?access-key=ak&secret-access-key=sk",
 		"s3://bucket?external-id=&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=abc&external_id=&access-key=ak&secret-access-key=sk",
 		"oss://bucket?role-arn=arn",
 	} {
 		u, err := url.Parse(str)

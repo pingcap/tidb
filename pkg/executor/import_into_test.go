@@ -266,6 +266,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 					for _, query := range []string{
 						"access-key=ak&secret-access-key=sk",
 						"EXTERNAL_ID=&access-key=ak&secret-access-key=sk",
+						"external-id=allowed&EXTERNAL_ID=&access-key=ak&secret-access-key=sk",
 					} {
 						tk.MustMatchErrMsg(
 							fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?%s'", schema, query),

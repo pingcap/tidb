@@ -6615,16 +6615,24 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// checkStarterS3Path requires a non-empty external ID query parameter without
-// otherwise validating its value. The caller preserves the original path.
+// checkStarterS3Path requires every normalized external ID alias to have a
+// non-empty effective value. The caller preserves the original path.
 func checkStarterS3Path(u *url.URL) error {
 	values := u.Query()
-	for k := range values {
-		if objstore.NormalizeQueryParameterKey(k) == s3like.S3ExternalID && values.Get(k) != "" {
-			return nil
+	hasExternalID := false
+	for k, vs := range values {
+		if objstore.NormalizeQueryParameterKey(k) != s3like.S3ExternalID {
+			continue
+		}
+		hasExternalID = len(vs) > 0 && vs[0] != ""
+		if !hasExternalID {
+			break
 		}
 	}
-	return exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, "external ID is required for Starter deployments")
+	if !hasExternalID {
+		return exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, "external ID is required for Starter deployments")
+	}
+	return nil
 }
 
 // For nextgen IMPORT INTO with SEM, require explicit S3 authentication. For
