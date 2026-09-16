@@ -1875,21 +1875,14 @@ func (b *PlanBuilder) buildAdminCheckIndexLookUpReader(_ context.Context, dbName
 		// projection keeps the row returned to IndexLookUpExecutor unchanged.
 		cop.FinishIndexPlan()
 		outputSchema := ts.Schema().Clone()
-		needProjection := false
 		for _, affectedCol := range idx.AffectColumn {
 			colInfo := tblInfo.Columns[affectedCol.Offset]
-			found := false
-			for _, scanCol := range ts.Columns {
-				if scanCol.ID == colInfo.ID {
-					found = true
-					break
-				}
+			exprCol := fullExprCols.Columns[affectedCol.Offset]
+			if ts.Schema().Contains(exprCol) {
+				continue
 			}
-			if !found {
-				ts.Columns = append(ts.Columns, colInfo)
-				ts.Schema().Append(fullExprCols.Columns[affectedCol.Offset])
-				needProjection = true
-			}
+			ts.Columns = append(ts.Columns, colInfo)
+			ts.Schema().Append(exprCol)
 		}
 
 		condition, err := expression.ParseSimpleExpr(
@@ -1904,7 +1897,7 @@ func (b *PlanBuilder) buildAdminCheckIndexLookUpReader(_ context.Context, dbName
 			Init(b.ctx, ts.StatsInfo(), b.getSelectOffset())
 		selection.SetChildren(ts)
 		cop.TablePlan = selection
-		if needProjection {
+		if ts.Schema().Len() != outputSchema.Len() {
 			projection := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(outputSchema.Columns)}.
 				Init(b.ctx, ts.StatsInfo(), b.getSelectOffset(), nil)
 			projection.SetSchema(outputSchema)

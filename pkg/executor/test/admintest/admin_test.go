@@ -869,6 +869,23 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 	tk.MustExec("admin check table admin_test")
 }
 
+func mustMutateIndex(t *testing.T, store kv.Storage, mutate func(kv.Transaction) error) {
+	t.Helper()
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, mutate(txn))
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
+func mustReportAdminCheckInconsistent(t *testing.T, tk *testkit.TestKit, sqls ...string) {
+	t.Helper()
+	for _, sql := range sqls {
+		err := tk.ExecToErr(sql)
+		require.Error(t, err)
+		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err), "%v", err)
+	}
+}
+
 func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
@@ -888,48 +905,32 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 		tk.MustExec("insert into partial_t values (0, '[0,1,2]', 0), (1, '[1,2,3]', 1), (2, '[]', 1), (3, '[4,5]', null)")
 		tk.MustExec("admin check table partial_t")
 		tk.MustExec("admin check index partial_t idx")
-		mustReportInconsistent := func(sql string) {
-			err := tk.ExecToErr(sql)
-			require.Error(t, err)
-			require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
-		}
-
-		var idxInfo *model.IndexInfo
-		for _, info := range partialTbl.Meta().Indices {
-			if info.Name.L == "idx" {
-				idxInfo = info.Clone()
-				break
-			}
-		}
+		idxInfo := partialTbl.Meta().FindIndexByName("idx")
 		require.NotNil(t, idxInfo)
+		idxInfo = idxInfo.Clone()
 		idxInfo.MVIndex = false
 		indexOpr, err := tables.NewIndex(partialTbl.Meta().ID, partialTbl.Meta(), idxInfo)
 		require.NoError(t, err)
 		sctx := mock.NewContext()
 		sctx.Store = store
 
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		require.NoError(t, indexOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1)))
-		require.NoError(t, txn.Commit(context.Background()))
-		mustReportInconsistent("admin check table partial_t")
-		mustReportInconsistent("admin check index partial_t idx")
+		mustMutateIndex(t, store, func(txn kv.Transaction) error {
+			return indexOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1))
+		})
+		mustReportAdminCheckInconsistent(t, tk, "admin check table partial_t", "admin check index partial_t idx")
 
-		txn, err = store.Begin()
-		require.NoError(t, err)
-		_, err = indexOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1), nil)
-		require.NoError(t, err)
-		require.NoError(t, txn.Commit(context.Background()))
+		mustMutateIndex(t, store, func(txn kv.Transaction) error {
+			_, err := indexOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1), nil)
+			return err
+		})
 		tk.MustExec("admin check table partial_t")
 		tk.MustExec("admin check index partial_t idx")
 
-		txn, err = store.Begin()
-		require.NoError(t, err)
-		_, err = indexOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(0), nil)
-		require.NoError(t, err)
-		require.NoError(t, txn.Commit(context.Background()))
-		mustReportInconsistent("admin check table partial_t")
-		mustReportInconsistent("admin check index partial_t idx")
+		mustMutateIndex(t, store, func(txn kv.Transaction) error {
+			_, err := indexOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(0), nil)
+			return err
+		})
+		mustReportAdminCheckInconsistent(t, tk, "admin check table partial_t", "admin check index partial_t idx")
 	})
 
 	tk.MustExec("drop table if exists t")
@@ -1016,26 +1017,14 @@ func TestSlowAdminCheckTableWithPartialIndex(t *testing.T) {
 
 	sctx := mock.NewContext()
 	sctx.Store = store
-	mutateIndex := func(fn func(kv.Transaction) error) {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		require.NoError(t, fn(txn))
-		require.NoError(t, txn.Commit(context.Background()))
-	}
-	mustReportInconsistent := func(sql string) {
-		err := tk.ExecToErr(sql)
-		require.Error(t, err)
-		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err), "%v", err)
-	}
 
 	// A qualifying table row without its partial-index entry must be reported by
 	// the table-to-index direction of the slow check.
-	mutateIndex(func(txn kv.Transaction) error {
+	mustMutateIndex(t, store, func(txn kv.Transaction) error {
 		return partialIdxOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(10), kv.IntHandle(1))
 	})
-	mustReportInconsistent("admin check table t")
-	mustReportInconsistent("admin check index t idx_partial")
-	mutateIndex(func(txn kv.Transaction) error {
+	mustReportAdminCheckInconsistent(t, tk, "admin check table t", "admin check index t idx_partial")
+	mustMutateIndex(t, store, func(txn kv.Transaction) error {
 		_, err := partialIdxOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(10), kv.IntHandle(1), nil)
 		return err
 	})
@@ -1044,23 +1033,22 @@ func TestSlowAdminCheckTableWithPartialIndex(t *testing.T) {
 
 	// An entry for a row that does not satisfy the partial condition must be
 	// reported by the index-to-table direction of the slow check.
-	mutateIndex(func(txn kv.Transaction) error {
+	mustMutateIndex(t, store, func(txn kv.Transaction) error {
 		_, err := partialIdxOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(20), kv.IntHandle(2), nil)
 		return err
 	})
-	mustReportInconsistent("admin check table t")
-	mustReportInconsistent("admin check index t idx_partial")
-	mutateIndex(func(txn kv.Transaction) error {
+	mustReportAdminCheckInconsistent(t, tk, "admin check table t", "admin check index t idx_partial")
+	mustMutateIndex(t, store, func(txn kv.Transaction) error {
 		return partialIdxOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(20), kv.IntHandle(2))
 	})
 
 	// The count shortcut filters out the partial index. Verify that its returned
 	// offset is still mapped to the correct index in a mixed-index table.
-	mutateIndex(func(txn kv.Transaction) error {
+	mustMutateIndex(t, store, func(txn kv.Transaction) error {
 		return allIdxOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(2))
 	})
 	require.Error(t, tk.ExecToErr("admin check table t"))
-	mutateIndex(func(txn kv.Transaction) error {
+	mustMutateIndex(t, store, func(txn kv.Transaction) error {
 		_, err := allIdxOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(2), nil)
 		return err
 	})

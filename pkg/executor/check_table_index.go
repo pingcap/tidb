@@ -158,11 +158,9 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		if greater == admin.IdxCntGreater {
-			realIdxOffset := idxOffsets[idxOffset]
-			err = e.checkTableIndexHandle(ctx, e.indexInfos[realIdxOffset])
+			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffsets[idxOffset]])
 		} else if greater == admin.TblCntGreater {
-			realIdxOffset := idxOffsets[idxOffset]
-			err = e.checkTableRecord(ctx, realIdxOffset)
+			err = e.checkTableRecord(ctx, idxOffsets[idxOffset])
 		}
 		return errors.Trace(err)
 	}
