@@ -172,20 +172,20 @@ const (
 	selectIndexConflictKeysReplace = `
 		SELECT id, raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ?
+		WHERE task_id = ? AND table_name = ? AND kv_type = 0 AND id >= ? and id < ?
 		ORDER BY id LIMIT ?;
 	`
 
 	selectDataConflictKeysReplace = `
 		SELECT id, raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ?
+		WHERE task_id = ? AND table_name = ? AND kv_type <> 0 AND id >= ? and id < ?
 		ORDER BY id LIMIT ?;
 	`
 
 	deleteNullDataRow = `
 		DELETE FROM %s.` + ConflictErrorTableName + `
-		WHERE kv_type = 2
+		WHERE task_id = ? AND table_name = ? AND kv_type = 2
 		LIMIT ?;
 	`
 
@@ -567,13 +567,15 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			for start < end {
 				indexKvRows, err := em.db.QueryContext(
 					indexGCtx, common.SprintfWithIdentifiers(selectIndexConflictKeysReplace, em.schema),
-					tableName, start, end, rowLimit)
+					em.taskID, tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
 				}
 
 				var lastRowID int64
+				rowsRead := 0
 				for indexKvRows.Next() {
+					rowsRead++
 					var rawKey, rawValue, rawHandle []byte
 					var indexName string
 					if err := indexKvRows.Scan(&lastRowID, &rawKey, &indexName, &rawValue, &rawHandle); err != nil {
@@ -673,8 +675,13 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err := indexKvRows.Close(); err != nil {
 					return errors.Trace(err)
 				}
-				if len(handleKeys) == 0 {
+				if rowsRead == 0 {
 					break
+				}
+				// A page with no deletions can still be followed by conflicting rows.
+				start = lastRowID + 1
+				if len(handleKeys) == 0 {
+					continue
 				}
 				if err := fnDeleteKeys(indexGCtx, handleKeys); err != nil {
 					return errors.Trace(err)
@@ -707,7 +714,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					}); err != nil {
 					return errors.Trace(err)
 				}
-				start = lastRowID + 1
 				// If the remaining tasks cannot be processed at once, split the task
 				// into two subtasks and send one of them to the other idle worker if possible.
 				if end-start > rowLimit {
@@ -765,7 +771,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			for start < end {
 				dataKvRows, err := em.db.QueryContext(
 					dataGCtx, common.SprintfWithIdentifiers(selectDataConflictKeysReplace, em.schema),
-					tableName, start, end, rowLimit)
+					em.taskID, tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -773,8 +779,10 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				var lastRowID int64
 				var previousRawKey, latestValue []byte
 				var mustKeepKvPairs *kv.Pairs
+				rowsRead := 0
 
 				for dataKvRows.Next() {
+					rowsRead++
 					var rawKey, rawValue []byte
 					if err := dataKvRows.Scan(&lastRowID, &rawKey, &rawValue); err != nil {
 						return errors.Trace(err)
@@ -879,13 +887,16 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err := dataKvRows.Close(); err != nil {
 					return errors.Trace(err)
 				}
-				if len(handleKeys) == 0 {
+				if rowsRead == 0 {
 					break
+				}
+				start = lastRowID + 1
+				if len(handleKeys) == 0 {
+					continue
 				}
 				if err := fnDeleteKeys(dataGCtx, handleKeys); err != nil {
 					return errors.Trace(err)
 				}
-				start = lastRowID + 1
 				// If the remaining tasks cannot be processed at once, split the task
 				// into two subtasks and send one of them to the other idle worker if possible.
 				if end-start > rowLimit {
@@ -917,7 +928,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err2 != nil {
 					return errors.Trace(err2)
 				}
-				result, err := txn.ExecContext(c, sb.String(), rowLimit)
+				result, err := txn.ExecContext(c, sb.String(), em.taskID, tableName, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
 				}

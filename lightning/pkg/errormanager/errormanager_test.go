@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -35,6 +36,73 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
+
+func TestReplaceConflictEmptyEffectPage(t *testing.T) {
+	col := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("id"), State: model.StatePublic,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	col.AddFlag(mysql.PriKeyFlag)
+	info := &model.TableInfo{ID: 104, Name: ast.NewCIStr("t"), State: model.StatePublic,
+		PKIsHandle: true, Columns: []*model.ColumnInfo{col}}
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
+	require.NoError(t, err)
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{Table: tbl, Logger: log.L()})
+	require.NoError(t, err)
+	_, err = encoder.AddRecord(types.MakeDatums(1))
+	require.NoError(t, err)
+	pair := encoder.SessionCtx.TakeKvPairs().Pairs[0]
+	for _, stage := range []string{"index", "data", "empty"} {
+		t.Run(stage, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			cfg := config.NewConfig()
+			cfg.TaskID = 42
+			cfg.App.TaskInfoSchemaName = "lightning_task_info"
+			em := New(db, cfg, log.L())
+			indexQuery := "SELECT id, raw_key, index_name, raw_value, raw_handle FROM .* WHERE task_id = [?] AND table_name = [?] AND kv_type = 0.*"
+			dataQuery := "SELECT id, raw_key, raw_value FROM .* WHERE task_id = [?] AND table_name = [?] AND kv_type <> 0.*"
+			if stage == "empty" {
+				mock.ExpectQuery(indexQuery).WithArgs(int64(42), "t", 0, int64(math.MaxInt64), 1000).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}))
+				mock.ExpectQuery(dataQuery).WithArgs(int64(42), "t", 0, int64(math.MaxInt64), 1000).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
+				mock.ExpectBegin()
+				mock.ExpectExec("DELETE FROM .* WHERE task_id = [?] AND table_name = [?] AND kv_type = 2 LIMIT [?]").
+					WithArgs(int64(42), "t", 1000).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectCommit()
+				require.NoError(t, em.ReplaceConflictKeys(context.Background(), tbl, "t", util.NewWorkerPool(1, "test"),
+					func(context.Context, []byte) ([]byte, error) { return nil, fmt.Errorf("unexpected read") },
+					func(context.Context, [][]byte) error { return fmt.Errorf("unexpected delete") }))
+				require.NoError(t, mock.ExpectationsWereMet())
+				return
+			}
+			query := indexQuery
+			rows := sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"})
+			if stage == "data" {
+				mock.ExpectQuery(indexQuery).WillReturnRows(rows)
+				query = dataQuery
+				rows = sqlmock.NewRows([]string{"id", "raw_key", "raw_value"})
+			}
+			for i := 1; i <= 1000; i++ {
+				if stage == "index" {
+					rows.AddRow(i, pair.Key, "PRIMARY", pair.Val, pair.Key)
+				} else {
+					rows.AddRow(i, pair.Key, pair.Val)
+				}
+			}
+			mock.ExpectQuery(query).WithArgs(int64(42), "t", 0, int64(math.MaxInt64), 1000).WillReturnRows(rows)
+			nextPageErr := fmt.Errorf("next input page reached")
+			mock.ExpectQuery(query).WithArgs(int64(42), "t", 1001, int64(math.MaxInt64), 1000).WillReturnError(nextPageErr)
+			err = em.ReplaceConflictKeys(context.Background(), tbl, "t", util.NewWorkerPool(1, "test"),
+				func(context.Context, []byte) ([]byte, error) { return pair.Val, nil },
+				func(context.Context, [][]byte) error {
+					return fmt.Errorf("an effect-free page must not delete keys")
+				})
+			require.ErrorIs(t, err, nextPageErr)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
 
 func TestInit(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -244,14 +312,14 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
 		WillReturnResult(sqlmock.NewResult(3, 1))
-	mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+	mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE task_id = ? AND table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}))
-	mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+	mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE task_id = ? AND table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}).
 			AddRow(1, data1RowKey, data1RowValue).
 			AddRow(2, data1RowKey, data2RowValue))
 	for range 2 {
-		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE task_id = ? AND table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
 	}
 	mockDB.ExpectBegin()
@@ -442,7 +510,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
 		WillReturnResult(sqlmock.NewResult(3, 1))
-	mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+	mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE task_id = ? AND table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(1, data1IndexKey, "uni_b", data1IndexValue, data1RowKey).
 			AddRow(2, data1IndexKey, "uni_b", data2IndexValue, data2RowKey).
@@ -455,15 +523,15 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
 	for range 2 {
-		mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+		mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE task_id = ? AND table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}))
 	}
-	mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+	mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE task_id = ? AND table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}).
 			AddRow(1, data1RowKey, data1RowValue).
 			AddRow(2, data1RowKey, data3RowValue))
 	for range 2 {
-		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE task_id = ? AND table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
 	}
 	mockDB.ExpectBegin()
