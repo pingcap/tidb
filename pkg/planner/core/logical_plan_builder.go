@@ -6606,9 +6606,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		}
 	}
 
-	// If the delete is non-qualified it does not require Select Priv
+	// Only an unqualified single-table delete can omit SELECT privileges.
+	// Joined tables can be read by ON/USING even without a WHERE clause.
 	if ds.Where == nil && ds.Order == nil {
-		b.popVisitInfo()
+		if tableName, _ := getSingleTableNameAndAlias(ds.TableRefs); tableName != nil {
+			b.popVisitInfo()
+		}
 	}
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
