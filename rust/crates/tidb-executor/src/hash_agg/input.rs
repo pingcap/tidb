@@ -664,8 +664,22 @@ pub(super) fn update_row<C: Columns>(
     row: tidb_chunk::row::Row<'_>,
 ) -> Result<i64, ExecError> {
     let mut delta = 0;
+    // Go's serial and stream workers reuse the one-row evaluation storage for
+    // every aggregate in the row. Keeping this scratch vector outside the
+    // function loop avoids a fresh allocation for each fallback aggregate
+    // while preserving the source's evaluation order.
+    let mut extra_values = Vec::new();
     for ((mode, func), state) in modes.iter().zip(funcs).zip(states) {
-        delta += mode.update(func, ctx, state, row)?;
+        delta += mode.update_with_decimal_data(
+            func,
+            ctx,
+            state,
+            row,
+            None,
+            None,
+            None,
+            &mut extra_values,
+        )?;
     }
     Ok(delta)
 }
