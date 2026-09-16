@@ -1,0 +1,30 @@
+create table float_probe(v float);
+insert into float_probe values (26.9);
+select * from (select cast(v as decimal(10,2)) as x from float_probe where false union select v from float_probe) s;
+x
+26.90
+select distinct v from float_probe;
+v
+26.9
+select cast(v as decimal(10,2)) as x from float_probe where false union select v from float_probe;
+x
+26.90
+select distinct * from (select cast(v as decimal(10,2)) as x from float_probe where false union select v from float_probe) s;
+x
+26.90
+select a.v from float_probe a;
+v
+26.9
+select s.v from (select v from float_probe) s;
+v
+26.9
+select cast(v as double) x from float_probe;
+x
+26.899999618530273
+select s.x from (select cast(v as double) x from float_probe) s;
+x
+26.899999618530273
+select distinct s.x from (select cast(v as double) x from float_probe) s;
+x
+26.899999618530273
+drop table float_probe;
