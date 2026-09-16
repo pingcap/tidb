@@ -1418,6 +1418,11 @@ func (e *aggExec) getGroupKey(row chunk.Row) (*chunk.MutRow, []byte, error) {
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		// Scalar functions evaluate real values as float64 even when their result
+		// type is FLOAT. Match the group row's layout before storing the datum.
+		if e.groupByTypes[i].GetType() == mysql.TypeFloat && v.Kind() == types.KindFloat64 {
+			v.SetFloat32(float32(v.GetFloat64()))
+		}
 		gbyRow.SetDatum(i, v)
 		b, err := codec.EncodeValue(sc.TimeZone(), nil, v)
 		err = sc.HandleError(err)
