@@ -1216,18 +1216,22 @@ Example response:
 
 These APIs let an operator inspect and refresh TiDB's local region cache for one TiKV store after leader eviction, while the old TiKV is still online. They are registered on the status port for both classic and TiDB-X. `GET` reads local cache state and may drop unresolved failures whose original key range is fully covered by cached regions that have already left the store. `POST` is synchronous: it probes the old store with a one-shot Get, updates leaders from `NotLeader` responses, and is bounded by the request context and a 2-minute deadline for the whole HTTP call (all in-process stores/keyspaces). Concurrent `POST`s for the same store share one in-flight job.
 
-`ready` is true only when no matching cache entries remain, no unresolved refresh failures remain, and no refresh is in progress. Cache entries that expire or are deleted during a failed probe are not treated as successfully refreshed.
+`ready` is true only when no matching cache entries remain, no unresolved refresh failures remain, and no refresh is in progress. Cache entries that expire or are deleted during a failed probe are not treated as successfully refreshed. Region-cache TTL expiry is also not refresh success: if the operator times out, stop waiting for `ready`, wait the original region-cache TTL, then restart. Do not treat a later `ready=true` caused only by expiry as a completed refresh.
+
+Leftover failures from that fallback stay until the original range is fully covered off-store, or until the next rolling posts `reset=1`. `reset=1` drops unresolved failures and the idle task, then runs a new refresh. It is not a success signal. Do not pass `reset=1` while polling the same rolling.
 
 Usage:
 
 ```shell
 curl "http://{TiDBIP}:10080/regions/cache/status?store_id={id}"
 curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}"
+curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}&reset=1"
 ```
 
 Parameters:
 
 - `store_id`: required positive integer. Missing, zero, or non-integer values return HTTP 400.
+- `reset`: optional on `POST` only. `1` or `true` clears leftover failures from a previous rolling or TTL fallback, then refreshes. Omit it during an in-progress rolling.
 
 The status route accepts only `GET`. The refresh route accepts only `POST`. Other methods return HTTP 405.
 
