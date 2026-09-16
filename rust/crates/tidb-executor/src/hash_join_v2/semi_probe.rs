@@ -170,8 +170,9 @@ impl<'a> BaseSemiJoin<'a> {
                 && self.base.matched_rows_for_current_probe_row() < MAX_MATCHED_ROW_NUM
             {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let (build_row, next) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                let (build_row, next, _) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
                     table,
+                    partition,
                     address,
                     &self.ctx.tag_helper,
                     hash,
@@ -256,8 +257,9 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let (build_row, next) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                let (build_row, next, _) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
                     table,
+                    partition,
                     address,
                     &self.ctx.tag_helper,
                     hash,
@@ -315,8 +317,9 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let (build_row, next) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                let (build_row, next, _) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
                     table,
+                    partition,
                     address,
                     &self.ctx.tag_helper,
                     hash,

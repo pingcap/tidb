@@ -80,6 +80,21 @@ pub const MINIMAL_HASH_TABLE_LEN: u64 = 32;
 /// Width of one bucket, the source's `taggedPointerLen`.
 pub const TAGGED_POINTER_LEN: i64 = size_of::<usize>() as i64;
 
+/// Decoded location of one build row inside the partitioned row table.
+///
+/// Go keeps this location as the row pointer itself. Rust's safe row handle
+/// packs the same three coordinates into a `usize`; retaining the decoded
+/// coordinates lets a probe worker reuse them while reconstructing a batch.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BuildRowLocation {
+    /// Partition containing the row.
+    pub partition: usize,
+    /// Row-table segment containing the row.
+    pub segment: usize,
+    /// Row index within the segment.
+    pub row: usize,
+}
+
 /// Smallest power of two strictly greater than `value`.
 ///
 /// # Panics
@@ -519,6 +534,18 @@ impl HashTableV2 {
         )
     }
 
+    /// Resolves row bytes from a location decoded during chain traversal.
+    /// This is the safe equivalent of reusing Go's row pointer directly.
+    #[inline(always)]
+    pub(crate) fn row_bytes_at_location(&self, location: BuildRowLocation) -> &[u8] {
+        let table = self.tables[location.partition]
+            .as_ref()
+            .expect("sub table of a built partition");
+        let segment = &table.row_data.segments[location.segment];
+        let offset = segment.row_start_offset[location.row] as usize;
+        &segment.raw_data[offset..]
+    }
+
     /// Resolves a row and follows its chain link while the partition-local
     /// segment is already hot. Go reads both values from one unsafe row
     /// pointer; returning them together avoids a second helper boundary in
@@ -527,10 +554,11 @@ impl HashTableV2 {
     pub(crate) fn row_bytes_and_next_in_sub_table<'a>(
         &self,
         table: &'a SubTable,
+        partition: usize,
         address: usize,
         tag_helper: &TagPtrHelper,
         hash_value: u64,
-    ) -> (&'a [u8], usize) {
+    ) -> (&'a [u8], usize, BuildRowLocation) {
         let slot = (address >> self.row_offset_bits) - 1;
         let segment_index = slot & self.segment_mask;
         let row = (address & self.row_offset_mask) / 8;
@@ -545,6 +573,11 @@ impl HashTableV2 {
         (
             row_bytes,
             next_row_address(raw_next, tag_helper, hash_value),
+            BuildRowLocation {
+                partition,
+                segment: segment_index,
+                row,
+            },
         )
     }
 

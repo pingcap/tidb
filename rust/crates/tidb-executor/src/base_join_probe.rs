@@ -70,7 +70,7 @@ use tidb_chunk::chunk_util::{copy_selected_rows, copy_selected_rows_with_row_id_
 use tidb_chunk::column::Column;
 use tidb_codec::{JoinKeyColumns, SerializedJoinKeys};
 
-use crate::hash_table_v2::{HashTableV2, RowIter};
+use crate::hash_table_v2::{BuildRowLocation, HashTableV2, RowIter};
 use crate::join_row_table::{
     next_row_address, RowLayoutMeta, SIZE_OF_ELEMENT_SIZE, SIZE_OF_NEXT_PTR,
 };
@@ -184,14 +184,33 @@ pub trait BuildRowSource {
     /// Implementations panic on an unknown address, matching Go's behavior on
     /// a bad pointer.
     fn row_bytes(&self, address: usize) -> &[u8];
+
+    /// Bytes of a row whose location was already decoded by the caller.
+    ///
+    /// The default preserves the address-only contract for test sources and
+    /// other row stores. Hash-table-backed probes override it to reuse the
+    /// location that Go retains as its row pointer.
+    #[inline]
+    fn row_bytes_with_location(&self, address: usize, location: Option<BuildRowLocation>) -> &[u8] {
+        let _ = location;
+        self.row_bytes(address)
+    }
 }
 
 impl BuildRowSource for HashTableV2 {
-    #[inline]
+    #[inline(always)]
     fn row_bytes(&self, address: usize) -> &[u8] {
         let (segment, row) = self.row_location(address);
         let offset = segment.row_start_offset[row] as usize;
         &segment.raw_data[offset..]
+    }
+
+    #[inline(always)]
+    fn row_bytes_with_location(&self, address: usize, location: Option<BuildRowLocation>) -> &[u8] {
+        location.map_or_else(
+            || self.row_bytes(address),
+            |location| self.row_bytes_at_location(location),
+        )
     }
 }
 
@@ -343,6 +362,10 @@ pub struct BaseJoinProbe {
     chunk_rows: usize,
     /// Go `cachedBuildRows`, a fixed [`BATCH_BUILD_ROW_SIZE`] staging array.
     cached_build_rows: Vec<MatchedRowInfo>,
+    /// Decoded row-table locations for the staging array. Keeping this as a
+    /// scratch side buffer avoids inflating `MatchedRowInfo` instances that
+    /// survive in `row_index_infos` across the residual-condition phase.
+    cached_build_row_locations: Vec<Option<BuildRowLocation>>,
     /// Go `nextCachedBuildRowIndex`, how much of it is live.
     next_cached_build_row_index: usize,
     /// Destination columns for stored build columns in the normal output
@@ -859,6 +882,7 @@ impl BaseJoinProbe {
     /// and the comment's uncertainty is not a behavior worth transcribing.
     pub fn reset_probe(&mut self, ctx: &ProbeContext<'_>) {
         self.cached_build_rows = vec![MatchedRowInfo::default(); BATCH_BUILD_ROW_SIZE];
+        self.cached_build_row_locations = vec![None; BATCH_BUILD_ROW_SIZE];
         self.next_cached_build_row_index = 0;
         if ctx.has_other_condition() {
             self.row_index_infos = Vec::with_capacity(INITIAL_CAPACITY);
@@ -936,8 +960,9 @@ impl BaseJoinProbe {
             let table = ctx.hash_table.sub_table(partition);
             while header != 0 && self.next_cached_build_row_index < end {
                 let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-                let (row, next) = ctx.hash_table.row_bytes_and_next_in_sub_table(
+                let (row, next, location) = ctx.hash_table.row_bytes_and_next_in_sub_table(
                     table,
+                    partition,
                     address,
                     &ctx.tag_helper,
                     hash,
@@ -948,6 +973,8 @@ impl BaseJoinProbe {
                         build_row_start: address,
                         build_row_offset: 0,
                     };
+                    self.cached_build_row_locations[self.next_cached_build_row_index] =
+                        Some(location);
                     self.next_cached_build_row_index += 1;
                     self.matched_rows_for_current_probe_row += 1;
                 } else {
@@ -976,6 +1003,7 @@ impl BaseJoinProbe {
         for_other_condition: bool,
     ) {
         self.cached_build_rows[self.next_cached_build_row_index] = row_info;
+        self.cached_build_row_locations[self.next_cached_build_row_index] = None;
         self.next_cached_build_row_index += 1;
         if self.next_cached_build_row_index == BATCH_BUILD_ROW_SIZE {
             self.batch_construct_build_rows(
@@ -1120,11 +1148,15 @@ impl BaseJoinProbe {
         // Go retains direct row pointers across the column loop. Resolve the
         // safe row handles once per batch and borrow those same rows throughout.
         let mut row_data: [&[u8]; BATCH_BUILD_ROW_SIZE] = [&[]; BATCH_BUILD_ROW_SIZE];
-        for (row, cached) in row_data[..live]
+        for (index, (row, cached)) in row_data[..live]
             .iter_mut()
             .zip(&mut self.cached_build_rows[..live])
+            .enumerate()
         {
-            *row = rows.row_bytes(cached.build_row_start);
+            *row = rows.row_bytes_with_location(
+                cached.build_row_start,
+                self.cached_build_row_locations[index],
+            );
             if cached.build_row_offset == 0 {
                 Self::advance_to_row_data(meta, cached, row);
             }
@@ -1657,6 +1689,7 @@ pub fn new_join_probe(
         matched_rows_for_current_probe_row: 0,
         chunk_rows: 0,
         cached_build_rows: vec![MatchedRowInfo::default(); BATCH_BUILD_ROW_SIZE],
+        cached_build_row_locations: vec![None; BATCH_BUILD_ROW_SIZE],
         next_cached_build_row_index: 0,
         normal_column_destinations,
         other_column_destinations,

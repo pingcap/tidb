@@ -1048,8 +1048,9 @@ fn collect_outer_join_candidates_mode<
                     as usize;
             let table = ctx.hash_table.sub_table(partition);
             let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-            let (build_row, next) = ctx.hash_table.row_bytes_and_next_in_sub_table(
+            let (build_row, next, _) = ctx.hash_table.row_bytes_and_next_in_sub_table(
                 table,
+                partition,
                 address,
                 &ctx.tag_helper,
                 hash,
