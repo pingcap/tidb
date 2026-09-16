@@ -20,7 +20,7 @@ esac
 
 # download lightning and sync_diff_inspector
 TOOLS_TAG="nightly"
-wget http://download.pingcap.org/tidb-toolkit-$TOOLS_TAG-linux-$ARCH_SUFFIX.tar.gz -O tools.tar.gz
+wget http://download.pingcap.com/tidb-toolkit-$TOOLS_TAG-linux-$ARCH_SUFFIX.tar.gz -O tools.tar.gz
 tar -xzvf tools.tar.gz
 mv tidb-toolkit-$TOOLS_TAG-linux-$ARCH_SUFFIX/bin/* bin/
 
