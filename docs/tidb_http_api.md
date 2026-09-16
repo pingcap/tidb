@@ -1214,7 +1214,7 @@ Example response:
 
 ### Region cache status and refresh
 
-These APIs let an operator inspect and refresh TiDB's local region cache for one TiKV store after leader eviction, while the old TiKV is still online. They are registered on the status port for both classic and TiDB-X. `GET` only reads local cache state. `POST` is synchronous: it probes the old store with a one-shot Get, updates leaders from `NotLeader` responses, and returns when the job finishes or the request context / 2-minute job deadline expires. Concurrent `POST`s for the same store share one in-flight job.
+These APIs let an operator inspect and refresh TiDB's local region cache for one TiKV store after leader eviction, while the old TiKV is still online. They are registered on the status port for both classic and TiDB-X. `GET` reads local cache state and may drop unresolved failures whose original key range is fully covered by cached regions that have already left the store. `POST` is synchronous: it probes the old store with a one-shot Get, updates leaders from `NotLeader` responses, and is bounded by the request context and a 2-minute deadline for the whole HTTP call (all in-process stores/keyspaces). Concurrent `POST`s for the same store share one in-flight job.
 
 `ready` is true only when no matching cache entries remain, no unresolved refresh failures remain, and no refresh is in progress. Cache entries that expire or are deleted during a failed probe are not treated as successfully refreshed.
 
