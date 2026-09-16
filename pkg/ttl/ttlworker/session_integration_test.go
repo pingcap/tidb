@@ -29,10 +29,57 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTTLDeleteRejectsReusedKeyName(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ttl_key_reuse (id int primary key clustered, other int, ts datetime) TTL=ts + interval 1 day")
+	tk.MustExec("insert into ttl_key_reuse values (1,100,'2000-01-01')")
+	info, err := dom.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("ttl_key_reuse"))
+	require.NoError(t, err)
+	tbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), info, ast.NewCIStr(""))
+	require.NoError(t, err)
+	expire := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Retain the scanned key and metadata, then reuse its SQL name for another column.
+	rows := [][]types.Datum{types.MakeDatums(1)}
+	tk.MustExec("insert into ttl_key_reuse values (2,1,'2000-01-01')")
+	tk.MustExec("alter table ttl_key_reuse rename column id to old_id")
+	tk.MustExec("alter table ttl_key_reuse rename column other to id")
+	sql, err := sqlbuilder.BuildDeleteSQL(tbl, rows, expire)
+	require.NoError(t, err)
+	require.NoError(t, ttlworker.WithSessionForTest(dom.AdvancedSysSessionPool(), func(se session.Session) error {
+		tblSe := ttlworker.NewTableSessionForTest(se, tbl, expire)
+		_, retry, err := tblSe.ExecuteSQLWithCheck(context.Background(), sql)
+		require.ErrorContains(t, err, "key column")
+		require.False(t, retry)
+		return nil
+	}))
+	// The DELETE may run before metadata validation, but it must be rolled back.
+	tk.MustQuery("select old_id,id from ttl_key_reuse order by old_id").Check(testkit.Rows("1 100", "2 1"))
+	// A refreshed binding still deletes the originally scanned row, not the later row.
+	info, err = dom.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("ttl_key_reuse"))
+	require.NoError(t, err)
+	tbl, err = cache.NewPhysicalTable(ast.NewCIStr("test"), info, ast.NewCIStr(""))
+	require.NoError(t, err)
+	sql, err = sqlbuilder.BuildDeleteSQL(tbl, rows, expire)
+	require.NoError(t, err)
+	require.NoError(t, ttlworker.WithSessionForTest(dom.AdvancedSysSessionPool(), func(se session.Session) error {
+		tblSe := ttlworker.NewTableSessionForTest(se, tbl, expire)
+		_, retry, err := tblSe.ExecuteSQLWithCheck(context.Background(), sql)
+		require.NoError(t, err)
+		require.False(t, retry)
+		return nil
+	}))
+	tk.MustQuery("select old_id,id from ttl_key_reuse order by old_id").Check(testkit.Rows("2 1"))
+	tk.MustExec("admin check table ttl_key_reuse")
+}
 
 type fault interface {
 	// shouldFault returns whether the session should fault this time.
