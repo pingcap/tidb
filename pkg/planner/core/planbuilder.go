@@ -1783,7 +1783,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName ast.CIStr, tbl table.Table, idx *model.IndexInfo) (base.Plan, error) {
 	tblInfo := tbl.Meta()
 	physicalID, isPartition := getPhysicalID(tbl, idx.Global)
-	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), dbName, tblInfo)
+	fullExprCols, fullNames, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), dbName, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -1829,23 +1829,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 	ts.SetIsPartition(isPartition)
 	ts.SetSchema(idxColSchema)
 	ts.Columns = physicalop.ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
-	if idx.MVIndex && idx.HasCondition() {
-		// The admin index-side check must evaluate the partial condition against fetched table rows.
-		for _, affectedCol := range idx.AffectColumn {
-			colInfo := tblInfo.Columns[affectedCol.Offset]
-			found := false
-			for _, scanCol := range ts.Columns {
-				if scanCol.ID == colInfo.ID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				ts.Columns = append(ts.Columns, colInfo)
-				ts.Schema().Append(fullExprCols.Columns[affectedCol.Offset])
-			}
-		}
-	}
 	switch {
 	case hasExtraCol:
 		ts.Columns = append(ts.Columns, extraInfo)
@@ -1885,6 +1868,49 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 		TblColHists:      is.StatsInfo().HistColl,
 		ExtraHandleCol:   extraCol,
 		CommonHandleCols: commonCols,
+	}
+	if idx.MVIndex && idx.HasCondition() {
+		// Finish the index plan while the table plan is still a table scan. The partial
+		// condition is then evaluated inside the table-side coprocessor plan, and a
+		// projection keeps the row returned to IndexLookUpExecutor unchanged.
+		cop.FinishIndexPlan()
+		outputSchema := ts.Schema().Clone()
+		needProjection := false
+		for _, affectedCol := range idx.AffectColumn {
+			colInfo := tblInfo.Columns[affectedCol.Offset]
+			found := false
+			for _, scanCol := range ts.Columns {
+				if scanCol.ID == colInfo.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				ts.Columns = append(ts.Columns, colInfo)
+				ts.Schema().Append(fullExprCols.Columns[affectedCol.Offset])
+				needProjection = true
+			}
+		}
+
+		condition, err := expression.ParseSimpleExpr(
+			b.ctx.GetExprCtx(),
+			idx.ConditionExprString,
+			expression.WithInputSchemaAndNames(fullExprCols, fullNames, tblInfo),
+		)
+		if err != nil {
+			return nil, err
+		}
+		selection := physicalop.PhysicalSelection{Conditions: []expression.Expression{condition}}.
+			Init(b.ctx, ts.StatsInfo(), b.getSelectOffset())
+		selection.SetChildren(ts)
+		cop.TablePlan = selection
+		if needProjection {
+			projection := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(outputSchema.Columns)}.
+				Init(b.ctx, ts.StatsInfo(), b.getSelectOffset(), nil)
+			projection.SetSchema(outputSchema)
+			projection.SetChildren(selection)
+			cop.TablePlan = projection
+		}
 	}
 	rootT := cop.ConvertToRootTask(b.ctx).(*physicalop.RootTask)
 	if err := rootT.GetPlan().ResolveIndices(); err != nil {
