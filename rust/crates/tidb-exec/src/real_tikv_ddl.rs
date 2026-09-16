@@ -44,7 +44,9 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
     lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
-    plan_persisted_check_constraint_job_step, prepare_check_constraint_job_submission,
+    plan_persisted_check_constraint_job_step,
+    plan_persisted_create_schema_job_step,
+    prepare_check_constraint_job_submission,
     CheckConstraintValidation, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite,
     ExchangePartitionValidation, IndexBackfill, MdlInfoUpdate,
 };
@@ -657,6 +659,7 @@ pub trait CheckConstraintSchemaSync {
 enum DdlPhase<'statement> {
     Initial(&'statement DdlStatement),
     PersistedCheckConstraint { ddl_job_id: i64 },
+    PersistedCreateSchema { ddl_job_id: i64 },
 }
 
 struct CommittedDdlPhase {
@@ -810,6 +813,52 @@ pub fn run_persisted_check_constraint_job_to_completion<
                 eprintln!(
                     "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
                     serde_json::to_string(&error)
+                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                );
+            }
+            return Ok(committed.report);
+        }
+    }
+}
+
+/// Go worker loop for one persisted `ACTION_CREATE_SCHEMA` job: phase until
+/// the job lands in history. CREATE DATABASE is a single terminal step; the
+/// inner retry loop absorbs write conflicts with concurrent schema changes.
+/// The backfill/validator traits exist only to satisfy the shared phase
+/// pipeline — a CREATE SCHEMA plan never produces backfills or validations.
+pub fn run_persisted_create_schema_job_to_completion<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    ddl_job_id: i64,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    schema_sync: &dyn CheckConstraintSchemaSync,
+) -> Result<ClusterDdlReport, ClusterDdlError> {
+    loop {
+        let outcome = commit_cluster_ddl_phase_with_retry(
+            Arc::clone(&opener),
+            DdlPhase::PersistedCreateSchema { ddl_job_id },
+            timeout,
+            notifier,
+            backfiller,
+            exchange_validator,
+            check_constraint_validator,
+            schema_sync.owner_id(),
+        )?;
+        let DdlPhaseOutcome::Committed(committed) = outcome else {
+            unreachable!("a queued CREATE SCHEMA action is always a worker write")
+        };
+        if committed.persisted_job_terminal {
+            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
+                eprintln!(
+                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                    serde_json::to_string(&error.to_string())
                         .unwrap_or_else(|_| "\"unprintable\"".to_owned())
                 );
             }
@@ -1230,6 +1279,10 @@ fn commit_cluster_ddl_with_backfill_once<
             }
             DdlPhase::PersistedCheckConstraint { ddl_job_id } => {
                 plan_persisted_check_constraint_job_step(&mut snapshot, ddl_job_id, start_ts)
+                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
+            }
+            DdlPhase::PersistedCreateSchema { ddl_job_id } => {
+                plan_persisted_create_schema_job_step(&mut snapshot, ddl_job_id, start_ts)
                     .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
             }
         }

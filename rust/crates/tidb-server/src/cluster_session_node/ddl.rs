@@ -41,7 +41,8 @@ use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs,
     load_history_persisted_ddl_job, load_min_persisted_ddl_job_id,
-    run_persisted_check_constraint_job_to_completion, submit_check_constraint_job_with_retry,
+    run_persisted_check_constraint_job_to_completion,
+    run_persisted_create_schema_job_to_completion, submit_check_constraint_job_with_retry,
     CheckConstraintSchemaSync, CheckConstraintValidator, ClusterDdlReport,
     ExchangePartitionValidator, IndexBackfiller, SchemaVersionNotifier,
 };
@@ -215,39 +216,66 @@ where
                         if stop.load(Ordering::Acquire) {
                             return;
                         }
-                        if !matches!(
-                            job.type_,
-                            tidb_model::ActionType::ACTION_ADD_CHECK_CONSTRAINT
-                                | tidb_model::ActionType::ACTION_DROP_CHECK_CONSTRAINT
-                                | tidb_model::ActionType::ACTION_ALTER_CHECK_CONSTRAINT
-                        ) {
-                            eprintln!(
-                                "{{\"level\":\"warning\",\"event\":\"ddl_scheduler_unsupported_job\",\"job_id\":{},\"job_type\":{}}}",
-                                job.id, job.type_.0
-                            );
-                            continue;
-                        }
                         let notifier_ref = notifier
                             .as_ref()
                             .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
-                        if let Err(error) = run_persisted_check_constraint_job_to_completion(
-                            Arc::clone(&opener),
-                            job.id,
-                            timeout,
-                            notifier_ref,
-                            &KvTableIndexBackfiller,
-                            &KvTableIndexBackfiller,
-                            &KvTableIndexBackfiller,
-                            schema_sync.as_ref(),
-                        ) {
-                            // A validation error is terminal and retained in history; every
-                            // other error leaves the active row for the next scheduler pass.
-                            eprintln!(
-                                "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                job.id,
-                                serde_json::to_string(&error.to_string())
-                                    .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                            );
+                        match job.type_ {
+                            tidb_model::ActionType::ACTION_ADD_CHECK_CONSTRAINT
+                                | tidb_model::ActionType::ACTION_DROP_CHECK_CONSTRAINT
+                                | tidb_model::ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
+                                    if let Err(error) =
+                                        run_persisted_check_constraint_job_to_completion(
+                                            Arc::clone(&opener),
+                                            job.id,
+                                            timeout,
+                                            notifier_ref,
+                                            &KvTableIndexBackfiller,
+                                            &KvTableIndexBackfiller,
+                                            &KvTableIndexBackfiller,
+                                            schema_sync.as_ref(),
+                                        )
+                                    {
+                                        // A validation error is terminal and retained in history; every
+                                        // other error leaves the active row for the next scheduler pass.
+                                        eprintln!(
+                                            "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
+                                            job.id,
+                                            serde_json::to_string(&error.to_string())
+                                                .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                                        );
+                                    }
+                                }
+                            // Pinned Go `onCreateSchema`: BR restore submits the
+                            // CREATE DATABASE for the restored keyspace through the
+                            // persisted job queue (the submitting Go TiDB runs with
+                            // runWorker=false), so the cluster's SQL node owns the
+                            // execution.
+                            tidb_model::ActionType::ACTION_CREATE_SCHEMA => {
+                                if let Err(error) = run_persisted_create_schema_job_to_completion(
+                                    Arc::clone(&opener),
+                                    job.id,
+                                    timeout,
+                                    notifier_ref,
+                                    &KvTableIndexBackfiller,
+                                    &KvTableIndexBackfiller,
+                                    &KvTableIndexBackfiller,
+                                    schema_sync.as_ref(),
+                                ) {
+                                    eprintln!(
+                                        "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
+                                        job.id,
+                                        serde_json::to_string(&error.to_string())
+                                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                                    );
+                                }
+                            }
+                            _ => {
+                                eprintln!(
+                                    "{{\"level\":\"warning\",\"event\":\"ddl_scheduler_unsupported_job\",\"job_id\":{},\"job_type\":{}}}",
+                                    job.id, job.type_.0
+                                );
+                                continue;
+                            }
                         }
                         let (_, condvar) = &*wake;
                         condvar.notify_all();

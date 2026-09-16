@@ -3295,6 +3295,144 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
     })
 }
 
+/// Plans one execution step of a persisted `ACTION_CREATE_SCHEMA` job.
+///
+/// Pinned Go `onCreateSchema` (`pkg/ddl/schema.go`): the submitter already
+/// packed the full `DBInfo` (name, charset, collate, placement) into the
+/// job's raw args and allocated `job.SchemaID`; the owner re-stamps the ID,
+/// refuses the job when either the name or the ID is already taken (Go
+/// `checkSchemaNotExists` -- that path cancels the job), bumps the schema
+/// version with a `CREATE SCHEMA` diff, publishes the database `PUBLIC` in
+/// one meta write, and finishes the job into history. CREATE DATABASE has no
+/// reorg states and no backfill: one step is terminal.
+pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_CREATE_SCHEMA {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} has unsupported action {}",
+            active.job.type_
+        )));
+    }
+    if active.job.real_start_ts == 0 {
+        active.job.real_start_ts = start_ts;
+    }
+    if active.job.state != JobState::ROLLINGBACK {
+        active.job.state = JobState::RUNNING;
+    }
+
+    let args = tidb_model::get_create_schema_args(&mut active.job)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .ok_or_else(|| DdlPlanError::Encode("CREATE SCHEMA job has nil args".to_owned()))?;
+    let submitted = args
+        .read()
+        .db_info
+        .get()
+        .ok_or_else(|| DdlPlanError::Encode("CREATE SCHEMA job has nil db_info".to_owned()))?
+        .read()
+        .clone();
+    let mut db_info = submitted;
+    // Go `onCreateSchema`: the owner re-stamps the ID from the job.
+    db_info.id = active.job.schema_id;
+
+    let name_taken = find_database(&catalog, db_info.name.original()).is_some();
+    let id_taken = catalog
+        .databases
+        .iter()
+        .any(|database| database.info.id == db_info.id);
+    let cancelled = name_taken || id_taken;
+
+    let schema_version = if cancelled { 0 } else { catalog.schema_version + 1 };
+    let mut mutations = Vec::new();
+    let diff = if cancelled {
+        SchemaDiff::default()
+    } else {
+        db_info.state = SchemaState::PUBLIC;
+        mutations.push(OptimisticMutation::meta_put(
+            key::database_kv_key(db_info.id),
+            value::serialize_db_info(&db_info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        let diff = SchemaDiff {
+            version: schema_version,
+            action_type: active.job.type_,
+            schema_id: db_info.id,
+            ..SchemaDiff::default()
+        };
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_version_kv_key(),
+            value::encode_int_value(schema_version),
+        )?);
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_diff_kv_key(schema_version),
+            value::serialize_schema_diff(&diff)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        active.job.last_schema_version = schema_version;
+        diff
+    };
+
+    if !cancelled {
+        active.job.finish_db_job(
+            JobState::DONE,
+            SchemaState::PUBLIC,
+            schema_version,
+            Some(GoShared::new(db_info.clone())),
+        );
+    }
+    if let Some(binlog) = active.job.binlog_info.as_ref() {
+        binlog.write().finished_ts = start_ts;
+    }
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ =
+            history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: (!cancelled).then_some(db_info.id),
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
+    })
+}
+
 /// Plans pinned Go `onCreateMaterializedViewLog` (master `94a9cbedab`):
 /// the one owner transaction that turns a submitted create-log job into the
 /// created `$mlog$` table, the base table's `MLogID` back-reference, the
