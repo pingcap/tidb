@@ -2261,14 +2261,21 @@ impl Session {
                         // apply every row through the ordinary text-INSERT
                         // pipeline so typing, coercion, defaults and
                         // auto-increment follow the tested INSERT semantics.
-                        let (path, format) = match &import.source {
+                        let (path, format, select_sql) = match &import.source {
                             tidb_ast::ImportSource::File { path, format } => {
-                                (path.clone(), format.clone())
+                                (path.clone(), format.clone(), None)
                             }
-                            tidb_ast::ImportSource::Select { .. } => {
-                                return Err(DriverError::unsupported(
-                                    "IMPORT INTO ... FROM SELECT is not supported yet",
-                                ));
+                            tidb_ast::ImportSource::Select {
+                                query,
+                                parenthesized,
+                            } => {
+                                let restored = query.restore();
+                                let select_sql = if *parenthesized {
+                                    format!("({restored})")
+                                } else {
+                                    restored
+                                };
+                                (String::new(), None, Some(select_sql))
                             }
                         };
                         if let Some(format) = format.as_deref() {
@@ -2301,6 +2308,42 @@ impl Session {
                                     }
                                 }
                             }
+                        }
+                        let column_list = import
+                            .columns_and_user_vars
+                            .iter()
+                            .map(|entry| {
+                                let name = match entry {
+                                    tidb_ast::ColumnOrUserVar::Column(column) => {
+                                        column.clone()
+                                    }
+                                    tidb_ast::ColumnOrUserVar::UserVar(name) => {
+                                        name.trim_start_matches('@').to_owned()
+                                    }
+                                };
+                                format!("`{}`", name.replace('`', "``"))
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let column_clause = if column_list.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ({column_list})")
+                        };
+                        let mut imported = 0u64;
+                        if let Some(select_sql) = select_sql {
+                            // SELECT source: the query's output columns feed
+                            // the target positionally under the column list.
+                            let count = match self.run(&format!(
+                                "INSERT INTO {target}{column_clause} {select_sql}"
+                            ))? {
+                                StmtResult::Affected(count) => count,
+                                _ => 0,
+                            };
+                            imported = count;
+                            return Ok(PendingExecution::Complete(
+                                StmtOutput::Affected(imported),
+                            ));
                         }
                         let csv = std::fs::read_to_string(&path).map_err(|error| {
                             DriverError::unsupported(format!(
