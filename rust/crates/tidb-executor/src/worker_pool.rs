@@ -4,77 +4,182 @@
 //! Blocking input pipelines run on separate lanes; jobs move their buffers
 //! and return ownership at a completion barrier.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
-/// A bounded set of reusable lanes for work that may block on external I/O.
-/// Go's index-join workers are goroutines reused for every task; creating one
-/// native thread per batch adds scheduler and stack costs to every lookup.
-/// Lanes stay separate from the compute pool so a blocked request cannot
-/// consume one of its per-core workers.
+type LaneTask = Box<dyn FnOnce() + Send + 'static>;
+
+/// One reusable process-wide lane set. The width is part of the registry key
+/// so changing the session concurrency still gets a matching lane set.
+struct SharedLanePool {
+    sender: std::sync::mpsc::SyncSender<LaneTask>,
+    in_use: AtomicBool,
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct LanePoolKey {
+    name: &'static str,
+    workers: usize,
+}
+
+fn lane_registry() -> &'static Mutex<HashMap<LanePoolKey, Vec<Arc<SharedLanePool>>>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<LanePoolKey, Vec<Arc<SharedLanePool>>>>> =
+        OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn shared_lane_pool(name: &'static str, workers: usize) -> Arc<SharedLanePool> {
+    let mut registry = lane_registry()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let pools = registry.entry(LanePoolKey { name, workers }).or_default();
+    if let Some(pool) = pools.iter().find(|pool| {
+        pool.in_use
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+    }) {
+        return Arc::clone(pool);
+    }
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<LaneTask>(workers);
+    let receiver = Arc::new(Mutex::new(receiver));
+    for _ in 0..workers {
+        let receiver = Arc::clone(&receiver);
+        std::thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || loop {
+                let task = receiver
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .recv();
+                let Ok(task) = task else { break };
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task));
+            })
+            .expect("spawn persistent exec lane");
+    }
+    let pool = Arc::new(SharedLanePool {
+        sender,
+        in_use: AtomicBool::new(true),
+    });
+    pools.push(Arc::clone(&pool));
+    pool
+}
+
+struct LaneActivity {
+    state: Mutex<LaneActivityState>,
+    done: Condvar,
+}
+
+struct LaneActivityState {
+    in_flight: usize,
+    closed: bool,
+}
+
+/// A per-executor view of a process-wide registry of reusable lanes for work
+/// that may block on external I/O. Go's index-join workers are goroutines
+/// reused for every task; idle sets are returned to the registry after Close,
+/// while overlapping executors receive separate sets to preserve concurrency.
 pub struct LanePool {
-    sender: Option<std::sync::mpsc::SyncSender<Box<dyn FnOnce() + Send + 'static>>>,
-    workers: Vec<std::thread::JoinHandle<()>>,
+    shared: Arc<SharedLanePool>,
+    activity: Arc<LaneActivity>,
+    width: usize,
 }
 
 impl LanePool {
-    /// Starts `concurrency` persistent lanes and bounds queued work to the
-    /// same count, matching Go's buffered worker channel.
+    /// Gets `concurrency` persistent lanes and bounds this executor's
+    /// in-flight work to the same count, matching Go's buffered worker
+    /// channel. Native workers are created once per concurrently active set
+    /// and reused by later executors.
     pub fn new(name: &'static str, concurrency: usize) -> Self {
         let workers = concurrency.max(1);
-        let (sender, receiver) =
-            std::sync::mpsc::sync_channel::<Box<dyn FnOnce() + Send + 'static>>(workers);
-        let receiver = Arc::new(Mutex::new(receiver));
-        let mut handles = Vec::with_capacity(workers);
-        for _ in 0..workers {
-            let receiver = Arc::clone(&receiver);
-            let handle = std::thread::Builder::new()
-                .name(name.to_owned())
-                .spawn(move || loop {
-                    let task = receiver
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .recv();
-                    let Ok(task) = task else { break };
-                    task();
-                })
-                .expect("spawn persistent exec lane");
-            handles.push(handle);
-        }
+        let shared = shared_lane_pool(name, workers);
         Self {
-            sender: Some(sender),
-            workers: handles,
+            shared,
+            activity: Arc::new(LaneActivity {
+                state: Mutex::new(LaneActivityState {
+                    in_flight: 0,
+                    closed: false,
+                }),
+                done: Condvar::new(),
+            }),
+            width: workers,
         }
     }
 
-    /// Queues one task for a reusable lane. The bounded send applies the
-    /// same backpressure as Go's `innerCh` when all workers are busy.
+    /// Queues one task for a reusable lane. Admission is bounded per
+    /// executor, while idle lane sets are reused across executors.
     pub fn submit<F>(&self, task: F) -> Result<(), ()>
     where
         F: FnOnce() + Send + 'static,
     {
-        self.sender
-            .as_ref()
-            .ok_or(())?
-            .send(Box::new(task))
-            .map_err(|_| ())
+        {
+            let mut state = self
+                .activity
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            while state.in_flight >= self.width && !state.closed {
+                state = self
+                    .activity
+                    .done
+                    .wait(state)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+            if state.closed {
+                return Err(());
+            }
+            state.in_flight += 1;
+        }
+        let activity = Arc::clone(&self.activity);
+        let result = self.shared.sender.send(Box::new(move || {
+            let _guard = LaneActivityGuard { activity };
+            task();
+        }));
+        if result.is_err() {
+            let mut state = self
+                .activity
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.in_flight = state.in_flight.saturating_sub(1);
+            self.activity.done.notify_all();
+        }
+        result.map_err(|_| ())
     }
 }
 
+struct LaneActivityGuard {
+    activity: Arc<LaneActivity>,
+}
+
+impl Drop for LaneActivityGuard {
+    fn drop(&mut self) {
+        let mut state = self
+            .activity
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.in_flight = state.in_flight.saturating_sub(1);
+        self.activity.done.notify_all();
+    }
+}
 impl Drop for LanePool {
     fn drop(&mut self) {
-        // Close the channel before joining so idle lanes leave recv and all
-        // queued work drains without leaving native threads behind. A shared
-        // plan can be released by its final lane; that lane cannot join
-        // itself, so dropping its handle cleanly detaches the already-ending
-        // thread while every other lane is joined.
-        self.sender.take();
-        let current = std::thread::current().id();
-        for worker in self.workers.drain(..) {
-            if worker.thread().id() != current {
-                let _ = worker.join();
-            }
+        let mut state = self
+            .activity
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        self.activity.done.notify_all();
+        while state.in_flight != 0 {
+            state = self
+                .activity
+                .done
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
+        self.shared.in_use.store(false, Ordering::Release);
     }
 }
 
@@ -308,6 +413,47 @@ mod tests {
     fn submit_returns_the_task_value() {
         let value = 21 * 2;
         assert_eq!(submit(move || value), 42);
+    }
+
+    #[test]
+    fn blocking_lane_workers_are_reused_across_handles() {
+        // Width one makes the worker identity deterministic. A second handle
+        // with the same Go-style lane shape must attach to the existing
+        // process worker instead of starting another native thread.
+        let (first_tx, first_rx) = std::sync::mpsc::sync_channel(1);
+        let first = LanePool::new("tidb-worker-pool-reuse-test", 1);
+        first
+            .submit(move || first_tx.send(std::thread::current().id()).unwrap())
+            .unwrap();
+        drop(first);
+        let first_id = first_rx.recv().unwrap();
+
+        let (second_tx, second_rx) = std::sync::mpsc::sync_channel(1);
+        let second = LanePool::new("tidb-worker-pool-reuse-test", 1);
+        second
+            .submit(move || second_tx.send(std::thread::current().id()).unwrap())
+            .unwrap();
+        drop(second);
+        assert_eq!(first_id, second_rx.recv().unwrap());
+    }
+
+    #[test]
+    fn blocking_lane_drop_waits_for_in_flight_work() {
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+        let pool = LanePool::new("tidb-worker-pool-close-test", 1);
+        pool.submit(move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        })
+        .unwrap();
+        started_rx.recv().unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            release_tx.send(()).unwrap();
+        });
+        drop(pool);
+        releaser.join().unwrap();
     }
 
     /// The pool wakes a worker only when one is parked, so a lost wakeup
