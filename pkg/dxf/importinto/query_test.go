@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -52,6 +53,23 @@ func TestImportQueryPlanning(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	require.Equal(t, plan.Plan.Query, decoded.Plan.Query)
 	require.Equal(t, 1, decoded.Plan.MaxNodeCnt)
+	plan.Plan.Query.Scan = &importer.QueryScan{TableID: 42, ReadTS: 123, Ranges: []kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("m")}, {StartKey: []byte("m"), EndKey: []byte("z")},
+	}}
+	plan.Plan.MaxNodeCnt = 2
+	physical, err = plan.ToPhysicalPlan(planner.PlanCtx{SourceStep: proto.ImportStepQuery, Ctx: context.Background(), GlobalSort: true, NextTaskStep: proto.ImportStepQuery})
+	require.NoError(t, err)
+	require.Len(t, physical.Processors, 2)
+	for i, proc := range physical.Processors {
+		spec := proc.Pipeline.(*ImportSpec)
+		require.EqualValues(t, i+1, spec.ImportStepMeta.ID)
+		require.Equal(t, &plan.Plan.Query.Scan.Ranges[i], spec.ImportStepMeta.QueryRange)
+		meta, err := spec.ToSubtaskMeta(planner.PlanCtx{SourceStep: proto.ImportStepQuery})
+		require.NoError(t, err)
+		var decoded ImportStepMeta
+		require.NoError(t, json.Unmarshal(meta, &decoded))
+		require.Equal(t, spec.ImportStepMeta.QueryRange, decoded.QueryRange)
+	}
 	sch := &importScheduler{GlobalSort: true, sourceStep: proto.ImportStepQuery}
 	task := &proto.TaskBase{Step: proto.StepInit}
 	for _, step := range []proto.Step{

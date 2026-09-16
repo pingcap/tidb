@@ -486,24 +486,16 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 }
 
 // prepareQuery captures source metadata for the Query step.
-func (e *ImportIntoExec) prepareQuery(_ context.Context) error {
+func (e *ImportIntoExec) prepareQuery(ctx context.Context) error {
 	if e.controller.IsLocalSort() {
 		return errors.New("IMPORT FROM SELECT requires global sort storage")
 	}
-	query, err := CaptureImportQuery(e.userSctx, e.plan.Stmt)
+	query, node, err := CaptureImportQuery(e.userSctx, e.plan.Stmt)
 	if err != nil {
 		return err
 	}
 	e.controller.Plan.Query = query
-	// TODO: Parallelize I/O-bound queries such as clustered/nonclustered PK conversions.
-	// Start with a rule-based check for single-table Scan/Filter/Projection queries
-	// whose results can be concatenated across disjoint source ranges. Size range
-	// subtasks by estimated scan bytes and worker resources, similar to file imports.
-	// Each supported reader must enforce its assigned ranges; subtasks must share
-	// a read TS and allocate non-overlapping generated row IDs. Keep other queries,
-	// including compute-heavy MV construction with aggregation, as a whole query.
-	e.controller.Plan.MaxNodeCnt = 1
-	return nil
+	return PrepareImportQueryRanges(ctx, e.userSctx, node, e.plan.SelectPlan, e.controller.Plan)
 }
 
 // fillQueryInfo preserves the affected-row response of IMPORT FROM SELECT.
