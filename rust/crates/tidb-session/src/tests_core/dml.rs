@@ -1235,3 +1235,48 @@ fn an_assignment_cast_reports_cast_values_own_error() {
         "Incorrect int value: 'abc' for column 'i' at row 1"
     );
 }
+
+
+/// Go's IMPORT INTO local-file path, pinned at the data level: the CSV is
+/// read server-side and applied through the ordinary INSERT semantics, and a
+/// non-empty target is refused by the pre-check (Go
+/// `pkg/dxf/importinto/scheduler.go` fails the pre-check with the recorded
+/// "target table is not empty" text). The full dist-task job surface
+/// (mysql.tidb_import_jobs row + the 20-column job result set) is future
+/// work; this tier returns the imported row count as the affected count.
+#[test]
+fn import_into_a_local_csv_applies_rows_and_the_pre_check_guards_the_target() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(10), c DECIMAL(6,2))")
+        .unwrap();
+
+    let path = std::env::temp_dir().join(format!(
+        "tidb-import-into-test-{}.csv",
+        std::process::id()
+    ));
+    std::fs::write(&path, "1,alpha,10.50\n2,beta,20.00\n").unwrap();
+
+    let sql = format!(
+        "IMPORT INTO t (a, b, c) FROM '{}'",
+        path.display()
+    );
+    let imported = session.run(&sql).unwrap();
+    assert!(matches!(imported, StmtResult::Affected(2)));
+    assert_eq!(
+        row_text(session.run("SELECT a, b, c FROM t ORDER BY a")),
+        [
+            ["1", "alpha", "10.50"],
+            ["2", "beta", "20.00"],
+        ]
+    );
+    std::fs::remove_file(&path).unwrap();
+
+    // Go's pre-check refuses a second import into the now-populated target.
+    assert!(session
+        .run(&format!(
+            "IMPORT INTO t (a, b, c) FROM '{}'",
+            path.display()
+        ))
+        .is_err());
+}
