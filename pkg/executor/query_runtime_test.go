@@ -46,11 +46,8 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	tk.MustExec("set collation_connection='utf8mb4_general_ci'")
 	tk.MustExec("set tidb_isolation_read_engines='tikv'")
 	queries := []string{
-		"with c as (select g,v,i from query_src where i>0) select g,count(*),sum(v) from c group by g",
-		"with c as (select i from query_src where i=1) select x.i,y.i from c x join (with c as (select i from query_src where i=2) select i from c) y",
-		"with query_src as (select 1 as i) select c.i,t.i from query_src c join test.query_src t on t.i=c.i",
-		"with recursive c(n) as (select 1 union all select n+1 from c where n<3) select n from c",
-		"select a.i,b.v from query_src a left join query_src b on a.i=b.i where b.v>5",
+		"select g,count(*),sum(v) from (select g,v from query_src where i>0) c group by g",
+		"select i from query_src where i=1 limit 1",
 		`select hex(_binary'\0\\a'), _latin1'a', 'a''b'`,
 		"select 'a' = 'A'",
 		"select /*+ SET_VAR(tidb_distsql_scan_concurrency=2) */ count(*) from query_src",
@@ -110,9 +107,9 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			})
 		}
 	}
-	t.Run("CTE source tables", func(t *testing.T) {
+	t.Run("source tables", func(t *testing.T) {
 		tk.MustExec("create table query_other(i int)")
-		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from with c as (select a.i from query_src a join query_other b on a.i=b.i) select * from c")
+		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
 		require.NoError(t, err)
 		require.Len(t, q.Databases, 1)
 		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
@@ -131,6 +128,29 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		} {
 			_, err = executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+sql+")")
 			require.ErrorContains(t, err, "does not support variables")
+		}
+	})
+	t.Run("unsupported queries", func(t *testing.T) {
+		for _, tt := range []struct{ sql, unsupported string }{
+			{"select a.i from query_src a join query_src b on a.i=b.i", "JOIN"},
+			{"select a.i from query_src a, query_src b", "JOIN"},
+			{"select a.i from query_src a left join query_src b on a.i=b.i", "JOIN"},
+			{"select * from query_src a natural join query_src b", "JOIN"},
+			{"select * from (select a.i from query_src a cross join query_src b) s", "JOIN"},
+			{"with c as (select i from query_src) select * from c", "CTE"},
+			{"with recursive c(n) as (select 1 union all select n+1 from c where n<3) select n from c", "CTE"},
+			{"select * from (with c as (select i from query_src) select * from c) s", "CTE"},
+			{"select i from query_src order by i", "ORDER BY"},
+			{"select i from query_src order by i limit 1", "ORDER BY"},
+			{"select * from (select i from query_src order by i limit 1) s", "ORDER BY"},
+			{"select i from query_src union all select i from query_src order by i limit 1", "ORDER BY"},
+			{"select row_number() over (order by i) from query_src", "ORDER BY"},
+		} {
+			t.Run(tt.sql, func(t *testing.T) {
+				q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+tt.sql+")")
+				require.ErrorContains(t, err, "does not support "+tt.unsupported)
+				require.Nil(t, q)
+			})
 		}
 	})
 	t.Run("close after open error", func(t *testing.T) {

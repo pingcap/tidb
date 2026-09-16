@@ -65,8 +65,9 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 	if err != nil {
 		return nil, err
 	}
-	if !ast.Walk(node, &importQueryVariableChecker{}) {
-		return nil, errors.New("import query does not support variables")
+	checker := &importQueryChecker{}
+	if !ast.Walk(node, checker) {
+		return nil, checker.err
 	}
 
 	q := &importer.QueryPlan{
@@ -130,13 +131,27 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 	return q, nil
 }
 
-type importQueryVariableChecker struct{}
+type importQueryChecker struct {
+	err error
+}
 
-func (*importQueryVariableChecker) Enter(ast.Node) bool { return false }
+func (*importQueryChecker) Enter(ast.Node) bool { return false }
 
-func (*importQueryVariableChecker) Leave(node ast.Node) bool {
-	_, isVariable := node.(*ast.VariableExpr)
-	return !isVariable
+func (c *importQueryChecker) Leave(node ast.Node) bool {
+	switch n := node.(type) {
+	case *ast.VariableExpr:
+		c.err = errors.New("import query does not support variables")
+	case *ast.Join:
+		// A single-table FROM also has a Join node, with no right side.
+		if n.Right != nil {
+			c.err = errors.New("import query does not support JOIN")
+		}
+	case *ast.WithClause:
+		c.err = errors.New("import query does not support CTE")
+	case *ast.OrderByClause:
+		c.err = errors.New("import query does not support ORDER BY")
+	}
+	return c.err == nil
 }
 
 func runImportQuery(

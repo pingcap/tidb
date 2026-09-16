@@ -54,12 +54,21 @@ func TestImportFromQueryGlobalSort(t *testing.T) {
 	previousURI, previousDist := vardef.CloudStorageURI.Load(), vardef.EnableDistTask.Load()
 	vardef.CloudStorageURI.Store(sortURI)
 	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI); vardef.EnableDistTask.Store(previousDist) })
-	query := "with query_input as (select g,v from query_import_src where i>0) select g,count(*),count(v),sum(v),min(v),max(v) from query_input group by g"
+	query := "select g,count(*),count(v),sum(v),min(v),max(v) from query_import_src where i>0 group by g"
 	for _, distributed := range modes {
 		t.Run(fmt.Sprintf("distributed=%t", distributed), func(t *testing.T) {
 			vardef.EnableDistTask.Store(distributed)
 			target := fmt.Sprintf("query_import_dst_%t", distributed)
 			tk.MustExec(fmt.Sprintf("create table %s(g bigint, c bigint, cv bigint, s decimal(42,2), lo decimal(20,2), hi decimal(20,2), key(g))", target))
+			for _, unsupported := range []struct{ sql, construct string }{
+				{"select a.g from query_import_src a join query_import_src b on a.i=b.i", "JOIN"},
+				{"with c as (select g from query_import_src) select * from c", "CTE"},
+				{"select g from query_import_src order by g limit 1", "ORDER BY"},
+			} {
+				err := tk.ExecToErr(fmt.Sprintf("import into %s(g) from (%s) with thread=2", target, unsupported.sql))
+				require.ErrorContains(t, err, "does not support "+unsupported.construct)
+			}
+			tk.MustQuery("select count(*) from mysql.tidb_import_jobs where table_name=?", target).Check(testkit.Rows("0"))
 			rs, err := tk.Exec(fmt.Sprintf("import into %s from (%s) with thread=2", target, query))
 			require.NoError(t, err)
 			if rs != nil {
