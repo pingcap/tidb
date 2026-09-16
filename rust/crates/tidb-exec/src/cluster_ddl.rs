@@ -3353,6 +3353,17 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
         .iter()
         .any(|database| database.info.id == db_info.id);
     let cancelled = name_taken || id_taken;
+    if cancelled {
+        // Go's worker records the cancel error on the job before it lands in
+        // history: the submitter's wait loop (`pkg/ddl/executor.go`) panics on
+        // a cancelled/rollback-done history job whose error is nil.
+        active.job.error = Some(GoShared::new(
+            tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(1050),
+                format!("database '{}' already exists", db_info.name.original()),
+            ),
+        ));
+    }
 
     let schema_version = if cancelled { 0 } else { catalog.schema_version + 1 };
     let mut mutations = Vec::new();
@@ -3391,6 +3402,12 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
             schema_version,
             Some(GoShared::new(db_info.clone())),
         );
+        // Go's owner flips the history job from `done` to `synced` once every
+        // peer has applied the version; the submitter's wait loop only
+        // accepts `synced` (or a non-nil error on a cancelled job). One
+        // atomic transaction publishes the database and its final synced
+        // state together.
+        active.job.state = JobState::SYNCED;
     }
     if let Some(binlog) = active.job.binlog_info.as_ref() {
         binlog.write().finished_ts = start_ts;
@@ -3419,6 +3436,169 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
             schema_version,
             diff,
             created_id: (!cancelled).then_some(db_info.id),
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
+    })
+}
+
+/// Plans one execution step of a persisted `ACTION_CREATE_TABLE` job.
+///
+/// Pinned Go `onCreateTable` fast path (`pkg/ddl/table.go`): the submitter
+/// packed the full `TableInfo` into the job's raw args and allocated
+/// `job.TableID`; the owner re-stamps the ID, refuses the job when the table
+/// already exists in the target schema (Go `checkTableNotExists` cancels),
+/// publishes the table `PUBLIC` in one meta write, bumps the schema version
+/// with a `CREATE TABLE` diff, and finishes the job into history. A BR
+/// checkpoint table carries no secondary indexes to backfill: one step is
+/// terminal.
+pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_CREATE_TABLE {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} has unsupported action {}",
+            active.job.type_
+        )));
+    }
+    if active.job.real_start_ts == 0 {
+        active.job.real_start_ts = start_ts;
+    }
+    if active.job.state != JobState::ROLLINGBACK {
+        active.job.state = JobState::RUNNING;
+    }
+
+    let args = tidb_model::get_create_table_args(&mut active.job)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .ok_or_else(|| DdlPlanError::Encode("CREATE TABLE job has nil args".to_owned()))?;
+    let submitted = args
+        .read()
+        .table_info
+        .get()
+        .ok_or_else(|| DdlPlanError::Encode("CREATE TABLE job has nil table_info".to_owned()))?
+        .read()
+        .clone();
+    let mut table_info = submitted;
+    // Go `onCreateTable`: the owner re-stamps the ID from the job.
+    table_info.id = active.job.table_id;
+
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let name_taken = database
+        .tables
+        .iter()
+        .any(|table| table.name.lowercase() == table_info.name.lowercase());
+    let id_taken = database
+        .tables
+        .iter()
+        .any(|table| table.id == table_info.id);
+    let cancelled = name_taken || id_taken;
+
+    let schema_version = if cancelled { 0 } else { catalog.schema_version + 1 };
+    let mut mutations = Vec::new();
+    let diff = if cancelled {
+        SchemaDiff::default()
+    } else {
+        table_info.state = SchemaState::PUBLIC;
+        table_info.update_ts = start_ts;
+        mutations.push(OptimisticMutation::meta_put(
+            key::table_kv_key(database.info.id, table_info.id),
+            value::serialize_table_info(&table_info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        let diff = SchemaDiff {
+            version: schema_version,
+            action_type: active.job.type_,
+            schema_id: database.info.id,
+            table_id: table_info.id,
+            ..SchemaDiff::default()
+        };
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_version_kv_key(),
+            value::encode_int_value(schema_version),
+        )?);
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_diff_kv_key(schema_version),
+            value::serialize_schema_diff(&diff)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        active.job.last_schema_version = schema_version;
+        diff
+    };
+
+    if !cancelled {
+        active.job.finish_table_job(
+            JobState::DONE,
+            SchemaState::PUBLIC,
+            schema_version,
+            Some(GoShared::new(table_info.clone())),
+        );
+        // The submitter's wait loop only accepts a history job whose state is
+        // `synced` (or a cancelled job with a non-nil error); publish both the
+        // table and its final synced state in the one atomic transaction.
+        active.job.state = JobState::SYNCED;
+    } else {
+        active.job.error = Some(GoShared::new(
+            tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(1050),
+                format!(
+                    "table '{}.{}' already exists",
+                    database.info.name.original(),
+                    table_info.name.original()
+                ),
+            ),
+        ));
+    }
+    if let Some(binlog) = active.job.binlog_info.as_ref() {
+        binlog.write().finished_ts = start_ts;
+    }
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ =
+            history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
             backfill: Vec::new(),
             auto_pre_split: false,
             exchange_partition_validation: None,
