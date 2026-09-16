@@ -324,7 +324,10 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
-
+	// MatchSQLBindingCacheKey is the AST node used to match the SQL binding.
+	MatchSQLBindingCacheKey ast.StmtNode
+	// MatchSQLBindingCache caches the binding match result for the current statement.
+	MatchSQLBindingCache any
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
 	// Note:
