@@ -65,7 +65,19 @@ func (importer *SnapFileImporter) buildRestoreRegionRequest(
 	if info.Leader == nil {
 		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound, "region id %d has no leader", info.Region.Id)
 	}
+	if importer.apiVersion != kvrpcpb.APIVersion_V2 {
+		return nil, errors.New("RestoreRegion batch task identity requires API V2")
+	}
+	if len(files) == 0 || files[0].RestoreTaskID == [32]byte{} {
+		return nil, errors.New("RestoreRegion requires a planned batch task ID")
+	}
+	for _, set := range files[1:] {
+		if set.RestoreTaskID != files[0].RestoreTaskID {
+			return nil, errors.New("RestoreRegion file sets have inconsistent batch task IDs")
+		}
+	}
 	req := &import_sstpb.RestoreRegionRequest{
+		RestoreTaskId: bytes.Clone(files[0].RestoreTaskID[:]),
 		Context: &kvrpcpb.Context{
 			RegionId: info.Region.GetId(), RegionEpoch: info.Region.GetRegionEpoch(),
 			Peer: info.Leader, ApiVersion: importer.apiVersion,

@@ -189,6 +189,7 @@ func NewRestoreClient(
 	keepaliveConf keepalive.ClientParameters,
 ) *SnapClient {
 	return &SnapClient{
+		restoreUUID:          uuid.New(),
 		pdClient:             pdClient,
 		pdHTTPClient:         pdHTTPCli,
 		tlsConf:              tlsConf,
@@ -592,7 +593,10 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		restoreID := uuid.New()
+		restoreID := rc.restoreUUID
+		if restoreID == uuid.Nil {
+			restoreID = uuid.New()
+		}
 		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
 			UpstreamClusterID: rc.backupMeta.ClusterId,
 			RestoreStartTS:    restoreStartTS,

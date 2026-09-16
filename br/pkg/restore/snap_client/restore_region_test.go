@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -73,6 +74,9 @@ func restoreRegionFixture(t *testing.T) (*SnapFileImporter, *restoreRegionTestCl
 	}
 	set := restore.BackupFileSet{TableID: 20, SSTFiles: []*backuppb.File{file("write"), file("default")},
 		RewriteRules: &restoreutils.RewriteRules{Data: []*import_sstpb.RewriteRule{{OldKeyPrefix: oldPrefix, NewKeyPrefix: newPrefix}}}}
+	id, err := classicRestoreTaskID(uuid.UUID{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}, []restore.BackupFileSet{set})
+	require.NoError(t, err)
+	set.RestoreTaskID = id
 	bounds := [][]byte{codec.EncodeBytes(nil, append(bytes.Clone(newPrefix), 'a')),
 		codec.EncodeBytes(nil, append(bytes.Clone(newPrefix), 'm')),
 		codec.EncodeBytes(nil, append(bytes.Clone(newPrefix), 'z'))}
@@ -95,10 +99,15 @@ func restoreRegionFixture(t *testing.T) (*SnapFileImporter, *restoreRegionTestCl
 
 func TestRestoreRegionRequest(t *testing.T) {
 	importer, _, set, regions := restoreRegionFixture(t)
+	importer.apiVersion = kvrpcpb.APIVersion_V1
+	_, err := importer.buildRestoreRegionRequest(regions[0], []restore.BackupFileSet{set})
+	require.ErrorContains(t, err, "requires API V2")
+	importer.apiVersion = kvrpcpb.APIVersion_V2
 	// Real plaintext backups can still contain an IV in their file metadata.
 	set.SSTFiles[0].CipherIv = bytes.Repeat([]byte{2}, 16)
 	req, err := importer.buildRestoreRegionRequest(regions[0], []restore.BackupFileSet{set})
 	require.NoError(t, err)
+	require.Equal(t, set.RestoreTaskID[:], req.RestoreTaskId)
 	require.Len(t, req.Sources, 2)
 	require.Equal(t, kvrpcpb.APIVersion_V2, req.Context.ApiVersion)
 	require.Equal(t, regions[0].Region.RegionEpoch, req.Context.RegionEpoch)
