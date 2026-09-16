@@ -56,7 +56,9 @@ func TestImportFromQueryGlobalSort(t *testing.T) {
 	tk.MustExec("set global tidb_cloud_storage_uri = ?", sortURI)
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_cloud_storage_uri = ?", previousURI)
-		tk.MustExec("set global tidb_enable_dist_task = ?", previousDist)
+		if kerneltype.IsClassic() {
+			tk.MustExec("set global tidb_enable_dist_task = ?", previousDist)
+		}
 	})
 	// A background sysvar refresh must retain the configured storage URI.
 	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
@@ -64,7 +66,9 @@ func TestImportFromQueryGlobalSort(t *testing.T) {
 	query := "select g,count(*),count(v),sum(v),min(v),max(v) from query_import_src where i>0 group by g"
 	for _, distributed := range modes {
 		t.Run(fmt.Sprintf("distributed=%t", distributed), func(t *testing.T) {
-			tk.MustExec("set global tidb_enable_dist_task = ?", distributed)
+			if kerneltype.IsClassic() {
+				tk.MustExec("set global tidb_enable_dist_task = ?", distributed)
+			}
 			target := fmt.Sprintf("query_import_dst_%t", distributed)
 			tk.MustExec(fmt.Sprintf("create table %s(g bigint, c bigint, cv bigint, s decimal(42,2), lo decimal(20,2), hi decimal(20,2), key(g))", target))
 			for _, unsupported := range []struct{ sql, construct string }{
