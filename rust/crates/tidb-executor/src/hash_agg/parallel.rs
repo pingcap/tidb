@@ -103,6 +103,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64};
 use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
 use std::sync::Mutex;
+use tidb_codec::JoinKeyColumn;
 use tidb_vardef::tidb_vars::{
     TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
 };
@@ -2325,26 +2326,39 @@ impl PipelineKeyBuffer {
             self.partial_results.clear();
             if let Some([index]) = inputs.integer_columns {
                 let column = chunk.column(*index);
-                if let Some(selection) = chunk.sel() {
-                    debug_assert_eq!(selection.len(), rows);
-                    self.integers
-                        .extend(selection.iter().take(rows).map(|&physical| {
-                            let value =
-                                (!column.is_null(physical)).then(|| column.get_int64(physical));
+                column.with_raw(|raw| {
+                    if let Some(selection) = chunk.sel() {
+                        debug_assert_eq!(selection.len(), rows);
+                        self.integers
+                            .extend(selection.iter().take(rows).map(|&physical| {
+                                let value = (!column.is_null(physical)).then(|| {
+                                    i64::from_ne_bytes(
+                                        raw.row(physical)
+                                            .try_into()
+                                            .expect("integer group key cell is 8 bytes"),
+                                    )
+                                });
+                                (
+                                    value,
+                                    map_key_bucket(PipelineMapKeyRef::Int(value), bucket_count),
+                                )
+                            }));
+                    } else {
+                        self.integers.extend((0..rows).map(|physical| {
+                            let value = (!column.is_null(physical)).then(|| {
+                                i64::from_ne_bytes(
+                                    raw.row(physical)
+                                        .try_into()
+                                        .expect("integer group key cell is 8 bytes"),
+                                )
+                            });
                             (
                                 value,
                                 map_key_bucket(PipelineMapKeyRef::Int(value), bucket_count),
                             )
                         }));
-                } else {
-                    self.integers.extend((0..rows).map(|physical| {
-                        let value = (!column.is_null(physical)).then(|| column.get_int64(physical));
-                        (
-                            value,
-                            map_key_bucket(PipelineMapKeyRef::Int(value), bucket_count),
-                        )
-                    }));
-                }
+                    }
+                });
                 return Ok(());
             }
             self.group_keys
@@ -2456,6 +2470,11 @@ fn merge_map(global: &mut PipelineMap, incoming: PipelineMap) -> Result<(), Exec
         *global = incoming;
         return Ok(());
     }
+    // Final workers merge complete partial maps. Reserve once for the incoming
+    // batch so hashbrown does not repeatedly rehash while Go's map merge walks
+    // the same batch of entries.
+    global.index.reserve(incoming.index.len());
+    global.groups.reserve(incoming.groups.len());
     for (key, group) in incoming.into_entries() {
         global.merge(key, group)?;
     }

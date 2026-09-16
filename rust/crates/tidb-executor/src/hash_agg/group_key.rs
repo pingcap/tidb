@@ -15,6 +15,7 @@
 //! Go aggregate.GetGroupKey: evaluate and encode a whole column at a time.
 
 use super::*;
+use tidb_codec::JoinKeyColumn;
 
 /// Walk logical rows in the same order as Go's `Chunk.GetRow`, resolving the
 /// selection vector once for the whole column batch.  HashGroupKey receives a
@@ -82,30 +83,67 @@ impl GroupKeyBuffer {
                         let column = chunk.column(index);
                         match field_type.eval_type() {
                             EvalType::Int if column.type_size() == 8 => {
-                                for_each_logical_row(chunk, rows, |logical, physical| {
-                                    let key = &mut self.encoded[logical];
-                                    if column.is_null(physical) {
-                                        key.push(NIL_FLAG);
-                                    } else {
-                                        // Go ETInt hashes signed storage bits,
-                                        // including unsigned SQL columns.
-                                        key.push(VARINT_FLAG);
-                                        encode_varint(key, column.get_int64(physical));
-                                    }
+                                column.with_raw(|raw| {
+                                    for_each_logical_row(chunk, rows, |logical, physical| {
+                                        let key = &mut self.encoded[logical];
+                                        if column.is_null(physical) {
+                                            key.push(NIL_FLAG);
+                                        } else {
+                                            // Go ETInt hashes signed storage bits,
+                                            // including unsigned SQL columns.
+                                            let value = i64::from_ne_bytes(
+                                                raw.row(physical)
+                                                    .try_into()
+                                                    .expect("ETInt group key cell is 8 bytes"),
+                                            );
+                                            key.push(VARINT_FLAG);
+                                            encode_varint(key, value);
+                                        }
+                                    });
+                                });
+                                continue;
+                            }
+                            EvalType::Real if matches!(column.type_size(), 4 | 8) => {
+                                column.with_raw(|raw| {
+                                    for_each_logical_row(chunk, rows, |logical, physical| {
+                                        let key = &mut self.encoded[logical];
+                                        if column.is_null(physical) {
+                                            key.push(NIL_FLAG);
+                                        } else {
+                                            let cell = raw.row(physical);
+                                            let value = match cell.len() {
+                                                4 => f64::from(f32::from_ne_bytes(
+                                                    cell.try_into().expect("Float cell is 4 bytes"),
+                                                )),
+                                                8 => f64::from_ne_bytes(
+                                                    cell.try_into()
+                                                        .expect("Double cell is 8 bytes"),
+                                                ),
+                                                _ => unreachable!("real group key width is 4 or 8"),
+                                            };
+                                            key.push(tidb_codec::FLOAT_FLAG);
+                                            tidb_codec::encode_float(key, value);
+                                        }
+                                    });
                                 });
                                 continue;
                             }
                             EvalType::String if !field_type.is_hybrid() => {
                                 let collator = field_type.runtime_collator();
-                                for_each_logical_row(chunk, rows, |logical, physical| {
-                                    let key = &mut self.encoded[logical];
-                                    if column.is_null(physical) {
-                                        key.push(NIL_FLAG);
-                                    } else {
-                                        key.push(tidb_codec::COMPACT_BYTES_FLAG);
-                                        let bytes = column.get_bytes(physical);
-                                        encode_compact_bytes(key, &collator.immutable_key(&bytes));
-                                    }
+                                column.with_raw(|raw| {
+                                    for_each_logical_row(chunk, rows, |logical, physical| {
+                                        let key = &mut self.encoded[logical];
+                                        if column.is_null(physical) {
+                                            key.push(NIL_FLAG);
+                                        } else {
+                                            key.push(tidb_codec::COMPACT_BYTES_FLAG);
+                                            let bytes = raw.row(physical);
+                                            encode_compact_bytes(
+                                                key,
+                                                &collator.immutable_key(bytes),
+                                            );
+                                        }
+                                    });
                                 });
                                 continue;
                             }
