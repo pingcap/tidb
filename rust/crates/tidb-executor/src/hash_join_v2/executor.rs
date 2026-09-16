@@ -70,12 +70,13 @@ struct Runtime {
 }
 
 /// The build coordinator exclusively owns the build child while the caller
-/// fetches the first probe chunk. Probe workers share only the completed table;
-/// Close joins every worker before releasing it or closing either child.
+/// fetches the first probe chunk. The probe stage moves the probe child into a
+/// Go-equivalent fetcher after that first chunk and returns it before Close;
+/// probe workers share only the completed table.
 pub struct HashJoinV2Executor<C> {
     meta: ExecutorMeta,
     plan: Arc<HashJoinV2Plan>,
-    children: [Box<dyn Executor>; 2],
+    children: [Option<Box<dyn Executor>>; 2],
     context: C,
     memory: StatementMemory,
     runtime: Option<Arc<Runtime>>,
@@ -96,7 +97,7 @@ impl<C> HashJoinV2Executor<C> {
         Self {
             meta,
             plan: Arc::new(plan),
-            children: [left, right],
+            children: [Some(left), Some(right)],
             context,
             memory,
             runtime: None,
@@ -108,7 +109,17 @@ impl<C> HashJoinV2Executor<C> {
 
     fn close_owned(&mut self) -> Result<(), ExecError> {
         self.finished = true;
-        let mut first_error = self.probe.take().and_then(|mut stage| stage.close().err());
+        let probe_index = usize::from(!self.plan.right_as_build_side);
+        let mut first_error = None;
+        if let Some(mut stage) = self.probe.take() {
+            if let Err(error) = stage.close() {
+                first_error = Some(error);
+            }
+            if let Some(source) = stage.take_source() {
+                debug_assert!(self.children[probe_index].is_none());
+                self.children[probe_index] = Some(source);
+            }
+        }
         if let Some(runtime) = self.runtime.take() {
             // The only shared owners are the workers, all joined above.
             let mut runtime = Arc::try_unwrap(runtime)
@@ -121,7 +132,7 @@ impl<C> HashJoinV2Executor<C> {
         if std::mem::take(&mut self.children_open) {
             // BaseExecutor.Close visits both children and returns the first
             // error, including after a partially successful Open.
-            for child in &mut self.children {
+            for child in self.children.iter_mut().flatten() {
                 if let Err(error) = child.close() {
                     first_error.get_or_insert(error);
                 }
@@ -153,7 +164,10 @@ impl<C> HashJoinV2Executor<C> {
                 "V2 key indices and comparison types differ",
             ));
         }
-        let build_types = self.children[usize::from(right_build)].ret_field_types();
+        let build_types = self.children[usize::from(right_build)]
+            .as_ref()
+            .expect("build child missing before Open")
+            .ret_field_types();
         let categories = field_categories(build_types)?;
         let build_key_types = field_categories(&plan.build_key_types)?;
         let probe_key_types = field_categories(&plan.probe_key_types)?;
@@ -218,7 +232,10 @@ impl<C> HashJoinV2Executor<C> {
         let spill = HashJoinSpill::new(
             plan.concurrency,
             build.ctx.partition_number,
-            self.children[usize::from(!right_build)].ret_field_types(),
+            self.children[usize::from(!right_build)]
+                .as_ref()
+                .expect("probe child missing before Open")
+                .ret_field_types(),
             build.hash_table_context.memory_tracker.clone(),
             self.memory.clone(),
             self.meta.id(),
@@ -236,6 +253,7 @@ impl<C> HashJoinV2Executor<C> {
             joined_types: self
                 .children
                 .iter()
+                .filter_map(|child| child.as_ref())
                 .flat_map(|child| child.ret_field_types().iter().cloned())
                 .collect(),
         }));
@@ -266,9 +284,21 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
         let first_probe = if runtime.restored.is_empty() {
             let [left, right] = &mut self.children;
             let (build, probe) = if plan.right_as_build_side {
-                (right, left)
+                (
+                    right
+                        .as_deref_mut()
+                        .expect("build child missing before prepare"),
+                    left.as_deref_mut()
+                        .expect("probe child missing before prepare"),
+                )
             } else {
-                (left, right)
+                (
+                    left.as_deref_mut()
+                        .expect("build child missing before prepare"),
+                    right
+                        .as_deref_mut()
+                        .expect("probe child missing before prepare"),
+                )
             };
             let mut first_probe = probe.new_chunk();
             if ProbeStage::should_limit_fetch_size(plan.join_type, plan.right_as_build_side) {
@@ -284,7 +314,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
                     .spawn_scoped(scope, || {
                         recover_worker_panic(|| {
                             runtime.build.fetch_and_build_hash_table_with_spill(
-                                build.as_mut(),
+                                build,
                                 &build_context,
                                 memory,
                                 &mut runtime.spill,
@@ -328,7 +358,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
         let context = self.context.clone();
         let max_chunk_size = self.meta.max_chunk_size();
         self.probe = Some(ProbeStage::new_with_spill(
-            self.children[1 - build_index].as_ref(),
+            &mut self.children[1 - build_index],
             &self.meta,
             &runtime.build,
             self.memory.clone(),
@@ -424,7 +454,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
 
     fn next_restore_partition(&mut self) -> Result<bool, ExecError> {
         if let Some(mut stage) = self.probe.take() {
-            stage.close()?;
+            let close_result = stage.close();
+            if let Some(source) = stage.take_source() {
+                let probe_index = usize::from(!self.plan.right_as_build_side);
+                debug_assert!(self.children[probe_index].is_none());
+                self.children[probe_index] = Some(source);
+            }
+            close_result?;
         }
         let runtime = Arc::get_mut(self.runtime.as_mut().expect("opened V2 runtime"))
             .expect("round workers joined before restore");
@@ -446,7 +482,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for HashJoinV2Executor
     fn open(&mut self) -> Result<(), ExecError> {
         self.close_owned()?;
         self.children_open = true;
-        for child in &mut self.children {
+        for child in self.children.iter_mut().flatten() {
             child.open()?;
         }
         recover_worker_panic(|| self.open_self())
@@ -466,10 +502,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for HashJoinV2Executor
                 if self.probe.is_none() {
                     self.prepare(output.required_rows())?;
                 }
-                self.probe.as_mut().expect("prepared V2 probe").next(
-                    self.children[usize::from(!self.plan.right_as_build_side)].as_mut(),
-                    output,
-                )?;
+                self.probe
+                    .as_mut()
+                    .expect("prepared V2 probe")
+                    .next(output)?;
                 if output.num_rows() != 0 {
                     return Ok(());
                 }
@@ -483,6 +519,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for HashJoinV2Executor
             self.finished = true;
             if let Some(mut stage) = self.probe.take() {
                 let _ = stage.close();
+                if let Some(source) = stage.take_source() {
+                    let probe_index = usize::from(!self.plan.right_as_build_side);
+                    debug_assert!(self.children[probe_index].is_none());
+                    self.children[probe_index] = Some(source);
+                }
             }
         }
         result

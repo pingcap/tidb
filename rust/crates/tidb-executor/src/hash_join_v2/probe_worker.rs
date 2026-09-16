@@ -50,6 +50,10 @@ pub enum ProbeWorkerEvent {
     Done { worker_id: usize, collisions: u64 },
     /// Terminal error, retaining SQL/expression identity across the queue.
     Error { worker_id: usize, error: ExecError },
+    /// Terminal error raised by the Go-equivalent probe-side fetcher.
+    FetcherError { error: ExecError },
+    /// The probe source returned an empty chunk and will send no more input.
+    FetcherDone,
 }
 
 pub struct ProbeWorkerV2 {

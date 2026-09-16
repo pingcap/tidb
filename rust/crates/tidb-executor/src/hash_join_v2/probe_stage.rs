@@ -17,7 +17,8 @@
 //! The parent owns child Open/Close and the built table until this stage closes.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::mpsc::{Receiver as CompletionReceiver, SyncSender};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{bounded, select_biased, Receiver, Sender, TryRecvError, TrySendError};
@@ -28,6 +29,51 @@ use super::HashJoinV2Exec;
 use crate::joiner::JoinType;
 use crate::{ExecError, Executor, ExecutorMeta, StatementMemory};
 
+struct FetchRequest {
+    worker_id: usize,
+    chunk: Chunk,
+    required_rows: usize,
+}
+
+struct FetcherHandle {
+    scheduler: Arc<ProbeFetcher>,
+    requests: Option<Sender<FetchRequest>>,
+    completion: CompletionReceiver<Option<Box<dyn Executor>>>,
+}
+
+struct FetcherState {
+    scheduled: bool,
+    closed: bool,
+    finished: bool,
+}
+
+struct ProbeFetcher {
+    requests: Receiver<FetchRequest>,
+    source: Mutex<Option<Box<dyn Executor>>>,
+    inputs: Vec<Sender<Chunk>>,
+    events: Sender<ProbeWorkerEvent>,
+    close: Receiver<()>,
+    killed: Receiver<()>,
+    memory: StatementMemory,
+    limit_fetch_size: bool,
+    max_chunk_size: usize,
+    state: Mutex<FetcherState>,
+    completion: Mutex<Option<SyncSender<Option<Box<dyn Executor>>>>>,
+}
+
+enum FetchResult {
+    Chunk { worker_id: usize, chunk: Chunk },
+    Eof,
+    Closed,
+}
+
+enum FetchBatchResult {
+    Continue,
+    Finished { notify: bool },
+}
+
+const FETCH_BATCH_SIZE: usize = 8;
+
 pub struct ProbeStage {
     events: Receiver<ProbeWorkerEvent>,
     close_signal: Option<Sender<()>>,
@@ -37,6 +83,8 @@ pub struct ProbeStage {
     resources: VecDeque<(usize, Chunk)>,
     first_fetched: bool,
     workers: Vec<JoinHandle<()>>,
+    fetcher: Option<FetcherHandle>,
+    source: Option<Box<dyn Executor>>,
     probe_done: Vec<bool>,
     done: Vec<bool>,
     source_eof: bool,
@@ -51,7 +99,7 @@ impl ProbeStage {
     /// an Arc-owned build state and constructs a borrowing probe inside its lane;
     /// it must call worker.run exactly once.
     pub fn new<F>(
-        source: &dyn Executor,
+        source: &mut Option<Box<dyn Executor>>,
         output: &ExecutorMeta,
         build: &HashJoinV2Exec,
         memory: StatementMemory,
@@ -64,7 +112,7 @@ impl ProbeStage {
     }
 
     pub fn new_with_spill<F>(
-        source: &dyn Executor,
+        source: &mut Option<Box<dyn Executor>>,
         output: &ExecutorMeta,
         build: &HashJoinV2Exec,
         memory: StatementMemory,
@@ -89,6 +137,10 @@ impl ProbeStage {
                 _ => false,
             };
         let limit_fetch_size = Self::should_limit_fetch_size(build.ctx.join_type, right_build);
+        let source_max_chunk_size = source
+            .as_ref()
+            .ok_or_else(|| ExecError::internal("probe source missing before stage start"))?
+            .max_chunk_size();
         let (events_tx, events) = bounded(concurrency + 1);
         let (close_signal, close) = bounded(0);
         let (scan_ready, scan) = bounded(0);
@@ -101,6 +153,8 @@ impl ProbeStage {
             resources: VecDeque::with_capacity(concurrency),
             first_fetched: first_chunk.is_some(),
             workers: Vec::with_capacity(concurrency),
+            fetcher: None,
+            source: None,
             probe_done: vec![false; concurrency],
             done: vec![false; concurrency],
             source_eof: false,
@@ -120,10 +174,16 @@ impl ProbeStage {
             );
             stage.inputs.push(ports.input);
             stage.recycles.push(ports.recycle);
-            if !restored {
-                stage
-                    .resources
-                    .push_back((id, first_chunk.take().unwrap_or_else(|| source.new_chunk())));
+            if !restored && !skip_probe {
+                stage.resources.push_back((
+                    id,
+                    first_chunk.take().unwrap_or_else(|| {
+                        source
+                            .as_ref()
+                            .expect("probe source missing while allocating resources")
+                            .new_chunk()
+                    }),
+                ));
             }
             let (run, memory, errors, close) = (
                 Arc::clone(&run),
@@ -148,7 +208,46 @@ impl ProbeStage {
         }
         if skip_probe || restored {
             stage.finish_fetch();
+            return Ok(stage);
         }
+
+        // Go's startProbeFetcher owns a long-lived producer. Schedule its
+        // bounded fetch batches on the persistent execution pool rather than
+        // creating a native thread for every hash join. The completion channel
+        // returns the child after the producer has observed Close or EOF.
+        let fetch_source = source
+            .take()
+            .ok_or_else(|| ExecError::internal("probe source missing for fetcher"))?;
+        let (requests_tx, requests_rx) = bounded(concurrency);
+        let fetch_inputs = stage.inputs.clone();
+        let fetch_events = events_tx.clone();
+        let fetch_close = close.clone();
+        let fetch_memory = stage.memory.clone();
+        let fetch_limit = stage.limit_fetch_size;
+        let fetch_max_chunk_size = source_max_chunk_size;
+        let (completion_tx, completion_rx) = std::sync::mpsc::sync_channel(1);
+        let fetcher = Arc::new(ProbeFetcher {
+            requests: requests_rx,
+            source: Mutex::new(Some(fetch_source)),
+            inputs: fetch_inputs,
+            events: fetch_events,
+            close: fetch_close,
+            killed: stage.memory.sql_killer().get_kill_event_chan(),
+            memory: fetch_memory,
+            limit_fetch_size: fetch_limit,
+            max_chunk_size: fetch_max_chunk_size,
+            state: Mutex::new(FetcherState {
+                scheduled: false,
+                closed: false,
+                finished: false,
+            }),
+            completion: Mutex::new(Some(completion_tx)),
+        });
+        stage.fetcher = Some(FetcherHandle {
+            scheduler: fetcher,
+            requests: Some(requests_tx),
+            completion: completion_rx,
+        });
         Ok(stage)
     }
 
@@ -163,17 +262,49 @@ impl ProbeStage {
         self.source_eof = true;
         self.resources.clear();
         self.inputs.clear();
+        if let Some(fetcher) = self.fetcher.as_mut() {
+            fetcher.requests.take();
+            fetcher.scheduler.close();
+        }
+    }
+
+    fn request_fetch(
+        &self,
+        request: FetchRequest,
+        killed: &Receiver<()>,
+    ) -> Result<bool, ExecError> {
+        let Some(fetcher) = self.fetcher.as_ref() else {
+            return Ok(false);
+        };
+        if fetcher.scheduler.is_finished() {
+            return Ok(false);
+        }
+        let Some(requests) = fetcher.requests.as_ref() else {
+            return Ok(false);
+        };
+        let sent = select_biased! {
+            recv(killed) -> _ => {
+                self.memory.check()?;
+                Err(ExecError::internal("probe kill event without a kill reason"))
+            },
+            send(requests, request) -> result => Ok(result.is_ok()),
+        }?;
+        if !sent {
+            return Ok(false);
+        }
+        fetcher.scheduler.schedule();
+        Ok(!fetcher.scheduler.is_finished())
     }
 
     /// Go Next: reset the caller's chunk, swap a result's columns into it,
     /// and recycle the old columns. RequiredRows is a fetch hint for preserved
     /// probe-side outer joins, as in Go; it does not split join-result chunks.
-    pub fn next(&mut self, source: &mut dyn Executor, output: &mut Chunk) -> Result<(), ExecError> {
+    pub fn next(&mut self, output: &mut Chunk) -> Result<(), ExecError> {
         output.reset();
         if self.finished {
             return Ok(());
         }
-        let result = crate::sort_util::recover_worker_panic(|| self.next_inner(source, output));
+        let result = crate::sort_util::recover_worker_panic(|| self.next_inner(output));
         if result.is_err() {
             // Preserve the original error; Close only drains and joins workers.
             let _ = self.close();
@@ -181,39 +312,35 @@ impl ProbeStage {
         result
     }
 
-    fn next_inner(
-        &mut self,
-        source: &mut dyn Executor,
-        output: &mut Chunk,
-    ) -> Result<(), ExecError> {
+    fn next_inner(&mut self, output: &mut Chunk) -> Result<(), ExecError> {
         let killed = self.memory.sql_killer().get_kill_event_chan();
         loop {
             self.memory.check()?;
             // Admit returned input resources before the next output event, so
             // a prolific worker cannot starve other lanes of source chunks.
-            if let Some((id, mut chunk)) = self.resources.pop_front() {
-                if !std::mem::take(&mut self.first_fetched) {
-                    if self.limit_fetch_size {
-                        chunk.set_required_rows(
-                            output.required_rows() as isize,
-                            source.max_chunk_size(),
-                        );
-                    }
-                    source.next(&mut chunk)?;
-                }
-                self.memory.check()?;
-                if chunk.num_rows() == 0 {
-                    self.finish_fetch();
-                } else if let Some(input) = self.inputs.get(id) {
-                    match input.try_send(chunk) {
-                        Ok(()) | Err(TrySendError::Disconnected(_)) => {}
-                        Err(TrySendError::Full(_)) => {
-                            return Err(ExecError::internal(
-                                "probe resource returned before input was consumed",
-                            ))
+            if let Some((id, chunk)) = self.resources.pop_front() {
+                if std::mem::take(&mut self.first_fetched) {
+                    if chunk.num_rows() == 0 {
+                        self.finish_fetch();
+                    } else if let Some(input) = self.inputs.get(id) {
+                        match input.try_send(chunk) {
+                            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+                            Err(TrySendError::Full(_)) => {
+                                return Err(ExecError::internal(
+                                    "probe resource returned before input was consumed",
+                                ))
+                            }
                         }
                     }
-                    // A disconnected lane publishes its typed error to events.
+                } else if !self.request_fetch(
+                    FetchRequest {
+                        worker_id: id,
+                        chunk,
+                        required_rows: output.required_rows(),
+                    },
+                    &killed,
+                )? {
+                    self.finish_fetch();
                 }
             }
             let event = match self.events.try_recv() {
@@ -235,7 +362,16 @@ impl ProbeStage {
             match event {
                 ProbeWorkerEvent::Input { worker_id, chunk } => {
                     if !self.source_eof {
-                        self.resources.push_back((worker_id, chunk));
+                        if !self.request_fetch(
+                            FetchRequest {
+                                worker_id,
+                                chunk,
+                                required_rows: output.required_rows(),
+                            },
+                            &killed,
+                        )? {
+                            self.finish_fetch();
+                        }
                     }
                 }
                 ProbeWorkerEvent::Output {
@@ -269,7 +405,9 @@ impl ProbeStage {
                         return Ok(());
                     }
                 }
-                ProbeWorkerEvent::Error { error, .. } => return Err(error),
+                ProbeWorkerEvent::Error { error, .. }
+                | ProbeWorkerEvent::FetcherError { error } => return Err(error),
+                ProbeWorkerEvent::FetcherDone => self.finish_fetch(),
             }
         }
     }
@@ -288,6 +426,23 @@ impl ProbeStage {
                 });
             }
         }
+        if let Some(fetcher) = self.fetcher.take() {
+            match fetcher.completion.recv() {
+                Ok(source) => {
+                    self.source = source;
+                    if self.source.is_none() {
+                        error.get_or_insert_with(|| {
+                            ExecError::internal("hash join probe fetcher lost its source")
+                        });
+                    }
+                }
+                Err(_) => {
+                    error.get_or_insert_with(|| {
+                        ExecError::internal("hash join probe fetcher exited without completion")
+                    });
+                }
+            }
+        }
         self.recycles.clear();
         while self.events.try_recv().is_ok() {}
         self.finished = true;
@@ -301,10 +456,233 @@ impl ProbeStage {
     pub fn is_finished(&self) -> bool {
         self.finished
     }
+
+    /// Returns the probe child after the fetcher has been joined by `close`.
+    pub fn take_source(&mut self) -> Option<Box<dyn Executor>> {
+        self.source.take()
+    }
 }
 
 impl Drop for ProbeStage {
     fn drop(&mut self) {
         let _ = self.close();
+    }
+}
+
+impl ProbeFetcher {
+    fn schedule(self: &Arc<Self>) {
+        let should_schedule = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if state.scheduled || state.finished {
+                false
+            } else {
+                state.scheduled = true;
+                true
+            }
+        };
+        if should_schedule {
+            let fetcher = Arc::clone(self);
+            crate::worker_pool::enqueue_public(Box::new(move || fetcher.run_batch()));
+        }
+    }
+
+    fn close(self: &Arc<Self>) {
+        {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.closed = true;
+        }
+        self.schedule();
+    }
+
+    fn is_finished(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .finished
+    }
+
+    fn run_batch(self: Arc<Self>) {
+        let Some(mut source) = self
+            .source
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        else {
+            self.report_error(ExecError::internal("probe fetcher source missing"));
+            self.complete();
+            return;
+        };
+        let result = crate::sort_util::recover_worker_panic(|| self.run_batch_inner(&mut *source));
+        *self
+            .source
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(source);
+        match result {
+            Ok(FetchBatchResult::Continue) => self.reschedule(),
+            Ok(FetchBatchResult::Finished { notify }) => {
+                if notify {
+                    self.report_done();
+                }
+                self.complete();
+            }
+            Err(error) => {
+                self.report_error(error);
+                self.complete();
+            }
+        }
+    }
+
+    fn run_batch_inner(&self, source: &mut dyn Executor) -> Result<FetchBatchResult, ExecError> {
+        for _ in 0..FETCH_BATCH_SIZE {
+            if self.is_closed() {
+                return Ok(FetchBatchResult::Finished { notify: false });
+            }
+            let request = match self.requests.try_recv() {
+                Ok(request) => request,
+                Err(TryRecvError::Empty) => return Ok(FetchBatchResult::Continue),
+                Err(TryRecvError::Disconnected) => {
+                    return Ok(FetchBatchResult::Finished { notify: false })
+                }
+            };
+            match self.fetch_one(source, request)? {
+                FetchResult::Chunk { worker_id, chunk } => {
+                    if !self.send_input(worker_id, chunk)? {
+                        return Ok(FetchBatchResult::Finished { notify: false });
+                    }
+                }
+                FetchResult::Eof => return Ok(FetchBatchResult::Finished { notify: true }),
+                FetchResult::Closed => return Ok(FetchBatchResult::Finished { notify: false }),
+            }
+        }
+        if self.is_closed() {
+            return Ok(FetchBatchResult::Finished { notify: false });
+        }
+        Ok(FetchBatchResult::Continue)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .closed
+    }
+
+    fn fetch_one(
+        &self,
+        source: &mut dyn Executor,
+        mut request: FetchRequest,
+    ) -> Result<FetchResult, ExecError> {
+        if self.is_closed() {
+            return Ok(FetchResult::Closed);
+        }
+        let result = crate::sort_util::recover_worker_panic(|| {
+            if self.is_closed() {
+                return Ok(FetchResult::Closed);
+            }
+            self.memory.check()?;
+            if self.limit_fetch_size {
+                request
+                    .chunk
+                    .set_required_rows(request.required_rows as isize, self.max_chunk_size);
+            }
+            source.next(&mut request.chunk)?;
+            self.memory.check()?;
+            if self.is_closed() {
+                Ok(FetchResult::Closed)
+            } else if request.chunk.num_rows() == 0 {
+                Ok(FetchResult::Eof)
+            } else {
+                Ok(FetchResult::Chunk {
+                    worker_id: request.worker_id,
+                    chunk: request.chunk,
+                })
+            }
+        });
+        result
+    }
+
+    fn report_done(&self) {
+        select_biased! {
+            recv(self.close) -> _ => {},
+            send(self.events, ProbeWorkerEvent::FetcherDone) -> _ => {},
+        }
+    }
+
+    fn report_error(&self, error: ExecError) {
+        select_biased! {
+            recv(self.close) -> _ => {},
+            send(self.events, ProbeWorkerEvent::FetcherError { error }) -> _ => {},
+        }
+    }
+
+    fn send_input(&self, worker_id: usize, chunk: Chunk) -> Result<bool, ExecError> {
+        let input = self
+            .inputs
+            .get(worker_id)
+            .ok_or_else(|| ExecError::internal("probe fetcher received an invalid worker id"))?;
+        select_biased! {
+            recv(self.close) -> _ => Ok(false),
+            recv(self.killed) -> _ => {
+                self.memory.check()?;
+                Err(ExecError::internal("probe kill event without a kill reason"))
+            },
+            send(input, chunk) -> result => result
+                .map(|()| true)
+                .map_err(|_| ExecError::internal("probe worker input channel disconnected")),
+        }
+    }
+
+    fn reschedule(self: &Arc<Self>) {
+        let (should_schedule, should_finish) = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.scheduled = false;
+            if state.finished || state.closed {
+                (false, !state.finished)
+            } else if self.requests.is_empty() {
+                (false, false)
+            } else {
+                state.scheduled = true;
+                (true, false)
+            }
+        };
+        if should_finish {
+            self.complete();
+        } else if should_schedule {
+            let fetcher = Arc::clone(self);
+            crate::worker_pool::enqueue_public(Box::new(move || fetcher.run_batch()));
+        }
+    }
+
+    fn complete(&self) {
+        let source = self
+            .source
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.scheduled = false;
+            state.finished = true;
+        }
+        let completion = self
+            .completion
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(completion) = completion {
+            let _ = completion.send(source);
+        }
     }
 }
