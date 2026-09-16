@@ -38,9 +38,12 @@ type PlanCtx struct {
 	// PreviousSubtaskMetas is subtask metas of previous steps.
 	// We can remove this field if we find a better way to pass the result between steps.
 	PreviousSubtaskMetas map[proto.Step][][]byte
-	GlobalSort           bool
-	NextTaskStep         proto.Step
-	ExecuteNodesCnt      int
+	// SourceStep identifies the initial producer of metadata consumed by later
+	// steps. It remains the same even when an intermediate step is skipped.
+	SourceStep      proto.Step
+	GlobalSort      bool
+	NextTaskStep    proto.Step
+	ExecuteNodesCnt int
 
 	Store kv.Storage
 }
