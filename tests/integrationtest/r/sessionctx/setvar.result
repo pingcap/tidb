@@ -1117,11 +1117,12 @@ Warning	1229	Variable 'tidb_paging_size_bytes' is a GLOBAL variable and should b
 select @@global.tidb_paging_size_bytes;
 @@global.tidb_paging_size_bytes
 4194304
-set global tidb_paging_size_bytes=0;
+set global tidb_paging_size_bytes=default;
 select @@tidb_paging_size_bytes;
 @@tidb_paging_size_bytes
 0
-set global tidb_paging_size_bytes=default;
+set global tidb_paging_size_bytes=4194304;
+set global tidb_paging_size_bytes=0;
 select @@tidb_paging_size_bytes;
 @@tidb_paging_size_bytes
 0

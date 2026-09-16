@@ -361,6 +361,8 @@ func TestDistSQLCtxPagingSizeBytesGlobalUpdate(t *testing.T) {
 		{"4194304", 4 * 1024 * 1024},
 		{"1048576", 1024 * 1024},
 		{"8388608", 8 * 1024 * 1024},
+		{"default", 0},
+		{"4194304", 4 * 1024 * 1024},
 		{"0", 0},
 	} {
 		previousBudget := previous.PagingSizeBytes
@@ -378,8 +380,18 @@ func TestDistSQLCtxPagingSizeBytesGlobalUpdate(t *testing.T) {
 	}
 	MustExec(t, reader, "rollback")
 
-	// Cache rebuilds must restore the persisted budget, as on startup or a peer update.
 	MustExec(t, writer, "set global tidb_paging_size_bytes = 4194304")
+	newReader, err := createSession(store)
+	require.NoError(t, err)
+	defer newReader.Close()
+	MustExec(t, newReader, "set resource group rg_paging_global")
+	rs := MustExecToRecodeSet(t, newReader, "select @@global.tidb_paging_size_bytes, @@tidb_paging_size_bytes")
+	rows, err := ResultSetToStringSlice(context.Background(), newReader, rs)
+	require.NoError(t, err)
+	require.Equal(t, [][]string{{"4194304", "4194304"}}, rows)
+	require.Equal(t, 4*1024*1024, newReader.GetDistSQLCtx().PagingSizeBytes)
+
+	// Cache rebuilds must restore the persisted budget, as on startup or a peer update.
 	vardef.PagingSizeBytes.Store(0)
 	dom.NotifyUpdateSysVarCache(true)
 	MustExec(t, reader, "select 1")
