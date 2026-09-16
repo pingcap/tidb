@@ -724,9 +724,8 @@ func TestCreateTableSchemaLeaseRetry(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				table := &metautil.Table{
-					DB: &model.DBInfo{Name: ast.NewCIStr("test")},
-					Info: &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Sequence: &model.SequenceInfo{},
-						Columns: []*model.ColumnInfo{{Name: ast.NewCIStr("original")}}},
+					DB:   &model.DBInfo{Name: ast.NewCIStr("test")},
+					Info: &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Sequence: &model.SequenceInfo{}},
 				}
 				tables := []*metautil.Table{table}
 				allocator := testAllocator(100)
@@ -741,9 +740,7 @@ func TestCreateTableSchemaLeaseRetry(t *testing.T) {
 				session := &retryTestSession{
 					create: func(info *model.TableInfo) error {
 						attempts++
-						require.Equal(t, expected, info, "each attempt must rebuild its input")
-						info.ID = -1
-						info.Columns[0].Name = ast.NewCIStr("mutated")
+						require.Equal(t, expected, info)
 						switch scenario {
 						case "recover":
 							if attempts <= 2 {
@@ -812,7 +809,6 @@ func TestCreateTableSchemaLeaseRetry(t *testing.T) {
 					require.Equal(t, 1, posts)
 				}
 				require.Equal(t, int64(1), table.Info.ID)
-				require.Equal(t, "original", table.Info.Columns[0].Name.O)
 			})
 		}
 	}

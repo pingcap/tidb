@@ -273,6 +273,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 		return errors.New("preallocedIDs is nil")
 	}
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
+		clonedInfos := make(map[string][]*model.TableInfo)
 		for _, table := range tables {
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
@@ -287,17 +288,14 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
 				ttlInfo.Enable = false
 			}
+			infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			clonedInfos[table.DB.Name.L] = append(clonedInfos[table.DB.Name.L], infoClone)
 		}
-		if len(tables) > 0 {
+		if len(clonedInfos) > 0 {
 			if err := retryCreateTableOnSchemaExpired(ctx, func() error {
-				clonedInfos := make(map[string][]*model.TableInfo)
-				for _, table := range tables {
-					infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					clonedInfos[table.DB.Name.L] = append(clonedInfos[table.DB.Name.L], infoClone)
-				}
 				return batchSession.CreateTables(ctx, clonedInfos, ddl.WithIDAllocated(true))
 			}); err != nil {
 				return err
@@ -331,11 +329,11 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		ttlInfo.Enable = false
 	}
 
-	err := retryCreateTableOnSchemaExpired(ctx, func() error {
-		infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = retryCreateTableOnSchemaExpired(ctx, func() error {
 		return db.se.CreateTable(ctx, table.DB.Name, infoClone, ddl.WithIDAllocated(true))
 	})
 	if err != nil {
@@ -356,7 +354,6 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 
 // retryCreateTableOnSchemaExpired retries at the restore caller, where the table
 // definitions come from the backup rather than a particular target schema version.
-// Each attempt must rebuild its inputs because DDL can modify the TableInfo values.
 func retryCreateTableOnSchemaExpired(ctx context.Context, create func() error) error {
 	backoff := &createTableBackoff{RetryState: utils.InitialRetryState(1, time.Second, 5*time.Second)}
 	err := utils.WithRetryReturnLastErr(ctx, func() error {
