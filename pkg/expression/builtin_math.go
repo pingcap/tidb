@@ -462,15 +462,19 @@ func roundIntOverflowErr(val, frac int64, unsigned bool) error {
 	return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("round(%d, %d)", val, frac))
 }
 
-// roundIntWithFrac rounds val at the frac-th digit, where a negative frac
-// counts digits to the left of the decimal point. Integers are exact-value
-// numbers, so MySQL rounds them half away from zero rather than half to even:
+// roundIntWithFrac rounds val at the frac-th digit, where a negative frac counts
+// digits to the left of the decimal point and a non-negative one leaves val
+// alone. unsigned reports whether val's own type is unsigned, which decides
+// whether its high bit carries a sign or magnitude; a frac of an unsigned type
+// is handled by the callers, the way Item_func_round::int_op does.
+//
+// Integers are exact-value numbers, so MySQL rounds them half away from zero
+// rather than half to even:
 // https://dev.mysql.com/doc/refman/8.0/en/precision-math-rounding.html
 //
 // The digits are shifted with integer arithmetic rather than through float64 so
-// that magnitudes above 2^53 survive, and rounding away from zero past the end
-// of the type is reported as an overflow instead of wrapping. Both follow
-// Item_func_round::int_op.
+// that magnitudes above 2^53 survive, and a result that leaves the type returns
+// types.ErrOverflow instead of wrapping, again following int_op.
 func roundIntWithFrac(val, frac int64, unsigned bool) (int64, error) {
 	if frac >= 0 {
 		return val, nil
