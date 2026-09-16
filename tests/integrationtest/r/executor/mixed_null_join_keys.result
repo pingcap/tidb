@@ -1,0 +1,34 @@
+create table null_keys_l(a int, b int);
+create table null_keys_r(a int, b int);
+insert into null_keys_l values (null,null);
+insert into null_keys_r values (null,null);
+select exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a) from null_keys_r r;
+exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a)
+0
+select exists(select 1 from null_keys_l l where l.a<=>r.a and l.b=r.b) from null_keys_r r;
+exists(select 1 from null_keys_l l where l.a<=>r.a and l.b=r.b)
+0
+select not exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a) from null_keys_r r;
+not exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a)
+1
+select exists(select 1 from null_keys_l l where l.a<=>r.a and l.b<=>r.b) from null_keys_r r;
+exists(select 1 from null_keys_l l where l.a<=>r.a and l.b<=>r.b)
+1
+select * from null_keys_r r where not exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a);
+a	b
+NULL	NULL
+insert into null_keys_l values (null,1), (2,2);
+insert into null_keys_r values (null,1), (2,2), (3,3);
+select a,b,exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a) as matched from null_keys_r r order by b;
+a	b	matched
+NULL	NULL	0
+NULL	1	1
+2	2	1
+3	3	0
+select a,b,not exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a) as unmatched from null_keys_r r order by b;
+a	b	unmatched
+NULL	NULL	1
+NULL	1	0
+2	2	0
+3	3	1
+drop table null_keys_l,null_keys_r;
