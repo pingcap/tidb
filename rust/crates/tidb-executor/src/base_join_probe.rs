@@ -514,6 +514,14 @@ impl BaseJoinProbe {
         &self.row_index_infos
     }
 
+    /// Locations retained alongside [`Self::row_index_infos`] for residual
+    /// evaluation. A `Some` entry is the decoded build-row handle from the
+    /// chain walk; `None` is kept for address-only test sources.
+    #[must_use]
+    pub(crate) fn row_index_locations(&self) -> &[Option<BuildRowLocation>] {
+        &self.row_index_locations
+    }
+
     /// Go `selected`; the other-condition filter writes it.
     #[must_use]
     pub fn selected_mut(&mut self) -> &mut Vec<bool> {

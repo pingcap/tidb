@@ -850,9 +850,15 @@ impl ProbeV2 for OuterJoinProbe<'_> {
                     if self.base.selected_mut()[index] {
                         let info = self.base.row_index_infos()[index];
                         if self.outer_side_build {
-                            self.ctx
-                                .hash_table
-                                .mark_build_row_matched(info.build_row_start);
+                            if let Some(location) = self.base.row_index_locations()[index] {
+                                self.ctx
+                                    .hash_table
+                                    .mark_build_row_matched_at_location(location);
+                            } else {
+                                self.ctx
+                                    .hash_table
+                                    .mark_build_row_matched(info.build_row_start);
+                            }
                         } else {
                             self.is_not_matched[info.probe_row_index] = false;
                         }
@@ -927,14 +933,17 @@ impl ProbeV2 for OuterJoinProbe<'_> {
         let iter = self.row_iter.as_mut().expect("scan row table before init");
         while inserted < remain_cap && !iter.is_end() {
             let location = iter.current_row_location();
-            let address = iter.get_value();
-            if !self.ctx.hash_table.is_build_row_matched(address) {
+            if !self
+                .ctx
+                .hash_table
+                .is_build_row_matched_at_location(location)
+            {
                 self.base
                     .append_build_row_to_cached_build_rows_v1_with_location(
                         &self.ctx,
                         self.ctx.hash_table,
                         0,
-                        address,
+                        0,
                         Some(location),
                         output,
                         0,
@@ -1075,7 +1084,7 @@ fn collect_outer_join_candidates_mode<
                 );
                 if !RESIDUAL {
                     if OUTER_SIDE_BUILD {
-                        ctx.hash_table.mark_build_row_matched(address);
+                        ctx.hash_table.mark_build_row_matched_at_location(location);
                     } else {
                         is_not_matched[probe_row] = false;
                     }

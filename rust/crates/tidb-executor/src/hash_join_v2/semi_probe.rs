@@ -182,7 +182,7 @@ impl<'a> BaseSemiJoin<'a> {
                     || !self
                         .ctx
                         .hash_table
-                        .is_build_row_matched_in_sub_table(table, address)
+                        .is_build_row_matched_at_location(location)
                 {
                     if is_key_matched(
                         self.ctx.meta.key_mode,
@@ -231,9 +231,15 @@ impl<'a> BaseSemiJoin<'a> {
             let matched = selected[index] || (self.anti && !self.outer_semi && nulls[index]);
             if self.left_build {
                 if matched {
-                    self.ctx
-                        .hash_table
-                        .mark_build_row_matched(info.build_row_start);
+                    if let Some(location) = self.base.row_index_locations()[index] {
+                        self.ctx
+                            .hash_table
+                            .mark_build_row_matched_at_location(location);
+                    } else {
+                        self.ctx
+                            .hash_table
+                            .mark_build_row_matched(info.build_row_start);
+                    }
                 }
             } else {
                 self.matched[info.probe_row_index] |= matched;
@@ -260,17 +266,18 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let (build_row, next, _) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
-                    table,
-                    partition,
-                    address,
-                    &self.ctx.tag_helper,
-                    hash,
-                );
+                let (build_row, next, location) =
+                    self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                        table,
+                        partition,
+                        address,
+                        &self.ctx.tag_helper,
+                        hash,
+                    );
                 if !self
                     .ctx
                     .hash_table
-                    .is_build_row_matched_in_sub_table(table, address)
+                    .is_build_row_matched_at_location(location)
                 {
                     if is_key_matched(
                         self.ctx.meta.key_mode,
@@ -280,7 +287,7 @@ impl<'a> BaseSemiJoin<'a> {
                     ) {
                         self.ctx
                             .hash_table
-                            .mark_build_row_matched_in_sub_table(table, address);
+                            .mark_build_row_matched_at_location(location);
                     } else {
                         self.base.record_probe_collision();
                     }
@@ -320,13 +327,14 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let (build_row, next, _) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
-                    table,
-                    partition,
-                    address,
-                    &self.ctx.tag_helper,
-                    hash,
-                );
+                let (build_row, next, _location) =
+                    self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                        table,
+                        partition,
+                        address,
+                        &self.ctx.tag_helper,
+                        hash,
+                    );
                 if is_key_matched(
                     self.ctx.meta.key_mode,
                     &self.base.serialized_keys()[row],
@@ -428,14 +436,18 @@ impl<'a> BaseSemiJoin<'a> {
         let rows = self.row_iter.as_mut().expect("scan before init");
         while remaining > 0 && !rows.is_end() {
             let location = rows.current_row_location();
-            let address = rows.get_value();
-            if self.ctx.hash_table.is_build_row_matched(address) != self.anti {
+            if self
+                .ctx
+                .hash_table
+                .is_build_row_matched_at_location(location)
+                != self.anti
+            {
                 self.base
                     .append_build_row_to_cached_build_rows_v1_with_location(
                         &self.ctx,
                         self.ctx.hash_table,
                         0,
-                        address,
+                        0,
                         Some(location),
                         output,
                         0,

@@ -546,6 +546,32 @@ impl HashTableV2 {
         &segment.raw_data[offset..]
     }
 
+    /// Reports a row's used flag from a location decoded during the current
+    /// chain walk or row-table scan. Go keeps the row pointer and reads the
+    /// flag through it; do not round-trip this handle through the synthetic
+    /// address encoding when the coordinates are already available.
+    #[must_use]
+    #[inline(always)]
+    pub(crate) fn is_build_row_matched_at_location(&self, location: BuildRowLocation) -> bool {
+        self.tables[location.partition]
+            .as_ref()
+            .expect("sub table of a built partition")
+            .row_data
+            .segments[location.segment]
+            .is_row_used(location.row)
+    }
+
+    /// Marks a row selected by a location retained from a chain walk or scan.
+    #[inline(always)]
+    pub(crate) fn mark_build_row_matched_at_location(&self, location: BuildRowLocation) {
+        self.tables[location.partition]
+            .as_ref()
+            .expect("sub table of a built partition")
+            .row_data
+            .segments[location.segment]
+            .mark_row_used(location.row);
+    }
+
     /// Resolves a row and follows its chain link while the partition-local
     /// segment is already hot. Go reads both values from one unsafe row
     /// pointer; returning them together avoids a second helper boundary in
@@ -579,29 +605,6 @@ impl HashTableV2 {
                 row,
             },
         )
-    }
-
-    /// Marks a row using an already-selected partition table.
-    #[inline]
-    pub(crate) fn mark_build_row_matched_in_sub_table(&self, table: &SubTable, address: usize) {
-        let slot = (address >> self.row_offset_bits) - 1;
-        let segment = slot & self.segment_mask;
-        let row = (address & self.row_offset_mask) / 8;
-        table.row_data.segments[segment].mark_row_used(row);
-    }
-
-    /// Reports a row's used flag using an already-selected partition table.
-    #[must_use]
-    #[inline]
-    pub(crate) fn is_build_row_matched_in_sub_table(
-        &self,
-        table: &SubTable,
-        address: usize,
-    ) -> bool {
-        let slot = (address >> self.row_offset_bits) - 1;
-        let segment = slot & self.segment_mask;
-        let row = (address & self.row_offset_mask) / 8;
-        table.row_data.segments[segment].is_row_used(row)
     }
 
     /// Go setUsedFlag: each row owns an atomic flag, with no shared set.
