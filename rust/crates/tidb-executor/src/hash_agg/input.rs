@@ -28,15 +28,33 @@ type IntegerBatch = Arc<[Option<i64>]>;
 type IntegerCache = smallvec::SmallVec<[Option<IntegerBatch>; 4]>;
 
 #[derive(Clone, Copy)]
+pub(super) enum IntegerAggOp {
+    Sum,
+    MinMax { is_max: bool },
+    Avg,
+}
+
+#[derive(Clone, Copy)]
 pub(super) enum AggInputMode<T = usize> {
     Expression,
     FirstRow,
     CountAll,
     Count(T),
     CountDistinctInt(T),
-    FinalCount { column: T, unsigned: bool },
+    FinalCount {
+        column: T,
+        unsigned: bool,
+    },
+    Integer {
+        column: T,
+        unsigned: bool,
+        op: IntegerAggOp,
+    },
     Decimal(T),
-    AvgDecimal { sum: T, count: Option<(T, bool)> },
+    AvgDecimal {
+        sum: T,
+        count: Option<(T, bool)>,
+    },
 }
 
 impl AggInputMode {
@@ -84,13 +102,44 @@ impl AggInputMode {
                 let (column, unsigned) = integer(func.arg.as_ref()?)?;
                 Some(Self::FinalCount { column, unsigned })
             }
-            (AggKind::Sum | AggKind::Min | AggKind::Max, []) => {
-                Some(Self::Decimal(decimal(func.arg.as_ref()?)?))
+            (AggKind::Sum, []) => {
+                if let Some((index, unsigned)) = integer(func.arg.as_ref()?) {
+                    Some(Self::Integer {
+                        column: index,
+                        unsigned,
+                        op: IntegerAggOp::Sum,
+                    })
+                } else {
+                    Some(Self::Decimal(decimal(func.arg.as_ref()?)?))
+                }
             }
-            (AggKind::Avg, []) => Some(Self::AvgDecimal {
-                sum: decimal(func.arg.as_ref()?)?,
-                count: None,
-            }),
+            (AggKind::Min | AggKind::Max, []) => {
+                if let Some((index, unsigned)) = integer(func.arg.as_ref()?) {
+                    Some(Self::Integer {
+                        column: index,
+                        unsigned,
+                        op: IntegerAggOp::MinMax {
+                            is_max: matches!(func.kind, AggKind::Max),
+                        },
+                    })
+                } else {
+                    Some(Self::Decimal(decimal(func.arg.as_ref()?)?))
+                }
+            }
+            (AggKind::Avg, []) => {
+                if let Some((index, unsigned)) = integer(func.arg.as_ref()?) {
+                    Some(Self::Integer {
+                        column: index,
+                        unsigned,
+                        op: IntegerAggOp::Avg,
+                    })
+                } else {
+                    Some(Self::AvgDecimal {
+                        sum: decimal(func.arg.as_ref()?)?,
+                        count: None,
+                    })
+                }
+            }
             (AggKind::Avg, [sum]) => Some(Self::AvgDecimal {
                 sum: decimal(sum)?,
                 count: Some(integer(func.arg.as_ref()?)?),
@@ -113,6 +162,15 @@ impl AggInputMode {
             Self::FinalCount { column, unsigned } => AggInputMode::FinalCount {
                 column: chunk.column(column),
                 unsigned,
+            },
+            Self::Integer {
+                column,
+                unsigned,
+                op,
+            } => AggInputMode::Integer {
+                column: chunk.column(column),
+                unsigned,
+                op,
             },
             Self::Decimal(index) => AggInputMode::Decimal(chunk.column(index)),
             Self::AvgDecimal { sum, count } => AggInputMode::AvgDecimal {
@@ -151,6 +209,29 @@ impl AggInputMode<ColumnRead<'_>> {
                 match value? {
                     None => Some(0),
                     Some(value) => state.update_final_count_fast(value).then_some(0),
+                }
+            }
+            Self::Integer {
+                column,
+                unsigned,
+                op,
+            } => {
+                let value = integer_data
+                    .map(|values| values[row])
+                    .unwrap_or_else(|| (!column.is_null(row)).then(|| column.get_int64(row)));
+                let Some(value) = value else {
+                    return Some(0);
+                };
+                match op {
+                    IntegerAggOp::Sum => state
+                        .partial_update_with_coefficient(integer_coefficient(value, *unsigned), 0)
+                        .then_some(0),
+                    IntegerAggOp::Avg => state
+                        .update_avg_decimal_fast(integer_coefficient(value, *unsigned), 0, 1)
+                        .then_some(0),
+                    IntegerAggOp::MinMax { is_max } => state
+                        .update_integer_fast(value, *unsigned, *is_max)
+                        .then_some(0),
                 }
             }
             Self::Decimal(column) => {
@@ -308,6 +389,7 @@ pub(super) fn prepare_integer_cache(modes: &[AggInputMode], chunk: &Chunk) -> In
             let index = match mode {
                 AggInputMode::CountDistinctInt(index) => Some(*index),
                 AggInputMode::FinalCount { column, .. } => Some(*column),
+                AggInputMode::Integer { column, .. } => Some(*column),
                 AggInputMode::AvgDecimal {
                     count: Some((index, _)),
                     ..
@@ -338,6 +420,14 @@ pub(super) fn prepare_integer_cache(modes: &[AggInputMode], chunk: &Chunk) -> In
             Some(batch)
         })
         .collect()
+}
+
+fn integer_coefficient(value: i64, unsigned: bool) -> i128 {
+    if unsigned {
+        i128::from(value as u64)
+    } else {
+        i128::from(value)
+    }
 }
 
 pub(super) fn update_row<C: Columns>(

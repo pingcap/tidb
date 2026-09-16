@@ -676,6 +676,59 @@ impl AggState {
         true
     }
 
+    /// Folds a fixed-width integer into Go's typed `maxMin4Int`/
+    /// `maxMin4Uint` state without materializing a [`Datum`] for every row.
+    /// Returning `false` leaves the exact datum path responsible for any
+    /// representation that does not match the planned signedness.
+    fn update_integer_fast(&mut self, value: i64, unsigned: bool, is_max: bool) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        let Partial::MaxMin {
+            value: current,
+            is_max: state_is_max,
+        } = &mut self.partial
+        else {
+            return false;
+        };
+        if *state_is_max != is_max {
+            return false;
+        }
+        if unsigned {
+            let value = value as u64;
+            match current {
+                None => *current = Some(Datum::UInt(value)),
+                Some(Datum::UInt(current)) => {
+                    let improves = if is_max {
+                        value > *current
+                    } else {
+                        value < *current
+                    };
+                    if improves {
+                        *current = value;
+                    }
+                }
+                Some(_) => return false,
+            }
+        } else {
+            match current {
+                None => *current = Some(Datum::Int(value)),
+                Some(Datum::Int(current)) => {
+                    let improves = if is_max {
+                        value > *current
+                    } else {
+                        value < *current
+                    };
+                    if improves {
+                        *current = value;
+                    }
+                }
+                Some(_) => return false,
+            }
+        }
+        true
+    }
+
     fn update_count_fast(&mut self, input_is_non_null: bool) -> bool {
         if self.seen.is_some() {
             return false;
