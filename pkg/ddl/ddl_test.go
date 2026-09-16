@@ -23,6 +23,7 @@ import (
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -112,6 +113,11 @@ func (c *ddlJobRUReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 }
 
 func TestAccountJobRU(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.DDLWeights.TxnKVBytes = 2
+	})
+
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -137,17 +143,23 @@ func TestAccountJobRU(t *testing.T) {
 	require.NoError(t, w.accountJobRU(job))
 	expectedRU := float64(7)
 	if kerneltype.IsNextGen() {
-		expectedRU += float64(activeTxn.Size())
+		expectedRU += 2 * float64(activeTxn.Size())
 	}
 	require.Equal(t, expectedRU, job.RU)
 
 	accountedRU := job.RU
 	w.tp = addIdxWorker
 	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += 2 * float64(activeTxn.Size())
+	}
 	require.Equal(t, accountedRU, job.RU)
 
 	w.tp = backgroundWorker
 	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += 2 * float64(activeTxn.Size())
+	}
 	require.Equal(t, accountedRU, job.RU)
 
 	t.Run("reports through the DDL session resource group", func(t *testing.T) {
@@ -161,10 +173,36 @@ func TestAccountJobRU(t *testing.T) {
 		}
 		w := worker{sess: sess.NewSession(sessCtx)}
 
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUConsumption(&model.Job{RU: 42})
 
 		require.Equal(t, []ddlJobRUReport{{
 			resourceGroupName: resourcegroup.DefaultResourceGroupName,
+			tikvRUV2:          42,
+			tidbRUV2:          0,
+			tiflashRUV2:       0,
+		}}, reporter.reports)
+	})
+
+	t.Run("reports reorganization jobs through the persisted resource group", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUConsumption(&model.Job{
+			RU: 42,
+			ReorgMeta: &model.DDLReorgMeta{
+				ResourceGroupName: "non-default-group",
+			},
+		})
+
+		require.Equal(t, []ddlJobRUReport{{
+			resourceGroupName: "non-default-group",
 			tikvRUV2:          42,
 			tidbRUV2:          0,
 			tiflashRUV2:       0,
@@ -181,9 +219,9 @@ func TestAccountJobRU(t *testing.T) {
 		}
 		w := worker{sess: sess.NewSession(sessCtx)}
 
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUConsumption(&model.Job{RU: 42})
 		sessCtx.dctx = nil
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUConsumption(&model.Job{RU: 42})
 
 		require.Empty(t, reporter.reports)
 	})
@@ -200,7 +238,7 @@ func TestAccountJobRU(t *testing.T) {
 		w := worker{sess: sess.NewSession(sessCtx)}
 
 		require.Panics(t, func() {
-			w.reportJobRUV3Consumption(42)
+			w.reportJobRUConsumption(&model.Job{RU: 42})
 		})
 	})
 }

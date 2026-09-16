@@ -472,6 +472,12 @@ operator-num = 1.0
 write-key = 1.0
 write-byte = 1.0
 
+# DDL RU v2 weights. Values must be finite and non-negative; zero disables the
+# corresponding charge. These defaults are uncalibrated placeholders, not billing values.
+[ru-v2.ddl-weights]
+txn-kv-bytes = 1.0
+ingest-kv-bytes = 1.0
+
 # error-msg-extension appends configured messages to SQL errors matching regexps. TiDB joins
 # the original error and suffix as "error, suffix.". When multiple regexps match the same
 # error, TiDB uses the longest regexp pattern first. Prefer anchored, specific patterns to

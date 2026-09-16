@@ -327,7 +327,7 @@ func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
 	finalized statementRUFinalizedSnapshot,
 ) {
-	reportStatementRUV3ConsumptionSafely(stmt, finalized.engineRU)
+	reportStatementRUV2ConsumptionSafely(stmt, finalized.engineRU)
 	publishStatementRUMetricsSafely(finalized)
 	if finalized.report == nil {
 		return
@@ -338,7 +338,7 @@ func publishStatementRUFinalizedSnapshot(
 	})
 }
 
-func reportStatementRUV3ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
+func reportStatementRUV2ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
 	defer func() {
 		_ = recover()
 	}()
@@ -361,9 +361,9 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 		}
 	}()
 	if finalized.ttlJob {
-		metrics.RUV3TTLTotal.Add(finalized.result.TotalRU)
+		metrics.RUV2TTLTotal.Add(finalized.result.TotalRU)
 	}
-	metrics.AddRUV3Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.result.TotalRU, finalized.sqlType)
+	metrics.AddRUV2Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.result.TotalRU, finalized.sqlType)
 	if finalized.report != nil {
 		publishStatementRUFullMetrics(finalized)
 	}

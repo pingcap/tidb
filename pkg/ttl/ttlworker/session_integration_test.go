@@ -500,7 +500,7 @@ func TestTTLJobRUAttribution(t *testing.T) {
 		}
 	})
 
-	before := testutil.ToFloat64(rumetrics.RUV3TTLTotal)
+	before := testutil.ToFloat64(rumetrics.RUV2TTLTotal)
 	// These maintenance queries run without a user job and remain uncharged.
 	for range 2 {
 		_, err = se.ExecuteSQL(ctx, "select * from mysql.tidb_ttl_table_status")
@@ -508,7 +508,7 @@ func TestTTLJobRUAttribution(t *testing.T) {
 		_, err = se.ExecuteSQL(ctx, "select count(*) from mysql.tidb_ttl_task")
 		require.NoError(t, err)
 	}
-	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV3TTLTotal))
+	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV2TTLTotal))
 
 	now := se.Now()
 	job, err := manager.LockJob(ctx, se, tbl, now, jobID, false)
@@ -529,11 +529,11 @@ func TestTTLJobRUAttribution(t *testing.T) {
 	require.NoError(t, job.Finish(se, se.Now(), &ttlworker.TTLSummary{}))
 	require.Equal(t, 1, globalCounts)
 	require.Equal(t, 4, jobCommits, "creation, task claim, takeover and job completion")
-	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV3TTLTotal))
+	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV2TTLTotal))
 	require.Empty(t, vars.TTLJobID)
 
-	before = testutil.ToFloat64(rumetrics.RUV3TTLTotal)
+	before = testutil.ToFloat64(rumetrics.RUV2TTLTotal)
 	_, err = se.ExecuteSQL(ctx, "select * from mysql.tidb_ttl_job_history")
 	require.NoError(t, err)
-	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV3TTLTotal))
+	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV2TTLTotal))
 }

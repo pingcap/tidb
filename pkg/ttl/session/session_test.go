@@ -50,12 +50,12 @@ func TestSessionTTLJobRU(t *testing.T) {
 
 	exec := func(ctx context.Context, sql string, counted bool) {
 		t.Helper()
-		before := testutil.ToFloat64(metrics.RUV3Total)
-		ttlBefore := testutil.ToFloat64(metrics.RUV3TTLTotal)
+		before := testutil.ToFloat64(metrics.RUV2Total)
+		ttlBefore := testutil.ToFloat64(metrics.RUV2TTLTotal)
 		_, err := se.ExecuteSQL(ctx, sql)
 		require.NoError(t, err)
-		after := testutil.ToFloat64(metrics.RUV3Total)
-		ttlAfter := testutil.ToFloat64(metrics.RUV3TTLTotal)
+		after := testutil.ToFloat64(metrics.RUV2Total)
+		ttlAfter := testutil.ToFloat64(metrics.RUV2TTLTotal)
 		if counted {
 			require.Greater(t, after, before, sql)
 			require.InDelta(t, after-before, ttlAfter-ttlBefore, 1e-9, sql)

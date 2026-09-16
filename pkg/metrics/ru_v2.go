@@ -19,133 +19,133 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// RUv3 metrics.
+// RUv2 metrics.
 var (
-	RUV3Total        prometheus.Counter
-	RUV3BySQLType    *prometheus.CounterVec
-	RUV3BySQLTypeDDL prometheus.Counter
-	RUV3ByEngine     *prometheus.CounterVec
-	RUV3ByEngineTiKV prometheus.Counter
-	RUV3Unit         *prometheus.CounterVec
-	RUV3Statements   *prometheus.CounterVec
-	ruv3TiDB         prometheus.Counter
-	ruv3Select       prometheus.Counter
-	ruv3Insert       prometheus.Counter
-	ruv3Replace      prometheus.Counter
-	ruv3Update       prometheus.Counter
-	ruv3Delete       prometheus.Counter
-	ruv3Commit       prometheus.Counter
-	ruv3Analyze      prometheus.Counter
-	ruv3Other        prometheus.Counter
-	RUV3TTLTotal     prometheus.Counter
+	RUV2Total        prometheus.Counter
+	RUV2BySQLType    *prometheus.CounterVec
+	RUV2BySQLTypeDDL prometheus.Counter
+	RUV2ByEngine     *prometheus.CounterVec
+	RUV2ByEngineTiKV prometheus.Counter
+	RUV2Unit         *prometheus.CounterVec
+	RUV2Statements   *prometheus.CounterVec
+	ruv2TiDB         prometheus.Counter
+	ruv2Select       prometheus.Counter
+	ruv2Insert       prometheus.Counter
+	ruv2Replace      prometheus.Counter
+	ruv2Update       prometheus.Counter
+	ruv2Delete       prometheus.Counter
+	ruv2Commit       prometheus.Counter
+	ruv2Analyze      prometheus.Counter
+	ruv2Other        prometheus.Counter
+	RUV2TTLTotal     prometheus.Counter
 )
 
-// RUV3 unit label constants define the label name and values for RU v3 raw unit metrics.
+// RUV2 unit label constants define the label name and values for RU v2 raw unit metrics.
 const (
-	LblRUV3Unit = "unit"
+	LblRUV2Unit = "unit"
 
-	LblRUV3UnitCPUWork              = "cpu_work"
-	LblRUV3UnitScanBytes            = "scan_bytes"
-	LblRUV3UnitNetBytes             = "net_bytes"
-	LblRUV3UnitFrontendCompileBytes = "frontend_compile_bytes"
-	LblRUV3UnitHashStateRows        = "hash_state_rows"
-	LblRUV3UnitJoinOutputRows       = "join_output_rows"
-	LblRUV3UnitWriteStatement       = "write_statement"
-	LblRUV3UnitOperatorNum          = "operator_num"
-	LblRUV3UnitWriteKeys            = "write_keys"
-	LblRUV3UnitWriteBytes           = "write_bytes"
+	LblRUV2UnitCPUWork              = "cpu_work"
+	LblRUV2UnitScanBytes            = "scan_bytes"
+	LblRUV2UnitNetBytes             = "net_bytes"
+	LblRUV2UnitFrontendCompileBytes = "frontend_compile_bytes"
+	LblRUV2UnitHashStateRows        = "hash_state_rows"
+	LblRUV2UnitJoinOutputRows       = "join_output_rows"
+	LblRUV2UnitWriteStatement       = "write_statement"
+	LblRUV2UnitOperatorNum          = "operator_num"
+	LblRUV2UnitWriteKeys            = "write_keys"
+	LblRUV2UnitWriteBytes           = "write_bytes"
 )
 
-// InitRUV3Metrics initializes RUv3 metrics.
-func InitRUV3Metrics() {
-	RUV3TTLTotal = metricscommon.NewCounter(
+// InitRUV2Metrics initializes RUv2 metrics.
+func InitRUV2Metrics() {
+	RUV2TTLTotal = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "ruv3",
+			Subsystem: "ruv2",
 			Name:      "ttl_ru_total",
-			Help: "Counter of RU v3 consumption from TTL user-table scans and deletes, including their commits; " +
+			Help: "Counter of RU v2 consumption from TTL user-table scans and deletes, including their commits; " +
 				"included in ru_total.",
 		},
 	)
-	RUV3Total = metricscommon.NewCounter(
+	RUV2Total = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "ruv3",
+			Subsystem: "ruv2",
 			Name:      "ru_total",
-			Help:      "Counter of resource unit consumption for RU v3.",
+			Help:      "Counter of resource unit consumption for RU v2.",
 		},
 	)
 
-	RUV3BySQLType = metricscommon.NewCounterVec(
+	RUV2BySQLType = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "ruv3",
+			Subsystem: "ruv2",
 			Name:      "ru_by_sql_type_total",
-			Help:      "Counter of resource unit consumption by SQL type for RU v3.",
+			Help:      "Counter of resource unit consumption by SQL type for RU v2.",
 		}, []string{LblSQLType},
 	)
-	RUV3BySQLTypeDDL = RUV3BySQLType.WithLabelValues(LblSQLTypeDDL)
+	RUV2BySQLTypeDDL = RUV2BySQLType.WithLabelValues(LblSQLTypeDDL)
 
-	ruv3Select = RUV3BySQLType.WithLabelValues("select")
-	ruv3Insert = RUV3BySQLType.WithLabelValues("insert")
-	ruv3Replace = RUV3BySQLType.WithLabelValues("replace")
-	ruv3Update = RUV3BySQLType.WithLabelValues("update")
-	ruv3Delete = RUV3BySQLType.WithLabelValues("delete")
-	ruv3Commit = RUV3BySQLType.WithLabelValues("commit")
-	ruv3Analyze = RUV3BySQLType.WithLabelValues("analyze")
-	ruv3Other = RUV3BySQLType.WithLabelValues("other")
+	ruv2Select = RUV2BySQLType.WithLabelValues("select")
+	ruv2Insert = RUV2BySQLType.WithLabelValues("insert")
+	ruv2Replace = RUV2BySQLType.WithLabelValues("replace")
+	ruv2Update = RUV2BySQLType.WithLabelValues("update")
+	ruv2Delete = RUV2BySQLType.WithLabelValues("delete")
+	ruv2Commit = RUV2BySQLType.WithLabelValues("commit")
+	ruv2Analyze = RUV2BySQLType.WithLabelValues("analyze")
+	ruv2Other = RUV2BySQLType.WithLabelValues("other")
 
-	RUV3ByEngine = metricscommon.NewCounterVec(
+	RUV2ByEngine = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "ruv3",
+			Subsystem: "ruv2",
 			Name:      "ru_by_engine_total",
-			Help:      "Counter of resource unit consumption by engine for RU v3.",
+			Help:      "Counter of resource unit consumption by engine for RU v2.",
 		}, []string{LblEngine},
 	)
-	ruv3TiDB = RUV3ByEngine.WithLabelValues("tidb")
-	RUV3ByEngineTiKV = RUV3ByEngine.WithLabelValues(LblEngineTiKV)
+	ruv2TiDB = RUV2ByEngine.WithLabelValues("tidb")
+	RUV2ByEngineTiKV = RUV2ByEngine.WithLabelValues(LblEngineTiKV)
 
-	RUV3Unit = metricscommon.NewCounterVec(
+	RUV2Unit = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "ruv3",
+			Subsystem: "ruv2",
 			Name:      "unit_total",
-			Help:      "Counter of raw statement units for RU v3.",
-		}, []string{LblEngine, "opclass", LblRUV3Unit},
+			Help:      "Counter of raw statement units for RU v2.",
+		}, []string{LblEngine, "opclass", LblRUV2Unit},
 	)
-	RUV3Statements = metricscommon.NewCounterVec(
+	RUV2Statements = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "ruv3",
+			Subsystem: "ruv2",
 			Name:      "statements_total",
-			Help:      "Counter of RU v3 calculation outcomes in full report mode; success with incomplete evidence remains best effort.",
+			Help:      "Counter of RU v2 calculation outcomes in full report mode; success with incomplete evidence remains best effort.",
 		}, []string{"status", "reason"},
 	)
 }
 
-// AddRUV3Results records total, SQL-type and supported engine results without
-// a label lookup on the statement hot path. TiFlash has no RU v3 model yet.
-func AddRUV3Results(tikvRU, tidbRU, totalRU float64, sqlType string) {
-	counter := ruv3Other
+// AddRUV2Results records total, SQL-type and supported engine results without
+// a label lookup on the statement hot path. TiFlash has no RU v2 model yet.
+func AddRUV2Results(tikvRU, tidbRU, totalRU float64, sqlType string) {
+	counter := ruv2Other
 	switch sqlType {
 	case "select":
-		counter = ruv3Select
+		counter = ruv2Select
 	case "insert":
-		counter = ruv3Insert
+		counter = ruv2Insert
 	case "replace":
-		counter = ruv3Replace
+		counter = ruv2Replace
 	case "update":
-		counter = ruv3Update
+		counter = ruv2Update
 	case "delete":
-		counter = ruv3Delete
+		counter = ruv2Delete
 	case "commit":
-		counter = ruv3Commit
+		counter = ruv2Commit
 	case "analyze":
-		counter = ruv3Analyze
+		counter = ruv2Analyze
 	}
-	RUV3Total.Add(totalRU)
+	RUV2Total.Add(totalRU)
 	counter.Add(totalRU)
-	RUV3ByEngineTiKV.Add(tikvRU)
-	ruv3TiDB.Add(tidbRU)
+	RUV2ByEngineTiKV.Add(tikvRU)
+	ruv2TiDB.Add(tidbRU)
 }
