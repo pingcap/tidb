@@ -91,7 +91,7 @@ func WrapKV(c tikv.Client) tikv.Client {
 	}
 	return &KVClient{Client: c}
 }
-func (c *KVClient) allowed(r *tikvrpc.Request) bool {
+func (*KVClient) allowed(r *tikvrpc.Request) bool {
 	if r == nil {
 		return false
 	}
