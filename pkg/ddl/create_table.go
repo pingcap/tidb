@@ -1373,6 +1373,13 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 		tblInfo.Affinity = referTblInfo.Affinity.Clone()
 	}
 
+	// Renaming the copied constraints must not mutate the source InfoSchema.
+	if len(referTblInfo.Constraints) > 0 {
+		tblInfo.Constraints = make([]*model.ConstraintInfo, len(referTblInfo.Constraints))
+		for i, constraint := range referTblInfo.Constraints {
+			tblInfo.Constraints[i] = constraint.Clone()
+		}
+	}
 	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil
 }
