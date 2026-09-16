@@ -6093,6 +6093,27 @@ func TestIndexHint(t *testing.T) {
 }
 
 func TestPriority(t *testing.T) {
+	for _, options := range []string{
+		"LOW_PRIORITY", "HIGH_PRIORITY", "SQL_SMALL_RESULT", "SQL_BIG_RESULT",
+		"SQL_BUFFER_RESULT", "SQL_NO_CACHE", "SQL_CALC_FOUND_ROWS",
+		"LOW_PRIORITY SQL_NO_CACHE", "DISTINCT", "ALL", "STRAIGHT_JOIN",
+	} {
+		t.Run(options, func(t *testing.T) {
+			p := parser.New()
+			stmts, warnings, err := p.Parse("SELECT /*+ RESOURCE_GROUP(rg1) */ "+options+" * FROM t", "", "")
+			require.NoError(t, err)
+			require.Empty(t, warnings)
+			var restored strings.Builder
+			require.NoError(t, stmts[0].Restore(NewRestoreCtx(DefaultRestoreFlags, &restored)))
+			stmts2, warnings, err := p.Parse(restored.String(), "", "")
+			require.NoError(t, err)
+			require.Empty(t, warnings, restored.String())
+			original := stmts[0].(*ast.SelectStmt)
+			roundTrip := stmts2[0].(*ast.SelectStmt)
+			require.Equal(t, original.TableHints, roundTrip.TableHints)
+			require.Equal(t, original.SelectStmtOpts, roundTrip.SelectStmtOpts)
+		})
+	}
 	table := []testCase{
 		{`select high_priority * from t`, true, "SELECT HIGH_PRIORITY * FROM `t`"},
 		{`select low_priority * from t`, true, "SELECT LOW_PRIORITY * FROM `t`"},
