@@ -3721,13 +3721,29 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
         }
-        let diff = SchemaDiff {
+        // Go `SetSchemaDiffForCreateTables` (`pkg/ddl/schema_version.go:36`):
+        // one `AffectedOption` per created table, each naming its schema and
+        // table IDs on both sides -- Go's `applyCreateTables` applies the
+        // batch to every peer's infoschema strictly through these options.
+        let mut diff = SchemaDiff {
             version: schema_version,
             action_type: active.job.type_,
             schema_id: database.info.id,
             table_id: first_id,
             ..SchemaDiff::default()
         };
+        diff.affected_options = GoSharedPointerSlice::from(
+            table_infos
+                .iter()
+                .map(|info| tidb_model::AffectedOption {
+                    schema_id: database.info.id,
+                    old_schema_id: database.info.id,
+                    table_id: info.id,
+                    old_table_id: info.id,
+                    ..tidb_model::AffectedOption::default()
+                })
+                .collect::<Vec<_>>(),
+        );
         mutations.push(OptimisticMutation::meta_put(
             key::schema_version_kv_key(),
             value::encode_int_value(schema_version),
@@ -3806,6 +3822,549 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
     })
 }
 
+
+/// Plans one execution step of a persisted `ACTION_RENAME_TABLES` job.
+///
+/// Pinned Go `onRenameTables` (`pkg/ddl/table.go:849`), a two-phase job.
+/// Phase one (before `StatePublic`) moves every table from its old schema to
+/// its new one -- delete the old table KV, stamp `tblInfo.Name =
+/// args.NewTableName`, create under the new schema (Go `checkAndRenameTables`)
+/// -- and bumps the schema version once with a `RENAME TABLES` diff (Go
+/// `SetSchemaDiffForRenameTables`: the first rename rides `TableID` /
+/// `SchemaID` / `OldSchemaID`, the rest land in `AffectedOpts`). The job then
+/// sits at `StatePublic` in the queue. Phase two bumps the version once more
+/// with the diff's old IDs pinned to the new schemas (Go
+/// `finishJobRenameTables`), so peers re-resolve the tables, and finishes the
+/// job with `FinishMultipleTableJob`. A missing source table cancels the job
+/// with the recorded error (Go `GetTableInfoAndCancelFaultJob`); Go resolves
+/// the table by name inside the old schema, so a stale job-side ID must not
+/// fail the move.
+pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_RENAME_TABLES {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} has unsupported action {}",
+            active.job.type_
+        )));
+    }
+    if active.job.real_start_ts == 0 {
+        active.job.real_start_ts = start_ts;
+    }
+    if active.job.state != JobState::ROLLINGBACK {
+        active.job.state = JobState::RUNNING;
+    }
+
+    let args = tidb_model::get_rename_tables_args(&mut active.job)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .ok_or_else(|| DdlPlanError::Encode("RENAME TABLES job has nil args".to_owned()))?;
+    let args = args.read();
+    let rename_infos = args.rename_table_infos.get();
+    let first = rename_infos
+        .get(0)
+        .ok_or_else(|| DdlPlanError::Encode("RENAME TABLES job has no entries".to_owned()))?;
+    let first = first.read();
+
+    // Resolve every entry: Go looks the table up by name inside the old
+    // schema (`GetTableInfoAndCancelFaultJob`), so a job-side stale ID must
+    // not fail a rename whose name still resolves.
+    struct Move {
+        old_schema_id: i64,
+        new_schema_id: i64,
+        table: tidb_model::TableInfo,
+        new_name: CiString,
+        old_table_id: i64,
+    }
+    let mut resolved: Vec<Move> = Vec::with_capacity(rename_infos.len());
+    let mut failure: Option<String> = None;
+    // Once phase one has moved the tables (`SchemaState == StatePublic`), the
+    // same entries resolve against their NEW schema and NEW names instead (Go
+    // `finishJobRenameTables` reloads the tables under `info.NewSchemaID`).
+    let phase_two = active.job.schema_state == SchemaState::PUBLIC;
+    for index in 0..rename_infos.len() {
+        let info = rename_infos
+            .get(index)
+            .ok_or_else(|| DdlPlanError::Encode("RENAME TABLES job arg is nil".to_owned()))?;
+        let info = info.read();
+        let old_schema_id = if info.old_schema_id == 0 {
+            active.job.schema_id
+        } else {
+            info.old_schema_id
+        };
+        let new_schema_id = if info.new_schema_id == 0 {
+            old_schema_id
+        } else {
+            info.new_schema_id
+        };
+        let (lookup_schema_id, lookup_table_id, lookup_name) = if phase_two {
+            (
+                new_schema_id,
+                info.table_id,
+                info.new_table_name.lowercase(),
+            )
+        } else {
+            (
+                old_schema_id,
+                info.table_id,
+                info.old_table_name.lowercase(),
+            )
+        };
+        let table = catalog
+            .databases
+            .iter()
+            .find(|database| database.info.id == lookup_schema_id)
+            .and_then(|database| {
+                database
+                    .tables
+                    .iter()
+                    .find(|table| {
+                        table.id == lookup_table_id
+                            || table.name.lowercase() == lookup_name
+                    })
+                    .cloned()
+            });
+        let Some(table) = table else {
+            failure = Some(if phase_two {
+                format!(
+                    "[ddl:1146]Table '{}' doesn't exist",
+                    info.new_table_name.original()
+                )
+            } else {
+                format!(
+                    "[ddl:1146]Table '{}' doesn't exist",
+                    info.old_table_name.original()
+                )
+            });
+            break;
+        };
+        if !catalog
+            .databases
+            .iter()
+            .any(|database| database.info.id == new_schema_id)
+        {
+            failure = Some(format!(
+                "[ddl:1049]Unknown database (schema id {new_schema_id})"
+            ));
+            break;
+        }
+        resolved.push(Move {
+            old_schema_id,
+            new_schema_id,
+            table,
+            new_name: info.new_table_name.clone(),
+            old_table_id: info.table_id,
+        });
+    }
+
+    let schema_version = catalog.schema_version;
+    let mut mutations = Vec::new();
+    let diff = SchemaDiff::default();
+
+    if failure.is_none() && active.job.schema_state != SchemaState::PUBLIC {
+        // Phase one: move the tables and bump the version once.
+        let mut affected = Vec::with_capacity(resolved.len().saturating_sub(1));
+        for (index, move_plan) in resolved.iter().enumerate() {
+            let info_handle = rename_infos
+                .get(index)
+                .ok_or_else(|| DdlPlanError::Encode("RENAME TABLES job arg is nil".to_owned()))?;
+            let info = info_handle.read();
+            if index > 0 {
+                let adjusted_old = if info.old_schema_id_for_schema_diff > 0 {
+                    info.old_schema_id_for_schema_diff
+                } else {
+                    info.old_schema_id
+                };
+                affected.push(tidb_model::AffectedOption {
+                    schema_id: move_plan.new_schema_id,
+                    old_schema_id: adjusted_old,
+                    table_id: move_plan.table.id,
+                    old_table_id: move_plan.table.id,
+                    ..tidb_model::AffectedOption::default()
+                });
+            }
+            mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                move_plan.old_schema_id,
+                move_plan.table.id,
+            ))?);
+            let mut table = move_plan.table.clone();
+            table.name = move_plan.new_name.clone();
+            // Go `checkAndRenameTables`: keep the auto ID anchored to the
+            // original schema across a cross-schema rename.
+            if table.auto_id_schema_id == 0 && move_plan.new_schema_id != move_plan.old_schema_id {
+                table.auto_id_schema_id = move_plan.old_schema_id;
+            }
+            if move_plan.new_schema_id == table.auto_id_schema_id {
+                table.auto_id_schema_id = 0;
+            }
+            table.update_ts = start_ts;
+            mutations.push(OptimisticMutation::meta_put(
+                key::table_kv_key(move_plan.new_schema_id, table.id),
+                value::serialize_table_info(&table)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+        }
+        let _first_guard = &first;
+        let schema_version = schema_version + 1;
+        let diff = SchemaDiff {
+            version: schema_version,
+            action_type: active.job.type_,
+            schema_id: first.new_schema_id,
+            table_id: first.table_id,
+            old_schema_id: first.old_schema_id,
+            ..SchemaDiff::default()
+        };
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_version_kv_key(),
+            value::encode_int_value(schema_version),
+        )?);
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_diff_kv_key(schema_version),
+            value::serialize_schema_diff(&diff)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        active.job.last_schema_version = schema_version;
+        active.job.schema_state = SchemaState::PUBLIC;
+        job_table
+            .append_update(&mut active, true, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        return Ok(PersistedDdlJobStep {
+            write: DdlWrite {
+                ddl_job_id,
+                mutations,
+                schema_version,
+                diff,
+                created_id: None,
+                backfill: Vec::new(),
+                auto_pre_split: false,
+                exchange_partition_validation: None,
+                check_constraint_validation: None,
+                mdl_info_update: None,
+                exchange_partition_label_swap: None,
+                warning: None,
+                placement_bundles: Vec::new(),
+                placement_rollback_bundles: Vec::new(),
+            },
+            terminal: false,
+        });
+    }
+
+    let mut terminal = failure.is_none();
+    let mut final_diff = diff;
+    let mut final_version = schema_version;
+    if failure.is_none() {
+        // Phase two (Go `finishJobRenameTables`): bump the version once more
+        // with every old schema pinned to the new schema, then finish the job
+        // over the relocated tables.
+        let mut tables: Vec<tidb_model::TableInfo> = Vec::with_capacity(resolved.len());
+        for move_plan in resolved.iter() {
+            let mut table = move_plan.table.clone();
+            table.name = move_plan.new_name.clone();
+            table.update_ts = start_ts;
+            tables.push(table);
+        }
+        let schema_version = schema_version + 1;
+        let mut diff = SchemaDiff {
+            version: schema_version,
+            action_type: active.job.type_,
+            schema_id: first.new_schema_id,
+            table_id: first.table_id,
+            old_schema_id: first.new_schema_id,
+            ..SchemaDiff::default()
+        };
+        let mut affected = Vec::with_capacity(resolved.len().saturating_sub(1));
+        for move_plan in resolved.iter().skip(1) {
+            affected.push(tidb_model::AffectedOption {
+                schema_id: move_plan.new_schema_id,
+                old_schema_id: move_plan.new_schema_id,
+                table_id: move_plan.table.id,
+                old_table_id: move_plan.table.id,
+                ..tidb_model::AffectedOption::default()
+            });
+        }
+        diff.affected_options = GoSharedPointerSlice::from(affected);
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_version_kv_key(),
+            value::encode_int_value(schema_version),
+        )?);
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_diff_kv_key(schema_version),
+            value::serialize_schema_diff(&diff)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        active.job.last_schema_version = schema_version;
+        let published: GoSharedPointerSlice<tidb_model::TableInfo> =
+            GoSharedPointerSlice::from(tables);
+        active.job.finish_multiple_table_job(
+            JobState::DONE,
+            SchemaState::PUBLIC,
+            schema_version,
+            &published,
+        );
+        active.job.state = JobState::SYNCED;
+        final_diff = diff;
+        final_version = schema_version;
+    } else {
+        active.job.error = Some(GoShared::new(
+            tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(1146),
+                failure.expect("checked above"),
+            ),
+        ));
+    }
+
+    if let Some(binlog) = active.job.binlog_info.as_ref() {
+        binlog.write().finished_ts = start_ts;
+    }
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ =
+            history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version: final_version,
+            diff: final_diff,
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal,
+    })
+}
+
+/// Plans one execution step of a persisted `ACTION_DROP_SCHEMA` job.
+///
+/// Pinned Go `onDropSchema` (`pkg/ddl/schema.go:158`): the job walks the
+/// database state machine -- `Public` -> `WriteOnly` -> `DeleteOnly` -> `None`
+/// -- bumping the schema version at every transition, then deletes the
+/// database meta key (table KVs are left to the delete range) and finishes
+/// with `FinishDBJob`. A missing database cancels the job with the recorded
+/// error (Go `checkSchemaExistAndCancelNotExistJob`).
+pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_DROP_SCHEMA {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} has unsupported action {}",
+            active.job.type_
+        )));
+    }
+    if active.job.real_start_ts == 0 {
+        active.job.real_start_ts = start_ts;
+    }
+    if active.job.state != JobState::ROLLINGBACK {
+        active.job.state = JobState::RUNNING;
+    }
+
+    let schema_version = catalog.schema_version;
+    let mut mutations = Vec::new();
+    let diff = SchemaDiff::default();
+
+    let Some(database) = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .map(|database| database.info.clone())
+    else {
+        active.job.error = Some(GoShared::new(
+            tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(1008),
+                format!(
+                    "[ddl:1008]Can't drop database '{}'; database doesn't exist",
+                    active.job.schema_name.to_string()
+                ),
+            ),
+        ));
+        terminal_drop_landing(
+            &catalog, snapshot, &job_table, &mut active, &mut mutations, start_ts,
+        );
+        return Ok(PersistedDdlJobStep {
+            write: DdlWrite {
+                ddl_job_id,
+                mutations,
+                schema_version,
+                diff,
+                created_id: None,
+                backfill: Vec::new(),
+                auto_pre_split: false,
+                exchange_partition_validation: None,
+                check_constraint_validation: None,
+                mdl_info_update: None,
+                exchange_partition_label_swap: None,
+                warning: None,
+                placement_bundles: Vec::new(),
+                placement_rollback_bundles: Vec::new(),
+            },
+            terminal: true,
+        });
+    };
+
+    let mut db_info = database;
+    let schema_version = schema_version + 1;
+    match db_info.state {
+        SchemaState::PUBLIC => db_info.state = SchemaState::WRITE_ONLY,
+        SchemaState::WRITE_ONLY => db_info.state = SchemaState::DELETE_ONLY,
+        SchemaState::DELETE_ONLY => db_info.state = SchemaState::NONE,
+        _ => {}
+    }
+    let diff = SchemaDiff {
+        version: schema_version,
+        action_type: active.job.type_,
+        schema_id: db_info.id,
+        ..SchemaDiff::default()
+    };
+    let mut terminal = false;
+    if db_info.state != SchemaState::NONE {
+        mutations.push(OptimisticMutation::meta_put(
+            key::database_kv_key(db_info.id),
+            value::serialize_db_info(&db_info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+    } else {
+        // Go `metaMut.DropDatabase`: only the database meta key is deleted;
+        // the tables' KVs are cleaned by the delete range.
+        mutations.push(OptimisticMutation::meta_delete(key::database_kv_key(
+            db_info.id,
+        ))?);
+        active
+            .job
+            .finish_db_job(JobState::DONE, SchemaState::NONE, schema_version, None);
+        active.job.state = JobState::SYNCED;
+        terminal = true;
+    }
+    active.job.schema_state = db_info.state;
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_version_kv_key(),
+        value::encode_int_value(schema_version),
+    )?);
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_diff_kv_key(schema_version),
+        value::serialize_schema_diff(&diff)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+    active.job.last_schema_version = schema_version;
+
+    if terminal {
+        if let Some(binlog) = active.job.binlog_info.as_ref() {
+            binlog.write().finished_ts = start_ts;
+        }
+        active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+        let encoded = active
+            .job
+            .encode(true)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+            let _ = history_table
+                .append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+        }
+        mutations.push(OptimisticMutation::meta_put(
+            key::ddl_job_history_kv_key(active.job.id),
+            encoded,
+        )?);
+        job_table
+            .append_delete(&active, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    } else {
+        job_table
+            .append_update(&mut active, true, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    }
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal,
+    })
+}
+
+/// Lands a cancelled drop-schema job in history and removes it from the queue.
+fn terminal_drop_landing<S: MetaSnapshot>(
+    catalog: &ClusterCatalog,
+    snapshot: &mut S,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    mutations: &mut Vec<OptimisticMutation>,
+    start_ts: u64,
+) {
+    if let Some(binlog) = active.job.binlog_info.as_ref() {
+        binlog.write().finished_ts = start_ts;
+    }
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = match active.job.encode(true) {
+        Ok(encoded) => encoded,
+        Err(_) => return,
+    };
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(catalog) {
+        let _ =
+            history_table.append_insert_ignore(snapshot, &active.job, &encoded, mutations);
+    }
+    if let Ok(mutation) = OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    ) {
+        mutations.push(mutation);
+    }
+    let _ = job_table.append_delete(active, mutations);
+}
 /// Plans pinned Go `onCreateMaterializedViewLog` (master `94a9cbedab`):
 /// the one owner transaction that turns a submitted create-log job into the
 /// created `$mlog$` table, the base table's `MLogID` back-reference, the

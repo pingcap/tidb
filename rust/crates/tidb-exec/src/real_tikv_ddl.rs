@@ -48,6 +48,8 @@ use crate::cluster_ddl::{
     plan_persisted_create_schema_job_step,
     plan_persisted_create_table_job_step,
     plan_persisted_create_tables_job_step,
+    plan_persisted_rename_tables_job_step,
+    plan_persisted_drop_schema_job_step,
     prepare_check_constraint_job_submission,
     CheckConstraintValidation, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite,
     ExchangePartitionValidation, IndexBackfill, MdlInfoUpdate,
@@ -664,6 +666,8 @@ enum DdlPhase<'statement> {
     PersistedCreateSchema { ddl_job_id: i64 },
     PersistedCreateTable { ddl_job_id: i64 },
     PersistedCreateTables { ddl_job_id: i64 },
+    PersistedRenameTables { ddl_job_id: i64 },
+    PersistedDropSchema { ddl_job_id: i64 },
 }
 
 struct CommittedDdlPhase {
@@ -955,6 +959,92 @@ pub fn run_persisted_create_tables_job_to_completion<
             if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
                 eprintln!(
                     "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                    serde_json::to_string(&error.to_string())
+                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                );
+            }
+            return Ok(committed.report);
+        }
+    }
+}
+
+/// @DOC
+pub fn run_persisted_rename_tables_job_to_completion<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    ddl_job_id: i64,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    schema_sync: &dyn CheckConstraintSchemaSync,
+) -> Result<ClusterDdlReport, ClusterDdlError> {
+    loop {
+        let outcome = commit_cluster_ddl_phase_with_retry(
+            Arc::clone(&opener),
+            DdlPhase::PersistedRenameTables { ddl_job_id },
+            timeout,
+            notifier,
+            backfiller,
+            exchange_validator,
+            check_constraint_validator,
+            schema_sync.owner_id(),
+        )?;
+        let DdlPhaseOutcome::Committed(committed) = outcome else {
+            unreachable!("a queued RENAME TABLES action is always a worker write")
+        };
+        if committed.persisted_job_terminal {
+            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
+                eprintln!(
+                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{},\"error\":{}}}",
+                    ddl_job_id,
+                    serde_json::to_string(&error.to_string())
+                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                );
+            }
+            return Ok(committed.report);
+        }
+    }
+}
+
+/// @DOC
+pub fn run_persisted_drop_schema_job_to_completion<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    ddl_job_id: i64,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    schema_sync: &dyn CheckConstraintSchemaSync,
+) -> Result<ClusterDdlReport, ClusterDdlError> {
+    loop {
+        let outcome = commit_cluster_ddl_phase_with_retry(
+            Arc::clone(&opener),
+            DdlPhase::PersistedDropSchema { ddl_job_id },
+            timeout,
+            notifier,
+            backfiller,
+            exchange_validator,
+            check_constraint_validator,
+            schema_sync.owner_id(),
+        )?;
+        let DdlPhaseOutcome::Committed(committed) = outcome else {
+            unreachable!("a queued DROP SCHEMA action is always a worker write")
+        };
+        if committed.persisted_job_terminal {
+            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
+                eprintln!(
+                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{},\"error\":{}}}",
+                    ddl_job_id,
                     serde_json::to_string(&error.to_string())
                         .unwrap_or_else(|_| "\"unprintable\"".to_owned())
                 );
@@ -1388,6 +1478,14 @@ fn commit_cluster_ddl_with_backfill_once<
             }
             DdlPhase::PersistedCreateTables { ddl_job_id } => {
                 plan_persisted_create_tables_job_step(&mut snapshot, ddl_job_id, start_ts)
+                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
+            }
+            DdlPhase::PersistedRenameTables { ddl_job_id } => {
+                plan_persisted_rename_tables_job_step(&mut snapshot, ddl_job_id, start_ts)
+                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
+            }
+            DdlPhase::PersistedDropSchema { ddl_job_id } => {
+                plan_persisted_drop_schema_job_step(&mut snapshot, ddl_job_id, start_ts)
                     .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
             }
         }
