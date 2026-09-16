@@ -4115,7 +4115,11 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 			usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
 			row = append(row, types.NewStringDatum(schema.O))
 			row = append(row, types.NewStringDatum(tbl.Name.O))
-			row = append(row, types.NewStringDatum(idx.Name))
+			indexName := idx.Name
+			if indexName == lowerPrimaryKeyName {
+				indexName = mysql.PrimaryKeyName
+			}
+			row = append(row, types.NewStringDatum(indexName))
 			row = append(row, types.NewIntDatum(int64(usage.QueryTotal)))
 			row = append(row, types.NewIntDatum(int64(usage.KvReqTotal)))
 			row = append(row, types.NewIntDatum(int64(usage.RowAccessTotal)))
