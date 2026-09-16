@@ -411,6 +411,8 @@ func newPlanCacheKeyWithMatchedBinding(
 	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
 	// txn status
 	hashLen += 6
+	// divPrecisionIncrement affects decimal division result types and constant folding.
+	hashLen += 8
 
 	hash := make([]byte, 0, hashLen)
 	// hashInitCap is not used, just for test purposes
@@ -428,6 +430,7 @@ func newPlanCacheKeyWithMatchedBinding(
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = codec.EncodeInt(hash, int64(vars.DivPrecisionIncrement))
 	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
