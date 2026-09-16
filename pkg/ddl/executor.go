@@ -1217,6 +1217,10 @@ func (e *executor) createTableWithInfoJob(
 func getSharedInvolvingSchemaInfo(info *model.TableInfo) []model.InvolvingSchemaInfo {
 	ret := make([]model.InvolvingSchemaInfo, 0, len(info.ForeignKeys)+1)
 	for _, fk := range info.ForeignKeys {
+		// Legacy foreign keys are not enforced and may lack a referenced schema.
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
 		ret = append(ret, model.InvolvingSchemaInfo{
 			Database: fk.RefSchema.L,
 			Table:    fk.RefTable.L,
