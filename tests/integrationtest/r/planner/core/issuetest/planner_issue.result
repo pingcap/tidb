@@ -31,7 +31,7 @@ set tidb_enable_index_merge=on;
 drop table if exists t;
 create table t(a int, b int, index idx_a(a), index idx_b(b));
 set @@session.sql_select_limit=3;
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx_a, idx_b) */ * from t where a = 1 or b = 1;
+explain format = 'plan_tree' select * from t where a = 1 or b = 1;
 id	task	access object	operator info
 IndexMerge	root		type: union, limit embedded(offset:0, count:3)
 ├─Limit(Build)	cop[tikv]		offset:0, count:3
@@ -48,13 +48,13 @@ IndexMerge	root		type: union, limit embedded(offset:0, count:3)
 │ └─IndexRangeScan	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 set @@session.sql_select_limit=18446744073709551615;
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx_a, idx_b) */ * from t where a = 1 or b = 1;
+explain format = 'plan_tree' select * from t where a = 1 or b = 1;
 id	task	access object	operator info
 IndexMerge	root		type: union
 ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx_a, idx_b) */ * from t where a = 1 or b = 1 limit 3;
+explain format = 'plan_tree' select * from t where a = 1 or b = 1 limit 3;
 id	task	access object	operator info
 IndexMerge	root		type: union, limit embedded(offset:0, count:3)
 ├─Limit(Build)	cop[tikv]		offset:0, count:3

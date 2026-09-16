@@ -766,7 +766,7 @@ a	b	c	d
 set tidb_enable_clustered_index=default;
 drop table if exists t;
 create table t(pk varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, fpi json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `fpi` ((cast(`fpi` as unsigned array))));
-explain format='plan_tree' SELECT /*+ use_index_merge(t, domains, image_signatures, canonical_links, fpi) */ pk FROM  t WHERE   "B2c32" member of (domains)   OR "2eoqyp6399" member of (image_signatures)   OR "E33EAdAc2Bee.com/s/link" member of (canonical_links)   OR json_contains(fpi, '[69236881]') LIMIT   10;
+explain format='plan_tree' SELECT pk FROM  t WHERE   "B2c32" member of (domains)   OR "2eoqyp6399" member of (image_signatures)   OR "E33EAdAc2Bee.com/s/link" member of (canonical_links)   OR json_contains(fpi, '[69236881]') LIMIT   10;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__index__index.t.pk
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:10)

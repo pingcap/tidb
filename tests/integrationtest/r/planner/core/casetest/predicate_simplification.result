@@ -627,7 +627,7 @@ id	task	access object	operator info
 IndexLookUp	root		
 ├─IndexRangeScan(Build)	cop[tikv]	table:t3, index:ia(a)	range:["\x00A","\x00A"], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	cop[tikv]	table:t3	keep order:false, stats:pseudo
-explain format='plan_tree' select /*+ use_index_merge(t3, ia, ib) */ * from t3 where a = 'a' or a = 'a' or a = 'A' or b = _utf8mb4'b' or b = _latin1'b' or b = 'B';
+explain format='plan_tree' select * from t3 where a = 'a' or a = 'a' or a = 'A' or b = _utf8mb4'b' or b = _latin1'b' or b = 'B';
 id	task	access object	operator info
 IndexMerge	root		type: union
 ├─IndexRangeScan(Build)	cop[tikv]	table:t3, index:ia(a)	range:["\x00A","\x00A"], keep order:false, stats:pseudo

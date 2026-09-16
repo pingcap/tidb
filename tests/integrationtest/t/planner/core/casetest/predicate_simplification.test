@@ -303,7 +303,7 @@ explain format='plan_tree' select * from t2 where (a = '2025-01-01 00:00:00' or 
 drop table if exists t3;
 create table t3 (a varchar(10) collate utf8mb4_general_ci, b varchar(10) collate utf8mb4_bin, index ia(a), index ib(b));
 explain format='plan_tree' select * from t3 where a = 'a' or a = 'a' or a = 'A';
-explain format='plan_tree' select /*+ use_index_merge(t3, ia, ib) */ * from t3 where a = 'a' or a = 'a' or a = 'A' or b = _utf8mb4'b' or b = _latin1'b' or b = 'B';
+explain format='plan_tree' select * from t3 where a = 'a' or a = 'a' or a = 'A' or b = _utf8mb4'b' or b = _latin1'b' or b = 'B';
 explain format='plan_tree' select * from t3 where a = _utf8mb4'a' collate utf8mb4_unicode_ci or a = _utf8mb4'a' collate utf8mb4_0900_ai_ci or a = 'A' or b = 'b' or b = 'b' or b = 'B';
 
 drop table if exists t4;

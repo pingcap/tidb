@@ -931,7 +931,7 @@ func TestReaderCopRequestCost(t *testing.T) {
 	require.Equal(t, 1, strings.Count(indexLookupTrace, "tidb_request_factor"),
 		"only the table-side handle lookup should charge requests")
 
-	indexMergeTrace := traceFor("select /*+ use_index_merge(t, idx_b, idx_c) */ * from t where b = 1 or c = 2", "IndexMerge")
+	indexMergeTrace := traceFor("select * from t where b = 1 or c = 2", "IndexMerge")
 	require.NotContains(t, indexMergeTrace, "cop-request(")
 	require.Equal(t, 1, strings.Count(indexMergeTrace, "requestPenalty("))
 	require.NotContains(t, indexMergeTrace, "doubleRead(")

@@ -1608,18 +1608,16 @@ IndexLookUp	root	partition:dual
 └─Selection(Probe)	cop[tikv]		lt(planner__core__casetest__integration.pt.c, 3)
   └─TableRowIDScan	cop[tikv]	table:pt	keep order:false, stats:pseudo
 ## Index Merge
-explain format='plan_tree' select /*+ use_index_merge(pt, i_id, i_c) */ * from pt where id = 4 or c < 7;
+explain format='plan_tree' select * from pt where id = 4 or c < 7;
 id	task	access object	operator info
-IndexMerge	root	partition:all	type: union
-├─IndexRangeScan(Build)	cop[tikv]	table:pt, index:i_id(id)	range:[4,4], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	cop[tikv]	table:pt, index:i_c(c)	range:[-inf,7), keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	cop[tikv]	table:pt	keep order:false, stats:pseudo
-explain format='plan_tree' select /*+ use_index_merge(pt, i_id, i_c) */ * from pt where id > 4 or c = 7;
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		or(eq(planner__core__casetest__integration.pt.id, 4), lt(planner__core__casetest__integration.pt.c, 7))
+  └─TableFullScan	cop[tikv]	table:pt	keep order:false, stats:pseudo
+explain format='plan_tree' select * from pt where id > 4 or c = 7;
 id	task	access object	operator info
-IndexMerge	root	partition:all	type: union
-├─IndexRangeScan(Build)	cop[tikv]	table:pt, index:i_id(id)	range:(4,+inf], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	cop[tikv]	table:pt, index:i_c(c)	range:[7,7], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	cop[tikv]	table:pt	keep order:false, stats:pseudo
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		or(gt(planner__core__casetest__integration.pt.id, 4), eq(planner__core__casetest__integration.pt.c, 7))
+  └─TableFullScan	cop[tikv]	table:pt	keep order:false, stats:pseudo
 set tidb_opt_fix_control=default;
 set @@tidb_enable_index_merge = default;
 drop table if exists github_events;

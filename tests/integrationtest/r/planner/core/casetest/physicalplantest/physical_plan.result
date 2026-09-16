@@ -3690,7 +3690,7 @@ drop table if exists t, tcommon, thash;
 create table t (a int, b int, c int, index idx(a, c), index idx2(b, c));
 create table tcommon (a int, b int, c int, primary key(a, c), index idx2(b, c));
 create table thash(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c)) PARTITION BY HASH (`a`) PARTITIONS 4;
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where a = 1 or b = 1 order by c limit 2;
+explain format = 'plan_tree' select * from t where a = 1 or b = 1 order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3701,7 +3701,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where a = 1 or b in (1, 2, 3) order by c limit 2;
+explain format = 'plan_tree' select * from t where a = 1 or b in (1, 2, 3) order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3712,7 +3712,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where a in (1, 2, 3) or b = 1 order by c limit 2;
+explain format = 'plan_tree' select * from t where a in (1, 2, 3) or b = 1 order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3723,7 +3723,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where a in (1, 2, 3) or b in (1, 2, 3) order by c limit 2;
+explain format = 'plan_tree' select * from t where a in (1, 2, 3) or b in (1, 2, 3) order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3734,7 +3734,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2;
+explain format = 'plan_tree' select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3745,7 +3745,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2;
+explain format = 'plan_tree' select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3756,7 +3756,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2;
+explain format = 'plan_tree' select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3767,7 +3767,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where (a = 1 or b = 2) and c = 3 order by c limit 2;
+explain format = 'plan_tree' select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3778,7 +3778,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2;
+explain format = 'plan_tree' select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3789,7 +3789,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(t, idx, idx2) */ * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by b limit 2;
+explain format = 'plan_tree' select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by b limit 2;
 id	task	access object	operator info
 TopN	root		planner__core__casetest__physicalplantest__physical_plan.t.b, offset:0, count:2
 └─IndexMerge	root		type: union
@@ -3799,7 +3799,7 @@ TopN	root		planner__core__casetest__physicalplantest__physical_plan.t.b, offset:
     └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(tcommon, PRIMARY, idx2) */ * from tcommon where a = 1 or b = 1 order by c limit 2;
+explain format = 'plan_tree' select * from tcommon where a = 1 or b = 1 order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.tcommon.a, planner__core__casetest__physicalplantest__physical_plan.tcommon.b, planner__core__casetest__physicalplantest__physical_plan.tcommon.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
@@ -3810,7 +3810,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.tcommo
   └─TableRowIDScan(Probe)	cop[tikv]	table:tcommon	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ use_index_merge(tcommon, PRIMARY, idx2) */ * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2;
+explain format = 'plan_tree' select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.tcommon.a, planner__core__casetest__physicalplantest__physical_plan.tcommon.b, planner__core__casetest__physicalplantest__physical_plan.tcommon.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
