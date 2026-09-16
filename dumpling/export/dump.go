@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	parsermysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -157,6 +158,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 	)
 	tctx, conf, pool := d.tctx, d.conf, d.dbHandle
 	tctx.L().Info("begin to run Dump", zap.Stringer("conf", conf))
+	if len(conf.columnFilter.Filters) > 0 {
+		// Config can be built or mutated without ParseFromFlags, so keep this runtime guard.
+		if err = validateColumnFilterOptions(conf, flagColumnFilterFile); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	m := newGlobalMetadata(tctx, d.extStore, conf.Snapshot)
 	repeatableRead := needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency)
 	defer func() {
@@ -263,6 +270,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return rebuildMetaConn(conn, updateMeta)
 	}
 
+	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 	chanSize := defaultTaskChannelCapacity
 	failpoint.Inject("SmallDumpChanSize", func() {
 		chanSize = 1
@@ -297,6 +305,14 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}
 
+	if conf.SQL == "" && len(conf.columnFilter.Filters) > 0 {
+		if err = prepareColumnProjection(tctx, conf, baseConn); err != nil {
+			close(taskIn)
+			_ = baseConn.DBConn.Close()
+			return errors.Trace(err)
+		}
+	}
+
 	summary.SetLogCollector(summary.NewLogCollector(tctx.L().Info))
 	summary.SetUnit(summary.BackupUnit)
 	defer summary.Summary(summary.BackupUnit)
@@ -316,7 +332,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 			fmt.Printf("tidb_mem_quota_query == %s\n", s)
 		}
 	})
-	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
 	if conf.SQL == "" {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
@@ -490,6 +505,157 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 		}
 	}
 	return nil
+}
+
+func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
+	conf.columnProjection = make(map[tableName]columnProjection, calculateTableCount(conf.Tables))
+	anyFilteredColumns := false
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			projection, err := buildColumnProjection(tctx, conf, conn, dbName, table)
+			if err != nil {
+				return err
+			}
+			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
+			anyFilteredColumns = anyFilteredColumns || projection.hasFilteredColumns()
+		}
+	}
+	if conf.NoSchemas || !anyFilteredColumns {
+		return nil
+	}
+
+	for _, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type == TableTypeView {
+				return errors.New("schema output with an active column filter is not supported when the dump includes views")
+			}
+		}
+	}
+
+	schemaParser := parser.New()
+	if value, ok := conf.SessionParams["sql_mode"]; ok {
+		sqlMode, err := parsermysql.GetSQLMode(parsermysql.FormatSQLModeStr(fmt.Sprint(value)))
+		if err != nil {
+			return errors.Annotate(err, "failed to parse session sql_mode")
+		}
+		schemaParser.SetSQLMode(sqlMode)
+	}
+	schemas := make(projectedTableSchemas, calculateTableCount(conf.Tables))
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			projection := conf.columnProjection[key]
+			createTableSQL, err := ShowCreateTable(tctx, conn, dbName, table.Name)
+			if err != nil {
+				return err
+			}
+			if projection.hasFilteredColumns() {
+				schemas[key], err = buildProjectedTableSchema(
+					schemaParser,
+					createTableSQL,
+					columnNames(projection.selectedTypes),
+				)
+			} else {
+				schemas[key], err = parseTableSchema(schemaParser, createTableSQL)
+			}
+			if err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to analyze schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+			projection.schemaSQL = createTableSQL
+			if projection.hasFilteredColumns() {
+				projection.schemaSQL, err = restoreProjectedSchema(schemas[key].createTable)
+				if err != nil {
+					return errors.Annotatef(
+						err,
+						"failed to restore schema projection for table `%s`.`%s`",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
+			}
+			conf.columnProjection[key] = projection
+		}
+	}
+
+	// Runs after all schemas are built: map order is random, and an unbuilt parent is treated as "outside the dump" (skipped), so merging into the loop above would drop FK validation nondeterministically.
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			if err := validateForeignKeyParents(dbName, schemas[key], schemas); err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to validate schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func buildColumnProjection(
+	tctx *tcontext.Context,
+	conf *Config,
+	conn *BaseConn,
+	dbName string,
+	table *TableInfo,
+) (columnProjection, error) {
+	if table.Type != TableTypeBase {
+		return columnProjection{}, nil
+	}
+
+	sourceColumns, hasGeneratedColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+	if err != nil {
+		return columnProjection{}, err
+	}
+	selectedColumns, selectedIndexes, err := conf.columnFilter.applyToColumns(dbName, table.Name, sourceColumns)
+	if err != nil {
+		return columnProjection{}, err
+	}
+	if len(selectedColumns) == 0 {
+		// Preserve the existing empty projection for tables with only generated columns.
+		return columnProjection{}, nil
+	}
+
+	sourceFields := columnNamesToSelectFields(sourceColumns)
+	selectedFields := columnNamesToSelectFields(selectedColumns)
+	projection := columnProjection{
+		selectField: strings.Join(selectedFields, ","),
+	}
+	if !hasGeneratedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
+		projection.selectField = "*"
+	}
+
+	projection.sourceTypes, err = GetColumnTypes(tctx, conn, strings.Join(sourceFields, ","), dbName, table.Name)
+	if err != nil {
+		return columnProjection{}, err
+	}
+
+	projection.selectedTypes = make([]*sql.ColumnType, len(selectedColumns))
+	for i, idx := range selectedIndexes {
+		projection.selectedTypes[i] = projection.sourceTypes[idx]
+	}
+	return projection, nil
+}
+
+func columnNamesToSelectFields(columns []string) []string {
+	fields := make([]string, 0, len(columns))
+	for _, column := range columns {
+		fields = append(fields, wrapBackTicks(escapeString(column)))
+	}
+	return fields
 }
 
 // adjustDatabaseCollation adjusts db collation and return new create sql and collation
@@ -1200,12 +1366,22 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	selectField, selectLen, err := buildSelectField(tctx, conn, db, tbl, conf.CompleteInsert)
-	if err != nil {
-		return nil, err
+	var err error
+	projection, ok := conf.columnProjection[tableName{db: db, table: tbl}]
+	if !ok {
+		if len(conf.columnFilter.Filters) > 0 {
+			return nil, errors.Errorf(
+				"missing column projection for table `%s`.`%s`",
+				escapeString(db),
+				escapeString(tbl),
+			)
+		}
+		projection, err = buildColumnProjection(tctx, conf, conn, db, table)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var (
-		colTypes         []*sql.ColumnType
 		hasImplicitRowID bool
 	)
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
@@ -1215,25 +1391,13 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		}
 	}
 
-	// If all columns are generated
-	if table.Type == TableTypeBase {
-		if selectField == "" {
-			colTypes, err = GetColumnTypes(tctx, conn, "*", db, tbl)
-		} else {
-			colTypes, err = GetColumnTypes(tctx, conn, selectField, db, tbl)
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-
 	meta := &tableMeta{
 		avgRowLength:     table.AvgRowLength,
 		database:         db,
 		table:            tbl,
-		colTypes:         colTypes,
-		selectedField:    selectField,
-		selectedLen:      selectLen,
+		colTypes:         projection.selectedTypes,
+		sourceColTypes:   projection.sourceTypes,
+		selectedField:    projection.selectField,
 		hasImplicitRowID: hasImplicitRowID,
 		specCmts:         getSpecialComments(conf.ServerInfo.ServerType),
 	}
@@ -1261,9 +1425,12 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return meta, nil
 	}
 
-	createTableSQL, err := ShowCreateTable(tctx, conn, db, tbl)
-	if err != nil {
-		return nil, err
+	createTableSQL := projection.schemaSQL
+	if createTableSQL == "" {
+		createTableSQL, err = ShowCreateTable(tctx, conn, db, tbl)
+		if err != nil {
+			return nil, err
+		}
 	}
 	meta.showCreateTable = createTableSQL
 	return meta, nil
