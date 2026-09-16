@@ -5,6 +5,7 @@ package export
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -621,21 +622,28 @@ func TestUpdateServiceSafePointCancelDuringRetry(t *testing.T) {
 	mockPD.mu.Unlock()
 }
 
-func TestDumpTableMeta(t *testing.T) {
+func newMockDumpConn(t *testing.T) (*tcontext.Context, sqlmock.Sqlmock, *BaseConn) {
+	t.Helper()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
 
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
 	conn, err := db.Conn(tctx)
 	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, db.Close())
+	})
 
+	return tctx, mock, newBaseConn(conn, true, nil)
+}
+
+func TestDumpTableMeta(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.NoSchemas = true
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 
 	for serverType := version.ServerTypeUnknown; serverType < version.ServerTypeAll; serverType++ {
 		conf.ServerInfo.ServerType = serverType
@@ -643,13 +651,15 @@ func TestDumpTableMeta(t *testing.T) {
 		mock.ExpectQuery("SHOW COLUMNS FROM").
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
+		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table))).
+			WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+				sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			).AddRow(1))
 		if serverType == version.ServerTypeTiDB {
 			mock.ExpectExec("SELECT _tidb_rowid from").
 				WillReturnResult(sqlmock.NewResult(0, 0))
 			hasImplicitRowID = true
 		}
-		mock.ExpectQuery(fmt.Sprintf("SELECT \\* FROM `%s`.`%s`", database, table)).
-			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 		meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
 		require.NoError(t, err)
 		require.Equal(t, database, meta.DatabaseName())
@@ -661,8 +671,6 @@ func TestDumpTableMeta(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func TestTableMetaSplitSourceColumns(t *testing.T) {
 	tctx, mock, baseConn := newMockDumpConn(t)
 	columnFilter := newColumnFilterConfigForTest(t,
@@ -955,7 +963,6 @@ func TestColumnProjectionNoSelectedColumns(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
->>>>>>> dfc06738174 (dumpling: support projected schemas for column filters (#70506))
 func TestGetListTableTypeByConf(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	cases := []struct {

@@ -158,6 +158,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 	)
 	tctx, conf, pool := d.tctx, d.conf, d.dbHandle
 	tctx.L().Info("begin to run Dump", zap.Stringer("conf", conf))
+	if len(conf.columnFilter.Filters) > 0 {
+		// Config can be built or mutated without ParseFromFlags, so keep this runtime guard.
+		if err = validateColumnFilterOptions(conf, flagColumnFilterFile); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	m := newGlobalMetadata(tctx, d.extStore, conf.Snapshot)
 	repeatableRead := needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency)
 	defer func() {
@@ -264,6 +270,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return rebuildMetaConn(conn, updateMeta)
 	}
 
+	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 	chanSize := defaultTaskChannelCapacity
 	failpoint.Inject("SmallDumpChanSize", func() {
 		chanSize = 1
@@ -298,6 +305,14 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}
 
+	if conf.SQL == "" && len(conf.columnFilter.Filters) > 0 {
+		if err = prepareColumnProjection(tctx, conf, baseConn); err != nil {
+			close(taskIn)
+			_ = baseConn.DBConn.Close()
+			return errors.Trace(err)
+		}
+	}
+
 	summary.SetLogCollector(summary.NewLogCollector(tctx.L().Info))
 	summary.SetUnit(summary.BackupUnit)
 	defer summary.Summary(summary.BackupUnit)
@@ -317,7 +332,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 			fmt.Printf("tidb_mem_quota_query == %s\n", s)
 		}
 	})
-	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
 	if conf.SQL == "" {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
@@ -493,8 +507,6 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 	return nil
 }
 
-<<<<<<< HEAD
-=======
 func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
 	conf.columnProjection = make(map[tableName]columnProjection, calculateTableCount(conf.Tables))
 	anyFilteredColumns := false
@@ -646,41 +658,6 @@ func columnNamesToSelectFields(columns []string) []string {
 	return fields
 }
 
-func (d *Dumper) checkPartitionsFlag(tctx *tcontext.Context, conn *BaseConn, allTables DatabaseTables) error {
-	if len(d.conf.Partitions) == 0 {
-		return nil
-	}
-	conf := d.conf
-	if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
-		return errors.New("--partitions is only available for TiDB")
-	}
-	if conf.ServerInfo.ServerVersion == nil || conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) < 0 {
-		return errors.New("--partitions requires TiDB version >= v5.0.0")
-	}
-	for dbName, tables := range allTables {
-		for _, table := range tables {
-			if table.Type != TableTypeBase {
-				continue
-			}
-			partitions, err := GetPartitionNames(tctx, conn, dbName, table.Name)
-			if err != nil {
-				return err
-			}
-			partitionSet := make(map[string]struct{}, len(partitions))
-			for _, partition := range partitions {
-				partitionSet[strings.ToLower(partition)] = struct{}{}
-			}
-			for _, partition := range conf.Partitions {
-				if _, ok := partitionSet[strings.ToLower(partition)]; !ok {
-					return errors.Errorf("--partitions: partition %s does not exist in table %s.%s", partition, dbName, table.Name)
-				}
-			}
-		}
-	}
-	return nil
-}
-
->>>>>>> dfc06738174 (dumpling: support projected schemas for column filters (#70506))
 // adjustDatabaseCollation adjusts db collation and return new create sql and collation
 func adjustDatabaseCollation(tctx *tcontext.Context, collationCompatible string, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
 	if collationCompatible != StrictCollationCompatible {
@@ -1389,12 +1366,22 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	selectField, selectLen, err := buildSelectField(tctx, conn, db, tbl, conf.CompleteInsert)
-	if err != nil {
-		return nil, err
+	var err error
+	projection, ok := conf.columnProjection[tableName{db: db, table: tbl}]
+	if !ok {
+		if len(conf.columnFilter.Filters) > 0 {
+			return nil, errors.Errorf(
+				"missing column projection for table `%s`.`%s`",
+				escapeString(db),
+				escapeString(tbl),
+			)
+		}
+		projection, err = buildColumnProjection(tctx, conf, conn, db, table)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var (
-		colTypes         []*sql.ColumnType
 		hasImplicitRowID bool
 	)
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
@@ -1404,25 +1391,13 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		}
 	}
 
-	// If all columns are generated
-	if table.Type == TableTypeBase {
-		if selectField == "" {
-			colTypes, err = GetColumnTypes(tctx, conn, "*", db, tbl)
-		} else {
-			colTypes, err = GetColumnTypes(tctx, conn, selectField, db, tbl)
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-
 	meta := &tableMeta{
 		avgRowLength:     table.AvgRowLength,
 		database:         db,
 		table:            tbl,
-		colTypes:         colTypes,
-		selectedField:    selectField,
-		selectedLen:      selectLen,
+		colTypes:         projection.selectedTypes,
+		sourceColTypes:   projection.sourceTypes,
+		selectedField:    projection.selectField,
 		hasImplicitRowID: hasImplicitRowID,
 		specCmts:         getSpecialComments(conf.ServerInfo.ServerType),
 	}
