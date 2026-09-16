@@ -25,6 +25,7 @@ type fakeCacheStore struct {
 	resetCalled   bool
 	refreshCalled bool
 	resetErr      error
+	onRefresh     func(ctx context.Context)
 }
 
 func (f *fakeCacheStore) GetStoreCacheStatus(storeID uint64) tikv.StoreCacheStatus {
@@ -33,8 +34,10 @@ func (f *fakeCacheStore) GetStoreCacheStatus(storeID uint64) tikv.StoreCacheStat
 }
 
 func (f *fakeCacheStore) RefreshStoreCache(ctx context.Context, storeID uint64) tikv.StoreCacheRefreshResult {
-	_ = ctx
 	f.refreshCalled = true
+	if f.onRefresh != nil {
+		f.onRefresh(ctx)
+	}
 	f.refresh.StoreID = storeID
 	return f.refresh
 }
@@ -216,5 +219,99 @@ func TestRegionCacheHandlerResetRespectsCancel(t *testing.T) {
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.False(t, got.Ready)
+	require.Contains(t, got.Errors, context.Canceled.Error())
+}
+
+func TestRegionCacheHandlerSumsSystemAndBusinessStores(t *testing.T) {
+	sys := &fakeCacheStore{
+		status: tikv.StoreCacheStatus{Matched: 2, Failed: 0, Ready: false, ObservedAt: 1},
+		ks:     "SYSTEM",
+		cid:    11,
+	}
+	biz := &fakeCacheStore{
+		status: tikv.StoreCacheStatus{Matched: 3, Failed: 1, Ready: false, ObservedAt: 2},
+		ks:     "keyspace1",
+		cid:    11,
+	}
+	h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: sys}})
+	h.listed = []regionCacheStore{sys, biz}
+
+	req := httptest.NewRequest(http.MethodGet, "/regions/cache/status?store_id=7", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var got regionCacheHTTPResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Equal(t, 5, got.Matched)
+	require.Equal(t, 1, got.Failed)
+	require.Equal(t, 5, got.Remaining)
+	require.False(t, got.Ready)
+	require.Len(t, got.Stores, 2)
+	require.Equal(t, "SYSTEM", got.Stores[0].Keyspace)
+	require.Equal(t, "keyspace1", got.Stores[1].Keyspace)
+}
+
+func TestRegionCacheHandlerPostContinuesAfterOneStoreFails(t *testing.T) {
+	failing := &fakeCacheStore{
+		refresh: tikv.StoreCacheRefreshResult{Scanned: 2, Matched: 2, Updated: 0, Failed: 2, Remaining: 2, Ready: false, Errors: []string{"still leader"}},
+		ks:      "SYSTEM",
+		cid:     11,
+	}
+	ok := &fakeCacheStore{
+		refresh: tikv.StoreCacheRefreshResult{Scanned: 1, Matched: 1, Updated: 1, Failed: 0, Remaining: 0, Ready: true},
+		ks:      "keyspace1",
+		cid:     11,
+	}
+	h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: failing}})
+	h.listed = []regionCacheStore{failing, ok}
+
+	req := httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.True(t, failing.refreshCalled)
+	require.True(t, ok.refreshCalled)
+	var got regionCacheHTTPResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.False(t, got.Ready)
+	require.Equal(t, 3, got.Scanned)
+	require.Equal(t, 2, got.Failed)
+	require.Equal(t, 2, got.Remaining)
+	require.Equal(t, 1, got.Updated)
+	require.Len(t, got.Stores, 2)
+	require.Equal(t, "SYSTEM", got.Stores[0].Keyspace)
+	require.False(t, got.Stores[0].Ready)
+	require.Equal(t, "keyspace1", got.Stores[1].Keyspace)
+	require.True(t, got.Stores[1].Ready)
+}
+
+func TestRegionCacheHandlerPostStopsLaterStoresAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	first := &fakeCacheStore{
+		refresh: tikv.StoreCacheRefreshResult{Scanned: 1, Matched: 1, Updated: 1, Remaining: 0, Ready: true},
+		ks:      "SYSTEM",
+		cid:     11,
+		onRefresh: func(context.Context) {
+			cancel()
+		},
+	}
+	second := &fakeCacheStore{
+		refresh: tikv.StoreCacheRefreshResult{Scanned: 4, Matched: 4, Updated: 4, Remaining: 0, Ready: true},
+		ks:      "keyspace1",
+		cid:     11,
+	}
+	h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: first}})
+	h.listed = []regionCacheStore{first, second}
+
+	req := httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.True(t, first.refreshCalled)
+	require.False(t, second.refreshCalled)
+	var got regionCacheHTTPResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.False(t, got.Ready)
+	require.Len(t, got.Stores, 1)
 	require.Contains(t, got.Errors, context.Canceled.Error())
 }
