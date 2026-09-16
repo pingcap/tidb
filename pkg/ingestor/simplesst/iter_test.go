@@ -633,7 +633,7 @@ func (s *slowOpenStorage) Open(
 }
 
 type asyncFailStorage struct {
-	*objstore.MemStorage
+	storeapi.Storage
 	failingPaths map[string]struct{}
 	openStarted  chan struct{}
 	continueOpen chan struct{}
@@ -649,7 +649,7 @@ func (s *asyncFailStorage) Open(
 		<-s.continueOpen
 		return nil, fmt.Errorf("injected open failure for %s", filePath)
 	}
-	return s.MemStorage.Open(ctx, filePath, o)
+	return s.Storage.Open(ctx, filePath, o)
 }
 
 func TestMergePropBaseIter(t *testing.T) {
@@ -720,7 +720,7 @@ func TestMergePropBaseIterCloseWithAsyncOpenError(t *testing.T) {
 	}
 
 	store := &asyncFailStorage{
-		MemStorage:   memStore,
+		Storage:      memStore,
 		failingPaths: failingPaths,
 		openStarted:  make(chan struct{}, readerLimit),
 		continueOpen: make(chan struct{}),
@@ -743,6 +743,92 @@ func TestMergePropBaseIterCloseWithAsyncOpenError(t *testing.T) {
 	<-iter.closeCh
 	close(store.continueOpen)
 	require.NoError(t, <-closeDone)
+}
+
+func TestMergePropBaseIterReaderCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fileNum  int
+		failPath string
+		empty    bool
+	}{
+		{name: "early close after producer exits", fileNum: 4},
+		{name: "initial open fails with full pre-open queue", fileNum: 7, failPath: "/test0"},
+		{name: "replacement open fails with full pre-open queue", fileNum: 7, failPath: "/test2", empty: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			tracked := &testutils.TrackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
+			multiStat := MultipleFilesStat{MaxOverlappingNum: 1}
+			for i := range tc.fileNum {
+				path := fmt.Sprintf("/test%d", i)
+				multiStat.Filenames = append(multiStat.Filenames, [2]string{"", path})
+				data := encodeMultiProps(nil, []*RangeProperty{{FirstKey: []byte{byte(i)}}})
+				if tc.empty && i == 0 {
+					data = nil
+				}
+				require.NoError(t, tracked.WriteFile(ctx, path, data))
+			}
+			if tc.failPath == "" {
+				iter, err := newMergePropBaseIter(ctx, multiStat, tracked)
+				require.NoError(t, err)
+				// All pre-opens fit in the queue, so the producer can exit before close.
+				iter.wg.Wait()
+				require.EqualValues(t, tc.fileNum, tracked.Opened.Load())
+				require.NoError(t, iter.close())
+				require.Zero(t, tracked.Opened.Load())
+				return
+			}
+
+			store := &asyncFailStorage{
+				Storage:      tracked,
+				failingPaths: map[string]struct{}{tc.failPath: {}},
+				openStarted:  make(chan struct{}, 1),
+				continueOpen: make(chan struct{}),
+			}
+			type result struct {
+				iter *mergePropBaseIter
+				err  error
+			}
+			done := make(chan result, 1)
+			go func() {
+				iter, err := newMergePropBaseIter(ctx, multiStat, store)
+				done <- result{iter, err}
+			}()
+			<-store.openStarted
+			// With limit=2, three async tasks fill the queue and block the producer.
+			filled := false
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+				if tracked.TotalOpened.Load() >= 4 {
+					filled = true
+					break
+				}
+				runtime.Gosched()
+			}
+			close(store.continueOpen)
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("iterator construction did not return")
+			}
+			// Clean up the old implementation too, so a failing regression does not
+			// leave a producer behind. It must not be the caller's responsibility.
+			if got.iter != nil {
+				defer func() {
+					close(got.iter.closeCh)
+					got.iter.wg.Wait()
+					if got.iter.iter != nil {
+						_ = got.iter.iter.close()
+					}
+				}()
+			}
+			require.True(t, filled, "pre-open queue did not fill")
+			require.ErrorContains(t, got.err, "injected open failure")
+			require.Zero(t, tracked.Opened.Load())
+			require.Nil(t, got.iter)
+		})
+	}
 }
 
 func TestEmptyBaseReader4LimitSizeMergeIter(t *testing.T) {

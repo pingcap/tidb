@@ -617,6 +617,7 @@ type mergePropBaseIter struct {
 	iter            *limitSizeMergeIter[*RangeProperty, statReaderProxy]
 	closeReaderFlag *bool
 	closeCh         chan struct{}
+	preOpenCh       chan chan readerAndError
 	wg              *sync.WaitGroup
 }
 
@@ -686,18 +687,7 @@ func newMergePropBaseIter(
 			}()
 			select {
 			case <-closeCh:
-				// when close, no other methods is called simultaneously, so this goroutine can
-				// check the size of channel and drain all
-				for j := len(preOpenCh); j > 0; j-- {
-					asyncTask2 := <-preOpenCh
-					t, ok := <-asyncTask2
-					if !ok {
-						continue
-					}
-					if t.err == nil {
-						_ = t.r.close()
-					}
-				}
+				// This task was not queued, so the producer still owns its reader.
 				t, ok := <-asyncTask
 				if ok && t.err == nil {
 					_ = t.r.close()
@@ -747,7 +737,12 @@ func newMergePropBaseIter(
 		weight[i] = 1
 	}
 	i, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
-	return &mergePropBaseIter{iter: i, closeCh: closeCh, wg: wg}, err
+	ret := &mergePropBaseIter{iter: i, closeCh: closeCh, preOpenCh: preOpenCh, wg: wg}
+	if err != nil {
+		_ = ret.close()
+		return nil, err
+	}
+	return ret, nil
 }
 
 func (m mergePropBaseIter) path() string {
@@ -776,7 +771,17 @@ func (m mergePropBaseIter) switchConcurrentMode(bool) error {
 func (m mergePropBaseIter) close() error {
 	close(m.closeCh)
 	m.wg.Wait()
-	return m.iter.close()
+	// The producer may have exited before closeCh was closed. The iterator owns
+	// all queued tasks that were not consumed, even after the producer exits.
+	for task := range m.preOpenCh {
+		if t, ok := <-task; ok && t.err == nil {
+			_ = t.r.close()
+		}
+	}
+	if m.iter != nil {
+		return m.iter.close()
+	}
+	return nil
 }
 
 // MergePropIter is an iterator that merges multiple range properties from different files.
