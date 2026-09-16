@@ -196,6 +196,18 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	if phyWrapper, ok := p.(*plannercore.PhysicalPlanWrapper); ok {
 		p = phyWrapper.Inner
 	}
+	if _, ok := b.sctx.(*importQuerySession); ok {
+		// Only local executors pass through this builder. Reader cop/MPP plans
+		// stay remote. This also covers subqueries executed during optimization.
+		switch p.(type) {
+		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalSort, *physicalop.PhysicalTopN,
+			*physicalop.PhysicalHashJoin, *physicalop.PhysicalMergeJoin,
+			*physicalop.PhysicalCTE, *physicalop.PhysicalCTETable:
+			b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+				"IMPORT INTO FROM SELECT with TiDB " + p.TP() + " (local spilling)")
+			return nil
+		}
+	}
 
 	switch v := p.(type) {
 	case nil:
@@ -1129,7 +1141,7 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		selectExec exec.Executor
 		children   []exec.Executor
 	)
-	if v.SelectPlan != nil && !kerneltype.IsNextGen() && vardef.CloudStorageURI.Load() == "" {
+	if v.SelectPlan != nil && !kerneltype.IsNextGen() {
 		selectExec = b.build(v.SelectPlan)
 		if b.err != nil {
 			return nil

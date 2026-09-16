@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 )
 
@@ -66,7 +67,7 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 	if err != nil {
 		return nil, err
 	}
-	checker := &importQueryChecker{}
+	checker := &importQueryVariableChecker{}
 	if !ast.Walk(node, checker) {
 		return nil, checker.err
 	}
@@ -81,6 +82,8 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 		Tables:      make(map[int64][]*model.TableInfo),
 	}
 	vars := sctx.GetSessionVars()
+	// Keep inherited planning/execution settings here; remote scan and TiFlash
+	// concurrency are independent of the TiDB worker CPU allocation.
 	for _, name := range []string{
 		vardef.SQLModeVar, vardef.TimeZone, vardef.TiDBDistSQLScanConcurrency,
 		vardef.CharacterSetClient, vardef.CharacterSetConnection,
@@ -112,7 +115,7 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 		return nil, err
 	}
 	if ret.IsStaleness {
-		return nil, errors.New("import query does not support stale reads")
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("stale reads in IMPORT INTO FROM SELECT")
 	}
 
 	seen := make(map[int64]bool)
@@ -121,7 +124,7 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 		if tblInfo.IsView() ||
 			tblInfo.TempTableType != model.TempTableNone ||
 			tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-			return nil, errors.New("import query requires persistent, uncached source tables")
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("views, temporary or cached source tables in IMPORT INTO FROM SELECT")
 		}
 		if !seen[tblInfo.ID] {
 			seen[tblInfo.ID] = true
@@ -140,25 +143,15 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 	return q, nil
 }
 
-type importQueryChecker struct {
+type importQueryVariableChecker struct {
 	err error
 }
 
-func (*importQueryChecker) Enter(ast.Node) bool { return false }
+func (*importQueryVariableChecker) Enter(ast.Node) bool { return false }
 
-func (c *importQueryChecker) Leave(node ast.Node) bool {
-	switch n := node.(type) {
-	case *ast.VariableExpr:
-		c.err = errors.New("import query does not support variables")
-	case *ast.Join:
-		// A single-table FROM also has a Join node, with no right side.
-		if n.Right != nil {
-			c.err = errors.New("import query does not support JOIN")
-		}
-	case *ast.WithClause:
-		c.err = errors.New("import query does not support CTE")
-	case *ast.OrderByClause:
-		c.err = errors.New("import query does not support ORDER BY")
+func (c *importQueryVariableChecker) Leave(node ast.Node) bool {
+	if _, ok := node.(*ast.VariableExpr); ok {
+		c.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("variables in IMPORT INTO FROM SELECT")
 	}
 	return c.err == nil
 }

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -116,7 +117,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 	e.controller = controller
 
-	if e.plan.SelectPlan != nil && (kerneltype.IsNextGen() || e.controller.IsGlobalSort()) {
+	if e.plan.SelectPlan != nil && kerneltype.IsNextGen() {
 		if err := e.prepareQuery(ctx); err != nil {
 			return err
 		}
@@ -488,7 +489,7 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 // prepareQuery captures source metadata for the Query step.
 func (e *ImportIntoExec) prepareQuery(_ context.Context) error {
 	if e.controller.IsLocalSort() {
-		return errors.New("IMPORT FROM SELECT requires global sort storage")
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("IMPORT INTO FROM SELECT without global sort storage")
 	}
 	query, err := CaptureImportQuery(e.userSctx, e.plan.Stmt)
 	if err != nil {

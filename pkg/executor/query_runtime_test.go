@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,32 +47,33 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	tk.MustExec("set collation_connection='utf8mb4_general_ci'")
 	tk.MustExec("set tidb_isolation_read_engines='tikv'")
 	queries := []string{
-		"select g,count(*),sum(v) from (select g,v from query_src where i>0) c group by g",
+		"select i from (select i from query_src where i>0) c",
 		"select i from query_src where i=1 limit 1",
 		`select hex(_binary'\0\\a'), _latin1'a', 'a''b'`,
 		"select 'a' = 'A'",
-		"select /*+ SET_VAR(tidb_distsql_scan_concurrency=2) */ count(*) from query_src",
-		"select /*+ READ_FROM_STORAGE(TIFLASH[query_src]) MPP_2PHASE_AGG() */ g,count(*) from query_src group by g",
-		"select /*+ SET_VAR(tidb_mem_quota_query=1073741824) */ count(*) from query_src",
-		"select /*+ MEMORY_QUOTA(1 GB) */ count(*) from query_src",
-		"select /*+ HASH_AGG() */ g,count(*),count(v),sum(v),min(v),max(v) from query_src group by g",
-		"select /*+ HASH_AGG() */ g,count(*),sum(v) from query_src where round(v,2)>5 group by g",
+		"select /*+ STREAM_AGG() SET_VAR(tidb_distsql_scan_concurrency=2) */ count(*) from query_src",
+		"select /*+ READ_FROM_STORAGE(TIFLASH[query_src]) MPP_1PHASE_AGG() */ i from query_src",
+		"select /*+ STREAM_AGG() SET_VAR(tidb_mem_quota_query=1073741824) */ count(*) from query_src",
+		"select /*+ STREAM_AGG() MEMORY_QUOTA(1 GB) */ count(*) from query_src",
+		"select /*+ STREAM_AGG() */ i,count(*),sum(v) from query_src use index(idx_i) where round(v,2)>5 group by i",
 		"select /*+ STREAM_AGG() */ i,count(*) from query_src use index(idx_i) group by i",
-		"select /*+ HASH_AGG() */ g,count(*)+1 from query_src where i>100 group by g",
+		"select i from query_src use index(idx_i) order by i limit 2",
+		"with c as (select /*+ MERGE() */ i from query_src) select i from c",
+		"select /*+ INL_JOIN(b) */ a.i from query_src a join query_src b use index(idx_i) on a.i=b.i",
 	}
 	tk.MustExec("set tidb_mem_quota_query=16777216")
 	for _, mode := range []string{"", "NO_BACKSLASH_ESCAPES"} {
 		tk.MustExec("set sql_mode='" + mode + "'")
 		for _, sql := range queries {
 			t.Run(mode+"/"+sql, func(t *testing.T) {
-				tk.MustExec("begin")
+				require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 				captured, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+sql+") with thread=1")
 				require.NoError(t, err)
 				require.Equal(t, "import into unused_target from ("+sql+") with thread=1", captured.SQL)
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 					vars := p.SCtx().GetSessionVars()
 					require.EqualValues(t, 32<<20, vars.MemQuotaQuery)
-					if strings.Contains(sql, "/*+") {
+					if strings.HasPrefix(sql, "select /*+") {
 						require.True(t, vars.StmtCtx.StmtHints.QueryHasHints)
 					}
 					if strings.Contains(sql, "tidb_distsql_scan_concurrency=2") {
@@ -116,9 +118,33 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			})
 		}
 	}
+	t.Run("reject local spill operators", func(t *testing.T) {
+		for _, tt := range []struct{ sql, operator string }{
+			{"select /*+ HASH_AGG() */ g,count(*) from query_src group by g", "HashAgg"},
+			{"select (select /*+ HASH_AGG() */ sum(v) from query_src) from query_src limit 1", "HashAgg"},
+			{"select i from query_src order by g", "Sort"},
+			{"select i from query_src order by g limit 2", "TopN"},
+			{"select /*+ HASH_JOIN(a,b) */ a.i from query_src a join query_src b on a.i=b.i", "HashJoin"},
+			{"select /*+ MERGE_JOIN(a,b) */ a.i from query_src a join query_src b on a.i=b.i", "MergeJoin"},
+			{"with recursive c(i) as (select 1 union all select i+1 from c where i<3) select i from c", "CTE"},
+		} {
+			t.Run(tt.operator+"/"+tt.sql, func(t *testing.T) {
+				require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+				q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+tt.sql+")")
+				require.NoError(t, err)
+				se, err := session.CreateSession4Test(store)
+				require.NoError(t, err)
+				defer se.Close()
+				output := make(chan importer.QueryChunk, 16)
+				err = importer.RunImportQuery(context.Background(), se, q, 1<<20, output)
+				require.ErrorIs(t, err, plannererrors.ErrNotSupportedYet)
+				require.ErrorContains(t, err, "TiDB "+tt.operator)
+			})
+		}
+	})
 	t.Run("source tables", func(t *testing.T) {
 		tk.MustExec("create table query_other(i int)")
-		tk.MustExec("begin")
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
 		require.NoError(t, err)
 		require.Len(t, q.Databases, 1)
@@ -137,34 +163,11 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			"select @@sql_mode", "with c as (select @v) select * from c",
 		} {
 			_, err = executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+sql+")")
-			require.ErrorContains(t, err, "does not support variables")
-		}
-	})
-	t.Run("unsupported queries", func(t *testing.T) {
-		for _, tt := range []struct{ sql, unsupported string }{
-			{"select a.i from query_src a join query_src b on a.i=b.i", "JOIN"},
-			{"select a.i from query_src a, query_src b", "JOIN"},
-			{"select a.i from query_src a left join query_src b on a.i=b.i", "JOIN"},
-			{"select * from query_src a natural join query_src b", "JOIN"},
-			{"select * from (select a.i from query_src a cross join query_src b) s", "JOIN"},
-			{"with c as (select i from query_src) select * from c", "CTE"},
-			{"with recursive c(n) as (select 1 union all select n+1 from c where n<3) select n from c", "CTE"},
-			{"select * from (with c as (select i from query_src) select * from c) s", "CTE"},
-			{"select i from query_src order by i", "ORDER BY"},
-			{"select i from query_src order by i limit 1", "ORDER BY"},
-			{"select * from (select i from query_src order by i limit 1) s", "ORDER BY"},
-			{"select i from query_src union all select i from query_src order by i limit 1", "ORDER BY"},
-			{"select row_number() over (order by i) from query_src", "ORDER BY"},
-		} {
-			t.Run(tt.sql, func(t *testing.T) {
-				q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+tt.sql+")")
-				require.ErrorContains(t, err, "does not support "+tt.unsupported)
-				require.Nil(t, q)
-			})
+			require.ErrorContains(t, err, "variables in IMPORT INTO FROM SELECT")
 		}
 	})
 	t.Run("close after open error", func(t *testing.T) {
-		tk.MustExec("begin")
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from select i+1 from query_src")
 		require.NoError(t, err)
 		se, err := session.CreateSession4Test(store)
@@ -182,14 +185,14 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.Contains(t, se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(planID).String(), "Concurrency:")
 	})
 	t.Run("submitted table definitions", func(t *testing.T) {
-		tk.MustExec("begin")
-		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from select count(*) from query_src")
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from select /*+ STREAM_AGG() */ count(*) from query_src")
 		require.NoError(t, err)
 		data, err := json.Marshal(q)
 		require.NoError(t, err)
 		q = &importer.QueryPlan{}
 		require.NoError(t, json.Unmarshal(data, q))
-		tk.MustExec("commit")
+		tk.Session().RollbackTxn(context.Background())
 		tk.MustExec("insert into query_src values (9,90,9)")
 		tk.MustExec("rename table query_src to query_renamed")
 		se, err := session.CreateSession4Test(store)
@@ -235,8 +238,8 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 	tk.MustExec("set tidb_enforce_mpp=1")
 	tk.MustExec("set tidb_isolation_read_engines='tiflash'")
 
-	sql := "import into unused_target from select g,count(*),sum(v) from query_flash group by g"
-	tk.MustExec("begin")
+	sql := "import into unused_target from select /*+ READ_FROM_STORAGE(TIFLASH[`test`.`query_flash`]) MPP_1PHASE_AGG() */ g,count(*),sum(v) from query_flash group by g"
+	require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 	captured, err := executor.CaptureImportQuery(tk.Session(), sql)
 	require.NoError(t, err)
 	se, err := session.CreateSession4Test(store)
@@ -245,6 +248,7 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 	var optimized bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 		optimized = true
+		require.Equal(t, "TableReader", p.TP())
 		require.True(t, strings.Contains(core.ToString(p), "Send("), core.ToString(p))
 	})
 	// Validate the real optimizer output without dispatching to a TiFlash server.

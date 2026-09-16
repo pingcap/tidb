@@ -48,13 +48,13 @@ func TestImportQueryEncodeS3(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table query_src(g bigint not null,v bigint not null)")
+	tk.MustExec("create table query_src(g bigint not null,v bigint not null,key idx_g(g))")
 	tk.MustExec("insert into query_src values (1,10),(1,20),(2,30)")
 	tk.MustExec("create table query_dst(g bigint primary key,c bigint,s decimal(42,0))")
 	previousURI := vardef.CloudStorageURI.Load()
 	vardef.CloudStorageURI.Store(uri)
 	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
-	sql := "import into query_dst from (select g,count(*),sum(v) from query_src group by g) with thread=2"
+	sql := "import into query_dst from (select /*+ STREAM_AGG() */ g,count(*),sum(v) from query_src use index(idx_g) group by g) with thread=2"
 	ctx := context.Background()
 	nodes, err := tk.Session().Parse(ctx, sql)
 	require.NoError(t, err)
@@ -67,6 +67,8 @@ func TestImportQueryEncodeS3(t *testing.T) {
 	require.NoError(t, err)
 	plan, err := importer.NewImportPlan(ctx, tk.Session(), logical, tbl)
 	require.NoError(t, err)
+	// Exercise the Query step directly; classic SQL imports retain the local path.
+	plan.CloudStorageURI = uri
 	plan.Query, err = executor.CaptureImportQuery(tk.Session(), sql)
 	require.NoError(t, err)
 	meta, err := json.Marshal(importinto.TaskMeta{Plan: *plan, Stmt: sql})

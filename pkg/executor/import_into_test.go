@@ -507,15 +507,15 @@ func TestImportQueryRouting(t *testing.T) {
 		for _, uri := range []string{"", "s3://query-sort"} {
 			vardef.CloudStorageURI.Store(uri)
 			tk.MustExec("delete from query_route_dst")
-			if uri != "" {
+			if kerneltype.IsNextGen() && uri != "" {
 				tk.MustExec("insert into query_route_dst values (1)")
 			}
 			err := tk.ExecToErr("import into query_route_dst from select id from query_route_src with disable_precheck")
 			switch {
-			case uri != "":
+			case kerneltype.IsNextGen() && uri != "":
 				require.ErrorContains(t, err, "target table is not empty")
 			case kerneltype.IsNextGen():
-				require.ErrorContains(t, err, "IMPORT FROM SELECT requires global sort storage")
+				require.ErrorContains(t, err, "IMPORT INTO FROM SELECT without global sort storage")
 			default:
 				require.ErrorContains(t, err, "mock import from select setup error")
 			}

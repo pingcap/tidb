@@ -116,7 +116,11 @@ func TestImportQueryStorageOptions(t *testing.T) {
 
 	plan := &Plan{DataSourceType: DataSourceTypeQuery}
 	require.NoError(t, plan.initOptions(ctx, sctx, nil))
-	require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
+	} else {
+		require.Empty(t, plan.CloudStorageURI)
+	}
 
 	err := plan.initOptions(ctx, sctx, []*plannercore.LoadDataOpt{{
 		Name: cloudStorageURIOption,

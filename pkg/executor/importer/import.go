@@ -270,8 +270,11 @@ type QueryPlan struct {
 	Databases map[int64]*model.DBInfo
 	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
 	// Persist table definitions grouped by database ID explicitly.
-	Tables        map[int64][]*model.TableInfo
-	SQL           string
+	Tables map[int64][]*model.TableInfo
+	SQL    string
+	// SessionVars is an explicit subset of SELECT settings inherited from the submitter.
+	// Extend the subset when another setting must be preserved on the worker.
+	// TiDB worker memory limits are configured separately.
 	SessionVars   map[string]string
 	PushDownFlags uint64
 }
@@ -772,7 +775,9 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = getDefMaxEngineSize()
-	p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
+	if p.DataSourceType != DataSourceTypeQuery || kerneltype.IsNextGen() {
+		p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
+	}
 
 	v := defaultCharacterSet
 	p.Charset = &v
