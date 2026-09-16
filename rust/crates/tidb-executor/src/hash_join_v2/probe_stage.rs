@@ -49,7 +49,14 @@ struct FetcherState {
 struct ProbeFetcher {
     requests: Receiver<FetchRequest>,
     source: Mutex<Option<Box<dyn Executor>>>,
-    inputs: Vec<Sender<Chunk>>,
+    // The fetcher holds its own clones of the workers' input senders for the
+    // batches it runs. Go's fetcher goroutine closes every worker's
+    // probeResultCh when it exits (hash_join_base.go
+    // handleProbeSideFetcherPanic, run on every exit via RunWithRecover); the
+    // Mutex lets `complete` drop these senders at that same point so workers
+    // see the disconnect even though the stage keeps the fetcher handle alive
+    // until the workers report Done.
+    inputs: Mutex<Vec<Sender<Chunk>>>,
     events: Sender<ProbeWorkerEvent>,
     close: Receiver<()>,
     killed: Receiver<()>,
@@ -236,7 +243,7 @@ impl ProbeStage {
         let fetcher = Arc::new(ProbeFetcher {
             requests: requests_rx,
             source: Mutex::new(Some(fetch_source)),
-            inputs: fetch_inputs,
+            inputs: Mutex::new(fetch_inputs),
             events: fetch_events,
             close: fetch_close,
             killed: stage.memory.sql_killer().get_kill_event_chan(),
@@ -626,10 +633,19 @@ impl ProbeFetcher {
     }
 
     fn send_input(&self, worker_id: usize, chunk: Chunk) -> Result<bool, ExecError> {
-        let input = self
-            .inputs
-            .get(worker_id)
-            .ok_or_else(|| ExecError::internal("probe fetcher received an invalid worker id"))?;
+        let input = {
+            let inputs = self
+                .inputs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            inputs.get(worker_id).cloned()
+        };
+        // `complete` dropped the senders once the source was drained; the
+        // worker finishes with its current data, so stop fetching without an
+        // error (Go's worker simply stops receiving on the closed channel).
+        let Some(input) = input else {
+            return Ok(false);
+        };
         select_biased! {
             recv(self.close) -> _ => Ok(false),
             recv(self.killed) -> _ => {
@@ -680,6 +696,17 @@ impl ProbeFetcher {
             state.scheduled = false;
             state.finished = true;
         }
+        // Go's fetcher goroutine closes every worker's probeResultCh when it
+        // exits (hash_join_base.go:88-96, run on every exit via
+        // RunWithRecover); without this the workers wait on an open channel
+        // and the stage waits for their Done events forever. The batches that
+        // race with this clear were spawned under `scheduled = true`, and
+        // `complete` only runs at their terminal point, so no later batch can
+        // observe the emptied vec.
+        self.inputs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         let completion = self
             .completion
             .lock()
