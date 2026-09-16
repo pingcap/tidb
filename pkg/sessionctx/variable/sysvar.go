@@ -759,6 +759,7 @@ var defaultSysVars = []*SysVar{
 			vardef.MaxPreparedStmtCountValue.Store(num)
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.LocalInFile, Value: vardef.On, Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal, Name: vardef.InitConnect, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		p := parser.New()
 		p.SetSQLMode(vars.SQLMode)
