@@ -1542,7 +1542,11 @@ func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType,
 		return con, false
 	}
 
-	dt, err = dt.ConvertTo(evalCtx.TypeCtx(), targetFieldType)
+	// Match the initial refinement conversion: a negative rounded constant
+	// underflows an unsigned column instead of wrapping to a large value.
+	typeCtx := evalCtx.TypeCtx()
+	typeCtx = typeCtx.WithFlags(typeCtx.Flags().WithAllowNegativeToUnsigned(false))
+	dt, err = dt.ConvertTo(typeCtx, targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
