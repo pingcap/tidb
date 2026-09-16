@@ -43,6 +43,15 @@ pub(super) enum AggInputMode<T = usize> {
     CountAll,
     Count(T),
     CountDistinctInt(T),
+    CountDistinctString {
+        column: T,
+        collation: tidb_datatype::Collation,
+    },
+    CountDistinctDecimal(T),
+    CountDistinctDuration {
+        column: T,
+        fsp: i64,
+    },
     FinalCount {
         column: T,
         unsigned: bool,
@@ -122,6 +131,33 @@ impl AggInputMode {
         };
         if count_distinct_int(func) {
             return Some(Self::CountDistinctInt(column(func.arg.as_ref()?)?));
+        }
+        if matches!(func.kind, AggKind::Count)
+            && func.distinct
+            && func.extra_args.is_empty()
+            && func.order_by.is_empty()
+        {
+            if let Some((index, collation)) = string(func.arg.as_ref()?) {
+                return Some(Self::CountDistinctString {
+                    column: index,
+                    collation,
+                });
+            }
+            if let Some(index) = column(func.arg.as_ref()?) {
+                let field_type = func.arg.as_ref()?.static_type()?;
+                match field_type.eval_type() {
+                    EvalType::Decimal if field_type.code() == FieldTypeCode::NewDecimal => {
+                        return Some(Self::CountDistinctDecimal(index));
+                    }
+                    EvalType::Duration => {
+                        return Some(Self::CountDistinctDuration {
+                            column: index,
+                            fsp: field_type.decimal(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
         }
         if func.distinct || !func.order_by.is_empty() {
             return None;
@@ -232,6 +268,17 @@ impl AggInputMode {
             Self::CountAll => AggInputMode::CountAll,
             Self::Count(index) => AggInputMode::Count(chunk.column(index)),
             Self::CountDistinctInt(index) => AggInputMode::CountDistinctInt(chunk.column(index)),
+            Self::CountDistinctString { column, collation } => AggInputMode::CountDistinctString {
+                column: chunk.column(column),
+                collation,
+            },
+            Self::CountDistinctDecimal(index) => {
+                AggInputMode::CountDistinctDecimal(chunk.column(index))
+            }
+            Self::CountDistinctDuration { column, fsp } => AggInputMode::CountDistinctDuration {
+                column: chunk.column(column),
+                fsp,
+            },
             Self::FinalCount { column, unsigned } => AggInputMode::FinalCount {
                 column: chunk.column(column),
                 unsigned,
@@ -306,6 +353,39 @@ impl AggInputMode<ColumnRead<'_>> {
                     .map(|values| values[row])
                     .unwrap_or_else(|| (!column.is_null(row)).then(|| column.get_int64(row)));
                 state.update_count_distinct_int_fast(value)
+            }
+            Self::CountDistinctString { column, collation } => {
+                if column.is_null(row) {
+                    return Some(0);
+                }
+                let value = column.get_bytes(row);
+                let bytes = value.as_ref();
+                state.update_count_distinct_fast(collation.key(bytes), true, || {
+                    Datum::Bytes(bytes.to_vec())
+                })
+            }
+            Self::CountDistinctDecimal(column) => {
+                if column.is_null(row) {
+                    return Some(0);
+                }
+                let value = column.get_my_decimal(row);
+                let Ok(key) = value.to_hash_key() else {
+                    return None;
+                };
+                state.update_count_distinct_fast(key.into_vec(), true, || {
+                    Datum::Decimal(tidb_datatype::Decimal::from_my_decimal(&value))
+                })
+            }
+            Self::CountDistinctDuration { column, fsp } => {
+                let value = integer_data
+                    .map(|values| values[row])
+                    .unwrap_or_else(|| (!column.is_null(row)).then(|| column.get_int64(row)));
+                let Some(value) = value else {
+                    return Some(0);
+                };
+                state.update_count_distinct_fast(value.to_le_bytes().to_vec(), false, || {
+                    Datum::Duration(tidb_datatype::MySqlDuration::from_raw_parts(value, *fsp))
+                })
             }
             Self::FinalCount { column, unsigned } => {
                 let value = integer_data

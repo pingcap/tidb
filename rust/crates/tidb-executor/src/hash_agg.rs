@@ -656,6 +656,46 @@ impl AggState {
         Some(value.map_or(0, |value| set.insert(value)))
     }
 
+    /// Folds a directly read typed value into Go's single-argument
+    /// `COUNT(DISTINCT)` set. The key is prepared by the caller using the
+    /// aggregate's specialized source rule (collation key, MyDecimal hash
+    /// key, or duration bits), and the datum is constructed only when a
+    /// parallel partial worker must retain a value for final set union.
+    fn update_count_distinct_fast(
+        &mut self,
+        key: Vec<u8>,
+        key_memory: bool,
+        make_value: impl FnOnce() -> Datum,
+    ) -> Option<i64> {
+        if !matches!(self.partial, Partial::Count(_)) {
+            return None;
+        }
+        let retained_key = self.distinct_inputs.is_some().then(|| key.clone());
+        let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
+        let key = GoString::from_bytes(key);
+        let seen = self.seen.as_mut()?;
+        if seen.contains(&key) {
+            return Some(0);
+        }
+        let mut delta = seen.insert(key);
+        if key_memory {
+            delta = delta.saturating_add(key_bytes);
+        }
+        let retained_value = self.distinct_inputs.is_some().then(make_value);
+        if let Some(inputs) = &mut self.distinct_inputs {
+            inputs.push(DistinctInput {
+                key: retained_key.expect("parallel DISTINCT retains its key"),
+                value: retained_value,
+                extra: Vec::new(),
+                sort_key: Vec::new(),
+            });
+        }
+        if let Partial::Count(count) = &mut self.partial {
+            *count += 1;
+        }
+        Some(delta)
+    }
+
     /// Go `countPartial4Int.UpdatePartialResult`: a FINAL `COUNT` adds the
     /// partial count it is handed, read straight from its integer column.
     ///
