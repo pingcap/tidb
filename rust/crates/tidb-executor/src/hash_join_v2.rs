@@ -926,17 +926,20 @@ impl ProbeV2 for OuterJoinProbe<'_> {
         let mut inserted = 0;
         let iter = self.row_iter.as_mut().expect("scan row table before init");
         while inserted < remain_cap && !iter.is_end() {
+            let location = iter.current_row_location();
             let address = iter.get_value();
             if !self.ctx.hash_table.is_build_row_matched(address) {
-                self.base.append_build_row_to_cached_build_rows_v1(
-                    &self.ctx,
-                    self.ctx.hash_table,
-                    0,
-                    address,
-                    output,
-                    0,
-                    false,
-                );
+                self.base
+                    .append_build_row_to_cached_build_rows_v1_with_location(
+                        &self.ctx,
+                        self.ctx.hash_table,
+                        0,
+                        address,
+                        Some(location),
+                        output,
+                        0,
+                        false,
+                    );
                 inserted += 1;
             }
             iter.next();
@@ -1048,7 +1051,7 @@ fn collect_outer_join_candidates_mode<
                     as usize;
             let table = ctx.hash_table.sub_table(partition);
             let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-            let (build_row, next, _) = ctx.hash_table.row_bytes_and_next_in_sub_table(
+            let (build_row, next, location) = ctx.hash_table.row_bytes_and_next_in_sub_table(
                 table,
                 partition,
                 address,
@@ -1060,11 +1063,12 @@ fn collect_outer_join_candidates_mode<
                 build_row,
                 ctx.meta,
             ) {
-                base.append_build_row_to_cached_build_rows_v1(
+                base.append_build_row_to_cached_build_rows_v1_with_location(
                     ctx,
                     ctx.hash_table,
                     probe_row,
                     address,
+                    Some(location),
                     output,
                     0,
                     RESIDUAL,

@@ -387,6 +387,10 @@ pub struct BaseJoinProbe {
     offset_and_length_array: Vec<OffsetAndLength>,
     /// Go `rowIndexInfos`, only used when the join has an other condition.
     row_index_infos: Vec<MatchedRowInfo>,
+    /// Decoded locations parallel to [`BaseJoinProbe::row_index_infos`]. Go
+    /// keeps the row pointer in each info; retaining the safe coordinates in
+    /// a side vector gives the same reuse without widening `MatchedRowInfo`.
+    row_index_locations: Vec<Option<BuildRowLocation>>,
     /// Go `selected`, the other-condition verdict per joined row.
     selected: Vec<bool>,
     /// Go `probeCollision`.
@@ -886,6 +890,7 @@ impl BaseJoinProbe {
         self.next_cached_build_row_index = 0;
         if ctx.has_other_condition() {
             self.row_index_infos = Vec::with_capacity(INITIAL_CAPACITY);
+            self.row_index_locations = Vec::with_capacity(INITIAL_CAPACITY);
         }
     }
 
@@ -909,6 +914,7 @@ impl BaseJoinProbe {
         let use_scratch = ctx.has_other_condition();
         if use_scratch {
             self.row_index_infos.clear();
+            self.row_index_locations.clear();
             self.selected.clear();
         }
         (
@@ -1002,8 +1008,31 @@ impl BaseJoinProbe {
         current_column_index_in_row: usize,
         for_other_condition: bool,
     ) {
+        self.append_build_row_to_cached_build_rows_v2_with_location(
+            ctx,
+            rows,
+            row_info,
+            None,
+            chk,
+            current_column_index_in_row,
+            for_other_condition,
+        );
+    }
+
+    /// Location-aware form of Go `appendBuildRowToCachedBuildRowsV2`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_build_row_to_cached_build_rows_v2_with_location<R: BuildRowSource + ?Sized>(
+        &mut self,
+        ctx: &ProbeContext<'_>,
+        rows: &R,
+        row_info: MatchedRowInfo,
+        location: Option<BuildRowLocation>,
+        chk: &mut Chunk,
+        current_column_index_in_row: usize,
+        for_other_condition: bool,
+    ) {
         self.cached_build_rows[self.next_cached_build_row_index] = row_info;
-        self.cached_build_row_locations[self.next_cached_build_row_index] = None;
+        self.cached_build_row_locations[self.next_cached_build_row_index] = location;
         self.next_cached_build_row_index += 1;
         if self.next_cached_build_row_index == BATCH_BUILD_ROW_SIZE {
             self.batch_construct_build_rows(
@@ -1032,7 +1061,32 @@ impl BaseJoinProbe {
         current_column_index_in_row: usize,
         for_other_condition: bool,
     ) {
-        self.append_build_row_to_cached_build_rows_v2(
+        self.append_build_row_to_cached_build_rows_v1_with_location(
+            ctx,
+            rows,
+            probe_row_index,
+            build_row_start,
+            None,
+            chk,
+            current_column_index_in_row,
+            for_other_condition,
+        );
+    }
+
+    /// Location-aware form of Go `appendBuildRowToCachedBuildRowsV1`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_build_row_to_cached_build_rows_v1_with_location<R: BuildRowSource + ?Sized>(
+        &mut self,
+        ctx: &ProbeContext<'_>,
+        rows: &R,
+        probe_row_index: usize,
+        build_row_start: usize,
+        location: Option<BuildRowLocation>,
+        chk: &mut Chunk,
+        current_column_index_in_row: usize,
+        for_other_condition: bool,
+    ) {
+        self.append_build_row_to_cached_build_rows_v2_with_location(
             ctx,
             rows,
             MatchedRowInfo {
@@ -1040,6 +1094,7 @@ impl BaseJoinProbe {
                 build_row_start,
                 build_row_offset: 0,
             },
+            location,
             chk,
             current_column_index_in_row,
             for_other_condition,
@@ -1065,8 +1120,11 @@ impl BaseJoinProbe {
             for_other_condition,
         );
         if for_other_condition {
+            let live = self.next_cached_build_row_index;
             self.row_index_infos
-                .extend_from_slice(&self.cached_build_rows[..self.next_cached_build_row_index]);
+                .extend_from_slice(&self.cached_build_rows[..live]);
+            self.row_index_locations
+                .extend_from_slice(&self.cached_build_row_locations[..live]);
         }
         self.next_cached_build_row_index = 0;
     }
@@ -1451,10 +1509,11 @@ impl BaseJoinProbe {
             for index in 0..self.selected.len() {
                 if self.selected[index] {
                     let info = self.row_index_infos[index];
-                    self.append_build_row_to_cached_build_rows_v2(
+                    self.append_build_row_to_cached_build_rows_v2_with_location(
                         ctx,
                         rows,
                         info,
+                        self.row_index_locations[index],
                         chk,
                         column_count,
                         false,
@@ -1699,6 +1758,11 @@ pub fn new_join_probe(
         right_as_build_side,
         offset_and_length_array: Vec::new(),
         row_index_infos: if ctx.has_other_condition() {
+            Vec::with_capacity(INITIAL_CAPACITY)
+        } else {
+            Vec::new()
+        },
+        row_index_locations: if ctx.has_other_condition() {
             Vec::with_capacity(INITIAL_CAPACITY)
         } else {
             Vec::new()

@@ -170,13 +170,14 @@ impl<'a> BaseSemiJoin<'a> {
                 && self.base.matched_rows_for_current_probe_row() < MAX_MATCHED_ROW_NUM
             {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let (build_row, next, _) = self.ctx.hash_table.row_bytes_and_next_in_sub_table(
-                    table,
-                    partition,
-                    address,
-                    &self.ctx.tag_helper,
-                    hash,
-                );
+                let (build_row, next, location) =
+                    self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                        table,
+                        partition,
+                        address,
+                        &self.ctx.tag_helper,
+                        hash,
+                    );
                 if !self.left_build
                     || !self
                         .ctx
@@ -189,15 +190,17 @@ impl<'a> BaseSemiJoin<'a> {
                         build_row,
                         self.ctx.meta,
                     ) {
-                        self.base.append_build_row_to_cached_build_rows_v1(
-                            &self.ctx,
-                            self.ctx.hash_table,
-                            row,
-                            address,
-                            &mut condition.chunk,
-                            0,
-                            true,
-                        );
+                        self.base
+                            .append_build_row_to_cached_build_rows_v1_with_location(
+                                &self.ctx,
+                                self.ctx.hash_table,
+                                row,
+                                address,
+                                Some(location),
+                                &mut condition.chunk,
+                                0,
+                                true,
+                            );
                         self.base.record_matched_row_for_current_probe_row();
                         remaining -= 1;
                     } else {
@@ -424,17 +427,20 @@ impl<'a> BaseSemiJoin<'a> {
         let mut remaining = output.required_rows() - output.num_rows();
         let rows = self.row_iter.as_mut().expect("scan before init");
         while remaining > 0 && !rows.is_end() {
+            let location = rows.current_row_location();
             let address = rows.get_value();
             if self.ctx.hash_table.is_build_row_matched(address) != self.anti {
-                self.base.append_build_row_to_cached_build_rows_v1(
-                    &self.ctx,
-                    self.ctx.hash_table,
-                    0,
-                    address,
-                    output,
-                    0,
-                    false,
-                );
+                self.base
+                    .append_build_row_to_cached_build_rows_v1_with_location(
+                        &self.ctx,
+                        self.ctx.hash_table,
+                        0,
+                        address,
+                        Some(location),
+                        output,
+                        0,
+                        false,
+                    );
                 remaining -= 1;
             }
             rows.next();

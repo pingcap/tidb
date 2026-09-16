@@ -751,6 +751,19 @@ impl RowIter<'_> {
         self.end_pos
     }
 
+    /// Location of the current row, matching the row pointer Go retains while
+    /// scanning the build table. Callers must only request it before the
+    /// iterator reaches [`RowIter::is_end`].
+    #[must_use]
+    #[inline(always)]
+    pub const fn current_row_location(&self) -> BuildRowLocation {
+        BuildRowLocation {
+            partition: self.current_pos.sub_table_index,
+            segment: self.current_pos.row_segment_index,
+            row: self.current_pos.row_index as usize,
+        }
+    }
+
     /// `getValue`: the address of the row at the current position.
     #[must_use]
     pub fn get_value(&self) -> usize {
