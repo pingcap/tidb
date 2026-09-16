@@ -977,7 +977,7 @@ const (
 
 type memArbitrator struct {
 	*MemArbitrator
-	ctx    *ArbitrationContext
+	ctx    ArbitrationContext
 	killer *sqlkiller.SQLKiller
 	budget struct {
 		smallB *TrackedConcurrentBudget
@@ -998,7 +998,6 @@ type memArbitrator struct {
 	state       struct {
 		sync.Mutex
 		atomic.Int32 // states: the current state of memArbitrator
-		reset        func()
 	}
 	preMaxMem int64
 
@@ -1146,7 +1145,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	smallUsed := max(0, m.smallBudgetUsed())
 
-	if !m.RestartEntryByContext(root, m.ctx) {
+	if !m.RestartEntryByContext(root, &m.ctx) {
 		panic("failed to init mem pool")
 	}
 
@@ -1275,7 +1274,7 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		globalArbitrator.metrics.pools.internal.Add(-1)
 	}
 
-	if !exception {
+	if !exception && maxConsumed > m.poolAllocStats.SmallPoolLimit {
 		m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
 	}
 
@@ -1311,13 +1310,15 @@ func (t *Tracker) InitMemArbitrator(
 	if g == nil || t == nil {
 		return false
 	}
-	if m := t.MemArbitrator; m != nil {
-		m.reset(true, 0)
-		t.MemArbitrator = nil
+	if t.MemArbitrator != nil {
+		t.MemArbitrator.reset(true, 0)
+		*t.MemArbitrator = memArbitrator{}
+	} else {
+		t.MemArbitrator = &memArbitrator{}
 	}
-
+	m := t.MemArbitrator
 	uid := t.SessionID.Load()
-	m := &memArbitrator{
+	*m = memArbitrator{
 		MemArbitrator: g,
 		uid:           uid,
 		killer:        killer,
@@ -1326,12 +1327,12 @@ func (t *Tracker) InitMemArbitrator(
 		isInternal:    isInternal,
 	}
 	t.MemArbitrator = m
-	m.ctx = NewArbitrationContext(
-		m,
-		memPriority,
-		waitAverse,
-		true,
-	)
+	m.ctx = ArbitrationContext{
+		arbitrateHelper: m,
+		memPriority:     memPriority,
+		waitAverse:      waitAverse,
+		preferPrivilege: true,
+	}
 
 	if explicitReserveSize == 0 && digestID != InvalidDigestID {
 		if maxMem, found := g.GetDigestProfileCache(digestID, g.approxUnixTimeSec()); found {

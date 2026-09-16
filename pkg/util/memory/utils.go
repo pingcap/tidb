@@ -16,11 +16,13 @@ package memory
 
 import (
 	"container/list"
+	"encoding/binary"
 	"math/bits"
 	"runtime"
 	"runtime/metrics"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/cpu"
 )
@@ -183,24 +185,28 @@ func NewDigestIDBuilder() DigestIDBuilder {
 	return DigestIDBuilder{hash: initHashKey}
 }
 
-// AddString adds a length-prefixed string component to the digest profile ID.
+func (b *DigestIDBuilder) addUint64(value uint64) {
+	b.hash = b.hash*prime64 ^ value
+}
+
 func (b *DigestIDBuilder) AddString(value string) {
 	b.addUint64(uint64(len(value)))
-	for i := range len(value) {
-		b.addByte(value[i])
-	}
-}
 
-func (b *DigestIDBuilder) addUint64(value uint64) {
-	for range 8 {
-		b.addByte(byte(value))
-		value >>= 8
+	for len(value) >= 8 {
+		v := binary.LittleEndian.Uint64(
+			unsafe.Slice(unsafe.StringData(value), 8),
+		)
+		b.addUint64(v)
+		value = value[8:]
 	}
-}
 
-func (b *DigestIDBuilder) addByte(value byte) {
-	b.hash *= prime64
-	b.hash ^= uint64(value)
+	if len(value) > 0 {
+		var tail uint64
+		for i := range len(value) {
+			tail |= uint64(value[i]) << (8 * i)
+		}
+		b.addUint64(tail)
+	}
 }
 
 // Sum64 returns the digest profile ID.

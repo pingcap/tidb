@@ -949,9 +949,8 @@ type wrapTimeMaxval struct {
 }
 
 type wrapTimeSizeQuota struct {
-	ts    atomic.Int64
-	size  atomic.Int64
-	quota atomic.Int64
+	ts   atomic.Int64
+	size atomic.Int64
 }
 
 type statisticsTimedMapElement struct {
@@ -1129,6 +1128,10 @@ func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, utimeSec int64) {
 	const maxNum = int64(len(m.buffer.timedMap))
 	const maxDur = maxNum - defRedundancy
 
+	if m.workMode() != ArbitratorModePriority {
+		return
+	}
+
 	tsAlign := utimeSec / defUpdateProfileTimeAlignSec
 	tar := &m.buffer.timedMap[tsAlign%maxNum]
 
@@ -1137,6 +1140,7 @@ func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, utimeSec int64) {
 
 		if oriTs = tar.ts.Load(); oriTs < tsAlign && oriTs != 0 {
 			tar.wrapTimeSizeQuota = wrapTimeSizeQuota{}
+			tar.wrapTimeSizeQuota.size.Store(-1)
 		}
 
 		tar.Unlock()
@@ -1166,7 +1170,7 @@ func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, utimeSec int64) {
 				d := &m.buffer.timedMap[(maxNum+tsAlign-i)%maxNum]
 
 				if ts := d.ts.Load(); ts > tsAlign-maxDur && ts <= tsAlign {
-					memConsumed = max(memConsumed, d.size.Load())
+					memConsumed = max(memConsumed, d.size.Load(), 0)
 				}
 			}
 			if updateSize && m.bufferSize() != memConsumed {
@@ -1183,6 +1187,7 @@ func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, utimeSec int64) {
 
 		if v := d.ts.Load(); v < tsAlign+1 && v != 0 {
 			d.wrapTimeSizeQuota = wrapTimeSizeQuota{}
+			d.wrapTimeSizeQuota.size.Store(-1)
 		}
 
 		d.Unlock()
@@ -1203,16 +1208,16 @@ func (m *MemArbitrator) reclaimHeap() {
 }
 
 // ResetRootPoolByID resets the root pool by ID and analyze the memory consumption info
-func (m *MemArbitrator) ResetRootPoolByID(uid uint64, maxMemConsumed int64, tune bool) {
+func (m *MemArbitrator) ResetRootPoolByID(uid uint64, maxConsumed int64, tune bool) {
 	entry := m.getRootPoolEntry(uid)
 	if entry == nil {
 		return
 	}
 
 	if tune {
-		if maxMemConsumed > m.poolAllocStats.SmallPoolLimit {
+		if maxConsumed > m.poolAllocStats.SmallPoolLimit {
 			m.recordMemConsumed(
-				maxMemConsumed,
+				maxConsumed,
 				m.approxUnixTimeSec())
 		}
 	}
@@ -2624,9 +2629,9 @@ func (m *MemArbitrator) updateTrackedHeapStats() {
 			}
 			return true
 		})
-		if m.bufferSize() < maxHeapUsed {
-			m.tryToUpdateBuffer(maxHeapUsed, m.approxUnixTimeSec())
-		}
+		m.tryToUpdateBuffer(maxHeapUsed, m.approxUnixTimeSec())
+	} else {
+		m.tryToUpdateBuffer(0, m.approxUnixTimeSec())
 	}
 
 	totalTrackedHeap += min(m.awaitFreePoolCap(), m.awaitFreePoolUsed().trackedHeap)
@@ -3044,7 +3049,6 @@ type ArbitrateHelper interface {
 
 // ArbitrationContext represents the context & properties of the root pool which is accessible for the global mem-arbitrator
 type ArbitrationContext struct {
-	id              uint64
 	arbitrateHelper ArbitrateHelper
 	memPriority     ArbitrationPriority
 	stopped         atomic.Bool
