@@ -33,6 +33,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPreparedPlanCacheRenameCreateDropOldName(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists prepared_rename")
+	defer tk.MustExec("drop database if exists prepared_rename")
+	tk.MustExec("create database prepared_rename")
+	tk.MustExec("use prepared_rename")
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("create table t (id int, c int)")
+	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("prepare s from 'select * from t where id = ?'")
+	tk.MustExec("set @a = 1")
+	tk.MustQuery("execute s using @a").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("rename table t to bak")
+	tk.MustExec("create table t (id int)")
+	tk.MustQuery("execute s using @a").Check(testkit.Rows())
+
+	tk.MustExec("drop table bak")
+	tk.MustQuery("execute s using @a").Check(testkit.Rows())
+}
+
 func TestPointGetPreparedPlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
