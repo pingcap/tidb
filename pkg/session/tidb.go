@@ -247,11 +247,8 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		if checkConnectionAlive {
 			sessVars.SQLKiller.CheckConnectionAlive()
 		}
-		// Honor a pending timeout before commit, even if context cancellation has not arrived.
-		// Starting commit here could make its outcome undetermined.
-		//
-		// Handle other signals only for connection-liveness checks; executors such as
-		// BRIE already report interruptions from Next.
+		// Honor timeout signals before commit, even if the context is not yet canceled.
+		// Leave other signals to executors unless a connection check is needed.
 		if checkConnectionAlive || sessVars.SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded {
 			meetsErr = handlePendingSQLKillerSignal(sessVars)
 		}
