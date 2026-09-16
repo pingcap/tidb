@@ -138,6 +138,13 @@ func TestImportQueryStorageOptions(t *testing.T) {
 		require.Equal(t, uri != "", controller.globalSortStore != nil)
 		controller.Close()
 	}
+	for _, source := range []string{"s3://source/%zz", "unsupported://source/file"} {
+		controller := &LoadDataController{Plan: &Plan{CloudStorageURI: "noop://sort", Path: source}}
+		require.Error(t, controller.InitDataStore(ctx))
+		require.Nil(t, controller.globalSortStore)
+		require.Nil(t, controller.dataStore)
+		controller.Close()
+	}
 }
 
 func TestPlanUseNewCollate(t *testing.T) {

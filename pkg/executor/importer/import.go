@@ -1288,13 +1288,19 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 }
 
 // InitDataStore initializes the data store.
-func (e *LoadDataController) InitDataStore(ctx context.Context) error {
+func (e *LoadDataController) InitDataStore(ctx context.Context) (err error) {
 	if e.IsGlobalSort() {
 		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
 		if err3 != nil {
 			return err3
 		}
 		e.globalSortStore = store
+		defer func() {
+			if err != nil {
+				store.Close()
+				e.globalSortStore = nil
+			}
+		}()
 	}
 
 	if e.Path == "" {
