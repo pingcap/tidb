@@ -34,6 +34,7 @@ go_test(
     shard_count = 6,
     deps = [
         ":session",
+        "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
