@@ -2060,8 +2060,8 @@ github.com/lestrrat-go/jwx/v2 v2.0.21 h1:jAPKupy4uHgrHFEdjVjNkUgoBKtVDgrQPB/h55F
 github.com/lestrrat-go/jwx/v2 v2.0.21/go.mod h1:09mLW8zto6bWL9GbwnqAli+ArLf+5M33QLQPDggkUWM=
 github.com/lestrrat-go/option v1.0.1 h1:oAzP2fvZGQKWkvHa1/SAcFolBEca1oN+mQ7eooNBEYU=
 github.com/lestrrat-go/option v1.0.1/go.mod h1:5ZHFbivi4xwXxhxY9XHDe2FHo6/Z7WWmtT7T5nBBp3I=
-github.com/lhy1024/client-go/v2 v2.0.0-20260916095911-2f15d0fdb9cd h1:o9LHs+M4cfR0eTRFVtY1Jo+GlPxOxO3fNfj1ozBjOXM=
-github.com/lhy1024/client-go/v2 v2.0.0-20260916095911-2f15d0fdb9cd/go.mod h1:4pMn4TwlKD9CIiRXT3d6d+iNVf3PPBoxYw/LSnYmS9g=
+github.com/lhy1024/client-go/v2 v2.0.0-20260916100946-de2087b11ab0 h1:cd5ofi3ZLn3TGrL2I11nVhIxQZ3QIB8Rbb4FNdatSXE=
+github.com/lhy1024/client-go/v2 v2.0.0-20260916100946-de2087b11ab0/go.mod h1:4pMn4TwlKD9CIiRXT3d6d+iNVf3PPBoxYw/LSnYmS9g=
 github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0/go.mod h1:zJYVVT2jmtg6P3p1VtQj7WsuWi/y4VnjVBn7F8KPB3I=
 github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a h1:N9zuLhTvBSRt0gWSiJswwQ2HqDmtX/ZCDJURnKUt1Ik=
 github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a/go.mod h1:JKx41uQRwqlTZabZc+kILPrO/3jlKnQ2Z8b7YiVw5cE=
