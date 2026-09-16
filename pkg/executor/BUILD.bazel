@@ -502,6 +502,7 @@ go_test(
         "//pkg/session/sessionapi",
         "//pkg/session/sessmgr",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/slowlogrule",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",

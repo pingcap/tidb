@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1964,6 +1966,34 @@ func TestStatementRUWriteLifecycle(t *testing.T) {
 		checkWork("update ru_noncluster set v=v", 130)
 		checkWork("delete from ru_noncluster", 130)
 	})
+}
+
+func TestLastQueryInfoRUV2(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_last_query_info (id int primary key, v int)")
+	tk.MustExec("insert into ru_last_query_info values (1, 2), (2, 3), (3, 4)")
+	const sql = "select * from ru_last_query_info where id > 0 order by id"
+	for _, mode := range []string{config.RUReportModeResult, config.RUReportModeFull} {
+		t.Run(mode, func(t *testing.T) {
+			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
+			explainRows := tk.MustQuery("explain analyze format='ru' " + sql).Rows()
+			require.NotEmpty(t, explainRows)
+			require.Len(t, explainRows[0], 7)
+			require.Equal(t, "100.00%", explainRows[0][5])
+			explainRU := explainRows[0][4].(string)
+
+			tk.MustQuery(sql).Check(testkit.Rows("1 2", "2 3", "3 4"))
+			rows := tk.MustQuery("select @@tidb_last_query_info").Rows()
+			var info sessionstates.QueryInfo
+			require.NoError(t, json.Unmarshal([]byte(rows[0][0].(string)), &info))
+			require.Positive(t, info.RUV2Consumption)
+			// EXPLAIN displays RU with two decimal places.
+			require.Equal(t, explainRU, fmt.Sprintf("%.2f", info.RUV2Consumption))
+		})
+	}
 }
 
 func TestStatementRUReportModesSQL(t *testing.T) {
