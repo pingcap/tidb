@@ -172,6 +172,10 @@ pub struct RowTableSegment {
     pub valid_join_key_pos: Vec<usize>,
     tagged_bits: u8,
     base_address: usize,
+    /// Native next-link cache populated while the merged hash table is built.
+    /// The packed pointer bytes remain authoritative for spill and layout
+    /// compatibility; this cache avoids decoding those bytes on every probe.
+    next_row_addresses: Vec<usize>,
     used_flags: RowUsedFlags,
 }
 
@@ -232,6 +236,7 @@ impl RowTableSegment {
     /// No bucket may retain a segment address until this ownership transfer.
     pub(crate) fn bind_address(&mut self, base_address: usize) {
         self.base_address = base_address;
+        self.next_row_addresses.clear();
         self.init_tagged_bits();
     }
 
@@ -242,6 +247,7 @@ impl RowTableSegment {
         ret += (self.hash_values.capacity() * UINT64_LEN) as i64;
         ret += (self.row_start_offset.capacity() * UINT64_LEN) as i64;
         ret += (self.valid_join_key_pos.capacity() * INT_LEN) as i64;
+        ret += (self.next_row_addresses.capacity() * SIZE_OF_UINTPTR) as i64;
         ret += self.used_flags.0.len() as i64 * size_of::<AtomicBool>() as i64;
         ret
     }
@@ -308,6 +314,23 @@ impl RowTableSegment {
     pub fn set_next_row_address(&mut self, row_offset: usize, next_row_address: usize) {
         self.raw_data[row_offset..row_offset + SIZE_OF_NEXT_PTR]
             .copy_from_slice(&(next_row_address as u64).to_le_bytes());
+        // Callers that only provide a byte offset (including layout tests) do
+        // not establish the row-indexed cache. The hash-table linker uses the
+        // index-aware method below on the hot path.
+        self.next_row_addresses.clear();
+    }
+
+    /// Writes a chain link and records its row-indexed native form.
+    #[inline(always)]
+    pub(crate) fn set_next_row_address_at(&mut self, row: usize, next_row_address: usize) {
+        let row_offset = self.row_start_offset[row] as usize;
+        self.raw_data[row_offset..row_offset + SIZE_OF_NEXT_PTR]
+            .copy_from_slice(&(next_row_address as u64).to_le_bytes());
+        if self.next_row_addresses.len() != self.row_start_offset.len() {
+            self.next_row_addresses
+                .resize(self.row_start_offset.len(), 0);
+        }
+        self.next_row_addresses[row] = next_row_address;
     }
 
     /// Reads the raw tagged address stored in this row's `next_row_ptr`.
@@ -320,6 +343,20 @@ impl RowTableSegment {
                 .expect("build row next pointer"),
         ) as usize
     }
+
+    /// Reads a row's next link, using the native cache when the segment has
+    /// already been linked and falling back to the packed bytes otherwise.
+    #[must_use]
+    #[inline(always)]
+    pub(crate) fn next_row_address_at(&self, row: usize, hash_tag_value: u64) -> usize {
+        let raw = if self.next_row_addresses.len() == self.row_start_offset.len() {
+            self.next_row_addresses[row]
+        } else {
+            let row_offset = self.row_start_offset[row] as usize;
+            self.raw_next_row_address(row_offset)
+        };
+        next_row_address_with_tag(raw, hash_tag_value)
+    }
 }
 
 /// Reads the next row in a chain, honoring the source's tag short-circuit.
@@ -329,7 +366,13 @@ impl RowTableSegment {
 #[must_use]
 #[inline(always)]
 pub fn next_row_address(raw: usize, tag_helper: &TagPtrHelper, hash_value: u64) -> usize {
-    let hash_tag_value = tag_helper.get_tagged_value(hash_value);
+    next_row_address_with_tag(raw, tag_helper.get_tagged_value(hash_value))
+}
+
+/// Reads a chain link after the caller has already derived the probe tag.
+#[must_use]
+#[inline(always)]
+pub fn next_row_address_with_tag(raw: usize, hash_tag_value: u64) -> usize {
     if (raw as u64) & hash_tag_value != hash_tag_value {
         return 0;
     }

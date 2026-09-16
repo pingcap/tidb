@@ -969,18 +969,19 @@ impl BaseJoinProbe {
             let probe_row = self.current_probe_row;
             let mut header = self.matched_rows_headers[probe_row];
             let hash = self.matched_rows_hash_value[probe_row];
+            let hash_tag_value = ctx.tag_helper.get_tagged_value(hash);
             let partition = generate_partition_index(hash, ctx.partition_mask_offset) as usize;
             let key = &self.serialized_keys[probe_row];
             let table = ctx.hash_table.sub_table(partition);
             while header != 0 && self.next_cached_build_row_index < end {
                 let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-                let (row, next, location) = ctx.hash_table.row_bytes_and_next_in_sub_table(
-                    table,
-                    partition,
-                    address,
-                    &ctx.tag_helper,
-                    hash,
-                );
+                let (row, next, location) =
+                    ctx.hash_table.row_bytes_and_next_in_sub_table_with_tag(
+                        table,
+                        partition,
+                        address,
+                        hash_tag_value,
+                    );
                 if is_key_matched_mode::<INTEGER_KEY, VARIABLE_KEY>(key, row, ctx.meta) {
                     self.cached_build_rows[self.next_cached_build_row_index] = MatchedRowInfo {
                         probe_row_index: probe_row,

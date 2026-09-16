@@ -159,6 +159,7 @@ impl<'a> BaseSemiJoin<'a> {
             }
             self.base.set_current_probe_row(row);
             let hash = self.base.matched_rows_hash_value()[row];
+            let hash_tag_value = self.ctx.tag_helper.get_tagged_value(hash);
             let partition = crate::row_table_builder::generate_partition_index(
                 hash,
                 self.ctx.partition_mask_offset,
@@ -170,13 +171,14 @@ impl<'a> BaseSemiJoin<'a> {
                 && self.base.matched_rows_for_current_probe_row() < MAX_MATCHED_ROW_NUM
             {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let (build_row, next, location) =
-                    self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                let (build_row, next, location) = self
+                    .ctx
+                    .hash_table
+                    .row_bytes_and_next_in_sub_table_with_tag(
                         table,
                         partition,
                         address,
-                        &self.ctx.tag_helper,
-                        hash,
+                        hash_tag_value,
                     );
                 if !self.left_build
                     || !self
@@ -258,6 +260,7 @@ impl<'a> BaseSemiJoin<'a> {
         while !self.base.is_current_chunk_probe_done() {
             let row = self.base.current_probe_row();
             let hash = self.base.matched_rows_hash_value()[row];
+            let hash_tag_value = self.ctx.tag_helper.get_tagged_value(hash);
             let partition = crate::row_table_builder::generate_partition_index(
                 hash,
                 self.ctx.partition_mask_offset,
@@ -266,13 +269,14 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let (build_row, next, location) =
-                    self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                let (build_row, next, location) = self
+                    .ctx
+                    .hash_table
+                    .row_bytes_and_next_in_sub_table_with_tag(
                         table,
                         partition,
                         address,
-                        &self.ctx.tag_helper,
-                        hash,
+                        hash_tag_value,
                     );
                 if !self
                     .ctx
@@ -319,6 +323,7 @@ impl<'a> BaseSemiJoin<'a> {
         while remaining > 0 && !self.base.is_current_chunk_probe_done() {
             let row = self.base.current_probe_row();
             let hash = self.base.matched_rows_hash_value()[row];
+            let hash_tag_value = self.ctx.tag_helper.get_tagged_value(hash);
             let partition = crate::row_table_builder::generate_partition_index(
                 hash,
                 self.ctx.partition_mask_offset,
@@ -327,13 +332,14 @@ impl<'a> BaseSemiJoin<'a> {
             let mut header = self.base.matched_rows_headers()[row];
             while header != 0 {
                 let address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
-                let (build_row, next, _location) =
-                    self.ctx.hash_table.row_bytes_and_next_in_sub_table(
+                let (build_row, next, _location) = self
+                    .ctx
+                    .hash_table
+                    .row_bytes_and_next_in_sub_table_with_tag(
                         table,
                         partition,
                         address,
-                        &self.ctx.tag_helper,
-                        hash,
+                        hash_tag_value,
                     );
                 if is_key_matched(
                     self.ctx.meta.key_mode,

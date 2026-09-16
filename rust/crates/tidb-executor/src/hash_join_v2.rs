@@ -1055,18 +1055,19 @@ fn collect_outer_join_candidates_mode<
             base.set_current_probe_row(probe_row + 1);
         } else {
             let hash = base.matched_rows_hash_value()[probe_row];
+            let hash_tag_value = ctx.tag_helper.get_tagged_value(hash);
             let partition =
                 crate::row_table_builder::generate_partition_index(hash, ctx.partition_mask_offset)
                     as usize;
             let table = ctx.hash_table.sub_table(partition);
             let address = crate::hash_table_v2::row_address_of(&ctx.tag_helper, header);
-            let (build_row, next, location) = ctx.hash_table.row_bytes_and_next_in_sub_table(
-                table,
-                partition,
-                address,
-                &ctx.tag_helper,
-                hash,
-            );
+            let (build_row, next, location) =
+                ctx.hash_table.row_bytes_and_next_in_sub_table_with_tag(
+                    table,
+                    partition,
+                    address,
+                    hash_tag_value,
+                );
             if is_key_matched_mode::<INTEGER_KEY, VARIABLE_KEY>(
                 &base.serialized_keys()[probe_row],
                 build_row,

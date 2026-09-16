@@ -71,7 +71,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::join_row_table::{next_row_address, RowTable, RowTableSegment, SIZE_OF_NEXT_PTR};
+use crate::join_row_table::{RowTable, RowTableSegment};
 use crate::tagged_ptr::TagPtrHelper;
 
 /// Smallest hash table the source ever allocates, `minimalHashTableLen`.
@@ -294,8 +294,7 @@ fn build_one_segment(
         } else {
             slots.update_hash_value(hash_value, row_address, tag_helper)
         };
-        let row_offset = usize::try_from(segment.row_start_offset[index]).expect("row offset");
-        segment.set_next_row_address(row_offset, prev);
+        segment.set_next_row_address_at(index, prev);
     }
 }
 
@@ -572,18 +571,14 @@ impl HashTableV2 {
             .mark_row_used(location.row);
     }
 
-    /// Resolves a row and follows its chain link while the partition-local
-    /// segment is already hot. Go reads both values from one unsafe row
-    /// pointer; returning them together avoids a second helper boundary in
-    /// every candidate walk.
+    /// Hot chain-walk form when the probe has already derived its tag.
     #[inline(always)]
-    pub(crate) fn row_bytes_and_next_in_sub_table<'a>(
+    pub(crate) fn row_bytes_and_next_in_sub_table_with_tag<'a>(
         &self,
         table: &'a SubTable,
         partition: usize,
         address: usize,
-        tag_helper: &TagPtrHelper,
-        hash_value: u64,
+        hash_tag_value: u64,
     ) -> (&'a [u8], usize, BuildRowLocation) {
         let slot = (address >> self.row_offset_bits) - 1;
         let segment_index = slot & self.segment_mask;
@@ -591,14 +586,9 @@ impl HashTableV2 {
         let segment = &table.row_data.segments[segment_index];
         let offset = segment.row_start_offset[row] as usize;
         let row_bytes = &segment.raw_data[offset..];
-        let raw_next = u64::from_le_bytes(
-            row_bytes[..SIZE_OF_NEXT_PTR]
-                .try_into()
-                .expect("build row next pointer"),
-        ) as usize;
         (
             row_bytes,
-            next_row_address(raw_next, tag_helper, hash_value),
+            segment.next_row_address_at(row, hash_tag_value),
             BuildRowLocation {
                 partition,
                 segment: segment_index,
