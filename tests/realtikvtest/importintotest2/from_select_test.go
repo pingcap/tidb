@@ -92,14 +92,26 @@ func (s *mockGCSSuite) TestImportFromSelectColumnList() {
 	s.tk.MustExec("create table src(id int, a varchar(64))")
 	s.tk.MustExec("create table dst(id int auto_increment primary key, a varchar(64), b int default 10, c int)")
 	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
-	s.tk.MustExec(`import into dst(c, a) FROM select * from src order by id`)
-	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 aaaaaa 10 4", "2 bbbbbb 10 5", "3 cccccc 10 6", "4 dddddd 10 7"))
+	if vardef.CloudStorageURI.Load() != "" {
+		s.ErrorContains(s.tk.ExecToErr(`import into dst(c, a) FROM select * from src order by id`), "does not support ORDER BY")
+		s.tk.MustExec(`import into dst(c, a) FROM select * from src`)
+		// Generated IDs need not follow source order without ORDER BY.
+		s.tk.MustQuery("select c,a,b from dst order by c").Check(testkit.Rows("4 aaaaaa 10", "5 bbbbbb 10", "6 cccccc 10", "7 dddddd 10"))
+		s.tk.MustQuery("select count(distinct id),min(id)>0 from dst").Check(testkit.Rows("4 1"))
+	} else {
+		s.tk.MustExec(`import into dst(c, a) FROM select * from src order by id`)
+		s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 aaaaaa 10 4", "2 bbbbbb 10 5", "3 cccccc 10 6", "4 dddddd 10 7"))
+	}
 
 	s.tk.MustExec("truncate table dst")
 	s.tk.MustExec("create table src2(id int, a varchar(64))")
 	s.tk.MustExec("insert into src2 values(4, 'four'), (5, 'five')")
-	s.tk.MustExec(`import into dst(c, a) FROM select y.id, y.a from src x join src2 y on x.id = y.id order by y.id`)
-	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 four 10 4", "2 five 10 5"))
+	if vardef.CloudStorageURI.Load() != "" {
+		s.ErrorContains(s.tk.ExecToErr(`import into dst(c, a) FROM select y.id, y.a from src x join src2 y on x.id = y.id`), "does not support JOIN")
+	} else {
+		s.tk.MustExec(`import into dst(c, a) FROM select y.id, y.a from src x join src2 y on x.id = y.id order by y.id`)
+		s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 four 10 4", "2 five 10 5"))
+	}
 }
 
 func (s *mockGCSSuite) TestWriteAfterImportFromSelect() {
