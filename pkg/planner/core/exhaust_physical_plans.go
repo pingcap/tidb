@@ -613,6 +613,17 @@ func constructIndexMergeJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []base.PhysicalPlan {
+	// An ordered index scan does not guarantee ordered output after HashAgg.
+	// The inner wrappers are unary; inspect them before trusting index order.
+	for inner := innerTask.Plan(); inner != nil; {
+		if _, ok := inner.(*PhysicalHashAgg); ok {
+			return nil
+		}
+		if len(inner.Children()) != 1 {
+			break
+		}
+		inner = inner.Children()[0]
+	}
 	hintExists := false
 	if (outerIdx == 1 && (p.PreferJoinType&h.PreferLeftAsINLMJInner) > 0) || (outerIdx == 0 && (p.PreferJoinType&h.PreferRightAsINLMJInner) > 0) {
 		hintExists = true
