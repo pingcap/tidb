@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -27,8 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -80,12 +83,25 @@ func TestImportFromQueryGlobalSort(t *testing.T) {
 				require.ErrorContains(t, err, "does not support "+unsupported.construct)
 			}
 			tk.MustQuery("select count(*) from mysql.tidb_import_jobs where table_name=?", target).Check(testkit.Rows("0"))
+			var readTS, processTS atomic.Uint64
+			var encodeTasks atomic.Int64
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeSortChunk", func() {
+				encodeTasks.Add(1)
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
+				readTS.Store(p.SCtx().GetSessionVars().SnapshotTS)
+				processTS.Store(tk.Session().ShowProcess().CurTxnStartTS)
+			})
 			rs, err := tk.Exec(fmt.Sprintf("import into %s from (%s) with thread=2", target, query))
 			require.NoError(t, err)
 			if rs != nil {
 				t.Cleanup(func() { require.NoError(t, rs.Close()) })
 			}
 			require.Nil(t, rs)
+			require.EqualValues(t, 2, encodeTasks.Load())
+			require.NotZero(t, readTS.Load())
+			require.Equal(t, readTS.Load(), processTS.Load())
+			require.Equal(t, readTS.Load(), tk.Session().GetSessionVars().LastQueryInfo.StartTS)
 			require.EqualValues(t, 4, tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 			message := tk.Session().GetSessionVars().StmtCtx.GetMessage()
 			tk.MustQuery(fmt.Sprintf("select * from %s order by g is not null,g", target)).Check(testkit.Rows(
@@ -105,6 +121,7 @@ func TestImportFromQueryGlobalSort(t *testing.T) {
 			var meta importinto.TaskMeta
 			require.NoError(t, json.Unmarshal(task.Meta, &meta))
 			require.NotNil(t, meta.Plan.Query)
+			require.Equal(t, readTS.Load(), meta.Plan.Query.ReadTS)
 			require.Contains(t, meta.Plan.Query.SQL, query)
 			require.Nil(t, meta.ChunkMap)
 			require.EqualValues(t, 4, meta.Summary.ImportedRows)

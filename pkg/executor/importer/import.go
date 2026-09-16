@@ -262,6 +262,8 @@ type LoadDataReaderInfo struct {
 // QueryPlan records SQL and its source metadata after tenant privilege checks.
 // The worker optimizes it against the captured source schema.
 type QueryPlan struct {
+	// ReadTS is the submitting SELECT snapshot, reused by every worker attempt.
+	ReadTS    uint64
 	CurrentDB string
 	Timestamp int64
 	Keyspace  string

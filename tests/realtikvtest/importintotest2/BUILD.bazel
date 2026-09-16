@@ -29,6 +29,7 @@ go_test(
         "//pkg/lightning/common",
         "//pkg/parser/ast",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

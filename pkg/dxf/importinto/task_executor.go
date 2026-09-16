@@ -340,7 +340,11 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	if query := s.taskMeta.Plan.Query; query != nil {
 		selected := make(chan importer.QueryChunk, 1)
 		s.tableImporter.SetSelectedChunkCh(selected)
-		chunks = []importer.Chunk{{Timestamp: query.Timestamp}}
+		// Each encode worker consumes chunks from the shared SELECT output channel.
+		chunks = make([]importer.Chunk, concurrency)
+		for i := range chunks {
+			chunks[i].Timestamp = query.Timestamp
+		}
 		eg.Go(func() error {
 			err := s.readQuery(wctx, selected)
 			if err != nil {
@@ -394,6 +398,7 @@ func (s *importStepExecutor) readQuery(
 
 	defer pool.Destroy(resource)
 	se := resource.(sessionctx.Context)
+	// Limit the SELECT to half the subtask memory to leave room for encoding and sort writers.
 	return importer.RunImportQuery(
 		ctx, se, s.taskMeta.Plan.Query,
 		s.GetResource().Mem.Capacity()/2, selected)

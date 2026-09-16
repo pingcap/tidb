@@ -54,7 +54,7 @@ func TestImportQueryEncodeS3(t *testing.T) {
 	previousURI := vardef.CloudStorageURI.Load()
 	vardef.CloudStorageURI.Store(uri)
 	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
-	sql := "import into query_dst from (select g,count(*),sum(v) from query_src group by g) with thread=1"
+	sql := "import into query_dst from (select g,count(*),sum(v) from query_src group by g) with thread=2"
 	ctx := context.Background()
 	nodes, err := tk.Session().Parse(ctx, sql)
 	require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestImportQueryEncodeS3(t *testing.T) {
 	require.NoError(t, err)
 	meta, err := json.Marshal(importinto.TaskMeta{Plan: *plan, Stmt: sql})
 	require.NoError(t, err)
-	task := &proto.Task{TaskBase: proto.TaskBase{ID: 891, Type: proto.ImportInto, Step: proto.ImportStepQuery, RequiredSlots: 1}, Meta: meta}
+	task := &proto.Task{TaskBase: proto.TaskBase{ID: 891, Type: proto.ImportInto, Step: proto.ImportStepQuery, RequiredSlots: 2}, Meta: meta}
 	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
 	param.TaskRuntime = dom.GetRuntime()
 	taskExecutor := importinto.NewImportExecutor(ctx, task, param)
@@ -81,7 +81,7 @@ func TestImportQueryEncodeS3(t *testing.T) {
 	})
 	step, err := factory.GetStepExecutor(task)
 	require.NoError(t, err)
-	execute.SetFrameworkInfo(step, task, &proto.StepResource{CPU: proto.NewAllocatable(1), Mem: proto.NewAllocatable(64 << 20)}, nil, nil)
+	execute.SetFrameworkInfo(step, task, &proto.StepResource{CPU: proto.NewAllocatable(2), Mem: proto.NewAllocatable(64 << 20)}, nil, nil)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/createTableImporterForTest", `return(true)`)
 	require.NoError(t, step.Init(ctx))
 	defer func() { require.NoError(t, step.Cleanup(ctx)) }()

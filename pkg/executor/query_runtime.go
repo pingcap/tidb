@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 )
@@ -59,7 +60,7 @@ func parseImportQuery(sctx sessionctx.Context, sql string) (ast.StmtNode, error)
 	return node, nil
 }
 
-// CaptureImportQuery records the original SQL and source metadata after privilege checks.
+// CaptureImportQuery records the original SQL, source metadata and read TS after privilege checks.
 func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPlan, error) {
 	node, err := parseImportQuery(sctx, sql)
 	if err != nil {
@@ -127,6 +128,14 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 			q.Databases[dbInfo.ID] = dbInfo
 			q.Tables[dbInfo.ID] = append(q.Tables[dbInfo.ID], tblInfo)
 		}
+	}
+	q.ReadTS, err = sessiontxn.GetTxnManager(sctx).GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
+	if pi, ok := sctx.(processinfoSetter); ok {
+		// Publish the lazily activated transaction TS while the submitting session waits for the worker.
+		pi.UpdateProcessInfo()
 	}
 	return q, nil
 }

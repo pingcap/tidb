@@ -64,6 +64,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		tk.MustExec("set sql_mode='" + mode + "'")
 		for _, sql := range queries {
 			t.Run(mode+"/"+sql, func(t *testing.T) {
+				tk.MustExec("begin")
 				captured, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+sql+") with thread=1")
 				require.NoError(t, err)
 				require.Equal(t, "import into unused_target from ("+sql+") with thread=1", captured.SQL)
@@ -117,6 +118,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	}
 	t.Run("source tables", func(t *testing.T) {
 		tk.MustExec("create table query_other(i int)")
+		tk.MustExec("begin")
 		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
 		require.NoError(t, err)
 		require.Len(t, q.Databases, 1)
@@ -162,6 +164,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		}
 	})
 	t.Run("close after open error", func(t *testing.T) {
+		tk.MustExec("begin")
 		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from select i+1 from query_src")
 		require.NoError(t, err)
 		se, err := session.CreateSession4Test(store)
@@ -179,12 +182,15 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.Contains(t, se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(planID).String(), "Concurrency:")
 	})
 	t.Run("submitted table definitions", func(t *testing.T) {
+		tk.MustExec("begin")
 		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from select count(*) from query_src")
 		require.NoError(t, err)
 		data, err := json.Marshal(q)
 		require.NoError(t, err)
 		q = &importer.QueryPlan{}
 		require.NoError(t, json.Unmarshal(data, q))
+		tk.MustExec("commit")
+		tk.MustExec("insert into query_src values (9,90,9)")
 		tk.MustExec("rename table query_src to query_renamed")
 		se, err := session.CreateSession4Test(store)
 		require.NoError(t, err)
@@ -200,6 +206,14 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			}
 		}
 		require.Equal(t, []int64{7}, rows)
+		// Retrying the persisted query must keep the same snapshot.
+		output = make(chan importer.QueryChunk, 1)
+		require.NoError(t, importer.RunImportQuery(context.Background(), se, q, 1<<20, output))
+		close(output)
+		require.Len(t, output, 1)
+		for result := range output {
+			require.EqualValues(t, 7, result.Chk.GetRow(0).GetInt64(0))
+		}
 	})
 }
 
@@ -222,6 +236,7 @@ func TestImportQueryPlanTiFlashOptimization(t *testing.T) {
 	tk.MustExec("set tidb_isolation_read_engines='tiflash'")
 
 	sql := "import into unused_target from select g,count(*),sum(v) from query_flash group by g"
+	tk.MustExec("begin")
 	captured, err := executor.CaptureImportQuery(tk.Session(), sql)
 	require.NoError(t, err)
 	se, err := session.CreateSession4Test(store)

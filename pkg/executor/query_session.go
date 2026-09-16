@@ -104,12 +104,7 @@ func newImportQuerySession(
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	ver, err := sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return nil, nil, err
-	}
-	readTS := ver.Ver
-	is, err := newImportQuerySchema(sctx, q, readTS)
+	is, err := newImportQuerySchema(sctx, q, q.ReadTS)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -128,7 +123,7 @@ func newImportQuerySession(
 	); err != nil {
 		return nil, nil, err
 	}
-	vars.SnapshotTS = readTS
+	vars.SnapshotTS = q.ReadTS
 	vars.SnapshotInfoschema = is
 	vars.StmtCtx.InitFromPBFlagAndTz(q.PushDownFlags, vars.Location())
 	querySession := &importQuerySession{Context: sctx, schema: is}
