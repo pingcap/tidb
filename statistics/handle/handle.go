@@ -127,33 +127,42 @@ type Handle struct {
 	sysProcTracker sessionctx.SysProcTracker
 	// serverIDGetter is used to get server ID for generating auto analyze ID.
 	serverIDGetter func() uint64
-	// tableLocked used to store locked tables
-	tableLocked []int64
+	// tableLocked stores a snapshot of locked table IDs and is accessed lock-free so
+	// periodic control-plane refreshes do not need to hold h.mu across restricted SQL.
+	tableLocked   atomic.Value
+	tableLockedMu sync.Mutex
 
 	InitStatsDone chan struct{}
 }
 
 // GetTableLockedAndClearForTest for unit test only
 func (h *Handle) GetTableLockedAndClearForTest() []int64 {
-	tableLocked := h.tableLocked
-	h.tableLocked = make([]int64, 0)
+	h.tableLockedMu.Lock()
+	defer h.tableLockedMu.Unlock()
+	tableLocked := h.getTableLocked()
+	h.tableLocked.Store([]int64{})
 	return tableLocked
 }
 
 // LoadLockedTables load locked tables from store
-func (h *Handle) LoadLockedTables() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+func (h *Handle) LoadLockedTables() (err error) {
+	h.tableLockedMu.Lock()
+	defer h.tableLockedMu.Unlock()
+	start := time.Now()
+	defer func() {
+		metrics.StatsControlPlaneHistogram.WithLabelValues("load_locked_tables", metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_table_locked")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	h.tableLocked = make([]int64, len(rows))
+	tableLocked := make([]int64, len(rows))
 	for i, row := range rows {
-		h.tableLocked[i] = row.GetInt64(0)
+		tableLocked[i] = row.GetInt64(0)
 	}
+	h.publishLockedTables(tableLocked)
 
 	return nil
 }
@@ -217,7 +226,7 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 		return "", err
 	}
 	// update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated
-	h.tableLocked = tableLocked
+	h.storeLockedTables(tableLocked)
 
 	if len(dupTables) > 0 {
 		tables := dupTables[0]
@@ -338,7 +347,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 		return "", err
 	}
 	// update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated
-	h.tableLocked = tableLocked
+	h.storeLockedTables(tableLocked)
 
 	if len(nonlockedTables) > 0 {
 		tables := nonlockedTables[0]
@@ -365,7 +374,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 
 // IsTableLocked check whether table is locked in handle
 func (h *Handle) IsTableLocked(tableID int64) bool {
-	return isTableLocked(h.tableLocked, tableID)
+	return isTableLocked(h.getTableLocked(), tableID)
 }
 
 // isTableLocked check whether table is locked
@@ -390,6 +399,27 @@ func removeIfTableLocked(tableLocked []int64, tableID int64) (bool, []int64) {
 		tableLocked = append(tableLocked[:idx], tableLocked[idx+1:]...)
 	}
 	return idx > -1, tableLocked
+}
+
+func (h *Handle) getTableLocked() []int64 {
+	tableLocked, ok := h.tableLocked.Load().([]int64)
+	if !ok {
+		return nil
+	}
+	return tableLocked
+}
+
+func (h *Handle) storeLockedTables(tableLocked []int64) {
+	h.tableLockedMu.Lock()
+	defer h.tableLockedMu.Unlock()
+	h.publishLockedTables(tableLocked)
+}
+
+func (h *Handle) publishLockedTables(tableLocked []int64) {
+	snapshot := append([]int64(nil), tableLocked...)
+	h.tableLocked.Store(snapshot)
+	metrics.StatsLockedTableCacheEntriesGauge.Set(float64(len(snapshot)))
+	metrics.StatsLockedTableCacheLastUpdateGauge.Set(float64(time.Now().Unix()))
 }
 
 func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
@@ -483,6 +513,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
+	handle.tableLocked.Store([]int64{})
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
@@ -673,7 +704,7 @@ type GlobalStats struct {
 func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 	physicalID int64, isIndex int, histIDs []int64,
-	tablePartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
+	tablePartitionStats map[int64]*statistics.Table, mergeConcurrency int) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -683,7 +714,7 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	globalStats, err = h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+	globalStats, err = h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats, mergeConcurrency)
 	if err != nil {
 		return
 	}
@@ -722,7 +753,7 @@ func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDe
 func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo,
 	isIndex int, histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
+	allPartitionStats map[int64]*statistics.Table, mergeConcurrency int) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 
 	// initialized the globalStats
@@ -868,7 +899,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
 		wrapper := statistics.NewStatsWrapper(allHg[i], allTopN[i])
-		globalStats.TopN[i], popedTopN, allHg[i], err = mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
+		globalStats.TopN[i], popedTopN, allHg[i], err = mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1, mergeConcurrency)
 		if err != nil {
 			return
 		}
@@ -905,12 +936,11 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 }
 
 func mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
-	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
+	timeZone *time.Location, version int, n uint32, isIndex bool, mergeConcurrency int) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
 		return nil, nil, wrapper.AllHg, nil
 	}
-	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
 	killed := &sc.GetSessionVars().Killed
 	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
@@ -1692,6 +1722,10 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, ana
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
 func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
+	start := time.Now()
+	defer func() {
+		metrics.StatsControlPlaneHistogram.WithLabelValues("save_table_stats_to_storage", metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	}()
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
 	statsVer := uint64(0)
@@ -1868,6 +1902,10 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
 func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (err error) {
+	start := time.Now()
+	defer func() {
+		metrics.StatsControlPlaneHistogram.WithLabelValues("save_stats_to_storage", metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	}()
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
@@ -2715,10 +2753,11 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
+func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) (err error) {
+	start := time.Now()
+	defer func() {
+		metrics.StatsControlPlaneHistogram.WithLabelValues("insert_analyze_job", metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	jobInfo := job.JobInfo
 	const textMaxLength = 65535
@@ -2726,14 +2765,19 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, p
 		jobInfo = jobInfo[:textMaxLength]
 	}
 	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
+	const getJobID = "SELECT LAST_INSERT_ID()"
+	rows, _, err := h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, getJobID)
+	})
 	if err != nil {
 		return err
 	}
-	const getJobID = "SELECT LAST_INSERT_ID()"
-	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, getJobID)
-	if err != nil {
-		return err
+	if len(rows) == 0 {
+		return errors.New("failed to allocate analyze job id")
 	}
 	job.ID = new(uint64)
 	*job.ID = rows[0].GetUint64(0)

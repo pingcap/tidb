@@ -17,9 +17,11 @@ package executor
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -69,6 +71,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 			}
 			AddNewAnalyzeJob(e.ctx, job)
 			StartAnalyzeJob(e.ctx, job)
+			mergeConcurrency := getAnalyzeGlobalStatsMergeConcurrency(e.ctx)
 			mergeStatsErr := func() error {
 				globalOpts := e.opts
 				if e.OptionsMap != nil {
@@ -76,9 +79,11 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						globalOpts = v2Options.FilledOpts
 					}
 				}
+				mergeStart := time.Now()
 				globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema),
 					globalStatsID.tableID, info.isIndex, info.histIDs,
-					tableAllPartitionStats)
+					tableAllPartitionStats, mergeConcurrency)
+				metrics.StatsControlPlaneHistogram.WithLabelValues("merge_partition_stats_to_global_stats", metrics.RetLabel(err)).Observe(time.Since(mergeStart).Seconds())
 				if err != nil {
 					logutil.BgLogger().Error("merge global stats failed",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
@@ -88,6 +93,13 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 					}
 					return err
 				}
+				logutil.Logger(ctx).Info("merge partition stats to global stats completed",
+					zap.String("info", job.JobInfo),
+					zap.Int64("tableID", tableID),
+					zap.Int("isIndex", info.isIndex),
+					zap.Int("histCount", globalStats.Num),
+					zap.Duration("duration", time.Since(mergeStart)),
+				)
 				for i := 0; i < globalStats.Num; i++ {
 					hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
 					if hg == nil {
@@ -95,6 +107,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						continue
 					}
 					// fms for global stats doesn't need to dump to kv.
+					saveStart := time.Now()
 					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID,
 						globalStats.Count,
 						globalStats.ModifyCount,
@@ -109,6 +122,13 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 					if err != nil {
 						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo),
 							zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", tableID))
+					} else {
+						logutil.Logger(ctx).Info("save global-level stats to storage completed",
+							zap.String("info", job.JobInfo),
+							zap.Int64("tableID", tableID),
+							zap.Int64("histID", hg.ID),
+							zap.Duration("duration", time.Since(saveStart)),
+						)
 					}
 					// Dump stats to historical storage.
 					if err1 := recordHistoricalStats(e.ctx, globalStatsID.tableID); err1 != nil {
