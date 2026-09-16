@@ -151,28 +151,26 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		idxNames = append(idxNames, idx.Name.O)
 		idxOffsets = append(idxOffsets, offset)
 	}
-	if len(idxNames) > 0 {
-		greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
-		if err != nil {
-			// For admin check index statement, for speed up and compatibility, doesn't do below checks.
-			if e.checkIndex {
-				return errors.Trace(err)
-			}
-			if greater == admin.IdxCntGreater {
-				realIdxOffset := idxOffsets[idxOffset]
-				err = e.checkTableIndexHandle(ctx, e.indexInfos[realIdxOffset])
-			} else if greater == admin.TblCntGreater {
-				realIdxOffset := idxOffsets[idxOffset]
-				err = e.checkTableRecord(ctx, realIdxOffset)
-			}
+	greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
+	if err != nil {
+		// For admin check index statement, for speed up and compatibility, doesn't do below checks.
+		if e.checkIndex {
 			return errors.Trace(err)
 		}
+		if greater == admin.IdxCntGreater {
+			realIdxOffset := idxOffsets[idxOffset]
+			err = e.checkTableIndexHandle(ctx, e.indexInfos[realIdxOffset])
+		} else if greater == admin.TblCntGreater {
+			realIdxOffset := idxOffsets[idxOffset]
+			err = e.checkTableRecord(ctx, realIdxOffset)
+		}
+		return errors.Trace(err)
 	}
 
 	// The number of table rows is equal to the number of index rows.
 	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
 	if len(e.srcs) == 1 {
-		err := e.checkIndexHandle(ctx, e.srcs[0])
+		err = e.checkIndexHandle(ctx, e.srcs[0])
 		if err == nil && (e.srcs[0].index.MVIndex || e.srcs[0].index.HasCondition()) {
 			err = e.checkTableRecord(ctx, 0)
 		}
