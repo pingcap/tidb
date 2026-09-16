@@ -1803,6 +1803,15 @@ func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
 			},
 		},
 	}
+	// A failed repair must prevent PiTR from reporting success with the stale
+	// allocator. Once the transient failure is gone, retrying can repair it.
+	err = func() error {
+		const fp = "github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn"
+		require.NoError(t, failpoint.Enable(fp, `return("no_retry")`))
+		defer func() { require.NoError(t, failpoint.Disable(fp)) }()
+		return client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace)
+	}()
+	require.ErrorContains(t, err, "mock commit error")
 	require.NoError(t, client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace))
 
 	// After the fix: the service is synced to the persisted value, so the next
