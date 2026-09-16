@@ -62,6 +62,15 @@ func TestMPPTopNScalarSortProjection(t *testing.T) {
 		tk.MustQuery("select s,id from t where a=0 and b=1 order by s collate utf8mb4_general_ci desc,id desc limit 2").Check(testkit.Rows("y 1", "a 3"))
 		tk.MustQuery("select id from t where a=0 and b=1 order by s collate utf8mb4_general_ci,id").Check(testkit.Rows("2", "3", "1"))
 	}
+	// Window output and duplicate source columns must survive TopN output pruning.
+	tk.MustExec("set tidb_isolation_read_engines='tikv'")
+	tk.MustExec("set tidb_enforce_mpp=0")
+	tk.MustExec("create table tw(c1 int)")
+	tk.MustExec("insert into tw values (1),(2)")
+	tk.MustExec("create view vw(c_1,c_2,c_3,c_4,c_5,c_6) as select c1 as c_1,2 as c_2,3 as c_3,null != last_value(22) over(partition by c1 order by c1) as c_4,5 as c_5,c1 as c_6 from tw order by c_1,c_2,c_3,c_4,c_5,c_6 limit 164")
+	tk.MustQuery("select * from vw").Check(testkit.Rows("1 2 3 <nil> 5 1", "2 2 3 <nil> 5 2"))
+	tk.MustQuery("select c_1,c_2,c_3,c_4 from vw").Check(testkit.Rows("1 2 3 <nil>", "2 2 3 <nil>"))
+	tk.MustQuery("select c_1 from vw").Check(testkit.Rows("1", "2"))
 }
 
 func TestMPPJoin(t *testing.T) {
