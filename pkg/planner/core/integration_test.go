@@ -2660,3 +2660,17 @@ from (
     group by t0.c1, t0.c0, t0.c2
 ) as s where ref3`).Check(testkit.Rows())
 }
+
+func TestUnionAllCorrelatedQuantifiedPredicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_union_fd (id bigint)")
+	tk.MustExec("create view v_union_fd as select * from t_union_fd union all select * from t_union_fd")
+	query := "select 1 from v_union_fd as t1 where (t1.id < all (select 1)) in (select t1.id)"
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("explain " + query)
+	tk.MustExec("insert into t_union_fd values (null), (-1), (0), (1), (2)")
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("select t1.id from v_union_fd as t1 where (t1.id <= all (select 1)) in (select t1.id)").Check(testkit.Rows("1", "1"))
+}
