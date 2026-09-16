@@ -2037,11 +2037,16 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 // unionJoinFieldType finds the type which can carry the given types in Union.
 // Note that unionJoinFieldType doesn't handle charset and collation, caller need to handle it by itself.
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
-	// We ignore the pure NULL type.
-	if a.GetType() == mysql.TypeNull {
-		return b
-	} else if b.GetType() == mysql.TypeNull {
-		return a
+	// A pure NULL branch does not change the value type, but makes the union
+	// nullable. Do not rely on branch CASTs mutating the shared result type.
+	if a.GetType() == mysql.TypeNull || b.GetType() == mysql.TypeNull {
+		resultTp := a
+		if a.GetType() == mysql.TypeNull {
+			resultTp = b
+		}
+		resultTp = resultTp.Clone()
+		resultTp.DelFlag(mysql.NotNullFlag)
+		return resultTp
 	}
 	resultTp := types.AggFieldType([]*types.FieldType{a, b})
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.

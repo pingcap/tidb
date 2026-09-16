@@ -49,7 +49,16 @@ func TestUnionStringCastLength(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table union_text(v longtext)")
+	tk.MustQuery("select 2 in (select 5 union select null)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 2 in (select null union select 5)").Check(testkit.Rows("<nil>"))
+	tk.MustExec("create view nullable_union as select 'a' c union all select null")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
+	tk.MustExec("create view nullable_union as select null c union select 'a'")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
 	tk.MustExec("insert into union_text values(repeat('z',1592)),(repeat('界',600)),(null)")
+	tk.MustQuery("select 2 in (select 5 union select null) from union_text").Check(testkit.Rows("<nil>", "<nil>", "<nil>"))
 	short := "select cast('q' as char(255)) as v where false"
 	text := "select v from union_text"
 	numeric := "select cast(10 as double)*cast(10 as double) as v where false"
