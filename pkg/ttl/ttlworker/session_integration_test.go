@@ -478,8 +478,6 @@ func TestTTLJobRUAttribution(t *testing.T) {
 	manager.InfoSchemaCache().Tables[tbl.ID] = tbl
 
 	const jobID = "ttl-ru-job"
-	expectedJobID := ""
-	defer func() { expectedJobID = "" }()
 	globalCounts, globalRefreshes, jobCommits := 0, 0, 0
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest", func(stmt *executor.ExecStmt) {
 		if stmt.Ctx.GetSessionVars() != vars {
@@ -496,8 +494,8 @@ func TestTTLJobRUAttribution(t *testing.T) {
 			globalCounts++
 			return
 		}
-		require.Equal(t, expectedJobID, vars.TTLJobID, sql)
-		if strings.EqualFold(sql, "COMMIT") && vars.TTLJobID == jobID {
+		require.Empty(t, vars.TTLJobID, sql)
+		if strings.EqualFold(sql, "COMMIT") {
 			jobCommits++
 		}
 	})
@@ -512,7 +510,6 @@ func TestTTLJobRUAttribution(t *testing.T) {
 	}
 	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV3TTLTotal))
 
-	expectedJobID = jobID
 	now := se.Now()
 	job, err := manager.LockJob(ctx, se, tbl, now, jobID, false)
 	require.NoError(t, err)
@@ -524,18 +521,17 @@ func TestTTLJobRUAttribution(t *testing.T) {
 	require.NoError(t, taskManager.UpdateHeartBeatForTask(ctx, se, now.Add(time.Minute), task))
 	task.SetResult(nil)
 	require.NoError(t, taskManager.ReportTaskFinished(se, se.Now(), task))
-	// The scheduler passes a job-scoped session when taking over an expired owner.
+	// Taking over an expired owner is also metadata work.
 	takeoverManager := ttlworker.NewJobManager("ttl-ru-takeover", nil, store, nil, nil)
-	job, err = takeoverManager.LockJob(ctx, session.WithJob(se, jobID), tbl, now.Add(time.Hour), "", false)
+	job, err = takeoverManager.LockJob(ctx, se, tbl, now.Add(time.Hour), "", false)
 	require.NoError(t, err)
 	require.Equal(t, 2, globalRefreshes, "takeover also refreshes the global table-status cache")
 	require.NoError(t, job.Finish(se, se.Now(), &ttlworker.TTLSummary{}))
 	require.Equal(t, 1, globalCounts)
 	require.Equal(t, 4, jobCommits, "creation, task claim, takeover and job completion")
-	require.Greater(t, testutil.ToFloat64(rumetrics.RUV3TTLTotal), before)
+	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV3TTLTotal))
 	require.Empty(t, vars.TTLJobID)
 
-	expectedJobID = ""
 	before = testutil.ToFloat64(rumetrics.RUV3TTLTotal)
 	_, err = se.ExecuteSQL(ctx, "select * from mysql.tidb_ttl_job_history")
 	require.NoError(t, err)

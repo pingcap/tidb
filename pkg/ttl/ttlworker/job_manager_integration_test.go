@@ -397,6 +397,7 @@ func TestTriggerTTLJob(t *testing.T) {
 
 	var ruMu sync.Mutex
 	scanJobs, deleteJobs := make(map[string]int), make(map[string]int)
+	var unexpectedJobSQL []string
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest", func(stmt *executor.ExecStmt) {
 		if !stmt.Ctx.GetSessionVars().InRestrictedSQL {
 			return
@@ -408,6 +409,9 @@ func TestTriggerTTLJob(t *testing.T) {
 			scanJobs[stmt.Ctx.GetSessionVars().TTLJobID]++
 		} else if strings.HasPrefix(sql, "DELETE LOW_PRIORITY FROM") {
 			deleteJobs[stmt.Ctx.GetSessionVars().TTLJobID]++
+		} else if stmt.Ctx.GetSessionVars().TTLJobID != "" &&
+			!strings.HasPrefix(sql, "BEGIN ") && sql != "COMMIT" && sql != "ROLLBACK" {
+			unexpectedJobSQL = append(unexpectedJobSQL, sql)
 		}
 	})
 
@@ -431,6 +435,7 @@ func TestTriggerTTLJob(t *testing.T) {
 	require.Positive(t, deleteJobs[tableResult.JobID])
 	require.Zero(t, scanJobs[""])
 	require.Zero(t, deleteJobs[""])
+	require.Empty(t, unexpectedJobSQL)
 }
 
 func TestTriggerTTLJobWithIndexScan(t *testing.T) {

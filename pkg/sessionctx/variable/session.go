@@ -1889,8 +1889,8 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
-	// TTLJobID attributes the current internal SQL to a user TTL job. Empty means
-	// global TTL maintenance; TTL sessions restore it after draining the result.
+	// TTLJobID attributes a user-table scan/delete transaction to a TTL job. Empty means
+	// no scan/delete attribution; TTL sessions restore it after draining the result.
 	TTLJobID string
 
 	// MemArbitrator represents the properties to be controlled by the memory arbitrator.

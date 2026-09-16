@@ -63,7 +63,8 @@ func InitRUV3Metrics() {
 			Namespace: "tidb",
 			Subsystem: "ruv3",
 			Name:      "ttl_ru_total",
-			Help:      "Counter of RU v3 consumption attributable to TTL jobs, included in ru_total. Excludes global TTL maintenance.",
+			Help: "Counter of RU v3 consumption from TTL user-table scans and deletes, including their commits; " +
+				"included in ru_total.",
 		},
 	)
 	RUV3Total = metricscommon.NewCounter(

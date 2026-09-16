@@ -81,8 +81,8 @@ type jobSession struct {
 	jobID string
 }
 
-// WithJob attributes SQL and transaction completion to a concrete TTL job.
-// Use the original session for global maintenance, even inside a job transaction.
+// WithJob attributes user-table scans/deletes and their commits to a concrete TTL job.
+// Use the original session for metadata operations and session setup.
 func WithJob(se Session, jobID string) Session {
 	if previous, ok := se.(*jobSession); ok {
 		se = previous.Session
