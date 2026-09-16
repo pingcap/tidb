@@ -5645,6 +5645,12 @@ ViewCheckOption:
 	{
 		$$ = nil
 	}
+|	"WITH" "CHECK" "OPTION"
+	{
+		// Omitting the CASCADED or LOCAL qualifier is equivalent to CASCADED.
+		// See https://dev.mysql.com/doc/refman/5.7/en/create-view.html
+		$$ = ast.CheckOptionCascaded
+	}
 |	"WITH" "CASCADED" "CHECK" "OPTION"
 	{
 		$$ = ast.CheckOptionCascaded
