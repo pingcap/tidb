@@ -65,6 +65,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{Arc, Mutex};
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DiskError;
+use tidb_chunk::column::Column;
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row::Row;
 use tidb_chunk::row_container::{RowContainer, SpillDiskAction};
@@ -932,8 +933,8 @@ pub(crate) fn row_hash_chunk(
 /// cursor for every key part.
 ///
 /// `None` means that one of the key columns needs the general datum path
-/// (currently hybrid integer and string columns). Callers can then fall back
-/// to [`row_hash_chunk`] without changing the accepted key domain.
+/// (currently hybrid columns). Callers can then fall back to
+/// [`row_hash_chunk`] without changing the accepted key domain.
 pub(crate) fn row_hash_chunk_batched(
     chunk: &Chunk,
     keys: &[EquiKey],
@@ -951,7 +952,12 @@ pub(crate) fn row_hash_chunk_batched(
                 tidb_datatype::FieldTypeCode::Float | tidb_datatype::FieldTypeCode::Double
             ),
             KeyClass::Decimal => is_decimal_cell(field_type),
-            KeyClass::Str(_) => false,
+            // ENUM/SET/BIT are hybrid cells whose comparison representation
+            // depends on their metadata. Plain byte-valued columns already
+            // expose the exact payload used by `key_part`, so they can stay
+            // in the column-major path without materializing a `Datum` per
+            // row.
+            KeyClass::Str(_) => is_raw_string_cell(field_type),
         };
         if !supported {
             return Ok(None);
@@ -972,55 +978,43 @@ pub(crate) fn row_hash_chunk_batched(
         }
     }
 
+    // Go's HashChunkSelected walks one key column at a time. Keep that
+    // column-major order, but split the selected and unselected cases so the
+    // hot row loop does not repeatedly branch through an optional selection
+    // vector or remap a physical index for every key part.
     for key in keys {
         let at = offset(key);
         let field_type = types.get(at).ok_or(KeyError)?;
         let column = chunk.column(at);
-        for row_idx in 0..rows {
-            if !active[row_idx] {
-                continue;
+        if let Some(selection) = selection {
+            for (row_idx, &physical_row) in selection.iter().enumerate() {
+                if !active[row_idx] {
+                    continue;
+                }
+                hash_chunk_key_row(
+                    key,
+                    field_type,
+                    &column,
+                    row_idx,
+                    physical_row,
+                    &mut hashers,
+                    &mut active,
+                )?;
             }
-            let physical_row = selection.map_or(row_idx, |selection| selection[row_idx]);
-            if column.is_null(physical_row) {
-                if key.null_safe {
-                    hashers[row_idx].write(&u64::MAX.to_be_bytes());
-                } else {
-                    active[row_idx] = false;
+        } else {
+            for row_idx in 0..rows {
+                if !active[row_idx] {
+                    continue;
                 }
-                continue;
-            }
-            match key.class {
-                KeyClass::Int => {
-                    hashers[row_idx].write(&16u64.to_be_bytes());
-                    let value = if field_type.is_unsigned() {
-                        i128::from(column.get_uint64(physical_row))
-                    } else {
-                        i128::from(column.get_int64(physical_row))
-                    };
-                    hashers[row_idx].write(&value.to_be_bytes());
-                }
-                KeyClass::Real => {
-                    let value = if field_type.code() == tidb_datatype::FieldTypeCode::Float {
-                        f64::from(column.get_float32(physical_row))
-                    } else {
-                        column.get_float64(physical_row)
-                    };
-                    if value.is_nan() {
-                        active[row_idx] = false;
-                        continue;
-                    }
-                    hashers[row_idx].write(&8u64.to_be_bytes());
-                    hashers[row_idx].write(&(if value == 0.0 { 0.0 } else { value }).to_be_bytes());
-                }
-                KeyClass::Decimal => {
-                    let part = column
-                        .get_my_decimal(physical_row)
-                        .to_hash_key()
-                        .map_err(|_| KeyError)?;
-                    hashers[row_idx].write(&(part.len() as u64).to_be_bytes());
-                    hashers[row_idx].write(&part);
-                }
-                KeyClass::Str(_) => unreachable!("string keys are filtered above"),
+                hash_chunk_key_row(
+                    key,
+                    field_type,
+                    &column,
+                    row_idx,
+                    row_idx,
+                    &mut hashers,
+                    &mut active,
+                )?;
             }
         }
     }
@@ -1033,10 +1027,91 @@ pub(crate) fn row_hash_chunk_batched(
     ))
 }
 
+/// Hash one already-selected physical cell while retaining the comparison
+/// framing used by [`row_hash_chunk`] and [`row_hash`]. The helper is kept
+/// inline so the two selection-specialized loops above compile to the same
+/// straight-line typed reads without duplicating their match arms.
+#[inline(always)]
+fn hash_chunk_key_row(
+    key: &EquiKey,
+    field_type: &FieldType,
+    column: &Column,
+    row_idx: usize,
+    physical_row: usize,
+    hashers: &mut [FastBytesHasher],
+    active: &mut [bool],
+) -> Result<(), KeyError> {
+    let hasher = &mut hashers[row_idx];
+    if column.is_null(physical_row) {
+        if key.null_safe {
+            hasher.write(&u64::MAX.to_be_bytes());
+        } else {
+            active[row_idx] = false;
+        }
+        return Ok(());
+    }
+    match key.class {
+        KeyClass::Int => {
+            hasher.write(&16u64.to_be_bytes());
+            let value = if field_type.is_unsigned() {
+                i128::from(column.get_uint64(physical_row))
+            } else {
+                i128::from(column.get_int64(physical_row))
+            };
+            hasher.write(&value.to_be_bytes());
+        }
+        KeyClass::Real => {
+            let value = if field_type.code() == tidb_datatype::FieldTypeCode::Float {
+                f64::from(column.get_float32(physical_row))
+            } else {
+                column.get_float64(physical_row)
+            };
+            if value.is_nan() {
+                active[row_idx] = false;
+                return Ok(());
+            }
+            hasher.write(&8u64.to_be_bytes());
+            hasher.write(&(if value == 0.0 { 0.0 } else { value }).to_be_bytes());
+        }
+        KeyClass::Decimal => {
+            let part = column
+                .get_my_decimal(physical_row)
+                .to_hash_key()
+                .map_err(|_| KeyError)?;
+            hasher.write(&(part.len() as u64).to_be_bytes());
+            hasher.write(&part);
+        }
+        KeyClass::Str(collation) => {
+            let bytes = column.get_bytes(physical_row);
+            let part = collation.immutable_key(bytes.as_ref());
+            hasher.write(&(part.len() as u64).to_be_bytes());
+            hasher.write(part.as_ref());
+        }
+    }
+    Ok(())
+}
+
 /// Whether a chunk column stores Go `MyDecimal` cells, so a decimal join key
 /// can be read as one instead of through a datum.
 fn is_decimal_cell(field_type: &FieldType) -> bool {
     field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal
+}
+
+/// Plain byte-valued cells use the same payload that [`key_part`] reads from
+/// a materialized datum. Hybrid ENUM/SET/BIT cells are intentionally excluded:
+/// Go hashes their ordinal/name representation through field metadata, which
+/// is not the raw variable-column payload.
+fn is_raw_string_cell(field_type: &FieldType) -> bool {
+    matches!(
+        field_type.code(),
+        tidb_datatype::FieldTypeCode::String
+            | tidb_datatype::FieldTypeCode::Varchar
+            | tidb_datatype::FieldTypeCode::VarString
+            | tidb_datatype::FieldTypeCode::Blob
+            | tidb_datatype::FieldTypeCode::TinyBlob
+            | tidb_datatype::FieldTypeCode::MediumBlob
+            | tidb_datatype::FieldTypeCode::LongBlob
+    )
 }
 
 /// Returns the exact signed comparison-domain value for the one-key integer
