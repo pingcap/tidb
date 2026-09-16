@@ -327,9 +327,9 @@ func TestProcessChunkWith(t *testing.T) {
 	prefixLenForOneRow := uint64(len(keyspace))
 	tk.MustExec("create table t_close(a int, b int, c int, key(b))")
 	for _, tc := range []struct {
-		name                 string
+		name                  string
 		dataClose, indexClose bool
-		writeFailure         bool
+		writeFailure          bool
 	}{
 		{"data close", true, false, false},
 		{"index close", false, true, false},
