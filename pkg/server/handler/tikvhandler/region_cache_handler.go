@@ -25,6 +25,7 @@ import (
 type regionCacheStore interface {
 	GetStoreCacheStatus(storeID uint64) tikv.StoreCacheStatus
 	RefreshStoreCache(ctx context.Context, storeID uint64) tikv.StoreCacheRefreshResult
+	ResetStoreCacheRefresh(storeID uint64)
 	GetClusterID() uint64
 	GetKeyspace() string
 }
@@ -75,6 +76,11 @@ func parseStoreID(req *http.Request) (uint64, error) {
 		return 0, errors.New("store_id is invalid")
 	}
 	return id, nil
+}
+
+func parseReset(req *http.Request) bool {
+	raw := req.URL.Query().Get("reset")
+	return raw == "1" || raw == "true"
 }
 
 func collectRegionCacheStores(primary kv.Storage) []regionCacheStore {
@@ -137,11 +143,15 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	case http.MethodPost:
 		ctx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
 		defer cancel()
+		reset := parseReset(req)
 		for _, st := range stores {
 			if ctx.Err() != nil {
 				out.Ready = false
 				out.Errors = append(out.Errors, ctx.Err().Error())
 				break
+			}
+			if reset {
+				st.ResetStoreCacheRefresh(storeID)
 			}
 			res := st.RefreshStoreCache(ctx, storeID)
 			item := regionCacheStoreResult{
