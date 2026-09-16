@@ -57,6 +57,20 @@ pub(super) enum AggInputMode<T = usize> {
         float32: bool,
         op: IntegerAggOp,
     },
+    String {
+        column: T,
+        collation: tidb_datatype::Collation,
+        is_max: bool,
+    },
+    Time {
+        column: T,
+        is_max: bool,
+    },
+    Duration {
+        column: T,
+        fsp: i64,
+        is_max: bool,
+    },
     Decimal(T),
     AvgDecimal {
         sum: T,
@@ -99,6 +113,12 @@ impl AggInputMode {
             let field_type = expr.static_type()?;
             (field_type.eval_type() == EvalType::Real)
                 .then_some((index, field_type.code() == FieldTypeCode::Float))
+        };
+        let string = |expr: &Expression| {
+            let index = column(expr)?;
+            let field_type = expr.static_type()?;
+            (field_type.eval_type() == EvalType::String && !field_type.is_hybrid())
+                .then_some((index, tidb_expr::collation_derive::collation_of_node(expr)))
         };
         if count_distinct_int(func) {
             return Some(Self::CountDistinctInt(column(func.arg.as_ref()?)?));
@@ -149,6 +169,26 @@ impl AggInputMode {
                             is_max: matches!(func.kind, AggKind::Max),
                         },
                     })
+                } else if let Some((index, collation)) = string(func.arg.as_ref()?) {
+                    Some(Self::String {
+                        column: index,
+                        collation,
+                        is_max: matches!(func.kind, AggKind::Max),
+                    })
+                } else if let Some(index) = column(func.arg.as_ref()?) {
+                    let field_type = func.arg.as_ref()?.static_type()?;
+                    match field_type.eval_type() {
+                        EvalType::Datetime | EvalType::Timestamp => Some(Self::Time {
+                            column: index,
+                            is_max: matches!(func.kind, AggKind::Max),
+                        }),
+                        EvalType::Duration => Some(Self::Duration {
+                            column: index,
+                            fsp: field_type.decimal(),
+                            is_max: matches!(func.kind, AggKind::Max),
+                        }),
+                        _ => Some(Self::Decimal(decimal(func.arg.as_ref()?)?)),
+                    }
                 } else {
                     Some(Self::Decimal(decimal(func.arg.as_ref()?)?))
                 }
@@ -213,6 +253,28 @@ impl AggInputMode {
                 column: chunk.column(column),
                 float32,
                 op,
+            },
+            Self::String {
+                column,
+                collation,
+                is_max,
+            } => AggInputMode::String {
+                column: chunk.column(column),
+                collation,
+                is_max,
+            },
+            Self::Time { column, is_max } => AggInputMode::Time {
+                column: chunk.column(column),
+                is_max,
+            },
+            Self::Duration {
+                column,
+                fsp,
+                is_max,
+            } => AggInputMode::Duration {
+                column: chunk.column(column),
+                fsp,
+                is_max,
             },
             Self::Decimal(index) => AggInputMode::Decimal(chunk.column(index)),
             Self::AvgDecimal { sum, count } => AggInputMode::AvgDecimal {
@@ -301,6 +363,49 @@ impl AggInputMode<ColumnRead<'_>> {
                         .update_real_fast(value, *float32, *is_max)
                         .then_some(0),
                 }
+            }
+            Self::String {
+                column,
+                collation,
+                is_max,
+            } => {
+                if column.is_null(row) {
+                    return Some(0);
+                }
+                state.update_string_fast(column.get_bytes(row).as_ref(), *collation, *is_max)
+            }
+            Self::Time { column, is_max } => {
+                let value = integer_data
+                    .map(|values| values[row])
+                    .unwrap_or_else(|| (!column.is_null(row)).then(|| column.get_int64(row)));
+                let Some(value) = value else {
+                    return Some(0);
+                };
+                state
+                    .update_time_fast(
+                        tidb_datatype::Time::from_go_raw(value as u64)
+                            .expect("chunk Time cell holds a valid packed types.Time"),
+                        *is_max,
+                    )
+                    .then_some(0)
+            }
+            Self::Duration {
+                column,
+                fsp,
+                is_max,
+            } => {
+                let value = integer_data
+                    .map(|values| values[row])
+                    .unwrap_or_else(|| (!column.is_null(row)).then(|| column.get_int64(row)));
+                let Some(value) = value else {
+                    return Some(0);
+                };
+                state
+                    .update_duration_fast(
+                        tidb_datatype::MySqlDuration::from_raw_parts(value, *fsp),
+                        *is_max,
+                    )
+                    .then_some(0)
             }
             Self::Decimal(column) => {
                 if column.is_null(row) {
@@ -463,6 +568,9 @@ pub(super) fn prepare_integer_cache(modes: &[AggInputMode], chunk: &Chunk) -> In
                 AggInputMode::CountDistinctInt(index) => Some(*index),
                 AggInputMode::FinalCount { column, .. } => Some(*column),
                 AggInputMode::Integer { column, .. } => Some(*column),
+                AggInputMode::Time { column, .. } | AggInputMode::Duration { column, .. } => {
+                    Some(*column)
+                }
                 AggInputMode::AvgDecimal {
                     count: Some((index, _)),
                     ..

@@ -826,6 +826,116 @@ impl AggState {
         true
     }
 
+    /// Folds a direct string cell into Go's `maxMin4String` state. The
+    /// collation compares the borrowed column bytes; ownership is copied only
+    /// for the first value or when the extremum changes, just as Go's
+    /// `stringutil.Copy` path does.
+    fn update_string_fast(
+        &mut self,
+        value: &[u8],
+        collation: Collation,
+        is_max: bool,
+    ) -> Option<i64> {
+        if self.seen.is_some() {
+            return None;
+        }
+        let Partial::MaxMin {
+            value: current,
+            is_max: state_is_max,
+        } = &mut self.partial
+        else {
+            return None;
+        };
+        if *state_is_max != is_max {
+            return None;
+        }
+        match current {
+            None => {
+                *current = Some(Datum::Bytes(value.to_vec()));
+                Some(value.len() as i64)
+            }
+            Some(current) => {
+                let Some(current_bytes) = current.as_raw_bytes() else {
+                    return None;
+                };
+                let ordering = collation.compare(value, current_bytes);
+                let improves = (is_max && ordering == Ordering::Greater)
+                    || (!is_max && ordering == Ordering::Less);
+                if improves {
+                    let old_len = current_bytes.len() as i64;
+                    *current = Datum::Bytes(value.to_vec());
+                    Some(value.len() as i64 - old_len)
+                } else {
+                    Some(0)
+                }
+            }
+        }
+    }
+
+    /// Folds a direct DATE/DATETIME/TIMESTAMP cell into Go's `maxMin4Time`
+    /// state. `Time` is copyable, so the hot loop performs only the packed
+    /// decode and comparison and never evaluates the expression tree.
+    fn update_time_fast(&mut self, value: tidb_datatype::Time, is_max: bool) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        let Partial::MaxMin {
+            value: current,
+            is_max: state_is_max,
+        } = &mut self.partial
+        else {
+            return false;
+        };
+        if *state_is_max != is_max {
+            return false;
+        }
+        match current {
+            None => *current = Some(Datum::Time(value)),
+            Some(Datum::Time(current)) => {
+                let ordering = value.compare(*current);
+                let improves = (is_max && ordering == Ordering::Greater)
+                    || (!is_max && ordering == Ordering::Less);
+                if improves {
+                    *current = value;
+                }
+            }
+            Some(_) => return false,
+        }
+        true
+    }
+
+    /// Folds a direct TIME cell into Go's `maxMin4Duration` state using the
+    /// packed nanosecond value and preserving the column's fractional-second
+    /// precision on the stored datum.
+    fn update_duration_fast(&mut self, value: tidb_datatype::MySqlDuration, is_max: bool) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        let Partial::MaxMin {
+            value: current,
+            is_max: state_is_max,
+        } = &mut self.partial
+        else {
+            return false;
+        };
+        if *state_is_max != is_max {
+            return false;
+        }
+        match current {
+            None => *current = Some(Datum::Duration(value)),
+            Some(Datum::Duration(current)) => {
+                let ordering = value.compare(*current);
+                let improves = (is_max && ordering == Ordering::Greater)
+                    || (!is_max && ordering == Ordering::Less);
+                if improves {
+                    *current = value;
+                }
+            }
+            Some(_) => return false,
+        }
+        true
+    }
+
     fn update_count_fast(&mut self, input_is_non_null: bool) -> bool {
         if self.seen.is_some() {
             return false;
