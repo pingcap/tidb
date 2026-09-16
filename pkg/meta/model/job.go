@@ -129,6 +129,9 @@ const (
 	ActionCreateMaterializedView                ActionType = 86
 	ActionDropMaterializedViewLog               ActionType = 87
 	ActionDropMaterializedView                  ActionType = 88
+	ActionAlterMaterializedViewRefresh          ActionType = 89
+	ActionAlterMaterializedViewLogPurge         ActionType = 90
+	ActionAlterMaterializedViewAttributes       ActionType = 91
 
 	// range [200, 256) is reserved for a downstream fork
 )
@@ -218,6 +221,9 @@ var ActionMap = map[ActionType]string{
 	ActionCreateMaterializedView:                "create materialized view",
 	ActionDropMaterializedViewLog:               "drop materialized view log",
 	ActionDropMaterializedView:                  "drop materialized view",
+	ActionAlterMaterializedViewRefresh:          "alter materialized view refresh",
+	ActionAlterMaterializedViewLogPurge:         "alter materialized view log purge",
+	ActionAlterMaterializedViewAttributes:       "alter materialized view attributes",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -471,6 +477,15 @@ type Job struct {
 	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
 	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
 	LastSchemaVersion int64 `json:"last_schema_version"`
+
+	// RU stores the resource units accounted for this DDL job. The calculated RU,
+	// rather than the raw buffered KV byte count, is stored so it stays fixed after
+	// the job finishes even if the accounting weight or formula changes later.
+	// A multi-schema change keeps cumulative RU on its parent Job, not its SubJobs:
+	// parent Job.RU -> SubJob.ToProxyJob -> proxy Job.RU ->
+	// updateParentJobFromProxy -> parent Job.RU. The next SubJob's proxy therefore
+	// starts with the RU accumulated by all preceding SubJobs.
+	RU float64 `json:"ru,omitempty"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -1076,6 +1091,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:             parentJob.Collate,
 		AdminOperator:       parentJob.AdminOperator,
 		ResumeReason:        parentJob.ResumeReason,
+		RU:                  parentJob.RU,
 		TraceInfo:           parentJob.TraceInfo,
 		SQLMode:             parentJob.SQLMode,
 		SessionVars:         parentJob.SessionVars,

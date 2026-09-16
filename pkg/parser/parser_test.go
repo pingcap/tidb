@@ -445,6 +445,8 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		{"ALTER MATERIALIZED VIEW mv REFRESH", true, "ALTER MATERIALIZED VIEW \x60mv\x60 REFRESH"},
 		{"ALTER MATERIALIZED VIEW LOG ON t PURGE, ADD COLUMN (b,c)", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE, ADD COLUMN (\x60b\x60, \x60c\x60)"},
 		{"ALTER MATERIALIZED VIEW LOG ON t PURGE", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE"},
+		{"PURGE MATERIALIZED VIEW LOG ON t", true, "PURGE MATERIALIZED VIEW LOG ON \x60t\x60"},
+		{"PURGE MATERIALIZED VIEW LOG ON test.t", true, "PURGE MATERIALIZED VIEW LOG ON \x60test\x60.\x60t\x60"},
 		{"DROP MATERIALIZED VIEW IF EXISTS mv", true, "DROP MATERIALIZED VIEW IF EXISTS \x60mv\x60"},
 		{"DROP MATERIALIZED VIEW LOG IF EXISTS ON t", true, "DROP MATERIALIZED VIEW LOG IF EXISTS ON \x60t\x60"},
 	}
@@ -454,6 +456,7 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
 		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{},
 		&ast.AlterMaterializedViewLogStmt{}, &ast.AlterMaterializedViewLogStmt{},
+		&ast.PurgeMaterializedViewLogStmt{}, &ast.PurgeMaterializedViewLogStmt{},
 		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
 	}
 	p := parser.New()
@@ -1275,6 +1278,10 @@ AAAAAAAAAAAA5gm5Mg==
 		// for cancel distribution job JOBID
 		{"cancel distribution job", false, ""},
 		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
+
+		// for cancel materialized view log purge job
+		{"cancel materialized view log purge job", false, ""},
+		{"cancel materialized view log purge job 1", true, "CANCEL MATERIALIZED VIEW LOG PURGE JOB 1"},
 
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
@@ -5777,18 +5784,18 @@ type subqueryChecker struct {
 	t    *testing.T
 }
 
-// Enter implements ast.Visitor interface.
-func (sc *subqueryChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (sc *subqueryChecker) Enter(inNode ast.Node) bool {
 	if expr, ok := inNode.(*ast.SubqueryExpr); ok {
 		require.Equal(sc.t, sc.text, expr.Query.Text())
-		return inNode, true
+		return true
 	}
-	return inNode, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (sc *subqueryChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	return inNode, true
+// Leave implements ast.InPlaceVisitor interface.
+func (*subqueryChecker) Leave(ast.Node) bool {
+	return true
 }
 
 func TestSubquery(t *testing.T) {
@@ -5836,7 +5843,7 @@ func TestSubquery(t *testing.T) {
 	for _, tbl := range tests {
 		stmt, err := p.ParseOneStmt(tbl.input, "", "")
 		require.NoError(t, err)
-		stmt.Accept(&subqueryChecker{
+		ast.Walk(stmt, &subqueryChecker{
 			text: tbl.text,
 			t:    t,
 		})
@@ -6710,6 +6717,17 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
 		{"analyze table t with 0.05 ndvrate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE"},
 		{"analyze table t with 0.05 ndvrate 0.00001 samplerate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE, 0.00001 SAMPLERATE"},
+		{"analyze table t with default buckets", true, "ANALYZE TABLE `t` WITH DEFAULT BUCKETS"},
+		{"analyze table t with default topn", true, "ANALYZE TABLE `t` WITH DEFAULT TOPN"},
+		{"analyze table t with default samples", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLES"},
+		{"analyze table t with default samplerate", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLERATE"},
+		{"analyze table t with default samples, 0.1 samplerate", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLES, 0.1 SAMPLERATE"},
+		{"analyze table t with default buckets, default topn, default samples, default samplerate", true, "ANALYZE TABLE `t` WITH DEFAULT BUCKETS, DEFAULT TOPN, DEFAULT SAMPLES, DEFAULT SAMPLERATE"},
+		{"analyze table t with 4 buckets, default topn", true, "ANALYZE TABLE `t` WITH 4 BUCKETS, DEFAULT TOPN"},
+		{"analyze table t partition a with default buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH DEFAULT BUCKETS"},
+		{"analyze table t with default cmsketch width", false, ""},
+		{"analyze table t with default cmsketch depth", false, ""},
+		{"analyze table t with default ndvrate", false, ""},
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}
@@ -7190,8 +7208,8 @@ type windowFrameBoundChecker struct {
 	t      *testing.T
 }
 
-// Enter implements ast.Visitor interface.
-func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) bool {
 	if _, ok := inNode.(*ast.FrameBound); ok {
 		wfc.fb = inNode.(*ast.FrameBound)
 		if wfc.fb.Unit != ast.TimeUnitInvalid {
@@ -7199,11 +7217,11 @@ func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, sk
 			require.False(wfc.t, ok)
 		}
 	}
-	return inNode, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+// Leave implements ast.InPlaceVisitor interface.
+func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) bool {
 	if _, ok := inNode.(*ast.FrameBound); ok {
 		wfc.fb = nil
 	}
@@ -7213,7 +7231,7 @@ func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bo
 		}
 		wfc.unit = wfc.fb.Unit
 	}
-	return inNode, true
+	return true
 }
 
 // For issue #51
@@ -7234,7 +7252,7 @@ func TestVisitFrameBound(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tbl.s, "", "")
 		require.NoError(t, err)
 		checker := windowFrameBoundChecker{t: t}
-		stmt.Accept(&checker)
+		ast.Walk(stmt, &checker)
 		require.Equal(t, tbl.exprRc, checker.exprRc)
 		require.Equal(t, tbl.unit, checker.unit)
 	}
@@ -7483,7 +7501,7 @@ func TestSignedInt64OutOfRange(t *testing.T) {
 // For test only.
 func CleanNodeText(node ast.Node) {
 	var cleaner nodeTextCleaner
-	node.Accept(&cleaner)
+	ast.Walk(node, &cleaner)
 }
 
 // nodeTextCleaner clean the text of a node and it's child node.
@@ -7497,19 +7515,19 @@ func cleanPartition(n ast.Node) {
 		if p.Interval != nil {
 			p.Interval.SetText(nil, "")
 			p.Interval.SetOriginTextPosition(0)
-			p.Interval.IntervalExpr.Expr.Accept(&tmpCleaner)
+			ast.Walk(p.Interval.IntervalExpr.Expr, &tmpCleaner)
 			if p.Interval.FirstRangeEnd != nil {
-				(*p.Interval.FirstRangeEnd).Accept(&tmpCleaner)
+				ast.Walk(*p.Interval.FirstRangeEnd, &tmpCleaner)
 			}
 			if p.Interval.LastRangeEnd != nil {
-				(*p.Interval.LastRangeEnd).Accept(&tmpCleaner)
+				ast.Walk(*p.Interval.LastRangeEnd, &tmpCleaner)
 			}
 		}
 	}
 }
 
-// Enter implements Visitor interface.
-func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Enter(in ast.Node) bool {
 	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	if v, ok := in.(ast.ValueExpr); ok && v != nil {
@@ -7593,12 +7611,12 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	case *ast.PartitionOptions:
 		cleanPartition(node)
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (checker *nodeTextCleaner) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+// Leave implements ast.InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Leave(in ast.Node) bool {
+	return true
 }
 
 // For BRIE
@@ -8095,14 +8113,14 @@ func TestGBKEncoding(t *testing.T) {
 	stmt, _, err := p.ParseSQL(sql)
 	require.NoError(t, err)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.NotEqual(t, "测试表", checker.tblName)
 	require.NotEqual(t, "测试列", checker.colName)
 
 	gbkOpt := parser.CharsetClient("gbk")
 	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	require.NoError(t, err)
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.Equal(t, "测试表", checker.tblName)
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GBK测试用例", checker.expr)
@@ -8143,14 +8161,14 @@ func TestGB18030Encoding(t *testing.T) {
 	stmt, _, err := p.ParseSQL(sql)
 	require.NoError(t, err)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.NotEqual(t, "测试表", checker.tblName)
 	require.NotEqual(t, "测试列", checker.colName)
 
 	gb18030Opt := parser.CharsetClient("gb18030")
 	stmt, _, err = p.ParseSQL(sql, gb18030Opt)
 	require.NoError(t, err)
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.Equal(t, "测试表", checker.tblName)
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GB18030测试用例", checker.expr)
@@ -8187,26 +8205,26 @@ type gbkEncodingChecker struct {
 	expr    string
 }
 
-func (g *gbkEncodingChecker) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+func (g *gbkEncodingChecker) Enter(n ast.Node) bool {
 	if tn, ok := n.(*ast.TableName); ok {
 		g.tblName = tn.Name.O
-		return n, false
+		return false
 	}
 	if cn, ok := n.(*ast.ColumnName); ok {
 		g.colName = cn.Name.O
-		return n, false
+		return false
 	}
 	if c, ok := n.(*ast.ColumnOption); ok {
 		if ve, ok := c.Expr.(ast.ValueExpr); ok {
 			g.expr = ve.GetString()
-			return n, false
+			return false
 		}
 	}
-	return n, false
+	return false
 }
 
-func (g *gbkEncodingChecker) Leave(n ast.Node) (node ast.Node, ok bool) {
-	return n, true
+func (*gbkEncodingChecker) Leave(ast.Node) bool {
+	return true
 }
 
 func TestInsertStatementMemoryAllocation(t *testing.T) {

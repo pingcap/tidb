@@ -129,9 +129,12 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 		sr.selectResp = &tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{
 			{TimeProcessedNs: &i, NumProducedRows: &two, NumIterations: &i},
 		}}
-		update(t, nil, true)
+		update(t, &util.ScanDetail{ProcessedKeysSize: 7}, true)
 		require.Equal(t, snapshot,
 			ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(1234))
+		scan, ok = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopScanDetail(1234)
+		require.True(t, ok)
+		require.Equal(t, int64(12), scan.ProcessedKeysSize)
 	})
 
 	t.Run("malformed response invalidates the complete summary vector", func(t *testing.T) {
@@ -227,14 +230,17 @@ func TestCloseCollectsUnconsumedStatsAfterResponseClose(t *testing.T) {
 	resp := &closeOrderingResponse{
 		mockResponse: &mockResponse{},
 		stats: []*copr.CopRuntimeStats{{
-			CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee"},
+			CopExecDetails: execdetails.CopExecDetails{
+				CalleeAddress: "callee",
+				ScanDetail:    &util.ScanDetail{TotalKeys: 2, ProcessedKeys: 2, ProcessedKeysSize: 20},
+			},
 		}},
 	}
 	sr := &selectResult{
 		resp:       resp,
 		ctx:        ctx.GetDistSQLCtx(),
 		rootPlanID: 1234,
-		copPlanIDs: []int{1234},
+		copPlanIDs: []int{1235},
 		storeType:  kv.TiKV,
 	}
 
@@ -242,10 +248,19 @@ func TestCloseCollectsUnconsumedStatsAfterResponseClose(t *testing.T) {
 	require.True(t, resp.collectedAfterClose)
 	require.NotNil(t, sr.stats)
 	require.True(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsRootStats(1234))
-	snapshot := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(1234)
+	snapshot := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopRowsSnapshot(1235)
 	require.Equal(t, uint64(0), snapshot.ExpectedSummaries)
 	require.Equal(t, uint64(0), snapshot.ObservedSummaries)
 	require.False(t, snapshot.Complete())
+	scan, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopScanDetail(1235)
+	require.True(t, found)
+	require.Equal(t, int64(20), scan.ProcessedKeysSize)
+	_, found = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopScanDetail(1234)
+	require.False(t, found, "request scans belong to the cop root, not the reader")
+	require.NoError(t, sr.close())
+	scan, found = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopScanDetail(1235)
+	require.True(t, found)
+	require.Equal(t, int64(20), scan.ProcessedKeysSize, "Close must collect scans only once")
 }
 
 func TestNewSelRespChannelIter(t *testing.T) {

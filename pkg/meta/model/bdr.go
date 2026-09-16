@@ -42,6 +42,9 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionCreateTable,
 		ActionCreateMaterializedViewLog,
 		ActionCreateMaterializedView,
+		ActionAlterMaterializedViewRefresh,
+		ActionAlterMaterializedViewAttributes,
+		ActionAlterMaterializedViewLogPurge,
 		ActionAddColumn, // add a new column to table if it’s nullable or with default value.
 		ActionAddIndex,  //add non-unique index
 		ActionDropIndex,

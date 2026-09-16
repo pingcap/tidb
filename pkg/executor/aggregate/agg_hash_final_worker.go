@@ -54,6 +54,9 @@ type HashAggFinalWorker struct {
 
 func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
 	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
+	if w.hashStateStats != nil && ret != nil {
+		w.hashStateStats.AddRows(uint64(len(ret.M)))
+	}
 	w.intestDuringFinalWorkerRun(&err)
 	return ret, restoredMem, err
 }
@@ -73,6 +76,12 @@ func (w *HashAggFinalWorker) getPartialInput() (input aggfuncs.AggPartialResultM
 }
 
 func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, input aggfuncs.AggPartialResultMapper) error {
+	if w.hashStateStats != nil {
+		before := len(w.partialResultMap.M)
+		// Publishing output may be skipped after LIMIT; construction is chargeable
+		// as soon as the groups have been admitted to this worker's result map.
+		defer func() { w.hashStateStats.AddRows(uint64(len(w.partialResultMap.M) - before)) }()
+	}
 	// As the w.partialResultMap is empty when we get the first input.
 	// So it's better to directly assign the input to w.partialResultMap
 	if len(w.partialResultMap.M) == 0 {
@@ -157,9 +166,6 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	updateExecTime(w.stats, execStart)
 	if w.spillHelper.isSpilledChunksIOEmpty() {
-		if w.hashStateStats != nil {
-			w.hashStateStats.AddRows(uint64(len(w.partialResultMap.M)))
-		}
 		w.generateResultAndSend(sctx, result)
 	} else {
 		for {
@@ -173,9 +179,6 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 			}
 			if eof {
 				break
-			}
-			if w.hashStateStats != nil {
-				w.hashStateStats.AddRows(uint64(len(w.partialResultMap.M)))
 			}
 			w.generateResultAndSend(sctx, result)
 		}

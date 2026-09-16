@@ -485,7 +485,7 @@ func TestForIssue23387(t *testing.T) {
 	rows, err := ResultSetToStringSlice(context.Background(), se, rs)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	require.Equal(t, "GRANT USAGE ON *.* TO 'quatest'@'%'", rows[0][0])
+	require.Equal(t, "GRANT USAGE ON *.* TO `quatest`@`%`", rows[0][0])
 }
 
 func TestIndexMergeInNewCluster(t *testing.T) {

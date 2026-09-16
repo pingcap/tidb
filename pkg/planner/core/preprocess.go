@@ -145,7 +145,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	if v.PreprocessorReturn == nil {
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
-	node.Node.Accept(&v)
+	ast.Walk(node.Node, &v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
@@ -225,7 +225,7 @@ func (pw *preprocessWith) UpdateCTEConsumerCount(tableName string) {
 	}
 }
 
-// preprocessor is an ast.Visitor that preprocess
+// preprocessor is an ast.InPlaceVisitor that preprocesses
 // ast Nodes parsed from parser.
 type preprocessor struct {
 	ctx    context.Context
@@ -256,7 +256,7 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
-func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (p *preprocessor) Enter(in ast.Node) bool {
 	switch node := in.(type) {
 	case *ast.AdminStmt:
 		p.checkAdminCheckTableGrammar(node)
@@ -268,7 +268,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 		p.checkSelectNoopFuncs(node)
-		// SelectStmt.Accept visits FROM before LockInfo, so one per-SELECT context can collect FROM
+		// ast.Walk visits FROM before LockInfo, so one per-SELECT context can collect FROM
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
 		p.pushLockSelectCtx(node)
 	case *ast.SetOprStmt:
@@ -327,6 +327,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
+	case *ast.AlterMaterializedViewStmt:
+		p.stmtTp = TypeAlter
+		// The view name is not an existing table. Avoid resolving it as a normal table name.
+		p.flag |= inCreateOrDropTable
+	case *ast.AlterMaterializedViewLogStmt:
+		p.stmtTp = TypeAlter
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
@@ -347,7 +353,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkSetOprSelectList(node)
 	case *ast.DeleteTableList:
 		p.stmtTp = TypeDelete
-		return in, true
+		return true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
@@ -358,7 +364,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			EraseLastSemicolon(node.HintedNode)
 			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 		}
-		return in, true
+		return true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
 		if node.OriginNode != nil {
@@ -368,22 +374,22 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 			}
 		}
-		return in, true
+		return true
 	case *ast.RecoverTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
-		return in, true
+		return true
 	case *ast.FlashBackTableStmt:
 		if len(node.NewName) > 0 {
 			p.checkFlashbackTableGrammar(node)
 		}
-		return in, true
+		return true
 	case *ast.FlashBackDatabaseStmt:
 		if len(node.NewName) > 0 {
 			p.checkFlashbackDatabaseGrammar(node)
 		}
-		return in, true
+		return true
 	case *ast.RepairTableStmt:
 		p.stmtTp = TypeRepair
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
@@ -482,7 +488,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	default:
 		p.flag &= ^parentIsJoin
 	}
-	return in, p.err != nil
+	return p.err != nil
 }
 
 // EraseLastSemicolon removes last semicolon of sql.
@@ -632,8 +638,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		})
 	}
 	aliasChecker := &aliasChecker{}
-	originNode.Accept(aliasChecker)
-	hintedNode.Accept(aliasChecker)
+	ast.Walk(originNode, aliasChecker)
+	ast.Walk(hintedNode, aliasChecker)
 	originSQL, _ := bindinfo.NormalizeStmtForBinding(originNode, defaultDB, false)
 	hintedSQL, _ := bindinfo.NormalizeStmtForBinding(hintedNode, defaultDB, false)
 	if originSQL != hintedSQL {
@@ -641,7 +647,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 }
 
-func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (p *preprocessor) Leave(in ast.Node) bool {
 	switch x := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag &= ^inCreateOrDropTable
@@ -651,12 +657,12 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inCreateOrDropTable
 	case *ast.CreateMaterializedViewStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.DropMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
+	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {
 			p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
-			return
+			return false
 		}
 	case *ast.ExplainStmt:
 		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
@@ -760,7 +766,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	}
 
-	return in, p.err == nil
+	return p.err == nil
 }
 
 func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
@@ -2366,7 +2372,7 @@ func (p *preprocessor) skipLockMDL() bool {
 //	   so we have to set `tt1` as alias by aliasChecker.
 type aliasChecker struct{}
 
-func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
+func (*aliasChecker) Enter(in ast.Node) bool {
 	if deleteStmt, ok := in.(*ast.DeleteStmt); ok {
 		// 1. check the tableRefs of deleteStmt to find the alias
 		var aliases []*ast.CIStr
@@ -2393,9 +2399,9 @@ func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
 				}
 			}
 		}
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
 func getTableRefsAlias(tableRefs ast.ResultSetNode) *ast.CIStr {
@@ -2410,6 +2416,6 @@ func getTableRefsAlias(tableRefs ast.ResultSetNode) *ast.CIStr {
 	return nil
 }
 
-func (*aliasChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (*aliasChecker) Leave(ast.Node) bool {
+	return true
 }

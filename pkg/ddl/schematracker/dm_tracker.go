@@ -362,6 +362,16 @@ func (*SchemaTracker) DropMaterializedView(sessionctx.Context, *ast.DropMaterial
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("DROP MATERIALIZED VIEW is not supported in schema tracker")
 }
 
+// AlterMaterializedView rejects MV alteration because the schema tracker does not support MVs.
+func (*SchemaTracker) AlterMaterializedView(sessionctx.Context, *ast.AlterMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW is not supported in schema tracker")
+}
+
+// AlterMaterializedViewLog rejects MV log alteration because the schema tracker does not support MV logs.
+func (*SchemaTracker) AlterMaterializedViewLog(sessionctx.Context, *ast.AlterMaterializedViewLogStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG is not supported in schema tracker")
+}
+
 // DropMaterializedViewLog implements the DDL interface.
 func (d *SchemaTracker) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMaterializedViewLogStmt) error {
 	schemaName := s.Table.Schema

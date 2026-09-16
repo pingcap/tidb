@@ -34,11 +34,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -160,6 +162,63 @@ func (observation *StatementRUOwnerObservationForTest) RecordedSuccessForTest() 
 }
 
 func TestStatementRUCalculationTraversal(t *testing.T) {
+	// A large total from earlier tests can lose precision when measuring increments.
+	oldTotal := metrics.RUV2Total
+	metrics.RUV2Total = prometheus.NewCounter(prometheus.CounterOpts{Name: "test_statement_ru_total"})
+	t.Cleanup(func() {
+		metrics.RUV2Total = oldTotal
+	})
+	t.Run("MemTable and Lock preserve child work", func(t *testing.T) {
+		ctx := mock.NewContext()
+		memTable := physicalop.PhysicalMemTable{}.Init(ctx, &property.StatsInfo{}, 0)
+		projection := physicalop.PhysicalProjection{Exprs: []expression.Expression{&expression.Column{}}}.Init(ctx, &property.StatsInfo{}, 0)
+		lock := physicalop.PhysicalLock{}.Init(ctx, &property.StatsInfo{}, nil)
+		projection.SetChildren(memTable)
+		lock.SetChildren(projection)
+		tree := plannercore.FlattenPhysicalPlan(lock, false).Main
+		for _, rows := range []int{0, 3} {
+			coll := execdetails.NewRuntimeStatsColl(nil)
+			for _, operator := range tree {
+				coll.GetBasicRuntimeStats(operator.Origin.ID(), true).Record(0, rows)
+			}
+			calculator := &statementRUCalculator{}
+			result := calculateStatementRUPlanChildFirst(tree, 0, coll, calculator, 10, ruv2.StmtUnits{}, nil)
+			require.Equal(t, statementRUOperatorComplete, result.state)
+			require.EqualValues(t, rows, result.outputRows)
+			require.Equal(t, ruv2.StmtUnits{CPUWork: float64(rows), OperatorNum: 3}, calculator.units)
+		}
+	})
+	t.Run("DML requires typed processed work", func(t *testing.T) {
+		ctx := mock.NewContext()
+		plan := physicalop.Insert{}.Init(ctx)
+		tree := plannercore.FlattenPhysicalPlan(plan, false).Main
+		for _, tc := range []struct {
+			name  string
+			stats *execdetails.WriteRuntimeStats
+			want  statementRUOperatorState
+		}{
+			{"missing", nil, statementRUOperatorUnsupported},
+			{"zero", &execdetails.WriteRuntimeStats{}, statementRUOperatorComplete},
+			{"processed", &execdetails.WriteRuntimeStats{CPUWork: 6}, statementRUOperatorComplete},
+			{"negative", &execdetails.WriteRuntimeStats{CPUWork: -1}, statementRUOperatorInvalid},
+			{"overflow", &execdetails.WriteRuntimeStats{CPUWork: math.Inf(1)}, statementRUOperatorInvalid},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				coll := execdetails.NewRuntimeStatsColl(nil)
+				if tc.stats != nil {
+					coll.RegisterStats(plan.ID(), tc.stats)
+				}
+				calculator := &statementRUCalculator{}
+				result := calculateStatementRUPlanChildFirst(tree, 0, coll, calculator, 10, ruv2.StmtUnits{}, nil)
+				require.Equal(t, tc.want, result.state)
+				if tc.want == statementRUOperatorComplete {
+					require.Equal(t, tc.stats.CPUWork, calculator.units.CPUWork)
+				}
+			})
+		}
+		result := calculateStatementRUPlanChildFirst(tree, 0, nil, &statementRUCalculator{}, 10, ruv2.StmtUnits{}, nil)
+		require.Equal(t, statementRUOperatorUnsupported, result.state)
+	})
 	setPlan := func(fixture statementRUSimpleSelectFixture, plan base.PhysicalPlan) {
 		fixture.stmt.Plan = plan
 		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
@@ -272,17 +331,9 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture statementRUSimpleSelectFixture,
 		plan base.Plan,
 		rows int64,
-		complete bool,
-		invalid bool,
 	) {
 		stats := execdetails.NewHashStateRuntimeStats()
 		stats.AddRows(uint64(rows))
-		if complete {
-			stats.Complete()
-		}
-		if invalid {
-			stats.Invalidate()
-		}
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
 			plan.ID(),
 			stats,
@@ -291,7 +342,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 	requirePublication := func(
 		t *testing.T,
 		fixture statementRUSimpleSelectFixture,
-		wantUnits statementRURawUnits,
+		wantUnits ruv2.StmtUnits,
 	) {
 		var calibrationCount atomic.Int64
 		var snapshot statementRUCalibrationSnapshot
@@ -299,15 +350,38 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			calibrationCount.Add(1)
 			snapshot = published
 		})
-		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		sc := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+		calculationPlan, _ := sc.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		if calculationPlan == nil {
+			calculationPlan = plannercore.FlattenPhysicalPlan(fixture.stmt.Plan, false)
+		}
+		finalized, ok := calculateStatementRU(calculationPlan,
+			sc.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+			statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+		require.True(t, ok)
+		requireStatementRUReportConservation(t, finalized)
+		totalBefore := testutil.ToFloat64(metrics.RUV2Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
 		fixture.stmt.finishStatementRUForTest(nil)
 		require.Equal(t, int64(1), calibrationCount.Load())
 		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
+		flat, _ := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		if flat == nil {
+			flat = plannercore.FlattenPhysicalPlan(fixture.stmt.Plan, false)
+		}
+		wantUnits.OperatorNum = float64(len(flat.Main))
+		for _, tree := range flat.CTEs {
+			wantUnits.OperatorNum += float64(len(tree))
+		}
+		for _, tree := range flat.ScalarSubQueries {
+			wantUnits.OperatorNum += float64(len(tree))
+		}
 		require.Equal(t, wantUnits, snapshot.Units)
-		require.InDelta(t, calculateStatementRUResultOnly(wantUnits).TotalRU,
-			testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
+		wantResult, valid := ruv2.Calculate(wantUnits, ruv2.DefaultWeights())
+		require.True(t, valid)
+		require.InDelta(t, wantResult.TotalRU,
+			testutil.ToFloat64(metrics.RUV2Total)-totalBefore, 1e-9)
 		require.Zero(t, fixture.owner.calculationSetup)
 	}
 	requireNoPublication := func(t *testing.T, fixture statementRUSimpleSelectFixture) {
@@ -315,10 +389,10 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
 		})
-		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		totalBefore := testutil.ToFloat64(metrics.RUV2Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
-		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV2Total))
 		require.Zero(t, calibrationCount.Load())
 	}
 	calculateFixtureState := func(fixture statementRUSimpleSelectFixture) statementRUOperatorState {
@@ -329,7 +403,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			0,
 			fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl,
 			&calculator,
-			statementRURawUnits{},
+			ruv2.StmtUnits{},
 			nil,
 		).state
 	}
@@ -367,7 +441,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			17,
 		))
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            74,
 			NetBytes:             46,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -385,7 +459,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			23,
 		))
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            185,
 			NetBytes:             52,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -396,7 +470,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture, plan := pointLookupFixture(t, false)
 		registerPointStats(fixture, plan, util.PointResponseStats{})
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			NetBytes:             29,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
 		})
@@ -409,15 +483,18 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			0,
 		))
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			NetBytes:             29,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
 		})
 	})
 
-	t.Run("missing point response provider fails closed", func(t *testing.T) {
+	t.Run("missing point response provider contributes zero", func(t *testing.T) {
 		fixture, _ := pointLookupFixture(t, false)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, ruv2.StmtUnits{
+			NetBytes:             29,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
 	})
 
 	t.Run("point response with missing scan detail fails closed", func(t *testing.T) {
@@ -434,7 +511,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		requireNoPublication(t, fixture)
 	})
 
-	t.Run("point evidence registered under a different plan fails closed", func(t *testing.T) {
+	t.Run("point evidence registered under a different plan is not charged", func(t *testing.T) {
 		fixture, plan := pointLookupFixture(t, false)
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
 			plan.ID()+1,
@@ -442,7 +519,10 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 				&kvrpcpb.ScanDetailV2{}, 0,
 			)},
 		)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, ruv2.StmtUnits{
+			NetBytes:             29,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
 	})
 
 	t.Run("uncovered nonzero point response values fail closed", func(t *testing.T) {
@@ -497,6 +577,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 				plannercore.FlattenPhysicalPlan(plan, false),
 				stmtCtx.RuntimeStatsColl,
 				fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+				statementRUWriteSnapshot{},
 				fixture.owner.calculationSetup,
 				true,
 			)
@@ -538,10 +619,14 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		ctx.GetSessionVars().StmtCtx.SetPlan(plan)
 		installStatementRUOwner(stmt)
 		require.NotNil(t, stmt.statementRUOwner)
+		stmt.statementRUOwner.calculationSetup.fullReport = true
 		ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(plan, false))
 		stmt.recordStatementRURootEOF()
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 1000)
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 9)
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddTiKVCoprocessorResponseBytes(29)
+		ctx.GetSessionVars().RUV2Metrics = metrics
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopStats(
 			plan.ID(),
 			kv.TiKV,
@@ -551,8 +636,9 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			nil,
 		)
 
-		requirePublication(t, statementRUSimpleSelectFixture{stmt: stmt, owner: stmt.statementRUOwner}, statementRURawUnits{
+		requirePublication(t, statementRUSimpleSelectFixture{stmt: stmt, owner: stmt.statementRUOwner}, ruv2.StmtUnits{
 			ScanBytes: 1009,
+			NetBytes:  29,
 		})
 	})
 
@@ -616,29 +702,31 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			flat,
 			fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl,
 			metrics,
+			statementRUWriteSnapshot{},
 			statementRUCalculationSetup{frontendCompileBytes: 7},
 			true,
 		)
 		require.True(t, ok)
-		require.Equal(t, statementRURawUnits{
+		require.Equal(t, ruv2.StmtUnits{
+			OperatorNum:          8,
 			CPUWork:              20,
 			NetBytes:             11,
 			FrontendCompileBytes: 7,
 		}, finalized.units)
-		require.Equal(t, float64(38), finalized.result.TotalRU)
+		require.Equal(t, float64(46), finalized.result.TotalRU)
 		require.Equal(t, finalized.result.TotalRU, operators.TotalRU)
-		require.Equal(t, float64(20), operators.Main[0].SelfRU)
-		require.Equal(t, float64(20), operators.Main[0].CumRU)
-		require.Equal(t, float64(6), operators.CTEs[0][0].CumRU)
-		require.Equal(t, float64(12), operators.ScalarSubQueries[0][0].CumRU)
+		require.Equal(t, float64(21), operators.Main[0].SelfRU)
+		require.Equal(t, float64(22), operators.Main[0].CumRU)
+		require.Equal(t, float64(9), operators.CTEs[0][0].CumRU)
+		require.Equal(t, float64(15), operators.ScalarSubQueries[0][0].CumRU)
 		require.Equal(t, 101, operators.Main[0].Operator.Origin.ID())
 		require.Equal(t, 101, operators.CTEs[0][1].Operator.Origin.ID())
 		require.Equal(t, 101, operators.ScalarSubQueries[0][1].Operator.Origin.ID())
 		require.NotSame(t, operators.Main[0].Operator, operators.CTEs[0][1].Operator)
 		require.NotSame(t, operators.Main[0].Operator, operators.ScalarSubQueries[0][1].Operator)
-		require.Equal(t, float64(20), operators.Main[0].SelfRU)
-		require.Equal(t, float64(6), operators.CTEs[0][1].SelfRU)
-		require.Equal(t, float64(12), operators.ScalarSubQueries[0][1].SelfRU)
+		require.Equal(t, float64(21), operators.Main[0].SelfRU)
+		require.Equal(t, float64(7), operators.CTEs[0][1].SelfRU)
+		require.Equal(t, float64(13), operators.ScalarSubQueries[0][1].SelfRU)
 	})
 	newJoin := func(
 		fixture statementRUSimpleSelectFixture,
@@ -742,10 +830,10 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			}
 			recordJoinRows(fixture, join, left, right)
 			if tc.kind == "hash" {
-				recordHashState(fixture, join, 2, true, false)
+				recordHashState(fixture, join, 2)
 			}
 			setPlan(fixture, join)
-			want := statementRURawUnits{
+			want := ruv2.StmtUnits{
 				CPUWork:              5 * float64(tc.expressionCount),
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -762,7 +850,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		join, left, right := newJoin(fixture, "hash")
 		recordJoinRows(fixture, join, left, right)
-		recordHashState(fixture, join, 2, true, false)
+		recordHashState(fixture, join, 2)
 		setPlan(fixture, join)
 		flat := plannercore.FlattenPhysicalPlan(join, true)
 		require.Len(t, flat.Main[0].ChildrenIdx, 2)
@@ -771,7 +859,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		require.Same(t, right, firstChild.Origin)
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(flat)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              5,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -780,31 +868,42 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		})
 	})
 
-	t.Run("HashJoin fails closed on incomplete state", func(t *testing.T) {
+	t.Run("HashJoin retains state constructed before early stop", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		join, left, right := newJoin(fixture, "hash")
 		recordJoinRows(fixture, join, left, right)
-		recordHashState(fixture, join, 2, false, false)
+		recordHashState(fixture, join, 2)
 		setPlan(fixture, join)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, ruv2.StmtUnits{
+			CPUWork:              5,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			HashStateRows:        2,
+			JoinOutputRows:       4,
+		})
 	})
 
 	t.Run("HashJoin fails closed on invalid state", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		join, left, right := newJoin(fixture, "hash")
 		recordJoinRows(fixture, join, left, right)
-		recordHashState(fixture, join, 2, true, true)
+		recordHashState(fixture, join, -1)
 		setPlan(fixture, join)
 		requireNoPublication(t, fixture)
 	})
 
-	t.Run("Join fails closed on missing child rows", func(t *testing.T) {
+	t.Run("Join counts missing child rows as zero", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		join, left, _ := newJoin(fixture, "merge")
 		recordRootRows(fixture, left, 3)
 		recordRootRows(fixture, join, 4)
 		setPlan(fixture, join)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, ruv2.StmtUnits{
+			CPUWork:              3,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			JoinOutputRows:       4,
+		})
 	})
 
 	t.Run("Join fails closed on FULL OUTER source drift", func(t *testing.T) {
@@ -812,18 +911,18 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		join, left, right := newJoin(fixture, "hash")
 		join.(*physicalop.PhysicalHashJoin).JoinType = base.FullOuterJoin
 		recordJoinRows(fixture, join, left, right)
-		recordHashState(fixture, join, 2, true, false)
+		recordHashState(fixture, join, 2)
 		setPlan(fixture, join)
 		requireNoPublication(t, fixture)
 	})
 
 	t.Run("operator unit delta merge is atomic", func(t *testing.T) {
-		calculator := statementRUCalculator{units: statementRURawUnits{
+		calculator := statementRUCalculator{units: ruv2.StmtUnits{
 			CPUWork:   7,
 			ScanBytes: math.MaxFloat64,
 		}}
 		before := calculator
-		require.False(t, mergeStatementRUUnitDelta(&calculator, statementRURawUnits{
+		require.False(t, mergeStatementRUUnitDelta(&calculator, ruv2.StmtUnits{
 			CPUWork:   5,
 			ScanBytes: math.MaxFloat64,
 		}))
@@ -850,6 +949,38 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		return agg
 	}
 
+	t.Run("empty hash build retains probe scans without summaries", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		join, probe, build := newJoin(fixture, "hash")
+		agg := newAggregation(fixture, true, probe.TablePlan)
+		probe.TablePlan = agg
+		probe.TablePlans = physicalop.FlattenListPushDownPlan(agg)
+		// The first probe chunk was read before the empty-build shortcut. Its
+		// request scan is available even though the cop summaries are missing.
+		recordRootRows(fixture, probe, 32)
+		recordRootRows(fixture, build, 0)
+		recordRootRows(fixture, join, 0)
+		recordScan(fixture, agg, 7, 7, 70)
+		setPlan(fixture, join)
+		requirePublication(t, fixture, ruv2.StmtUnits{
+			CPUWork:              32,
+			ScanBytes:            70,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("unopened aggregation contributes zero without a provider", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		reader, _ := newTableReader(fixture)
+		agg := newAggregation(fixture, true, reader)
+		setPlan(fixture, agg)
+		requirePublication(t, fixture, ruv2.StmtUnits{
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
 	for _, hash := range []bool{true, false} {
 		name := "StreamAgg"
 		if hash {
@@ -862,10 +993,10 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			recordRootRows(fixture, reader, 3)
 			recordRootRows(fixture, agg, 2)
 			if hash {
-				recordHashState(fixture, agg, 2, true, false)
+				recordHashState(fixture, agg, 2)
 			}
 			setPlan(fixture, agg)
-			want := statementRURawUnits{
+			want := ruv2.StmtUnits{
 				CPUWork:              15,
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -877,15 +1008,15 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		})
 	}
 
-	t.Run("root HashAgg distinguishes observed zero from missing rows", func(t *testing.T) {
+	t.Run("root HashAgg counts missing rows as zero", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		reader, _ := newTableReader(fixture)
 		agg := newAggregation(fixture, true, reader)
 		recordRootRows(fixture, reader, 0)
 		recordRootRows(fixture, agg, 0)
-		recordHashState(fixture, agg, 0, true, false)
+		recordHashState(fixture, agg, 0)
 		setPlan(fixture, agg)
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
 		})
@@ -894,9 +1025,12 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		missingReader, _ := newTableReader(missing)
 		missingAgg := newAggregation(missing, true, missingReader)
 		recordRootRows(missing, missingAgg, 0)
-		recordHashState(missing, missingAgg, 0, true, false)
+		recordHashState(missing, missingAgg, 0)
 		setPlan(missing, missingAgg)
-		requireNoPublication(t, missing)
+		requirePublication(t, missing, ruv2.StmtUnits{
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
 	})
 
 	t.Run("TiKV cop HashAgg charges valid responses when another summary is missing", func(t *testing.T) {
@@ -911,7 +1045,15 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			RecordExpectedCopResponseSummaries([]int{scan.ID(), agg.ID()})
 		recordScan(fixture, agg, 1, 1, 10)
 		setPlan(fixture, reader)
-		requirePublication(t, fixture, statementRURawUnits{
+		sc := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+		finalized, ok := calculateStatementRU(sc.GetFlatPlan().(*plannercore.FlatPhysicalPlan),
+			sc.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+			statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+		require.True(t, ok)
+		require.Equal(t, ruv2.StmtUnits{CPUWork: 15, HashStateRows: 2, OperatorNum: 1},
+			finalized.report.units[statementRUTiKV][statementRUHashAgg])
+		require.Equal(t, float64(49), finalized.engineRU.TiKV)
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              15,
 			HashStateRows:        2,
 			ScanBytes:            10,
@@ -920,7 +1062,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		})
 	})
 
-	t.Run("TiKV cop HashAgg still requires one valid summary", func(t *testing.T) {
+	t.Run("TiKV cop HashAgg retains scans without any summary", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		reader, scan := newTableReader(fixture)
 		agg := newAggregation(fixture, true, scan)
@@ -930,7 +1072,11 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			RecordExpectedCopResponseSummaries([]int{scan.ID(), agg.ID()})
 		recordScan(fixture, agg, 1, 1, 10)
 		setPlan(fixture, reader)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, ruv2.StmtUnits{
+			ScanBytes:            10,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
 	})
 
 	for _, hash := range []bool{true, false} {
@@ -948,7 +1094,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			recordCopRows(fixture, agg, 2)
 			recordScan(fixture, agg, 1, 1, 10)
 			setPlan(fixture, reader)
-			want := statementRURawUnits{
+			want := ruv2.StmtUnits{
 				CPUWork:              15,
 				ScanBytes:            10,
 				NetBytes:             20,
@@ -970,7 +1116,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			ProcessedKeys:     100,
 			ProcessedKeysSize: 10000,
 		})
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            10,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -992,7 +1138,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordCopRows(fixture, scan, 7)
 		setPlan(fixture, reader)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              14,
 			ScanBytes:            10,
 			NetBytes:             20,
@@ -1011,7 +1157,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordRootRows(fixture, reader, 4)
 		setPlan(fixture, selection)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              12,
 			ScanBytes:            10,
 			NetBytes:             20,
@@ -1028,7 +1174,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordRootRows(fixture, reader, 8)
 		setPlan(fixture, sort)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              24,
 			ScanBytes:            10,
 			NetBytes:             20,
@@ -1062,7 +1208,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordRootRows(fixture, reader, 100)
 		setPlan(fixture, topN)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              100 * math.Log2(10),
 			ScanBytes:            10,
 			NetBytes:             20,
@@ -1080,7 +1226,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordRootRows(fixture, reader, 100)
 		setPlan(fixture, topN)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            10,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1109,7 +1255,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordRootRows(fixture, reader, 13)
 		setPlan(fixture, limit)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              13,
 			ScanBytes:            10,
 			NetBytes:             20,
@@ -1127,7 +1273,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			recordRootRows(fixture, reader, 8)
 			setPlan(fixture, unionScan)
 
-			requirePublication(t, fixture, statementRURawUnits{
+			requirePublication(t, fixture, ruv2.StmtUnits{
 				CPUWork:              8,
 				ScanBytes:            10,
 				NetBytes:             20,
@@ -1154,7 +1300,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			recordRootRows(fixture, reader, 8)
 			setPlan(fixture, window)
 
-			requirePublication(t, fixture, statementRURawUnits{
+			requirePublication(t, fixture, ruv2.StmtUnits{
 				CPUWork:              56,
 				ScanBytes:            10,
 				NetBytes:             20,
@@ -1180,7 +1326,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			recordRootRows(fixture, receiver, 3)
 			setPlan(fixture, shuffle)
 
-			requirePublication(t, fixture, statementRURawUnits{
+			requirePublication(t, fixture, ruv2.StmtUnits{
 				CPUWork:              6,
 				ScanBytes:            10,
 				NetBytes:             20,
@@ -1205,7 +1351,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			}
 			setPlan(fixture, reader)
 
-			requirePublication(t, fixture, statementRURawUnits{
+			requirePublication(t, fixture, ruv2.StmtUnits{
 				ScanBytes:            51,
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1225,7 +1371,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			zero := newStatementRUSimpleSelectFixture(t)
 			_, zeroChild := newUnionScan(zero)
 			recordRootRows(zero, zeroChild, 0)
-			requirePublication(t, zero, statementRURawUnits{
+			requirePublication(t, zero, ruv2.StmtUnits{
 				ScanBytes:            10,
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1233,7 +1379,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 
 			missing := newStatementRUSimpleSelectFixture(t)
 			newUnionScan(missing)
-			requirePublication(t, missing, statementRURawUnits{
+			requirePublication(t, missing, ruv2.StmtUnits{
 				ScanBytes:            10,
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1261,7 +1407,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			zero := newStatementRUSimpleSelectFixture(t)
 			_, zeroChild := newWindow(zero)
 			recordRootRows(zero, zeroChild, 0)
-			requirePublication(t, zero, statementRURawUnits{
+			requirePublication(t, zero, ruv2.StmtUnits{
 				ScanBytes:            10,
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1269,7 +1415,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 
 			missing := newStatementRUSimpleSelectFixture(t)
 			newWindow(missing)
-			requirePublication(t, missing, statementRURawUnits{
+			requirePublication(t, missing, ruv2.StmtUnits{
 				ScanBytes:            10,
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1311,7 +1457,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			recordRootRows(fixture, secondReceiver, 5)
 			setPlan(fixture, shuffle)
 
-			requirePublication(t, fixture, statementRURawUnits{
+			requirePublication(t, fixture, ruv2.StmtUnits{
 				CPUWork:              21,
 				ScanBytes:            17,
 				NetBytes:             20,
@@ -1345,7 +1491,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			_, zeroSource, zeroReceiver := newShuffle(zero)
 			recordRootRows(zero, zeroSource, 0)
 			recordRootRows(zero, zeroReceiver, 0)
-			requirePublication(t, zero, statementRURawUnits{
+			requirePublication(t, zero, ruv2.StmtUnits{
 				ScanBytes:            10,
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1354,7 +1500,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			missing := newStatementRUSimpleSelectFixture(t)
 			_, _, missingReceiver := newShuffle(missing)
 			recordRootRows(missing, missingReceiver, 0)
-			requirePublication(t, missing, statementRURawUnits{
+			requirePublication(t, missing, ruv2.StmtUnits{
 				ScanBytes:            10,
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1363,7 +1509,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			unobservedReceiver := newStatementRUSimpleSelectFixture(t)
 			_, source, _ := newShuffle(unobservedReceiver)
 			recordRootRows(unobservedReceiver, source, 3)
-			requirePublication(t, unobservedReceiver, statementRURawUnits{
+			requirePublication(t, unobservedReceiver, ruv2.StmtUnits{
 				CPUWork:              6,
 				ScanBytes:            10,
 				NetBytes:             20,
@@ -1373,7 +1519,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			noStats := newStatementRUSimpleSelectFixture(t)
 			newShuffle(noStats)
 			noStats.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
-			requirePublication(t, noStats, statementRURawUnits{
+			requirePublication(t, noStats, ruv2.StmtUnits{
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
 			})
@@ -1421,7 +1567,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 						requireNoPublication(t, fixture)
 						return
 					}
-					requirePublication(t, fixture, statementRURawUnits{
+					requirePublication(t, fixture, ruv2.StmtUnits{
 						ScanBytes:            tc.wantScanBytes,
 						NetBytes:             20,
 						FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1473,11 +1619,12 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 				flat,
 				fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl,
 				nil,
+				statementRUWriteSnapshot{},
 				statementRUCalculationSetup{},
 				true,
 			)
 			require.True(t, ok)
-			require.Equal(t, statementRURawUnits{CPUWork: 25, ScanBytes: 51}, finalized.units)
+			require.Equal(t, ruv2.StmtUnits{CPUWork: 25, ScanBytes: 51, OperatorNum: 8}, finalized.units)
 			require.Equal(t, finalized.result.TotalRU, operators.TotalRU)
 
 			operatorIndex := func(plan base.Plan) int {
@@ -1488,8 +1635,10 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 				}
 				return -1
 			}
-			wantRU := func(units statementRURawUnits) float64 {
-				return calculateStatementRUResultOnly(units).TotalRU
+			wantRU := func(units ruv2.StmtUnits) float64 {
+				result, valid := ruv2.Calculate(units, ruv2.DefaultWeights())
+				require.True(t, valid)
+				return result.TotalRU
 			}
 			indexMergeIndex := operatorIndex(indexMerge)
 			unionScanIndex := operatorIndex(unionScan)
@@ -1499,15 +1648,15 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			for _, index := range []int{indexMergeIndex, unionScanIndex, receiverIndex, windowIndex, shuffleIndex} {
 				require.NotEqual(t, -1, index)
 			}
-			require.Equal(t, wantRU(statementRURawUnits{ScanBytes: 51}), operators.Main[indexMergeIndex].SelfRU)
-			require.Equal(t, wantRU(statementRURawUnits{ScanBytes: 51}), operators.Main[indexMergeIndex].CumRU)
-			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 5}), operators.Main[unionScanIndex].SelfRU)
-			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 5, ScanBytes: 51}), operators.Main[unionScanIndex].CumRU)
-			require.Zero(t, operators.Main[receiverIndex].SelfRU)
-			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 5, ScanBytes: 51}), operators.Main[receiverIndex].CumRU)
-			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 10}), operators.Main[windowIndex].SelfRU)
-			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 15, ScanBytes: 51}), operators.Main[windowIndex].CumRU)
-			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 10}), operators.Main[shuffleIndex].SelfRU)
+			require.Equal(t, wantRU(ruv2.StmtUnits{ScanBytes: 51, OperatorNum: 1}), operators.Main[indexMergeIndex].SelfRU)
+			require.Equal(t, wantRU(ruv2.StmtUnits{ScanBytes: 51, OperatorNum: 4}), operators.Main[indexMergeIndex].CumRU)
+			require.Equal(t, wantRU(ruv2.StmtUnits{CPUWork: 5, OperatorNum: 1}), operators.Main[unionScanIndex].SelfRU)
+			require.Equal(t, wantRU(ruv2.StmtUnits{CPUWork: 5, ScanBytes: 51, OperatorNum: 5}), operators.Main[unionScanIndex].CumRU)
+			require.Equal(t, wantRU(ruv2.StmtUnits{OperatorNum: 1}), operators.Main[receiverIndex].SelfRU)
+			require.Equal(t, wantRU(ruv2.StmtUnits{CPUWork: 5, ScanBytes: 51, OperatorNum: 6}), operators.Main[receiverIndex].CumRU)
+			require.Equal(t, wantRU(ruv2.StmtUnits{CPUWork: 10, OperatorNum: 1}), operators.Main[windowIndex].SelfRU)
+			require.Equal(t, wantRU(ruv2.StmtUnits{CPUWork: 15, ScanBytes: 51, OperatorNum: 7}), operators.Main[windowIndex].CumRU)
+			require.Equal(t, wantRU(ruv2.StmtUnits{CPUWork: 10, OperatorNum: 1}), operators.Main[shuffleIndex].SelfRU)
 			require.Equal(t, finalized.result.TotalRU, operators.Main[shuffleIndex].CumRU)
 		})
 	})
@@ -1521,7 +1670,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		limit.SetChildren(reader)
 		setPlan(fixture, limit)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            10,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1542,7 +1691,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture.recordReaderScanDetail(reader, 1, 1, 10)
 		setPlan(fixture, reader)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              300,
 			ScanBytes:            10,
 			NetBytes:             20,
@@ -1579,7 +1728,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture.recordReaderScanDetail(reader, 1, 1, 10)
 		setPlan(fixture, reader)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              11,
 			ScanBytes:            10,
 			NetBytes:             20,
@@ -1601,7 +1750,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture.recordReaderScanDetail(reader, 1, 1, 10)
 		setPlan(fixture, reader)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            10,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1620,7 +1769,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordScan(fixture, indexScan, 4, 2, 6)
 		setPlan(fixture, indexReader)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            12,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1639,7 +1788,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordScan(fixture, indexScan, 0, 2, 0)
 		setPlan(fixture, indexReader)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
 		})
@@ -1667,7 +1816,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordScan(fixture, tableScan, 3, 3, 21)
 		setPlan(fixture, indexLookup)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            33,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1680,7 +1829,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordScan(fixture, indexScan, 4, 2, 6)
 		setPlan(fixture, indexLookup)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            12,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
@@ -1693,7 +1842,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordScan(fixture, tableScan, 3, 3, 21)
 		setPlan(fixture, indexLookup)
 
-		requirePublication(t, fixture, statementRURawUnits{
+		requirePublication(t, fixture, ruv2.StmtUnits{
 			ScanBytes:            21,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),

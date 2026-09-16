@@ -683,6 +683,9 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	r.getOrCreateRuntimeStats()
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 	if forUnconsumedStats {
+		if r.storeType == kv.TiKV && len(r.copPlanIDs) > 0 {
+			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, copStats.ReadPoolTaskDetails, nil)
+		}
 		// selectResp still refers to the last consumed response. Keep the generic
 		// RPC/scan/time evidence above, but do not invent a response-summary
 		// expectation or replay summaries from the last consumed response.
@@ -834,9 +837,6 @@ func (r *selectResult) Close() error {
 	if r.iter != nil {
 		return errors.New("selectResult is invalid after IntoIter()")
 	}
-	if r.isAnalyze {
-		return r.closeAnalyze()
-	}
 	return r.close()
 }
 
@@ -914,6 +914,9 @@ func (r *selectResult) close() error {
 }
 
 func (r *selectResult) closeImpl() error {
+	if r.isAnalyze {
+		return r.closeAnalyze()
+	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
 	if respSize > 0 {
