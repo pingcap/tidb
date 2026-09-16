@@ -33,11 +33,19 @@ type regionCacheStore interface {
 // RegionCacheHandler serves GET /regions/cache/status and POST /regions/cache/refresh.
 type RegionCacheHandler struct {
 	*handler.TikvHandlerTool
+	listed []regionCacheStore
+}
+
+func (h *RegionCacheHandler) cacheStores() []regionCacheStore {
+	if h.listed != nil {
+		return h.listed
+	}
+	return collectRegionCacheStores(h.Store)
 }
 
 // NewRegionCacheHandler creates a RegionCacheHandler.
 func NewRegionCacheHandler(tool *handler.TikvHandlerTool) *RegionCacheHandler {
-	return &RegionCacheHandler{tool}
+	return &RegionCacheHandler{TikvHandlerTool: tool}
 }
 
 type regionCacheStoreResult struct {
@@ -111,7 +119,7 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	stores := collectRegionCacheStores(h.Store)
+	stores := h.cacheStores()
 	if len(stores) == 0 {
 		http.Error(w, "store does not support region cache refresh", http.StatusNotImplemented)
 		return
