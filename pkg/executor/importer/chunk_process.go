@@ -586,6 +586,7 @@ type QueryRuntime struct {
 	// Session is exclusively owned by this attempt. The caller must close or
 	// destroy it on every exit path after RunImportQuery returns.
 	Session     sessionctx.Context
+	SessionPool util.DestroyableSessionPool
 	Storage     storeapi.Storage
 	Prefix      string
 	MemoryLimit int64
