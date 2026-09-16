@@ -1599,7 +1599,8 @@ func checkETCDNameSpace(t *testing.T, dom *domain.Domain, isHasPrefix bool) {
 
 type mockEtcdBackend struct {
 	kv.Storage
-	pdAddrs []string
+	pdAddrs            []string
+	gcWorkerStartCount int
 }
 
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
@@ -1612,7 +1613,10 @@ func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 
-func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
+func (mebd *mockEtcdBackend) StartGCWorker() error {
+	mebd.gcWorkerStartCount++
+	return nil
+}
 
 func TestTiDBUpgradeToVer240(t *testing.T) {
 	if kerneltype.IsNextGen() {

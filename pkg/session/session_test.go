@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -50,6 +51,24 @@ func TestGetStartMode(t *testing.T) {
 	require.Equal(t, ddl.Normal, getStartMode(currentBootstrapVersion+1))
 	require.Equal(t, ddl.Upgrade, getStartMode(currentBootstrapVersion-1))
 	require.Equal(t, ddl.Bootstrap, getStartMode(0))
+}
+
+func TestStartGCWorkerRespectsDiagnosticMode(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(false))
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	backend := &mockEtcdBackend{Storage: store}
+	require.NoError(t, startGCWorker(backend))
+	require.Equal(t, 1, backend.gcWorkerStartCount)
+
+	t.Run("diagnostic mode", func(t *testing.T) {
+		t.Cleanup(diagnosticmode.SetForTest(true))
+		diagnosticBackend := &mockEtcdBackend{Storage: store}
+		require.NoError(t, startGCWorker(diagnosticBackend))
+		require.Zero(t, diagnosticBackend.gcWorkerStartCount)
+	})
 }
 
 func TestMustGetStoreBootstrapVersionRetriesTransaction(t *testing.T) {
