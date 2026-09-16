@@ -174,6 +174,14 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 	// However, our current implementation requires generating it for each step.
 	// we only generate needed plans for the next step.
 	switch planCtx.NextTaskStep {
+	case proto.ImportStepQuery:
+		specs := []planner.PipelineSpec{
+			&ImportSpec{Plan: p.Plan, ImportStepMeta: &ImportStepMeta{ID: 1}},
+		}
+		if err := p.writeExternalPlanMeta(planCtx, specs); err != nil {
+			return nil, err
+		}
+		addSpecs(specs)
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		specs, err := generateImportSpecs(planCtx, p)
 		if err != nil {
@@ -303,9 +311,8 @@ type PostProcessSpec struct {
 
 // ToSubtaskMeta converts the post process spec to subtask meta.
 func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
-	encodeStep := getStepOfEncode(planCtx.GlobalSort)
 	subtaskMetas := make([]*ImportStepMeta, 0, len(planCtx.PreviousSubtaskMetas))
-	for _, bs := range planCtx.PreviousSubtaskMetas[encodeStep] {
+	for _, bs := range planCtx.PreviousSubtaskMetas[planCtx.SourceStep] {
 		var subtaskMeta ImportStepMeta
 		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
 			return nil, errors.Trace(err)
@@ -459,7 +466,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 	}
 	defer store.Close()
 
-	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], store)
+	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[planCtx.SourceStep], store)
 	if err != nil {
 		return nil, err
 	}
@@ -707,7 +714,7 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store st
 	if err != nil {
 		return nil, err
 	}
-	kvMetasOfEncodeStep, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], store)
+	kvMetasOfEncodeStep, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[planCtx.SourceStep], store)
 	if err != nil {
 		return nil, err
 	}
@@ -818,7 +825,7 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([
 
 func collectConflictInfos(ctx context.Context, store storeapi.Storage, planCtx planner.PlanCtx) (*KVGroupConflictInfos, error) {
 	m := &KVGroupConflictInfos{}
-	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort] {
+	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[planCtx.SourceStep] {
 		var stepMeta ImportStepMeta
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
 		if err != nil {

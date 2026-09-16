@@ -149,6 +149,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*importScheduler).GlobalSort)
+	s.Equal(proto.ImportStepImport, sch.sourceStep)
 
 	meta.Plan.CloudStorageURI = "s3://test"
 	bytes, err = json.Marshal(meta)
@@ -161,6 +162,18 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*importScheduler).GlobalSort)
+	s.Equal(proto.ImportStepEncodeAndSort, sch.sourceStep)
+
+	meta.Plan.Query = &importer.QueryPlan{}
+	bytes, err = json.Marshal(meta)
+	s.NoError(err)
+	sch = importScheduler{
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
+			TaskBase: proto.TaskBase{Keyspace: taskKS}, Meta: bytes,
+		}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{ks: taskKS}, nil)),
+	}
+	s.NoError(sch.Init())
+	s.Equal(proto.ImportStepQuery, sch.sourceStep)
 
 	if kerneltype.IsNextGen() {
 		sch = importScheduler{
@@ -202,25 +215,20 @@ func (s *importIntoSuite) TestGetTaskMgrForAccessingImportJobUsesTaskRuntime() {
 
 func (s *importIntoSuite) TestGetNextStep() {
 	task := &proto.TaskBase{Step: proto.StepInit}
-	ext := &importScheduler{}
+	ext := &importScheduler{sourceStep: proto.ImportStepImport}
 	for _, nextStep := range []proto.Step{proto.ImportStepImport, proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
 
 	task.Step = proto.StepInit
-	ext = &importScheduler{GlobalSort: true}
+	ext = &importScheduler{GlobalSort: true, sourceStep: proto.ImportStepEncodeAndSort}
 	for _, nextStep := range []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
 		proto.ImportStepWriteAndIngest, proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution,
 		proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
-}
-
-func (s *importIntoSuite) TestGetStepOfEncode() {
-	s.Equal(proto.ImportStepImport, getStepOfEncode(false))
-	s.Equal(proto.ImportStepEncodeAndSort, getStepOfEncode(true))
 }
 
 func (s *importIntoSuite) TestIsRetryable() {
