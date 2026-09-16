@@ -647,6 +647,28 @@ fn write_partial(writer: &mut SpillWriter, partial: &Partial) -> Result<(), Exec
                 writer.f64(value);
             }
         }
+        Partial::CountDistinctString(set) | Partial::CountDistinctDecimal(set) => {
+            writer.u8(if matches!(partial, &Partial::CountDistinctString(_)) {
+                21
+            } else {
+                22
+            });
+            writer.u32(u32::try_from(set.len()).map_err(|_| {
+                ExecError::SpillFailed("too many HashAgg DISTINCT values".to_owned())
+            })?);
+            for value in set.iter() {
+                writer.bytes(value.as_bytes())?;
+            }
+        }
+        Partial::CountDistinctDuration(set) => {
+            writer.u8(23);
+            writer.u32(u32::try_from(set.len()).map_err(|_| {
+                ExecError::SpillFailed("too many HashAgg DISTINCT values".to_owned())
+            })?);
+            for value in set.iter() {
+                writer.i64(*value);
+            }
+        }
         Partial::MaxMinCount { value, count, .. } => {
             writer.u8(17);
             writer.optional_datum(value.as_ref())?;
@@ -806,6 +828,30 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
             }
             Partial::CountDistinctReal(set)
         }
+        (AggKind::Count, 21) if super::count_distinct_string(func) => {
+            let count = reader.u32()? as usize;
+            let mut set = StringSetWithMemoryUsage::new(std::iter::empty::<GoString>()).0;
+            for _ in 0..count {
+                set.insert(GoString::from_bytes(reader.bytes()?.to_vec()));
+            }
+            Partial::CountDistinctString(set)
+        }
+        (AggKind::Count, 22) if super::count_distinct_decimal(func) => {
+            let count = reader.u32()? as usize;
+            let mut set = StringSetWithMemoryUsage::new(std::iter::empty::<GoString>()).0;
+            for _ in 0..count {
+                set.insert(GoString::from_bytes(reader.bytes()?.to_vec()));
+            }
+            Partial::CountDistinctDecimal(set)
+        }
+        (AggKind::Count, 23) if super::count_distinct_duration(func) => {
+            let count = reader.u32()? as usize;
+            let mut set = Int64SetWithMemoryUsage::new(std::iter::empty::<i64>()).0;
+            for _ in 0..count {
+                set.insert(reader.i64()?);
+            }
+            Partial::CountDistinctDuration(set)
+        }
         (AggKind::Min | AggKind::Max, 18) => Partial::MaxMinDecimalFast {
             value: reader.i128()?,
             scale: reader.u32()?,
@@ -960,7 +1006,7 @@ fn write_state(
     state: &AggState,
     func: &AggFunc,
 ) -> Result<(), ExecError> {
-    if func.distinct && !super::count_distinct_int(func) && !super::count_distinct_real(func) {
+    if func.distinct && !super::count_distinct_typed(func) {
         let inputs = state.distinct_inputs.as_ref().ok_or_else(|| {
             ExecError::SpillFailed(
                 "parallel DISTINCT state did not retain its partial inputs".to_owned(),
@@ -978,7 +1024,7 @@ fn write_state(
 
 fn read_state(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<AggState, ExecError> {
     let mut state = AggState::new_parallel(func);
-    if func.distinct && !super::count_distinct_int(func) && !super::count_distinct_real(func) {
+    if func.distinct && !super::count_distinct_typed(func) {
         let count = reader.u32()? as usize;
         let mut inputs = Vec::with_capacity(count);
         let mut seen = StringSetWithMemoryUsage::new([]).0;
@@ -2550,7 +2596,7 @@ fn merge_state(dst: &mut AggState, src: &mut AggState, func: &AggFunc) -> Result
     // Go's distinct partial implementations merge their retained value sets;
     // adding worker-local COUNT/SUM/AVG scalars would double-count a value
     // present in two workers. Replay only keys newly admitted to `dst`.
-    if func.distinct && !super::count_distinct_int(func) && !super::count_distinct_real(func) {
+    if func.distinct && !super::count_distinct_typed(func) {
         let Some(inputs) = src.distinct_inputs.take() else {
             return Err(ExecError::unsupported(
                 "parallel DISTINCT state did not retain its partial inputs",
@@ -2622,6 +2668,19 @@ fn merge_state(dst: &mut AggState, src: &mut AggState, func: &AggFunc) -> Result
         (Partial::CountDistinctReal(dst_set), Partial::CountDistinctReal(src_set)) => {
             for value in src_set.iter() {
                 dst_set.insert(value);
+            }
+        }
+        (Partial::CountDistinctString(dst_set), Partial::CountDistinctString(src_set))
+        | (Partial::CountDistinctDecimal(dst_set), Partial::CountDistinctDecimal(src_set)) => {
+            for value in src_set.iter() {
+                if !dst_set.contains(value) {
+                    dst_set.insert(value.clone());
+                }
+            }
+        }
+        (Partial::CountDistinctDuration(dst_set), Partial::CountDistinctDuration(src_set)) => {
+            for value in src_set.iter() {
+                dst_set.insert(*value);
             }
         }
         (Partial::FinalCount(a), Partial::FinalCount(b)) => *a = a.wrapping_add(*b),
@@ -3434,6 +3493,104 @@ mod tests {
         sort_rows(&mut expected);
         sort_rows(&mut actual);
         assert_eq!(actual, expected);
+    }
+
+    /// Go uses a dedicated set for every single-column DISTINCT COUNT type.
+    /// The Rust parallel state must therefore union the typed sets directly,
+    /// without retaining one `DistinctInput` per row for replay.
+    #[test]
+    fn typed_count_distinct_sets_union_and_spill_without_replay() {
+        let string_type = FieldType::new(FieldTypeCode::VarString)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+        let decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
+        let duration_type = FieldType::new(FieldTypeCode::Duration);
+        let make_func = |field_type: FieldType| {
+            let mut column = Column::new(1, field_type);
+            column.index = 0;
+            let mut func = AggFunc::new(AggKind::Count, Some(Expression::Column(column)));
+            func.distinct = true;
+            func
+        };
+
+        let cases = [
+            (
+                make_func(string_type),
+                vec![
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"a".to_vec(),
+                        tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                    )),
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"A".to_vec(),
+                        tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                    )),
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"b".to_vec(),
+                        tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                    )),
+                    Datum::Null,
+                ],
+                2usize,
+            ),
+            (
+                make_func(decimal_type),
+                vec![
+                    Datum::Decimal(Decimal::from_literal("1.00")),
+                    Datum::Decimal(Decimal::from_literal("1.0")),
+                    Datum::Decimal(Decimal::from_literal("2.00")),
+                    Datum::Null,
+                ],
+                2usize,
+            ),
+            (
+                make_func(duration_type),
+                vec![
+                    Datum::Duration(
+                        tidb_datatype::MySqlDuration::from_nanoseconds(1_000, 6).unwrap(),
+                    ),
+                    Datum::Duration(
+                        tidb_datatype::MySqlDuration::from_nanoseconds(1_000, 6).unwrap(),
+                    ),
+                    Datum::Duration(
+                        tidb_datatype::MySqlDuration::from_nanoseconds(2_000, 6).unwrap(),
+                    ),
+                    Datum::Null,
+                ],
+                2usize,
+            ),
+        ];
+
+        for (func, values, expected) in cases {
+            assert!(super::count_distinct_typed(&func));
+            let mut left = AggState::new_parallel(&func);
+            let mut right = AggState::new_parallel(&func);
+            for (index, value) in values.into_iter().enumerate() {
+                let target = if index % 2 == 0 {
+                    &mut left
+                } else {
+                    &mut right
+                };
+                target.update(Some(value), &[], Vec::new(), None).unwrap();
+            }
+            assert!(left.distinct_inputs.is_none());
+            assert!(right.distinct_inputs.is_none());
+            merge_state(&mut left, &mut right, &func).unwrap();
+            assert_eq!(
+                left.partial.finish(&[], 0).unwrap(),
+                Datum::Int(expected as i64)
+            );
+
+            let mut writer = SpillWriter::new();
+            write_state(&mut writer, &left, &func).unwrap();
+            let mut reader = SpillReader::new(&writer.0).unwrap();
+            let restored = read_state(&mut reader, &func).unwrap();
+            reader.finish().unwrap();
+            assert_eq!(
+                restored.partial.finish(&[], 0).unwrap(),
+                Datum::Int(expected as i64)
+            );
+            assert!(restored.distinct_inputs.is_none());
+        }
     }
 
     /// Two long columns whose second holds `None` as NULL, `chunk_rows` per

@@ -389,9 +389,7 @@ impl AggInputMode<ColumnRead<'_>> {
                 }
                 let value = column.get_bytes(row);
                 let bytes = value.as_ref();
-                state.update_count_distinct_fast(collation.key(bytes), true, || {
-                    Datum::Bytes(bytes.to_vec())
-                })
+                state.update_count_distinct_string_fast(collation.key(bytes))
             }
             Self::CountDistinctDecimal(column) => {
                 if column.is_null(row) {
@@ -401,20 +399,14 @@ impl AggInputMode<ColumnRead<'_>> {
                 let Ok(key) = value.to_hash_key() else {
                     return None;
                 };
-                state.update_count_distinct_fast(key.into_vec(), true, || {
-                    Datum::Decimal(tidb_datatype::Decimal::from_my_decimal(&value))
-                })
+                state.update_count_distinct_decimal_fast(key.into_vec())
             }
             Self::CountDistinctDuration { column, fsp } => {
                 let value = integer_data
                     .map(|values| values[row])
                     .unwrap_or_else(|| (!column.is_null(row)).then(|| column.get_int64(row)));
-                let Some(value) = value else {
-                    return Some(0);
-                };
-                state.update_count_distinct_fast(value.to_le_bytes().to_vec(), false, || {
-                    Datum::Duration(tidb_datatype::MySqlDuration::from_raw_parts(value, *fsp))
-                })
+                let _ = fsp;
+                state.update_count_distinct_duration_fast(value)
             }
             Self::FinalCount { column, unsigned } => {
                 let value = integer_data

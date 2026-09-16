@@ -314,6 +314,16 @@ enum Partial {
     /// `partialResult4CountDistinctReal`, backed by a float64 map. The set
     /// preserves Go's signed-zero aliasing and non-equal NaN keys.
     CountDistinctReal(Float64SetWithMemoryUsage),
+    /// `COUNT(DISTINCT x)` over one string argument: Go's
+    /// `partialResult4CountDistinctString`, retaining only the collation key
+    /// set and merging it by set union in final workers.
+    CountDistinctString(StringSetWithMemoryUsage),
+    /// `COUNT(DISTINCT x)` over one DECIMAL argument: Go's
+    /// `partialResult4CountDistinctDecimal`, keyed by `MyDecimal.ToHashKey`.
+    CountDistinctDecimal(StringSetWithMemoryUsage),
+    /// `COUNT(DISTINCT x)` over one duration argument: Go's
+    /// `partialResult4CountDistinctDuration`, keyed by the raw duration bits.
+    CountDistinctDuration(Int64SetWithMemoryUsage),
     FinalCount(i64),
     /// `None` until the first non-NULL input (an empty sum is NULL). Go
     /// sums an integer or decimal argument exactly, in the decimal domain --
@@ -505,6 +515,62 @@ fn count_distinct_real(func: &AggFunc) -> bool {
             .is_some_and(|ty| ty.eval_type() == EvalType::Real)
 }
 
+/// Go `buildCount` selects the dedicated string set for one ETString
+/// argument. Hybrid types (ENUM/SET without the integer flag) still evaluate
+/// through the expression path, but their resulting string key uses the same
+/// set semantics.
+fn count_distinct_string(func: &AggFunc) -> bool {
+    matches!(func.kind, AggKind::Count)
+        && func.distinct
+        && func.extra_args.is_empty()
+        && func.order_by.is_empty()
+        && func
+            .arg
+            .as_ref()
+            .and_then(Expression::static_type)
+            .is_some_and(|ty| ty.eval_type() == EvalType::String)
+}
+
+/// Go `buildCount` selects the dedicated decimal set for one ETDecimal
+/// argument. The direct-column fast path additionally requires NewDecimal,
+/// while expression evaluation remains responsible for any compatible value
+/// representation.
+fn count_distinct_decimal(func: &AggFunc) -> bool {
+    matches!(func.kind, AggKind::Count)
+        && func.distinct
+        && func.extra_args.is_empty()
+        && func.order_by.is_empty()
+        && func
+            .arg
+            .as_ref()
+            .and_then(Expression::static_type)
+            .is_some_and(|ty| {
+                ty.eval_type() == EvalType::Decimal && ty.code() == FieldTypeCode::NewDecimal
+            })
+}
+
+/// Go `buildCount` selects the dedicated duration set for one ETDuration
+/// argument.
+fn count_distinct_duration(func: &AggFunc) -> bool {
+    matches!(func.kind, AggKind::Count)
+        && func.distinct
+        && func.extra_args.is_empty()
+        && func.order_by.is_empty()
+        && func
+            .arg
+            .as_ref()
+            .and_then(Expression::static_type)
+            .is_some_and(|ty| ty.eval_type() == EvalType::Duration)
+}
+
+fn count_distinct_typed(func: &AggFunc) -> bool {
+    count_distinct_int(func)
+        || count_distinct_real(func)
+        || count_distinct_string(func)
+        || count_distinct_decimal(func)
+        || count_distinct_duration(func)
+}
+
 impl AggState {
     fn new(func: &AggFunc) -> AggState {
         Self::with_collation(func, state_collation(func))
@@ -515,7 +581,7 @@ impl AggState {
     fn with_collation(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
         AggState {
             partial: Partial::for_func(func),
-            seen: (func.distinct && !count_distinct_int(func) && !count_distinct_real(func))
+            seen: (func.distinct && !count_distinct_typed(func))
                 .then(|| Box::new(StringSetWithMemoryUsage::new([]).0)),
             distinct_inputs: None,
             collation,
@@ -542,9 +608,7 @@ impl AggState {
 
     fn new_parallel_with(func: &AggFunc, collation: tidb_datatype::Collation) -> AggState {
         let mut state = Self::with_collation(func, collation);
-        state.distinct_inputs =
-            (func.distinct && !count_distinct_int(func) && !count_distinct_real(func))
-                .then(Vec::new);
+        state.distinct_inputs = (func.distinct && !count_distinct_typed(func)).then(Vec::new);
         state
     }
 
@@ -579,6 +643,97 @@ impl AggState {
                 Some(other) => {
                     return Err(ExecError::unsupported(format!(
                         "COUNT(DISTINCT) over {other:?} is not an integer"
+                    )))
+                }
+            }
+            return Ok(delta);
+        }
+        if matches!(self.partial, Partial::CountDistinctReal(_)) {
+            match value {
+                Some(Datum::Real(value)) | Some(Datum::Float32(value)) => {
+                    if let Partial::CountDistinctReal(set) = &mut self.partial {
+                        set.insert(value);
+                    }
+                }
+                Some(Datum::Null) => {}
+                None => return Err(ExecError::unsupported("COUNT requires an argument")),
+                Some(other) => {
+                    return Err(ExecError::unsupported(format!(
+                        "COUNT(DISTINCT) over {other:?} is not real"
+                    )))
+                }
+            }
+            return Ok(0);
+        }
+        if matches!(self.partial, Partial::CountDistinctString(_)) {
+            match value {
+                Some(Datum::String(value)) => {
+                    let key = self.collation.key(value.bytes());
+                    if let Partial::CountDistinctString(set) = &mut self.partial {
+                        let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
+                        let key = GoString::from_bytes(key);
+                        if !set.contains(&key) {
+                            delta += set.insert(key) + key_bytes;
+                        }
+                    }
+                }
+                Some(Datum::Bytes(value)) => {
+                    let key = self.collation.key(&value);
+                    if let Partial::CountDistinctString(set) = &mut self.partial {
+                        let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
+                        let key = GoString::from_bytes(key);
+                        if !set.contains(&key) {
+                            delta += set.insert(key) + key_bytes;
+                        }
+                    }
+                }
+                Some(Datum::Null) => {}
+                None => return Err(ExecError::unsupported("COUNT requires an argument")),
+                Some(other) => {
+                    return Err(ExecError::unsupported(format!(
+                        "COUNT(DISTINCT) over {other:?} is not string"
+                    )))
+                }
+            }
+            return Ok(delta);
+        }
+        if matches!(self.partial, Partial::CountDistinctDecimal(_)) {
+            match value {
+                Some(Datum::Decimal(value)) => {
+                    let key = value
+                        .to_hash_key()
+                        .map_err(|_| ExecError::unsupported("COUNT(DISTINCT) over decimal"))?
+                        .0;
+                    if let Partial::CountDistinctDecimal(set) = &mut self.partial {
+                        let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
+                        let key = GoString::from_bytes(key);
+                        if !set.contains(&key) {
+                            delta += set.insert(key) + key_bytes;
+                        }
+                    }
+                }
+                Some(Datum::Null) => {}
+                None => return Err(ExecError::unsupported("COUNT requires an argument")),
+                Some(other) => {
+                    return Err(ExecError::unsupported(format!(
+                        "COUNT(DISTINCT) over {other:?} is not decimal"
+                    )))
+                }
+            }
+            return Ok(delta);
+        }
+        if matches!(self.partial, Partial::CountDistinctDuration(_)) {
+            match value {
+                Some(Datum::Duration(value)) => {
+                    if let Partial::CountDistinctDuration(set) = &mut self.partial {
+                        delta += set.insert(value.nanoseconds());
+                    }
+                }
+                Some(Datum::Null) => {}
+                None => return Err(ExecError::unsupported("COUNT requires an argument")),
+                Some(other) => {
+                    return Err(ExecError::unsupported(format!(
+                        "COUNT(DISTINCT) over {other:?} is not duration"
                     )))
                 }
             }
@@ -692,6 +847,37 @@ impl AggState {
         Some(value.map_or(0, |value| set.insert(value)))
     }
 
+    /// Go `baseCountDistinct4String.UpdatePartialResult` on a directly read
+    /// column key. The caller has already applied the aggregate argument's
+    /// collation, so the state only needs to insert the owned bytes.
+    fn update_count_distinct_string_fast(&mut self, key: Vec<u8>) -> Option<i64> {
+        let Partial::CountDistinctString(set) = &mut self.partial else {
+            return None;
+        };
+        let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
+        Some(set.insert(GoString::from_bytes(key)) + key_bytes)
+    }
+
+    /// Go `baseCountDistinct4Decimal.UpdatePartialResult` on a directly read
+    /// `MyDecimal.ToHashKey` value.
+    fn update_count_distinct_decimal_fast(&mut self, key: Vec<u8>) -> Option<i64> {
+        let Partial::CountDistinctDecimal(set) = &mut self.partial else {
+            return None;
+        };
+        let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
+        Some(set.insert(GoString::from_bytes(key)) + key_bytes)
+    }
+
+    /// Go `baseCountDistinct4Duration.UpdatePartialResult` on the raw duration
+    /// value. Keeping the primitive value avoids constructing an encoded key
+    /// and a retained datum for every row.
+    fn update_count_distinct_duration_fast(&mut self, value: Option<i64>) -> Option<i64> {
+        let Partial::CountDistinctDuration(set) = &mut self.partial else {
+            return None;
+        };
+        Some(value.map_or(0, |value| set.insert(value)))
+    }
+
     /// Folds a directly read typed value into Go's single-argument
     /// `COUNT(DISTINCT)` set. The key is prepared by the caller using the
     /// aggregate's specialized source rule (collation key, MyDecimal hash
@@ -703,11 +889,27 @@ impl AggState {
         key_memory: bool,
         make_value: impl FnOnce() -> Datum,
     ) -> Option<i64> {
-        if !matches!(self.partial, Partial::Count(_)) {
+        let typed_set = matches!(
+            self.partial,
+            Partial::CountDistinctString(_) | Partial::CountDistinctDecimal(_)
+        );
+        if !typed_set && !matches!(self.partial, Partial::Count(_)) {
             return None;
         }
         let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
         let key = GoString::from_bytes(key);
+        if typed_set {
+            let delta = match &mut self.partial {
+                Partial::CountDistinctString(set) | Partial::CountDistinctDecimal(set) => {
+                    if set.contains(&key) {
+                        return Some(0);
+                    }
+                    set.insert(key).saturating_add(key_bytes)
+                }
+                _ => unreachable!("typed DISTINCT set checked above"),
+            };
+            return Some(delta);
+        }
         let seen = self.seen.as_mut()?;
         if seen.contains(&key) {
             return Some(0);
@@ -1304,6 +1506,21 @@ impl Partial {
                 Float64SetWithMemoryUsage::new(std::iter::empty::<f64>()).0,
             );
         }
+        if count_distinct_string(func) {
+            return Partial::CountDistinctString(
+                StringSetWithMemoryUsage::new(std::iter::empty::<GoString>()).0,
+            );
+        }
+        if count_distinct_decimal(func) {
+            return Partial::CountDistinctDecimal(
+                StringSetWithMemoryUsage::new(std::iter::empty::<GoString>()).0,
+            );
+        }
+        if count_distinct_duration(func) {
+            return Partial::CountDistinctDuration(
+                Int64SetWithMemoryUsage::new(std::iter::empty::<i64>()).0,
+            );
+        }
         Partial::new(&func.kind)
     }
 
@@ -1774,6 +1991,21 @@ impl Partial {
                     "COUNT(DISTINCT) over this real value is not supported",
                 ));
             }
+            (Partial::CountDistinctString(_), _) => {
+                return Err(ExecError::internal(
+                    "a typed COUNT(DISTINCT) string state is folded by its aggregate state",
+                ));
+            }
+            (Partial::CountDistinctDecimal(_), _) => {
+                return Err(ExecError::internal(
+                    "a typed COUNT(DISTINCT) decimal state is folded by its aggregate state",
+                ));
+            }
+            (Partial::CountDistinctDuration(_), _) => {
+                return Err(ExecError::internal(
+                    "a typed COUNT(DISTINCT) duration state is folded by its aggregate state",
+                ));
+            }
             (Partial::MaxMin { .. }, Some(Datum::Null)) => {}
             (Partial::MaxMin { value, is_max }, Some(input)) => match value {
                 None => *value = Some(input),
@@ -2080,6 +2312,12 @@ impl Partial {
                 Datum::Int(i64::try_from(set.len()).unwrap_or(i64::MAX))
             }
             Partial::CountDistinctReal(set) => {
+                Datum::Int(i64::try_from(set.len()).unwrap_or(i64::MAX))
+            }
+            Partial::CountDistinctString(set) | Partial::CountDistinctDecimal(set) => {
+                Datum::Int(i64::try_from(set.len()).unwrap_or(i64::MAX))
+            }
+            Partial::CountDistinctDuration(set) => {
                 Datum::Int(i64::try_from(set.len()).unwrap_or(i64::MAX))
             }
             Partial::MaxMinCount { count, .. } => Datum::Int(*count),
