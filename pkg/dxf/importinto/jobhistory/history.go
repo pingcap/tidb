@@ -208,7 +208,7 @@ func GetFromHistory(
 	for step, bounds := range stepDurations {
 		duration := formatDuration(max(bounds[1]-bounds[0], 0))
 		switch step {
-		case proto.ImportStepEncodeAndSort:
+		case proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 			info.Duration.Encode = duration
 		case proto.ImportStepMergeSort:
 			info.Duration.MergeSort = duration

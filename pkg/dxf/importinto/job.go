@@ -75,7 +75,7 @@ func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
 	failpoint.Inject("mockDisableAsyncPrepare", func() {
 		failpoint.Return(false)
 	})
-	return plan != nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
+	return plan != nil && plan.Query == nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
 }
 
 func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
@@ -366,7 +366,7 @@ func GetRuntimeInfoForJob(
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
 		ri.Total = taskMeta.Summary.IngestSummary.Bytes
-	case proto.ImportStepEncodeAndSort:
+	case proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		ri.Total = taskMeta.Summary.EncodeSummary.Bytes
 	case proto.ImportStepMergeSort:
 		ri.Total = taskMeta.Summary.MergeSummary.Bytes
