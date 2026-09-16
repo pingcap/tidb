@@ -61,14 +61,15 @@ func parseImportQuery(sctx sessionctx.Context, sql string) (ast.StmtNode, error)
 }
 
 // CaptureImportQuery records the original SQL and source metadata after privilege checks.
-func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPlan, error) {
+// The returned SELECT AST is reused on the submitter; workers parse SQL independently.
+func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPlan, ast.StmtNode, error) {
 	node, err := parseImportQuery(sctx, sql)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	checker := &importQueryChecker{}
 	if !ast.Walk(node, checker) {
-		return nil, checker.err
+		return nil, nil, checker.err
 	}
 
 	q := &importer.QueryPlan{
@@ -95,7 +96,7 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 	} {
 		value, err := vars.GetSessionOrGlobalSystemVar(context.Background(), name)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		q.SessionVars[name] = value
 	}
@@ -109,10 +110,10 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 		context.Background(), sctx, nodeW,
 		plannercore.WithPreprocessorReturn(ret),
 	); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if ret.IsStaleness {
-		return nil, errors.New("import query does not support stale reads")
+		return nil, nil, errors.New("import query does not support stale reads")
 	}
 
 	seen := make(map[int64]bool)
@@ -121,7 +122,7 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 		if tblInfo.IsView() ||
 			tblInfo.TempTableType != model.TempTableNone ||
 			tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-			return nil, errors.New("import query requires persistent, uncached source tables")
+			return nil, nil, errors.New("import query requires persistent, uncached source tables")
 		}
 		if !seen[tblInfo.ID] {
 			seen[tblInfo.ID] = true
@@ -129,7 +130,7 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 			q.Tables[dbInfo.ID] = append(q.Tables[dbInfo.ID], tblInfo)
 		}
 	}
-	return q, nil
+	return q, node, nil
 }
 
 type importQueryChecker struct {
@@ -174,6 +175,19 @@ func runImportQuery(
 	if !ok {
 		return errors.New("import query did not produce a physical SELECT plan")
 	}
+	if q.Scan != nil {
+		if runtime.ScanConcurrency > 0 {
+			vars.SetDistSQLScanConcurrency(min(vars.DistSQLScanConcurrency(), runtime.ScanConcurrency))
+			workerSession.GetDistSQLCtx().DistSQLConcurrency = vars.DistSQLScanConcurrency()
+		}
+		scan := importRangeTableScan(p)
+		if scan == nil || scan.Table.ID != q.Scan.TableID {
+			return errors.New("import query no longer has a supported TiKV table scan for range execution")
+		}
+		if runtime.Range == nil || runtime.RowIDAllocator == nil || q.Scan.ReadTS == 0 {
+			return errors.New("import query range requires bounds, a read TS and a row ID allocator")
+		}
+	}
 	failpoint.InjectCall("afterImportQueryOptimize", p)
 	failpoint.Inject("failAfterImportQueryOptimize", func() {
 		failpoint.Return(errors.New("injected failure after import query optimization"))
@@ -190,6 +204,11 @@ func runImportQuery(
 	}
 	if e == nil {
 		return errors.New("import query built no executor")
+	}
+	if q.Scan != nil {
+		if err := setImportQueryRange(e, runtime.Range); err != nil {
+			return err
+		}
 	}
 	defer func() {
 		if closeErr := exec.Close(e); err == nil {
@@ -209,6 +228,12 @@ func runImportQuery(
 		}
 		if chk.NumRows() == 0 {
 			return nil
+		}
+		if runtime.RowIDAllocator != nil {
+			rowID, _, err = runtime.RowIDAllocator.Alloc(ctx, uint64(chk.NumRows()), 1, 1)
+			if err != nil {
+				return err
+			}
 		}
 		select {
 		case output <- importer.QueryChunk{Fields: fields, Chk: chk, RowIDOffset: rowID}:

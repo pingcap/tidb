@@ -272,6 +272,14 @@ type QueryPlan struct {
 	SQL           string
 	SessionVars   map[string]string
 	PushDownFlags uint64
+	Scan          *QueryScan `json:",omitempty"`
+}
+
+// QueryScan fixes source coverage and the shared snapshot for distributed query attempts.
+type QueryScan struct {
+	TableID int64
+	ReadTS  uint64
+	Ranges  []tidbkv.KeyRange
 }
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
