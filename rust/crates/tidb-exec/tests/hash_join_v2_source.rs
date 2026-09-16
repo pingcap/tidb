@@ -1,3 +1,26 @@
+//! MIGRATION NOTE (this target currently does not compile — see below).
+//!
+//! `native_probe_stage_next_close_and_error_source` (and its driver helpers at
+//! `events.recv_timeout` / `stage.next(&mut source, ...)`) were written for the
+//! pre-fetcher `ProbeStage` API, where `next` took the probe source per call.
+//! Since commit 2593651018 the stage owns a fetcher that runs on the persistent
+//! execution pool: `new` wants `&mut Option<Box<dyn Executor>>`, `next` wants
+//! only the output chunk, and the fetcher emits `FetcherDone` / `FetcherError`
+//! events the driver loop must now handle.
+//!
+//! To migrate:
+//!   1. Wrap the probe source as `&mut Some(Box::new(source) as
+//!      Box<dyn Executor>)` before `ProbeStage::new`.
+//!   2. Drop the source argument from `stage.next(&mut output)`.
+//!   3. Handle `FetcherDone` (source EOF: finish the fetch) and
+//!      `FetcherError { error }` (surface it) in the driver loop.
+//!   4. `source.calls` / `source.allocations` are read after the source is
+//!      boxed — route them through an `Arc<Mutex<..>>`-style shared handle
+//!      captured before boxing.
+//!   5. Re-derive per-mode expectations: source fail/panic now surface as
+//!      fetcher events, the empty-build path takes `skip_probe`, and the kill
+//!      path flows through the fetcher's kill select.
+
 // Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
