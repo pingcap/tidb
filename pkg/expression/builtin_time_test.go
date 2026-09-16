@@ -2272,6 +2272,26 @@ func TestUnixTimestamp(t *testing.T) {
 	}
 }
 
+func TestUnixTimestampMutableScale(t *testing.T) {
+	for _, kind := range []string{"literal", "parameter", "deferred"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := createContext(t)
+			ctx.GetSessionVars().StmtCtx.EnablePlanCache()
+			arg := &Constant{Value: types.NewStringDatum("2020-01-01 00:00:00.1"), RetType: types.NewFieldType(mysql.TypeVarString)}
+			switch kind {
+			case "parameter":
+				ctx.GetSessionVars().PlanCacheParams.Append(arg.Value)
+				arg.ParamMarker = &ParamMarker{order: 0}
+			case "deferred":
+				arg.DeferredExpr = arg.Clone()
+			}
+			_, err := funcs[ast.UnixTimestamp].getFunction(ctx, []Expression{arg})
+			require.NoError(t, err)
+			require.Equal(t, kind == "literal", ctx.IsUseCache())
+		})
+	}
+}
+
 func TestDateArithFuncs(t *testing.T) {
 	ctx := createContext(t)
 	date := []string{"2016-12-31", "2017-01-01"}
