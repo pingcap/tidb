@@ -44,6 +44,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBinaryLiteralNumericAggregation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table bit_agg(a int)")
+	tk.MustExec("insert into bit_agg values(1),(1),(2)")
+	tk.MustQuery("select a,sum(b'101010'),avg(b'101010') from bit_agg group by a order by a").Check(testkit.Rows("1 84 42", "2 42 42"))
+	tk.MustQuery("select a,sum(x'31'),avg(x'31') from bit_agg group by a order by a").Check(testkit.Rows("1 98 49", "2 49 49"))
+	tk.MustQuery("select a,sum('1'),avg('1') from bit_agg group by a order by a").Check(testkit.Rows("1 2 1", "2 1 1"))
+	tk.MustQuery("select hex(min(b'101010')),hex(max(b'101010')),count(b'101010') from bit_agg").Check(testkit.Rows("2A 2A 3"))
+	tk.MustQuery("select sum(b'101010'),avg(b'101010') from bit_agg where a=3").Check(testkit.Rows("<nil> <nil>"))
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")

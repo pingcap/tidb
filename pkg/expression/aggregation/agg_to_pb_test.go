@@ -81,6 +81,28 @@ func TestAggFunc2Pb(t *testing.T) {
 	}
 }
 
+func TestNumericBinaryLiteralToPB(t *testing.T) {
+	ctx := mock.NewContext()
+	ft := types.NewFieldType(mysql.TypeVarString)
+	types.SetBinChsClnFlag(ft)
+	literal := &expression.Constant{Value: types.NewBinaryLiteralDatum(types.BinaryLiteral{'1'}), RetType: ft}
+	pushCtx := expression.NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), new(mock.Client))
+	for _, name := range []string{ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncMin, ast.AggFuncCount} {
+		agg, err := NewAggFuncDesc(ctx, name, []expression.Expression{literal}, false)
+		require.NoError(t, err)
+		pb, err := AggFuncToPBExpr(pushCtx, agg, kv.TiKV)
+		require.NoError(t, err)
+		if name == ast.AggFuncSum || name == ast.AggFuncAvg {
+			require.Equal(t, tipb.ExprType_Float64, pb.Children[0].Tp)
+			require.Equal(t, float64(49), agg.Args[0].(*expression.Constant).Value.GetFloat64())
+		} else {
+			require.Equal(t, tipb.ExprType_String, pb.Children[0].Tp)
+			require.Equal(t, []byte{'1'}, pb.Children[0].Val)
+		}
+		require.True(t, expression.IsBinaryLiteral(literal))
+	}
+}
+
 func TestAggFuncSumIntToPb(t *testing.T) {
 	ctx := mock.NewContext()
 	client := new(mock.Client)
