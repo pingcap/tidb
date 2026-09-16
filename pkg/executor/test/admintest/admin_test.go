@@ -877,6 +877,14 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	t.Run("partial index", func(t *testing.T) {
 		tk.MustExec("drop table if exists partial_t")
 		tk.MustExec("create table partial_t(pk int primary key, a json, flag int, index idx((cast(a as signed array))) where flag = 1, index idx_flag(flag))")
+		partialTbl, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("partial_t"))
+		require.NoError(t, err)
+		// Simulate the metadata produced by ADD COLUMN flag INT DEFAULT 1. MockStore cannot
+		// add a partial index through fast reorg, so the test creates the index up front.
+		flagCol := model.FindColumnInfo(partialTbl.Meta().Columns, "flag")
+		require.NotNil(t, flagCol)
+		require.NoError(t, flagCol.SetOriginDefaultValue(int64(1)))
+
 		tk.MustExec("insert into partial_t values (0, '[0,1,2]', 0), (1, '[1,2,3]', 1), (2, '[]', 1), (3, '[4,5]', null)")
 		tk.MustExec("admin check table partial_t")
 		tk.MustExec("admin check index partial_t idx")
@@ -886,8 +894,6 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 			require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 		}
 
-		partialTbl, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("partial_t"))
-		require.NoError(t, err)
 		var idxInfo *model.IndexInfo
 		for _, info := range partialTbl.Meta().Indices {
 			if info.Name.L == "idx" {

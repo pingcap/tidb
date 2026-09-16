@@ -157,21 +157,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 	}
 
 	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
-	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
-		for i, val := range vals1 {
-			col := cols[i]
-			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.GetFlag()) && col.ToInfo().GetOriginDefaultValue() == nil {
-					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
-				}
-				// NULL value is regarded as its default value.
-				colDefVal, err := table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
-				if err != nil {
-					return false, errors.Trace(err)
-				}
-				vals1[i] = colDefVal
-			}
-		}
+	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, _ []*table.Column) (bool, error) {
 		idxVals := vals1
 		if idx.Meta().HasCondition() {
 			meet, err := idx.MeetPartialCondition(vals1)
@@ -262,7 +248,18 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		}
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
-			data = append(data, rowMap[col.ID])
+			val, found := rowMap[col.ID]
+			// Only a physically missing column uses its origin default. A stored NULL must stay NULL.
+			if !found || (val.IsNull() && mysql.HasNotNullFlag(col.GetFlag())) {
+				if mysql.HasNotNullFlag(col.GetFlag()) && col.ToInfo().GetOriginDefaultValue() == nil {
+					return errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, handle)
+				}
+				val, err = table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			data = append(data, val)
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
