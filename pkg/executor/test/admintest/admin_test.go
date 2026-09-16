@@ -869,70 +869,11 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func mustMutateIndex(t *testing.T, store kv.Storage, mutate func(kv.Transaction) error) {
-	t.Helper()
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	require.NoError(t, mutate(txn))
-	require.NoError(t, txn.Commit(context.Background()))
-}
-
-func mustReportAdminCheckInconsistent(t *testing.T, tk *testkit.TestKit, sqls ...string) {
-	t.Helper()
-	for _, sql := range sqls {
-		err := tk.ExecToErr(sql)
-		require.Error(t, err)
-		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err), "%v", err)
-	}
-}
-
 func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	t.Run("partial index", func(t *testing.T) {
-		tk.MustExec("drop table if exists partial_t")
-		tk.MustExec("create table partial_t(pk int primary key, a json, flag int, index idx((cast(a as signed array))) where flag = 1, index idx_flag(flag))")
-		partialTbl, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("partial_t"))
-		require.NoError(t, err)
-		// Simulate the metadata produced by ADD COLUMN flag INT DEFAULT 1. MockStore cannot
-		// add a partial index through fast reorg, so the test creates the index up front.
-		flagCol := model.FindColumnInfo(partialTbl.Meta().Columns, "flag")
-		require.NotNil(t, flagCol)
-		require.NoError(t, flagCol.SetOriginDefaultValue(int64(1)))
-
-		tk.MustExec("insert into partial_t values (0, '[0,1,2]', 0), (1, '[1,2,3]', 1), (2, '[]', 1), (3, '[4,5]', null)")
-		tk.MustExec("admin check table partial_t")
-		tk.MustExec("admin check index partial_t idx")
-		idxInfo := partialTbl.Meta().FindIndexByName("idx")
-		require.NotNil(t, idxInfo)
-		idxInfo = idxInfo.Clone()
-		idxInfo.MVIndex = false
-		indexOpr, err := tables.NewIndex(partialTbl.Meta().ID, partialTbl.Meta(), idxInfo)
-		require.NoError(t, err)
-		sctx := mock.NewContext()
-		sctx.Store = store
-
-		mustMutateIndex(t, store, func(txn kv.Transaction) error {
-			return indexOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1))
-		})
-		mustReportAdminCheckInconsistent(t, tk, "admin check table partial_t", "admin check index partial_t idx")
-
-		mustMutateIndex(t, store, func(txn kv.Transaction) error {
-			_, err := indexOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1), nil)
-			return err
-		})
-		tk.MustExec("admin check table partial_t")
-		tk.MustExec("admin check index partial_t idx")
-
-		mustMutateIndex(t, store, func(txn kv.Transaction) error {
-			_, err := indexOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(0), nil)
-			return err
-		})
-		mustReportAdminCheckInconsistent(t, tk, "admin check table partial_t", "admin check index partial_t idx")
-	})
-
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))))")
 	tk.MustExec("insert into t values (0, '[0,1,2]')")
@@ -988,68 +929,108 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestSlowAdminCheckTableWithPartialIndex(t *testing.T) {
+func TestSlowAdminCheckPartialIndexes(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_fast_table_check = off")
 	tk.MustExec(`create table t(
 		pk int primary key,
-		a int,
+		a json,
+		b int,
 		flag int,
-		index idx_partial(a) where flag = 1,
+		index idx_mv((cast(a as signed array))) where flag = 1,
+		index idx_scalar(b) where flag = 1,
 		index idx_all(flag)
 	)`)
-	tk.MustExec("insert into t values (1, 10, 1), (2, 20, 0), (3, 30, null)")
-	tk.MustExec("admin check table t")
-	tk.MustExec("admin check index t idx_partial")
 
 	tbl, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	partialIdx := tbl.Meta().FindIndexByName("idx_partial")
-	require.NotNil(t, partialIdx)
-	allIdx := tbl.Meta().FindIndexByName("idx_all")
-	require.NotNil(t, allIdx)
-	partialIdxOpr, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), partialIdx)
-	require.NoError(t, err)
-	allIdxOpr, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), allIdx)
-	require.NoError(t, err)
+	// Simulate the metadata produced by ADD COLUMN flag INT DEFAULT 1. MockStore cannot
+	// add a partial index through fast reorg, so the test creates the indexes up front.
+	flagCol := model.FindColumnInfo(tbl.Meta().Columns, "flag")
+	require.NotNil(t, flagCol)
+	require.NoError(t, flagCol.SetOriginDefaultValue(int64(1)))
+
+	tk.MustExec("insert into t values (0, '[0,1,2]', 0, 0), (1, '[1,2,3]', 10, 1), (2, '[]', 30, 1), (3, '[4,5]', 20, null)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t idx_mv")
+	tk.MustExec("admin check index t idx_scalar")
 
 	sctx := mock.NewContext()
 	sctx.Store = store
+	newIndex := func(name string, clearMVIndex bool) table.Index {
+		idxInfo := tbl.Meta().FindIndexByName(name)
+		require.NotNil(t, idxInfo)
+		if clearMVIndex {
+			idxInfo = idxInfo.Clone()
+			idxInfo.MVIndex = false
+		}
+		idx, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idxInfo)
+		require.NoError(t, err)
+		return idx
+	}
+	mutateIndex := func(t *testing.T, mutate func(kv.Transaction) error) {
+		t.Helper()
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		require.NoError(t, mutate(txn))
+		require.NoError(t, txn.Commit(context.Background()))
+	}
+	mustReportInconsistent := func(t *testing.T, indexName string) {
+		t.Helper()
+		for _, sql := range []string{"admin check table t", fmt.Sprintf("admin check index t %s", indexName)} {
+			err := tk.ExecToErr(sql)
+			require.Error(t, err)
+			require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err), "%v", err)
+		}
+	}
 
-	// A qualifying table row without its partial-index entry must be reported by
-	// the table-to-index direction of the slow check.
-	mustMutateIndex(t, store, func(txn kv.Transaction) error {
-		return partialIdxOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(10), kv.IntHandle(1))
-	})
-	mustReportAdminCheckInconsistent(t, tk, "admin check table t", "admin check index t idx_partial")
-	mustMutateIndex(t, store, func(txn kv.Transaction) error {
-		_, err := partialIdxOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(10), kv.IntHandle(1), nil)
-		return err
-	})
-	tk.MustExec("admin check table t")
-	tk.MustExec("admin check index t idx_partial")
+	testCases := []struct {
+		name          string
+		indexName     string
+		index         table.Index
+		missingValue  []types.Datum
+		missingHandle kv.Handle
+		extraValue    []types.Datum
+		extraHandle   kv.Handle
+	}{
+		{"multi-valued", "idx_mv", newIndex("idx_mv", true), types.MakeDatums(1), kv.IntHandle(1), types.MakeDatums(0), kv.IntHandle(0)},
+		{"scalar", "idx_scalar", newIndex("idx_scalar", false), types.MakeDatums(10), kv.IntHandle(1), types.MakeDatums(0), kv.IntHandle(0)},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// A qualifying table row without its partial-index entry must be reported.
+			mutateIndex(t, func(txn kv.Transaction) error {
+				return tc.index.Delete(sctx.GetTableCtx(), txn, tc.missingValue, tc.missingHandle)
+			})
+			mustReportInconsistent(t, tc.indexName)
+			mutateIndex(t, func(txn kv.Transaction) error {
+				_, err := tc.index.Create(sctx.GetTableCtx(), txn, tc.missingValue, tc.missingHandle, nil)
+				return err
+			})
 
-	// An entry for a row that does not satisfy the partial condition must be
-	// reported by the index-to-table direction of the slow check.
-	mustMutateIndex(t, store, func(txn kv.Transaction) error {
-		_, err := partialIdxOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(20), kv.IntHandle(2), nil)
-		return err
-	})
-	mustReportAdminCheckInconsistent(t, tk, "admin check table t", "admin check index t idx_partial")
-	mustMutateIndex(t, store, func(txn kv.Transaction) error {
-		return partialIdxOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(20), kv.IntHandle(2))
-	})
+			// An entry for a row that does not satisfy the condition must be reported.
+			mutateIndex(t, func(txn kv.Transaction) error {
+				_, err := tc.index.Create(sctx.GetTableCtx(), txn, tc.extraValue, tc.extraHandle, nil)
+				return err
+			})
+			mustReportInconsistent(t, tc.indexName)
+			mutateIndex(t, func(txn kv.Transaction) error {
+				return tc.index.Delete(sctx.GetTableCtx(), txn, tc.extraValue, tc.extraHandle)
+			})
+		})
+	}
 
 	// The count shortcut filters out the partial index. Verify that its returned
 	// offset is still mapped to the correct index in a mixed-index table.
-	mustMutateIndex(t, store, func(txn kv.Transaction) error {
-		return allIdxOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(2))
+	allIdx := newIndex("idx_all", false)
+	mutateIndex(t, func(txn kv.Transaction) error {
+		return allIdx.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(0))
 	})
 	require.Error(t, tk.ExecToErr("admin check table t"))
-	mustMutateIndex(t, store, func(txn kv.Transaction) error {
-		_, err := allIdxOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(2), nil)
+	mutateIndex(t, func(txn kv.Transaction) error {
+		_, err := allIdx.Create(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(0), nil)
 		return err
 	})
 	tk.MustExec("admin check table t")
