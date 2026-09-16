@@ -277,6 +277,9 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
+		if hasAsOfInUpdateTableRefs(node.TableRefs.TableRefs) {
+			p.err = plannererrors.ErrAsOf.FastGenWithCause("AS OF TIMESTAMP is not supported in UPDATE table references")
+		}
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
 		// handle the insert table name imminently
@@ -1152,6 +1155,21 @@ func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 			return
 		}
 	}
+}
+
+// Check direct UPDATE table references independently of traversal state: a CTE or
+// derived SELECT can change stmtTp before the UPDATE's table names are visited.
+// Nested SELECTs retain their own stale-read validation.
+func hasAsOfInUpdateTableRefs(node ast.ResultSetNode) bool {
+	switch n := node.(type) {
+	case *ast.Join:
+		return hasAsOfInUpdateTableRefs(n.Left) || hasAsOfInUpdateTableRefs(n.Right)
+	case *ast.TableSource:
+		return hasAsOfInUpdateTableRefs(n.Source)
+	case *ast.TableName:
+		return n.AsOf != nil
+	}
+	return false
 }
 
 func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -477,6 +478,39 @@ func TestPreprocessCTE(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tc.after, rs.String())
 	}
+}
+
+func TestPreprocessUpdateAsOf(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	for _, sql := range []string{
+		"update t1 as of timestamp '2020-01-01' set v=99 where id=1",
+		"update t1 as of timestamp '2020-01-01' set v=99",
+		"update t1 as x as of timestamp '2020-01-01' join t2 as y on x.id=y.id set x.v=99",
+		"update t1 as x join t2 as y as of timestamp '2020-01-01' on x.id=y.id set x.v=99",
+		"update (select 1 as id) as d join t1 as of timestamp '2020-01-01' on d.id=t1.id set t1.v=99",
+		"with c as (select 1) update t1 as of timestamp '2020-01-01' set v=99",
+		"prepare s from 'update t1 as of timestamp ? set v=99'",
+	} {
+		t.Run(sql, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("update t1 set v=id")
+			tk.MustGetErrCode(sql, errno.ErrAsOf)
+			tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("1 1", "2 2"))
+			tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 2"))
+		})
+	}
+	tk.MustExec("update t1 set v=id+10")
+	tk.MustExec("set @ts=cast(json_extract(@@tidb_last_txn_info, '$.commit_ts') as char)")
+	tk.MustExec("update t1 set v=99 where id=1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("1 99", "2 12"))
+	tk.MustQuery("select * from t1 as of timestamp @ts order by id").Check(testkit.Rows("1 11", "2 12"))
 }
 
 func TestPreprocessDeleteFromWithAlias(t *testing.T) {

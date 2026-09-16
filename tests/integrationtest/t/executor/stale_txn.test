@@ -63,3 +63,22 @@ commit;
 # Verify that CAST(@tso AS UNSIGNED) works directly in AS OF TIMESTAMP.
 set @int_tso = cast(@last_commit_ts as unsigned);
 select count(*) as int_tso_count from t1 as of timestamp @int_tso;
+
+# UPDATE must not ignore AS OF and modify current rows.
+drop table if exists update_asof;
+create table update_asof(id int primary key, v int);
+insert into update_asof values (1,1),(2,2);
+set @update_ts=cast(json_extract(@@tidb_last_txn_info, '$.commit_ts') as char);
+--error 8135
+update update_asof as of timestamp @update_ts set v=99;
+--error 8135
+update update_asof as x join update_asof as y as of timestamp @update_ts on x.id=y.id set x.v=99;
+--error 8135
+with c as (select 1) update update_asof as of timestamp @update_ts set v=99;
+--error 8135
+prepare s from 'update update_asof as of timestamp ? set v=99';
+select * from update_asof order by id;
+update update_asof set v=11 where id=1;
+select * from update_asof order by id;
+select * from update_asof as of timestamp @update_ts order by id;
+drop table update_asof;
