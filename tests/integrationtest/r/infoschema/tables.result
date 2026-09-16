@@ -288,3 +288,27 @@ DROP TABLE t2;
 SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
 CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE	TABLE_NAME
 SET GLOBAL tidb_enable_check_constraint = default;
+CREATE DATABASE issue70825;
+CREATE TABLE issue70825.test70825(a INT);
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name LIKE 'T%';
+COUNT(*)
+0
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name NOT LIKE 'T%';
+COUNT(*)
+1
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name LIKE 'T%' AND table_name NOT LIKE 'T%';
+COUNT(*)
+0
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name LIKE 't%';
+COUNT(*)
+1
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name ILIKE 'T%';
+COUNT(*)
+1
+SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='issue70825' AND column_name LIKE 'A%';
+COUNT(*)
+0
+SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='issue70825' AND column_name LIKE 'a%';
+COUNT(*)
+1
+DROP DATABASE issue70825;
