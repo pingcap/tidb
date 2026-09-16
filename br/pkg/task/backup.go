@@ -545,7 +545,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			}
 		}()
 		if e != nil {
-			return errors.Trace(err)
+			return errors.Trace(e)
 		}
 	}
 
