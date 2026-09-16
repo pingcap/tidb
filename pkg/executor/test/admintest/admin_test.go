@@ -987,6 +987,86 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestSlowAdminCheckTableWithPartialIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_fast_table_check = off")
+	tk.MustExec(`create table t(
+		pk int primary key,
+		a int,
+		flag int,
+		index idx_partial(a) where flag = 1,
+		index idx_all(flag)
+	)`)
+	tk.MustExec("insert into t values (1, 10, 1), (2, 20, 0), (3, 30, null)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t idx_partial")
+
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	partialIdx := tbl.Meta().FindIndexByName("idx_partial")
+	require.NotNil(t, partialIdx)
+	allIdx := tbl.Meta().FindIndexByName("idx_all")
+	require.NotNil(t, allIdx)
+	partialIdxOpr, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), partialIdx)
+	require.NoError(t, err)
+	allIdxOpr, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), allIdx)
+	require.NoError(t, err)
+
+	sctx := mock.NewContext()
+	sctx.Store = store
+	mutateIndex := func(fn func(kv.Transaction) error) {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		require.NoError(t, fn(txn))
+		require.NoError(t, txn.Commit(context.Background()))
+	}
+	mustReportInconsistent := func(sql string) {
+		err := tk.ExecToErr(sql)
+		require.Error(t, err)
+		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err), "%v", err)
+	}
+
+	// A qualifying table row without its partial-index entry must be reported by
+	// the table-to-index direction of the slow check.
+	mutateIndex(func(txn kv.Transaction) error {
+		return partialIdxOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(10), kv.IntHandle(1))
+	})
+	mustReportInconsistent("admin check table t")
+	mustReportInconsistent("admin check index t idx_partial")
+	mutateIndex(func(txn kv.Transaction) error {
+		_, err := partialIdxOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(10), kv.IntHandle(1), nil)
+		return err
+	})
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t idx_partial")
+
+	// An entry for a row that does not satisfy the partial condition must be
+	// reported by the index-to-table direction of the slow check.
+	mutateIndex(func(txn kv.Transaction) error {
+		_, err := partialIdxOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(20), kv.IntHandle(2), nil)
+		return err
+	})
+	mustReportInconsistent("admin check table t")
+	mustReportInconsistent("admin check index t idx_partial")
+	mutateIndex(func(txn kv.Transaction) error {
+		return partialIdxOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(20), kv.IntHandle(2))
+	})
+
+	// The count shortcut filters out the partial index. Verify that its returned
+	// offset is still mapped to the correct index in a mixed-index table.
+	mutateIndex(func(txn kv.Transaction) error {
+		return allIdxOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(2))
+	})
+	require.Error(t, tk.ExecToErr("admin check table t"))
+	mutateIndex(func(txn kv.Transaction) error {
+		_, err := allIdxOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(2), nil)
+		return err
+	})
+	tk.MustExec("admin check table t")
+}
+
 func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 

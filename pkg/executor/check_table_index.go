@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/admin"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -50,8 +48,6 @@ import (
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
-
-var errCheckPartialIndexWithoutFastCheck = dbterror.ClassExecutor.NewStd(errno.ErrCheckPartialIndexWithoutFastCheck)
 
 // CheckTableExec represents a check table executor.
 // It is built from the "admin check table" statement, and it checks if the
@@ -145,34 +141,39 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	defer func() { e.done = true }()
 
 	idxNames := make([]string, 0, len(e.indexInfos))
-	for _, idx := range e.indexInfos {
-		if idx.MVIndex || idx.IsColumnarIndex() {
+	idxOffsets := make([]int, 0, len(e.indexInfos))
+	for offset, idx := range e.indexInfos {
+		// These indexes do not have a one-to-one mapping between table rows and
+		// index entries, so their counts cannot be compared with the table count.
+		if idx.MVIndex || idx.IsColumnarIndex() || idx.HasCondition() {
 			continue
 		}
-		if idx.HasCondition() {
-			return errors.Trace(errCheckPartialIndexWithoutFastCheck)
-		}
 		idxNames = append(idxNames, idx.Name.O)
+		idxOffsets = append(idxOffsets, offset)
 	}
-	greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
-	if err != nil {
-		// For admin check index statement, for speed up and compatibility, doesn't do below checks.
-		if e.checkIndex {
+	if len(idxNames) > 0 {
+		greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
+		if err != nil {
+			// For admin check index statement, for speed up and compatibility, doesn't do below checks.
+			if e.checkIndex {
+				return errors.Trace(err)
+			}
+			if greater == admin.IdxCntGreater {
+				realIdxOffset := idxOffsets[idxOffset]
+				err = e.checkTableIndexHandle(ctx, e.indexInfos[realIdxOffset])
+			} else if greater == admin.TblCntGreater {
+				realIdxOffset := idxOffsets[idxOffset]
+				err = e.checkTableRecord(ctx, realIdxOffset)
+			}
 			return errors.Trace(err)
 		}
-		if greater == admin.IdxCntGreater {
-			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
-		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(ctx, idxOffset)
-		}
-		return errors.Trace(err)
 	}
 
 	// The number of table rows is equal to the number of index rows.
 	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
 	if len(e.srcs) == 1 {
-		err = e.checkIndexHandle(ctx, e.srcs[0])
-		if err == nil && e.srcs[0].index.MVIndex {
+		err := e.checkIndexHandle(ctx, e.srcs[0])
+		if err == nil && (e.srcs[0].index.MVIndex || e.srcs[0].index.HasCondition()) {
 			err = e.checkTableRecord(ctx, 0)
 		}
 		if err != nil {
@@ -195,7 +196,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				select {
 				case src := <-taskCh:
 					err1 := e.checkIndexHandle(ctx, src)
-					if err1 == nil && src.index.MVIndex {
+					if err1 == nil && (src.index.MVIndex || src.index.HasCondition()) {
 						for offset, idx := range e.indexInfos {
 							if idx.ID == src.index.ID {
 								err1 = e.checkTableRecord(ctx, offset)

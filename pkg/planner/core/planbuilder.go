@@ -1869,7 +1869,7 @@ func (b *PlanBuilder) buildAdminCheckIndexLookUpReader(_ context.Context, dbName
 		ExtraHandleCol:   extraCol,
 		CommonHandleCols: commonCols,
 	}
-	if idx.MVIndex && idx.HasCondition() {
+	if idx.HasCondition() {
 		// Finish the index plan while the table plan is still a table scan. The partial
 		// condition is then evaluated inside the table-side coprocessor plan, and a
 		// projection keeps the row returned to IndexLookUpExecutor unchanged.
