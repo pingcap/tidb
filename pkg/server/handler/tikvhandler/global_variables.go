@@ -63,6 +63,8 @@ func (h GlobalVariablesHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 		if compat.IsInvisibleSysVar(sv.Name) {
 			continue
 		}
+		// tidb_cloud_storage_uri's getter already applies ast.RedactURL, preserving
+		// non-secret URI details without needing additional redaction here.
 		value, err := sv.GetGlobalFromHook(ctx, s.GetSessionVars())
 		if err != nil {
 			handler.WriteErrorWithCode(w, http.StatusInternalServerError, errors.New("unable to read global variables"))
