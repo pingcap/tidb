@@ -255,7 +255,6 @@ fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
     }), "{rows:#?}");
 }
 
-
 /// TPC-H q14, planned exactly as Go records it in
 /// `tests/integrationtest/r/tpch.result` (the `explain format = 'plan_tree'`
 /// block under "Q14 Promotion Effect Query").

@@ -58,7 +58,7 @@ use tidb_util::serialization::{INT_LEN, UINT64_LEN};
 use tidb_util::{memory::Tracker, sqlkiller::SqlKiller};
 
 use crate::join_row_table::{
-    FAKE_ADDR_PLACE_HOLDER, FAKE_ADDR_PLACE_HOLDER_LEN, RowLayoutMeta, RowTableSegment,
+    RowLayoutMeta, RowTableSegment, FAKE_ADDR_PLACE_HOLDER, FAKE_ADDR_PLACE_HOLDER_LEN,
     SIZE_OF_ELEMENT_SIZE,
 };
 
@@ -697,8 +697,13 @@ impl RowTableBuilder {
 
             let mut row_length = 0_i64;
             row_length += fill_next_row_ptr(segment) as i64;
-            row_length +=
-                fill_null_map(meta, &cells, physical_row_index, segment, &mut self.null_map) as i64;
+            row_length += fill_null_map(
+                meta,
+                &cells,
+                physical_row_index,
+                segment,
+                &mut self.null_map,
+            ) as i64;
             row_length += self.fill_serialized_key_and_key_length_if_needed(
                 meta,
                 has_valid_key,

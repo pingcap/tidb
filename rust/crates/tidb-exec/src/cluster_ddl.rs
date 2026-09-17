@@ -3357,15 +3357,17 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
         // Go's worker records the cancel error on the job before it lands in
         // history: the submitter's wait loop (`pkg/ddl/executor.go`) panics on
         // a cancelled/rollback-done history job whose error is nil.
-        active.job.error = Some(GoShared::new(
-            tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(1050),
-                format!("database '{}' already exists", db_info.name.original()),
-            ),
-        ));
+        active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(1050),
+            format!("database '{}' already exists", db_info.name.original()),
+        )));
     }
 
-    let schema_version = if cancelled { 0 } else { catalog.schema_version + 1 };
+    let schema_version = if cancelled {
+        0
+    } else {
+        catalog.schema_version + 1
+    };
     let mut mutations = Vec::new();
     let diff = if cancelled {
         SchemaDiff::default()
@@ -3418,8 +3420,7 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
         .encode(true)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ =
-            history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
     mutations.push(OptimisticMutation::meta_put(
         key::ddl_job_history_kv_key(active.job.id),
@@ -3517,7 +3518,11 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
         .any(|table| table.id == table_info.id);
     let cancelled = name_taken || id_taken;
 
-    let schema_version = if cancelled { 0 } else { catalog.schema_version + 1 };
+    let schema_version = if cancelled {
+        0
+    } else {
+        catalog.schema_version + 1
+    };
     let mut mutations = Vec::new();
     let diff = if cancelled {
         SchemaDiff::default()
@@ -3561,16 +3566,14 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
         // table and its final synced state in the one atomic transaction.
         active.job.state = JobState::SYNCED;
     } else {
-        active.job.error = Some(GoShared::new(
-            tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(1050),
-                format!(
-                    "table '{}.{}' already exists",
-                    database.info.name.original(),
-                    table_info.name.original()
-                ),
+        active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(1050),
+            format!(
+                "table '{}.{}' already exists",
+                database.info.name.original(),
+                table_info.name.original()
             ),
-        ));
+        )));
     }
     if let Some(binlog) = active.job.binlog_info.as_ref() {
         binlog.write().finished_ts = start_ts;
@@ -3581,8 +3584,7 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
         .encode(true)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ =
-            history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
     mutations.push(OptimisticMutation::meta_put(
         key::ddl_job_history_kv_key(active.job.id),
@@ -3667,7 +3669,8 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
         .find(|database| database.info.id == active.job.schema_id)
         .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
 
-    let handles: Vec<Option<GoShared<tidb_model::CreateTableArgs>>> = args.read().tables.get().handles();
+    let handles: Vec<Option<GoShared<tidb_model::CreateTableArgs>>> =
+        args.read().tables.get().handles();
     let mut table_infos = Vec::new();
     let mut cancel_reason: Option<String> = None;
     for handle in handles {
@@ -3676,7 +3679,8 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
             break;
         };
         let Some(info_handle) = table_args.read().table_info.get() else {
-            cancel_reason = Some("CREATE TABLES job carries a table with nil table_info".to_owned());
+            cancel_reason =
+                Some("CREATE TABLES job carries a table with nil table_info".to_owned());
             break;
         };
         let mut table_info = info_handle.read().clone();
@@ -3705,7 +3709,11 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
 
     let cancelled = cancel_reason.is_some();
 
-    let schema_version = if cancelled { 0 } else { catalog.schema_version + 1 };
+    let schema_version = if cancelled {
+        0
+    } else {
+        catalog.schema_version + 1
+    };
     let mut mutations = Vec::new();
     let first_id = table_infos.first().map(|info| info.id).unwrap_or(0);
     let diff = if cancelled {
@@ -3773,12 +3781,10 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
             active.job.state = JobState::SYNCED;
         }
     } else if let Some(reason) = &cancel_reason {
-        active.job.error = Some(GoShared::new(
-            tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(1050),
-                reason.clone(),
-            ),
-        ));
+        active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(1050),
+            reason.clone(),
+        )));
     }
     if let Some(binlog) = active.job.binlog_info.as_ref() {
         binlog.write().finished_ts = start_ts;
@@ -3789,8 +3795,7 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
         .encode(true)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ =
-            history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
     mutations.push(OptimisticMutation::meta_put(
         key::ddl_job_history_kv_key(active.job.id),
@@ -3821,7 +3826,6 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
         terminal: true,
     })
 }
-
 
 /// Plans one execution step of a persisted `ACTION_RENAME_TABLES` job.
 ///
@@ -3930,8 +3934,7 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
                     .tables
                     .iter()
                     .find(|table| {
-                        table.id == lookup_table_id
-                            || table.name.lowercase() == lookup_name
+                        table.id == lookup_table_id || table.name.lowercase() == lookup_name
                     })
                     .cloned()
             });
@@ -4116,12 +4119,10 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
         final_diff = diff;
         final_version = schema_version;
     } else {
-        active.job.error = Some(GoShared::new(
-            tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(1146),
-                failure.expect("checked above"),
-            ),
-        ));
+        active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(1146),
+            failure.expect("checked above"),
+        )));
     }
 
     if let Some(binlog) = active.job.binlog_info.as_ref() {
@@ -4133,8 +4134,7 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
         .encode(true)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ =
-            history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
     mutations.push(OptimisticMutation::meta_put(
         key::ddl_job_history_kv_key(active.job.id),
@@ -4211,17 +4211,20 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         .find(|database| database.info.id == active.job.schema_id)
         .map(|database| database.info.clone())
     else {
-        active.job.error = Some(GoShared::new(
-            tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(1008),
-                format!(
-                    "[ddl:1008]Can't drop database '{}'; database doesn't exist",
-                    active.job.schema_name.to_string()
-                ),
+        active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(1008),
+            format!(
+                "[ddl:1008]Can't drop database '{}'; database doesn't exist",
+                active.job.schema_name.to_string()
             ),
-        ));
+        )));
         terminal_drop_landing(
-            &catalog, snapshot, &job_table, &mut active, &mut mutations, start_ts,
+            &catalog,
+            snapshot,
+            &job_table,
+            &mut active,
+            &mut mutations,
+            start_ts,
         );
         return Ok(PersistedDdlJobStep {
             write: DdlWrite {
@@ -4299,8 +4302,8 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
             .encode(true)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-            let _ = history_table
-                .append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+            let _ =
+                history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
         }
         mutations.push(OptimisticMutation::meta_put(
             key::ddl_job_history_kv_key(active.job.id),
@@ -4354,13 +4357,11 @@ fn terminal_drop_landing<S: MetaSnapshot>(
         Err(_) => return,
     };
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(catalog) {
-        let _ =
-            history_table.append_insert_ignore(snapshot, &active.job, &encoded, mutations);
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, mutations);
     }
-    if let Ok(mutation) = OptimisticMutation::meta_put(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    ) {
+    if let Ok(mutation) =
+        OptimisticMutation::meta_put(key::ddl_job_history_kv_key(active.job.id), encoded)
+    {
         mutations.push(mutation);
     }
     let _ = job_table.append_delete(active, mutations);
@@ -4413,17 +4414,20 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
         .find(|database| database.info.id == active.job.schema_id)
         .cloned()
     else {
-        active.job.error = Some(GoShared::new(
-            tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(1146),
-                format!(
-                    "[ddl:1146]Table '{}' doesn't exist",
-                    active.job.table_name.to_string()
-                ),
+        active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(1146),
+            format!(
+                "[ddl:1146]Table '{}' doesn't exist",
+                active.job.table_name.to_string()
             ),
-        ));
+        )));
         terminal_drop_landing(
-            &catalog, snapshot, &job_table, &mut active, &mut mutations, start_ts,
+            &catalog,
+            snapshot,
+            &job_table,
+            &mut active,
+            &mut mutations,
+            start_ts,
         );
         return Ok(PersistedDdlJobStep {
             write: DdlWrite {
@@ -4452,17 +4456,20 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
         .find(|table| table.id == active.job.table_id)
         .cloned()
     else {
-        active.job.error = Some(GoShared::new(
-            tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(1146),
-                format!(
-                    "[ddl:1146]Table '{}' doesn't exist",
-                    active.job.table_name.to_string()
-                ),
+        active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(1146),
+            format!(
+                "[ddl:1146]Table '{}' doesn't exist",
+                active.job.table_name.to_string()
             ),
-        ));
+        )));
         terminal_drop_landing(
-            &catalog, snapshot, &job_table, &mut active, &mut mutations, start_ts,
+            &catalog,
+            snapshot,
+            &job_table,
+            &mut active,
+            &mut mutations,
+            start_ts,
         );
         return Ok(PersistedDdlJobStep {
             write: DdlWrite {
@@ -4543,8 +4550,8 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             .encode(true)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-            let _ = history_table
-                .append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+            let _ =
+                history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
         }
         mutations.push(OptimisticMutation::meta_put(
             key::ddl_job_history_kv_key(active.job.id),

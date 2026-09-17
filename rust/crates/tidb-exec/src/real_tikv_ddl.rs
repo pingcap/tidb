@@ -44,14 +44,10 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
     lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
-    plan_persisted_check_constraint_job_step,
-    plan_persisted_create_schema_job_step,
-    plan_persisted_create_table_job_step,
-    plan_persisted_create_tables_job_step,
-    plan_persisted_rename_tables_job_step,
-    plan_persisted_drop_schema_job_step,
-    plan_persisted_drop_table_job_step,
-    prepare_check_constraint_job_submission,
+    plan_persisted_check_constraint_job_step, plan_persisted_create_schema_job_step,
+    plan_persisted_create_table_job_step, plan_persisted_create_tables_job_step,
+    plan_persisted_drop_schema_job_step, plan_persisted_drop_table_job_step,
+    plan_persisted_rename_tables_job_step, prepare_check_constraint_job_submission,
     CheckConstraintValidation, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite,
     ExchangePartitionValidation, IndexBackfill, MdlInfoUpdate,
 };

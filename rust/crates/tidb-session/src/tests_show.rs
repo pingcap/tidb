@@ -2224,10 +2224,7 @@ fn show_stats_healthy_reads_the_production_statistics_cache() {
     // master fdfadb96b2: `t` and `e` both report 100), in table-ID order.
     assert_eq!(
         row_text(session.run("SHOW STATS_HEALTHY WHERE Table_name IN ('t', 'e')")),
-        vec![
-            vec!["test", "t", "", "100"],
-            vec!["test", "e", "", "100"],
-        ]
+        vec![vec!["test", "t", "", "100"], vec!["test", "e", "", "100"],]
     );
 }
 

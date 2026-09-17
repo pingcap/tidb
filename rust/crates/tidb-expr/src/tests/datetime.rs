@@ -827,14 +827,18 @@ fn extract_matches_go_in_ast_and_chunk_paths() {
         ("extract(day_hour from '1 02:03:04')", "INT:26"),
         ("extract(year from NULL)", "NULL"),
         ("extract(day_second from NULL)", "NULL"),
-        ("extract(day_second from '2024-03-15 02:03:04')", "INT:15020304"),
+        (
+            "extract(day_second from '2024-03-15 02:03:04')",
+            "INT:15020304",
+        ),
     ] {
         assert_eq!(e(sql), expected, "AST: {sql}");
         assert_eq!(chunk_e(sql), expected, "chunk: {sql}");
     }
     for eval in [e, chunk_e] {
-        assert!(eval("extract(day_hour from 'bad')")
-            .contains("Truncated incorrect time value: 'bad'"));
+        assert!(
+            eval("extract(day_hour from 'bad')").contains("Truncated incorrect time value: 'bad'")
+        );
     }
 }
 

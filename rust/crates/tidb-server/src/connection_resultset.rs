@@ -227,7 +227,8 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     let mut stream = BinaryResultSetStream::new(columns.clone(), options)
         .map_err(|error| binary_failure(error.to_string(), sink, false))?;
     if chunk.is_some() {
-        stream.validate_chunk_types(source.field_types())
+        stream
+            .validate_chunk_types(source.field_types())
             .map_err(|error| binary_failure(error.to_string(), sink, false))?;
     }
     let metadata_packets = stream

@@ -25,8 +25,8 @@ use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
-use crate::StmtResult;
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
+use crate::StmtResult;
 use crate::{
     infoschema, privilege, statement_kind_of, statement_priority_of, Session, StatementKind,
     StmtOutput, WarningLevel,
@@ -2314,9 +2314,7 @@ impl Session {
                             .iter()
                             .map(|entry| {
                                 let name = match entry {
-                                    tidb_ast::ColumnOrUserVar::Column(column) => {
-                                        column.clone()
-                                    }
+                                    tidb_ast::ColumnOrUserVar::Column(column) => column.clone(),
                                     tidb_ast::ColumnOrUserVar::UserVar(name) => {
                                         name.trim_start_matches('@').to_owned()
                                     }
@@ -2334,16 +2332,14 @@ impl Session {
                         if let Some(select_sql) = select_sql {
                             // SELECT source: the query's output columns feed
                             // the target positionally under the column list.
-                            let count = match self.run(&format!(
-                                "INSERT INTO {target}{column_clause} {select_sql}"
-                            ))? {
+                            let count = match self
+                                .run(&format!("INSERT INTO {target}{column_clause} {select_sql}"))?
+                            {
                                 StmtResult::Affected(count) => count,
                                 _ => 0,
                             };
                             imported = count;
-                            return Ok(PendingExecution::Complete(
-                                StmtOutput::Affected(imported),
-                            ));
+                            return Ok(PendingExecution::Complete(StmtOutput::Affected(imported)));
                         }
                         let csv = std::fs::read_to_string(&path).map_err(|error| {
                             DriverError::unsupported(format!(
@@ -2356,9 +2352,7 @@ impl Session {
                             .iter()
                             .map(|entry| {
                                 let name = match entry {
-                                    tidb_ast::ColumnOrUserVar::Column(column) => {
-                                        column.clone()
-                                    }
+                                    tidb_ast::ColumnOrUserVar::Column(column) => column.clone(),
                                     tidb_ast::ColumnOrUserVar::UserVar(name) => {
                                         name.trim_start_matches('@').to_owned()
                                     }
@@ -2817,8 +2811,6 @@ impl Session {
         Ok(())
     }
 }
-
-
 
 /// Minimal RFC 4180 record reader: quoted fields may contain separators,
 /// escaped (`""`) quotes and newlines; blank trailing records are dropped.

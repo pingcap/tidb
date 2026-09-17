@@ -12,7 +12,11 @@ fn derived_alias_validation_visits_nested_queries_and_respects_oracle_mode() {
         "SELECT (SELECT 1 FROM (SELECT 1))",
         "SELECT * FROM (SELECT 1 UNION ALL SELECT 2)",
     ] {
-        assert_eq!(session.run(sql).unwrap_err().to_mysql_error().code, 1248, "{sql}");
+        assert_eq!(
+            session.run(sql).unwrap_err().to_mysql_error().code,
+            1248,
+            "{sql}"
+        );
     }
     session.run("SET sql_mode = 'ORACLE'").unwrap();
     assert!(session.run("SELECT 1 FROM (SELECT 1)").is_ok());
@@ -28,7 +32,9 @@ fn derived_duplicate_column_preserves_mysql_identity() {
         let error = session.run(sql).unwrap_err();
         assert_eq!(error.to_mysql_error().code, 1060, "{sql}");
     }
-    assert!(session.run("SELECT 1 FROM (SELECT 1 AS a, 2 AS A) q").is_ok());
+    assert!(session
+        .run("SELECT 1 FROM (SELECT 1 AS a, 2 AS A) q")
+        .is_ok());
 }
 
 /// Every `ALGORITHM` a `CREATE VIEW` may write round-trips through
@@ -379,7 +385,8 @@ fn lateral_alias_column_list_renames_positionally() {
         session
             .run("SELECT * FROM t, LATERAL (SELECT 1, 2) x(c)")
             .unwrap_err()
-            .to_mysql_error().code,
+            .to_mysql_error()
+            .code,
         1353
     );
     assert!(matches!(
@@ -681,7 +688,9 @@ fn a_view_over_a_dropped_table_is_invalid() {
 #[test]
 fn invalid_view_dependencies_preserve_mysql_error_identity() {
     let mut session = Session::new();
-    session.run("CREATE TABLE dependency (a INT, b INT)").unwrap();
+    session
+        .run("CREATE TABLE dependency (a INT, b INT)")
+        .unwrap();
     session
         .run("CREATE VIEW invalid_columns AS SELECT a, b FROM dependency")
         .unwrap();

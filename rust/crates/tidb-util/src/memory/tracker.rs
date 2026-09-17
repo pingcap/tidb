@@ -526,7 +526,11 @@ impl Tracker {
             previous.finish(true, 0);
         }
         if reserve_size > 0
-            || prev_max_mem > registration.arbitrator.pool_alloc_profile().small_pool_limit
+            || prev_max_mem
+                > registration
+                    .arbitrator
+                    .pool_alloc_profile()
+                    .small_pool_limit
         {
             let mut state = lock_unpoison(&registration.budget);
             let _ = registration.transition_to_big(&mut state);

@@ -816,10 +816,7 @@ mod tests {
         // New collations are ENABLED: the Chinese charsets' defaults are the
         // `_chinese_ci` spellings (Go switchDefaultCollation(true); live
         // master SHOW CHARSET prints gbk_chinese_ci / gb18030_chinese_ci).
-        assert_eq!(
-            get_default_collation("gbk").unwrap(),
-            "gbk_chinese_ci"
-        );
+        assert_eq!(get_default_collation("gbk").unwrap(), "gbk_chinese_ci");
         assert_eq!(
             get_default_collation("gb18030").unwrap(),
             "gb18030_chinese_ci"

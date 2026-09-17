@@ -1198,7 +1198,6 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
     );
 }
 
-
 /// A correlated subquery becomes an Apply: the inner query re-runs once
 /// per outer row with the outer row's values bound, which is Go's
 /// NestedLoopApplyExec loop.
@@ -1393,7 +1392,6 @@ fn correlated_exists_apply_answers_once_per_outer_row() {
         ]
     );
 }
-
 
 /// A subquery does not launder a `HAVING` column reference: the name it
 /// CORRELATES to answers to the same scope rule as one written in the clause

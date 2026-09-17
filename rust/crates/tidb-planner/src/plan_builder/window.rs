@@ -279,7 +279,11 @@ pub fn merge_window_spec(
     }
     if !reference.def.spec.order_by.is_empty() {
         if !spec.spec.order_by.is_empty() {
-            return Err(PlanError::window_definition(3583, window_name(spec_name), &reference.name));
+            return Err(PlanError::window_definition(
+                3583,
+                window_name(spec_name),
+                &reference.name,
+            ));
         }
         spec.spec.order_by = reference.def.spec.order_by.clone();
     }
@@ -728,7 +732,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if let Some(reference) = def.base.clone() {
                     let lower = reference.to_ascii_lowercase();
                     let Some(reference_spec) = self.window_specs.get(&lower) else {
-                        return Err(PlanError::window_definition(3579, window_name(&reference), ""));
+                        return Err(PlanError::window_definition(
+                            3579,
+                            window_name(&reference),
+                            "",
+                        ));
                     };
                     merge_window_spec(&mut def, "", reference_spec)?;
                 }
@@ -951,9 +959,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             match self.frame_offset_uint(offset) {
                 Some((_, false)) => return Ok(()),
-                _ => {
-                    return Err(PlanError::window_frame(3586, window_name(&spec.name)))
-                }
+                _ => return Err(PlanError::window_frame(3586, window_name(&spec.name))),
             }
         }
 
@@ -1041,7 +1047,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 return Err(PlanError::not_supported_yet("IGNORE NULLS"));
             }
             if func.distinct {
-                return Err(PlanError::not_supported_yet("<window function>(DISTINCT ..)"));
+                return Err(PlanError::not_supported_yet(
+                    "<window function>(DISTINCT ..)",
+                ));
             }
             if func.from_last {
                 return Err(PlanError::not_supported_yet("FROM LAST"));
@@ -1187,7 +1195,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // Decimal stores its value outside i (which remains zero), and
             // floating-point datums store their IEEE bits in i. This is only
             // the legality check; arithmetic below uses the original datum.
-            Expression::Constant(value) if matches!(value.value, tidb_datatype::Datum::Decimal(_)) => {
+            Expression::Constant(value)
+                if matches!(value.value, tidb_datatype::Datum::Decimal(_)) =>
+            {
                 Some((0, false))
             }
             Expression::Constant(value) => match &value.value {
@@ -1205,9 +1215,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         match checked_offset {
             Some((_, false)) => {}
-            _ => {
-                return Err(PlanError::window_frame(3586, window_name(&spec.name)))
-            }
+            _ => return Err(PlanError::window_frame(3586, window_name(&spec.name))),
         }
 
         built.is_explicit_range = true;
@@ -1332,7 +1340,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<(), PlanError> {
         for func in window_funcs {
             if func.name.eq_ignore_ascii_case("group_concat") {
-                return Err(PlanError::not_supported_yet("group_concat as window function"));
+                return Err(PlanError::not_supported_yet(
+                    "group_concat as window function",
+                ));
             }
             let args = self.build_args_for_window_func(&func.args, schema, names, markers)?;
             // `// boundary:` `ParamMarkerInPrepareChecker`; see section 3. The

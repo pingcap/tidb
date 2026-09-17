@@ -962,9 +962,9 @@ fn dynamic_partition_points_follow_each_bound_key() {
             "UPDATE point_route SET v = v + 1",
             "DELETE FROM point_route",
         ] {
-            let plan = tests_support::row_text(session.run(&format!(
-                "EXPLAIN {statement} WHERE id = {key} AND v > 0"
-            )));
+            let plan = tests_support::row_text(
+                session.run(&format!("EXPLAIN {statement} WHERE id = {key} AND v > 0")),
+            );
             assert!(
                 plan.iter().any(|row| row[0].contains("Point_Get")
                     && row[3] == format!("table:point_route, partition:{partition}")),
@@ -973,8 +973,10 @@ fn dynamic_partition_points_follow_each_bound_key() {
         }
     }
     session
-        .run("PREPARE restricted_stmt FROM \
-              'SELECT v FROM point_route PARTITION(p0) WHERE id = ? AND v > 0'")
+        .run(
+            "PREPARE restricted_stmt FROM \
+              'SELECT v FROM point_route PARTITION(p0) WHERE id = ? AND v > 0'",
+        )
         .unwrap();
     for (key, expected) in [(1, vec![vec!["11"]]), (11, vec![]), (1, vec![vec!["11"]])] {
         session.run(&format!("SET @route_key = {key}")).unwrap();
@@ -1011,7 +1013,10 @@ fn dynamic_partition_common_points_route_original_values() {
         )));
         assert!(
             plan.iter().any(|row| row[0].contains("Point_Get")
-                && row[3] == format!("table:point_string, partition:{partition}, clustered index:PRIMARY(id)")),
+                && row[3]
+                    == format!(
+                        "table:point_string, partition:{partition}, clustered index:PRIMARY(id)"
+                    )),
             "common point must route the SQL value, not its sort key: {plan:?}"
         );
     }
@@ -1573,14 +1578,20 @@ fn updates_and_deletes_restricted_to_partitions_do_not_escape_the_named_set() {
         .to_mysql_error();
     assert_eq!(error.code, 1747);
     assert_eq!(error.state, *b"HY000");
-    assert_eq!(error.message, "PARTITION () clause on non partitioned table");
+    assert_eq!(
+        error.message,
+        "PARTITION () clause on non partitioned table"
+    );
     let error = session
         .run("INSERT INTO q PARTITION (p0) VALUES (1)")
         .expect_err("an unpartitioned INSERT target has no named partition")
         .to_mysql_error();
     assert_eq!(error.code, 1747);
     assert_eq!(error.state, *b"HY000");
-    assert_eq!(error.message, "PARTITION () clause on non partitioned table");
+    assert_eq!(
+        error.message,
+        "PARTITION () clause on non partitioned table"
+    );
 }
 
 /// A selected UPDATE is not just a restricted scan: the destination of an
@@ -4112,12 +4123,18 @@ fn a_narrow_unsigned_row_handle_is_ranged_over_without_a_split() {
     );
     let plan = tests_support::row_text(session.run("EXPLAIN SELECT id FROM ui WHERE id > 0"));
     let scan = plan.last().expect("table scan");
-    assert!(scan[0].contains("TableFullScan"), "Go's boundary-based name: {plan:?}");
-    assert_eq!(scan[4], "keep order:false, stats:pseudo");
-    let executed = tests_support::row_text(
-        session.run("EXPLAIN ANALYZE SELECT id FROM ui WHERE id > 0"),
+    assert!(
+        scan[0].contains("TableFullScan"),
+        "Go's boundary-based name: {plan:?}"
     );
-    assert_eq!(executed.last().expect("table scan")[2], "2", "the open low bound excludes zero");
+    assert_eq!(scan[4], "keep order:false, stats:pseudo");
+    let executed =
+        tests_support::row_text(session.run("EXPLAIN ANALYZE SELECT id FROM ui WHERE id > 0"));
+    assert_eq!(
+        executed.last().expect("table scan")[2],
+        "2",
+        "the open low bound excludes zero"
+    );
 }
 
 /// A whole-table scan of an unsigned handle KEEPS ORDER, because the scan is

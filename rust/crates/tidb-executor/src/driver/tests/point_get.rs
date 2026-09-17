@@ -1775,9 +1775,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             projected,
             expected
                 .iter()
-                .map(|row| {
-                    row.as_ref().map(|row| vec![row[1].clone(), row[0].clone()])
-                })
+                .map(|row| { row.as_ref().map(|row| vec![row[1].clone(), row[0].clone()]) })
                 .collect::<Vec<_>>()
         );
         assert_eq!(batch_gets.load(Ordering::Relaxed), 1);

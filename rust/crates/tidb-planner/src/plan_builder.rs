@@ -1778,16 +1778,17 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     Form::In { .. } => SubQueryCtx::In,
                     Form::Exists { .. } => SubQueryCtx::Exists,
                 };
-                let (inner, hint_flags) = match self
-                    .builder
-                    .build_expression_subquery(&outer, &query, subquery_ctx)
-                {
-                    Ok((inner, hint_flags)) => (inner, hint_flags),
-                    Err(error) => {
-                        self.error = Some(error);
-                        return true;
-                    }
-                };
+                let (inner, hint_flags) =
+                    match self
+                        .builder
+                        .build_expression_subquery(&outer, &query, subquery_ctx)
+                    {
+                        Ok((inner, hint_flags)) => (inner, hint_flags),
+                        Err(error) => {
+                            self.error = Some(error);
+                            return true;
+                        }
+                    };
                 let mut rewriter = self.builder.expression_rewriter();
                 rewriter.as_scalar = true;
                 let lowered = match form {
@@ -2038,16 +2039,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     self.build_expression_subquery(&outer, subquery, SubQueryCtx::In)?;
                 let mut rewriter = self.expression_rewriter();
                 rewriter.ctx_stack_append(left.clone(), FieldName::default());
-                let plan = rewriter.handle_in_subquery(
-                    outer,
-                    &left,
-                    inner,
-                    *not,
-                    false,
-                    hint_flags,
-                    true,
-                    true,
-                )?;
+                let plan = rewriter
+                    .handle_in_subquery(outer, &left, inner, *not, false, hint_flags, true, true)?;
                 Ok((plan, true))
             }
             Expr::Exists { subquery, not } => {
@@ -2945,14 +2938,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> FieldName {
         if field.column_reference && correlated {
             if let Expr::Column(path) = &field.expr {
-                let mut name = FieldName::new(FieldNameMetadata {
-                    column: IdentifierMetadata::new(
-                        field.alias.as_deref().unwrap_or_else(|| {
-                            path.last().map(String::as_str).unwrap_or_default()
-                        }),
-                    ),
-                    ..FieldNameMetadata::default()
-                });
+                let mut name =
+                    FieldName::new(FieldNameMetadata {
+                        column: IdentifierMetadata::new(field.alias.as_deref().unwrap_or_else(
+                            || path.last().map(String::as_str).unwrap_or_default(),
+                        )),
+                        ..FieldNameMetadata::default()
+                    });
                 name.hidden = field.hidden;
                 return name;
             }
@@ -2965,13 +2957,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let (true, Some(index)) = (field.column_reference, resolved_index) {
             if let Expr::Column(path) = &field.expr {
                 let matches_path = |name: &FieldName| {
-                    let column = name.names.column.original.eq_ignore_ascii_case(
-                        path.last().map(String::as_str).unwrap_or_default(),
-                    );
+                    let column =
+                        name.names.column.original.eq_ignore_ascii_case(
+                            path.last().map(String::as_str).unwrap_or_default(),
+                        );
                     let table = path.len() < 2
-                        || name.names.table.original.eq_ignore_ascii_case(&path[path.len() - 2]);
+                        || name
+                            .names
+                            .table
+                            .original
+                            .eq_ignore_ascii_case(&path[path.len() - 2]);
                     let database = path.len() < 3
-                        || name.names.database.original.eq_ignore_ascii_case(&path[path.len() - 3]);
+                        || name
+                            .names
+                            .database
+                            .original
+                            .eq_ignore_ascii_case(&path[path.len() - 3]);
                     column && table && database
                 };
                 if let Some(origin) = names.iter().find(|name| matches_path(name)) {
@@ -3515,7 +3516,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .checked_sub(1)
                         .and_then(|index| schema.columns.get(index))
                         .ok_or_else(|| {
-                            PlanError::unknown_column_in_clause(position.to_string(), "order clause")
+                            PlanError::unknown_column_in_clause(
+                                position.to_string(),
+                                "order clause",
+                            )
                         })?;
                     let mut column = column.clone();
                     column.index = position as i64 - 1;

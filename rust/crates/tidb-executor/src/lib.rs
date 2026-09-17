@@ -147,8 +147,6 @@ mod tests_insert_on_duplicate_key_source;
 #[cfg(test)]
 mod tests_joiner_required_rows_source;
 #[cfg(test)]
-mod tests_required_rows_source;
-#[cfg(test)]
 mod tests_merge_join_in_disk_source;
 #[cfg(test)]
 mod tests_parallel_apply_sql_source;
@@ -160,6 +158,8 @@ mod tests_pkg_nested_loop_apply_source;
 mod tests_prepared_param_types_source;
 #[cfg(test)]
 mod tests_prepared_parameter_pushdown_source;
+#[cfg(test)]
+mod tests_required_rows_source;
 #[cfg(test)]
 mod tests_table_part1_source;
 #[cfg(test)]

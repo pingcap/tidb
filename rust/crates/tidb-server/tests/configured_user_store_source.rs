@@ -49,16 +49,13 @@ struct RestoreRequireSecureTransport(bool);
 
 impl RestoreRequireSecureTransport {
     fn snapshot() -> Self {
-        Self(tidb_util::tls::REQUIRE_SECURE_TRANSPORT.load(
-            std::sync::atomic::Ordering::SeqCst,
-        ))
+        Self(tidb_util::tls::REQUIRE_SECURE_TRANSPORT.load(std::sync::atomic::Ordering::SeqCst))
     }
 }
 
 impl Drop for RestoreRequireSecureTransport {
     fn drop(&mut self) {
-        tidb_util::tls::REQUIRE_SECURE_TRANSPORT
-            .store(self.0, std::sync::atomic::Ordering::SeqCst);
+        tidb_util::tls::REQUIRE_SECURE_TRANSPORT.store(self.0, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

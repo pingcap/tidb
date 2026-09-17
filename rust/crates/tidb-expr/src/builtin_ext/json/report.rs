@@ -139,7 +139,9 @@ impl jsonschema::Retrieve for LocalSchemaRetriever {
     ) -> Result<Json, Box<dyn std::error::Error + Send + Sync>> {
         match uri.scheme().as_str() {
             "http" | "https" => Ok(self.client.get(uri.as_str()).send()?.json()?),
-            "file" => Ok(serde_json::from_reader(std::fs::File::open(uri.path().as_str())?)?),
+            "file" => Ok(serde_json::from_reader(std::fs::File::open(
+                uri.path().as_str(),
+            )?)?),
             scheme => Err(format!("unsupported schema URI scheme: {scheme}").into()),
         }
     }

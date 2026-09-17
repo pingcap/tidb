@@ -2291,9 +2291,9 @@ mod tests_global_vars;
 #[cfg(test)]
 mod tests_grants;
 #[cfg(test)]
-mod tests_hash_join_fetcher_eof;
-#[cfg(test)]
 mod tests_harvested_relation_engine;
+#[cfg(test)]
+mod tests_hash_join_fetcher_eof;
 #[cfg(test)]
 mod tests_in_list_full_evaluation;
 #[cfg(test)]

@@ -542,7 +542,11 @@ impl JoinKeyColumns {
                             match prefix_size(field_type, mode) {
                                 1 if code == FieldTypeCode::NewDecimal => {
                                     append_length_and::<COLLECT_HASHES>(
-                                        keys, logical, bytes.len(), true, &bytes,
+                                        keys,
+                                        logical,
+                                        bytes.len(),
+                                        true,
+                                        &bytes,
                                     )?;
                                     continue;
                                 }
@@ -556,7 +560,11 @@ impl JoinKeyColumns {
                                 1 => keys.append::<COLLECT_HASHES>(logical, &[UINT_FLAG])?,
                                 4 => {
                                     append_length_and::<COLLECT_HASHES>(
-                                        keys, logical, bytes.len(), false, &bytes,
+                                        keys,
+                                        logical,
+                                        bytes.len(),
+                                        false,
+                                        &bytes,
                                     )?;
                                     continue;
                                 }
@@ -638,8 +646,8 @@ fn append_length_and<const COLLECT_HASHES: bool>(
             .map_err(|_| CodecError::InvalidEncoding("decimal hash key too long"))?;
         keys.append_parts::<COLLECT_HASHES>(row, &[length], payload)
     } else {
-        let length = u32::try_from(size)
-            .map_err(|_| CodecError::InvalidEncoding("join key too long"))?;
+        let length =
+            u32::try_from(size).map_err(|_| CodecError::InvalidEncoding("join key too long"))?;
         keys.append_parts::<COLLECT_HASHES>(row, &length.to_le_bytes(), payload)
     }
 }

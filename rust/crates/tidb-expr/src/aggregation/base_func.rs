@@ -744,7 +744,9 @@ impl BaseFuncDesc {
             // context. Preserve constants for buildLeadLag's default conversion.
             if type_of(&self.args[i]).eval_type() != EvalType::Json {
                 crate::fold_constant_in_mode(
-                    &mut self.args[i], ctx, crate::ConstantFoldMode::Normal,
+                    &mut self.args[i],
+                    ctx,
+                    crate::ConstantFoldMode::Normal,
                 );
             }
         }

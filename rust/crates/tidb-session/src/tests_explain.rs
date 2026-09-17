@@ -1276,12 +1276,10 @@ fn explain_refuses_what_it_cannot_plan() {
     // HashJoin over two TableReaders (the dedup IS the semi join), so the
     // statement plans and executes instead of refusing.
     assert!(
-        row_text(
-            session.run("EXPLAIN ANALYZE (SELECT a FROM t) INTERSECT (SELECT a FROM t)")
-        )
-        .iter()
-        .any(|row| row[0].contains("HashJoin")
-            && row.iter().any(|cell| cell.contains("semi join"))),
+        row_text(session.run("EXPLAIN ANALYZE (SELECT a FROM t) INTERSECT (SELECT a FROM t)"))
+            .iter()
+            .any(|row| row[0].contains("HashJoin")
+                && row.iter().any(|cell| cell.contains("semi join"))),
         "the INTERSECT analyze must plan through the common physical path"
     );
     assert!(matches!(
@@ -1737,12 +1735,10 @@ fn an_empty_index_range_is_a_table_dual_not_a_scan() {
         assert_eq!(leaf[0], "TableDual", "{where_clause}: {rows:?}");
         assert_eq!(leaf[4], "rows:0", "{where_clause}");
         // The rows were already right and must stay right.
-        assert!(
-            row_text(session.run(&format!(
-                "SELECT * FROM t1 USE INDEX(a) WHERE {where_clause}"
-            )))
-            .is_empty()
-        );
+        assert!(row_text(session.run(&format!(
+            "SELECT * FROM t1 USE INDEX(a) WHERE {where_clause}"
+        )))
+        .is_empty());
     }
 
     // The CONTROL: a bound the unsigned domain can satisfy still reads the

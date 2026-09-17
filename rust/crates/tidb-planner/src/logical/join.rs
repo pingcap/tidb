@@ -436,9 +436,7 @@ impl LogicalJoin {
                 if let Some(relaxed) = derive_relaxed_filters_from_dnf(expr, left_schema) {
                     left_cond.push(relaxed);
                 }
-                if let Some(not_null) =
-                    derive_not_null_for_schema(expr, left_schema, opts)
-                {
+                if let Some(not_null) = derive_not_null_for_schema(expr, left_schema, opts) {
                     left_cond.push(not_null);
                 }
             }
@@ -447,9 +445,7 @@ impl LogicalJoin {
                     right_cond.push(relaxed);
                 }
                 if !is_outer_semi {
-                    if let Some(not_null) =
-                        derive_not_null_for_schema(expr, right_schema, opts)
-                    {
+                    if let Some(not_null) = derive_not_null_for_schema(expr, right_schema, opts) {
                         right_cond.push(not_null);
                     }
                 }
@@ -778,13 +774,8 @@ impl LogicalJoin {
                 // Go `DeriveOtherConditions(p, left, right, false, true)`:
                 // the ON clause's own non-equality conditions still yield the
                 // null-supplying side's relaxed and not-null filters.
-                let (_, derived_right) = self.derive_other_conditions(
-                    left_schema,
-                    right_schema,
-                    false,
-                    true,
-                    opts,
-                );
+                let (_, derived_right) =
+                    self.derive_other_conditions(left_schema, right_schema, false, true, opts);
                 let mut right_cond = std::mem::take(&mut self.right_conditions);
                 right_cond.extend(derived_right);
                 result.left_cond = split.left;
@@ -832,13 +823,8 @@ impl LogicalJoin {
                 // Go `DeriveOtherConditions(p, left, right, true, false)`: the
                 // ON clause's own non-equality conditions still yield the
                 // null-supplying (left) side's relaxed and not-null filters.
-                let (derived_left, _) = self.derive_other_conditions(
-                    left_schema,
-                    right_schema,
-                    true,
-                    false,
-                    opts,
-                );
+                let (derived_left, _) =
+                    self.derive_other_conditions(left_schema, right_schema, true, false, opts);
                 let mut left_cond = std::mem::take(&mut self.left_conditions);
                 left_cond.extend(derived_left);
                 result.right_cond = split.right;

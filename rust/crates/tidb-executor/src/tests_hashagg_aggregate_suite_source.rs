@@ -44,7 +44,11 @@ fn select(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
 fn select_numeric_sorted(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
     let mut rows = select(catalog, sql);
     rows.sort_by(|left, right| {
-        let value = |row: &[Datum]| cell(&row[0]).parse::<f64>().expect("numeric aggregate result");
+        let value = |row: &[Datum]| {
+            cell(&row[0])
+                .parse::<f64>()
+                .expect("numeric aggregate result")
+        };
         value(left).total_cmp(&value(right))
     });
     rows
