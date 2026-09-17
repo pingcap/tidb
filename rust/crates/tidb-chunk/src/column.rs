@@ -55,7 +55,7 @@ use tidb_datatype::{
 };
 
 use crate::column_view::{ColumnBytes, ColumnBytesStorage};
-use crate::shared_bytes::SharedBytes;
+use crate::shared_bytes::{SharedBytes, SharedBytesRead};
 
 /// Go `VarElemLen` (`= -1`): the sentinel element length of a variable-length
 /// column.
@@ -830,6 +830,19 @@ impl Column {
             }
         } else {
             self.get_bytes(row_id)
+        }
+    }
+
+    /// The cells of this column for one whole pass. Go reads a cell as
+    /// `c.data[c.offsets[i]:c.offsets[i+1]]`; a row-wise consumer here
+    /// (the join's row table builder) reads through this view so the shared
+    /// data is borrowed once per pass instead of once per cell by
+    /// [`Self::get_raw`].
+    pub fn raw_cells(&self) -> RawCells<'_> {
+        RawCells {
+            column: self,
+            data: self.data.read(),
+            fixed_len: self.is_fixed().then(|| self.elem_buffer_len()),
         }
     }
 
@@ -1851,3 +1864,32 @@ pub fn append_cell_from_raw_data(
 #[cfg(test)]
 #[path = "column_tests.rs"]
 mod tests;
+
+/// See [`Column::raw_cells`].
+pub struct RawCells<'a> {
+    column: &'a Column,
+    data: SharedBytesRead<'a>,
+    fixed_len: Option<usize>,
+}
+
+impl RawCells<'_> {
+    /// Go `GetRaw` for one cell.
+    #[inline]
+    pub fn get(&self, row: usize) -> &[u8] {
+        let (start, end) = match self.fixed_len {
+            Some(len) => (row * len, row * len + len),
+            None if self.column.offsets.is_empty() => (0, 0),
+            None => (
+                self.column.offsets[row] as usize,
+                self.column.offsets[row + 1] as usize,
+            ),
+        };
+        &self.data[start..end]
+    }
+
+    /// Go `IsNull` for one cell.
+    #[inline]
+    pub fn is_null(&self, row: usize) -> bool {
+        self.column.is_null(row)
+    }
+}

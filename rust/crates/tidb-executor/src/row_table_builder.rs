@@ -51,6 +51,7 @@
 
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::column::RawCells;
 use tidb_chunk::row::Row;
 use tidb_codec::{JoinKeyColumns, SerializedJoinKeys};
 use tidb_util::serialization::{INT_LEN, UINT64_LEN};
@@ -603,6 +604,15 @@ impl RowTableBuilder {
             helper.reset();
         }
         let meta = context.meta;
+        // Go reads each cell straight from the column's data slice; hold the
+        // stored columns once for the pass instead of resolving a column and
+        // its data guard per cell.
+        let columns: Vec<_> = meta
+            .row_columns_order
+            .iter()
+            .map(|&col_idx| chunk.column(col_idx))
+            .collect();
+        let cells: Vec<RawCells<'_>> = columns.iter().map(|column| column.raw_cells()).collect();
         for logical_row_index in 0..self.used_rows.len() {
             let physical_row_index = self.used_rows[logical_row_index];
             let has_valid_key = self.has_valid_key(physical_row_index);
@@ -614,14 +624,13 @@ impl RowTableBuilder {
             if has_valid_key {
                 self.helpers[part_idx].valid_row_num += 1;
             }
-            let row = chunk.get_row(logical_row_index);
             let mut row_length = FAKE_ADDR_PLACE_HOLDER_LEN as i64 + meta.null_map_length as i64;
             row_length += self.calculate_serialized_key_and_key_length(
                 meta,
                 has_valid_key,
                 logical_row_index,
             );
-            row_length += calculate_row_data_length(meta, &row);
+            row_length += calculate_row_data_length(meta, &cells, physical_row_index);
             row_length += calculate_fake_length(row_length);
             self.helpers[part_idx].raw_data_len += row_length;
         }
@@ -661,6 +670,12 @@ impl RowTableBuilder {
         self.pre_alloc_for_segments(&mut segments, chunk, context)?;
 
         let meta = context.meta;
+        let columns: Vec<_> = meta
+            .row_columns_order
+            .iter()
+            .map(|&col_idx| chunk.column(col_idx))
+            .collect();
+        let cells: Vec<RawCells<'_>> = columns.iter().map(|column| column.raw_cells()).collect();
         for logical_row_index in 0..self.used_rows.len() {
             // Go appendToRowTable checks every ten rows and the final row.
             if logical_row_index % 10 == 0 || logical_row_index + 1 == self.used_rows.len() {
@@ -671,7 +686,6 @@ impl RowTableBuilder {
             if !has_valid_key && !self.keep_filtered_rows {
                 continue;
             }
-            let row = chunk.get_row(logical_row_index);
             let part_idx = self.part_idx_vector[logical_row_index];
             let segment = &mut segments[part_idx];
 
@@ -683,14 +697,15 @@ impl RowTableBuilder {
 
             let mut row_length = 0_i64;
             row_length += fill_next_row_ptr(segment) as i64;
-            row_length += fill_null_map(meta, &row, segment, &mut self.null_map) as i64;
+            row_length +=
+                fill_null_map(meta, &cells, physical_row_index, segment, &mut self.null_map) as i64;
             row_length += self.fill_serialized_key_and_key_length_if_needed(
                 meta,
                 has_valid_key,
                 logical_row_index,
                 segment,
             );
-            row_length += fill_row_data(meta, &row, segment);
+            row_length += fill_row_data(meta, &cells, physical_row_index, segment);
             if row_length % 8 != 0 {
                 let padding = 8 - (row_length % 8) as usize;
                 segment
@@ -712,9 +727,11 @@ fn fill_next_row_ptr(segment: &mut RowTableSegment) -> usize {
 }
 
 /// `fillNullMap`: writes one bit per stored column, MSB first inside a byte.
+/// `cells` holds the stored columns in `meta.row_columns_order`.
 fn fill_null_map(
     meta: &RowLayoutMeta,
-    row: &Row<'_>,
+    cells: &[RawCells<'_>],
+    physical_row: usize,
     segment: &mut RowTableSegment,
     bitmap: &mut [u8],
 ) -> usize {
@@ -723,9 +740,9 @@ fn fill_null_map(
         return 0;
     }
     bitmap[..null_map_length].fill(0);
-    for (col_index_in_row_table, &col_index_in_row) in meta.row_columns_order.iter().enumerate() {
+    for (col_index_in_row_table, column) in cells.iter().enumerate() {
         let col_index_in_bitmap = col_index_in_row_table + meta.col_offset_in_null_map;
-        if row.is_null(col_index_in_row) {
+        if column.is_null(physical_row) {
             bitmap[col_index_in_bitmap / 8] |= 1 << (7 - col_index_in_bitmap % 8);
         }
     }
@@ -736,17 +753,23 @@ fn fill_null_map(
 }
 
 /// `fillRowData`: fixed columns raw, variable columns length-prefixed.
-fn fill_row_data(meta: &RowLayoutMeta, row: &Row<'_>, segment: &mut RowTableSegment) -> i64 {
+/// `cells` holds the stored columns in `meta.row_columns_order`.
+fn fill_row_data(
+    meta: &RowLayoutMeta,
+    cells: &[RawCells<'_>],
+    physical_row: usize,
+    segment: &mut RowTableSegment,
+) -> i64 {
     let mut append_row_length = 0_i64;
-    for (index, &col_idx) in meta.row_columns_order.iter().enumerate() {
-        let raw = row.get_raw(col_idx);
+    for (index, column) in cells.iter().enumerate() {
+        let raw = column.get(physical_row);
         if let Some(size) = meta.columns_size[index] {
-            segment.raw_data.extend_from_slice(&raw);
+            segment.raw_data.extend_from_slice(raw);
             append_row_length += size as i64;
         } else {
             let length = raw.len() as u32;
             segment.raw_data.extend_from_slice(&length.to_le_bytes());
-            segment.raw_data.extend_from_slice(&raw);
+            segment.raw_data.extend_from_slice(raw);
             append_row_length += i64::from(length) + SIZE_OF_ELEMENT_SIZE as i64;
         }
     }
@@ -754,13 +777,18 @@ fn fill_row_data(meta: &RowLayoutMeta, row: &Row<'_>, segment: &mut RowTableSegm
 }
 
 /// `calculateRowDataLength`.
-fn calculate_row_data_length(meta: &RowLayoutMeta, row: &Row<'_>) -> i64 {
+fn calculate_row_data_length(
+    meta: &RowLayoutMeta,
+    cells: &[RawCells<'_>],
+    physical_row: usize,
+) -> i64 {
     let mut append_row_length = 0_i64;
-    for (index, &col_idx) in meta.row_columns_order.iter().enumerate() {
+    for (index, column) in cells.iter().enumerate() {
         if let Some(size) = meta.columns_size[index] {
             append_row_length += size as i64;
         } else {
-            append_row_length += row.get_raw(col_idx).len() as i64 + SIZE_OF_ELEMENT_SIZE as i64;
+            append_row_length +=
+                column.get(physical_row).len() as i64 + SIZE_OF_ELEMENT_SIZE as i64;
         }
     }
     append_row_length
