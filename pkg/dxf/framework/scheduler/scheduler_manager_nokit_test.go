@@ -528,11 +528,18 @@ func TestSchedulerCleanTask(t *testing.T) {
 		loopCtx, cancel := context.WithCancel(context.Background())
 		mgr := NewManager(loopCtx, nil, taskMgr, "1", proto.NodeResourceForTest)
 		cleanupStarted := make(chan struct{})
+		monitorStarted := make(chan struct{})
 		loopDone := make(chan struct{})
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).DoAndReturn(func(context.Context) ([]*proto.Task, error) {
 			close(cleanupStarted)
 			return nil, nil
 		})
+		if kerneltype.IsNextGen() {
+			taskMgr.EXPECT().GetAllTasks(mgr.ctx).DoAndReturn(func(context.Context) ([]*proto.TaskBase, error) {
+				close(monitorStarted)
+				return []*proto.TaskBase{{ID: 1}}, nil
+			})
+		}
 		go func() {
 			defer close(loopDone)
 			mgr.cleanTaskLoop()
@@ -543,12 +550,20 @@ func TestSchedulerCleanTask(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("cleanup task loop did not run immediately")
 		}
+		if kerneltype.IsNextGen() {
+			select {
+			case <-monitorStarted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("cleanup task loop did not request the residual monitor")
+			}
+		}
 		cancel()
 		select {
 		case <-loopDone:
 		case <-time.After(3 * time.Second):
 			t.Fatal("cleanup task loop did not stop")
 		}
+		mgr.wg.Wait()
 		require.True(t, ctrl.Satisfied())
 	})
 }

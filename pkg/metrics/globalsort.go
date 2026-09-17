@@ -32,6 +32,8 @@ var (
 	GlobalSortIngestWorkerCnt *prometheus.GaugeVec
 	// GlobalSortUploadWorkerCount is the gauge of active parallel upload worker count.
 	GlobalSortUploadWorkerCount prometheus.Gauge
+	// GlobalSortResidualDataSize records the residual data size when no DXF task exists.
+	GlobalSortResidualDataSize prometheus.Gauge
 	// MergeSortWriteBytes records the bytes written in merge sort.
 	MergeSortWriteBytes prometheus.Counter
 	// MergeSortReadBytes records the bytes read in merge sort.
@@ -85,6 +87,15 @@ func InitGlobalSortMetrics() {
 			Subsystem: "global_sort",
 			Name:      "upload_worker_cnt",
 			Help:      "Gauge of active parallel upload worker count.",
+		},
+	)
+
+	GlobalSortResidualDataSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "global_sort",
+			Name:      "residual_data_size_bytes",
+			Help:      "Gauge of residual data size in bytes when no DXF task exists.",
 		},
 	)
 

@@ -69,8 +69,9 @@ go_test(
     ],
     embed = [":metrics"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 10,
     deps = [
+        "//pkg/metrics/common",
         "//pkg/parser/terror",
         "//pkg/statistics/handle/cache",
         "//pkg/testkit/testsetup",
