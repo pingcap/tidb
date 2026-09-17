@@ -1149,7 +1149,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	m.state.Store(memArbitratorStateIntoBigBudget)
 
-	if maxMemHint := max(m.preMaxMem, smallUsed); maxMemHint > 0 {
+	if maxMemHint := max(m.preMaxMem, smallUsed); maxMemHint > m.poolAllocStats.SmallPoolLimit {
 		m.tryToUpdateBuffer(maxMemHint, m.approxUnixTimeSec())
 	}
 
@@ -1176,7 +1176,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 		m.reserveBigBudget(m.preMaxMem)
 	} else if m.bigBudgetUsed() > m.poolAllocStats.SmallPoolLimit {
 		if initCap := m.SuggestPoolInitCap(); initCap > 0 {
-			m.reserveBigBudget(min(initCap, m.limit()/10))
+			m.reserveBigBudget(initCap)
 			metrics.GlobalMemArbitratorSubEvents.PoolInitMediumQuota.Inc()
 		}
 	}
