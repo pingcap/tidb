@@ -227,7 +227,9 @@ struct HashState {
     /// Reused physical-row selection for a candidate run that comes from one
     /// in-memory build chunk. This is the direct counterpart to Go's
     /// `CopySelectedJoinRowsWithSameOuterRows` selection bitmap.
-    probe_batch_selected: Vec<bool>,
+    /// The accepted build rows of one candidate run, as ascending physical
+    /// row indexes into the run's build chunk.
+    probe_batch_rows: Vec<usize>,
     probe_done: bool,
     /// Cursor for Go hash join's post-probe scan when the preserved side was
     /// built. `None` means the scan is complete (or was never needed).
@@ -347,7 +349,9 @@ struct ProbeBatchScratch {
     exact_found: Vec<Option<usize>>,
     batch_ptrs: Vec<RowPtr>,
     candidates: Vec<RowPtr>,
-    selected: Vec<bool>,
+    /// The accepted build rows of one candidate run, as ascending physical
+    /// row indexes into the run's build chunk.
+    matched_rows: Vec<usize>,
 }
 
 impl ProbeBatchScratch {
@@ -360,7 +364,7 @@ impl ProbeBatchScratch {
             exact_found: Vec::new(),
             batch_ptrs: Vec::new(),
             candidates: Vec::new(),
-            selected: Vec::new(),
+            matched_rows: Vec::new(),
         }
     }
 
@@ -372,7 +376,7 @@ impl ProbeBatchScratch {
         self.exact_found.clear();
         self.batch_ptrs.clear();
         self.candidates.clear();
-        self.selected.clear();
+        self.matched_rows.clear();
     }
 }
 
@@ -4035,16 +4039,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 if build.sel().is_some() {
                                     return Ok(None);
                                 }
-                                scratch.selected.resize(build.num_rows(), false);
-                                for selected in &mut scratch.selected {
-                                    *selected = false;
-                                }
+                                scratch.matched_rows.clear();
                                 for &candidate in ptrs {
-                                    scratch.selected[candidate.row_idx as usize] = true;
-                                }
-                                if exact_int.is_none() {
-                                    for &candidate in ptrs {
-                                        let build_row = build.get_row(candidate.row_idx as usize);
+                                    let row_idx = candidate.row_idx as usize;
+                                    if exact_int.is_none() {
+                                        let build_row = build.get_row(row_idx);
                                         let (left, left_types, right, right_types) =
                                             if probe_is_left {
                                                 (probe_row, probe_types, build_row, build_types)
@@ -4060,23 +4059,27 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                         )
                                         .map_err(key_error)?
                                         {
-                                            scratch.selected[candidate.row_idx as usize] = false;
+                                            continue;
                                         }
                                     }
+                                    scratch.matched_rows.push(row_idx);
                                 }
                                 Ok(Some(output_layout.selected_chunk_matches(
                                     &mut output,
                                     probe_is_left,
                                     probe_row,
                                     build,
-                                    &scratch.selected,
+                                    &scratch.matched_rows,
                                 )))
                             })
                             .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
                         if let Some(accepted) = batch {
                             if builds_preserved {
-                                matched_build_rows.extend(ptrs.iter().copied().filter(
-                                    |candidate| scratch.selected[candidate.row_idx as usize],
+                                matched_build_rows.extend(scratch.matched_rows.iter().map(
+                                    |&row_idx| RowPtr {
+                                        chk_idx: first.chk_idx,
+                                        row_idx: row_idx as u32,
+                                    },
                                 ));
                             }
                             matched = accepted != 0;
@@ -4628,7 +4631,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             probe_candidates: Vec::new(),
             probe_candidate_idx: 0,
             probe_matched: false,
-            probe_batch_selected: Vec::new(),
+            probe_batch_rows: Vec::new(),
             probe_done: false,
             unmatched_build_scan,
             parallel_probe_pending: VecDeque::new(),
@@ -4973,16 +4976,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 if build.sel().is_some() {
                                     return Ok(None);
                                 }
-                                hash.probe_batch_selected.resize(build.num_rows(), false);
-                                for selected in &mut hash.probe_batch_selected {
-                                    *selected = false;
-                                }
+                                hash.probe_batch_rows.clear();
                                 for &candidate in ptrs {
-                                    hash.probe_batch_selected[candidate.row_idx as usize] = true;
-                                }
-                                if exact_int.is_none() {
-                                    for &candidate in ptrs {
-                                        let build_row = build.get_row(candidate.row_idx as usize);
+                                    let row_idx = candidate.row_idx as usize;
+                                    if exact_int.is_none() {
+                                        let build_row = build.get_row(row_idx);
                                         let (left, left_types, right, right_types) =
                                             if probe_is_left {
                                                 (probe_row, probe_types, build_row, build_types)
@@ -4998,27 +4996,28 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                         )
                                         .map_err(key_error)?
                                         {
-                                            hash.probe_batch_selected[candidate.row_idx as usize] =
-                                                false;
+                                            continue;
                                         }
                                     }
+                                    hash.probe_batch_rows.push(row_idx);
                                 }
                                 let accepted = self.output.selected_chunk_matches(
                                     req,
                                     probe_is_left,
                                     probe_row,
                                     build,
-                                    &hash.probe_batch_selected,
+                                    &hash.probe_batch_rows,
                                 );
                                 Ok(Some(accepted))
                             })
                             .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
                         if let Some(accepted) = batch {
-                            for &candidate in ptrs {
-                                if hash.probe_batch_selected[candidate.row_idx as usize]
-                                    && builds_preserved
-                                {
-                                    hash.table.mark_matched(candidate);
+                            if builds_preserved {
+                                for &row_idx in &hash.probe_batch_rows {
+                                    hash.table.mark_matched(RowPtr {
+                                        chk_idx: first.chk_idx,
+                                        row_idx: row_idx as u32,
+                                    });
                                 }
                             }
                             hash.probe_matched |= accepted != 0;

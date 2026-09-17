@@ -15,7 +15,7 @@
 //! Go `markChildrenUsedCols` / `baseJoiner`: output selection never changes
 //! the input layout used by hash keys and residual expressions.
 
-use tidb_chunk::{chunk::Chunk, chunk_util::copy_selected_rows, row::Row};
+use tidb_chunk::{chunk::Chunk, chunk_util::copy_rows, row::Row};
 use tidb_datatype::Datum;
 
 use super::JoinKind;
@@ -167,20 +167,23 @@ impl JoinOutput {
         Self::finish(req, 1);
     }
 
-    /// Go `AppendCellNTimes` plus `CopySelectedRows` for one probe row's
-    /// candidate chain. The probe row is identical for every accepted build
-    /// row, so append that side once as a repeated column and copy the build
-    /// side column-wise from its source chunk. `selected` is in physical
-    /// source-row order and contains only candidates from that chunk.
+    /// Go `AppendCellNTimes` plus `CopyRows` for one probe row's candidate
+    /// chain. The probe row is identical for every accepted build row, so
+    /// append that side once as a repeated column and copy the build side
+    /// column-wise from its source chunk. `matched` lists the accepted
+    /// physical rows of `build` in ascending order. It is the candidate
+    /// chain itself, not a selection over the whole build chunk: Go's join
+    /// only ever copies the matched rows, and a chunk-wide selection vector
+    /// would cost every probe row a scan of the build chunk per column.
     pub(super) fn selected_chunk_matches(
         &self,
         req: &mut Chunk,
         probe_left: bool,
         probe: Row<'_>,
         build: &Chunk,
-        selected: &[bool],
+        matched: &[usize],
     ) -> usize {
-        let rows = selected.iter().filter(|selected| **selected).count();
+        let rows = matched.len();
         if rows == 0 {
             return 0;
         }
@@ -194,7 +197,7 @@ impl JoinOutput {
                     .append_cell_n_times(&source, probe.idx(), rows);
             } else {
                 let source = build.column(source);
-                copy_selected_rows(&mut req.column_mut(destination), &source, selected);
+                copy_rows(&mut req.column_mut(destination), &source, matched);
             }
         }
         let right_offset = self.left.len();
@@ -202,7 +205,7 @@ impl JoinOutput {
             let destination = right_offset + index;
             if probe_left {
                 let source = build.column(source);
-                copy_selected_rows(&mut req.column_mut(destination), &source, selected);
+                copy_rows(&mut req.column_mut(destination), &source, matched);
             } else {
                 let source = probe_chunk.column(source);
                 req.column_mut(destination)

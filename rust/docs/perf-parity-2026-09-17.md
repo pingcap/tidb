@@ -130,3 +130,33 @@ join_probe_composite_key total_cal_per_row 11966.1988
 join_probe_composite_key source_cal_per_row 106.9120
 ```
 **join_probe_composite_key 7,872 ns/row against join_probe_int_key 605 ns/row: a two-column key costs 13x per probe row.** That is the serialised-key table every composite equi-join uses (TPC-H Q9 joins lineitem to partsupp on `l_partkey, l_suppkey`), and it matches the per-key `Vec<u8>` allocations and jemalloc traffic the Q3/Q16/Q8 profile showed. `cop_encode` is skipped until the bench can bind a transport.
+
+## Fix 3: join output from the sparse candidate list (found by the micro-bench)
+
+Bisecting the 13x composite-key cost with a third shape, `join_probe_bytes_key`
+(a single unique 25-byte VARCHAR key), showed the cost is the general (non
+exact-int) probe path itself, not composite serialisation: bytes 7,419 ns/row,
+composite 7,413, int 594. A flat profile of that shape alone
+(`BENCH_ONLY=bytes`) put 32% in `Column::copy_selected_rows`, 26% in its
+`SharedBytes::append_owned` closure and 7% in memmove, and the cost did not
+move with table size (7.1 us at 25k rows, 7.9 us at 100k), so it was per-probe-row
+work in the output copy: `selected_chunk_matches` took a `Vec<bool>` painted
+over the whole 1024-row build chunk for every probe row, counted it, and rescanned
+it once per output column (~6k iterations to emit one match). Go never selects
+over the build chunk; its join copies the matched rows (`CopyRows`,
+`appendBuildRowToChunk`). Both probe paths now collect the accepted candidate
+rows as ascending physical indexes and the output copies them with
+`chunk_util::copy_rows`.
+
+```
+                          before      after
+join_probe_int_key         594 ns     569 ns
+join_probe_bytes_key     7,419 ns   1,901 ns   (3.9x)
+join_probe_composite_key 7,413 ns   1,641 ns   (4.5x)
+```
+The int-key shape was unaffected because it never reached this copy at that
+cost profile in the bench's measurement; the remaining 3x of the byte-key shapes
+over the int one is the per-candidate re-verification, which builds two `Datum`s
+and two collation sort keys per candidate where Go's `EqualChunkRow` compares
+encoded keys in place; that is the next step. Executor tests: 1,332 + 329 + 6
+pass; clippy clean on the crate.

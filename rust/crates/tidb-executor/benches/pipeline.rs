@@ -435,7 +435,11 @@ impl HashAggContext for SerialAgg {
 fn bench_aggregate() {
     let types = wide_types();
     let out_types = vec![types[0].clone(), types[1].clone()];
-    for (label, groups) in [("agg_groups_10", 10_i64), ("agg_groups_1k", 1_000), ("agg_groups_60k", 60_000)] {
+    for (label, groups) in [
+        ("agg_groups_10", 10_i64),
+        ("agg_groups_1k", 1_000),
+        ("agg_groups_60k", 60_000),
+    ] {
         let mut source_pass = || {
             let mut source = replay(&types, ROWS, groups);
             black_box(drain(&mut source));
@@ -488,12 +492,28 @@ fn main() {
         elapsed.as_secs_f64() * 1e9 / CAL_OPS as f64
     );
     println!("calibration cal_per_op {:.4}", ratio / CAL_OPS as f64);
-    bench_read_task_setup();
-    bench_row_copy();
-    bench_aggregate();
-    bench_cell_append();
-    bench_cop_encode();
-    bench_hash_join_probe();
+    // BENCH_ONLY=<substring> runs the benches whose name contains it, so one
+    // path can be profiled in isolation (`perf record` on this binary).
+    let only = std::env::var("BENCH_ONLY").unwrap_or_default();
+    let wanted = |name: &str| only.is_empty() || name.contains(only.as_str());
+    if wanted("read_task") {
+        bench_read_task_setup();
+    }
+    if wanted("row_copy") {
+        bench_row_copy();
+    }
+    if wanted("agg") {
+        bench_aggregate();
+    }
+    if wanted("append") {
+        bench_cell_append();
+    }
+    if wanted("cop_encode") {
+        bench_cop_encode();
+    }
+    if wanted("join_probe int_key bytes_key composite_key") {
+        bench_hash_join_probe();
+    }
 }
 
 /// Go `buildCopTasks`: prepare one lookup batch, including region/bucket
@@ -607,7 +627,11 @@ impl Executor for Sequence {
         while self.next < stop {
             req.append_int64(0, self.next % self.ndv);
             req.append_int64(1, self.next);
-            req.append_bytes(2, &[b'n'; 25]);
+            // A unique 25-byte string per row, so a join on this column
+            // exercises the byte-key table with one key per build row.
+            let mut name = [b'n'; 25];
+            name[..20].copy_from_slice(format!("{:020}", self.next).as_bytes());
+            req.append_bytes(2, &name);
             req.append_bytes(3, &[b'a'; 40]);
             req.append_bytes(4, &[b'c'; 117]);
             self.next += 1;
@@ -644,9 +668,14 @@ impl Columns for JoinCtx {
 }
 
 fn eq_on(lhs: usize, rhs: usize, left_width: usize) -> Expression {
+    eq_on_typed(lhs, rhs, left_width, FieldTypeCode::LongLong)
+}
+
+fn eq_on_typed(lhs: usize, rhs: usize, left_width: usize, code: FieldTypeCode) -> Expression {
     let long = FieldType::new(FieldTypeCode::LongLong);
+    let key_type = FieldType::new(code);
     let column = |index: usize| {
-        let mut column = Column::new(index as i64 + 1, long.clone());
+        let mut column = Column::new(index as i64 + 1, key_type.clone());
         column.index = index as i64;
         Expression::Column(column)
     };
@@ -662,32 +691,52 @@ fn eq_on(lhs: usize, rhs: usize, left_width: usize) -> Expression {
 /// table; two take the serialised-key table every composite join uses.
 fn bench_hash_join_probe() {
     use tidb_executor::join::{JoinExec, JoinKind};
-    const ROWS: usize = 100_000;
+    let rows: usize = std::env::var("BENCH_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(100_000);
     let types = wide_types();
     let out_types: Vec<FieldType> = types.iter().chain(types.iter()).cloned().collect();
     for (label, conditions) in [
         ("join_probe_int_key", vec![eq_on(0, 0, 5)]),
-        ("join_probe_composite_key", vec![eq_on(0, 0, 5), eq_on(1, 1, 5)]),
+        (
+            "join_probe_bytes_key",
+            vec![eq_on_typed(2, 2, 5, FieldTypeCode::Varchar)],
+        ),
+        (
+            "join_probe_composite_key",
+            vec![eq_on(0, 0, 5), eq_on(1, 1, 5)],
+        ),
     ] {
+        let only = std::env::var("BENCH_ONLY").unwrap_or_default();
+        if !only.is_empty()
+            && !label.contains(only.as_str())
+            && !"join_probe".contains(only.as_str())
+        {
+            continue;
+        }
         let mut probe_only = || {
-            black_box(drain(&mut Sequence::new(ROWS, ROWS as i64)));
+            black_box(drain(&mut Sequence::new(rows, rows as i64)));
         };
         let mut total = || {
             let mut join = JoinExec::new(
                 ExecutorMeta::new(schema_of(&out_types), 1, CHUNK, CHUNK),
                 JoinKind::Inner,
                 conditions.clone(),
-                Box::new(Sequence::new(ROWS, ROWS as i64)),
-                Box::new(Sequence::new(ROWS, ROWS as i64)),
+                Box::new(Sequence::new(rows, rows as i64)),
+                Box::new(Sequence::new(rows, rows as i64)),
                 JoinCtx,
                 StatementMemory::new(1 << 30, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
             );
-            let rows = drain(&mut join);
-            assert_eq!(rows, ROWS, "{label}: every probe row matches exactly once");
+            let produced = drain(&mut join);
+            assert_eq!(
+                produced, rows,
+                "{label}: every probe row matches exactly once"
+            );
         };
         let results = best_of_blocks(&mut [("source", &mut probe_only), ("total", &mut total)]);
         let (source, total_m) = (results[0], results[1]);
-        let rows = ROWS as f64;
+        let rows = rows as f64;
         println!(
             "{label} ns_per_row {:.1}",
             (total_m.0.as_secs_f64() - 2.0 * source.0.as_secs_f64()).max(0.0) * 1e9 / rows
@@ -707,7 +756,10 @@ fn bench_cell_append() {
         ("append_bytes_8", FieldType::new(FieldTypeCode::Varchar)),
         ("append_bytes_32", FieldType::new(FieldTypeCode::Varchar)),
         ("append_bytes_128", FieldType::new(FieldTypeCode::Varchar)),
-        ("append_decimal_40", FieldType::new(FieldTypeCode::NewDecimal)),
+        (
+            "append_decimal_40",
+            FieldType::new(FieldTypeCode::NewDecimal),
+        ),
     ];
     let decimal = MyDecimal::from_int(1_234_567);
     for (label, field_type) in shapes {
@@ -731,7 +783,10 @@ fn bench_cell_append() {
             black_box(chunk.num_rows());
         };
         let (elapsed, ratio) = best_of_blocks(&mut [(label, &mut pass)])[0];
-        println!("{label} ns_per_cell {:.2}", elapsed.as_secs_f64() * 1e9 / CHUNK as f64);
+        println!(
+            "{label} ns_per_cell {:.2}",
+            elapsed.as_secs_f64() * 1e9 / CHUNK as f64
+        );
         println!("{label} cal_per_cell {:.5}", ratio / CHUNK as f64);
     }
 }
@@ -762,8 +817,16 @@ fn bench_cop_encode() {
     let topology: Vec<_> = (0..8_u32)
         .map(|region| RegionTaskTopology {
             region_id: u64::from(region + 1),
-            start_key: if region == 0 { Vec::new() } else { key(region * count / 4) },
-            end_key: if region == 7 { Vec::new() } else { key((region + 1) * count / 4) },
+            start_key: if region == 0 {
+                Vec::new()
+            } else {
+                key(region * count / 4)
+            },
+            end_key: if region == 7 {
+                Vec::new()
+            } else {
+                key((region + 1) * count / 4)
+            },
             buckets_version: 1,
             ..RegionTaskTopology::default()
         })
@@ -781,6 +844,9 @@ fn bench_cop_encode() {
         }
     };
     let (elapsed, ratio) = best_of_blocks(&mut [("cop_encode", &mut pass)])[0];
-    println!("cop_encode ns_per_task {:.0}", elapsed.as_secs_f64() * 1e9 / per_pass);
+    println!(
+        "cop_encode ns_per_task {:.0}",
+        elapsed.as_secs_f64() * 1e9 / per_pass
+    );
     println!("cop_encode cal_per_task {:.4}", ratio / per_pass);
 }
