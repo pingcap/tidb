@@ -59,3 +59,74 @@ Q10 1.41, Q21 1.46, Q18 1.31, Q9 1.19 -- no consistent reduction against head's 
 KvTable could not be shared (pushdown_row_cursor_with_context / stage_rows_by_handles_filtered
 take &mut self); the seven other fields were. The 6.1% "LookupForkTemplate::open" in the
 profile was therefore not the clones' cost, or the cost moved elsewhere.
+
+## In-flight coprocessor requests (Little's law from TiKV's grpc counters), Go vs Rust, 2 runs each
+Q10: Go 9.2-10.8, Rust 6.8-8.5 (wall 0.78-0.84 vs 0.89-0.94 s); Q12: Go 6.5-7.9, Rust 1.1-6.2;
+Q3: Go 7.9-13.5, Rust 3.8-9.9; Q19: Go 8.0-9.1, Rust 7.7-8.7 (wall equal); Q14: Go 7.8-8.6,
+Rust 5.2-12.6. Mean TiKV service time is the same for both nodes where the request mix is the
+same. Weak, consistent-direction signal that the Rust node keeps fewer cop requests in flight
+on the index-join / scan-bound queries; request counts also differ (paging), and the scatter
+(Q12 Go 52 vs 176 requests between runs, coprocessor cache) is too large for two runs to settle
+it. Needs a longer, cache-controlled run before any fix is aimed at it.
+
+## TPC-H go/head, four same-box counter-balanced runs on 2026-09-17 (warm min of 2 rounds each)
+3way 1.102x, fix 1.065x, fix2 1.049x, base-run 1.067x: the synced tree is about 1.06x Go on this
+box with +-0.03 run-to-run, matching 09-14's 1.056x. Any change below ~5% on a single query is
+inside this scatter, which is why the two fixes above read "neutral" and why the micro-bench
+suite (benches/pipeline.rs) exists.
+
+## Pre-campaign base 8123bb1 on this cluster: unmeasurable
+Built here with a one-line libc cast (statvfs.f_bsize is i64 on this VM). It answers Q1-Q4 and
+then stalls (Q5 in round 1, Q10 in round 2); its connections end with "MySQL packet failed:
+packet stream reached EOF" and each TPC-H pass hits the 3600 s timeout. The goal's 25% therefore
+has no same-box baseline here; Go is the reference that can be measured.
+
+## Micro-benchmark baseline at HEAD (`cargo bench -p tidb-executor --bench pipeline`, bench profile, `setarch -R`, run 1)
+```
+calibration ns_per_op 0.6093
+calibration cal_per_op 0.9975
+read_task_split_1024 ns_per_range 258.6
+read_task_split_1024 cal_per_range 422.0498
+read_task_prepare_1024 ns_per_range 716.2
+read_task_prepare_1024 cal_per_range 1169.7286
+read_task_split_20000 ns_per_range 260.4
+read_task_split_20000 cal_per_range 426.7004
+read_task_prepare_20000 ns_per_range 762.4
+read_task_prepare_20000 cal_per_range 1240.5322
+row_copy_keys_only ns_per_row 34.5
+row_copy_keys_only mib_per_s 442
+row_copy_keys_only cal_per_row 56.2459
+row_copy_wide ns_per_row 85.4
+row_copy_wide mib_per_s 2212
+row_copy_wide cal_per_row 139.7056
+agg_groups_10 total_ns_per_row 140.0
+agg_groups_10 fold_ns_per_row 54.4
+agg_groups_10 total_cal_per_row 229.0008
+agg_groups_10 fold_cal_per_row 88.9071
+agg_groups_1k total_ns_per_row 156.1
+agg_groups_1k fold_ns_per_row 70.5
+agg_groups_1k total_cal_per_row 254.5504
+agg_groups_1k fold_cal_per_row 116.7793
+agg_groups_60k total_ns_per_row 157.2
+agg_groups_60k fold_ns_per_row 71.5
+agg_groups_60k total_cal_per_row 255.7231
+agg_groups_60k fold_cal_per_row 116.7615
+append_int64 ns_per_cell 18.10
+append_int64 cal_per_cell 29.77460
+append_bytes_8 ns_per_cell 15.79
+append_bytes_8 cal_per_cell 25.90825
+append_bytes_32 ns_per_cell 14.68
+append_bytes_32 cal_per_cell 23.94901
+append_bytes_128 ns_per_cell 15.99
+append_bytes_128 cal_per_cell 26.14814
+append_decimal_40 ns_per_cell 20.00
+append_decimal_40 cal_per_cell 32.74836
+cop_encode skipped Unbound
+join_probe_int_key ns_per_row 604.7
+join_probe_int_key total_cal_per_row 1149.5106
+join_probe_int_key source_cal_per_row 111.2286
+join_probe_composite_key ns_per_row 7871.5
+join_probe_composite_key total_cal_per_row 11966.1988
+join_probe_composite_key source_cal_per_row 106.9120
+```
+**join_probe_composite_key 7,872 ns/row against join_probe_int_key 605 ns/row: a two-column key costs 13x per probe row.** That is the serialised-key table every composite equi-join uses (TPC-H Q9 joins lineitem to partsupp on `l_partkey, l_suppkey`), and it matches the per-key `Vec<u8>` allocations and jemalloc traffic the Q3/Q16/Q8 profile showed. `cop_encode` is skipped until the bench can bind a transport.

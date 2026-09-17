@@ -51,6 +51,7 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
+use tidb_ast::CiString;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::Datum;
 use tidb_datatype::{FieldType, FieldTypeCode};
@@ -59,6 +60,7 @@ use tidb_executor::hash_agg::{AggFunc, AggKind, HashAggContext, HashAggExec};
 use tidb_executor::mem_quota::{OomAction, StatementMemory};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
+use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 
@@ -433,7 +435,7 @@ impl HashAggContext for SerialAgg {
 fn bench_aggregate() {
     let types = wide_types();
     let out_types = vec![types[0].clone(), types[1].clone()];
-    for (label, groups) in [("agg_groups_1k", 1_000_i64), ("agg_groups_60k", 60_000)] {
+    for (label, groups) in [("agg_groups_10", 10_i64), ("agg_groups_1k", 1_000), ("agg_groups_60k", 60_000)] {
         let mut source_pass = || {
             let mut source = replay(&types, ROWS, groups);
             black_box(drain(&mut source));
@@ -489,6 +491,9 @@ fn main() {
     bench_read_task_setup();
     bench_row_copy();
     bench_aggregate();
+    bench_cell_append();
+    bench_cop_encode();
+    bench_hash_join_probe();
 }
 
 /// Go `buildCopTasks`: prepare one lookup batch, including region/bucket
@@ -563,4 +568,219 @@ fn bench_read_task_setup() {
             );
         }
     }
+}
+
+/// A source whose key column is unique across the whole run, unlike
+/// [`Replay`], which replays one 1024-row template and so repeats every key
+/// once per chunk. Go's `BenchmarkHashJoinExec` builds `rows` distinct keys
+/// and probes each once; a repeated key would fan every probe row out into
+/// dozens of matches and measure the output path instead of the probe.
+struct Sequence {
+    meta: ExecutorMeta,
+    types: Vec<FieldType>,
+    next: i64,
+    end: i64,
+    ndv: i64,
+}
+
+impl Sequence {
+    fn new(rows: usize, ndv: i64) -> Self {
+        let types = wide_types();
+        Sequence {
+            meta: ExecutorMeta::new(schema_of(&types), 0, CHUNK, CHUNK),
+            types,
+            next: 0,
+            end: rows as i64,
+            ndv,
+        }
+    }
+}
+
+impl Executor for Sequence {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.next = 0;
+        Ok(())
+    }
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        let stop = (self.next + CHUNK as i64).min(self.end);
+        while self.next < stop {
+            req.append_int64(0, self.next % self.ndv);
+            req.append_int64(1, self.next);
+            req.append_bytes(2, &[b'n'; 25]);
+            req.append_bytes(3, &[b'a'; 40]);
+            req.append_bytes(4, &[b'c'; 117]);
+            self.next += 1;
+        }
+        Ok(())
+    }
+    fn close(&mut self) -> Result<(), ExecError> {
+        Ok(())
+    }
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+    fn ret_field_types(&self) -> &[FieldType] {
+        &self.types
+    }
+    fn new_chunk(&self) -> Chunk {
+        Chunk::new_with_capacity(&self.types, CHUNK)
+    }
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+}
+
+/// `JoinCtx` is [`SerialAgg`] with the `Clone` the join's context bound asks for.
+#[derive(Clone, Copy)]
+struct JoinCtx;
+impl Columns for JoinCtx {
+    fn get(&self, _path: &[String]) -> Option<Datum> {
+        None
+    }
+}
+
+fn eq_on(lhs: usize, rhs: usize, left_width: usize) -> Expression {
+    let long = FieldType::new(FieldTypeCode::LongLong);
+    let column = |index: usize| {
+        let mut column = Column::new(index as i64 + 1, long.clone());
+        column.index = index as i64;
+        Expression::Column(column)
+    };
+    Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("eq"),
+        long.clone(),
+        vec![column(lhs), column(left_width + rhs)],
+    ))
+}
+
+/// Go `BenchmarkHashJoinExec` (rows 100000, keyIdx [0,1]): build `rows`
+/// distinct keys, probe each once. One key column takes the exact-integer
+/// table; two take the serialised-key table every composite join uses.
+fn bench_hash_join_probe() {
+    use tidb_executor::join::{JoinExec, JoinKind};
+    const ROWS: usize = 100_000;
+    let types = wide_types();
+    let out_types: Vec<FieldType> = types.iter().chain(types.iter()).cloned().collect();
+    for (label, conditions) in [
+        ("join_probe_int_key", vec![eq_on(0, 0, 5)]),
+        ("join_probe_composite_key", vec![eq_on(0, 0, 5), eq_on(1, 1, 5)]),
+    ] {
+        let mut probe_only = || {
+            black_box(drain(&mut Sequence::new(ROWS, ROWS as i64)));
+        };
+        let mut total = || {
+            let mut join = JoinExec::new(
+                ExecutorMeta::new(schema_of(&out_types), 1, CHUNK, CHUNK),
+                JoinKind::Inner,
+                conditions.clone(),
+                Box::new(Sequence::new(ROWS, ROWS as i64)),
+                Box::new(Sequence::new(ROWS, ROWS as i64)),
+                JoinCtx,
+                StatementMemory::new(1 << 30, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
+            );
+            let rows = drain(&mut join);
+            assert_eq!(rows, ROWS, "{label}: every probe row matches exactly once");
+        };
+        let results = best_of_blocks(&mut [("source", &mut probe_only), ("total", &mut total)]);
+        let (source, total_m) = (results[0], results[1]);
+        let rows = ROWS as f64;
+        println!(
+            "{label} ns_per_row {:.1}",
+            (total_m.0.as_secs_f64() - 2.0 * source.0.as_secs_f64()).max(0.0) * 1e9 / rows
+        );
+        println!("{label} total_cal_per_row {:.4}", total_m.1 / rows);
+        println!("{label} source_cal_per_row {:.4}", source.1 / rows);
+    }
+}
+
+/// Go `BenchmarkAppendInt`, `BenchmarkAppendBytes{8,32,128}`, and the fixed
+/// forty-byte decimal cell that `append_cell_from` copies with a runtime
+/// length: the per-cell cost of each column shape, one column at a time.
+fn bench_cell_append() {
+    use tidb_datatype::MyDecimal;
+    let shapes: [(&str, FieldType); 5] = [
+        ("append_int64", FieldType::new(FieldTypeCode::LongLong)),
+        ("append_bytes_8", FieldType::new(FieldTypeCode::Varchar)),
+        ("append_bytes_32", FieldType::new(FieldTypeCode::Varchar)),
+        ("append_bytes_128", FieldType::new(FieldTypeCode::Varchar)),
+        ("append_decimal_40", FieldType::new(FieldTypeCode::NewDecimal)),
+    ];
+    let decimal = MyDecimal::from_int(1_234_567);
+    for (label, field_type) in shapes {
+        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), CHUNK);
+        let payload = vec![b'x'; 128];
+        let width = match label {
+            "append_bytes_8" => 8,
+            "append_bytes_32" => 32,
+            "append_bytes_128" => 128,
+            _ => 0,
+        };
+        let mut pass = || {
+            chunk.reset();
+            for i in 0..CHUNK {
+                match label {
+                    "append_int64" => chunk.append_int64(0, i as i64),
+                    "append_decimal_40" => chunk.append_my_decimal(0, &decimal),
+                    _ => chunk.append_bytes(0, &payload[..width]),
+                }
+            }
+            black_box(chunk.num_rows());
+        };
+        let (elapsed, ratio) = best_of_blocks(&mut [(label, &mut pass)])[0];
+        println!("{label} ns_per_cell {:.2}", elapsed.as_secs_f64() * 1e9 / CHUNK as f64);
+        println!("{label} cal_per_cell {:.5}", ratio / CHUNK as f64);
+    }
+}
+
+/// The wire encode of one region task's coprocessor request, which a
+/// profile of Q10 put at 1.7% of the node: `encode_region_task_request`
+/// per task after `build_region_tasks`.
+fn bench_cop_encode() {
+    use tidb_distsql::{
+        CancelHandle, KvRequestMetadata, RegionTaskTopology, RequestKeyRange, RequestKeyRanges,
+        TransportRequest,
+    };
+    use tidb_txnkv::RequestType;
+    let count = 1024_u32;
+    let key = |index: u32| index.to_be_bytes().to_vec();
+    let mut metadata = KvRequestMetadata::default();
+    metadata.request_type = RequestType::Dag;
+    metadata.data = Some(vec![0_u8; 512]);
+    metadata.start_ts = 100;
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(
+        (0..count)
+            .map(|index| RequestKeyRange {
+                start_key: key(index * 2).into(),
+                end_key: key(index * 2 + 1).into(),
+            })
+            .collect(),
+    ));
+    let topology: Vec<_> = (0..8_u32)
+        .map(|region| RegionTaskTopology {
+            region_id: u64::from(region + 1),
+            start_key: if region == 0 { Vec::new() } else { key(region * count / 4) },
+            end_key: if region == 7 { Vec::new() } else { key((region + 1) * count / 4) },
+            buckets_version: 1,
+            ..RegionTaskTopology::default()
+        })
+        .collect();
+    let request = TransportRequest::new(metadata, std::sync::Arc::new(CancelHandle::default()));
+    let tasks = request.build_region_tasks(&topology).expect("region tasks");
+    if let Err(error) = request.encode_region_task_request(&tasks[0]) {
+        println!("cop_encode skipped {error:?}");
+        return;
+    }
+    let per_pass = tasks.len() as f64;
+    let mut pass = || {
+        for task in &tasks {
+            black_box(request.encode_region_task_request(task).expect("encode"));
+        }
+    };
+    let (elapsed, ratio) = best_of_blocks(&mut [("cop_encode", &mut pass)])[0];
+    println!("cop_encode ns_per_task {:.0}", elapsed.as_secs_f64() * 1e9 / per_pass);
+    println!("cop_encode cal_per_task {:.4}", ratio / per_pass);
 }
