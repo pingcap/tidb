@@ -866,13 +866,20 @@ type indexJoinInnerChildWrapper struct {
 // 2) columns from DataSource that are used as inner join keys.
 // It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
 // columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+c2).
-// In those cases, semantically equivalent keys may carry different UniqueIDs, so we may
+// In those cases, semantically equivalent keys may carry different UniqueIDs, and columns
+// nested inside expressions are deliberately not treated as grouping keys, so we may
 // reject some valid index join plans (false negatives) to keep correctness.
 // TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
 func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinKeys []*expression.Column, dataSourceSchema *expression.Schema) bool {
+	// Only direct GROUP BY columns count as grouping keys. A column that merely
+	// appears inside a GROUP BY expression (for example GROUP BY c2 % 2) does not
+	// partition the groups by that column, so probing per join-key value would
+	// still split a group across probes.
 	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
-	for _, col := range expression.ExtractColumnsFromExpressions(nil, la.GroupByItems, nil) {
-		groupByCols[col.UniqueID] = struct{}{}
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
 	}
 
 	// Only check the inner keys that is from the DataSource, and newly generated keys like agg func or projection column

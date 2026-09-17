@@ -140,4 +140,12 @@ explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select
 select /*+ INL_JOIN(a_t) */ tj1.c1, a_t.s from tj1 inner join (select c1, sum(c2) s from tj3 group by c1, c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.s;
 select /*+ HASH_JOIN(a_t) */ tj1.c1, a_t.s from tj1 inner join (select c1, sum(c2) s from tj3 group by c1, c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.s;
 
+# Case 5: UNSAFE - join key (c2) only appears inside a GROUP BY expression (c2 % 2) -> INL_JOIN hint should be rejected
+set @@sql_mode='';
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c2, count(*) cnt from tj2 group by c2 % 2) a_t on tj1.c2 = a_t.c2;
+show warnings;
+select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2 % 2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
+select /*+ HASH_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2 % 2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
+set @@sql_mode=default;
+
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
