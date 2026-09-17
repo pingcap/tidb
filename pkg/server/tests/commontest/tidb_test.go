@@ -2759,6 +2759,37 @@ func TestChunkReuseCorruptSysVarString(t *testing.T) {
 	require.Equal(t, "Asia/Shanghai", rows[0])
 }
 
+func TestConnectTimeout(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set global connect_timeout=2")
+		defer dbt.MustExec("set global connect_timeout=10")
+		authenticated, err := sql.Open("mysql", ts.GetDSN())
+		require.NoError(t, err)
+		defer authenticated.Close()
+		authenticated.SetMaxOpenConns(1)
+		authenticatedConn, err := authenticated.Conn(context.Background())
+		require.NoError(t, err)
+		defer authenticatedConn.Close()
+		require.NoError(t, authenticatedConn.PingContext(context.Background()))
+		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", ts.Port))
+		require.NoError(t, err)
+		defer conn.Close()
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+		var header [4]byte
+		_, err = io.ReadFull(conn, header[:])
+		require.NoError(t, err)
+		length := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
+		_, err = io.ReadFull(conn, make([]byte, length))
+		require.NoError(t, err)
+		// Do not respond to the greeting. The server must close this socket,
+		// rather than leaving it open until our client-side deadline expires.
+		_, err = io.ReadAll(conn)
+		require.NoError(t, err)
+		require.NoError(t, authenticatedConn.PingContext(context.Background()))
+	})
+}
+
 func TestTiDBIdleTransactionTimeout(t *testing.T) {
 	ts := servertestkit.CreateTidbTestTopSQLSuite(t)
 	cases := []func(dbt *testkit.DBTestKit){}
