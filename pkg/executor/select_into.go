@@ -121,6 +121,8 @@ func (s *SelectIntoExec) escapeField(f []byte) []byte {
 	return s.escapeBuf
 }
 
+// dumpToOutfile writes the current chunk using the configured OUTFILE format.
+// Line prefixes are written literally, outside field escaping and enclosure.
 func (s *SelectIntoExec) dumpToOutfile() error {
 	encloseFlag := false
 	var encloseByte byte
@@ -140,7 +142,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 	cols := s.Children(0).Schema().Columns
 	for i := range s.chk.NumRows() {
 		row := s.chk.GetRow(i)
-		s.lineBuf = s.lineBuf[:0]
+		s.lineBuf = append(s.lineBuf[:0], s.LinesStartingBy...)
 		for j, col := range cols {
 			if j != 0 {
 				s.lineBuf = append(s.lineBuf, s.FieldsTerminatedBy...)

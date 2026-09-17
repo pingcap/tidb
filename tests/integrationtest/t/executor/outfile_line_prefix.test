@@ -1,0 +1,20 @@
+create table source_rows (id int primary key, v varchar(20));
+insert into source_rows values (1, 'x'), (2, 'y'), (3, null);
+create table imported_rows like source_rows;
+
+select * from source_rows order by id into outfile 'outfile_line_prefix.txt'
+  fields terminated by ',' lines starting by 'PREFIX' terminated by '\n';
+load data local infile 'outfile_line_prefix.txt' into table imported_rows
+  fields terminated by ',' lines starting by 'PREFIX' terminated by '\n';
+select * from imported_rows order by id;
+--remove_file outfile_line_prefix.txt
+
+truncate table imported_rows;
+select * from source_rows order by id into outfile 'outfile_line_prefix.txt'
+  fields terminated by ',' lines starting by '' terminated by '\n';
+load data local infile 'outfile_line_prefix.txt' into table imported_rows
+  fields terminated by ',' lines terminated by '\n';
+select * from imported_rows order by id;
+--remove_file outfile_line_prefix.txt
+
+drop table imported_rows, source_rows;
