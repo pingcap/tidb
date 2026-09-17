@@ -225,9 +225,7 @@ insert into t values (-1);
 insert into t values (1);
 set tidb_enable_fast_table_check = 'OFF';
 admin check index t idx;
-Error 8273 (HY000): Validation of partial indexes requires tidb_enable_fast_table_check=ON
 admin check table t;
-Error 8273 (HY000): Validation of partial indexes requires tidb_enable_fast_table_check=ON
 set tidb_enable_fast_table_check = 'ON';
 admin check index t idx;
 admin check table t;

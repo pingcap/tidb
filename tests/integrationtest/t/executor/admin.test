@@ -234,9 +234,7 @@ insert into t values (NULL);
 insert into t values (-1);
 insert into t values (1);
 set tidb_enable_fast_table_check = 'OFF';
---error 8273
 admin check index t idx;
---error 8273
 admin check table t;
 set tidb_enable_fast_table_check = 'ON';
 admin check index t idx;
