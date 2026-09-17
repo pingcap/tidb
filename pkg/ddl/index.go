@@ -3979,16 +3979,26 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 		n := len(w.indexes)
 		globalIndexKeys := make([]kv.Key, 0, len(idxRecords))
-		allKeys := make([]kv.Key, 0, len(idxRecords))
+		// recordKeys[i] holds every encoded key of idxRecords[i]. A multi-valued index expands
+		// to one key per distinct element, so there can be more than one key per record, and
+		// `GenIndexKey` must not be used here: it only encodes the whole array, which is never a
+		// key that actually exists in the index.
+		recordKeys := make([][]kv.Key, len(idxRecords))
+		keyBuf, valBuf := make([]byte, 0, 64), make([]byte, 0, 64)
 		for i, idxRecord := range idxRecords {
-			key, distinct, err := w.indexes[i%n].GenIndexKey(ec, loc, idxRecord.vals, idxRecord.handle, nil)
-			if err != nil {
-				return errors.Trace(err)
+			iter := w.indexes[i%n].GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, nil)
+			for iter.Valid() {
+				key, _, distinct, err := iter.Next(keyBuf, valBuf)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				// `Next` may return a slice of `keyBuf`, so keep a private copy.
+				key = append([]byte(nil), key...)
+				if distinct {
+					globalIndexKeys = append(globalIndexKeys, key)
+				}
+				recordKeys[i] = append(recordKeys[i], key)
 			}
-			if distinct {
-				globalIndexKeys = append(globalIndexKeys, key)
-			}
-			allKeys = append(allKeys, key)
 		}
 
 		var found map[string][]byte
@@ -3999,8 +4009,13 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
-			if val, ok := found[string(allKeys[i])]; ok {
-				// Only delete if it is from the partition it was read from.
+			for _, key := range recordKeys[i] {
+				val, ok := found[string(key)]
+				if !ok {
+					continue
+				}
+				// Only lock an entry that is still from the partition it was read from, so that
+				// we do not resolve a lock conflict for an entry a concurrent write took over.
 				handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
 				if errPart != nil {
 					return errors.Trace(errPart)
@@ -4011,7 +4026,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 					}
 				}
 				// Lock the global index entry, to prevent deleting something that is concurrently added.
-				err = txn.LockKeys(ctx, lockCtx, allKeys[i])
+				err = txn.LockKeys(ctx, lockCtx, key)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -4019,7 +4034,10 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 			// we fetch records row by row, so records will belong to
 			// index[0], index[1] ... index[n-1], index[0], index[1] ...
 			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err = w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
+			// The owner check removes the entries of this row that are still owned by the
+			// partition being cleaned, and keeps the ones a concurrent write has taken over.
+			err = w.indexes[i%n].DeleteWithOwnerCheck(w.tblCtx, txn, idxRecord.vals, idxRecord.handle,
+				handleRange.physicalTable.GetPhysicalID())
 			if err != nil {
 				return errors.Trace(err)
 			}
