@@ -347,6 +347,7 @@ func TestValidateIncludeGeneratedColumns(t *testing.T) {
 		conf.FileType = FileFormatSQLTextString
 		conf.NoData = true
 		conf.SQL = "select 1"
+		conf.Where = "a > 0"
 		conf.columnFilter = columnFilterConfig{Filters: []columnFilterRule{{}}}
 		require.NoError(t, validateIncludeGeneratedColumns(conf))
 		require.Equal(t, GeneratedColumnsNone, conf.IncludeGeneratedColumns)
@@ -367,6 +368,11 @@ func TestValidateIncludeGeneratedColumns(t *testing.T) {
 	conf.SQL = "select * from t"
 	require.EqualError(t, validateIncludeGeneratedColumns(conf),
 		"can't specify both --include-generated-columns=stored and --sql at the same time")
+
+	conf = newConf(GeneratedColumnsStored)
+	conf.Where = "a >= 0"
+	require.EqualError(t, validateIncludeGeneratedColumns(conf),
+		"can't specify both --include-generated-columns=stored and --where at the same time")
 
 	conf = newConf(GeneratedColumnsStored)
 	conf.columnFilter = columnFilterConfig{Filters: []columnFilterRule{{Matcher: []string{"db.t"}, Columns: []string{"*"}}}}

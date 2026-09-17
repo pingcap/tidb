@@ -86,9 +86,18 @@ expect_dumpling_error() {
 	grep -qF -- "$expected_error" "$error_log"
 }
 
+echo "Test --where with the default --include-generated-columns=none."
+rm -rf "$DUMPLING_OUTPUT_DIR"
+run_dumpling --filetype csv --where "a > 10" --include-generated-columns=none
+actual=$(tr -d '\r' < "$data_file")
+expected=$(printf '"id","a"\n2,20')
+echo "expected ${expected}, actual ${actual}"
+[ "$actual" = "$expected" ]
+
 echo "Test unsupported --include-generated-columns combinations."
 expect_dumpling_error "only supported with --filetype csv or parquet" --filetype sql --include-generated-columns=stored
 expect_dumpling_error "and --no-data at the same time" --filetype csv --no-data --include-generated-columns=stored
+expect_dumpling_error "and --where at the same time" --filetype csv --where "a > 0" --include-generated-columns=stored
 expect_dumpling_error "and --sql at the same time" --sql "select * from $STORED_DB_NAME.$TABLE_NAME" --include-generated-columns=stored
 expect_dumpling_error "with --column-filter or --column-filter-file" --filetype csv -m --include-generated-columns=stored \
 	--column-filter "{ matcher = [\"$STORED_DB_NAME.$TABLE_NAME\"], columns = [\"*\"] }"

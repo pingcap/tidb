@@ -406,7 +406,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
 	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). When used with --rows/-r or --filesize/-F in split mode, include {{.Index}} (for example: '{{.DB}}.{{.Table}}.{{.Index}}') to avoid overwriting chunk files")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
-	flags.String(flagIncludeGeneratedColumns, string(GeneratedColumnsNone), "Which generated column values to include in data files: none, stored. Only supported with --filetype csv or parquet, and can't be used with --sql, --column-filter, --column-filter-file or --no-data. Schema files are unchanged, so the output may not be importable back into TiDB/MySQL as-is")
+	flags.String(flagIncludeGeneratedColumns, string(GeneratedColumnsNone), "Which generated column values to include in data files: none, stored. Only supported with --filetype csv or parquet, and can't be used with --sql, --where, --column-filter, --column-filter-file or --no-data. Schema files are unchanged, so the output may not be importable back into TiDB/MySQL as-is")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
 	flags.Duration(flagReadTimeout, 15*time.Minute, "I/O read timeout for db connection.")
@@ -1116,6 +1116,10 @@ func validateIncludeGeneratedColumns(conf *Config) error {
 	switch {
 	case conf.SQL != "":
 		return errors.Errorf("can't specify both %s and --%s at the same time", option, flagSQL)
+	case conf.Where != "":
+		// Stored generated columns become chunk key candidates, and the chunk
+		// splitter doesn't cover NULL chunk keys when --where is set.
+		return errors.Errorf("can't specify both %s and --%s at the same time", option, flagWhere)
 	case len(conf.columnFilter.Filters) > 0:
 		return errors.Errorf("can't specify %s with --%s or --%s", option, flagColumnFilter, flagColumnFilterFile)
 	case conf.NoData:
