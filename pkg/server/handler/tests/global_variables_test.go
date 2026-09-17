@@ -164,6 +164,8 @@ func TestGlobalVariables(t *testing.T) {
 			{"oss://bucket/path?access-key=key&secret-access-key=secret", "oss://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx"},
 			{"azure://bucket/path?account-key=key&encryption-key=secret&sas-token=token", "azure://bucket/path?account-key=xxxxxx&encryption-key=xxxxxx&sas-token=xxxxxx"},
 			{"azblob://bucket/path?account-key=key&encryption-key=secret&sas-token=token", "azblob://bucket/path?account-key=xxxxxx&encryption-key=xxxxxx&sas-token=xxxxxx"},
+			{"azure://bucket/path?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&sas-token=token", "azure://bucket/path?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx"},
+			{"azblob://bucket/path?EndPoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&sas_token=token", "azblob://bucket/path?EndPoint=xxxxxx&sas_token=xxxxxx"},
 		} {
 			vardef.CloudStorageURI.Store(test.uri)
 			require.Equal(t, test.expected, fetch()[vardef.TiDBCloudStorageURI])
