@@ -629,7 +629,7 @@ func buildColumnProjection(
 		return columnProjection{}, nil
 	}
 
-	sourceColumns, storedGeneratedColumns, hasSkippedColumn, err := getWritableColumnNames(
+	sourceColumns, storedGeneratedColumns, needExplicitFields, err := getWritableColumnNames(
 		tctx, conn, dbName, table.Name, conf.IncludeStoredGeneratedColumns)
 	if err != nil {
 		return columnProjection{}, err
@@ -649,7 +649,7 @@ func buildColumnProjection(
 		selectField:            strings.Join(selectedFields, ","),
 		storedGeneratedColumns: storedGeneratedColumns,
 	}
-	if !hasSkippedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
+	if !needExplicitFields && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
 		projection.selectField = "*"
 	}
 

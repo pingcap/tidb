@@ -1100,14 +1100,16 @@ type tableName struct {
 // getWritableColumnNames returns the columns whose values should be dumped.
 // VIRTUAL generated columns are always skipped, and STORED generated columns
 // are skipped unless includeStoredGenerated is true. It also returns the
-// lower-cased names of the included STORED generated columns, and whether any
-// column was skipped.
+// lower-cased names of the included STORED generated columns, and whether the
+// columns must be listed explicitly instead of using SELECT *, which happens
+// when a column is skipped or a returned column is INVISIBLE (MySQL 8.0.23+
+// excludes INVISIBLE columns from SELECT *).
 func getWritableColumnNames(
 	tctx *tcontext.Context,
 	db *BaseConn,
 	dbName, tableName string,
 	includeStoredGenerated bool,
-) (columns []string, storedGenerated map[string]struct{}, hasSkippedColumn bool, err error) {
+) (columns []string, storedGenerated map[string]struct{}, needExplicitFields bool, err error) {
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
 	if err != nil {
@@ -1120,11 +1122,11 @@ func getWritableColumnNames(
 		// Column filters apply to writable columns; schema projection handles generated dependencies.
 		switch {
 		case strings.Contains(extra, "VIRTUAL GENERATED"):
-			hasSkippedColumn = true
+			needExplicitFields = true
 			continue
 		case strings.Contains(extra, "STORED GENERATED"):
 			if !includeStoredGenerated {
-				hasSkippedColumn = true
+				needExplicitFields = true
 				continue
 			}
 			if storedGenerated == nil {
@@ -1132,9 +1134,12 @@ func getWritableColumnNames(
 			}
 			storedGenerated[strings.ToLower(fieldName)] = struct{}{}
 		}
+		if strings.Contains(extra, "INVISIBLE") {
+			needExplicitFields = true
+		}
 		columns = append(columns, fieldName)
 	}
-	return columns, storedGenerated, hasSkippedColumn, nil
+	return columns, storedGenerated, needExplicitFields, nil
 }
 
 func buildWhereClauses(handleColNames []string, handleVals [][]string) []string {
