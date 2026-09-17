@@ -115,7 +115,8 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	err = adjustConfig(conf,
 		buildTLSConfig,
 		validateSpecifiedSQL,
-		adjustFileFormat)
+		adjustFileFormat,
+		validateIncludeGeneratedColumns)
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +622,8 @@ func buildColumnProjection(
 		return columnProjection{}, nil
 	}
 
-	sourceColumns, hasGeneratedColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+	sourceColumns, needExplicitFields, err := getWritableColumnNames(
+		tctx, conn, dbName, table.Name, conf.includeStoredGeneratedColumns())
 	if err != nil {
 		return columnProjection{}, err
 	}
@@ -639,7 +641,7 @@ func buildColumnProjection(
 	projection := columnProjection{
 		selectField: strings.Join(selectedFields, ","),
 	}
-	if !hasGeneratedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
+	if !needExplicitFields && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
 		projection.selectField = "*"
 	}
 
