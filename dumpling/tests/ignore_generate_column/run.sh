@@ -37,3 +37,49 @@ run_lightning $cur/conf/lightning.toml
 check_sync_diff $cur/conf/diff_config.toml
 
 
+
+# --include-stored-generated-columns only changes data files, not schema files.
+STORED_DB_NAME="include_stored_generate"
+export DUMPLING_TEST_PORT=4000
+export DUMPLING_TEST_DATABASE=""
+run_sql "drop database if exists $STORED_DB_NAME;"
+run_sql "create database $STORED_DB_NAME;"
+run_sql "create table $STORED_DB_NAME.$TABLE_NAME(id int primary key, a int, s int as (a * 2) stored, v int as (a + 1) virtual);"
+run_sql "insert into $STORED_DB_NAME.$TABLE_NAME (id, a) values (1, 10), (2, 20);"
+export DUMPLING_TEST_DATABASE=$STORED_DB_NAME
+
+data_file="${DUMPLING_OUTPUT_DIR}/${STORED_DB_NAME}.${TABLE_NAME}.000000000.csv"
+schema_file="${DUMPLING_OUTPUT_DIR}/${STORED_DB_NAME}.${TABLE_NAME}-schema.sql"
+schema_backup="${DUMPLING_TEST_DIR}/include_stored_generate-schema.sql"
+
+echo "Test dumping csv without --include-stored-generated-columns."
+rm -rf "$DUMPLING_OUTPUT_DIR"
+run_dumpling --filetype csv
+actual=$(tr -d '\r' < "$data_file")
+expected=$(printf '"id","a"\n1,10\n2,20')
+echo "expected ${expected}, actual ${actual}"
+[ "$actual" = "$expected" ]
+cp "$schema_file" "$schema_backup"
+
+echo "Test dumping csv with --include-stored-generated-columns."
+rm -rf "$DUMPLING_OUTPUT_DIR"
+run_dumpling --filetype csv --include-stored-generated-columns
+actual=$(tr -d '\r' < "$data_file")
+expected=$(printf '"id","a","s"\n1,10,20\n2,20,40')
+echo "expected ${expected}, actual ${actual}"
+[ "$actual" = "$expected" ]
+if ! cmp -s "$schema_backup" "$schema_file"; then
+	echo "schema file changed with --include-stored-generated-columns"
+	diff "$schema_backup" "$schema_file" || true
+	exit 1
+fi
+
+echo "Test --include-stored-generated-columns is rejected for sql output."
+rm -rf "$DUMPLING_OUTPUT_DIR"
+if run_dumpling --filetype sql --include-stored-generated-columns > "${DUMPLING_TEST_DIR}/include_stored_generate.log" 2>&1; then
+	echo "dumpling should reject --include-stored-generated-columns with --filetype sql"
+	exit 1
+fi
+grep -q "only supported with --filetype csv or parquet" "${DUMPLING_TEST_DIR}/include_stored_generate.log"
+
+run_sql "drop database if exists $STORED_DB_NAME;"

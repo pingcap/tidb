@@ -303,3 +303,13 @@ func parseConfigFromArgsForTestWithErr(t *testing.T, args ...string) (*Config, e
 	}
 	return conf, conf.ParseFromFlags(flags)
 }
+
+func TestParseIncludeStoredGeneratedColumns(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t)
+	require.False(t, conf.IncludeStoredGeneratedColumns)
+
+	// The option only changes data output, so it doesn't require --no-schemas.
+	conf = parseConfigFromArgsForTest(t, "--include-stored-generated-columns", "--filetype", "csv")
+	require.True(t, conf.IncludeStoredGeneratedColumns)
+	require.False(t, conf.NoSchemas)
+}

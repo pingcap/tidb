@@ -1066,6 +1066,26 @@ type columnProjection struct {
 	selectedTypes []*sql.ColumnType
 	selectField   string
 	schemaSQL     string
+	// storedGeneratedColumns holds the lower-cased names of STORED generated
+	// columns included in the data by --include-stored-generated-columns.
+	storedGeneratedColumns map[string]struct{}
+}
+
+// schemaColumnNames returns the selected columns used to project the schema.
+// STORED generated columns included only for data output are excluded, so the
+// projected schema is the same as without --include-stored-generated-columns.
+func (p columnProjection) schemaColumnNames() []string {
+	names := columnNames(p.selectedTypes)
+	if len(p.storedGeneratedColumns) == 0 {
+		return names
+	}
+	result := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := p.storedGeneratedColumns[strings.ToLower(name)]; !ok {
+			result = append(result, name)
+		}
+	}
+	return result
 }
 
 func (p columnProjection) hasFilteredColumns() bool {
@@ -1077,25 +1097,44 @@ type tableName struct {
 	table string
 }
 
-func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {
+// getWritableColumnNames returns the columns whose values should be dumped.
+// VIRTUAL generated columns are always skipped, and STORED generated columns
+// are skipped unless includeStoredGenerated is true. It also returns the
+// lower-cased names of the included STORED generated columns, and whether any
+// column was skipped.
+func getWritableColumnNames(
+	tctx *tcontext.Context,
+	db *BaseConn,
+	dbName, tableName string,
+	includeStoredGenerated bool,
+) (columns []string, storedGenerated map[string]struct{}, hasSkippedColumn bool, err error) {
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
-	sourceColumns := make([]string, 0)
-	hasGeneratedColumn := false
+	columns = make([]string, 0, len(results))
 	for _, oneRow := range results {
-		fieldName, extra := oneRow[0], oneRow[1]
-		switch extra {
-		case "STORED GENERATED", "VIRTUAL GENERATED":
-			// Column filters apply to writable columns; schema projection handles generated dependencies.
-			hasGeneratedColumn = true
+		fieldName, extra := oneRow[0], strings.ToUpper(oneRow[1])
+		// EXTRA may carry more attributes, e.g. "STORED GENERATED INVISIBLE" in MySQL 8.0.
+		// Column filters apply to writable columns; schema projection handles generated dependencies.
+		switch {
+		case strings.Contains(extra, "VIRTUAL GENERATED"):
+			hasSkippedColumn = true
 			continue
+		case strings.Contains(extra, "STORED GENERATED"):
+			if !includeStoredGenerated {
+				hasSkippedColumn = true
+				continue
+			}
+			if storedGenerated == nil {
+				storedGenerated = make(map[string]struct{})
+			}
+			storedGenerated[strings.ToLower(fieldName)] = struct{}{}
 		}
-		sourceColumns = append(sourceColumns, fieldName)
+		columns = append(columns, fieldName)
 	}
-	return sourceColumns, hasGeneratedColumn, nil
+	return columns, storedGenerated, hasSkippedColumn, nil
 }
 
 func buildWhereClauses(handleColNames []string, handleVals [][]string) []string {

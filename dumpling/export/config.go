@@ -76,6 +76,7 @@ const (
 	flagCsvLineTerminator        = "csv-line-terminator"
 	flagOutputFilenameTemplate   = "output-filename-template"
 	flagCompleteInsert           = "complete-insert"
+	flagIncludeStoredGenCols     = "include-stored-generated-columns"
 	flagParams                   = "params"
 	flagReadTimeout              = "read-timeout"
 	flagTransactionalConsistency = "transactional-consistency"
@@ -143,6 +144,11 @@ type Config struct {
 	DumpEmptyDatabase        bool
 	PosAfterConnect          bool
 	CompressType             compressedio.CompressType
+
+	// IncludeStoredGeneratedColumns dumps the values of STORED generated columns
+	// into data files. VIRTUAL generated columns are always skipped, and the
+	// dumped schema files are not affected.
+	IncludeStoredGeneratedColumns bool
 
 	Host     string
 	Port     int
@@ -381,6 +387,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
 	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
+	flags.Bool(flagIncludeStoredGenCols, false, "Include the values of STORED generated columns in data files (csv/parquet only). VIRTUAL generated columns are always skipped and schema files are unchanged, so the output may not be importable back into TiDB/MySQL as-is")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
 	flags.Duration(flagReadTimeout, 15*time.Minute, "I/O read timeout for db connection.")
@@ -537,6 +544,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.CompleteInsert, err = flags.GetBool(flagCompleteInsert)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.IncludeStoredGeneratedColumns, err = flags.GetBool(flagIncludeStoredGenCols)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -865,6 +876,11 @@ func adjustFileFormat(conf *Config) error {
 	case FileFormatCSVString:
 	default:
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
+	}
+	if conf.IncludeStoredGeneratedColumns && conf.FileType == FileFormatSQLTextString && !conf.NoData {
+		// INSERT statements that assign values to generated columns can't be
+		// imported back, so only allow this option for csv/parquet output.
+		return errors.Errorf("--%s is only supported with --filetype csv or parquet", flagIncludeStoredGenCols)
 	}
 	return nil
 }
