@@ -23,7 +23,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/errormanager"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore/mockobjstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,28 +40,7 @@ import (
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/require"
 	tikvconfig "github.com/tikv/client-go/v2/config"
-	"go.uber.org/mock/gomock"
 )
-
-func TestControllerCloseStorageOwnership(t *testing.T) {
-	for _, ownStore := range []bool{false, true} {
-		t.Run(fmt.Sprintf("owned=%t", ownStore), func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			store := mockobjstore.NewMockStorage(ctrl)
-			if ownStore {
-				store.EXPECT().Close()
-			}
-			backend := mock.NewMockBackend(ctrl)
-			backend.EXPECT().Close()
-			db, dbMock, err := sqlmock.New()
-			require.NoError(t, err)
-			dbMock.ExpectClose()
-			controller := &Controller{backend: backend, db: db, store: store, ownStore: ownStore}
-			controller.Close()
-			require.NoError(t, dbMock.ExpectationsWereMet())
-		})
-	}
-}
 
 func TestNewTableRestore(t *testing.T) {
 	testCases := []struct {

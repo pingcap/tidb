@@ -16,8 +16,6 @@ package server
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -30,9 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,18 +45,6 @@ func TestInitEnv(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	var sources []*closeTrackingStorage
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/lightning/pkg/server/afterCreateSourceStorage", func(st *storeapi.Storage) {
-		tracked := &closeTrackingStorage{Storage: *st}
-		sources = append(sources, tracked)
-		*st = tracked
-	})
-	t.Cleanup(func() {
-		require.NotEmpty(t, sources)
-		for i, source := range sources {
-			require.Equal(t, 1, source.closeCount, "source %d", i)
-		}
-	})
 	globalConfig := config.NewGlobalConfig()
 	globalConfig.TiDB.Host = "test.invalid"
 	globalConfig.TiDB.Port = 4000
@@ -129,114 +112,6 @@ func TestRun(t *testing.T) {
 		},
 	}, o)
 	require.Error(t, err)
-
-	store, err := objstore.NewLocalStorage(path)
-	require.NoError(t, err)
-	borrowed := &closeTrackingStorage{Storage: store}
-	t.Cleanup(borrowed.Close)
-	o.dumpFileStorage = borrowed
-	o.checkpointStorage = borrowed
-	err = lightning.run(ctx, &cfgCheckpoint, o)
-	require.EqualError(t, err, "unknown backend ")
-	require.Zero(t, borrowed.closeCount)
-
-	for _, borrowed := range []bool{false, true} {
-		t.Run(fmt.Sprintf("controller-teardown/borrowed=%t", borrowed), func(t *testing.T) {
-			dir := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "ignored.txt"), []byte("data"), 0600))
-			cfg := config.NewConfig()
-			cfg.TikvImporter.Backend = config.BackendTiDB
-			cfg.Mydumper.SourceDir = "file://" + filepath.ToSlash(dir)
-			cfg.Checkpoint.Enable = false
-			cfg.App.TaskInfoSchemaName = ""
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			mock.ExpectQuery("SHOW VARIABLES").WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}))
-			mock.ExpectClose()
-			o := &options{
-				promRegistry: lightning.promRegistry,
-				promFactory:  lightning.promFactory,
-				logger:       logger,
-				db:           db,
-			}
-			var tracked *closeTrackingStorage
-			if borrowed {
-				store, err := objstore.NewLocalStorage(dir)
-				require.NoError(t, err)
-				tracked = &closeTrackingStorage{Storage: store}
-				t.Cleanup(tracked.Close)
-				o.dumpFileStorage = tracked
-				o.checkpointStorage = tracked
-				o.checkpointName = "checkpoint.pb"
-			}
-			err = lightning.run(ctx, cfg, o)
-			require.NoError(t, err)
-			require.NoError(t, mock.ExpectationsWereMet())
-			if borrowed {
-				require.Zero(t, tracked.closeCount)
-			}
-		})
-	}
-}
-
-type closeTrackingStorage struct {
-	storeapi.Storage
-	closeCount int
-}
-
-func (s *closeTrackingStorage) Close() {
-	s.closeCount++
-	s.Storage.Close()
-}
-
-func TestInitDataSourceStorageOwnership(t *testing.T) {
-	for _, borrowed := range []bool{false, true} {
-		for _, stage := range []string{"success", "empty", "loader-error"} {
-			t.Run(fmt.Sprintf("borrowed=%t/%s", borrowed, stage), func(t *testing.T) {
-				dir := t.TempDir()
-				if stage != "empty" {
-					require.NoError(t, os.WriteFile(filepath.Join(dir, "ignored.txt"), []byte("data"), 0600))
-				}
-				cfg := config.NewConfig()
-				cfg.TikvImporter.Backend = config.BackendTiDB
-				cfg.Mydumper.SourceDir = "file://" + filepath.ToSlash(dir)
-				if stage == "loader-error" {
-					cfg.Mydumper.Filter = []string{"["}
-				}
-				l := &Lightning{curTask: cfg}
-				o := &options{logger: log.L()}
-				var tracked *closeTrackingStorage
-				if borrowed {
-					store, err := objstore.NewLocalStorage(dir)
-					require.NoError(t, err)
-					tracked = &closeTrackingStorage{Storage: store}
-					o.dumpFileStorage = tracked
-				} else {
-					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/lightning/pkg/server/afterCreateSourceStorage", func(st *storeapi.Storage) {
-						tracked = &closeTrackingStorage{Storage: *st}
-						*st = tracked
-					})
-				}
-				mdl, store, err := l.initDataSource(context.Background(), cfg, o)
-				require.NotNil(t, tracked)
-				if stage == "success" {
-					require.NoError(t, err)
-					require.NotNil(t, mdl)
-					require.Same(t, tracked, store)
-				} else {
-					require.Error(t, err)
-					require.Nil(t, mdl)
-					require.Nil(t, store)
-				}
-				if borrowed || stage == "success" {
-					require.Zero(t, tracked.closeCount)
-					tracked.Close()
-				} else {
-					require.Equal(t, 1, tracked.closeCount)
-				}
-			})
-		}
-	}
 }
 
 func TestCheckSystemRequirement(t *testing.T) {

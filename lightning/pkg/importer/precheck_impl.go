@@ -30,7 +30,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
@@ -440,7 +439,7 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
-	st, err := objstore.New(ctx, u, &storeapi.Options{
+	_, err = objstore.New(ctx, u, &storeapi.Options{
 		CheckPermissions: []storeapi.Permission{
 			storeapi.ListObjects,
 			storeapi.GetObject,
@@ -449,10 +448,7 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 	if err != nil {
 		theResult.Passed = false
 		theResult.Message = err.Error()
-		return theResult, nil
 	}
-	failpoint.InjectCall("afterCreatePermissionCheckStorage", &st)
-	defer st.Close()
 	return theResult, nil
 }
 

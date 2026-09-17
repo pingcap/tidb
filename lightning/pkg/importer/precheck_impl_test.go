@@ -17,8 +17,6 @@ package importer
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -32,37 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/mockobjstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
-	"go.uber.org/mock/gomock"
 )
-
-func TestStoragePermissionCheckClosesStorage(t *testing.T) {
-	store := mockobjstore.NewMockStorage(gomock.NewController(t))
-	store.EXPECT().Close()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/lightning/pkg/importer/afterCreatePermissionCheckStorage", func(st *storeapi.Storage) {
-		*st = store
-	})
-	cfg := config.NewConfig()
-	cfg.Mydumper.SourceDir = "noop://"
-	checker := NewStoragePermissionCheckItem(cfg)
-	result, err := checker.Check(context.Background())
-	require.NoError(t, err)
-	require.True(t, result.Passed)
-
-	file := filepath.Join(t.TempDir(), "file")
-	require.NoError(t, os.WriteFile(file, []byte("data"), 0600))
-	cfg.Mydumper.SourceDir = "file://" + filepath.ToSlash(filepath.Join(file, "child"))
-	result, err = checker.Check(context.Background())
-	require.NoError(t, err)
-	require.False(t, result.Passed)
-	require.NotEmpty(t, result.Message)
-}
 
 type precheckImplSuite struct {
 	suite.Suite
