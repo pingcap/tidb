@@ -494,7 +494,7 @@ func TestImportIntoRejectsMaterializedViewLogBaseTable(t *testing.T) {
 }
 
 func TestImportQueryRouting(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table query_route_src(id int)")
@@ -521,4 +521,39 @@ func TestImportQueryRouting(t *testing.T) {
 			}
 		}
 	}
+	t.Run("reject unsupported plan before submission", func(t *testing.T) {
+		vardef.EnableDistTask.Store(true)
+		vardef.CloudStorageURI.Store("s3://query-sort")
+		tk.MustExec("delete from query_route_dst")
+		if kerneltype.IsNextGen() {
+			// The plan check must precede even the target-table precheck.
+			tk.MustExec("insert into query_route_dst values (1)")
+		}
+		for _, tt := range []struct{ sql, operator string }{
+			{"select /*+ HASH_AGG() */ count(*) from query_route_src group by id", "HashAgg"},
+			{"select id from query_route_src order by id", "Sort"},
+			{"select id from query_route_src order by id limit 1", "TopN"},
+		} {
+			err := tk.ExecToErr("import into query_route_dst from (" + tt.sql + ") with disable_precheck")
+			if kerneltype.IsNextGen() {
+				require.ErrorIs(t, err, plannererrors.ErrNotSupportedYet)
+				require.ErrorContains(t, err, "TiDB "+tt.operator)
+			} else {
+				require.ErrorContains(t, err, "mock import from select setup error")
+			}
+		}
+	})
+	t.Run("allow TiFlash aggregation for MV maintenance", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("query task precheck is nextgen only")
+		}
+		testkit.SetTiFlashReplica(t, dom, "test", "query_route_src")
+		tk.MustExec("set tidb_allow_mpp=1, tidb_enforce_mpp=1")
+		vars := tk.Session().GetSessionVars()
+		previousMaintenance := vars.InMViewMaintenance
+		vars.InMViewMaintenance = true
+		defer func() { vars.InMViewMaintenance = previousMaintenance }()
+		err := tk.ExecToErr("import into query_route_dst from (select /*+ READ_FROM_STORAGE(TIFLASH[query_route_src]) MPP_1PHASE_AGG() */ count(*) from query_route_src group by id) with disable_precheck")
+		require.ErrorContains(t, err, "target table is not empty")
+	})
 }

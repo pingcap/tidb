@@ -491,6 +491,11 @@ func (e *ImportIntoExec) prepareQuery(_ context.Context) error {
 	if e.controller.IsLocalSort() {
 		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("IMPORT INTO FROM SELECT without global sort storage")
 	}
+	// Reuse the submitting SELECT plan for early rejection. The worker checks
+	// its own optimized plan again because it may choose different operators.
+	if err := checkImportQueryPlan(e.plan.SelectPlan); err != nil {
+		return err
+	}
 	query, err := CaptureImportQuery(e.userSctx, e.plan.Stmt)
 	if err != nil {
 		return err
