@@ -271,3 +271,18 @@ q10   0.82 s 1170 ms   0.80 s 1122 ms   0.74 s  905 ms   0.973          0.959
 q09   3.29 s 4850 ms   3.34 s 4895 ms   2.95 s 3985 ms   1.016          1.009
 q18   3.61 s 2475 ms   3.52 s 2402 ms   3.06 s 1735 ms   0.976          0.971
 ```
+
+### Fix 8 (431bf7c9): lookup key types computed once per task; below the harness floor
+
+The q03 profile on fix7 attributed 1.6% of node CPU to `probe_key_types`
+re-collecting the key's column types for every probe row and 3.3% to cloning
+each probe before selecting its parts. Two ABBA runs (results/ab-fix8.txt,
+ab-fix8b.txt) cannot resolve it: in the first, fix7 in the outer passes led
+by 2-7% on every query; in the reversed order, fix8 in the outer passes led
+by 3-4% on every query, q09 included, which the change does not touch. The
+box drifts by ~3-4% between the outer and inner passes of a run, so any
+single-digit change on these one-second queries needs more passes than this
+harness takes. Pooled over both runs: q03 wall 1.16 s vs 1.18 s, CPU 826 vs
+845 ms; q10 0.83 vs 0.84 s, 1146 vs 1149 ms. The change stays: it is Go's
+shape (key column types fixed at build) and removes two allocations per probe
+row, but it is recorded as unmeasured, not as a gain.
