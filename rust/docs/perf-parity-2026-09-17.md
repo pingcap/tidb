@@ -212,3 +212,23 @@ v2's probe is on par with v1 for integer keys and 2.5x faster for byte keys;
 its build costs 15x v1's per row. `append_to_row_table` mirrors Go's
 `appendToRowTable` statement for statement, so the cost is in the per-cell
 primitives or the stages before it; attributed next with a line-tables build.
+
+### Corrections: the bench now runs on the server's allocator (8c5fc925)
+
+The bench ran on glibc malloc while the server runs tikv-jemallocator; glibc
+returned the row table segments to the OS after each iteration and charged
+the next build with page faults (22% of the v2 build phase). On jemalloc,
+after the column-view hoist (663718cb), ns per row:
+
+```
+                          build   probe(per output row)
+join_probe_int_key (v1)     18      477
+join_probe_int_fanout8      32      290
+join_probe_bytes_key (v1)   97    1,354
+join_v2_int_key            167      600
+join_v2_int_fanout8        164      336
+join_v2_bytes_key          197      573
+```
+v2's build is 9x v1's per row (Go's row table serialises every row, v1 keeps
+the chunks), but at 167 ns it is worth ~70 ms of CPU on q09's 612k-row build;
+the lever is the probe path per output row, where q09 emits millions.
