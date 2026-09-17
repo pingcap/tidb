@@ -361,6 +361,10 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 		tk.MustExec("set @@tidb_dml_max_execution_time = 0")
 		tk.MustExec("update dml_timeout set v = v + 1 where id = 1")
 		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("commit")
+		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("set @dml_timeout = 1")
+		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
 		tk.MustExec("set @@max_execution_time = 0")
 		tk.MustExec("set @@tidb_dml_max_execution_time = 60000")
 		tk.MustQuery("select 1")
@@ -426,9 +430,9 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
 
 		// Deprecated batch DML can commit earlier batches, so it is also excluded.
-		originalEnableBatchDML := vardef.EnableBatchDML.Load()
-		vardef.EnableBatchDML.Store(true)
-		t.Cleanup(func() { vardef.EnableBatchDML.Store(originalEnableBatchDML) })
+		originalEnableBatchDML := variable.EnableBatchDML.Load()
+		variable.EnableBatchDML.Store(true)
+		t.Cleanup(func() { variable.EnableBatchDML.Store(originalEnableBatchDML) })
 		tk.MustExec("set tidb_batch_insert = ON")
 		tk.MustExec("set tidb_dml_batch_size = 1")
 		tk.MustExec("insert into excluded_dml_timeout values (5, 5), (6, 6)")
@@ -450,9 +454,6 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 	})
 
 	t.Run("pipelined DML", func(t *testing.T) {
-		if kerneltype.IsNextGen() {
-			t.Skip("pipelined DML is not supported in next generation")
-		}
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("create table pipelined_dml_timeout (id int primary key, v int)")
@@ -501,11 +502,11 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 
 		// A pipelined statement must also survive the timeout check before Open.
 		tk.MustExec("set tidb_dml_max_execution_time = 200")
-		const failpointName = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+		const failpointName = "github.com/pingcap/tidb/pkg/session/mockStmtSlow"
 		func() {
 			require.NoError(t, failpoint.Enable(failpointName, "return(300)"))
 			defer func() { require.NoError(t, failpoint.Disable(failpointName)) }()
-			tk.MustExec("insert into pipelined_dml_timeout values (5, 5)")
+			tk.MustExec("insert /* sleep */ into pipelined_dml_timeout values (5, 5)")
 			require.Zero(t, tk.Session().ShowProcess().MaxExecutionTime)
 		}()
 		tk.MustQuery("select * from pipelined_dml_timeout where id = 5").Check(testkit.Rows("5 5"))

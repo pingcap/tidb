@@ -36,11 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	dto "github.com/prometheus/client_model/go"
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -567,87 +563,6 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
-<<<<<<< HEAD
-=======
-
-func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key, b int)")
-	tk.MustExec("insert into t values (1, 1), (2, 2)")
-
-	testCases := []struct {
-		name             string
-		tsoDelayMs       int
-		maxExecutionTime uint64 // in milliseconds
-		expectTimeout    bool
-		description      string
-	}{
-		{
-			name:             "TSO delay 50ms, timeout 500ms - should not timeout",
-			tsoDelayMs:       50,
-			maxExecutionTime: 500,
-			expectTimeout:    false,
-			description:      "TSO wait time (50ms) should be included, total << 500ms",
-		},
-		{
-			name:             "TSO delay 150ms, timeout 500ms - should not timeout",
-			tsoDelayMs:       150,
-			maxExecutionTime: 500,
-			expectTimeout:    false,
-			description:      "TSO wait time (150ms) should be included, total << 500ms",
-		},
-		{
-			name:             "TSO delay 300ms, timeout 50ms - should timeout",
-			tsoDelayMs:       300,
-			maxExecutionTime: 50,
-			expectTimeout:    true,
-			description:      "TSO wait time (300ms) exceeds timeout (50ms) clearly",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Enable failpoint to inject delay in TSO Wait()
-			failpointName := "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
-			require.NoError(t, failpoint.Enable(failpointName, `return(`+fmt.Sprintf("%d", tc.tsoDelayMs)+`)`))
-			defer func() {
-				require.NoError(t, failpoint.Disable(failpointName))
-			}()
-			// Set max_execution_time
-			tk.MustExec("set @@max_execution_time = ?", tc.maxExecutionTime)
-
-			// Execute a SELECT statement that will trigger TSO wait
-			// Use range scan instead of point get to avoid optimization
-			startTime := time.Now()
-			if tc.expectTimeout {
-				rs, err := tk.Exec("select * from t where a >= 1")
-				require.Nil(t, rs)
-				require.ErrorContains(t, err, "maximum statement execution time exceeded")
-			} else {
-				tk.MustQuery("select * from t where a >= 1")
-			}
-			elapsed := time.Since(startTime)
-
-			// Verify that the elapsed time includes the TSO delay
-			// Allow some skew for CI scheduling / overhead.
-			expectedMinTime := time.Duration(tc.tsoDelayMs) * time.Millisecond
-			skew := 200 * time.Millisecond
-			require.GreaterOrEqual(t, elapsed, expectedMinTime-skew,
-				"Elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, elapsed)
-
-			// Check ProcessInfo to verify the start time was set before TSO wait
-			pi := tk.Session().ShowProcess()
-			require.NotNil(t, pi)
-			if pi.MaxExecutionTime > 0 {
-				processElapsed := time.Since(pi.Time)
-				require.GreaterOrEqual(t, processElapsed, expectedMinTime-skew,
-					"ProcessInfo elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, processElapsed)
-			}
-		})
-	}
-}
 
 func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -663,14 +578,14 @@ func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
 	}
 	const cteQuery = "with recursive cte(n) as (select 1 union all select n+1 from cte where n<3) select n from cte"
 
-	const failpointName = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+	const failpointName = "github.com/pingcap/tidb/pkg/session/mockStmtSlow"
 	func() {
 		require.NoError(t, failpoint.Enable(failpointName, "return(300)"))
 		defer func() {
 			require.NoError(t, failpoint.Disable(failpointName))
 		}()
 
-		rs, err := tk.Exec("insert into t " + cteQuery)
+		rs, err := tk.Exec("insert /* sleep */ into t " + cteQuery)
 		require.Nil(t, rs)
 		require.ErrorContains(t, err, "maximum statement execution time exceeded")
 		checkReleased()
@@ -749,4 +664,3 @@ func TestDMLBuildCancellationPreservesTimeout(t *testing.T) {
 		})
 	}
 }
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))

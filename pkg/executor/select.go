@@ -307,24 +307,6 @@ func getMaxExecutionDeadline(sctx sessionctx.Context) (time.Time, bool) {
 	if sctx == nil {
 		return time.Time{}, false
 	}
-<<<<<<< HEAD
-
-	sessVars := sctx.GetSessionVars()
-	if sessVars == nil {
-		return nil
-	}
-
-	if !sessVars.StmtCtx.InSelectStmt {
-		return nil
-	}
-
-	maxExecTimeMS := sessVars.GetMaxExecutionTime()
-	if maxExecTimeMS == 0 {
-		return nil
-	}
-
-=======
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 	processInfo := sctx.ShowProcess()
 	if processInfo == nil || processInfo.Time.IsZero() || processInfo.MaxExecutionTime == 0 {
 		return time.Time{}, false
@@ -365,17 +347,8 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 	lockCtx.InShareMode = inSharedMode
 
-<<<<<<< HEAD
-	// Set max_execution_time deadline for SELECT statements
-	if seVars.StmtCtx.InSelectStmt && seVars.GetMaxExecutionTime() > 0 {
-		if processInfo := sctx.ShowProcess(); processInfo != nil {
-			maxExecTimeMs := time.Duration(seVars.GetMaxExecutionTime()) * time.Millisecond
-			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
-		}
-=======
 	if deadline, ok := getMaxExecutionDeadline(sctx); ok {
 		lockCtx.MaxExecutionDeadline = deadline
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 	}
 
 	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {

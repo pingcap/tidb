@@ -101,129 +101,25 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
-<<<<<<< HEAD
-=======
 func TestDMLMaxExecutionTime(t *testing.T) {
-	sv := GetSysVar(vardef.TiDBDMLMaxExecutionTime)
+	sv := GetSysVar(TiDBDMLMaxExecutionTime)
 	require.NotNil(t, sv)
-	require.Equal(t, vardef.ScopeGlobal|vardef.ScopeSession, sv.Scope)
+	require.Equal(t, ScopeGlobal|ScopeSession, sv.Scope)
 	require.Equal(t, "0", sv.Value)
 	require.True(t, sv.IsHintUpdatableVerified)
 
 	vars := NewSessionVars(nil)
-	val, err := sv.Validate(vars, "-10", vardef.ScopeSession)
+	val, err := sv.Validate(vars, "-10", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "0", val)
 
-	val, err = sv.Validate(vars, "99999", vardef.ScopeSession)
+	val, err = sv.Validate(vars, "99999", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "99999", val)
 	require.NoError(t, sv.SetSessionFromHook(vars, val))
 	require.Equal(t, uint64(99999), vars.DMLMaxExecutionTime)
 }
 
-func TestTiDBMaxKeysRead(t *testing.T) {
-	sv := GetSysVar(vardef.TiDBMaxKeysRead)
-	require.NotNil(t, sv)
-	vars := NewSessionVars(nil)
-
-	// Negative values should be clipped to 0.
-	val, err := sv.Validate(vars, "-1", vardef.ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "0", val)
-
-	// Zero is valid (unlimited).
-	val, err = sv.Validate(vars, "0", vardef.ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "0", val)
-
-	// Positive values are accepted.
-	val, err = sv.Validate(vars, "1000", vardef.ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "1000", val)
-
-	// SetSession sets MaxKeysRead.
-	require.Nil(t, sv.SetSessionFromHook(vars, "500"))
-	require.Equal(t, uint64(500), vars.MaxKeysRead)
-
-	// IsHintUpdatableVerified must be true.
-	require.True(t, sv.IsHintUpdatableVerified)
-}
-
-func TestTxnFileSysVars(t *testing.T) {
-	vars := NewSessionVars(nil)
-
-	t.Run("defaults and session propagation", func(t *testing.T) {
-		enableTxnFile := GetSysVar("tidb_enable_txn_file")
-		require.NotNil(t, enableTxnFile)
-		require.Equal(t, vardef.ScopeGlobal|vardef.ScopeSession, enableTxnFile.Scope)
-		require.Equal(t, vardef.Off, enableTxnFile.Value)
-
-		val, err := enableTxnFile.Validate(vars, vardef.Off, vardef.ScopeSession)
-		require.NoError(t, err)
-		require.NoError(t, enableTxnFile.SetSessionFromHook(vars, val))
-		require.True(t, vars.KVVars.DisableTxnFile)
-
-		val, err = enableTxnFile.Validate(vars, vardef.On, vardef.ScopeSession)
-		require.NoError(t, err)
-		require.NoError(t, enableTxnFile.SetSessionFromHook(vars, val))
-		require.False(t, vars.KVVars.DisableTxnFile)
-
-		minMutationSize := GetSysVar(vardef.TiDBTxnFileMinMutationSize)
-		require.NotNil(t, minMutationSize)
-		require.Equal(t, vardef.ScopeGlobal|vardef.ScopeSession, minMutationSize.Scope)
-		require.Equal(t, "0", minMutationSize.Value)
-		require.Zero(t, vars.KVVars.TxnFileMinMutationSize)
-
-		val, err = minMutationSize.Validate(vars, strconv.FormatUint(uint64(vardef.MinTiDBTxnFileMinMutationSize), 10), vardef.ScopeSession)
-		require.NoError(t, err)
-		require.NoError(t, minMutationSize.SetSessionFromHook(vars, val))
-		require.Equal(t, uint64(vardef.MinTiDBTxnFileMinMutationSize), vars.KVVars.TxnFileMinMutationSize)
-	})
-
-	t.Run("rejects nonzero sizes below 1 MiB", func(t *testing.T) {
-		minMutationSize := GetSysVar(vardef.TiDBTxnFileMinMutationSize)
-		for _, val := range []string{"1", strconv.FormatUint(vardef.MinTiDBTxnFileMinMutationSize-1, 10)} {
-			_, err := minMutationSize.Validate(vars, val, vardef.ScopeSession)
-			require.Error(t, err)
-		}
-
-		val, err := minMutationSize.Validate(vars, "0", vardef.ScopeSession)
-		require.NoError(t, err)
-		require.Equal(t, "0", val)
-	})
-
-	t.Run("rejected size preserves previous value", func(t *testing.T) {
-		minMutationSize := GetSysVar(vardef.TiDBTxnFileMinMutationSize)
-		validSize := uint64(vardef.MinTiDBTxnFileMinMutationSize * 2)
-		val, err := minMutationSize.Validate(vars, strconv.FormatUint(validSize, 10), vardef.ScopeSession)
-		require.NoError(t, err)
-		require.NoError(t, minMutationSize.SetSessionFromHook(vars, val))
-
-		_, err = minMutationSize.Validate(vars, "1", vardef.ScopeSession)
-		require.Error(t, err)
-		require.Equal(t, validSize, vars.KVVars.TxnFileMinMutationSize)
-	})
-}
-
-func TestGetMaxKeysRead(t *testing.T) {
-	vars := NewSessionVars(nil)
-	vars.MaxKeysRead = 100
-
-	// Outside SELECT statement: returns 0.
-	vars.StmtCtx.InSelectStmt = false
-	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
-
-	// Inside SELECT statement: returns configured value.
-	vars.StmtCtx.InSelectStmt = true
-	require.Equal(t, uint64(100), vars.GetMaxKeysRead())
-
-	// Zero means unlimited regardless of context.
-	vars.MaxKeysRead = 0
-	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
-}
-
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 func TestTiFlashMaxBytes(t *testing.T) {
 	varNames := []string{TiDBMaxBytesBeforeTiFlashExternalJoin, TiDBMaxBytesBeforeTiFlashExternalGroupBy, TiDBMaxBytesBeforeTiFlashExternalSort}
 	for index, varName := range varNames {

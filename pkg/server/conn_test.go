@@ -32,7 +32,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -40,13 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
@@ -943,9 +936,9 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 			if req.Type != target {
 				return resp, rpcErr
 			}
-			// Block the primary commit response to exercise classic 2PC outcome handling.
-			if target == tikvrpc.CmdCommit && req.Commit().GetCommitRole() != kvrpcpb.CommitRole_Primary {
-				return resp, rpcErr
+			// These single-key transactions only send a primary commit request.
+			if target == tikvrpc.CmdCommit {
+				require.Len(t, req.Commit().Keys, 1)
 			}
 			enteredOnce.Do(func() { close(entered) })
 			<-release

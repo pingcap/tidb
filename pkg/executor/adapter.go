@@ -406,13 +406,8 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
-<<<<<<< HEAD
 		sql := a.OriginText()
-		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
-=======
-		sql := a.Text()
 		maxExecutionTime := a.getMaxExecutionTime()
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -439,14 +434,17 @@ func (a *ExecStmt) OriginText() string {
 // Call it after building the executor so the actual DML transaction mode is known.
 func (a *ExecStmt) getMaxExecutionTime() uint64 {
 	vars := a.Ctx.GetSessionVars()
-	if vars.DMLMaxExecutionTime == 0 {
+	stmtCtx := vars.StmtCtx
+	if stmtCtx.InSelectStmt {
 		return vars.GetMaxExecutionTime()
 	}
-	stmtCtx := vars.StmtCtx
+	if vars.DMLMaxExecutionTime == 0 {
+		return 0
+	}
 	if stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt {
 		// Non-transactional and batch DML can commit incrementally.
 		// Autocommit EXPLAIN ANALYZE DML commits before its result set is consumed.
-		batchDML := vars.BatchCommit || vardef.EnableBatchDML.Load() && vars.DMLBatchSize > 0 && !vars.InTxn() &&
+		batchDML := vars.BatchCommit || variable.EnableBatchDML.Load() && vars.DMLBatchSize > 0 && !vars.InTxn() &&
 			((stmtCtx.InInsertStmt && vars.BatchInsert) ||
 				(stmtCtx.InDeleteStmt && vars.BatchDelete))
 		if vars.InNonTransactionalDML || batchDML || stmtCtx.InExplainStmt {
@@ -468,7 +466,7 @@ func (a *ExecStmt) getMaxExecutionTime() uint64 {
 			return vars.DMLMaxExecutionTime
 		}
 	}
-	return vars.GetMaxExecutionTime()
+	return 0
 }
 
 // IsPrepared returns true if stmt is a prepare statement.
@@ -686,15 +684,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (rs sqlexec.RecordSet, err error) {
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-<<<<<<< HEAD
-		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
-		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
-			maxExecutionTime = 0
-		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
-=======
-		pi.SetProcessInfo(sql, execStartTime, cmd, maxExecutionTime)
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 	}
 	// SetProcessInfo preserves the start time recorded before plan compilation.
 	// Reject an expired statement before Open or Next can start work with side effects.

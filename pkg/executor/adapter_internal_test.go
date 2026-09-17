@@ -18,44 +18,39 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessmgr"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/pkg/util/topsql"
-	topsqlmock "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
-	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
-	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 	"github.com/stretchr/testify/require"
 )
 
-<<<<<<< HEAD
-=======
-type stmtStatsTestContext struct {
-	*mock.Context
-	stmtStats *stmtstats.StatementStats
-}
-
 type maxExecutionTimeTestContext struct {
 	*mock.Context
-	processInfo *sessmgr.ProcessInfo
+	processInfo *util.ProcessInfo
 }
 
-func (c *maxExecutionTimeTestContext) ShowProcess() *sessmgr.ProcessInfo {
+func (c *maxExecutionTimeTestContext) ShowProcess() *util.ProcessInfo {
 	return c.processInfo
 }
 
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
+func TestCheckMaxExecutionTimeExceededPreservesPendingKillReason(t *testing.T) {
+	sctx := &maxExecutionTimeTestContext{
+		Context: mock.NewContext(),
+		processInfo: &util.ProcessInfo{
+			Time:             time.Now().Add(-time.Hour),
+			MaxExecutionTime: 1,
+		},
+	}
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	err := checkMaxExecutionTimeExceeded(sctx)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
 type sharedLockMemBufferForTest struct {
 	kv.MemBuffer
 	getLocal func(key []byte) ([]byte, error)
@@ -84,107 +79,6 @@ func (t *sharedLockTxnForTest) GetMemBuffer() kv.MemBuffer {
 	return t.memBuffer
 }
 
-<<<<<<< HEAD
-=======
-func (c *stmtStatsTestContext) GetStmtStats() *stmtstats.StatementStats {
-	return c.stmtStats
-}
-
-func resetTopProfilingStateForTest(t *testing.T) {
-	t.Helper()
-	topsqlstate.DisableTopSQL()
-	for topsqlstate.TopRUEnabled() {
-		topsqlstate.DisableTopRU()
-	}
-	t.Cleanup(func() {
-		topsqlstate.DisableTopSQL()
-		for topsqlstate.TopRUEnabled() {
-			topsqlstate.DisableTopRU()
-		}
-	})
-}
-
-func newExecStmtWithStmtStatsForTest(goCtx context.Context, t *testing.T) (*ExecStmt, *stmtstats.StatementStats) {
-	t.Helper()
-
-	stats := stmtstats.CreateStatementStats()
-	t.Cleanup(stats.SetFinished)
-
-	sctx := mock.NewContext()
-	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "u1", Hostname: "%"}
-	sc := sctx.GetSessionVars().StmtCtx
-	sc.OriginalSQL = "select * from t where a = 1"
-	_, sqlDigest := sc.SQLDigest()
-	require.NotNil(t, sqlDigest)
-	const normalizedPlan = "TableReader(table:t)->Selection(eq(test.t.a, ?))"
-	planDigest := parser.NewDigest([]byte("topru-plan-digest"))
-	sc.SetPlanDigest(normalizedPlan, planDigest)
-
-	return &ExecStmt{
-		Ctx: &stmtStatsTestContext{
-			Context:   sctx,
-			stmtStats: stats,
-		},
-		GoCtx: goCtx,
-	}, stats
-}
-
-func newFinishedRecordSetForTest() *recordSet {
-	ft := types.NewFieldType(mysql.TypeLonglong)
-	return &recordSet{
-		schema: expression.NewSchema(&expression.Column{RetType: ft}),
-		stmt:   &ExecStmt{Ctx: mock.NewContext()},
-	}
-}
-
-func TestRecordSetNewChunkAfterFinish(t *testing.T) {
-	rs := newFinishedRecordSetForTest()
-
-	req := rs.NewChunk(nil)
-	require.NotNil(t, req)
-	require.Equal(t, 1, req.NumCols())
-
-	req = rs.NewChunk(chunk.NewAllocator())
-	require.NotNil(t, req)
-	require.Equal(t, 1, req.NumCols())
-}
-
-func TestRecordSetNextAfterFinish(t *testing.T) {
-	rs := newFinishedRecordSetForTest()
-
-	err := rs.Next(context.Background(), chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1))
-	require.Error(t, err)
-	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
-}
-
-func TestCheckMaxExecutionTimeExceededPreservesPendingKillReason(t *testing.T) {
-	sctx := &maxExecutionTimeTestContext{
-		Context: mock.NewContext(),
-		processInfo: &sessmgr.ProcessInfo{
-			Time:             time.Now().Add(-time.Hour),
-			MaxExecutionTime: 1,
-		},
-	}
-	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-
-	err := checkMaxExecutionTimeExceeded(sctx)
-	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
-}
-
-func ruKeyForStmt(t *testing.T, stmt *ExecStmt) stmtstats.RUKey {
-	t.Helper()
-
-	sqlDigest, planDigest := stmt.getSQLPlanDigest()
-	require.NotNil(t, sqlDigest)
-	require.NotNil(t, planDigest)
-	return stmtstats.RUKey{
-		User:       stmt.Ctx.GetSessionVars().User.String(),
-		SQLDigest:  stmtstats.BinaryDigest(sqlDigest),
-		PlanDigest: stmtstats.BinaryDigest(planDigest),
-	}
-}
-
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 func TestMoveWrittenSharedLockKeysToExclusive(t *testing.T) {
 	injectedErr := errors.New("injected get local error")
 

@@ -216,12 +216,7 @@ go_test(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
-<<<<<<< HEAD
-=======
         "@com_github_tikv_client_go_v2//tikvrpc",
-        "@com_github_tikv_client_go_v2//util",
-        "@org_uber_go_atomic//:atomic",
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
         "@org_uber_go_goleak//:goleak",
     ],
 )

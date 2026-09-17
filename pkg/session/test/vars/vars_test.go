@@ -304,11 +304,8 @@ func TestGlobalVarAccessor(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().MaxExecutionTime)
-<<<<<<< HEAD
 	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().GetMaxExecutionTime())
-=======
 	require.Equal(t, uint64(200), tk2.Session().GetSessionVars().DMLMaxExecutionTime)
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
 	tk1.MustExec("set @@global.max_execution_time = 0")
 	tk1.MustExec("set @@global.tidb_dml_max_execution_time = 0")
 

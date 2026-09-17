@@ -8,11 +8,7 @@ go_test(
         "variable_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 9,
-=======
-    shard_count = 13,
->>>>>>> b82bed1eca2 (executor, session: add tidb_dml_max_execution_time for transactional DML (#70568))
+    shard_count = 10,
     deps = [
         "//pkg/config",
         "//pkg/kv",
