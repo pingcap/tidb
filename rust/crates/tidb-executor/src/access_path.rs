@@ -4351,6 +4351,9 @@ pub(crate) struct LookupForkTemplate {
     descending: bool,
     probe_parts: Vec<LookupProbePart>,
     probe_key_prefix_lengths: Vec<i64>,
+    /// The lookup key's column types, computed once here and shared by every
+    /// task this template opens (Go's `innerCtx.keyColTypes`, fixed at build).
+    probe_key_types: Option<Arc<[FieldType]>>,
     decode_context: crate::kv_table::RowDecodeContext,
     statement: PushdownStatementContext,
     filters: Vec<Expression>,
@@ -4378,6 +4381,7 @@ impl LookupForkTemplate {
             descending: self.descending,
             probe_parts: self.probe_parts.clone(),
             probe_key_prefix_lengths: self.probe_key_prefix_lengths.clone(),
+            probe_key_types: std::sync::OnceLock::from(self.probe_key_types.clone()),
             probes: Vec::new(),
             next_probe: 0,
             cursor: None,
@@ -4441,6 +4445,9 @@ pub struct IndexJoinLookupExec {
     /// Go `PhysicalIndexJoin.IdxColLens`, aligned with the selected index or
     /// common-handle object.
     probe_key_prefix_lengths: Vec<i64>,
+    /// See [`LookupForkTemplate::probe_key_types`]; a task built outside a
+    /// template computes it on first use.
+    probe_key_types: std::sync::OnceLock<Option<Arc<[FieldType]>>>,
     /// The current outer batch's distinct probe tuples, in walk order.
     probes: Vec<Vec<Datum>>,
     /// The next probe to open a cursor over.
@@ -4540,6 +4547,7 @@ impl IndexJoinLookupExec {
             descending: false,
             probe_parts: Vec::new(),
             probe_key_prefix_lengths: Vec::new(),
+            probe_key_types: std::sync::OnceLock::new(),
             probes: Vec::new(),
             next_probe: 0,
             cursor: None,
@@ -4693,6 +4701,7 @@ impl IndexJoinLookupExec {
             descending: self.descending,
             probe_parts: self.probe_parts.clone(),
             probe_key_prefix_lengths: self.probe_key_prefix_lengths.clone(),
+            probe_key_types: self.probe_key_types().map(Arc::from),
             decode_context: self.decode_context.clone(),
             statement: self.statement.clone(),
             filters: self.filters.clone(),
@@ -4798,13 +4807,13 @@ impl IndexJoinLookupExec {
     /// empty range for it.
     fn next_probe_with_bounds(&mut self) -> Option<(Vec<Datum>, Vec<Datum>)> {
         loop {
-            let Some(dynamic_probe) = self.probes.get(self.next_probe).cloned() else {
+            let Some(dynamic_probe) = self.probes.get(self.next_probe) else {
                 return None;
             };
             let probe_ordinal = self.next_probe;
             self.next_probe += 1;
             let key = if self.probe_parts.is_empty() {
-                Some(dynamic_probe)
+                Some(dynamic_probe.clone())
             } else {
                 self.probe_parts
                     .iter()
@@ -4992,7 +5001,15 @@ impl IndexJoinLookupExec {
 
     /// The field types of the object-key columns a probe is encoded against,
     /// or `None` for an object whose own arm already screens its probe.
-    fn probe_key_types(&self) -> Option<Vec<FieldType>> {
+    /// The lookup key's column types, computed once per task (Go's
+    /// `innerCtx.keyColTypes`); the per-probe callers read the cached slice.
+    fn probe_key_types(&self) -> Option<&[FieldType]> {
+        self.probe_key_types
+            .get_or_init(|| self.compute_probe_key_types().map(Arc::from))
+            .as_deref()
+    }
+
+    fn compute_probe_key_types(&self) -> Option<Vec<FieldType>> {
         let columns = self.table.visible_columns();
         match &self.object {
             LookupObject::Index(index_id) => {
