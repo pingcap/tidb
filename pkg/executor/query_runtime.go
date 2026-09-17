@@ -184,31 +184,9 @@ func runImportQuery(
 		return err
 	}
 
-	vars := workerSession.GetSessionVars()
-	stmt, err := (&Compiler{Ctx: workerSession}).Compile(ctx, node)
+	e, err := buildImportQueryExecutor(ctx, workerSession, node)
 	if err != nil {
 		return err
-	}
-	p, ok := stmt.Plan.(base.PhysicalPlan)
-	if !ok {
-		return errors.New("import query did not produce a physical SELECT plan")
-	}
-	if err := checkImportQueryPlan(p); err != nil {
-		return err
-	}
-	failpoint.InjectCall("afterImportQueryOptimize", p)
-	failpoint.Inject("failAfterImportQueryOptimize", func() {
-		failpoint.Return(errors.New("injected failure after import query optimization"))
-	})
-	b := newExecutorBuilder(ctx, workerSession, workerSession.schema, nil)
-	b.forDataReaderBuilder = true
-	b.dataReaderTS = vars.SnapshotTS
-	e := b.build(p)
-	if b.err != nil {
-		return b.err
-	}
-	if e == nil {
-		return errors.New("import query built no executor")
 	}
 	defer func() {
 		if closeErr := exec.Close(e); err == nil {
@@ -220,9 +198,10 @@ func runImportQuery(
 	}
 
 	fields := e.RetFieldTypes()
+	maxChunkSize := workerSession.GetSessionVars().MaxChunkSize
 	var rowID int64
 	for {
-		chk := chunk.New(fields, 32, vars.MaxChunkSize)
+		chk := chunk.New(fields, 32, maxChunkSize)
 		if err := exec.Next(ctx, e, chk); err != nil {
 			return err
 		}
@@ -236,4 +215,35 @@ func runImportQuery(
 			return context.Cause(ctx)
 		}
 	}
+}
+
+func buildImportQueryExecutor(
+	ctx context.Context, workerSession *importQuerySession, node ast.StmtNode,
+) (exec.Executor, error) {
+	stmt, err := (&Compiler{Ctx: workerSession}).Compile(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	p, ok := stmt.Plan.(base.PhysicalPlan)
+	if !ok {
+		return nil, errors.New("import query did not produce a physical SELECT plan")
+	}
+	if err := checkImportQueryPlan(p); err != nil {
+		return nil, err
+	}
+	failpoint.InjectCall("afterImportQueryOptimize", p)
+	failpoint.Inject("failAfterImportQueryOptimize", func() {
+		failpoint.Return(nil, errors.New("injected failure after import query optimization"))
+	})
+	b := newExecutorBuilder(ctx, workerSession, workerSession.schema, nil)
+	b.forDataReaderBuilder = true
+	b.dataReaderTS = workerSession.GetSessionVars().SnapshotTS
+	e := b.build(p)
+	if b.err != nil {
+		return nil, b.err
+	}
+	if e == nil {
+		return nil, errors.New("import query built no executor")
+	}
+	return e, nil
 }
