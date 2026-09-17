@@ -20,6 +20,7 @@ import (
 	"math/bits"
 	"runtime"
 	"runtime/metrics"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -185,7 +186,7 @@ func NewDigestIDBuilder() DigestIDBuilder {
 	return DigestIDBuilder{hash: initHashKey}
 }
 
-// 
+// AddString adds a string to hash builder
 func (b *DigestIDBuilder) AddString(s string) {
 	n := len(s)
 	h := b.hash*prime64 ^ uint64(n)
@@ -307,9 +308,12 @@ type RuntimeMemStats struct {
 	HeapAlloc, HeapInuse, TotalFree, MemOffHeap, NumGC uint64
 }
 
+type runtimeMemStatsSample [7]metrics.Sample
+
 var gcTracker struct {
-	lastGCTime atomic.Int64 // approximate time of last GC in unix nano
-	lastNumGC  atomic.Uint64
+	lastGCTime   atomic.Int64 // approximate time of last GC in unix nano
+	lastNumGC    atomic.Uint64
+	memStatsPool sync.Pool // use sync pool to reduce heap allocation by `metrics.Read`
 }
 
 func approxLastGCTime() int64 {
@@ -318,20 +322,8 @@ func approxLastGCTime() int64 {
 
 // SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW
 func SampleRuntimeMemStats() (s RuntimeMemStats) {
-	heapSample := [7]metrics.Sample{
-		// heap alloc
-		{Name: "/memory/classes/heap/objects:bytes"},
-		// heap available
-		{Name: "/memory/classes/heap/unused:bytes"}, // unused
-		{Name: "/memory/classes/heap/free:bytes"},
-		{Name: "/memory/classes/heap/released:bytes"},
-		// memory total
-		{Name: "/memory/classes/total:bytes"},
-		// total free
-		{Name: "/gc/heap/frees:bytes"},
-		// total GC cycles
-		{Name: "/gc/cycles/total:gc-cycles"},
-	}
+	heapSample := gcTracker.memStatsPool.Get().(*runtimeMemStatsSample)
+
 	metrics.Read(heapSample[:])
 	s = RuntimeMemStats{
 		HeapAlloc: heapSample[0].Value.Uint64(),
@@ -351,6 +343,7 @@ func SampleRuntimeMemStats() (s RuntimeMemStats) {
 		gcTracker.lastNumGC.Store(s.NumGC)
 	}
 
+	gcTracker.memStatsPool.Put(heapSample)
 	return s
 }
 
@@ -362,5 +355,26 @@ func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
 		TotalFree:  s.TotalAlloc - s.Alloc,
 		MemOffHeap: s.Sys - s.HeapSys,
 		NumGC:      uint64(s.NumGC),
+	}
+}
+
+func init() {
+	gcTracker.memStatsPool = sync.Pool{
+		New: func() any {
+			return &runtimeMemStatsSample{
+				// heap alloc
+				{Name: "/memory/classes/heap/objects:bytes"},
+				// heap available
+				{Name: "/memory/classes/heap/unused:bytes"}, // unused
+				{Name: "/memory/classes/heap/free:bytes"},
+				{Name: "/memory/classes/heap/released:bytes"},
+				// memory total
+				{Name: "/memory/classes/total:bytes"},
+				// total free
+				{Name: "/gc/heap/frees:bytes"},
+				// total GC cycles
+				{Name: "/gc/cycles/total:gc-cycles"},
+			}
+		},
 	}
 }
