@@ -86,11 +86,18 @@ expect_dumpling_error() {
 	grep -qF -- "$expected_error" "$error_log"
 }
 
-echo "Test --where with the default --include-generated-columns=none."
+expected=$(printf '"id","a"\n2,20')
+echo "Test --where with --include-generated-columns omitted."
+rm -rf "$DUMPLING_OUTPUT_DIR"
+run_dumpling --filetype csv --where "a > 10"
+actual=$(tr -d '\r' < "$data_file")
+echo "expected ${expected}, actual ${actual}"
+[ "$actual" = "$expected" ]
+
+echo "Test --where with an explicit --include-generated-columns=none."
 rm -rf "$DUMPLING_OUTPUT_DIR"
 run_dumpling --filetype csv --where "a > 10" --include-generated-columns=none
 actual=$(tr -d '\r' < "$data_file")
-expected=$(printf '"id","a"\n2,20')
 echo "expected ${expected}, actual ${actual}"
 [ "$actual" = "$expected" ]
 
