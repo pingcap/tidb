@@ -166,9 +166,16 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 	}
 	switch x := expr.(type) {
 	case *CorrelatedColumn:
+		// Its datum is NULL during planning, but may become an unsupported
+		// MysqlBit constant when the outer row is bound during execution.
+		if storeType != kv.TiDB && x.RetType.GetType() == mysql.TypeBit {
+			return false
+		}
 		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column, true) != nil
 	case *Constant:
-		return pc.conOrCorColToPBExpr(expr) != nil
+		pbExpr := pc.conOrCorColToPBExpr(expr)
+		return pbExpr != nil && (storeType == kv.TiDB ||
+			pbExpr.Tp != tipb.ExprType_MysqlBit)
 	case *Column:
 		return pc.columnToPBExpr(x, true) != nil
 	case *ScalarFunction:
