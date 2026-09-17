@@ -1647,7 +1647,11 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode())] = int(newCol.UniqueID)
 	}
 	newCol.SetCoercibility(expr.Coercibility())
-	newCol.SetRepertoire(expr.Repertoire())
+	// Only string results refine the column's type-derived repertoire.
+	// In particular, JSON columns must retain their Unicode repertoire.
+	if newCol.RetType.EvalType() == types.ETString {
+		newCol.SetRepertoire(expr.Repertoire())
+	}
 	return newCol, name, nil
 }
 
