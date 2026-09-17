@@ -185,33 +185,47 @@ func NewDigestIDBuilder() DigestIDBuilder {
 	return DigestIDBuilder{hash: initHashKey}
 }
 
-func (b *DigestIDBuilder) addUint64(value uint64) {
-	b.hash = b.hash*prime64 ^ value
-}
+// 
+func (b *DigestIDBuilder) AddString(s string) {
+	n := len(s)
+	h := b.hash*prime64 ^ uint64(n)
 
-func (b *DigestIDBuilder) AddString(value string) {
-	b.addUint64(uint64(len(value)))
-
-	for len(value) >= 8 {
-		v := binary.LittleEndian.Uint64(
-			unsafe.Slice(unsafe.StringData(value), 8),
-		)
-		b.addUint64(v)
-		value = value[8:]
+	if n == 0 {
+		b.hash = h
+		return
 	}
 
-	if len(value) > 0 {
+	data := unsafe.Slice(unsafe.StringData(s), n)
+
+	for len(data) >= 8 {
+		h = h*prime64 ^ binary.LittleEndian.Uint64(data[:8])
+		data = data[8:]
+	}
+
+	if len(data) > 0 {
 		var tail uint64
-		for i := range len(value) {
-			tail |= uint64(value[i]) << (8 * i)
+		for i, v := range data {
+			tail |= uint64(v) << (i * 8)
 		}
-		b.addUint64(tail)
+		h = h*prime64 ^ tail
 	}
+
+	b.hash = h
 }
 
 // Sum64 returns the digest profile ID.
 func (b *DigestIDBuilder) Sum64() uint64 {
-	return b.hash
+	h := b.hash
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	h *= 0xc4ceb9fe1a85ec53
+	h ^= h >> 33
+
+	if h == InvalidDigestID {
+		return 1
+	}
+	return h
 }
 
 // HashEvenNum hashes a uint64 even number to a uint64 value
