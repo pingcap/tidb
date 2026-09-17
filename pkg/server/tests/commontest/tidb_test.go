@@ -1030,7 +1030,7 @@ func TestInitConnect(t *testing.T) {
 			info := ts.Server.ShowProcessList()[connectionID]
 			require.NotNil(t, info)
 			require.Empty(t, info.Info)
-			require.Equal(t, byte(tmysql.ComSleep), info.Command)
+			require.Equal(t, tmysql.ComSleep, info.Command)
 			var database string
 			require.NoError(t, conn.QueryRowContext(context.Background(), "select database()").Scan(&database))
 			require.Equal(t, "test", database)
