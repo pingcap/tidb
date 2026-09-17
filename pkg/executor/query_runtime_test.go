@@ -95,6 +95,8 @@ func TestImportQueryPlanExecution(t *testing.T) {
 				output := make(chan importer.QueryChunk, len(expected)+1)
 				err = importer.RunImportQuery(context.Background(), se, captured, stmtSQL, 32<<20, output)
 				require.NoError(t, err)
+				require.NotNil(t, se.ShowProcess())
+				require.Equal(t, captured.ReadTS, se.ShowProcess().CurTxnStartTS)
 				close(output)
 				var got []string
 				for result := range output {
