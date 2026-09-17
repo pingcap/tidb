@@ -1373,6 +1373,17 @@ pub(crate) fn equi_keys_equal_chunk_rows(
                     .map_err(|_| KeyError)?;
                 left == right
             }
+            KeyClass::Str(collation)
+                if is_raw_string_cell(left_type) && is_raw_string_cell(right_type) =>
+            {
+                // Go `EqualChunkRow` compares the two cells' encoded hash
+                // keys. This is the collation key the batched hash path
+                // feeds the hasher, borrowed for binary collations, instead
+                // of a `Datum` plus an owned sort key per side and candidate.
+                let left = left.get_bytes(key.left);
+                let right = right.get_bytes(key.right);
+                collation.immutable_key(&left) == collation.immutable_key(&right)
+            }
             KeyClass::Decimal | KeyClass::Str(_) => {
                 let left = left.get_datum(key.left, left_type);
                 let right = right.get_datum(key.right, right_type);

@@ -154,8 +154,9 @@ join_probe_int_key         594 ns     569 ns
 join_probe_bytes_key     7,419 ns   1,901 ns   (3.9x)
 join_probe_composite_key 7,413 ns   1,641 ns   (4.5x)
 ```
-The int-key shape was unaffected because it never reached this copy at that
-cost profile in the bench's measurement; the remaining 3x of the byte-key shapes
+The int-key shape was unaffected because it never reaches this copy: its flat
+profile shows the per-row `append_cell_from` path (`probe_exact_int_many`,
+`index_chunk_selected`) and no `selected_chunk_matches` at all; the remaining 3x of the byte-key shapes
 over the int one is the per-candidate re-verification, which builds two `Datum`s
 and two collation sort keys per candidate where Go's `EqualChunkRow` compares
 encoded keys in place; that is the next step. Executor tests: 1,332 + 329 + 6
