@@ -37,8 +37,21 @@ import (
 // For mpp err recovery, hold at most 4 * MaxChunkSize rows.
 const mppErrRecoveryHoldChkCap = 4
 
+func isTiCITableReader(tr *plannercore.PhysicalTableReader) bool {
+	for _, tablePlan := range tr.TablePlans {
+		indexScan, ok := tablePlan.(*plannercore.PhysicalIndexScan)
+		if !ok || indexScan.Index == nil {
+			continue
+		}
+		if indexScan.Index.IsTiCIIndex() {
+			return true
+		}
+	}
+	return false
+}
+
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
-	if !ctx.GetSessionVars().IsMPPAllowed() {
+	if !ctx.GetSessionVars().IsMPPAllowed() && !isTiCITableReader(tr) {
 		return false
 	}
 	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)

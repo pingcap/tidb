@@ -117,6 +117,10 @@ const (
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
+
+	// Downstream actions use [200, 256) to avoid conflicts with upstream v8.5 actions.
+	ActionAddFullTextIndex ActionType = 200
+	ActionAddHybridIndex   ActionType = 201
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -194,6 +198,8 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTableAffinity:                    "alter table affinity",
 	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
 	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
+	ActionAddFullTextIndex:                      "add fulltext index",
+	ActionAddHybridIndex:                        "add hybrid index",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.

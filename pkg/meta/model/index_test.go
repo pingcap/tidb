@@ -15,6 +15,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -40,6 +41,12 @@ func newIndexForTest(id int64, cols ...*ColumnInfo) *IndexInfo {
 		Name:    model.NewCIStr(fmt.Sprintf("i_%d", id)),
 		Columns: idxCols,
 	}
+}
+
+func TestIndexInfoIsNonKVIndex(t *testing.T) {
+	require.False(t, (&IndexInfo{}).IsNonKVIndex())
+	require.True(t, (&IndexInfo{VectorInfo: &VectorIndexInfo{}}).IsNonKVIndex())
+	require.True(t, (&IndexInfo{FullTextInfo: &FullTextIndexInfo{}}).IsNonKVIndex())
 }
 
 func TestIsIndexPrefixCovered(t *testing.T) {
@@ -68,4 +75,32 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, model.NewCIStr("c_4")))
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, model.NewCIStr("c_4"), model.NewCIStr("c_2")))
 	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_2")))
+}
+
+func TestFullTextParserConfigSnapshot(t *testing.T) {
+	var legacy FullTextIndexInfo
+	require.NoError(t, json.Unmarshal([]byte(`{"parser_type":"STANDARD_V1"}`), &legacy))
+	require.Nil(t, legacy.ParserConfig)
+	index := &IndexInfo{FullTextInfo: &FullTextIndexInfo{
+		ParserType: FullTextParserTypeStandardV1,
+		ParserConfig: &FullTextParserConfig{
+			InnodbFtMinTokenSize:   3,
+			InnodbFtMaxTokenSize:   84,
+			NgramTokenSize:         2,
+			InnodbFtEnableStopword: false,
+		},
+	}}
+	encoded, err := json.Marshal(index)
+	require.NoError(t, err)
+	var decoded IndexInfo
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	require.Equal(t, index.FullTextInfo, decoded.FullTextInfo)
+	cloned := index.Clone()
+	cloned.FullTextInfo.ParserConfig.InnodbFtMinTokenSize = 5
+	cloned.FullTextInfo.ParserConfig.InnodbFtEnableStopword = true
+	require.Equal(t, 3, index.FullTextInfo.ParserConfig.InnodbFtMinTokenSize)
+	require.False(t, index.FullTextInfo.ParserConfig.InnodbFtEnableStopword)
+	configJSON, err := json.Marshal(index.FullTextInfo.ParserConfig)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"innodb_ft_min_token_size":3,"innodb_ft_max_token_size":84,"ngram_token_size":2,"innodb_ft_enable_stopword":false}`, string(configJSON))
 }

@@ -396,12 +396,17 @@ alter table t add unique index idx_ac(a, c);
 alter table t add unique index idx_b(b);
 drop table if exists t;
 
-# TestFulltextIndexIgnore
+# FULLTEXT uses TiCI DDL. These fixtures have no TiCI service: creation must
+# fail and roll back, rather than silently succeed with an ignored index.
+# Unistore reports the missing etcd endpoint (8204); TiKV reports the missing
+# TiCI meta service (1105).
 drop table if exists t_ft;
+-- error 8204,1105
 create table t_ft (a text, fulltext key (a));
-show warnings;
+show tables like 't_ft';
+create table t_ft (a text);
+-- error 8204,1105
 alter table t_ft add fulltext key (a);
-show warnings;
 show create table t_ft;
 drop table if exists t_ft;
 

@@ -18,12 +18,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -35,6 +38,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -55,7 +59,8 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
 	tk.MustExec("insert into tp1 values (1, 0), (11, 0), (101, 0), (1001, 0);")
-	task, server := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false)
+	scanSnapshotTS := uint64(100)
+	task, server := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false, scanSnapshotTS)
 	require.Nil(t, server)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp1"))
 	require.NoError(t, err)
@@ -73,6 +78,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		var subTask ddl.BackfillSubTaskMeta
 		require.NoError(t, json.Unmarshal(metas[i], &subTask))
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
+		require.Equal(t, scanSnapshotTS, subTask.ScanSnapshotTS)
 	}
 
 	// 1.2 test partition table OnNextSubtasksBatch after BackfillStepReadIndex
@@ -90,7 +96,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	/// 2. test non partition table.
 	// 2.1 empty table
 	tk.MustExec("create table t1(id int primary key, v int)")
-	task, server = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
+	task, server = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false, scanSnapshotTS)
 	require.Nil(t, server)
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
 	require.NoError(t, err)
@@ -101,7 +107,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
-	task, server = createAddIndexTask(t, dom, "test", "t2", proto.Backfill, false)
+	task, server = createAddIndexTask(t, dom, "test", "t2", proto.Backfill, false, scanSnapshotTS)
 	require.Nil(t, server)
 	// 2.2.1 stepInit
 	task.Step = sch.GetNextStep(&task.TaskBase)
@@ -109,6 +115,9 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
+	var subTask ddl.BackfillSubTaskMeta
+	require.NoError(t, json.Unmarshal(metas[0], &subTask))
+	require.Equal(t, scanSnapshotTS, subTask.ScanSnapshotTS)
 	// 2.2.2 BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(&task.TaskBase)
@@ -162,7 +171,8 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
-	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
+	scanSnapshotTS := uint64(200)
+	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true, scanSnapshotTS)
 	require.NotNil(t, server)
 
 	sch := schManager.MockScheduler(task)
@@ -180,6 +190,9 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
+	var subTask ddl.BackfillSubTaskMeta
+	require.NoError(t, json.Unmarshal(subtaskMetas[0], &subTask))
+	require.Equal(t, scanSnapshotTS, subTask.ScanSnapshotTS)
 	nextStep := ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepReadIndex, nextStep)
 	// update task/subtask, and finish subtask, so we can go to next stage
@@ -221,6 +234,8 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
+	require.NoError(t, json.Unmarshal(subtaskMetas[0], &subTask))
+	require.Equal(t, scanSnapshotTS, subTask.ScanSnapshotTS)
 	nextStep = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepMergeSort, nextStep)
 
@@ -271,6 +286,119 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.Equal(t, proto.StepDone, task.Step)
 }
 
+func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, "handle")
+	mgr := storage.NewTaskManager(pool)
+	storage.SetTaskManager(mgr)
+	schManager := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t_pre(id bigint auto_random primary key)")
+	tk.MustExec("insert into t_pre values (), (), (), (), (), ()")
+	scanSnapshotTS := uint64(300)
+	task, _ := createAddIndexTask(t, dom, "test", "t_pre", proto.Backfill, false, scanSnapshotTS)
+
+	var taskMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
+	taskMeta.Job.Type = model.ActionAddFullTextIndex
+	taskMeta.EleIDs = []int64{10}
+	sortDir := filepath.Join(t.TempDir(), "sorted", "addindex")
+	require.NoError(t, os.MkdirAll(sortDir, 0o755))
+	taskMeta.CloudStorageURI = "local://" + filepath.ToSlash(sortDir)
+	taskMetaBytes, err := json.Marshal(&taskMeta)
+	require.NoError(t, err)
+	task.Meta = taskMetaBytes
+	sortedKVMeta := writeSortedKVMetaForTest(
+		ctx,
+		t,
+		taskMeta.CloudStorageURI,
+		"/pre-split",
+		[][]byte{[]byte("ta"), []byte("tb"), []byte("tc")},
+		[][]byte{[]byte("va"), []byte("vb"), []byte("vc")},
+	)
+
+	sch := schManager.MockScheduler(task)
+	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
+	require.NoError(t, err)
+	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
+	sch.Extension = ext
+
+	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", 0, task.Meta)
+	require.NoError(t, err)
+	task.ID = taskID
+	execIDs := []string{":4000"}
+
+	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(&task.TaskBase))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 1)
+	nextStep := ext.GetNextStep(&task.TaskBase)
+	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
+	}
+	require.NoError(t, mgr.SwitchTaskStep(ctx, task, proto.TaskStatePending, nextStep, subtasks))
+	task.Step = nextStep
+
+	gotSubtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, proto.BackfillStepReadIndex)
+	require.NoError(t, err)
+	sortStepMeta := &ddl.BackfillSubTaskMeta{
+		MetaGroups: []*external.SortedKVMeta{sortedKVMeta},
+		EleIDs:     []int64{10},
+	}
+	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
+	require.NoError(t, err)
+	for _, s := range gotSubtasks {
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards", `return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards"))
+		tici.ResetMockTiCIPreSplitImportShardsRequest()
+	})
+	tici.ResetMockTiCIPreSplitImportShardsRequest()
+
+	mergeSortSubtasks := []*proto.Subtask{
+		proto.NewSubtask(proto.BackfillStepMergeSort, task.ID, task.Type, execIDs[0], 1, sortStepMetaBytes, 1),
+	}
+	require.NoError(t, mgr.SwitchTaskStep(ctx, task, proto.TaskStatePending, proto.BackfillStepMergeSort, mergeSortSubtasks))
+	task.Step = proto.BackfillStepMergeSort
+
+	gotSubtasks, err = mgr.GetSubtasksByExecIDAndStepAndStates(ctx, execIDs[0], taskID, proto.BackfillStepMergeSort, proto.SubtaskStatePending)
+	require.NoError(t, err)
+	for _, s := range gotSubtasks {
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
+	}
+
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 1)
+
+	raw := tici.GetMockTiCIPreSplitImportShardsRequest()
+	require.NotEmpty(t, raw)
+	var req tici.PreSplitImportShardsRequest
+	require.NoError(t, json.Unmarshal(raw, &req))
+	require.Equal(t, ddl.TaskKey(taskMeta.Job.ID, false), req.TidbTaskId)
+	require.Equal(t, taskMeta.Job.TableID, req.TableId)
+	require.Equal(t, []int64{10}, req.IndexIds)
+	require.Equal(t, scanSnapshotTS, req.ScanSnapshotTs)
+	require.Equal(t, sortedKVMeta.TotalKVSize, req.TotalKvSize)
+	require.Equal(t, sortedKVMeta.TotalKVCnt, req.TotalKvCnt)
+	require.EqualValues(t, 1, req.DataFileCount)
+	require.EqualValues(t, 1, req.StatFileCount)
+	require.Len(t, req.MetaGroups, 1)
+	require.Equal(t, int64(10), req.MetaGroups[0].EleId)
+	require.Equal(t, sortedKVMeta.TotalKVSize, req.MetaGroups[0].TotalKvSize)
+	require.Equal(t, sortedKVMeta.TotalKVCnt, req.MetaGroups[0].TotalKvCnt)
+}
+
 func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{Step: proto.StepInit},
@@ -296,7 +424,8 @@ func createAddIndexTask(t *testing.T,
 	dbName,
 	tblName string,
 	taskType proto.TaskType,
-	useGlobalSort bool) (*proto.Task, *fakestorage.Server) {
+	useGlobalSort bool,
+	scanSnapshotTS uint64) (*proto.Task, *fakestorage.Server) {
 	db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr(dbName))
 	var (
 		gcsHost = "127.0.0.1"
@@ -327,8 +456,9 @@ func createAddIndexTask(t *testing.T,
 				IsDistReorg: true,
 			},
 		},
-		EleIDs:     []int64{10},
-		EleTypeKey: meta.IndexElementKey,
+		EleIDs:         []int64{10},
+		EleTypeKey:     meta.IndexElementKey,
+		ScanSnapshotTS: scanSnapshotTS,
 	}
 	if useGlobalSort {
 		var err error
@@ -364,6 +494,38 @@ func createAddIndexTask(t *testing.T,
 	}
 
 	return task, server
+}
+
+func writeSortedKVMetaForTest(
+	ctx context.Context,
+	t *testing.T,
+	cloudStorageURI string,
+	prefix string,
+	keys [][]byte,
+	values [][]byte,
+) *external.SortedKVMeta {
+	t.Helper()
+
+	backend, err := brstorage.ParseBackend(cloudStorageURI, nil)
+	require.NoError(t, err)
+	objStore, err := brstorage.NewWithDefaultOpt(ctx, backend)
+	require.NoError(t, err)
+	t.Cleanup(objStore.Close)
+
+	var summary *external.WriterSummary
+	writer := external.NewWriterBuilder().
+		SetMemorySizeLimit(64).
+		SetBlockSize(64).
+		SetPropSizeDistance(1).
+		SetPropKeysDistance(1).
+		SetOnCloseFunc(func(s *external.WriterSummary) { summary = s }).
+		Build(objStore, prefix, "writer")
+	for i := range keys {
+		require.NoError(t, writer.WriteRow(ctx, keys[i], values[i], nil))
+	}
+	require.NoError(t, writer.Close(ctx))
+	require.NotNil(t, summary)
+	return external.NewSortedKVMeta(summary)
 }
 
 func TestBackfillTaskMetaVersion(t *testing.T) {

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -264,6 +265,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.disableFoldCounter = 0
 	rewriter.tryFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
+	rewriter.astNodeStack = rewriter.astNodeStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
 	rewriter.err = nil
@@ -350,11 +352,12 @@ type exprRewriterPlanCtx struct {
 }
 
 type expressionRewriter struct {
-	ctxStack   []expression.Expression
-	ctxNameStk []*types.FieldName
-	schema     *expression.Schema
-	names      []*types.FieldName
-	err        error
+	ctxStack     []expression.Expression
+	astNodeStack []ast.Node
+	ctxNameStk   []*types.FieldName
+	schema       *expression.Schema
+	names        []*types.FieldName
+	err          error
 
 	sctx expression.BuildContext
 	ctx  context.Context
@@ -530,6 +533,7 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ct
 
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
+	er.astNodeStack = append(er.astNodeStack, inNode)
 	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
 		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
@@ -658,6 +662,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		if _, ok := expression.TryFoldFunctions[v.FnName.L]; ok {
 			er.tryFoldCounter++
+		}
+		if _, ok := expression.FTSFuncMap[v.FnName.L]; ok {
+			er.planCtx.builder.optFlag = er.planCtx.builder.optFlag | rule.FlagFTSQuickValidation
+			er.planCtx.plan.SCtx().SetHasFTSFunc()
 		}
 	case *ast.CaseExpr:
 		er.asScalar = true
@@ -1495,6 +1503,11 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
+	defer func() {
+		if len(er.astNodeStack) > 0 {
+			er.astNodeStack = er.astNodeStack[:len(er.astNodeStack)-1]
+		}
+	}()
 	if er.err != nil {
 		return retNode, false
 	}
@@ -1702,6 +1715,85 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType(er.sctx.GetEvalCtx()).GetCharset(), arg.GetType(er.sctx.GetEvalCtx()).GetCollate())
+	case *ast.MatchAgainst:
+		numCols := len(v.ColumnNames)
+		// The stack order is: col1, col2, ... colN, against
+		stackLen := len(er.ctxStack)
+		if stackLen < numCols+1 {
+			er.err = errors.Errorf("Unexpected stack length for MatchAgainst: %d", stackLen)
+			return retNode, false
+		}
+		var localIndex *model.IndexInfo
+		if er.inDirectMatchBooleanContext() &&
+			er.planCtx.builder.ctx.GetSessionVars().EnableLocalMatchAgainst &&
+			expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+			localIndex = er.resolveLocalFullTextIndex(numCols, stackLen)
+		}
+		if localIndex != nil {
+			sv := er.planCtx.builder.ctx.GetSessionVars()
+			if sv.EnableAlternativeLogicalPlans {
+				sv.StmtCtx.AlternativeLogicalPlanHasLocalFTS = true
+				if !sv.StmtCtx.AlternativeLogicalPlanLocalFTS {
+					localIndex = nil
+				}
+			}
+		}
+		against := er.ctxStack[stackLen-1]
+		cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
+
+		args := make([]expression.Expression, 0, 1+numCols)
+		args = append(args, against)
+		args = append(args, cols...)
+
+		er.ctxStackPop(numCols + 1)
+		fn, err := er.newFunction(ast.FTSMysqlMatchAgainst, &v.Type, args...)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
+		sf, ok := fn.(*expression.ScalarFunction)
+		if !ok {
+			er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
+			return retNode, false
+		}
+		if v.Modifier != ast.FulltextSearchModifierBooleanMode {
+			er.err = errors.Errorf("Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
+			return retNode, false
+		}
+		if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
+			er.err = err
+			return retNode, false
+		}
+		if localIndex != nil {
+			info := localIndex.FullTextInfo
+			config := info.ParserConfig
+			localInfo := &expression.FTSLocalEvalInfo{
+				AnalyzerConfig: fulltext.AnalyzerConfig{
+					ParserType:             info.ParserType,
+					InnodbFtMinTokenSize:   config.InnodbFtMinTokenSize,
+					InnodbFtMaxTokenSize:   config.InnodbFtMaxTokenSize,
+					NgramTokenSize:         config.NgramTokenSize,
+					InnodbFtEnableStopword: config.InnodbFtEnableStopword,
+				},
+			}
+			if constExpr, isConst := against.(*expression.Constant); isConst &&
+				!expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {
+				// Validate stable literals even when no rows will be evaluated.
+				if _, err := expression.CompileFTSMysqlMatchAgainstLocalQuery(er.sctx.GetEvalCtx(), sf, localInfo.AnalyzerConfig); err != nil {
+					er.err = err
+					return retNode, false
+				}
+			}
+			err = expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localInfo)
+			if err != nil {
+				er.err = err
+				return retNode, false
+			}
+		} else {
+			er.planCtx.builder.optFlag |= rule.FlagFTSQuickValidation
+			er.planCtx.builder.ctx.SetHasFTSFunc()
+		}
+		er.ctxStackAppend(fn, types.EmptyName)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -1711,6 +1803,103 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		return retNode, false
 	}
 	return originInNode, true
+}
+
+// inDirectMatchBooleanContext reports whether MATCH ... AGAINST is directly
+// consumed as a WHERE, HAVING, or JOIN ON predicate. Any scalar ancestor would
+// require a relevance score and must not take the local 0/1 path.
+func (er *expressionRewriter) inDirectMatchBooleanContext() bool {
+	if er.planCtx == nil {
+		return false
+	}
+	switch er.planCtx.builder.curClause {
+	case whereClause, havingClause, onClause:
+	default:
+		return false
+	}
+	if len(er.astNodeStack) == 0 {
+		return false
+	}
+	for i := len(er.astNodeStack) - 2; i >= 0; i-- {
+		switch n := er.astNodeStack[i].(type) {
+		case *ast.ParenthesesExpr:
+		case *ast.BinaryOperationExpr:
+			if n.Op != opcode.LogicAnd && n.Op != opcode.LogicOr {
+				return false
+			}
+		case *ast.UnaryOperationExpr:
+			if n.Op != opcode.Not && n.Op != opcode.Not2 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// resolveLocalFullTextIndex selects a public index with a known analyzer snapshot.
+// Legacy indexes and unsupported parsers retain native TiCI execution.
+func (er *expressionRewriter) resolveLocalFullTextIndex(numCols, stackLen int) *model.IndexInfo {
+	nameStart := stackLen - numCols - 1
+	if nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil {
+		return nil
+	}
+	first := er.ctxNameStk[nameStart]
+	if first == nil {
+		return nil
+	}
+	dbName, tblName := first.DBName, first.OrigTblName
+	if tblName.L == "" {
+		tblName = first.TblName
+	}
+	if dbName.L == "" {
+		dbName = pmodel.NewCIStr(er.planCtx.builder.ctx.GetSessionVars().CurrentDB)
+	}
+	tbl, err := er.planCtx.builder.is.TableByName(er.ctx, dbName, tblName)
+	if err != nil {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	columnNames := make([]string, numCols)
+	for i := range numCols {
+		name := er.ctxNameStk[nameStart+i]
+		if name == nil {
+			return nil
+		}
+		nameTable := name.OrigTblName
+		if nameTable.L == "" {
+			nameTable = name.TblName
+		}
+		if name.TblName.L != first.TblName.L || nameTable.L != tblName.L || name.DBName.L != "" && name.DBName.L != dbName.L {
+			return nil
+		}
+		colName := name.OrigColName
+		if colName.L == "" {
+			colName = name.ColName
+		}
+		columnNames[i] = colName.L
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic || idx.FullTextInfo == nil || idx.FullTextInfo.ParserConfig == nil || len(idx.Columns) != len(columnNames) {
+			continue
+		}
+		if idx.FullTextInfo.ParserType != model.FullTextParserTypeStandardV1 &&
+			idx.FullTextInfo.ParserType != model.FullTextParserTypeNgramV1 {
+			continue
+		}
+		matched := true
+		for i, col := range idx.Columns {
+			if col.Name.L != columnNames[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return idx
+		}
+	}
+	return nil
 }
 
 // newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.

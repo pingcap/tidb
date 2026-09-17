@@ -228,7 +228,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
 	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
-	coprStore, err := copr.NewStore(s, coprCacheConfig)
+	coprStore, err := copr.NewStore(s, tlsConfig, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -341,6 +341,10 @@ func (s *tikvStore) GetClient() kv.Client {
 
 func (s *tikvStore) GetMPPClient() kv.MPPClient {
 	return s.coprStore.GetMPPClient()
+}
+
+func (s *tikvStore) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCountRequest, timeout time.Duration) (uint64, error) {
+	return s.coprStore.EstimateTiCICount(ctx, req, timeout)
 }
 
 // Close and unregister the store.
