@@ -42,7 +42,8 @@ type StmtUnits struct {
 	NetBytes float64
 	// CrossAZNetBytes is the subset of NetBytes identified as cross-AZ TiFlash traffic.
 	CrossAZNetBytes float64
-	// FrontendCompileBytes is the UTF-8 byte length of the normalized SQL text.
+	// FrontendCompileBytes is the UTF-8 byte length of the normalized SQL text,
+	// or zero when the statement hits the plan cache.
 	FrontendCompileBytes float64
 	// HashStateRows measures constructed hash lookup or group state. TiFlash
 	// contributions retain their producer's size definition: distinct keys,
