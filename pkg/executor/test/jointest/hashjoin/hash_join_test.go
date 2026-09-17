@@ -1035,3 +1035,35 @@ func TestIssue56825(t *testing.T) {
 		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
 	}
 }
+
+// TestIssue71197 covers a semi join whose keys mix null-safe (<=>) and plain (=)
+// equality. The plain key's NULL must keep making the row unmatchable even when a
+// later null-safe key is also NULL, otherwise EXISTS reports a spurious match and
+// NOT EXISTS drops the row.
+func TestIssue71197(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values (null, null)")
+	tk.MustExec("insert into t2 values (null, null)")
+	// (NULL = NULL) is UNKNOWN, so the correlated predicate is never TRUE and the
+	// subquery stays empty however the null-safe conditions evaluate.
+	tk.MustQuery("select exists (select 1 from t1 where t1.b = t2.b and t1.a <=> t2.a) from t2").Check(testkit.Rows("0"))
+	tk.MustQuery("select not exists (select 1 from t1 where t1.b = t2.b and t1.a <=> t2.a) from t2").Check(testkit.Rows("1"))
+	// The reversed key order is the control that never lost the flag.
+	tk.MustQuery("select exists (select 1 from t1 where t1.a <=> t2.a and t1.b = t2.b) from t2").Check(testkit.Rows("0"))
+	// NULL <=> NULL is TRUE, so null-safe keys alone must still match.
+	tk.MustQuery("select exists (select 1 from t1 where t1.a <=> t2.a and t1.b <=> t2.b) from t2").Check(testkit.Rows("1"))
+
+	// The originally reported shape: the plain keys come before the last null-safe
+	// key, over several column types.
+	tk.MustExec("drop table if exists t3, t4")
+	tk.MustExec("create table t3(pk int primary key, int_col int, string_col varchar(50), date_col date, datetime_col datetime, decimal_col decimal(20,5))")
+	tk.MustExec("create table t4(pk int primary key, int_col int, string_col varchar(50), date_col date, datetime_col datetime, decimal_col decimal(20,5))")
+	tk.MustExec("insert into t3 values (-1, null, null, null, null, null)")
+	tk.MustExec("insert into t4 values (-1, null, null, null, null, null)")
+	tk.MustQuery("select exists (select 1 from t3 where t3.date_col <=> t4.date_col and t3.int_col <=> t4.int_col and t3.datetime_col = t4.datetime_col and t3.string_col = t4.string_col and t3.decimal_col <=> t4.decimal_col) from t4").Check(testkit.Rows("0"))
+}

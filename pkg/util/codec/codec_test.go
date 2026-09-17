@@ -1338,3 +1338,41 @@ func TestDatumHashEquals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, tests[len(tests)-1].d1.Equals(tests[len(tests)-1].d2))
 }
+
+func TestHashChunkSelectedNullFlag(t *testing.T) {
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
+	varcharType := types.NewFieldType(mysql.TypeVarchar)
+	varcharType.SetCollate("binary")
+	tps := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLong),
+		varcharType,
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDatetime),
+	}
+	chk := chunk.New(tps, 1, 1)
+	for i := range tps {
+		chk.AppendNull(i)
+	}
+	buf := make([]byte, 1)
+
+	// The NULL flag of a null-rejecting key must survive a later null-safe key on
+	// the same row: join keys are hashed one at a time, and a row with NULL in any
+	// null-rejecting key can never match.
+	for i, tp := range tps {
+		h := []hash.Hash64{fnv.New64()}
+		hasNull := []bool{false}
+		require.NoError(t, HashChunkSelected(typeCtx, h, chk, tp, i, buf, hasNull, nil, false))
+		require.True(t, hasNull[0], "column %d: NULL in a null-rejecting key must be flagged", i)
+		require.NoError(t, HashChunkSelected(typeCtx, h, chk, tp, i, buf, hasNull, nil, true))
+		require.True(t, hasNull[0], "column %d: a null-safe key must not clear the flag", i)
+	}
+
+	// A NULL in a null-safe key alone must not be flagged, since NULL matches NULL
+	// for those keys.
+	for i, tp := range tps {
+		h := []hash.Hash64{fnv.New64()}
+		hasNull := []bool{false}
+		require.NoError(t, HashChunkSelected(typeCtx, h, chk, tp, i, buf, hasNull, nil, true))
+		require.False(t, hasNull[0], "column %d: NULL in a null-safe key must not be flagged", i)
+	}
+}
