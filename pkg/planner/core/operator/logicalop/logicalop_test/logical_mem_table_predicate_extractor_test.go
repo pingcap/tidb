@@ -1982,6 +1982,28 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 }
 
 func TestInfoSchemaTableExtract(t *testing.T) {
+	t.Run("regexp semantics", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database regexp_extract")
+		tk.MustExec("use regexp_extract")
+		for _, name := range []string{"UPPERONLY", "MixedCaseTbl", "lc_tbl", "tbl_99"} {
+			tk.MustExec("create table " + name + "(x int)")
+		}
+		for _, ca := range []struct {
+			predicate string
+			rows      []string
+		}{
+			{`table_name regexp '^[A-Z]+$'`, []string{"UPPERONLY"}},
+			{`table_name regexp '^\\D+$'`, []string{"MixedCaseTbl", "UPPERONLY", "lc_tbl"}},
+			{`table_name regexp '^[^A-Z]+$'`, []string{"lc_tbl", "tbl_99"}},
+			{`regexp_like(table_name, '^[A-Z]+$', 'i')`, []string{"MixedCaseTbl", "UPPERONLY"}},
+			{`regexp_like(table_name, '^[A-Z]+$', 'c')`, []string{"UPPERONLY"}},
+			{`table_name regexp '^[A-Z]+$' and not(table_name regexp '^[A-Z]+$')`, nil},
+		} {
+			tk.MustQuery("select table_name from information_schema.tables where table_schema='regexp_extract' and " + ca.predicate).Sort().Check(testkit.Rows(ca.rows...))
+		}
+	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
