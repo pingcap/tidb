@@ -291,7 +291,9 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan base.Plan, inLockOrWrite
 	case *physicalop.Delete:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
 	case *physicalop.Insert:
-		return v.SelectPlan == nil && len(v.OnDuplicate) == 0 && !v.IsReplace
+		// Foreign-key validation reads referenced rows before acquiring their
+		// locks, so it needs a fresh statement timestamp rather than an old TSO.
+		return v.SelectPlan == nil && len(v.OnDuplicate) == 0 && !v.IsReplace && len(v.FKChecks) == 0
 	}
 	return false
 }
