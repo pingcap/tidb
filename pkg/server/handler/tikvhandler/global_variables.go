@@ -78,6 +78,10 @@ func (h GlobalVariablesHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 			handler.WriteErrorWithCode(w, http.StatusInternalServerError, errors.New("unable to read global variables"))
 			return
 		}
+		// Getters do not uniformly hide secrets: some return configuration or SQL
+		// text unchanged, and embedding API keys may retain a suffix. Fully mask
+		// non-empty sensitive values here, even if a getter already masks them
+		// (e.g. LDAP passwords), while preserving empty values as unset.
 		if sv.IsSensitive && value != "" {
 			value = vardef.MaskPwd
 		}
