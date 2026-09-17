@@ -3918,34 +3918,6 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-// getCleanupIndexValues expands the array column so the ownership check and Delete
-// operate on the same single entry. Delete already accepts scalar cleanup values.
-func getCleanupIndexValues(index table.Index, indexedValues []types.Datum) [][]types.Datum {
-	if index.Meta().MVIndex {
-		for i, col := range index.Meta().Columns {
-			if !index.TableMeta().Columns[col.Offset].FieldType.IsArray() || indexedValues[i].Kind() != types.KindMysqlJSON {
-				continue
-			}
-			array := indexedValues[i].GetMysqlJSON()
-			values := make([][]types.Datum, 0, array.GetElemCount())
-			seen := make(map[string]struct{}, array.GetElemCount())
-			for j := range array.GetElemCount() {
-				element := array.ArrayGetElem(j)
-				key := string(element.HashValue(nil))
-				if _, exists := seen[key]; exists {
-					continue
-				}
-				seen[key] = struct{}{}
-				value := append([]types.Datum(nil), indexedValues...)
-				value[i] = types.NewDatum(element.GetValue())
-				values = append(values, value)
-			}
-			return values
-		}
-	}
-	return [][]types.Datum{indexedValues}
-}
-
 func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*cleanUpIndexWorker, error) {
 	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblCleanupIdxRate, false)
 	if err != nil {
@@ -4013,12 +3985,14 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		recordKeys := make([][]kv.Key, len(idxRecords))
 		for i, idxRecord := range idxRecords {
 			index := w.indexes[i%n]
-			recordValues[i] = getCleanupIndexValues(index, idxRecord.vals)
-			for _, values := range recordValues[i] {
-				key, distinct, err := index.GenIndexKey(ec, loc, values, idxRecord.handle, nil)
+			iter := index.GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, nil)
+			for iter.Valid() {
+				values := iter.IndexedValues()
+				key, distinct, err := iter.NextKey(nil)
 				if err != nil {
 					return errors.Trace(err)
 				}
+				recordValues[i] = append(recordValues[i], values)
 				if distinct {
 					globalIndexKeys = append(globalIndexKeys, key)
 				}

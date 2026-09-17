@@ -174,22 +174,44 @@ func NewPlainIndexKVGenerator(
 	}
 }
 
-// Next returns the next index key and value.
+// IndexedValues returns the scalar indexed values for the next entry without advancing.
+// It must only be called while Valid returns true. After a successful Next or NextKey,
+// it refers to the following entry. The returned slice is borrowed and must not be
+// modified by the caller. Key generation may normalize the values in place, but
+// advancing to subsequent entries does not reuse the slice.
+func (iter *IndexKVGenerator) IndexedValues() []types.Datum {
+	if iter.isMultiValue {
+		return iter.allIdxVals[iter.i]
+	}
+	return iter.idxVals
+}
+
+// Next returns the next index key and value, advancing only on success.
+// It must only be called while Valid returns true.
 // For non multi-value indexes, there is only one index kv.
 func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool, error) {
-	var val []types.Datum
-	if iter.isMultiValue {
-		val = iter.allIdxVals[iter.i]
-	} else {
-		val = iter.idxVals
-	}
+	return iter.next(keyBuf, valBuf, false)
+}
+
+// NextKey returns the next index key without generating its value, advancing only
+// on success. It must only be called while Valid returns true.
+func (iter *IndexKVGenerator) NextKey(keyBuf []byte) ([]byte, bool, error) {
+	key, _, distinct, err := iter.next(keyBuf, nil, true)
+	return key, distinct, err
+}
+
+func (iter *IndexKVGenerator) next(keyBuf, valBuf []byte, keyOnly bool) ([]byte, []byte, bool, error) {
+	val := iter.IndexedValues()
 	key, distinct, err := iter.index.GenIndexKey(iter.ec, iter.loc, val, iter.handle, keyBuf)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	idxVal, err := iter.index.GenIndexValue(iter.ec, iter.loc, distinct, false, val, iter.handle, iter.handleRestoreData, valBuf)
-	if err != nil {
-		return nil, nil, false, err
+	var idxVal []byte
+	if !keyOnly {
+		idxVal, err = iter.index.GenIndexValue(iter.ec, iter.loc, distinct, false, val, iter.handle, iter.handleRestoreData, valBuf)
+		if err != nil {
+			return nil, nil, false, err
+		}
 	}
 	iter.i++
 	return key, idxVal, distinct, err
