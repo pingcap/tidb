@@ -16,8 +16,6 @@ package executor
 
 import (
 	"context"
-	"maps"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -25,8 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/plannersession"
@@ -35,31 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
-
-func newImportQuerySchema(
-	sctx sessionctx.Context,
-	q *importer.QueryPlan,
-	readTS uint64,
-) (infoschema.InfoSchema, error) {
-	dbs := make([]*model.DBInfo, 0, len(q.Databases))
-	for _, db := range q.Databases {
-		dbInfo := db.Clone()
-		for _, tbl := range q.Tables[db.ID] {
-			tableInfo := tbl.Clone()
-			tableInfo.DBID = db.ID
-			dbInfo.Deprecated.Tables = append(dbInfo.Deprecated.Tables, tableInfo)
-		}
-		dbs = append(dbs, dbInfo)
-	}
-
-	parent := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
-	b := infoschema.NewBuilder(parent.GetAutoIDRequirement(), 0, nil, infoschema.NewData(), false).
-		WithCrossKS(true)
-	if err := b.InitWithDBInfos(dbs, parent.AllPlacementPolicies(), nil, nil, 0); err != nil {
-		return nil, err
-	}
-	return b.Build(readTS), nil
-}
 
 // The planner uses the submitted source schema for this query attempt.
 type importQuerySession struct {
@@ -91,25 +62,13 @@ func newImportQuerySession(
 		return nil, nil, errors.New("import query runtime keyspace mismatch")
 	}
 	vars := sctx.GetSessionVars()
-	varNames := slices.Sorted(maps.Keys(q.SessionVars))
-	for _, name := range varNames {
-		if err := vars.SetSystemVar(name, q.SessionVars[name]); err != nil {
-			return nil, nil, err
-		}
-	}
-	vars.MemQuotaQuery = memoryLimit
-	vars.MemTracker.SetBytesLimit(memoryLimit)
-	vars.CurrentDB = q.CurrentDB
-	vars.PartitionPruneMode.Store("static")
-	if err := ctx.Err(); err != nil {
+	if err := q.InitSessionVars(vars, memoryLimit); err != nil {
 		return nil, nil, err
 	}
-	is, err := newImportQuerySchema(sctx, q, q.ReadTS)
+	is, err := q.BuildInfoSchema(sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return nil, nil, err
 	}
-	vars.InRestrictedSQL, vars.InternalSQLScanUserTable = true, false
-	vars.RequestSourceType = kv.InternalDistTask
 	node, err := parseImportQuery(sctx, sql)
 	if err != nil {
 		return nil, nil, err

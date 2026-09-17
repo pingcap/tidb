@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/url"
 	"os"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -276,6 +278,44 @@ type QueryPlan struct {
 	// TiDB worker memory limits are configured separately.
 	SessionVars   map[string]string
 	PushDownFlags uint64
+}
+
+// InitSessionVars applies the captured settings to the worker session's existing
+// variables, keeping the memory budget determined by the worker's resources.
+func (q *QueryPlan) InitSessionVars(vars *variable.SessionVars, memoryLimit int64) error {
+	for _, name := range slices.Sorted(maps.Keys(q.SessionVars)) {
+		if err := vars.SetSystemVar(name, q.SessionVars[name]); err != nil {
+			return err
+		}
+	}
+	vars.MemQuotaQuery = memoryLimit
+	vars.MemTracker.SetBytesLimit(memoryLimit)
+	vars.CurrentDB = q.CurrentDB
+	vars.PartitionPruneMode.Store("static")
+	vars.InRestrictedSQL, vars.InternalSQLScanUserTable = true, false
+	vars.RequestSourceType = tidbkv.InternalDistTask
+	return nil
+}
+
+// BuildInfoSchema builds the captured source schema using the worker's auto-ID
+// requirement and placement policies. Table definitions are cloned for each attempt.
+func (q *QueryPlan) BuildInfoSchema(parent infoschema.InfoSchema) (infoschema.InfoSchema, error) {
+	dbs := make([]*model.DBInfo, 0, len(q.Databases))
+	for _, db := range q.Databases {
+		dbInfo := db.Clone()
+		for _, tbl := range q.Tables[db.ID] {
+			tableInfo := tbl.Clone()
+			tableInfo.DBID = db.ID
+			dbInfo.Deprecated.Tables = append(dbInfo.Deprecated.Tables, tableInfo)
+		}
+		dbs = append(dbs, dbInfo)
+	}
+	b := infoschema.NewBuilder(parent.GetAutoIDRequirement(), 0, nil, infoschema.NewData(), false).
+		WithCrossKS(true)
+	if err := b.InitWithDBInfos(dbs, parent.AllPlacementPolicies(), nil, nil, 0); err != nil {
+		return nil, err
+	}
+	return b.Build(q.ReadTS), nil
 }
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.

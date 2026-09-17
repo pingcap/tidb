@@ -27,6 +27,7 @@ go_library(
         "//pkg/dxf/framework/scheduler",
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/expression",
+        "//pkg/infoschema",
         "//pkg/ingestor/ingestctrl",
         "//pkg/ingestor/simplesst",
         "//pkg/keyspace",
