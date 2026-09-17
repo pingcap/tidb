@@ -1124,7 +1124,7 @@ func validateIncludeGeneratedColumns(conf *Config) error {
 		return errors.Errorf("can't specify %s with --%s or --%s", option, flagColumnFilter, flagColumnFilterFile)
 	case conf.NoData:
 		return errors.Errorf("can't specify both %s and --%s at the same time", option, flagNoData)
-	case conf.FileType != FileFormatCSVString && conf.FileType != FileFormatParquetString:
+	case conf.FileType == FileFormatSQLTextString:
 		// INSERT statements that assign values to generated columns can't be imported back.
 		return errors.Errorf("%s is only supported with --%s csv or parquet", option, flagFiletype)
 	}
