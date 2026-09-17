@@ -34,6 +34,7 @@ not as deliverables of this effort.
 * [Keeping the design reusable for TiFlash](#keeping-the-design-reusable-for-tiflash)
 * [Investigation and alternatives: the ER-tree (LSM-embedded R-tree)](#investigation-and-alternatives-the-er-tree-lsm-embedded-r-tree)
 * [SQL syntax (dialect compatibility)](#sql-syntax-dialect-compatibility)
+* [Apache Sedona survey (2026-09-17)](#apache-sedona-survey-2026-09-17)
 * [Open research questions and risks](#open-research-questions-and-risks)
 * [References](#references)
 
@@ -1270,6 +1271,90 @@ These are PoC measurements, not production numbers.
 
 The PoC also keeps its own execution log at `docs/design/spatial-index/OVERNIGHT-PLAN.md` on
 that branch.
+
+## Apache Sedona survey (2026-09-17)
+
+[Apache Sedona](https://sedona.apache.org/) is the largest open-source spatial SQL stack:
+`sedona` (Spark/Flink/Snowflake, Java/Scala) and `sedona-db` (a single-node Rust engine on
+DataFusion, the closer analogue to TiDB). Neither keeps a persistent index: they build
+R-trees in memory per query and spread data over Spark partitions, so their index
+structures do not carry over to an ordered KV store. These details do:
+
+- **Geographic bounds must follow the curve.** SedonaDB computes geography bounds with
+  S2's `RectBounder` rather than vertex min/max, and pads for numerical error
+  (`c/sedona-s2geography/src/rect_bounder.rs`). Checking that against MySQL is what
+  produced the measurements in "SRID 4326: spherical S2 cells" above, and the Phase-2
+  rules in the design doc's Query path.
+- **Wraparound intervals.** `WraparoundInterval` (`rust/sedona-geometry/src/interval.rs`)
+  encodes an antimeridian-crossing longitude range as `lo > hi` and splits it into two
+  plain intervals to test intersection: the GeoParquet/Iceberg convention, and what MySQL's
+  own MBR does. Their safe default is also worth copying: when no spherical bounder is
+  registered, a geography predicate prunes nothing rather than pruning wrongly.
+- **Prepared (pre-indexed) refine geometries.** Sedona prepares a geometry once and
+  chooses which side to prepare per predicate (`rust/sedona-spatial-join/src/refine/tg.rs`:
+  Contains/Covers prepare the build side, Within/CoveredBy the probe side, distance
+  predicates neither). The PoC instead decodes both operands per row and rebuilds an S2
+  polygon per row on 4326 (`pkg/util/geomrel/geodesic.go`). `simplefeatures` v0.59 already
+  exposes `geom.Prepare`, and TiDB already caches per-constant state in builtins
+  (`builtinFuncCache`, `pkg/expression/builtin_regexp.go`), so preparing the constant query
+  geometry once per statement is a small change with a large effect on big boundary
+  polygons. Caveat: `PreparedGeometry` still routes each probe geometry through WKB, so the
+  relate-internal re-parse noted in `storage-format.md` remains.
+- **A KNN radius that is provably an upper bound.** Sedona's exact KNN join bounds the
+  search with the distance to the k-th nearest *sample*
+  (`QuadTreeRTPartitioning.java`); since samples are a subset of the data, the true k-th
+  distance cannot be larger. TiDB's ANALYZE samples could seed the radius the same way:
+  run the radius-bounded index query plus TopN, accept the answer when at least k rows
+  survive, otherwise grow the radius and retry. Stale samples only cost a retry, never
+  correctness, as long as the row count is what decides. Related: SedonaDB gives up on
+  distance lower bounds for geography because planar lon/lat boxes provide none
+  (`index/default_spatial_index.rs`), whereas S2 cells do (`s2.Cell.Distance`).
+- **KNN semantics not to copy.** SedonaDB's `ST_KNN` join predicate applies filters on the
+  searched table *after* selecting the neighbours, so a query can return fewer than k rows
+  (`docs/reference/sql-joins.md`). SQL's `WHERE ... ORDER BY ... LIMIT k` filters first, so
+  a future best-first operator may only count rows that pass the residual filters.
+- **Cell equi-join for column-to-column spatial joins.** Sedona documents an S2 join:
+  fixed-level cell ids on both sides, an equality join, then refine and de-duplicate
+  (`docs/api/sql/Optimizer.md`). With fixed-level coverings, which the PoC's
+  `CoverFixedLevelCells` already produces for SRID 0, a spatial join becomes an ordinary
+  equality join that TiDB's existing joins can run, and it fits the MVI's equality-only
+  matching. The trade is more cells per large geometry. Duplicates can be removed without a
+  global DISTINCT by the reference-point rule (`DuplicatesFilter.java`): emit a pair only
+  from the half-open cell containing the minimum corner of the two bboxes' intersection,
+  which holds as long as coverings are bbox-derived, as the PoC's are.
+- **Format versioning, learned the hard way.** Sedona's own serialization is essentially
+  the "Tier B" layout `storage-format.md` describes (8-byte header carrying type,
+  dimensions, an SRID flag and the coordinate count, then all coordinates contiguous and
+  8-byte aligned, then ring and part counts). It carries **no version byte**, and when it
+  changed in 1.4.0 (SEDONA-207) data written by 1.3.1 became unreadable without a
+  `legacyMode` option. That is the argument for the format-version byte. Sedona also uses
+  native byte order, which is fine for in-memory Spark rows and wrong for stored data.
+  SedonaDB took a different route entirely: keep WKB and run algorithms straight over the
+  bytes through the `wkb` and `geo-traits` crates (`rust/sedona-geo-generic-alg`), which is
+  a third option for a future TiKV-side refine.
+- **Lakehouse pruning is our bbox-in-the-key idea.** GeoParquet 1.1 stores a per-row bbox
+  in ordinary scalar columns ("covering") so that plain min/max statistics prune row
+  groups, and Sedona recommends sorting data by geohash first. That is the same mechanism
+  as this design's bbox index columns, and it sketches a future TiFlash path: hidden stored
+  bbox columns plus TiFlash's per-pack min/max, with no new index type.
+- **Benchmark suite.** `sedona-spatialbench` is a synthetic trips/zones/buildings generator
+  with scale factors and 12 queries, including radius plus `ORDER BY` distance, point in
+  county polygon, distance joins and a KNN join. It needs a MySQL-dialect port (it uses
+  `ST_DWithin` and planar degrees), but it would complement the Capital Bikeshare dataset
+  in the design doc's Benchmark Tests.
+
+Deliberately not adopted:
+
+- **Heuristic padding.** Sedona inflates distance query windows by a flat 3% (spheroid) or
+  10% (haversine) with no derivation
+  (`SpatialFilterPushDownForGeoParquet.scala`, `Haversine.java`). Our equivalent question,
+  the conservative inflation for an ellipsoidal `ST_Distance` cap, still needs a real
+  bound.
+- **H3 cells.** H3 hexagons do not nest, so Sedona's coverings add a ring of neighbour
+  cells "just in case" (`H3Utils.java`). Exact hierarchical containment is what makes
+  ancestor/descendant matching work here, so S2 and the planar quadtree remain the choice.
+- **Spark-style spatial partitioning** (KDB-tree, quadtree partitioners): TiKV's automatic
+  Region splitting already provides the equivalent.
 
 ## Open research questions and risks
 
