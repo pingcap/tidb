@@ -511,6 +511,25 @@ func TestWriteSlowLog(t *testing.T) {
 
 	tk.MustExec(`set global tidb_slow_log_rules="Succ:true"`)
 	checkWriteSlowLog(true)
+
+	t.Run("memory cancellation before next is not success", func(t *testing.T) {
+		tk.MustExec("set tidb_slow_log_threshold=0")
+		tk.MustExec("set global tidb_slow_log_rules=''")
+		tk.MustExec("set session tidb_slow_log_rules=''")
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		require.NotNil(t, rs)
+		recorded.TakeAll()
+		killer := &tk.Session().GetSessionVars().SQLKiller
+		killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
+		err = rs.Next(context.Background(), rs.NewChunk(nil))
+		killer.Reset()
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err), err)
+		require.NoError(t, rs.Close())
+		entries := recorded.All()
+		require.Len(t, entries, 1)
+		require.Contains(t, entries[0].Message, "Succ: false")
+	})
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {

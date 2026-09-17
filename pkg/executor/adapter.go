@@ -181,6 +181,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			a.stmt.abortStatementRU()
+			a.lastErrs = append(a.lastErrs, err)
 			return err
 		}
 	}
