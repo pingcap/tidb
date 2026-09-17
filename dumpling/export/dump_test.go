@@ -1029,6 +1029,43 @@ func TestColumnProjectionIncludeStoredGeneratedColumns(t *testing.T) {
 	})
 }
 
+func TestColumnProjectionInvisibleColumns(t *testing.T) {
+	// MySQL 8.0.23+ excludes INVISIBLE columns from SELECT *, so they must be listed explicitly.
+	for _, tc := range []struct {
+		name          string
+		includeStored bool
+		extra         string
+		fields        string
+	}{
+		{name: "plain invisible column", extra: "INVISIBLE", fields: "`id`,`inv`"},
+		{name: "included stored invisible column", includeStored: true, extra: "STORED GENERATED INVISIBLE", fields: "`id`,`inv`"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tctx, mock, baseConn := newMockDumpConn(t)
+			conf := DefaultConfig()
+			conf.NoSchemas = true
+			conf.IncludeStoredGeneratedColumns = tc.includeStored
+			conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+			mock.ExpectQuery("SHOW COLUMNS FROM").
+				WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+					AddRow("id", "int(11)", "NO", "PRI", nil, "").
+					AddRow("inv", "int(11)", "YES", "", nil, tc.extra))
+			mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT %s FROM `%s`.`%s` LIMIT 1", tc.fields, database, table))).
+				WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+					sqlmock.NewColumn("id").OfType("INT", int64(0)),
+					sqlmock.NewColumn("inv").OfType("INT", int64(0)),
+				).AddRow(1, 2))
+
+			require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+			projection := conf.columnProjection[tableName{db: database, table: table}]
+			require.Equal(t, tc.fields, projection.selectField)
+			require.Equal(t, []string{"id", "inv"}, columnNames(projection.selectedTypes))
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestColumnProjectionIncludeStoredGeneratedColumnsKeepsSchema(t *testing.T) {
 	const createSQL = "CREATE TABLE `t` (`a` INT PRIMARY KEY, `b` INT, `secret` INT, " +
 		"`c` INT GENERATED ALWAYS AS (`a` + 1) STORED, `d` INT GENERATED ALWAYS AS (`b` + 1) STORED)"
