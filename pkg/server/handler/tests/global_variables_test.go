@@ -87,7 +87,7 @@ func TestGlobalVariables(t *testing.T) {
 		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 	})
 
-	t.Run("sensitive getters are never read", func(t *testing.T) {
+	t.Run("sensitive values are masked", func(t *testing.T) {
 		originalRedactMode := errors.RedactLogEnabled.Load()
 		t.Cleanup(func() { tk.MustExec("SET GLOBAL tidb_redact_log = '" + originalRedactMode + "'") })
 		names := []string{
@@ -95,19 +95,19 @@ func TestGlobalVariables(t *testing.T) {
 			vardef.TiDBExpEmbedCohereAPIKey, vardef.TiDBExpEmbedHuggingFaceAPIKey,
 			vardef.TiDBExpEmbedNvidiaNIMAPIKey, vardef.TiDBExpEmbedGeminiAPIKey,
 			vardef.AuthenticationLDAPSASLBindRootPWD, vardef.AuthenticationLDAPSimpleBindRootPWD,
-			vardef.TiDBCloudStorageURI, vardef.TiDBConfig, vardef.TiDBTraceEvent, vardef.InitConnect,
+			vardef.TiDBConfig, vardef.TiDBTraceEvent, vardef.InitConnect,
 			vardef.ValidatePasswordDictionary, "init_slave",
 		}
 		oldNoop := vardef.EnableNoopVariables.Swap(true)
 		t.Cleanup(func() { vardef.EnableNoopVariables.Store(oldNoop) })
-		var called atomic.Bool
+		var called atomic.Int64
 		for _, name := range names {
 			original := variable.GetSysVar(name)
 			t.Cleanup(func() { variable.RegisterSysVar(original) })
 			replacement := *original
 			replacement.GetGlobal = func(context.Context, *variable.SessionVars) (string, error) {
-				called.Store(true)
-				return "credential-that-must-never-be-read", errors.New("secret getter error")
+				called.Add(1)
+				return "credential-that-must-be-masked", nil
 			}
 			variable.RegisterSysVar(&replacement)
 		}
@@ -118,7 +118,7 @@ func TestGlobalVariables(t *testing.T) {
 				require.Equal(t, "******", result[name], name)
 			}
 		}
-		require.False(t, called.Load())
+		require.Equal(t, int64(3*len(names)), called.Load())
 	})
 
 	t.Run("noop visibility", func(t *testing.T) {
@@ -137,12 +137,36 @@ func TestGlobalVariables(t *testing.T) {
 		defer variable.UnregisterSysVar(name)
 		for _, value := range []string{"", "x", "sk-long-secret-suffix", "s3://user:secret@bucket/?token=secret%zz"} {
 			variable.RegisterSysVar(&variable.SysVar{
-				Name: name, Scope: vardef.ScopeGlobal, Value: value, IsSensitive: true,
+				Name: name, Scope: vardef.ScopeGlobal, Value: "default-secret", IsSensitive: true,
 				GetGlobal: func(context.Context, *variable.SessionVars) (string, error) {
-					panic("sensitive variable getter must not run")
+					return value, nil
 				},
 			})
-			require.Equal(t, "******", fetch()[name])
+			expected := "******"
+			if value == "" {
+				expected = ""
+			}
+			require.Equal(t, expected, fetch()[name])
+		}
+	})
+
+	t.Run("cloud storage URI redaction", func(t *testing.T) {
+		original := vardef.CloudStorageURI.Load()
+		t.Cleanup(func() { vardef.CloudStorageURI.Store(original) })
+		for _, test := range []struct {
+			uri      string
+			expected string
+		}{
+			{"", ""},
+			{"s3://bucket/path", "s3://bucket/path"},
+			{"s3://bucket/path?access-key=key&secret-access-key=secret&session-token=token&region=us-east-1", "s3://bucket/path?access-key=xxxxxx&region=us-east-1&secret-access-key=xxxxxx&session-token=xxxxxx"},
+			{"ks3://bucket/path?Access_Key=key&secret_access_key=secret", "ks3://bucket/path?Access_Key=xxxxxx&secret_access_key=xxxxxx"},
+			{"oss://bucket/path?access-key=key&secret-access-key=secret", "oss://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx"},
+			{"azure://bucket/path?account-key=key&encryption-key=secret&sas-token=token", "azure://bucket/path?account-key=xxxxxx&encryption-key=xxxxxx&sas-token=xxxxxx"},
+			{"azblob://bucket/path?account-key=key&encryption-key=secret&sas-token=token", "azblob://bucket/path?account-key=xxxxxx&encryption-key=xxxxxx&sas-token=xxxxxx"},
+		} {
+			vardef.CloudStorageURI.Store(test.uri)
+			require.Equal(t, test.expected, fetch()[vardef.TiDBCloudStorageURI])
 		}
 	})
 
@@ -172,26 +196,40 @@ func TestGlobalVariables(t *testing.T) {
 
 	t.Run("safe getter failure", func(t *testing.T) {
 		const name = "test_http_failing_global_variable"
-		variable.RegisterSysVar(&variable.SysVar{
-			Name: name, Scope: vardef.ScopeGlobal,
-			GetGlobal: func(context.Context, *variable.SessionVars) (string, error) {
-				return "", errors.New("credential-in-error-must-not-leak")
-			},
-		})
 		defer variable.UnregisterSysVar(name)
-		resp, err := ts.FetchStatus("/variables/global")
-		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-		require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-		body, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-		require.NotContains(t, string(body), "credential-in-error")
-		require.NotContains(t, string(body), vardef.MaxExecutionTime)
+		for _, sensitive := range []bool{false, true} {
+			variable.RegisterSysVar(&variable.SysVar{
+				Name: name, Scope: vardef.ScopeGlobal, IsSensitive: sensitive,
+				GetGlobal: func(context.Context, *variable.SessionVars) (string, error) {
+					return "credential-in-value-must-not-leak", errors.New("credential-in-error-must-not-leak")
+				},
+			})
+			resp, err := ts.FetchStatus("/variables/global")
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.NotContains(t, string(body), "credential-in-")
+			require.NotContains(t, string(body), vardef.MaxExecutionTime)
+		}
 	})
 
 	t.Run("request cancellation", func(t *testing.T) {
+		const name = "test_http_cancel_global_variable"
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		defer cancel()
+		variable.RegisterSysVar(&variable.SysVar{
+			Name: name, Scope: vardef.ScopeGlobal,
+			GetGlobal: func(ctx context.Context, _ *variable.SessionVars) (string, error) {
+				_, hasDeadline := ctx.Deadline()
+				require.True(t, hasDeadline)
+				cancel()
+				require.ErrorIs(t, ctx.Err(), context.Canceled)
+				return "", ctx.Err()
+			},
+		})
+		defer variable.UnregisterSysVar(name)
 		req := httptest.NewRequest(http.MethodGet, "/variables/global", nil).WithContext(ctx)
 		resp := httptest.NewRecorder()
 		tikvhandler.NewGlobalVariablesHandler(ts.server.NewTikvHandlerTool()).ServeHTTP(resp, req)

@@ -3296,7 +3296,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	// can't assign validate function here. Because validation function will run after GetGlobal function
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCloudStorageURI, Value: "", Type: vardef.TypeStr, IsSensitive: true, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCloudStorageURI, Value: "", Type: vardef.TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
 		cloudStorageURI := vardef.CloudStorageURI.Load()
 		if len(cloudStorageURI) > 0 {
 			cloudStorageURI = ast.RedactURL(cloudStorageURI)

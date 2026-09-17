@@ -46,10 +46,6 @@ func (h GlobalVariablesHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 
 	ctx, cancel := context.WithTimeout(req.Context(), requestDefaultTimeout)
 	defer cancel()
-	if ctx.Err() != nil {
-		handler.WriteErrorWithCode(w, http.StatusInternalServerError, errors.New("unable to read global variables"))
-		return
-	}
 	s, err := session.CreateSession(h.Store)
 	if err != nil {
 		handler.WriteErrorWithCode(w, http.StatusInternalServerError, errors.New("unable to read global variables"))
@@ -60,10 +56,6 @@ func (h GlobalVariablesHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 	sysVars := variable.GetSysVars()
 	values := make(map[string]string, len(sysVars))
 	for _, sv := range sysVars {
-		if ctx.Err() != nil {
-			handler.WriteErrorWithCode(w, http.StatusInternalServerError, errors.New("unable to read global variables"))
-			return
-		}
 		if sv.Scope == vardef.ScopeSession || sv.IsNoop && !vardef.EnableNoopVariables.Load() {
 			continue
 		}
@@ -71,20 +63,15 @@ func (h GlobalVariablesHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 		if compat.IsInvisibleSysVar(sv.Name) {
 			continue
 		}
-		if sv.IsSensitive {
-			values[sv.Name] = "******"
-			continue
-		}
 		value, err := sv.GetGlobalFromHook(ctx, s.GetSessionVars())
 		if err != nil {
 			handler.WriteErrorWithCode(w, http.StatusInternalServerError, errors.New("unable to read global variables"))
 			return
 		}
+		if sv.IsSensitive && value != "" {
+			value = "******"
+		}
 		values[sv.Name] = value
-	}
-	if ctx.Err() != nil {
-		handler.WriteErrorWithCode(w, http.StatusInternalServerError, errors.New("unable to read global variables"))
-		return
 	}
 	handler.WriteData(w, values)
 }
