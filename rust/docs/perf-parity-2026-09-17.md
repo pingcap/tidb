@@ -173,3 +173,17 @@ remaining profile is flat: memmove 13% spread over the ten output columns'
 `copy_row_ids_from` / `append_cell_n_times` closures, `BuildTable::probe` 3%,
 allocator 5%; nothing single dominates, so the next check is the workload
 effect (Q9's `lineitem x partsupp` on `l_partkey, l_suppkey`).
+
+### Workload check of fixes 3+4 (warm, per query, go / head / fix4 / go, results/ab-fix4.txt)
+
+No measurable change on TPC-H: q09 head 3.34/3.39 s vs fix4 3.58/3.43 s (go
+3.22), q02 0.22 vs 0.23 s, q20 1.47 vs 1.50 s, q03 1.15 vs 1.08 s, q10 0.82 vs
+0.77 s (node CPU within 5% in every case; the first head pass in the file is
+invalid, the node was not up yet). EXPLAIN on the Rust node shows why: q09's
+composite-key join (`HashJoin_87`, lineitem x partsupp) gives each probe row
+~7 matches that live in different build chunks, so it takes the per-row path
+and never used the batched copy; q20's composite join is a small-build outer
+join; q02's only general-key join (decimal `ps_supplycost`) has 630 rows. The
+13x pathology is therefore not a TPC-H lever; it applies to varchar, decimal
+and composite-key joins whose matches sit in one build chunk. q09 also shows
+the Rust node at ~5.0 s of CPU against Go's ~4.45 s for the same wall time.
