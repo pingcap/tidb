@@ -511,8 +511,11 @@ fn main() {
     if wanted("cop_encode") {
         bench_cop_encode();
     }
-    if wanted("join_probe int_key bytes_key composite_key") {
+    if wanted("join_probe int_key bytes_key composite_key fanout") {
         bench_hash_join_probe();
+    }
+    if wanted("join_v2 int_key bytes_key fanout") {
+        bench_hash_join_v2_probe();
     }
 }
 
@@ -697,16 +700,25 @@ fn bench_hash_join_probe() {
         .unwrap_or(100_000);
     let types = wide_types();
     let out_types: Vec<FieldType> = types.iter().chain(types.iter()).cloned().collect();
-    for (label, conditions) in [
-        ("join_probe_int_key", vec![eq_on(0, 0, 5)]),
+    // `fanout` is the number of build rows per key. With more than one, a
+    // probe row's matches are `rows / fanout` build rows apart, i.e. in
+    // different build chunks, which is how a join on a foreign key sees them
+    // (TPC-H q09: each partsupp row matches ~7 lineitem rows). The build side
+    // is the left child (an inner join's default), the probe side has one row
+    // per key, so every shape emits `rows` output rows.
+    for (label, conditions, fanout) in [
+        ("join_probe_int_key", vec![eq_on(0, 0, 5)], 1),
         (
             "join_probe_bytes_key",
             vec![eq_on_typed(2, 2, 5, FieldTypeCode::Varchar)],
+            1,
         ),
         (
             "join_probe_composite_key",
             vec![eq_on(0, 0, 5), eq_on(1, 1, 5)],
+            1,
         ),
+        ("join_probe_int_fanout8", vec![eq_on(0, 0, 5)], 8),
     ] {
         let only = std::env::var("BENCH_ONLY").unwrap_or_default();
         if !only.is_empty()
@@ -715,23 +727,25 @@ fn bench_hash_join_probe() {
         {
             continue;
         }
+        let keys = rows / fanout;
         let mut probe_only = || {
-            black_box(drain(&mut Sequence::new(rows, rows as i64)));
+            black_box(drain(&mut Sequence::new(rows, keys as i64)));
+            black_box(drain(&mut Sequence::new(keys, keys as i64)));
         };
         let mut total = || {
             let mut join = JoinExec::new(
                 ExecutorMeta::new(schema_of(&out_types), 1, CHUNK, CHUNK),
                 JoinKind::Inner,
                 conditions.clone(),
-                Box::new(Sequence::new(rows, rows as i64)),
-                Box::new(Sequence::new(rows, rows as i64)),
+                Box::new(Sequence::new(rows, keys as i64)),
+                Box::new(Sequence::new(keys, keys as i64)),
                 JoinCtx,
                 StatementMemory::new(1 << 30, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
             );
             let produced = drain(&mut join);
             assert_eq!(
                 produced, rows,
-                "{label}: every probe row matches exactly once"
+                "{label}: every probe row matches `fanout` build rows"
             );
         };
         let results = best_of_blocks(&mut [("source", &mut probe_only), ("total", &mut total)]);
@@ -739,10 +753,79 @@ fn bench_hash_join_probe() {
         let rows = rows as f64;
         println!(
             "{label} ns_per_row {:.1}",
-            (total_m.0.as_secs_f64() - 2.0 * source.0.as_secs_f64()).max(0.0) * 1e9 / rows
+            (total_m.0.as_secs_f64() - source.0.as_secs_f64()).max(0.0) * 1e9 / rows
         );
         println!("{label} total_cal_per_row {:.4}", total_m.1 / rows);
         println!("{label} source_cal_per_row {:.4}", source.1 / rows);
+    }
+}
+
+/// The same three shapes through the server's default join, hash join v2
+/// (`tidb_hash_join_version = optimized`): `HashJoinV2Executor` with one
+/// worker, the probe side left and the build side right.
+fn bench_hash_join_v2_probe() {
+    use tidb_executor::hash_join_v2::executor::{HashJoinV2Executor, HashJoinV2Plan};
+    use tidb_executor::joiner::JoinType;
+    let rows: usize = std::env::var("BENCH_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(100_000);
+    let types = wide_types();
+    let out_types: Vec<FieldType> = types.iter().chain(types.iter()).cloned().collect();
+    for (label, key, key_code, fanout) in [
+        ("join_v2_int_key", 0usize, FieldTypeCode::LongLong, 1usize),
+        ("join_v2_bytes_key", 2, FieldTypeCode::Varchar, 1),
+        ("join_v2_int_fanout8", 0, FieldTypeCode::LongLong, 8),
+    ] {
+        let only = std::env::var("BENCH_ONLY").unwrap_or_default();
+        if !only.is_empty() && !label.contains(only.as_str()) && !"join_v2".contains(only.as_str())
+        {
+            continue;
+        }
+        let keys = rows / fanout;
+        let mut probe_only = || {
+            black_box(drain(&mut Sequence::new(rows, keys as i64)));
+            black_box(drain(&mut Sequence::new(keys, keys as i64)));
+        };
+        let mut total = || {
+            let mut join = HashJoinV2Executor::new(
+                ExecutorMeta::new(schema_of(&out_types), 1, CHUNK, CHUNK),
+                HashJoinV2Plan {
+                    concurrency: 1,
+                    join_type: JoinType::Inner,
+                    right_as_build_side: true,
+                    build_key_indices: vec![key],
+                    probe_key_indices: vec![key],
+                    build_key_types: vec![FieldType::new(key_code)],
+                    probe_key_types: vec![FieldType::new(key_code)],
+                    l_used: (0..types.len()).collect(),
+                    r_used: (0..types.len()).collect(),
+                    l_used_in_other_condition: vec![],
+                    r_used_in_other_condition: vec![],
+                    build_filter: vec![],
+                    probe_filter: vec![],
+                    other_condition: vec![],
+                    vectorized: true,
+                },
+                Box::new(Sequence::new(keys, keys as i64)),
+                Box::new(Sequence::new(rows, keys as i64)),
+                JoinCtx,
+                StatementMemory::new(1 << 30, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
+            );
+            let produced = drain(&mut join);
+            assert_eq!(
+                produced, rows,
+                "{label}: every probe row matches `fanout` build rows"
+            );
+        };
+        let results = best_of_blocks(&mut [("source", &mut probe_only), ("total", &mut total)]);
+        let (source, total_m) = (results[0], results[1]);
+        let rows = rows as f64;
+        println!(
+            "{label} ns_per_row {:.1}",
+            (total_m.0.as_secs_f64() - source.0.as_secs_f64()).max(0.0) * 1e9 / rows
+        );
+        println!("{label} total_cal_per_row {:.4}", total_m.1 / rows);
     }
 }
 
