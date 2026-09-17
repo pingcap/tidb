@@ -2212,6 +2212,29 @@ func TestDecodetoChunkReuse(t *testing.T) {
 	rs.Close()
 }
 
+func TestIssue70283(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table t (s bigint, u bigint unsigned)")
+	tk.MustExec("insert into t values (-1, 18446744073709551615), (0, 0), (null, null)")
+	for _, vectorized := range []string{"OFF", "ON"} {
+		tk.MustExec("set tidb_enable_vectorized_expression = " + vectorized)
+		for _, list := range []string{
+			"-1, 18446744073709551615",
+			"18446744073709551615, -1",
+			"-1, -1, 18446744073709551615, 18446744073709551615",
+		} {
+			// Projection evaluates locally; WHERE also exercises the pruned argument list sent to coprocessors.
+			tk.MustQuery("select s in (" + list + "), u in (" + list + ") from t").Sort().Check(
+				testkit.Rows("0 0", "1 1", "<nil> <nil>"))
+			tk.MustQuery("select s from t where s in (" + list + ")").Check(testkit.Rows("-1"))
+			tk.MustQuery("select u from t where u in (" + list + ")").Check(testkit.Rows("18446744073709551615"))
+			tk.MustQuery("select s from t where s not in (" + list + ")").Check(testkit.Rows("0"))
+			tk.MustQuery("select u from t where u not in (" + list + ")").Check(testkit.Rows("0"))
+		}
+	}
+}
+
 func TestIssue16697(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

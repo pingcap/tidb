@@ -235,9 +235,16 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 			}
 
 			// Only keep this arg if value wasn't seen before
-			if _, exists := b.hashSet[val]; !exists {
+			if isUnsigned, exists := b.hashSet[val]; !exists {
 				b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
 				b.args[uniqueArgCount] = b.args[i]
+				uniqueArgCount++
+			} else if val < 0 && isUnsigned != mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag()) {
+				// Negative signed values and large unsigned values can share the same
+				// int64 representation. Keep the other signedness for the fallback
+				// comparison and for expressions pushed down to coprocessors.
+				b.args[uniqueArgCount] = b.args[i]
+				b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
 				uniqueArgCount++
 			}
 		case ConstOnlyInContext:

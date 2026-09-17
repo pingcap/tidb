@@ -305,6 +305,17 @@ func TestInFunc(t *testing.T) {
 		{[]any{uint64(math.MaxUint64), uint64(math.MaxUint64), 2, 3}, int64(1)},
 		{[]any{-1, uint64(math.MaxUint64), 2, 3}, int64(0)},
 		{[]any{uint64(math.MaxUint64), -1, 2, 3}, int64(0)},
+		{[]any{uint64(math.MaxUint64), -1, uint64(math.MaxUint64)}, int64(1)},
+		{[]any{uint64(math.MaxUint64), uint64(math.MaxUint64), -1}, int64(1)},
+		{[]any{-1, uint64(math.MaxUint64), -1}, int64(1)},
+		{[]any{-1, -1, uint64(math.MaxUint64)}, int64(1)},
+		{[]any{int64(math.MinInt64), uint64(1 << 63), int64(math.MinInt64)}, int64(1)},
+		{[]any{uint64(1 << 63), int64(math.MinInt64), uint64(1 << 63)}, int64(1)},
+		{[]any{-1, nil, uint64(math.MaxUint64), -1, -1}, int64(1)},
+		{[]any{uint64(math.MaxUint64), nil, -1, uint64(math.MaxUint64), uint64(math.MaxUint64)}, int64(1)},
+		{[]any{0, -1, uint64(math.MaxUint64)}, int64(0)},
+		{[]any{0, -1, uint64(math.MaxUint64), nil}, nil},
+		{[]any{nil, -1, uint64(math.MaxUint64)}, nil},
 		{[]any{1, 0, 2, 3}, int64(0)},
 		{[]any{1.1, 1.2, 1.3}, int64(0)},
 		{[]any{1.1, 1.1, 1.2, 1.3}, int64(1)},
@@ -326,6 +337,21 @@ func TestInFunc(t *testing.T) {
 		d, err := evalBuiltinFunc(fn, ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		require.NoError(t, err)
 		require.Equalf(t, tc.res, d.GetValue(), "%v", types.MakeDatums(tc.args))
+		if _, ok := fn.(*builtinInIntSig); ok {
+			input := chunk.NewChunkWithCapacity(nil, 1)
+			input.SetNumVirtualRows(1)
+			result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1)
+			for _, sig := range []builtinFunc{fn, fn.Clone()} {
+				require.True(t, sig.vectorized() && sig.isChildrenVectorized())
+				require.NoError(t, vecEvalType(ctx, sig, types.ETInt, input, result))
+				if tc.res == nil {
+					require.True(t, result.IsNull(0))
+				} else {
+					require.False(t, result.IsNull(0))
+					require.Equal(t, tc.res, result.GetInt64(0))
+				}
+			}
+		}
 	}
 	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci")
 	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci")
