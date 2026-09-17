@@ -262,7 +262,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 		}
 	case ast.RegexpReplace:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1], args[2])
-	case ast.Locate, ast.Instr, ast.Position, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr:
+	case ast.Locate, ast.Instr, ast.Position, ast.RegexpSubstr:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
 	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.Strcmp:
 		// if compare type is string, we should determine which collation should be used.
@@ -279,7 +279,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[1], args[2])
 	case ast.Ifnull:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
-	case ast.Like, ast.Ilike:
+	case ast.Like, ast.Ilike, ast.RegexpLike, ast.RegexpInStr:
 		ec, err = CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args[0], args[1])
 		if err != nil {
 			return nil, err
