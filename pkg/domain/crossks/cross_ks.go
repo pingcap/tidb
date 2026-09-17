@@ -35,12 +35,15 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -250,6 +253,8 @@ func (*Manager) createSessionManager(
 		return nil, errors.Trace(err)
 	}
 	failpoint.InjectCall("injectETCDCli", &etcdCli, ks)
+	// Service discovery and connection creation are deferred until ID allocation.
+	autoidClient := autoid.NewClientDiscover(etcdCli)
 	ctx, cancel := context.WithCancel(context.Background())
 	var svrInfoSyncer *serverinfo.Syncer
 	serverInfoRegistered := false
@@ -260,6 +265,7 @@ func (*Manager) createSessionManager(
 				svrInfoSyncer.RevokeSession()
 			}
 			cancel()
+			autoidClient.ResetConn(nil)
 			err2 := etcdCli.Close()
 			if err2 != nil {
 				logutil.BgLogger().Warn("failed to close etcd client", zap.Error(err2))
@@ -302,7 +308,7 @@ func (*Manager) createSessionManager(
 			return coordinator
 		},
 		schemaVerSyncer,
-		nil, nil,
+		autoidClient, nil,
 	)
 	if err = isSyncer.Reload(); err != nil {
 		return nil, errors.Trace(err)
@@ -326,6 +332,7 @@ func (*Manager) createSessionManager(
 		exitCh:            make(chan struct{}),
 		store:             store,
 		etcdCli:           etcdCli,
+		autoidClient:      autoidClient,
 		schemaVerSyncer:   schemaVerSyncer,
 		serverStateSyncer: serverStateSyncer,
 		infoCache:         infoCache,
@@ -468,6 +475,23 @@ func (h *runtimeHandle) SysSessionPool() util.DestroyableSessionPool {
 	return h.entry.sessMgr.SysSessionPool()
 }
 
+func (h *runtimeHandle) RegisterTables(ctx context.Context, schemaID int64, tableIDs ...int64) (func(), error) {
+	return h.entry.sessMgr.isSyncer.RegisterTables(ctx, schemaID, tableIDs...)
+}
+
+// ReloadSchema refreshes the schema shared by pooled sessions.
+func (h *runtimeHandle) ReloadSchema(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return h.entry.sessMgr.isSyncer.Reload()
+}
+
+// LoadSnapshotInfoSchema loads the schema at ts without refreshing the live schema.
+func (h *runtimeHandle) LoadSnapshotInfoSchema(ctx context.Context, names []ast.Ident, ts uint64) (infoschemactx.MetaOnlyInfoSchema, error) {
+	return h.entry.sessMgr.isSyncer.LoadSnapshotInfoSchema(ctx, names, ts)
+}
+
 func (h *runtimeHandle) AlterTableMode(ctx context.Context, target model.AlterTableModeTarget) error {
 	return h.entry.sessMgr.alterTableMode(ctx, target)
 }
@@ -486,6 +510,7 @@ type SessionManager struct {
 	exitCh            chan struct{}
 	store             kv.Storage
 	etcdCli           *clientv3.Client
+	autoidClient      *autoid.ClientDiscover
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
 	infoCache         *infoschema.InfoCache
@@ -534,6 +559,7 @@ func (m *SessionManager) close() {
 		m.svrInfoSyncer.RevokeSession()
 	}
 	m.schemaVerSyncer.Close()
+	m.autoidClient.ResetConn(nil)
 	if err := m.etcdCli.Close(); err != nil {
 		logger.Warn("failed to close etcd client", zap.Error(err))
 	}

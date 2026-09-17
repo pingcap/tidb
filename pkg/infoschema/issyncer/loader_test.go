@@ -19,7 +19,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -489,4 +491,149 @@ func TestLoadForBR(t *testing.T) {
 		require.True(t, schemaNamesNormal["information_schema"], "information_schema should be loaded")
 		require.True(t, schemaNamesNormal["metrics_schema"], "metrics_schema should be loaded")
 	})
+}
+
+func TestCrossKSTableSubscriptions(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	ctx := tidbkv.WithInternalSourceType(context.Background(), tidbkv.InternalTxnAdmin)
+	update := func(diff *model.SchemaDiff, fn func(*meta.Mutator) error) uint64 {
+		require.NoError(t, tidbkv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn tidbkv.Transaction) error {
+			m := meta.NewMutator(txn)
+			if err := fn(m); err != nil {
+				return err
+			}
+			v, err := m.GenSchemaVersion()
+			if err != nil {
+				return err
+			}
+			diff.Version = v
+			return m.SetSchemaDiff(diff)
+		}))
+		ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
+		require.NoError(t, err)
+		return ver.Ver
+	}
+	oldTS := update(&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 1}, func(m *meta.Mutator) error {
+		require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: metadef.SystemDatabaseID, Name: ast.NewCIStr("mysql")}))
+		require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+		require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 2, Name: ast.NewCIStr("other")}))
+		for i, name := range []string{"a", "b", "unrelated"} {
+			require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{ID: int64(i + 1), Name: ast.NewCIStr(name), State: model.StatePublic}))
+		}
+		return nil
+	})
+	cache := infoschema.NewCache(store, 8)
+	s := NewCrossKSSyncer(store, cache, 1e9, nil, isvalidator.New(1e9), "test-ks")
+	s.schemaVerSyncer = schemaver.NewMemSyncer()
+	latest := func() infoschema.InfoSchema {
+		require.NoError(t, s.Reload())
+		return cache.GetLatest()
+	}
+	incremental := func(ts uint64) infoschema.InfoSchema {
+		is, hit, _, changes, err := s.LoadWithTS(ts, false)
+		require.NoError(t, err)
+		require.False(t, hit)
+		require.NotNil(t, changes, "must apply diffs rather than fall back to full load")
+		return is
+	}
+	names := []ast.Ident{{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("a")}}
+	lookup := func(is infoschema.InfoSchema, db, name string) *model.TableInfo {
+		tbl, err := is.TableByName(ctx, ast.NewCIStr(db), ast.NewCIStr(name))
+		require.NoError(t, err)
+		return tbl.Meta()
+	}
+	// SELECT does not register live tables or initialize the shared cache.
+	snapshot, err := s.LoadSnapshotInfoSchema(ctx, names, oldTS)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, lookup(snapshot, "test", "a").ID)
+	require.Nil(t, cache.GetLatest())
+	require.Empty(t, s.loader.tableSubscriptions)
+	a, err := s.RegisterTables(ctx, 1, 1)
+	require.NoError(t, err)
+	require.Nil(t, cache.GetLatest())
+	frozen := latest()
+	b, err := s.RegisterTables(ctx, 1, 2)
+	require.NoError(t, err)
+	defer b()
+	require.Equal(t, frozen.SchemaMetaVersion(), latest().SchemaMetaVersion())
+	require.EqualValues(t, 2, lookup(latest(), "test", "b").ID)
+	_, err = frozen.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("b"))
+	require.Error(t, err)
+	_, err = latest().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("unrelated"))
+	require.Error(t, err)
+	require.False(t, s.skipMDLCheck(map[int64]struct{}{1: {}}))
+	require.False(t, s.loader.skipLoadingDiff(&model.SchemaDiff{TableID: 3, AffectedOpts: []*model.AffectedOption{{TableID: 2}}}))
+	require.True(t, s.loader.skipLoadingDiff(&model.SchemaDiff{TableID: 3, AffectedOpts: []*model.AffectedOption{{TableID: 4}}}))
+
+	// Unrelated DDL is skipped; a registered table's changes are applied incrementally.
+	for _, id := range []int64{3, 1} {
+		ts := update(&model.SchemaDiff{Type: model.ActionModifyTableComment, SchemaID: 1, TableID: id}, func(m *meta.Mutator) error {
+			tbl, err := m.GetTable(1, id)
+			require.NoError(t, err)
+			tbl.Comment = "changed"
+			return m.UpdateTable(1, tbl)
+		})
+		is := incremental(ts)
+		if id == 1 {
+			require.Equal(t, "changed", lookup(is, "test", "a").Comment)
+		}
+	}
+	ts := update(&model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: 1, OldSchemaID: 1, TableID: 1}, func(m *meta.Mutator) error {
+		return m.UpdateTable(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("renamed"), State: model.StatePublic})
+	})
+	require.EqualValues(t, 1, lookup(incremental(ts), "test", "renamed").ID)
+	ts = update(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: 1, TableID: 4}, func(m *meta.Mutator) error {
+		return m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: ast.NewCIStr("a"), State: model.StatePublic})
+	})
+	live := incremental(ts)
+	_, err = live.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("a"))
+	require.Error(t, err, "registration follows ID 1, not the new table named a")
+	newSnapshot, err := s.LoadSnapshotInfoSchema(ctx, names, ts)
+	require.NoError(t, err)
+	require.EqualValues(t, 4, lookup(newSnapshot, "test", "a").ID)
+	require.Same(t, live, cache.GetLatest())
+	historical, err := s.LoadSnapshotInfoSchema(ctx, names, oldTS)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, lookup(historical, "test", "a").ID)
+	require.EqualValues(t, 1, lookup(frozen, "test", "a").ID)
+
+	otherA, err := s.RegisterTables(ctx, 1, 1)
+	require.NoError(t, err)
+	a()
+	require.EqualValues(t, 1, lookup(latest(), "test", "renamed").ID)
+	ts = update(&model.SchemaDiff{Type: model.ActionTruncateTable, SchemaID: 1, OldTableID: 1, TableID: 5}, func(m *meta.Mutator) error {
+		require.NoError(t, m.DropTableOrView(1, 1))
+		return m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: ast.NewCIStr("renamed"), State: model.StatePublic})
+	})
+	_, err = incremental(ts).TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("renamed"))
+	require.Error(t, err, "TRUNCATE must not subscribe to the replacement ID")
+	otherA()
+	latest()
+	// A cross-database rename may need a full reload, but must retain the same ID.
+	update(&model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: 2, OldSchemaID: 1, TableID: 2}, func(m *meta.Mutator) error {
+		require.NoError(t, m.DropTableOrView(1, 2))
+		return m.CreateTableOrView(2, &model.TableInfo{ID: 2, Name: ast.NewCIStr("b"), State: model.StatePublic})
+	})
+	require.EqualValues(t, 2, lookup(latest(), "other", "b").ID)
+	require.EqualValues(t, 2, s.loader.tableSubscriptions[2].schemaID)
+	future, err := s.RegisterTables(ctx, 1, 6)
+	require.NoError(t, err)
+	defer future()
+	latest()
+	ts = update(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: 1, TableID: 6}, func(m *meta.Mutator) error {
+		return m.CreateTableOrView(1, &model.TableInfo{ID: 6, Name: ast.NewCIStr("future"), State: model.StatePublic})
+	})
+	require.EqualValues(t, 6, lookup(incremental(ts), "test", "future").ID)
+	ts = update(&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: 1, TableID: 6}, func(m *meta.Mutator) error {
+		return m.DropTableOrView(1, 6)
+	})
+	_, err = incremental(ts).TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("future"))
+	require.Error(t, err)
+	ts = update(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: 1, TableID: 7}, func(m *meta.Mutator) error {
+		return m.CreateTableOrView(1, &model.TableInfo{ID: 7, Name: ast.NewCIStr("future"), State: model.StatePublic})
+	})
+	_, err = incremental(ts).TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("future"))
+	require.Error(t, err, "DROP and recreate must not follow the replacement ID")
 }

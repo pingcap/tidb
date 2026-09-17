@@ -49,6 +49,7 @@ go_library(
         "//pkg/extworkload",
         "//pkg/inference",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/infoschema/issyncer",
         "//pkg/infoschema/isvalidator",
         "//pkg/infoschema/metrics",

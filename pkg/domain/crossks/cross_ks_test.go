@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	_ "github.com/pingcap/tidb/pkg/autoid_service" // Initialize the source mockstore's auto-ID service.
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
@@ -481,6 +482,40 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	require.True(t, ok)
 	require.Same(t, sessMgr.Store(), handle.Store())
 	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
+
+	t.Run("latest and snapshot schemas", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, targetStore)
+		tk.MustExec("create table test.subscribed_table(id bigint auto_increment primary key) auto_id_cache=1")
+		ctx := context.Background()
+		sourceIS := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+		db, ok := sourceIS.SchemaByName(ast.NewCIStr("test"))
+		require.True(t, ok)
+		tbl, err := sourceIS.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("subscribed_table"))
+		require.NoError(t, err)
+		releaseTables, err := handle.RegisterTables(ctx, db.ID, tbl.Meta().ID)
+		require.NoError(t, err)
+		defer releaseTables()
+		readVer, err := targetStore.CurrentVersion(kv.GlobalTxnScope)
+		require.NoError(t, err)
+		before, err := handle.LoadSnapshotInfoSchema(ctx, []ast.Ident{{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("subscribed_table")}}, readVer.Ver)
+		require.NoError(t, err)
+		tk.MustExec("alter table test.subscribed_table add column v int")
+		require.NoError(t, handle.ReloadSchema(ctx))
+		resource, err := handle.SysSessionPool().Get()
+		require.NoError(t, err)
+		defer handle.SysSessionPool().Destroy(resource)
+		latest := resource.(sessionctx.Context).GetLatestInfoSchema()
+		lookup := func(is infoschema.InfoSchema) *model.TableInfo {
+			tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("subscribed_table"))
+			require.NoError(t, err)
+			return tbl.Meta()
+		}
+		require.Len(t, lookup(latest.(infoschema.InfoSchema)).Columns, 2)
+		require.Len(t, lookup(before.(infoschema.InfoSchema)).Columns, 1)
+		again, err := handle.LoadSnapshotInfoSchema(ctx, []ast.Ident{{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("subscribed_table")}}, readVer.Ver)
+		require.NoError(t, err)
+		require.Len(t, lookup(again.(infoschema.InfoSchema)).Columns, 1)
+	})
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {

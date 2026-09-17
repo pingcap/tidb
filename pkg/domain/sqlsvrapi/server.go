@@ -17,9 +17,11 @@ package sqlsvrapi
 import (
 	"context"
 
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -32,6 +34,13 @@ import (
 type Runtime interface {
 	Store() kv.Storage
 	SysSessionPool() util.DestroyableSessionPool
+	// RegisterTables holds table IDs, using schemaID as their initial metadata location.
+	// It performs no reads; call the returned function when the operation finishes.
+	RegisterTables(ctx context.Context, schemaID int64, tableIDs ...int64) (func(), error)
+	// ReloadSchema refreshes the shared schema read by pooled sessions.
+	ReloadSchema(context.Context) error
+	// LoadSnapshotInfoSchema resolves names at ts without registering live tables.
+	LoadSnapshotInfoSchema(context.Context, []ast.Ident, uint64) (infoschemactx.MetaOnlyInfoSchema, error)
 	// AlterTableMode submits an internal table-mode DDL and waits for the result.
 	//
 	// SchemaID, TableID, and TargetMode are required caller inputs.

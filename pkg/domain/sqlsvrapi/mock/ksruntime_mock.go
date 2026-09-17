@@ -13,8 +13,10 @@ import (
 	context "context"
 	reflect "reflect"
 
+	context0 "github.com/pingcap/tidb/pkg/infoschema/context"
 	kv "github.com/pingcap/tidb/pkg/kv"
 	model "github.com/pingcap/tidb/pkg/meta/model"
+	ast "github.com/pingcap/tidb/pkg/parser/ast"
 	util "github.com/pingcap/tidb/pkg/util"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -61,6 +63,41 @@ func (mr *MockKSRuntimeHandleMockRecorder) AlterTableMode(arg0, arg1 any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AlterTableMode", reflect.TypeOf((*MockKSRuntimeHandle)(nil).AlterTableMode), arg0, arg1)
 }
 
+// LoadSnapshotInfoSchema mocks base method.
+func (m *MockKSRuntimeHandle) LoadSnapshotInfoSchema(arg0 context.Context, arg1 []ast.Ident, arg2 uint64) (context0.MetaOnlyInfoSchema, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LoadSnapshotInfoSchema", arg0, arg1, arg2)
+	ret0, _ := ret[0].(context0.MetaOnlyInfoSchema)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LoadSnapshotInfoSchema indicates an expected call of LoadSnapshotInfoSchema.
+func (mr *MockKSRuntimeHandleMockRecorder) LoadSnapshotInfoSchema(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadSnapshotInfoSchema", reflect.TypeOf((*MockKSRuntimeHandle)(nil).LoadSnapshotInfoSchema), arg0, arg1, arg2)
+}
+
+// RegisterTables mocks base method.
+func (m *MockKSRuntimeHandle) RegisterTables(arg0 context.Context, arg1 int64, arg2 ...int64) (func(), error) {
+	m.ctrl.T.Helper()
+	varargs := []any{arg0, arg1}
+	for _, a := range arg2 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "RegisterTables", varargs...)
+	ret0, _ := ret[0].(func())
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RegisterTables indicates an expected call of RegisterTables.
+func (mr *MockKSRuntimeHandleMockRecorder) RegisterTables(arg0, arg1 any, arg2 ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{arg0, arg1}, arg2...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegisterTables", reflect.TypeOf((*MockKSRuntimeHandle)(nil).RegisterTables), varargs...)
+}
+
 // Release mocks base method.
 func (m *MockKSRuntimeHandle) Release() {
 	m.ctrl.T.Helper()
@@ -71,6 +108,20 @@ func (m *MockKSRuntimeHandle) Release() {
 func (mr *MockKSRuntimeHandleMockRecorder) Release() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Release", reflect.TypeOf((*MockKSRuntimeHandle)(nil).Release))
+}
+
+// ReloadSchema mocks base method.
+func (m *MockKSRuntimeHandle) ReloadSchema(arg0 context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReloadSchema", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReloadSchema indicates an expected call of ReloadSchema.
+func (mr *MockKSRuntimeHandleMockRecorder) ReloadSchema(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReloadSchema", reflect.TypeOf((*MockKSRuntimeHandle)(nil).ReloadSchema), arg0)
 }
 
 // Store mocks base method.

@@ -197,7 +197,7 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 }
 
 func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
-	if !s.crossKS {
+	if !s.crossKS || s.loader.hasTableSubscriptions.Load() {
 		return false
 	}
 
@@ -401,6 +401,10 @@ func (s *Syncer) mustReload(ctx context.Context) (exitLoop bool) {
 
 // LoadWithTS loads the InfoSchema with a specific timestamp.
 func (s *Syncer) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
+	if s.crossKS {
+		s.m.Lock()
+		defer s.m.Unlock()
+	}
 	return s.loader.LoadWithTS(startTS, isSnapshot)
 }
 

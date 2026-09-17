@@ -16,6 +16,7 @@ package issyncer
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -81,15 +82,19 @@ type Loader struct {
 	infoCache *infoschema.InfoCache
 	// deferFn is used to release infoschema object lazily during v1 and v2 switch
 	deferFn *deferFn
-	// if true, it means the loader is used for cross keyspace, we only allow
-	// loading system tables
+	// Cross-keyspace loaders load system tables and explicitly registered user tables.
 	crossKS bool
 	logger  *zap.Logger
 	filter  Filter
+	// Subscription state is protected by Syncer.m. MDL only reads the atomic flag.
+	tableSubscriptions           map[int64]registeredTable
+	subscriptionGeneration       uint64
+	loadedSubscriptionGeneration uint64
+	hasTableSubscriptions        atomic.Bool
 
 	// below fields are set when running background routines
-	// Note: for cross keyspace loader, we don't set below fields as system tables
-	// are forbidden to use those features.
+	// Cross-keyspace loaders initialize auto-ID discovery for registered user tables.
+	// Cached user tables still require a system executor factory.
 	//
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the
 	// client to the autoid service.
@@ -143,6 +148,7 @@ func (l *Loader) initFields(
 // 4. the changed table IDs if it is not full load
 // 5. an error if any
 func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
+	refreshSubscriptions := l.crossKS && l.subscriptionGeneration != l.loadedSubscriptionGeneration
 	beginTime := time.Now()
 	defer func() {
 		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
@@ -179,7 +185,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
 	}
 	useV2, isV1V2Switch := shouldUseV2(enableV2, oldInfoSchema, isSnapshot)
-	if is := l.infoCache.GetByVersion(neededSchemaVersion); is != nil {
+	if is := l.infoCache.GetByVersion(neededSchemaVersion); is != nil && !refreshSubscriptions {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
 			// Copy the infoschema V2 instance and update its ts.
@@ -207,7 +213,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	// 3. There are less 100 diffs.
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
-	if !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
+	if !refreshSubscriptions && !(l.crossKS && isSnapshot) && !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
 		is, relatedChanges, diffTypes, err := l.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, startTS, schemaCacheSize)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
@@ -284,7 +290,29 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("elapsed time", time.Since(startTime)))
 
-	if isV1V2Switch && schemaTs > 0 {
+	// Snapshot reads must not publish a schema or acknowledge pending registrations.
+	// Only Reload updates the shared cache together with its validation lease.
+	if l.crossKS && isSnapshot {
+		return is, false, currentSchemaVersion, nil, nil
+	}
+
+	if l.crossKS {
+		for _, db := range schemas {
+			for _, tbl := range db.Deprecated.Tables {
+				if entry, ok := l.tableSubscriptions[tbl.ID]; ok {
+					entry.schemaID = db.ID
+					l.tableSubscriptions[tbl.ID] = entry
+				}
+			}
+		}
+	}
+
+	if refreshSubscriptions {
+		// Replace even at the same schema version. Active queries may still use
+		// old immutable snapshots, so do not run Upsert's destructive cleanup.
+		l.infoCache.Upsert(is, schemaTs)
+		l.loadedSubscriptionGeneration = l.subscriptionGeneration
+	} else if isV1V2Switch && schemaTs > 0 {
 		// Reset the whole info cache to avoid co-existing of both v1 and v2, causing the memory usage doubled.
 		fn := l.infoCache.Upsert(is, schemaTs)
 		l.deferFn.add(fn, time.Now().Add(10*time.Minute))
@@ -310,12 +338,57 @@ func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
 		return false
 	}
 
-	// for cross keyspace loader, we only load diff related to system tables.
-	// we don't check AffectedOpts, as we forbid doing DDL which involve multiple
-	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
-	// ExchangePartition, etc.
-	isRelatedToSystemTables := metadef.IsReservedID(diff.TableID) || metadef.IsReservedID(diff.OldTableID)
-	return !isRelatedToSystemTables
+	if l.tracksTable(diff.TableID) || l.tracksTable(diff.OldTableID) {
+		return false
+	}
+	for _, opt := range diff.AffectedOpts {
+		if l.tracksTable(opt.TableID) || l.tracksTable(opt.OldTableID) {
+			return false
+		}
+	}
+	if len(l.tableSubscriptions) > 0 && diff.TableID == 0 && diff.OldTableID == 0 && len(diff.AffectedOpts) == 0 {
+		switch diff.Type {
+		case model.ActionCreateSchema, model.ActionDropSchema, model.ActionRecoverSchema,
+			model.ActionModifySchemaCharsetAndCollate, model.ActionModifySchemaDefaultPlacement:
+			for _, entry := range l.tableSubscriptions {
+				if entry.schemaID == diff.SchemaID {
+					return false
+				}
+			}
+		default:
+			// Policies, resource groups and cluster-wide changes can affect registered tables.
+			return false
+		}
+	}
+	return true
+}
+
+func (l *Loader) tracksTable(id int64) bool {
+	_, registered := l.tableSubscriptions[id]
+	return registered || metadef.IsReservedID(id)
+}
+
+// applyDiff keeps the partial catalog restricted to registered table identities.
+func (l *Loader) applyDiff(builder *infoschema.Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	if !l.crossKS || len(l.tableSubscriptions) == 0 {
+		return builder.ApplyDiff(m, diff)
+	}
+	// Multi-table diffs can require objects absent from this partial catalog.
+	// Reuse the existing full-load fallback for these and cross-database moves.
+	if len(diff.AffectedOpts) > 0 || diff.Type == model.ActionRecoverSchema ||
+		diff.Type == model.ActionExchangeTablePartition ||
+		diff.Type == model.ActionAlterTablePartitioning || diff.Type == model.ActionRemovePartitioning ||
+		(diff.Type == model.ActionRenameTable && diff.OldSchemaID != diff.SchemaID) {
+		return nil, errors.New("schema diff requires rebuilding registered tables")
+	}
+	if diff.Type == model.ActionTruncateTable && !l.tracksTable(diff.TableID) {
+		// TRUNCATE replaces the table ID. Remove the registered old object without
+		// implicitly registering its replacement, even though the name is unchanged.
+		drop := *diff
+		drop.Type, drop.TableID, drop.OldTableID = model.ActionDropTable, diff.OldTableID, 0
+		return builder.ApplyDiff(m, &drop)
+	}
+	return builder.ApplyDiff(m, diff)
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -378,7 +451,7 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 		if diff.RegenerateSchemaMap {
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
-		ids, err := builder.ApplyDiff(m, diff)
+		ids, err := l.applyDiff(builder, m, diff)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -429,6 +502,11 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
+		registered, err := l.fetchRegisteredSchemas(m)
+		if err != nil {
+			return nil, err
+		}
+		allSchemas = append(allSchemas, registered...)
 	} else if l.filter != nil {
 		allSchemas = make([]*model.DBInfo, 0, 6)
 		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
@@ -489,7 +567,7 @@ func (*Loader) fetchMaskingPolicies(_ meta.Reader) ([]*model.MaskingPolicyInfo, 
 	return nil, nil
 }
 
-func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {
+func (l *Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {
 	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
 		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
 	})
@@ -501,7 +579,9 @@ func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		}
 		var tables []*model.TableInfo
 		var err error
-		if schemaCacheSize > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+		if l.crossKS && di.ID != metadef.SystemDatabaseID {
+			tables = di.Deprecated.Tables
+		} else if schemaCacheSize > 0 && !infoschema.IsSpecialDB(di.Name.L) {
 			name2ID, specialTableInfos, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
 			if err != nil {
 				return err

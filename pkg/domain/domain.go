@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
@@ -314,6 +315,24 @@ func (do *Domain) GetDDLOwnerMgr() owner.Manager {
 // GetRuntime implements sqlsvrapi.Server.
 func (do *Domain) GetRuntime() sqlsvrapi.Runtime {
 	return do
+}
+
+// RegisterTables implements sqlsvrapi.Runtime using the domain's complete schema cache.
+func (do *Domain) RegisterTables(ctx context.Context, schemaID int64, tableIDs ...int64) (func(), error) {
+	return do.isSyncer.RegisterTables(ctx, schemaID, tableIDs...)
+}
+
+// ReloadSchema refreshes the schema shared by pooled sessions.
+func (do *Domain) ReloadSchema(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return do.isSyncer.Reload()
+}
+
+// LoadSnapshotInfoSchema loads the schema at ts without refreshing the live schema.
+func (do *Domain) LoadSnapshotInfoSchema(ctx context.Context, names []ast.Ident, ts uint64) (infoschemactx.MetaOnlyInfoSchema, error) {
+	return do.isSyncer.LoadSnapshotInfoSchema(ctx, names, ts)
 }
 
 // AcquireKSRuntime implements the sqlsvrapi.Server interface.
