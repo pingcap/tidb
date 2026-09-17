@@ -541,7 +541,6 @@ var noopSysVars = []*SysVar{
 	{Scope: vardef.ScopeNone, Name: "basedir", Value: "/usr/local/mysql"},
 	{Scope: vardef.ScopeGlobal, Name: "innodb_old_blocks_time", Value: "1000"},
 	{Scope: vardef.ScopeGlobal, Name: "innodb_stats_method", Value: "nulls_equal"},
-	{Scope: vardef.ScopeGlobal, Name: vardef.LocalInFile, Value: vardef.On, Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "myisam_stats_method", Value: "nulls_unequal"},
 	{Scope: vardef.ScopeNone, Name: "relay_log_recovery", Value: "0"},
 	{Scope: vardef.ScopeNone, Name: "old", Value: "0"},

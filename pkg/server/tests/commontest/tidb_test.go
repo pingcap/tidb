@@ -4138,6 +4138,45 @@ func TestIssue62673(t *testing.T) {
 	})
 }
 
+func TestLoadDataLocalInfileDisabled(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(c *mysql.Config) {
+		c.AllowAllFiles = true
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+		filePath := filepath.Join(t.TempDir(), "local_infile.csv")
+		require.NoError(t, os.WriteFile(filePath, []byte("1\n2\n"), 0600))
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+		_, err = conn.ExecContext(ctx, "create table t_local_infile(a int)")
+		require.NoError(t, err)
+		defer func() {
+			_, err := conn.ExecContext(ctx, "set global local_infile=ON")
+			require.NoError(t, err)
+		}()
+		for _, enabled := range []bool{false, true, false} {
+			_, err = conn.ExecContext(ctx, "set global local_infile=?", enabled)
+			require.NoError(t, err)
+			_, err = conn.ExecContext(ctx, "truncate table t_local_infile")
+			require.NoError(t, err)
+			_, err = conn.ExecContext(ctx, fmt.Sprintf("load data local infile %q into table t_local_infile", filePath))
+			wantRows := 0
+			if enabled {
+				require.NoError(t, err)
+				wantRows = 2
+			} else {
+				var mysqlErr *mysql.MySQLError
+				require.ErrorAs(t, err, &mysqlErr)
+				require.Equal(t, uint16(tmysql.ErrNotAllowedCommand), mysqlErr.Number)
+			}
+			var count int
+			require.NoError(t, conn.QueryRowContext(ctx, "select count(*) from t_local_infile").Scan(&count))
+			require.Equal(t, wantRows, count)
+		}
+	})
+}
+
 // TestLoadDataLocalRetryDesync reproduces a protocol desync bug where TiDB's
 // optimistic transaction retry re-executes LOAD DATA LOCAL INFILE from
 // StmtHistory, sending a second 0xfb LOCAL_INFILE_REQUEST to a client that

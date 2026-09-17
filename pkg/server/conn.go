@@ -2333,6 +2333,13 @@ func (cc *clientConn) preprocessLoadDataLocal(ctx context.Context) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return servererr.ErrNotAllowedCommand
 	}
+	localInfile, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(ctx, vardef.LocalInFile)
+	if err != nil {
+		return err
+	}
+	if !variable.TiDBOptOn(localInfile) {
+		return servererr.ErrNotAllowedCommand
+	}
 
 	wg := &sync.WaitGroup{}
 	builderFunc := func(filepath string) (
