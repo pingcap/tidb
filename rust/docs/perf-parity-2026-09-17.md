@@ -187,3 +187,28 @@ join; q02's only general-key join (decimal `ps_supplycost`) has 630 rows. The
 13x pathology is therefore not a TPC-H lever; it applies to varchar, decimal
 and composite-key joins whose matches sit in one build chunk. q09 also shows
 the Rust node at ~5.0 s of CPU against Go's ~4.45 s for the same wall time.
+
+## The server runs hash join v2; its build side is the pathology (bench d845ab8f)
+
+`tidb_hash_join_version` defaults to `optimized` in the Rust session catalog
+as in Go, the support gate is always true, and inner/outer/semi joins pass
+`can_use_hash_join_v2`, so TPC-H's joins run `HashJoinV2Executor`, not the
+`JoinExec` the first join shapes measured (q09 on the node: `legacy` 3.35 s /
+4.76 s CPU, `optimized` 3.34 s / 4.94 s CPU; the profile under the default
+is `BaseJoinProbe::collect_inner_candidate_batch` 13%, memmove 10%,
+`Column::append_cell_runs` 8.5%). The bench's build/probe split, bench
+profile, `setarch -R`, 100k build rows, ns per row:
+
+```
+                          build   probe(per output row)
+join_probe_int_key (v1)     26      480
+join_probe_int_fanout8      26      276
+join_probe_bytes_key (v1)  100    1,306
+join_v2_int_key            422      552
+join_v2_int_fanout8        386      244
+join_v2_bytes_key          460      519
+```
+v2's probe is on par with v1 for integer keys and 2.5x faster for byte keys;
+its build costs 15x v1's per row. `append_to_row_table` mirrors Go's
+`appendToRowTable` statement for statement, so the cost is in the per-cell
+primitives or the stages before it; attributed next with a line-tables build.
