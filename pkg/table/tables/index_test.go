@@ -206,7 +206,7 @@ func TestIndexKVGenerator(t *testing.T) {
 			require.NoError(t, err)
 			iter := idx.GenIndexKVIter(sc.ErrCtx(), sc.TimeZone(), tc.values, kv.IntHandle(1), nil)
 			var retained [][]types.Datum
-			for i, want := range tc.want {
+			for _, want := range tc.want {
 				require.True(t, iter.Valid())
 				values := iter.IndexedValues()
 				require.Equal(t, want, values)
@@ -214,21 +214,13 @@ func TestIndexKVGenerator(t *testing.T) {
 				retained = append(retained, values)
 				wantKey, wantDistinct, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), want, kv.IntHandle(1), nil)
 				require.NoError(t, err)
-				// Mix both advance methods on the same iterator.
-				if i%2 == 0 {
-					key, distinct, err := iter.NextKey(nil)
-					require.NoError(t, err)
-					require.Equal(t, wantKey, key)
-					require.Equal(t, wantDistinct, distinct)
-				} else {
-					key, value, distinct, err := iter.Next(nil, nil)
-					require.NoError(t, err)
-					require.Equal(t, wantKey, key)
-					require.Equal(t, wantDistinct, distinct)
-					wantValue, err := idx.GenIndexValue(sc.ErrCtx(), sc.TimeZone(), distinct, false, want, kv.IntHandle(1), nil, nil)
-					require.NoError(t, err)
-					require.Equal(t, wantValue, value)
-				}
+				key, value, distinct, err := iter.Next(nil, nil)
+				require.NoError(t, err)
+				require.Equal(t, wantKey, key)
+				require.Equal(t, wantDistinct, distinct)
+				wantValue, err := idx.GenIndexValue(sc.ErrCtx(), sc.TimeZone(), distinct, false, want, kv.IntHandle(1), nil, nil)
+				require.NoError(t, err)
+				require.Equal(t, wantValue, value)
 			}
 			require.False(t, iter.Valid())
 			require.Equal(t, tc.want, retained) // Advancing does not reuse entry slices.
@@ -239,7 +231,6 @@ func TestIndexKVGenerator(t *testing.T) {
 type failingGeneratorIndex struct {
 	table.Index
 	keyErr, valueErr error
-	valueCalls       int
 }
 
 func (idx *failingGeneratorIndex) GenIndexKey(_ errctx.Context, _ *time.Location, _ []types.Datum, _ kv.Handle, _ []byte) ([]byte, bool, error) {
@@ -247,7 +238,6 @@ func (idx *failingGeneratorIndex) GenIndexKey(_ errctx.Context, _ *time.Location
 }
 
 func (idx *failingGeneratorIndex) GenIndexValue(_ errctx.Context, _ *time.Location, _, _ bool, _ []types.Datum, _ kv.Handle, _ []types.Datum, _ []byte) ([]byte, error) {
-	idx.valueCalls++
 	return nil, idx.valueErr
 }
 
@@ -259,25 +249,21 @@ func TestIndexKVGeneratorErrors(t *testing.T) {
 	iter := table.NewPlainIndexKVGenerator(idx, sc.ErrCtx(), sc.TimeZone(), kv.IntHandle(1), nil, values)
 	_, _, _, err := iter.Next(nil, nil)
 	require.ErrorIs(t, err, keyErr)
-	_, _, err = iter.NextKey(nil)
-	require.ErrorIs(t, err, keyErr)
 	require.True(t, iter.Valid())
 	require.Equal(t, values, iter.IndexedValues())
-	require.Zero(t, idx.valueCalls)
 
 	idx.keyErr = nil
 	_, _, _, err = iter.Next(nil, nil)
 	require.ErrorIs(t, err, valueErr)
 	require.True(t, iter.Valid())
 	require.Equal(t, values, iter.IndexedValues())
-	require.Equal(t, 1, idx.valueCalls)
 
-	key, distinct, err := iter.NextKey(nil)
+	idx.valueErr = nil
+	key, _, distinct, err := iter.Next(nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("key"), key)
 	require.True(t, distinct)
 	require.False(t, iter.Valid())
-	require.Equal(t, 1, idx.valueCalls) // NextKey never generates an unused value.
 }
 
 func TestGenIndexValueFromIndex(t *testing.T) {
