@@ -3918,6 +3918,34 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
+// getCleanupIndexValues expands the array column so the ownership check and Delete
+// operate on the same single entry. Delete already accepts scalar cleanup values.
+func getCleanupIndexValues(index table.Index, indexedValues []types.Datum) [][]types.Datum {
+	if index.Meta().MVIndex {
+		for i, col := range index.Meta().Columns {
+			if !index.TableMeta().Columns[col.Offset].FieldType.IsArray() || indexedValues[i].Kind() != types.KindMysqlJSON {
+				continue
+			}
+			array := indexedValues[i].GetMysqlJSON()
+			values := make([][]types.Datum, 0, array.GetElemCount())
+			seen := make(map[string]struct{}, array.GetElemCount())
+			for j := range array.GetElemCount() {
+				element := array.ArrayGetElem(j)
+				key := string(element.HashValue(nil))
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+				value := append([]types.Datum(nil), indexedValues...)
+				value[i] = types.NewDatum(element.GetValue())
+				values = append(values, value)
+			}
+			return values
+		}
+	}
+	return [][]types.Datum{indexedValues}
+}
+
 func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*cleanUpIndexWorker, error) {
 	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblCleanupIdxRate, false)
 	if err != nil {
@@ -3979,21 +4007,18 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 		n := len(w.indexes)
 		globalIndexKeys := make([]kv.Key, 0, len(idxRecords))
-		// recordKeys[i] holds every encoded key of idxRecords[i]. A multi-valued index expands
-		// to one key per distinct element, so there can be more than one key per record, and
-		// `GenIndexKey` must not be used here: it only encodes the whole array, which is never a
-		// key that actually exists in the index.
+		// Keep the fetched records intact: i%n identifies the index even when an
+		// array expands to zero or multiple entries, and progress is per record.
+		recordValues := make([][][]types.Datum, len(idxRecords))
 		recordKeys := make([][]kv.Key, len(idxRecords))
-		keyBuf, valBuf := make([]byte, 0, 64), make([]byte, 0, 64)
 		for i, idxRecord := range idxRecords {
-			iter := w.indexes[i%n].GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, nil)
-			for iter.Valid() {
-				key, _, distinct, err := iter.Next(keyBuf, valBuf)
+			index := w.indexes[i%n]
+			recordValues[i] = getCleanupIndexValues(index, idxRecord.vals)
+			for _, values := range recordValues[i] {
+				key, distinct, err := index.GenIndexKey(ec, loc, values, idxRecord.handle, nil)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				// `Next` may return a slice of `keyBuf`, so keep a private copy.
-				key = append([]byte(nil), key...)
 				if distinct {
 					globalIndexKeys = append(globalIndexKeys, key)
 				}
@@ -4009,39 +4034,37 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
-			for _, key := range recordKeys[i] {
-				val, ok := found[string(key)]
-				if !ok {
-					continue
-				}
-				// Only lock an entry that is still from the partition it was read from, so that
-				// we do not resolve a lock conflict for an entry a concurrent write took over.
-				handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
-				if errPart != nil {
-					return errors.Trace(errPart)
-				}
-				if partHandle, ok := handle.(kv.PartitionHandle); ok {
-					if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
-						continue
+			cleaned := len(recordKeys[i]) == 0
+			for j, key := range recordKeys[i] {
+				if val, ok := found[string(key)]; ok {
+					// Only delete if it is from the partition it was read from.
+					handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
+					if errPart != nil {
+						return errors.Trace(errPart)
+					}
+					if partHandle, ok := handle.(kv.PartitionHandle); ok {
+						if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
+							continue
+						}
+					}
+					// Mark the entry for transactional conflict checking. A concurrent
+					// takeover causes the optimistic transaction to conflict and retry.
+					err = txn.LockKeys(ctx, lockCtx, key)
+					if err != nil {
+						return errors.Trace(err)
 					}
 				}
-				// Lock the global index entry, to prevent deleting something that is concurrently added.
-				err = txn.LockKeys(ctx, lockCtx, key)
+				// Delete only the checked element, not the original array: another
+				// element of the same row may now belong to a surviving partition.
+				err = w.indexes[i%n].Delete(w.tblCtx, txn, recordValues[i][j], idxRecord.handle)
 				if err != nil {
 					return errors.Trace(err)
 				}
+				cleaned = true
 			}
-			// we fetch records row by row, so records will belong to
-			// index[0], index[1] ... index[n-1], index[0], index[1] ...
-			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			// The owner check removes the entries of this row that are still owned by the
-			// partition being cleaned, and keeps the ones a concurrent write has taken over.
-			err = w.indexes[i%n].DeleteWithOwnerCheck(w.tblCtx, txn, idxRecord.vals, idxRecord.handle,
-				handleRange.physicalTable.GetPhysicalID())
-			if err != nil {
-				return errors.Trace(err)
+			if cleaned {
+				taskCtx.addedCount++
 			}
-			taskCtx.addedCount++
 		}
 		return nil
 	})

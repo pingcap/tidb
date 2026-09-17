@@ -492,6 +492,10 @@ func TestGlobalIndexTruncatePartitionMVIndexKeepTakeoverEntry(t *testing.T) {
 		_, err := tk1.Exec("INSERT INTO t VALUES (21, '[7]')")
 		assert.NoError(t, err)
 	}
+	t.Cleanup(func() {
+		assert.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
+		ddl.MockDMLExecution = nil
+	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
 	tk.MustExec("ALTER TABLE t TRUNCATE PARTITION p0, p1")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
@@ -512,6 +516,25 @@ func TestGlobalIndexTruncatePartitionMVIndexKeepTakeoverEntry(t *testing.T) {
 	tk.MustExec("INSERT INTO t VALUES (23, '[8]')")
 	tk.MustQuery("SELECT p FROM t WHERE 8 MEMBER OF (j)").Check(testkit.Rows("23"))
 	tk.MustExec("ADMIN CHECK TABLE t")
+
+	// Empty arrays must not shift the record-to-index mapping. Exercise a
+	// composite MV index alongside another global index, including NULL and
+	// repeated elements, whose expansion must match ordinary index writes.
+	tk.MustExec(`CREATE TABLE t_cleanup (
+		p INT PRIMARY KEY, c INT, j JSON,
+		UNIQUE KEY m (c, (CAST(j AS UNSIGNED ARRAY))) GLOBAL,
+		UNIQUE KEY g (c) GLOBAL
+	) PARTITION BY RANGE (p) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN MAXVALUE
+	)`)
+	tk.MustExec("INSERT INTO t_cleanup VALUES (1, 1, '[]'), (2, 2, NULL), (3, 3, '[7, 7, 8]'), (11, 4, '[9]')")
+	tk.MustExec("ALTER TABLE t_cleanup TRUNCATE PARTITION p0")
+	tk.MustExec("ADMIN CHECK TABLE t_cleanup")
+	tk.MustQuery("SELECT p FROM t_cleanup USE INDEX(g)").Check(testkit.Rows("11"))
+	tk.MustExec("INSERT INTO t_cleanup VALUES (12, 1, '[]'), (13, 2, NULL), (14, 3, '[7, 8]')")
+	tk.MustQuery("SELECT p FROM t_cleanup WHERE c = 3 AND 7 MEMBER OF (j)").Check(testkit.Rows("14"))
+	tk.MustExec("ADMIN CHECK TABLE t_cleanup")
 }
 
 // TestUpdateIndexesResetsGlobalIndexVersion verifies that UPDATE INDEXES resets
