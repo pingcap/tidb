@@ -568,6 +568,17 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
+	return c.delete(ctx, txn, indexedValue, h, 0, false)
+}
+
+// DeleteWithOwnerCheck removes the entries for handle h and indexedValues from KV index, but
+// keeps every unique entry that another partition has taken over. See the interface comment
+// for why the DROP/TRUNCATE PARTITION cleanup needs this.
+func (c *index) DeleteWithOwnerCheck(ctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, ownerPartitionID int64) error {
+	return c.delete(ctx, txn, indexedValue, h, ownerPartitionID, true)
+}
+
+func (c *index) delete(ctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, ownerPartitionID int64, ownerCheck bool) error {
 	indexedValues := c.getIndexedValue(indexedValue)
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
@@ -597,7 +608,26 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		if distinct {
 			if len(key) > 0 {
 				okToDelete := true
-				if c.idxInfo.BackfillState != model.BackfillStateInapplicable {
+				if ownerCheck {
+					// The DROP/TRUNCATE PARTITION cleanup must not delete an entry that a
+					// concurrent write has taken over. Only the partition id stored in the
+					// entry itself tells which partition owns it: the handle this row is
+					// being deleted for is not enough, because it need not even be a
+					// PartitionHandle while the index is being switched to the V1 format.
+					originVal, err := getKeyInTxn(context.TODO(), txn, key)
+					if err != nil {
+						return err
+					}
+					if len(originVal) > 0 {
+						oh, err := tablecodec.DecodeHandleInIndexValue(originVal)
+						if err != nil {
+							return err
+						}
+						if partHandle, ok := oh.(kv.PartitionHandle); ok && partHandle.PartitionID != ownerPartitionID {
+							okToDelete = false
+						}
+					}
+				} else if c.idxInfo.BackfillState != model.BackfillStateInapplicable {
 					// #52914: the delete key is covered by the new ingested key, which shouldn't be deleted.
 					originVal, err := getKeyInTxn(context.TODO(), txn, key)
 					if err != nil {
