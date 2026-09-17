@@ -295,21 +295,6 @@ func TestConfigValidation(t *testing.T) {
 
 	conf.FileType = "rand_str"
 	require.EqualError(t, adjustFileFormat(conf), "unknown config.FileType 'rand_str'")
-
-	conf.IncludeStoredGeneratedColumns = true
-	for _, fileType := range []string{"", FileFormatSQLTextString} {
-		conf.FileType = fileType
-		require.EqualError(t, adjustFileFormat(conf),
-			"--include-stored-generated-columns is only supported with --filetype csv or parquet")
-	}
-	conf.NoData = true
-	conf.FileType = FileFormatSQLTextString
-	require.NoError(t, adjustFileFormat(conf))
-	conf.NoData = false
-	for _, fileType := range []string{FileFormatCSVString, FileFormatParquetString} {
-		conf.FileType = fileType
-		require.NoError(t, adjustFileFormat(conf))
-	}
 }
 
 func TestValidateResolveAutoConsistency(t *testing.T) {
@@ -342,4 +327,58 @@ func TestValidateResolveAutoConsistency(t *testing.T) {
 			require.EqualError(t, validateResolveAutoConsistency(d), fmt.Sprintf("can't specify --snapshot when --consistency isn't snapshot, resolved consistency: %s", conf.Consistency))
 		}
 	}
+}
+
+func TestValidateIncludeGeneratedColumns(t *testing.T) {
+	newConf := func(mode GeneratedColumnsMode) *Config {
+		conf := defaultConfigForTest(t)
+		conf.IncludeGeneratedColumns = mode
+		conf.FileType = FileFormatCSVString
+		return conf
+	}
+
+	for _, mode := range []GeneratedColumnsMode{"", GeneratedColumnsNone} {
+		// The default mode keeps the existing behavior for every combination.
+		conf := newConf(mode)
+		conf.FileType = FileFormatSQLTextString
+		conf.NoData = true
+		conf.SQL = "select 1"
+		conf.columnFilter = columnFilterConfig{Filters: []columnFilterRule{{}}}
+		require.NoError(t, validateIncludeGeneratedColumns(conf))
+		require.Equal(t, GeneratedColumnsNone, conf.IncludeGeneratedColumns)
+	}
+
+	for _, fileType := range []string{FileFormatCSVString, FileFormatParquetString} {
+		conf := newConf(GeneratedColumnsStored)
+		conf.FileType = fileType
+		require.NoError(t, validateIncludeGeneratedColumns(conf))
+	}
+
+	conf := newConf(GeneratedColumnsStored)
+	conf.FileType = FileFormatSQLTextString
+	require.EqualError(t, validateIncludeGeneratedColumns(conf),
+		"--include-generated-columns=stored is only supported with --filetype csv or parquet")
+
+	conf = newConf(GeneratedColumnsStored)
+	conf.SQL = "select * from t"
+	require.EqualError(t, validateIncludeGeneratedColumns(conf),
+		"can't specify both --include-generated-columns=stored and --sql at the same time")
+
+	conf = newConf(GeneratedColumnsStored)
+	conf.columnFilter = columnFilterConfig{Filters: []columnFilterRule{{Matcher: []string{"db.t"}, Columns: []string{"*"}}}}
+	require.EqualError(t, validateIncludeGeneratedColumns(conf),
+		"can't specify --include-generated-columns=stored with --column-filter or --column-filter-file")
+
+	conf = newConf(GeneratedColumnsStored)
+	conf.NoData = true
+	require.EqualError(t, validateIncludeGeneratedColumns(conf),
+		"can't specify both --include-generated-columns=stored and --no-data at the same time")
+
+	for _, mode := range []GeneratedColumnsMode{GeneratedColumnsVirtual, GeneratedColumnsAll} {
+		conf = newConf(mode)
+		require.ErrorContains(t, validateIncludeGeneratedColumns(conf), "is not supported yet")
+	}
+	conf = newConf("bad")
+	require.EqualError(t, validateIncludeGeneratedColumns(conf),
+		"invalid --include-generated-columns value 'bad', supported values: none, stored")
 }
