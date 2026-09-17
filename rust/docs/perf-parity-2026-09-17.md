@@ -232,3 +232,23 @@ join_v2_bytes_key          197      573
 v2's build is 9x v1's per row (Go's row table serialises every row, v1 keeps
 the chunks), but at 167 ns it is worth ~70 ms of CPU on q09's 612k-row build;
 the lever is the probe path per output row, where q09 emits millions.
+
+## Fix 5: the v2 probe worker spins before parking (edd3f8d6)
+
+On the node, q09's v2 probe pipeline spent 15% of CPU in futex wake and park
+around its four channel handoffs per chunk (113k futex calls per q09 run,
+`strace -c`); the Go node's kernel scheduler share for the same pipeline is
+3.4%, because goroutine handoffs rarely sleep an M. The worker's receive now
+spins ~20 us before it blocks (Go's idle-M spin in `findRunnable`). A/B,
+warm, ABBA means over 2 runs per pass (results/ab-fix5.txt):
+
+```
+        fix4            fix5            go             fix5/fix4 wall  cpu
+q09   3.46 s 5072 ms   3.36 s 4967 ms   3.21 s 4565 ms   0.973          0.979
+q03   1.20 s  927 ms   1.18 s  930 ms   1.11 s  670 ms   0.979          1.003
+q10   0.86 s 1190 ms   0.82 s 1175 ms   0.69 s  855 ms   0.954          0.987
+q18   3.72 s 2395 ms   3.63 s 2412 ms   3.29 s 1940 ms   0.977          1.007
+```
+Wall improves 2-5% on every query, in both passes; CPU is flat (spinning
+replaces the futex CPU). The remaining CPU gap to Go is 9% on q09, 24% on
+q18, and 37-39% on q03 and q10, the smaller index-join queries.
