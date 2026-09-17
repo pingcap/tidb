@@ -299,6 +299,21 @@ func TestConfigValidation(t *testing.T) {
 
 	conf.FileType = "rand_str"
 	require.EqualError(t, adjustFileFormat(conf), "unknown config.FileType 'rand_str'")
+
+	conf.IncludeStoredGeneratedColumns = true
+	for _, fileType := range []string{"", FileFormatSQLTextString} {
+		conf.FileType = fileType
+		require.EqualError(t, adjustFileFormat(conf),
+			"--include-stored-generated-columns is only supported with --filetype csv or parquet")
+	}
+	conf.NoData = true
+	conf.FileType = FileFormatSQLTextString
+	require.NoError(t, adjustFileFormat(conf))
+	conf.NoData = false
+	for _, fileType := range []string{FileFormatCSVString, FileFormatParquetString} {
+		conf.FileType = fileType
+		require.NoError(t, adjustFileFormat(conf))
+	}
 }
 
 func TestValidateResolveAutoConsistency(t *testing.T) {

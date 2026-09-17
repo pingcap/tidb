@@ -558,10 +558,18 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			if projection.hasFilteredColumns() {
+				schemaColumns := projection.schemaColumnNames()
+				if len(schemaColumns) == 0 {
+					return errors.Errorf(
+						"column filter selects no non-generated columns from table `%s`.`%s`, can't project its schema",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
 				schemas[key], err = buildProjectedTableSchema(
 					schemaParser,
 					createTableSQL,
-					columnNames(projection.selectedTypes),
+					schemaColumns,
 				)
 			} else {
 				schemas[key], err = parseTableSchema(schemaParser, createTableSQL)
@@ -621,7 +629,8 @@ func buildColumnProjection(
 		return columnProjection{}, nil
 	}
 
-	sourceColumns, hasGeneratedColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+	sourceColumns, storedGeneratedColumns, hasSkippedColumn, err := getWritableColumnNames(
+		tctx, conn, dbName, table.Name, conf.IncludeStoredGeneratedColumns)
 	if err != nil {
 		return columnProjection{}, err
 	}
@@ -630,16 +639,17 @@ func buildColumnProjection(
 		return columnProjection{}, err
 	}
 	if len(selectedColumns) == 0 {
-		// Preserve the existing empty projection for tables with only generated columns.
+		// Preserve the existing empty projection for tables with only skipped generated columns.
 		return columnProjection{}, nil
 	}
 
 	sourceFields := columnNamesToSelectFields(sourceColumns)
 	selectedFields := columnNamesToSelectFields(selectedColumns)
 	projection := columnProjection{
-		selectField: strings.Join(selectedFields, ","),
+		selectField:            strings.Join(selectedFields, ","),
+		storedGeneratedColumns: storedGeneratedColumns,
 	}
-	if !hasGeneratedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
+	if !hasSkippedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
 		projection.selectField = "*"
 	}
 
