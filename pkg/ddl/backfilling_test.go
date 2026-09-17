@@ -28,12 +28,15 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -596,4 +599,154 @@ func TestSplitRangesByKeys(t *testing.T) {
 		result := splitRangesByKeys(tt.ranges, tt.splitKeys)
 		require.EqualValues(t, len(tt.expected), len(result), "keys mismatch", tt.name)
 	}
+}
+
+func TestGetRestoreDataFulltextKeepsRawHandleDatum(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	colPKType := types.NewFieldType(mysql.TypeVarchar)
+	colPKType.SetCharset(charset.CharsetUTF8MB4)
+	colPKType.SetCollate(charset.CollationUTF8MB4)
+	colPK := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *colPKType}
+	colPK.AddFlag(mysql.PriKeyFlag)
+	colDoc := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeBlob)}
+	pkIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    pmodel.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+	}
+	fulltextIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    pmodel.NewCIStr("idx_fts"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	normalIdx := &model.IndexInfo{
+		ID:      3,
+		Name:    pmodel.NewCIStr("idx_doc"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+	}
+	tblInfo := &model.TableInfo{
+		ID:                  22,
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
+		Columns:             []*model.ColumnInfo{colPK, colDoc},
+		Indices:             []*model.IndexInfo{pkIdx, fulltextIdx, normalIdx},
+	}
+
+	// the pk column with charset UTF8MB4, the raw value with tailing spaces should be encoded to restore data directly for fulltext index
+	rawPK := "pk   "
+	makeHandleDts := func() []types.Datum {
+		return []types.Datum{types.NewCollationStringDatum(rawPK, charset.CollationUTF8MB4)}
+	}
+
+	rsData := getRestoreData(tblInfo, fulltextIdx, pkIdx, makeHandleDts())
+	// verify the result of `getRestoreData`
+	require.Len(t, rsData, 1)
+	require.Equal(t, types.KindString, rsData[0].Kind())
+	require.Equal(t, rawPK, rsData[0].GetString())
+	require.Equal(t, "pk   ", rsData[0].GetString())
+
+	rsData = getRestoreData(tblInfo, normalIdx, pkIdx, makeHandleDts())
+	require.Len(t, rsData, 1)
+	require.Equal(t, types.KindInt64, rsData[0].Kind())
+	require.Equal(t, int64(3), rsData[0].GetInt64())
+}
+
+func TestGetRestoreDataHybridKeepsRawHandleDatum(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	colPKType := types.NewFieldType(mysql.TypeVarchar)
+	colPKType.SetCharset(charset.CharsetUTF8MB4)
+	colPKType.SetCollate(charset.CollationUTF8MB4)
+	colPK := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *colPKType}
+	colPK.AddFlag(mysql.PriKeyFlag)
+	colDoc := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeBlob)}
+	pkIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    pmodel.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+	}
+	hybridIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    pmodel.NewCIStr("idx_hybrid"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+		HybridInfo: &model.HybridIndexInfo{
+			Sharding: &model.HybridShardingSpec{
+				Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+			},
+		},
+	}
+	normalIdx := &model.IndexInfo{
+		ID:      3,
+		Name:    pmodel.NewCIStr("idx_doc"),
+		Columns: []*model.IndexColumn{{Offset: 1, Length: types.UnspecifiedLength}},
+	}
+	tblInfo := &model.TableInfo{
+		ID:                  23,
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
+		Columns:             []*model.ColumnInfo{colPK, colDoc},
+		Indices:             []*model.IndexInfo{pkIdx, hybridIdx, normalIdx},
+	}
+
+	// the pk column with charset UTF8MB4, the raw value with tailing spaces should be encoded to restore data directly for hybrid index
+	rawPK := "pk   "
+	makeHandleDts := func() []types.Datum {
+		return []types.Datum{types.NewCollationStringDatum(rawPK, charset.CollationUTF8MB4)}
+	}
+
+	rsData := getRestoreData(tblInfo, hybridIdx, pkIdx, makeHandleDts())
+	// verify the result of `getRestoreData`
+	require.Len(t, rsData, 1)
+	require.Equal(t, types.KindString, rsData[0].Kind())
+	require.Equal(t, rawPK, rsData[0].GetString())
+	require.Equal(t, "pk   ", rsData[0].GetString())
+
+	rsData = getRestoreData(tblInfo, normalIdx, pkIdx, makeHandleDts())
+	require.Len(t, rsData, 1)
+	require.Equal(t, types.KindInt64, rsData[0].Kind())
+	require.Equal(t, int64(3), rsData[0].GetInt64())
+}
+
+func TestGetTiCIHeaderCommitTSForCloudImport(t *testing.T) {
+	scanSnapshotTS := uint64(123456789)
+
+	require.Zero(t, getTiCIHeaderCommitTSForCloudImport(nil, scanSnapshotTS))
+	require.Zero(t, getTiCIHeaderCommitTSForCloudImport(&model.IndexInfo{}, scanSnapshotTS))
+
+	fullTextIdx := &model.IndexInfo{
+		FullTextInfo: &model.FullTextIndexInfo{},
+	}
+	require.Equal(t, scanSnapshotTS, getTiCIHeaderCommitTSForCloudImport(fullTextIdx, scanSnapshotTS))
+
+	hybridIdx := &model.IndexInfo{
+		HybridInfo: &model.HybridIndexInfo{},
+	}
+	require.Equal(t, scanSnapshotTS, getTiCIHeaderCommitTSForCloudImport(hybridIdx, scanSnapshotTS))
+}
+
+func TestGetTiCIIndexIDForCloudImport(t *testing.T) {
+	idxID := int64(123)
+
+	require.Zero(t, getTiCIIndexIDForCloudImport(nil, idxID))
+	require.Zero(t, getTiCIIndexIDForCloudImport(&model.IndexInfo{}, idxID))
+
+	fullTextIdx := &model.IndexInfo{
+		FullTextInfo: &model.FullTextIndexInfo{},
+	}
+	require.Equal(t, idxID, getTiCIIndexIDForCloudImport(fullTextIdx, idxID))
+
+	hybridIdx := &model.IndexInfo{
+		HybridInfo: &model.HybridIndexInfo{},
+	}
+	require.Equal(t, idxID, getTiCIIndexIDForCloudImport(hybridIdx, idxID))
 }

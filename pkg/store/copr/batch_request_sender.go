@@ -100,7 +100,7 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 		return tikverr.ErrTiDBShuttingDown
 	}
 
-	if !config.GetGlobalConfig().DisaggregatedTiFlash {
+	if !config.GetGlobalConfig().DisaggregatedTiFlash && ctx.Store != nil {
 		// The reload region param is always true. Because that every time we try, we must
 		// re-build the range then re-create the batch sender. As a result, the len of "failStores"
 		// will change. If tiflash's replica is more than two, the "reload region" will always be false.

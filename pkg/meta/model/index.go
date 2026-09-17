@@ -15,6 +15,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -102,26 +103,383 @@ type VectorIndexInfo struct {
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }
 
+// FullTextParserType is the tokenizer kind.
+// Note: Must use UPPER_UNDER_SCORE naming convention.
+type FullTextParserType string
+
+const (
+	// FullTextParserTypeInvalid is the invalid tokenizer.
+	FullTextParserTypeInvalid FullTextParserType = "INVALID"
+	// FullTextParserTypeStandardV1 is the standard parser for English texts.
+	FullTextParserTypeStandardV1 FullTextParserType = "STANDARD_V1"
+	// FullTextParserTypeMultilingualV1 is a parser for multilingual texts.
+	FullTextParserTypeMultilingualV1 FullTextParserType = "MULTILINGUAL_V1"
+	// FullTextParserTypeNgramV1 is a better recall rate,
+	// but may be not better performed parser.
+	// The value matches with the supported tokenizer in Libclara.
+	FullTextParserTypeNgramV1 FullTextParserType = "NGRAM_V1"
+)
+
+// SQLName returns the SQL keyword name of the fulltext parser.
+func (t FullTextParserType) SQLName() string {
+	switch t {
+	case FullTextParserTypeStandardV1:
+		return "STANDARD"
+	case FullTextParserTypeMultilingualV1:
+		return "MULTILINGUAL"
+	case FullTextParserTypeNgramV1:
+		return "NGRAM"
+	default:
+		return "INVALID"
+	}
+}
+
+// GetFullTextParserTypeBySQLName returns the FullTextParserType by a SQL name.
+func GetFullTextParserTypeBySQLName(name string) FullTextParserType {
+	switch strings.ToUpper(name) {
+	case "STANDARD":
+		return FullTextParserTypeStandardV1
+	case "MULTILINGUAL":
+		return FullTextParserTypeMultilingualV1
+	case "NGRAM":
+		return FullTextParserTypeNgramV1
+	default:
+		return FullTextParserTypeInvalid
+	}
+}
+
+// FullTextIndexInfo is the information of a FULLTEXT index.
+type FullTextIndexInfo struct {
+	ParserType FullTextParserType `json:"parser_type"`
+	// ParserConfig records the creation-time tokenization variables. Nil denotes a legacy index
+	// whose creation-time analyzer settings are unknown.
+	ParserConfig *FullTextParserConfig `json:"parser_config,omitempty"`
+}
+
+// FullTextParserConfig preserves the creation-time tokenization variables.
+// Custom stopword table names and contents are deliberately not persisted.
+type FullTextParserConfig struct {
+	InnodbFtMinTokenSize   int  `json:"innodb_ft_min_token_size"`
+	InnodbFtMaxTokenSize   int  `json:"innodb_ft_max_token_size"`
+	NgramTokenSize         int  `json:"ngram_token_size"`
+	InnodbFtEnableStopword bool `json:"innodb_ft_enable_stopword"`
+}
+
+// Clone returns an independent copy of the fulltext index metadata.
+func (info *FullTextIndexInfo) Clone() *FullTextIndexInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := *info
+	if info.ParserConfig != nil {
+		config := *info.ParserConfig
+		cloned.ParserConfig = &config
+	}
+	return &cloned
+}
+
+// HybridIndexInfo is the information of HYBRID index of a column.
+type HybridIndexInfo struct {
+	FullText []*HybridFullTextSpec `json:"fulltext,omitempty"`
+	Vector   []*HybridVectorSpec   `json:"vector,omitempty"`
+	Inverted []*HybridInvertedSpec `json:"inverted,omitempty"`
+	Sort     *HybridSortSpec       `json:"sort,omitempty"`
+	Sharding *HybridShardingSpec   `json:"sharding_key,omitempty"`
+}
+
+// HybridFullTextSpec describes the configuration for a fulltext segment in a hybrid index.
+type HybridFullTextSpec struct {
+	Columns   []*IndexColumn           `json:"columns"`
+	IndexInfo *HybridFulltextIndexInfo `json:"index_info"`
+}
+
+// HybridFulltextIndexInfo includes analyzer and tokenizer information for the fulltext component.
+type HybridFulltextIndexInfo struct {
+	Analyzer     *HybridFulltextAnalyzer  `json:"analyzer,omitempty"`
+	Tokenizer    *HybridFulltextTokenizer `json:"tokenizer,omitempty"`
+	TokenFilters []string                 `json:"token_filter,omitempty"`
+}
+
+// HybridFulltextAnalyzer describes the analyzer configuration for the fulltext component.
+type HybridFulltextAnalyzer struct {
+	Type   string         `json:"type"`
+	Params map[string]any `json:"params,omitempty"`
+}
+
+// HybridFulltextTokenizer describes the tokenizer configuration for the fulltext component.
+type HybridFulltextTokenizer struct {
+	Type    string         `json:"type"`
+	Options map[string]any `json:"options,omitempty"`
+}
+
+// HybridVectorSpec describes the configuration for a vector segment in a hybrid index.
+type HybridVectorSpec struct {
+	Columns   []*IndexColumn         `json:"columns"`
+	IndexInfo *HybridVectorIndexInfo `json:"index_info"`
+}
+
+// HybridVectorIndexInfo describes the configuration of a vector index inside the hybrid index.
+type HybridVectorIndexInfo struct {
+	DistanceMetric string            `json:"distance_metric,omitempty"`
+	Dimension      *uint64           `json:"dimension,omitempty"`
+	Options        map[string]string `json:"options,omitempty"`
+}
+
+// HybridInvertedSpec describes the configuration for an inverted segment in a hybrid index.
+type HybridInvertedSpec struct {
+	Columns []*IndexColumn `json:"columns,omitempty"`
+	Params  map[string]any `json:"params,omitempty"`
+}
+
+// HybridSortSpec describes the order definition of the hybrid index.
+type HybridSortSpec struct {
+	Columns []*IndexColumn `json:"columns,omitempty"`
+	// IsAsc stores, for each column, whether it is sorted in ascending order (true) or descending order (false).
+	IsAsc []bool `json:"is_asc,omitempty"`
+}
+
+// HybridShardingSpec describes the sharding key definition of the hybrid index.
+type HybridShardingSpec struct {
+	Columns []*IndexColumn `json:"columns,omitempty"`
+}
+
+// Clone clones HybridIndexInfo.
+func (info *HybridIndexInfo) Clone() *HybridIndexInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := &HybridIndexInfo{}
+	if len(info.FullText) > 0 {
+		cloned.FullText = make([]*HybridFullTextSpec, len(info.FullText))
+		for i, ft := range info.FullText {
+			if ft == nil {
+				continue
+			}
+			cloned.FullText[i] = ft.Clone()
+		}
+	}
+	if len(info.Vector) > 0 {
+		cloned.Vector = make([]*HybridVectorSpec, len(info.Vector))
+		for i, v := range info.Vector {
+			if v == nil {
+				continue
+			}
+			cloned.Vector[i] = v.Clone()
+		}
+	}
+	if len(info.Inverted) > 0 {
+		cloned.Inverted = make([]*HybridInvertedSpec, len(info.Inverted))
+		for i, inv := range info.Inverted {
+			if inv == nil {
+				continue
+			}
+			cloned.Inverted[i] = inv.Clone()
+		}
+	}
+	if info.Sort != nil {
+		cloned.Sort = info.Sort.Clone()
+	}
+	if info.Sharding != nil {
+		cloned.Sharding = info.Sharding.Clone()
+	}
+	return cloned
+}
+
+// Clone clones HybridFullTextSpec.
+func (c *HybridFullTextSpec) Clone() *HybridFullTextSpec {
+	if c == nil {
+		return nil
+	}
+	cloned := &HybridFullTextSpec{}
+	cloned.Columns = cloneIndexColumnSlice(c.Columns)
+	if c.IndexInfo != nil {
+		cloned.IndexInfo = c.IndexInfo.Clone()
+	}
+	return cloned
+}
+
+// Clone clones HybridFulltextIndexInfo.
+func (info *HybridFulltextIndexInfo) Clone() *HybridFulltextIndexInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := &HybridFulltextIndexInfo{}
+	if info.Analyzer != nil {
+		cloned.Analyzer = info.Analyzer.Clone()
+	}
+	if info.Tokenizer != nil {
+		cloned.Tokenizer = info.Tokenizer.Clone()
+	}
+	if len(info.TokenFilters) > 0 {
+		cloned.TokenFilters = append([]string(nil), info.TokenFilters...)
+	}
+	return cloned
+}
+
+// Clone clones HybridFulltextAnalyzer.
+func (cfg *HybridFulltextAnalyzer) Clone() *HybridFulltextAnalyzer {
+	if cfg == nil {
+		return nil
+	}
+	cloned := &HybridFulltextAnalyzer{Type: cfg.Type}
+	if len(cfg.Params) > 0 {
+		cloned.Params = cloneInterfaceMap(cfg.Params)
+	}
+	return cloned
+}
+
+// Clone clones HybridFulltextTokenizer.
+func (cfg *HybridFulltextTokenizer) Clone() *HybridFulltextTokenizer {
+	if cfg == nil {
+		return nil
+	}
+	cloned := &HybridFulltextTokenizer{Type: cfg.Type}
+	if len(cfg.Options) > 0 {
+		cloned.Options = cloneInterfaceMap(cfg.Options)
+	}
+	return cloned
+}
+
+// Clone clones HybridVectorSpec.
+func (c *HybridVectorSpec) Clone() *HybridVectorSpec {
+	if c == nil {
+		return nil
+	}
+	cloned := &HybridVectorSpec{}
+	cloned.Columns = cloneIndexColumnSlice(c.Columns)
+	if c.IndexInfo != nil {
+		cloned.IndexInfo = c.IndexInfo.Clone()
+	}
+	return cloned
+}
+
+// Clone clones HybridVectorIndexInfo.
+func (info *HybridVectorIndexInfo) Clone() *HybridVectorIndexInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := &HybridVectorIndexInfo{
+		DistanceMetric: info.DistanceMetric,
+	}
+	if info.Dimension != nil {
+		dim := *info.Dimension
+		cloned.Dimension = &dim
+	}
+	if len(info.Options) > 0 {
+		cloned.Options = make(map[string]string, len(info.Options))
+		for k, v := range info.Options {
+			cloned.Options[k] = v
+		}
+	}
+	return cloned
+}
+
+// Clone clones HybridInvertedSpec.
+func (c *HybridInvertedSpec) Clone() *HybridInvertedSpec {
+	if c == nil {
+		return nil
+	}
+	cloned := &HybridInvertedSpec{}
+	cloned.Columns = cloneIndexColumnSlice(c.Columns)
+	if len(c.Params) > 0 {
+		cloned.Params = cloneInterfaceMap(c.Params)
+	}
+	return cloned
+}
+
+// Clone clones HybridSortSpec.
+func (opt *HybridSortSpec) Clone() *HybridSortSpec {
+	if opt == nil {
+		return nil
+	}
+	cloned := &HybridSortSpec{}
+	cloned.Columns = cloneIndexColumnSlice(opt.Columns)
+	if len(opt.IsAsc) > 0 {
+		cloned.IsAsc = append([]bool(nil), opt.IsAsc...)
+	}
+	return cloned
+}
+
+// Clone clones HybridShardingSpec.
+func (opt *HybridShardingSpec) Clone() *HybridShardingSpec {
+	if opt == nil {
+		return nil
+	}
+	cloned := &HybridShardingSpec{}
+	cloned.Columns = cloneIndexColumnSlice(opt.Columns)
+	return cloned
+}
+
+func cloneIndexColumnSlice(cols []*IndexColumn) []*IndexColumn {
+	if len(cols) == 0 {
+		return nil
+	}
+	cloned := make([]*IndexColumn, len(cols))
+	for i, col := range cols {
+		if col == nil {
+			continue
+		}
+		cloned[i] = col.Clone()
+	}
+	return cloned
+}
+
+func cloneInterfaceMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = deepCloneInterface(v)
+	}
+	return dst
+}
+
+func deepCloneInterface(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return cloneInterfaceMap(val)
+	case []any:
+		if len(val) == 0 {
+			return []any{}
+		}
+		res := make([]any, len(val))
+		for i, elem := range val {
+			res[i] = deepCloneInterface(elem)
+		}
+		return res
+	case json.RawMessage:
+		if val == nil {
+			return json.RawMessage(nil)
+		}
+		return append(json.RawMessage(nil), val...)
+	default:
+		return val
+	}
+}
+
 // IndexInfo provides meta data describing a DB index.
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID                  int64            `json:"id"`
-	Name                model.CIStr      `json:"idx_name"` // Index name.
-	Table               model.CIStr      `json:"tbl_name"` // Table name.
-	Columns             []*IndexColumn   `json:"idx_cols"` // Index columns.
-	State               SchemaState      `json:"state"`
-	BackfillState       BackfillState    `json:"backfill_state"`
-	Comment             string           `json:"comment"`                       // Comment
-	Tp                  model.IndexType  `json:"index_type"`                    // Index type: Btree, Hash, Rtree or HNSW
-	Unique              bool             `json:"is_unique"`                     // Whether the index is unique.
-	Primary             bool             `json:"is_primary"`                    // Whether the index is primary key.
-	Invisible           bool             `json:"is_invisible"`                  // Whether the index is invisible.
-	Global              bool             `json:"is_global"`                     // Whether the index is global.
-	MVIndex             bool             `json:"mv_index"`                      // Whether the index is multivalued index.
-	VectorInfo          *VectorIndexInfo `json:"vector_index"`                  // VectorInfo is the vector index information.
-	ConditionExprString string           `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
-	AffectColumn        []*IndexColumn   `json:"affect_column,omitempty"`       // AffectColumn is the columns related to the index.
+	ID                  int64              `json:"id"`
+	Name                model.CIStr        `json:"idx_name"` // Index name.
+	Table               model.CIStr        `json:"tbl_name"` // Table name.
+	Columns             []*IndexColumn     `json:"idx_cols"` // Index columns.
+	State               SchemaState        `json:"state"`
+	BackfillState       BackfillState      `json:"backfill_state"`
+	Comment             string             `json:"comment"`                       // Comment
+	Tp                  model.IndexType    `json:"index_type"`                    // Index type: Btree, Hash, Rtree or HNSW
+	Unique              bool               `json:"is_unique"`                     // Whether the index is unique.
+	Primary             bool               `json:"is_primary"`                    // Whether the index is primary key.
+	Invisible           bool               `json:"is_invisible"`                  // Whether the index is invisible.
+	Global              bool               `json:"is_global"`                     // Whether the index is global.
+	MVIndex             bool               `json:"mv_index"`                      // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo   `json:"vector_index"`                  // VectorInfo is the vector index information.
+	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`               // FullTextInfo is the FULLTEXT index information.
+	HybridInfo          *HybridIndexInfo   `json:"hybrid_index"`                  // HybridInfo is the HYBRID index information.
+	ConditionExprString string             `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"`       // AffectColumn is the columns related to the index.
 	// Version of global index key format for non-clustered tables.
 	// Set to V1 when the handle can appear in the index key (non-unique indexes,
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
@@ -140,6 +498,10 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {
 		ni.Columns[i] = index.Columns[i].Clone()
+	}
+	ni.FullTextInfo = index.FullTextInfo.Clone()
+	if index.HybridInfo != nil {
+		ni.HybridInfo = index.HybridInfo.Clone()
 	}
 	if index.AffectColumn != nil {
 		ni.AffectColumn = make([]*IndexColumn, len(index.AffectColumn))
@@ -213,6 +575,32 @@ func (index *IndexInfo) IsTiFlashLocalIndex() bool {
 	return index.VectorInfo != nil
 }
 
+// IsNonKVIndex checks whether the index has no index data in TiKV.
+func (index *IndexInfo) IsNonKVIndex() bool {
+	return index.IsTiFlashLocalIndex() || index.IsTiCIIndex()
+}
+
+// IsTiCIIndex checks whether the index is a fulltext index.
+// Fulltext indexes only exist in TiCI, so no actual index data is written to the KV layer.
+func (index *IndexInfo) IsTiCIIndex() bool {
+	return index.FullTextInfo != nil || index.HybridInfo != nil
+}
+
+// HasExtraTiCIShardingKey checks whether the TiCI index uses an explicit
+// sharding key, whose storage key has the normal index-key layout.
+func (index *IndexInfo) HasExtraTiCIShardingKey() bool {
+	return index.HybridInfo != nil && index.HybridInfo.Sharding != nil
+}
+
+// HybridShardingColumns returns the sharding columns for a hybrid index.
+// It returns nil when the index is not hybrid or sharding is not configured.
+func (index *IndexInfo) HybridShardingColumns() []*IndexColumn {
+	if index == nil || index.HybridInfo == nil || index.HybridInfo.Sharding == nil {
+		return nil
+	}
+	return index.HybridInfo.Sharding.Columns
+}
+
 // HasCondition checks whether the index has a partial index condition.
 func (index *IndexInfo) HasCondition() bool {
 	return len(index.ConditionExprString) > 0
@@ -269,6 +657,9 @@ func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, co
 // IsIndexPrefixCoveredForForeignKey checks whether the index covers the foreign key columns
 // and whether the partial index predicate, if any, is safe for foreign key checks.
 func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols ...model.CIStr) bool {
+	if index.IsNonKVIndex() {
+		return false
+	}
 	if !IsIndexPrefixCovered(tbInfo, index, cols...) {
 		return false
 	}

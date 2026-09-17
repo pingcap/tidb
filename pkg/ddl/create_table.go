@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -92,6 +93,17 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 	}
 	switch tbInfo.State {
 	case model.StateNone:
+		// Persist the same job variables used to create the TiCI indexes.
+		for _, index := range tbInfo.Indices {
+			if index.FullTextInfo == nil {
+				continue
+			}
+			config, err := fullTextParserConfigFromJob(job)
+			if err != nil {
+				return tbInfo, errors.Trace(err)
+			}
+			index.FullTextInfo.ParserConfig = config
+		}
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = metaMut.StartTS
@@ -206,6 +218,65 @@ func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableIn
 	return nil
 }
 
+func (w *worker) createTiCIIndexes(jobCtx *jobContext, job *model.Job, schemaName string, tblInfo *model.TableInfo) error {
+	if tblInfo == nil {
+		return nil
+	}
+
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
+
+	for _, index := range tblInfo.Indices {
+		if !index.IsTiCIIndex() {
+			continue
+		}
+		var parserInfo *tici.ParserInfo
+		if index.FullTextInfo != nil {
+			info, err := w.buildTiCIFulltextParserInfo(jobCtx, job, index)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			parserInfo = info
+		}
+		if err := tici.CreateFulltextIndex(ctx, jobCtx.store, tblInfo, index, schemaName, parserInfo); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// dropTiCIIndexes drops TiCI indexes in a best-effort manner.
+// It never blocks TiDB DDL progress: failures are logged as warnings.
+func dropTiCIIndexes(jobCtx *jobContext, tblInfo *model.TableInfo) {
+	if tblInfo == nil {
+		return
+	}
+
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
+
+	for _, index := range tblInfo.Indices {
+		if !index.IsTiCIIndex() {
+			continue
+		}
+		if err := tici.DropFullTextIndex(ctx, jobCtx.store, tblInfo.ID, index.ID); err != nil {
+			logutil.DDLLogger().Warn(
+				"drop TiCI index failed when dropping table",
+				zap.Error(err),
+				zap.Int64("table_id", tblInfo.ID),
+				zap.String("table", tblInfo.Name.L),
+				zap.Int64("index_id", index.ID),
+				zap.String("index", index.Name.L),
+			)
+		}
+	}
+}
+
 func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 		if val.(bool) {
@@ -234,6 +305,14 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if err := w.createTiCIIndexes(jobCtx, job, job.SchemaName, tbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	failpoint.Inject("mockErrorAfterCreateTiCIIndexes", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock error after creating TiCI indexes"))
+		}
+	})
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -263,6 +342,9 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 			autoidCli: w.autoidCli,
 		}, args)
 		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err := w.createTiCIIndexes(jobCtx, job, job.SchemaName, tbInfo); err != nil {
 			return ver, errors.Trace(err)
 		}
 		tbInfo.State = model.StateDeleteOnly
@@ -331,6 +413,10 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 				autoidCli: w.autoidCli,
 			}, tblArgs)
 			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			if err := w.createTiCIIndexes(jobCtx, stubJob, stubJob.SchemaName, tbInfo); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
@@ -1332,8 +1418,23 @@ func BuildTableInfo(
 	}
 
 	for _, constr := range constraints {
+		indexOption := constr.Option
+		if indexOption != nil && indexOption.TiCIParameter != "" && constr.Tp != ast.ConstraintFulltext && constr.Tp != ast.ConstraintHybrid {
+			return nil, dbterror.ErrUnsupportedIndexType.FastGen("PARAMETER is only supported for FULLTEXT/HYBRID INDEX")
+		}
+		if constr.Tp == ast.ConstraintHybrid {
+			option := ast.IndexOption{}
+			if indexOption != nil {
+				option = *indexOption
+			}
+			if option.Tp != pmodel.IndexTypeInvalid {
+				return nil, dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for HYBRID INDEX", option.Tp)
+			}
+			option.Tp = pmodel.IndexTypeHybrid
+			indexOption = &option
+		}
 		var hiddenCols []*model.ColumnInfo
-		if constr.Tp != ast.ConstraintVector {
+		if constr.Tp != ast.ConstraintVector && constr.Tp != ast.ConstraintFulltext && constr.Tp != ast.ConstraintHybrid {
 			// Build hidden columns if necessary.
 			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns)
 			if err != nil {
@@ -1408,7 +1509,22 @@ func BuildTableInfo(
 		}
 
 		if constr.Tp == ast.ConstraintFulltext {
-			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
+			idxInfo, err := buildFullTextIndexInfo(
+				tbInfo,
+				pmodel.NewCIStr(constr.Name),
+				constr.Keys,
+				constr.Option,
+				model.StatePublic,
+			)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			_, err = validateCommentLength(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), ctx.GetSQLMode(), idxInfo.Name.String(), &idxInfo.Comment, dbterror.ErrTooLongIndexComment)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			idxInfo.ID = AllocateIndexID(tbInfo)
+			tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 			continue
 		}
 
@@ -1504,7 +1620,7 @@ func BuildTableInfo(
 			unique,
 			vector,
 			constr.Keys,
-			constr.Option,
+			indexOption,
 			model.StatePublic,
 		)
 		if err != nil {
