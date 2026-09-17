@@ -141,7 +141,7 @@ impl std::fmt::Debug for KvRequestMetadata {
                 &self
                     .key_ranges
                     .as_ref()
-                    .map(RequestKeyRanges::total_range_count),
+                    .map(|ranges| ranges.total_range_count()),
             )
             .field("store_type", &self.store_type)
             .field("connection_id", &self.connection_id)

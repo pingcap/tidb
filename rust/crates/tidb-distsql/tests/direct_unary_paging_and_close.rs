@@ -203,14 +203,17 @@ mod concurrent {
             }));
             let mut request = metadata(&keys[0], &keys[64]);
             request.keep_order = ordered;
-            request.key_ranges = Some(RequestKeyRanges::new_non_partitioned_with_hints(
-                (0..64)
-                    .map(|index| range(&keys[index], &keys[index + 1]))
-                    .collect(),
-                (0..64)
-                    .map(|index| if index % 3 == 0 { 1 } else { 64 })
-                    .collect(),
-            ));
+            request.key_ranges = Some(
+                RequestKeyRanges::new_non_partitioned_with_hints(
+                    (0..64)
+                        .map(|index| range(&keys[index], &keys[index + 1]))
+                        .collect(),
+                    (0..64)
+                        .map(|index| if index % 3 == 0 { 1 } else { 64 })
+                        .collect(),
+                )
+                .into(),
+            );
             let mut result = select(&mut runtime, request, Arc::new(AtomicBool::new(false)));
             let replies = std::thread::spawn(move || {
                 for _ in 0..64 {
@@ -270,10 +273,13 @@ mod concurrent {
             ]);
             let mut request = metadata("a", "z");
             request.request_source.internal = internal;
-            request.key_ranges = Some(RequestKeyRanges::new_non_partitioned_with_hints(
-                vec![range("a", "g"), range("g", "m"), range("m", "z")],
-                vec![64, 64, 1],
-            ));
+            request.key_ranges = Some(
+                RequestKeyRanges::new_non_partitioned_with_hints(
+                    vec![range("a", "g"), range("g", "m"), range("m", "z")],
+                    vec![64, 64, 1],
+                )
+                .into(),
+            );
             let mut result = select(&mut runtime, request, Arc::new(AtomicBool::new(false)));
             let mut attempts = vec![started(&incoming), started(&incoming)];
             if !internal {
@@ -546,16 +552,19 @@ mod concurrent {
         ]);
         let mut request = metadata("a", "z");
         request.request_source.internal = false;
-        request.key_ranges = Some(RequestKeyRanges::new_non_partitioned_with_hints(
-            vec![
-                range("a", "e"),
-                range("e", "i"),
-                range("i", "m"),
-                range("m", "q"),
-                range("q", "z"),
-            ],
-            vec![64, 64, 64, 64, 1],
-        ));
+        request.key_ranges = Some(
+            RequestKeyRanges::new_non_partitioned_with_hints(
+                vec![
+                    range("a", "e"),
+                    range("e", "i"),
+                    range("i", "m"),
+                    range("m", "q"),
+                    range("q", "z"),
+                ],
+                vec![64, 64, 64, 64, 1],
+            )
+            .into(),
+        );
         let mut result = select(&mut runtime, request, Arc::new(AtomicBool::new(false)));
         let mut attempts = [started(&incoming), started(&incoming)];
         attempts.sort_by_key(|attempt| attempt.0);

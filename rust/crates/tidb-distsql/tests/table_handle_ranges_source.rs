@@ -163,16 +163,10 @@ fn empty_handles_preserve_non_partitioned_builder_shape() {
     let mut builder = KvRequestBuilder::new();
     builder.set_table_handles(1, &[]);
     let request = builder.build().expect("empty table-handle request build");
-    let attached = request
-        .key_ranges
-        .as_ref()
-        .expect("empty ranges attached");
+    let attached = request.key_ranges.as_ref().expect("empty ranges attached");
     assert!(attached.is_non_partitioned());
     assert_eq!(attached.partitions(), vec![vec![]]);
-    assert_eq!(
-        attached.row_count_hints(),
-        vec![Vec::<usize>::new()]
-    );
+    assert_eq!(attached.row_count_hints(), vec![Vec::<usize>::new()]);
 }
 
 #[test]

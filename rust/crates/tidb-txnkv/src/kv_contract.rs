@@ -617,7 +617,10 @@ pub struct Request {
     /// Serialized request body.
     pub data: Option<Vec<u8>>,
     /// Partition-aware key ranges.
-    pub key_ranges: Option<PartitionedKeyRanges>,
+    /// Go `KeyRanges *KeyRanges`: one range list shared by every copy of
+    /// the request (the transport binding, each response's metadata, each
+    /// attempt), not cloned per copy.
+    pub key_ranges: Option<Arc<PartitionedKeyRanges>>,
     /// TiFlash partition-table ranges.
     pub partition_id_and_ranges: Vec<PartitionIdAndRanges>,
     /// Request concurrency.

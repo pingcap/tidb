@@ -42,7 +42,7 @@ fn metadata() -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(b"dag".to_vec());
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range("a", "z")]));
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range("a", "z")]).into());
     metadata.keep_order = true;
     metadata.cacheable = true;
     metadata.store_type = StoreType::TiKv;

@@ -976,7 +976,7 @@ impl CopReadTaskRuntime {
         topology: &[RegionTaskTopology],
     ) -> Result<Vec<RegionTaskEnvelope>, CopReadTaskError> {
         let mut metadata = self.metadata.as_ref().clone();
-        metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(ranges));
+        metadata.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned(ranges)));
         let tasks =
             build_region_tasks(&metadata, topology).ok_or(CopReadTaskError::InvalidTopology)?;
         if tasks.iter().any(|task| !task.batch_task_list.is_empty()) {

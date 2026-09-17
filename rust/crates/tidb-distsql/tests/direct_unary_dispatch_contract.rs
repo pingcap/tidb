@@ -45,14 +45,16 @@ fn unordered_regions_publish_first_completed_response() {
     let mut request_metadata = metadata("a", "z");
     request_metadata.keep_order = false;
     request_metadata.concurrency = 2;
-    let mut runtime = InjectedQueryRuntime::new(completion_order_transport(
-        Rc::clone(&calls),
-        [false, true],
-    ));
+    let mut runtime =
+        InjectedQueryRuntime::new(completion_order_transport(Rc::clone(&calls), [false, true]));
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
-    assert_eq!(calls.borrow().len(), 2, "prefetch stays bounded by concurrency");
+    assert_eq!(
+        calls.borrow().len(),
+        2,
+        "prefetch stays bounded by concurrency"
+    );
 }
 
 #[test]
@@ -60,14 +62,16 @@ fn ordered_regions_retain_logical_range_order() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.concurrency = 2;
-    let mut runtime = InjectedQueryRuntime::new(completion_order_transport(
-        Rc::clone(&calls),
-        [false, true],
-    ));
+    let mut runtime =
+        InjectedQueryRuntime::new(completion_order_transport(Rc::clone(&calls), [false, true]));
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
-    assert_eq!(calls.borrow().len(), 2, "ordered reads still prefetch regions");
+    assert_eq!(
+        calls.borrow().len(),
+        2,
+        "ordered reads still prefetch regions"
+    );
 }
 
 #[test]
@@ -101,10 +105,7 @@ fn unordered_region_window_is_bounded_and_results_are_not_lost() {
     let mut request_metadata = metadata("a", "z");
     request_metadata.keep_order = false;
     request_metadata.concurrency = 2;
-    let mut runtime = InjectedQueryRuntime::new(completion_order_transport(
-        calls,
-        [true, true],
-    ));
+    let mut runtime = InjectedQueryRuntime::new(completion_order_transport(calls, [true, true]));
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
     assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
     assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
@@ -237,10 +238,7 @@ fn locked_response_publishes_the_exact_transaction_event_before_recovery() {
         .next_raw()
         .expect_err("scripted lock recovery cannot complete");
     assert_eq!(
-        observed
-            .lock()
-            .expect("lock event observation")
-            .as_deref(),
+        observed.lock().expect("lock event observation").as_deref(),
         Some(&lock)
     );
 }

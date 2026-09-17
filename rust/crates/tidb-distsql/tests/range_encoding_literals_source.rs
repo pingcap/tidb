@@ -26,8 +26,8 @@
 
 use tidb_distsql::{
     index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext,
-    IsolationLevel, KvPriority, MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE, ReplicaReadType,
-    RequestBuilder, RequestEnvelope, RequestType,
+    IsolationLevel, KvPriority, ReplicaReadType, RequestBuilder, RequestEnvelope, RequestType,
+    MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE,
 };
 
 fn datum(value: i64) -> tidb_datatype::Datum {
@@ -107,8 +107,8 @@ fn table_ranges_to_kv_ranges_matches_master_byte_literals() {
 /// id 15, before the encoded boundary.
 fn index_seek_prefix() -> Vec<u8> {
     vec![
-        0x74, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x5f, 0x69, 0x80, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x0f,
+        0x74, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x5f, 0x69, 0x80, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x0f,
     ]
 }
 

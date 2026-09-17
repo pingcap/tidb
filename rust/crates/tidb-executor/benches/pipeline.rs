@@ -549,14 +549,17 @@ fn bench_read_task_setup() {
         metadata.data = Some(b"dag".to_vec());
         metadata.keep_order = true;
         metadata.start_ts = 100;
-        metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(
-            (0..count)
-                .map(|index| RequestKeyRange {
-                    start_key: key(index * 2).into(),
-                    end_key: key(index * 2 + 1).into(),
-                })
-                .collect(),
-        ));
+        metadata.key_ranges = Some(
+            RequestKeyRanges::new_non_partitioned(
+                (0..count)
+                    .map(|index| RequestKeyRange {
+                        start_key: key(index * 2).into(),
+                        end_key: key(index * 2 + 1).into(),
+                    })
+                    .collect(),
+            )
+            .into(),
+        );
         let topology: Vec<_> = (0..8_u32)
             .map(|region| RegionTaskTopology {
                 region_id: u64::from(region + 1),
@@ -955,14 +958,17 @@ fn bench_cop_encode() {
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(vec![0_u8; 512]);
     metadata.start_ts = 100;
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(
-        (0..count)
-            .map(|index| RequestKeyRange {
-                start_key: key(index * 2).into(),
-                end_key: key(index * 2 + 1).into(),
-            })
-            .collect(),
-    ));
+    metadata.key_ranges = Some(
+        RequestKeyRanges::new_non_partitioned(
+            (0..count)
+                .map(|index| RequestKeyRange {
+                    start_key: key(index * 2).into(),
+                    end_key: key(index * 2 + 1).into(),
+                })
+                .collect(),
+        )
+        .into(),
+    );
     let topology: Vec<_> = (0..8_u32)
         .map(|region| RegionTaskTopology {
             region_id: u64::from(region + 1),

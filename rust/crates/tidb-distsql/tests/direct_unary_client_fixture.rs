@@ -464,9 +464,8 @@ pub fn metadata(start: &str, end: &str) -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(b"dag-read".to_vec());
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range(
-        start, end,
-    )]));
+    metadata.key_ranges =
+        Some(RequestKeyRanges::new_non_partitioned(vec![range(start, end)]).into());
     metadata.keep_order = true;
     // Keep the generic dispatch fixture focused on routing/order. Paging
     // tests opt in explicitly; production defaults are covered by

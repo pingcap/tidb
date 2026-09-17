@@ -83,7 +83,10 @@ impl RegionRecoveryLoader for RecordingLoader {
         &mut self,
         metadata: &RegionMetadata,
         _leader_store_id: u64,
-        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        _resolved_stores: &mut std::collections::BTreeMap<
+            u64,
+            Option<tidb_txnkv::region::StoreMetadata>,
+        >,
     ) -> Result<RegionLocation, RegionLoadError> {
         self.load_region(&metadata.encoded_start_key)
     }
@@ -252,7 +255,7 @@ fn metadata() -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(b"cancelled-dag".to_vec());
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range("a", "z")]));
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range("a", "z")]).into());
     metadata.keep_order = true;
     metadata.store_type = StoreType::TiKv;
     metadata.start_ts = 42;

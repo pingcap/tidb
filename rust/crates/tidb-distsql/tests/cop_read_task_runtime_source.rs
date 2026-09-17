@@ -37,7 +37,7 @@ fn metadata(ranges: Vec<RequestKeyRange>) -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(b"dag".to_vec());
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(ranges));
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(ranges).into());
     metadata.keep_order = true;
     metadata.cacheable = true;
     metadata.store_type = StoreType::TiKv;
@@ -250,9 +250,8 @@ fn unsupported_request_shapes_fail_before_task_or_cache_mutation() {
     cases.push((request, "store_batching"));
 
     let mut request = metadata(vec![range("a", "z")]);
-    request.key_ranges = Some(RequestKeyRanges::new_partitioned(vec![vec![range(
-        "a", "z",
-    )]]));
+    request.key_ranges =
+        Some(RequestKeyRanges::new_partitioned(vec![vec![range("a", "z")]]).into());
     cases.push((request, "partitioned_ranges"));
 
     let mut request = metadata(vec![range("a", "z")]);

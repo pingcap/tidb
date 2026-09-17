@@ -223,7 +223,6 @@ pub fn encode_key(values: &[Datum]) -> Result<Vec<u8>, CodecError> {
     Encoder::new(tidb_datatype::new_collation_enabled()).encode_key(values)
 }
 
-/// Encodes keys with the source session time-zone contract.
 /// Go `preRealloc`: the buffer growth one `encode` needs, reserved up front
 /// so a key is not grown once per datum. Kinds Go sizes by inspecting the
 /// value's internal representation (JSON, decimal, vector) answer `None`
@@ -258,6 +257,7 @@ fn pre_realloc_size(values: &[Datum], comparable: bool) -> Option<usize> {
     Some(size)
 }
 
+/// Encodes keys with the source session time-zone contract.
 pub fn encode_key_in_timezone<TZ: TimeZone + 'static>(
     timezone: &TZ,
     values: &[Datum],

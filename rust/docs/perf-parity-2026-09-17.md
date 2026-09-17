@@ -252,3 +252,22 @@ q18   3.72 s 2395 ms   3.63 s 2412 ms   3.29 s 1940 ms   0.977          1.007
 Wall improves 2-5% on every query, in both passes; CPU is flat (spinning
 replaces the futex CPU). The remaining CPU gap to Go is 9% on q09, 24% on
 q18, and 37-39% on q03 and q10, the smaller index-join queries.
+
+## Fix 6+7: keys sized once (4f8f87e0) and the request's key ranges shared by Arc
+
+q03's index-join lookups (lineitem's composite primary key, so common-handle
+ranges) showed `LookupForkTemplate::open` at 13% of node CPU: key buffers
+grown per datum and per handle (`RawVec::finish_grow` 4.5%), and the
+request's range list cloned along the path (transport bind, per-response
+metadata, each attempt; `Vec<KeyRange>::clone` 4.4% + 2.2%). The key and
+value encoders now reserve Go's `preRealloc` estimate and `encode_row_key`
+sizes `prefix + handle` once; `Request.key_ranges` is `Arc`-shared like Go's
+`KeyRanges *KeyRanges`. A/B, warm, ABBA means (results/ab-fix7.txt):
+
+```
+        fix5            fix7            go             fix7/fix5 wall  cpu
+q03   1.15 s  952 ms   1.11 s  820 ms   1.15 s  720 ms   0.967          0.861
+q10   0.82 s 1170 ms   0.80 s 1122 ms   0.74 s  905 ms   0.973          0.959
+q09   3.29 s 4850 ms   3.34 s 4895 ms   2.95 s 3985 ms   1.016          1.009
+q18   3.61 s 2475 ms   3.52 s 2402 ms   3.06 s 1735 ms   0.976          0.971
+```

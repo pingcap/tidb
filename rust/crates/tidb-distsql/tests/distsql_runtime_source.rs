@@ -23,9 +23,8 @@ use tidb_distsql::{
     mpp_result_metadata, select_result_metadata, select_with_runtime_stats, set_encode_type,
     system_endian, tiflash_conf_metadata, with_sql_kv_exec_counter_interceptor, EncodeType,
     LimiterWaitStats, SelectInput, SelectResultMetadata, SelectResultRuntimeStats, StoreType,
-    SystemEndian, TiFlashSettings,
-    ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE,
-    INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL,
+    SystemEndian, TiFlashSettings, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL,
+    GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL,
 };
 
 fn select_input() -> SelectInput {
@@ -181,7 +180,13 @@ fn source_limiter_wait_stats_merge_total_and_max() {
     assert!(LimiterWaitStats::default().is_zero());
     stats.record_limiter_wait(5);
     stats.record_limiter_wait(3);
-    assert_eq!(stats.limiter_wait, LimiterWaitStats { total_ns: 8, max_ns: 5 });
+    assert_eq!(
+        stats.limiter_wait,
+        LimiterWaitStats {
+            total_ns: 8,
+            max_ns: 5
+        }
+    );
 
     let mut additional = LimiterWaitStats::default();
     additional.record(10);

@@ -627,9 +627,9 @@ mod tests {
         };
         let metadata_for = |ranges: Vec<tidb_txnkv::KeyRange>, hints: Vec<usize>| {
             let mut request = tidb_txnkv::Request::default();
-            request.key_ranges = Some(
+            request.key_ranges = Some(std::sync::Arc::new(
                 tidb_txnkv::PartitionedKeyRanges::new_non_partitioned_with_hints(ranges, hints),
-            );
+            ));
             KvRequestMetadata::from_request(request)
         };
 

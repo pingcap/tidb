@@ -155,17 +155,19 @@ fn response_rejects_unknown_encode_type_without_guessing() {
 #[test]
 fn default_chunk_uses_source_value_framing_without_datum_guessing() {
     let chunk = Chunk {
-        rows_data: Some(vec![
-            VALUE_NIL_FLAG,
-            VALUE_VARINT_FLAG,
-            0x02,
-            VALUE_COMPACT_BYTES_FLAG,
-            0x06,
-            b'a',
-            b'b',
-            b'c',
-        ]
-        .into()),
+        rows_data: Some(
+            vec![
+                VALUE_NIL_FLAG,
+                VALUE_VARINT_FLAG,
+                0x02,
+                VALUE_COMPACT_BYTES_FLAG,
+                0x06,
+                b'a',
+                b'b',
+                b'c',
+            ]
+            .into(),
+        ),
         ..Default::default()
     };
     let raw = decode_chunk(&chunk, EncodeType::TypeDefault).expect("raw default chunk");
@@ -181,11 +183,8 @@ fn default_chunk_uses_source_value_framing_without_datum_guessing() {
 #[test]
 fn default_chunk_frames_a_vector_before_the_following_value() {
     let vector = VectorFloat32::must_create(vec![1.25, -3.5]);
-    let rows_data = encode_value(&[
-        Datum::new_vector_float32(vector.clone()),
-        Datum::new_int(9),
-    ])
-    .unwrap();
+    let rows_data =
+        encode_value(&[Datum::new_vector_float32(vector.clone()), Datum::new_int(9)]).unwrap();
     let chunk = Chunk {
         rows_data: Some((rows_data).into()),
         ..Default::default()

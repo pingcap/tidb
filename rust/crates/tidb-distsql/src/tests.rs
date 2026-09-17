@@ -337,13 +337,13 @@ fn test_kv_request_build_initializes_defaults_and_is_one_use() {
         request
             .key_ranges
             .as_ref()
-            .map(RequestKeyRanges::partition_count),
+            .map(|ranges| ranges.partition_count()),
         Some(1)
     );
     assert!(request
         .key_ranges
         .as_ref()
-        .is_some_and(RequestKeyRanges::is_non_partitioned));
+        .is_some_and(|ranges| ranges.is_non_partitioned()));
     assert_eq!(request.match_store_labels, Vec::new());
     assert!(matches!(
         builder.build(),

@@ -20,6 +20,7 @@
 //! payloads remain caller-owned bytes and TiKV routing/RPC remains explicitly
 //! outside this crate.
 
+use std::sync::Arc;
 use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::{encode_key, encode_row_key};
 use tidb_datatype::Datum;
@@ -150,7 +151,7 @@ impl RequestBuilder {
 
     /// Replaces ranges with a complete canonical envelope.
     pub fn set_key_ranges(&mut self, key_ranges: RequestKeyRanges) -> &mut Self {
-        self.request.key_ranges = Some(key_ranges);
+        self.request.key_ranges = Some(Arc::new(key_ranges));
         self
     }
 
@@ -159,7 +160,7 @@ impl RequestBuilder {
         &mut self,
         key_ranges: Vec<RequestKeyRange>,
     ) -> &mut Self {
-        self.request.key_ranges = Some(RequestKeyRanges::new_non_partitioned(key_ranges));
+        self.request.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned(key_ranges)));
         self
     }
 
@@ -169,15 +170,15 @@ impl RequestBuilder {
         key_ranges: Vec<RequestKeyRange>,
         hints: Vec<usize>,
     ) -> &mut Self {
-        self.request.key_ranges = Some(RequestKeyRanges::new_non_partitioned_with_hints(
+        self.request.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned_with_hints(
             key_ranges, hints,
-        ));
+        )));
         self
     }
 
     /// Replaces ranges with partitioned groups.
     pub fn set_partition_key_ranges(&mut self, key_ranges: Vec<Vec<RequestKeyRange>>) -> &mut Self {
-        self.request.key_ranges = Some(RequestKeyRanges::new_partitioned(key_ranges));
+        self.request.key_ranges = Some(Arc::new(RequestKeyRanges::new_partitioned(key_ranges)));
         self
     }
 
@@ -251,7 +252,7 @@ impl RequestBuilder {
                 .request
                 .key_ranges
                 .as_ref()
-                .map_or(0, RequestKeyRanges::partition_count);
+                .map_or(0, |ranges| ranges.partition_count());
         }
         if let Some(concurrency) = dag.small_limit_concurrency() {
             self.request.concurrency = concurrency as isize;
@@ -487,7 +488,7 @@ impl RequestBuilder {
             }];
         }
         if request.key_ranges.is_none() {
-            request.key_ranges = Some(RequestKeyRanges::new_non_partitioned(Vec::new()));
+            request.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned(Vec::new())));
         }
 
         if let Some(dag) = &self.dag {
