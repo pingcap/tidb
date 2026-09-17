@@ -112,7 +112,7 @@ impl Encoder {
         timezone: &TZ,
         values: &[Datum],
     ) -> Result<Vec<u8>, CodecError> {
-        let mut output = Vec::new();
+        let mut output = Vec::with_capacity(pre_realloc_size(values, true).unwrap_or(0));
         self.append_key_in_timezone(timezone, &mut output, values)?;
         Ok(output)
     }
@@ -125,6 +125,9 @@ impl Encoder {
         output: &mut Vec<u8>,
         values: &[Datum],
     ) -> Result<(), CodecError> {
+        if let Some(size) = pre_realloc_size(values, true) {
+            output.reserve(size);
+        }
         for value in values {
             match value {
                 Datum::Null => output.push(NIL_FLAG),
@@ -221,6 +224,40 @@ pub fn encode_key(values: &[Datum]) -> Result<Vec<u8>, CodecError> {
 }
 
 /// Encodes keys with the source session time-zone contract.
+/// Go `preRealloc`: the buffer growth one `encode` needs, reserved up front
+/// so a key is not grown once per datum. Kinds Go sizes by inspecting the
+/// value's internal representation (JSON, decimal, vector) answer `None`
+/// here, which like Go's `default` arm leaves the buffer as it is.
+fn pre_realloc_size(values: &[Datum], comparable: bool) -> Option<usize> {
+    const ENC_GROUP_SIZE: usize = 8;
+    const MAX_VARINT_LEN64: usize = 10;
+    let size_int = if comparable { 9 } else { 1 + MAX_VARINT_LEN64 };
+    let size_bytes = |len: usize| {
+        if comparable {
+            1 + (len / ENC_GROUP_SIZE + 1) * (ENC_GROUP_SIZE + 1)
+        } else {
+            1 + MAX_VARINT_LEN64 + len
+        }
+    };
+    let mut size = 0;
+    for value in values {
+        size += match value {
+            Datum::Int(_)
+            | Datum::UInt(_)
+            | Datum::Enum(..)
+            | Datum::Set(..)
+            | Datum::Bit(_)
+            | Datum::BinaryLiteral(_) => size_int,
+            Datum::String(value) => size_bytes(value.bytes().len()),
+            Datum::Bytes(value) | Datum::Raw(value) => size_bytes(value.len()),
+            Datum::Time(_) | Datum::Duration(_) | Datum::Float32(_) | Datum::Real(_) => 9,
+            Datum::Null | Datum::MinNotNull | Datum::MaxValue => 1,
+            _ => return None,
+        };
+    }
+    Some(size)
+}
+
 pub fn encode_key_in_timezone<TZ: TimeZone + 'static>(
     timezone: &TZ,
     values: &[Datum],
@@ -238,7 +275,7 @@ pub fn encode_value_in_timezone<TZ: TimeZone + 'static>(
     timezone: &TZ,
     values: &[Datum],
 ) -> Result<Vec<u8>, CodecError> {
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(pre_realloc_size(values, false).unwrap_or(0));
     for value in values {
         match value {
             Datum::Null => output.push(NIL_FLAG),

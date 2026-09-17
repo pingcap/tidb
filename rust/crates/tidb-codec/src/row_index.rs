@@ -85,8 +85,13 @@ pub fn gen_table_record_prefix(table_id: i64) -> Vec<u8> {
 /// prefixes the exact opaque handle bytes, matching Go
 /// `tablecodec.EncodeRowKey` without introducing a reverse crate dependency.
 pub fn encode_row_key(table_id: i64, encoded_handle: &[u8]) -> Vec<u8> {
-    let mut key = gen_table_record_prefix(table_id);
-    key.reserve(encoded_handle.len());
+    // Go `EncodeRowKeyWithHandle` sizes the buffer to `prefixLen + h.Len()`
+    // up front; growing the 11-byte prefix for the handle would be a second
+    // allocation per key.
+    let mut key = Vec::with_capacity(MIN_KEY_LEN + encoded_handle.len());
+    key.push(TABLE_PREFIX);
+    encode_int(&mut key, table_id);
+    key.extend_from_slice(RECORD_PREFIX);
     key.extend_from_slice(encoded_handle);
     key
 }
