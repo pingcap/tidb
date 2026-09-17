@@ -302,6 +302,10 @@ func TestInSignedConstants(t *testing.T) {
 			input.AppendNull(0)
 			result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 3)
 			require.NoError(t, f.vecEvalInt(ctx, input, result))
+			cloned := f.Clone()
+			require.True(t, cloned.vectorized() && cloned.isChildrenVectorized())
+			clonedResult := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 3)
+			require.NoError(t, cloned.vecEvalInt(ctx, input, clonedResult))
 			want := int64(0)
 			for _, c := range constants {
 				_, isUnsigned := c.(uint64)
@@ -314,6 +318,7 @@ func TestInSignedConstants(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, i == 2, isNull)
 				require.Equal(t, isNull, result.IsNull(i))
+				require.Equal(t, isNull, clonedResult.IsNull(i))
 				if i < 2 {
 					expected := int64(0)
 					if i == 0 {
@@ -321,6 +326,7 @@ func TestInSignedConstants(t *testing.T) {
 					}
 					require.Equal(t, expected, value)
 					require.Equal(t, expected, result.Int64s()[i])
+					require.Equal(t, expected, clonedResult.Int64s()[i])
 				}
 			}
 		}
@@ -363,6 +369,10 @@ func TestInFunc(t *testing.T) {
 		{[]any{0, -1, uint64(math.MaxUint64), nil}, nil},
 		{[]any{int64(1), uint64(1), int64(1)}, int64(1)},
 		{[]any{uint64(1), int64(1), uint64(1)}, int64(1)},
+		{[]any{int64(math.MinInt64), uint64(1 << 63), int64(math.MinInt64)}, int64(1)},
+		{[]any{uint64(1 << 63), int64(math.MinInt64), uint64(1 << 63)}, int64(1)},
+		{[]any{int64(math.MinInt64), uint64(1 << 63)}, int64(0)},
+		{[]any{uint64(1 << 63), int64(math.MinInt64)}, int64(0)},
 		{[]any{1, 0, 2, 3}, int64(0)},
 		{[]any{1.1, 1.2, 1.3}, int64(0)},
 		{[]any{1.1, 1.1, 1.2, 1.3}, int64(1)},
