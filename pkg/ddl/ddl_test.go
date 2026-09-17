@@ -25,6 +25,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
@@ -51,6 +52,13 @@ import (
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+func TestDiagnosticModeDisallowsSwitchMDL(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(true))
+
+	d := &ddl{}
+	require.ErrorIs(t, d.SwitchMDL(true), diagnosticmode.ErrDDLNotAllowed)
+}
 
 // DDLForTest exports for testing.
 type DDLForTest interface {

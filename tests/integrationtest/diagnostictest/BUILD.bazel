@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "diagnostictest_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/tests/integrationtest/diagnostictest",
+    visibility = ["//visibility:private"],
+    deps = ["@com_github_go_sql_driver_mysql//:mysql"],
+)
+
+go_binary(
+    name = "diagnostictest",
+    embed = [":diagnostictest_lib"],
+    visibility = ["//visibility:public"],
+)

@@ -24,6 +24,17 @@ To run integration tests against a real TiKV cluster, use:
 
 This script sets up a real cluster environment and then invokes `run-tests.sh` with your provided options.
 
+### 3. Diagnostic Mode Runner
+
+Run the diagnostic-mode DDL integration test against a persistent UniStore:
+
+```sh
+./run-diagnostic-tests.sh
+```
+
+The runner first starts TiDB normally to bootstrap the temporary store, then
+restarts TiDB with `--diagnostic-mode` and runs `ddl/diagnostic_mode`.
+
 ---
 
 ## Script Options

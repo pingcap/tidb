@@ -338,6 +338,7 @@ go_test(
         "//pkg/autoid_service",
         "//pkg/config",
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",

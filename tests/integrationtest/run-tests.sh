@@ -16,6 +16,7 @@
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
 NEXT_GEN=$NEXT_GEN
+TIDB_TEST_DIAGNOSTIC_MODE=${TIDB_TEST_DIAGNOSTIC_MODE:-0}
 
 build=1
 mysql_tester="./mysql_tester"
@@ -28,9 +29,24 @@ record_case=""
 stats="s"
 collation_opt=2
 runs_on_port=0
+diagnostic_mode=0
+diagnostic_store_path=""
+start_in_diagnostic_mode=0
+SERVER_PID=""
 
 set -eu
-trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
+function cleanup()
+{
+    set +e
+    PIDS=$(jobs -p)
+    for pid in $PIDS; do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+    if [[ -n "$diagnostic_store_path" && -d "$diagnostic_store_path" ]]; then
+        rm -rf -- "$diagnostic_store_path"
+    fi
+}
+trap cleanup EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -101,6 +117,18 @@ function find_multiple_available_ports() {
 
     echo "${ports[@]}"
 }
+
+case "${TIDB_TEST_DIAGNOSTIC_MODE}" in
+    1|true|TRUE|on|ON)
+        diagnostic_mode=1
+        ;;
+    0|false|FALSE|off|OFF|"")
+        ;;
+    *)
+        echo "Error: TIDB_TEST_DIAGNOSTIC_MODE must be a boolean value." >&2
+        exit 1
+        ;;
+esac
 
 function build_tidb_server()
 {
@@ -196,7 +224,9 @@ if [ $build -eq 1 ]; then
     else
         echo "skip building tidb-server, using existing binary: $tidb_server"
     fi
-    build_mysql_tester
+    if [[ $diagnostic_mode = 0 ]]; then
+        build_mysql_tester
+    fi
 else
     if [ -z "$tidb_server" ] && [ "$runs_on_port" -eq 0 ]; then
         tidb_server="./integrationtest_tidb-server"
@@ -223,6 +253,13 @@ then
     ports=($(find_multiple_available_ports 4000 2))
     port=6999
     status=${ports[1]}
+    if [[ $diagnostic_mode = 1 ]]; then
+        if [[ "${TIDB_TEST_STORE_NAME}" = "tikv" ]]; then
+            echo "Error: the diagnostic integrationtest runner requires a persistent UniStore." >&2
+            exit 1
+        fi
+        diagnostic_store_path=$(mktemp -d "${TMPDIR:-/tmp}/tidb-integrationtest-diagnostic.XXXXXX")
+    fi
 fi
 
 function start_tidb_server()
@@ -235,8 +272,14 @@ function start_tidb_server()
     start_options="-P $port -status $status -config $config_file"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         start_options="$start_options -store tikv -path ${TIKV_PATH}"
+    elif [[ $diagnostic_mode = 1 ]]; then
+        start_options="$start_options -store unistore -path $diagnostic_store_path"
     else
         start_options="$start_options -store unistore -path ''"
+    fi
+
+    if [[ $start_in_diagnostic_mode = 1 ]]; then
+        start_options="$start_options --diagnostic-mode"
     fi
 
     if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
@@ -248,6 +291,42 @@ function start_tidb_server()
     $tidb_server $start_options > $mysql_tester_log 2>&1 &
     SERVER_PID=$!
     echo "tidb-server(PID: $SERVER_PID) started"
+}
+
+function wait_for_tidb_server()
+{
+    local status_url="http://127.0.0.1:${status}/status"
+    for _ in $(seq 1 120); do
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "tidb-server exited before becoming ready. Log tail:" >&2
+            tail -n 100 "$mysql_tester_log" >&2 || true
+            return 1
+        fi
+        if curl -sf --max-time 2 "$status_url" >/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "timed out waiting for tidb-server. Log tail:" >&2
+    tail -n 100 "$mysql_tester_log" >&2 || true
+    return 1
+}
+
+function stop_tidb_server()
+{
+    kill -15 "$SERVER_PID"
+    wait "$SERVER_PID" || true
+    SERVER_PID=""
+}
+
+function bootstrap_diagnostic_store()
+{
+    echo "bootstrap persistent UniStore before diagnostic-mode startup"
+    start_in_diagnostic_mode=0
+    start_tidb_server
+    wait_for_tidb_server
+    stop_tidb_server
+    start_in_diagnostic_mode=1
 }
 
 function run_mysql_tester()
@@ -273,6 +352,33 @@ function run_mysql_tester()
           echo "run integration test cases($coll_msg): $tests"
       fi
       $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled $tests
+    fi
+}
+
+function run_diagnostic_tester()
+{
+    local test_case="$tests"
+    if [[ $record = 1 ]]; then
+        test_case="$record_case"
+    fi
+    if [[ -z "$test_case" || "$test_case" = "all" ]]; then
+        echo "Error: diagnostic integrationtest runner requires one test case." >&2
+        return 1
+    fi
+
+    go run ./diagnostictest \
+        -port "$port" \
+        -test "t/${test_case}.test" \
+        -result "r/${test_case}.result" \
+        -record="$record"
+}
+
+function run_tester()
+{
+    if [[ $diagnostic_mode = 1 ]]; then
+        run_diagnostic_tester
+    else
+        run_mysql_tester
     fi
 }
 
@@ -326,15 +432,18 @@ if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     if [ "$runs_on_port" -eq 0 ]
     then
+        if [[ $diagnostic_mode = 1 ]]; then
+            bootstrap_diagnostic_store
+        fi
         start_tidb_server
+        if [[ $diagnostic_mode = 1 ]]; then
+            wait_for_tidb_server
+        fi
     fi
-    run_mysql_tester
+    run_tester
     if [ "$runs_on_port" -eq 0 ]
     then
-        kill -15 $SERVER_PID
-        while ps -p $SERVER_PID > /dev/null; do
-            sleep 1
-        done
+        stop_tidb_server
     fi
     check_data_race
 fi
@@ -343,15 +452,18 @@ if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
     if [ "$runs_on_port" -eq 0 ]
     then
+        if [[ $diagnostic_mode = 1 ]]; then
+            bootstrap_diagnostic_store
+        fi
         start_tidb_server
+        if [[ $diagnostic_mode = 1 ]]; then
+            wait_for_tidb_server
+        fi
     fi
-    run_mysql_tester
+    run_tester
     if [ "$runs_on_port" -eq 0 ]
     then
-        kill -15 $SERVER_PID
-        while ps -p $SERVER_PID > /dev/null; do
-            sleep 1
-        done
+        stop_tidb_server
     fi
     check_data_race
 fi
