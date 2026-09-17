@@ -3985,10 +3985,10 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		recordKeys := make([][]kv.Key, len(idxRecords))
 		for i, idxRecord := range idxRecords {
 			index := w.indexes[i%n]
-			iter := index.GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, nil)
+			iter := index.GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
 			for iter.Valid() {
 				values := iter.IndexedValues()
-				key, distinct, err := iter.NextKey(nil)
+				key, _, distinct, err := iter.Next(nil, nil)
 				if err != nil {
 					return errors.Trace(err)
 				}
