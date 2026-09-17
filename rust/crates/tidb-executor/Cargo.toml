@@ -55,6 +55,8 @@ tracing = "0.1"
 
 [dev-dependencies]
 sha2 = { workspace = true }
+# The bench runs on the server's allocator (crates/tidb-server default feature).
+tikv-jemallocator = "0.7"
 
 [lints]
 workspace = true

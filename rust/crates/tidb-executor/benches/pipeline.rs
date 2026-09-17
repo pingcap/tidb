@@ -48,6 +48,12 @@
 //! source. Confirm anything surprising, or anything that turns on cross-crate
 //! inlining, with `cargo bench --profile release`.
 
+/// The server binary runs on tikv-jemallocator (its default feature); the
+/// bench uses the same allocator so allocation-heavy paths, such as the
+/// join's row table segments, fault and reuse memory as they do in the node.
+#[global_allocator]
+static GLOBAL_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -783,6 +789,13 @@ fn report_join(
     let mut build_source = || {
         black_box(drain(&mut Sequence::new(rows, keys as i64)));
     };
+    // `BENCH_PHASE=build` runs only the build-only block, for profiling one
+    // phase; no per-row number is printed then.
+    if std::env::var("BENCH_PHASE").as_deref() == Ok("build") {
+        best_of_blocks(&mut [("build_only", build_only)]);
+        println!("{label} build phase only");
+        return;
+    }
     let results = best_of_blocks(&mut [
         ("source", source),
         ("build_source", &mut build_source),

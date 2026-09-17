@@ -3694,6 +3694,7 @@ dependencies = [
  "tidb-util",
  "tidb-vardef",
  "tikv-client",
+ "tikv-jemallocator",
  "tracing",
 ]
 
