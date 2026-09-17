@@ -65,15 +65,17 @@ func TestRUV2MetricDefinitions(t *testing.T) {
 
 	InitRUV2Metrics()
 	RUV2Total.Add(1)
+	RUV2TTLTotal.Add(1)
 	RUV2BySQLTypeDDL.Add(2)
 	RUV2ByEngineTiKV.Add(3)
 	RUV2BySQLType.WithLabelValues("select").Add(2)
-	AddRUV2Results(3, 4, 7, "select")
+	AddRUV2Results(3, 4, 5, 12, "select")
 	RUV2Unit.WithLabelValues("tikv", "hash_agg", LblRUV2UnitCPUWork).Add(5)
 	RUV2Statements.WithLabelValues("success", "incomplete").Inc()
 
 	registry := prometheus.NewRegistry()
 	require.NoError(t, registry.Register(RUV2Total))
+	require.NoError(t, registry.Register(RUV2TTLTotal))
 	require.NoError(t, registry.Register(RUV2BySQLType))
 	require.NoError(t, registry.Register(RUV2ByEngine))
 	require.NoError(t, registry.Register(RUV2Unit))
@@ -82,6 +84,7 @@ func TestRUV2MetricDefinitions(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, findMetricFamily(families, "tidb_ruv2_ru_total"))
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv2_ttl_ru_total"))
 	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_ru_by_sql_type_total", LblSQLType, LblSQLTypeDDL)
 	requireMetricFamilyHasLabel(
 		t, families, "tidb_ruv2_ru_by_sql_type_total", LblSQLType, "select",

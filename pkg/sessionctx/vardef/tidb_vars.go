@@ -139,6 +139,9 @@ const (
 	// User could change it to a smaller one to avoid breaking the transaction size limitation.
 	TiDBDMLBatchSize = "tidb_dml_batch_size"
 
+	// TiDBDMLMaxExecutionTime is the maximum execution time for transactional DML statements and COMMIT, in milliseconds.
+	TiDBDMLMaxExecutionTime = "tidb_dml_max_execution_time"
+
 	// TiDBMLogPurgeBatchSize is used to split PURGE MATERIALIZED VIEW LOG into multiple delete batches.
 	TiDBMLogPurgeBatchSize = "tidb_mlog_purge_batch_size"
 	// TiDBMLogPurgeMinRate controls the minimum target delete rate for adaptive MLog purge throttling.
@@ -1604,6 +1607,7 @@ const (
 	DefPagingSizeBytes                      = 0
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
+	DefTiDBDMLMaxExecutionTime              = 0
 	DefMaxPreparedStmtCount                 = -1
 	DefWaitTimeout                          = 28800
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.

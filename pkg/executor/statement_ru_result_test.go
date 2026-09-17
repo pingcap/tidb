@@ -134,7 +134,7 @@ func observeStatementRUCalibrationForTest(
 	testfailpoint.EnableCall(t, statementRUCalibrationFailpointForTest, func(
 		_ uint64,
 		stateName string,
-		cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows, writeStatement, operatorNum, writeKeys, writeBytes float64,
+		cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows, writeStatement, operatorNum, writeKeys, writeBytes, crossAZNetBytes float64,
 	) {
 		state := statementRUCalibrationUnknown
 		switch stateName {
@@ -151,6 +151,7 @@ func observeStatementRUCalibrationForTest(
 				CPUWork:              cpuWork,
 				ScanBytes:            scanBytes,
 				NetBytes:             netBytes,
+				CrossAZNetBytes:      crossAZNetBytes,
 				FrontendCompileBytes: frontendCompileBytes,
 				HashStateRows:        hashStateRows,
 				JoinOutputRows:       joinOutputRows,
@@ -622,7 +623,7 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		unitsType := reflect.TypeOf(ruv2.StmtUnits{})
 		require.Equal(t, []string{
 			"WriteStatement", "OperatorNum", "WriteKeys", "WriteBytes",
-			"CPUWork", "ScanBytes", "NetBytes", "FrontendCompileBytes", "HashStateRows", "JoinOutputRows",
+			"CPUWork", "ScanBytes", "NetBytes", "CrossAZNetBytes", "FrontendCompileBytes", "HashStateRows", "JoinOutputRows",
 		}, statementRUFieldNames(unitsType))
 		resultType := reflect.TypeOf(ruv2.StmtResult{})
 		require.Equal(t, []string{"TotalRU"}, statementRUFieldNames(resultType))
@@ -663,5 +664,58 @@ func requireStatementRUValueOnlyType(t *testing.T, valueType reflect.Type) {
 			reflect.Slice,
 			reflect.UnsafePointer,
 		}, fieldType.Kind())
+	}
+}
+
+func TestStatementRUTTLJobEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		restricted bool
+		source     string
+		jobID      string
+		eligible   bool
+		ttl        bool
+	}{
+		{"ttl job", true, kv.InternalTxnTTL, "job-1", true, true},
+		{"global ttl", true, kv.InternalTxnTTL, "", false, false},
+		{"other internal", true, kv.InternalTxnOthers, "job-1", false, false},
+		{"external", false, kv.InternalTxnTTL, "job-1", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			stmt := fixture.stmt
+			vars := stmt.Ctx.GetSessionVars()
+			flat := vars.StmtCtx.GetFlatPlan()
+			vars.StmtCtx.SetFlatPlan(nil)
+			vars.InRestrictedSQL = tc.restricted
+			vars.RequestSourceType = tc.source
+			vars.TTLJobID = tc.jobID
+			stmt.statementRUOwner = nil
+			installStatementRUOwner(stmt)
+			vars.StmtCtx.SetFlatPlan(flat)
+			require.Equal(t, tc.eligible, stmt.statementRUOwner != nil)
+			// The original attribution survives session restoration before terminal.
+			vars.TTLJobID = ""
+			vars.InRestrictedSQL = false
+			stmt.recordStatementRURootEOF()
+			stmt.RecordStatementRUFinalOutcome(true)
+			before := testutil.ToFloat64(metrics.RUV2Total)
+			ttlBefore := testutil.ToFloat64(metrics.RUV2TTLTotal)
+			stmt.finishStatementRU(nil)
+			delta := testutil.ToFloat64(metrics.RUV2Total) - before
+			ttlDelta := testutil.ToFloat64(metrics.RUV2TTLTotal) - ttlBefore
+			if tc.eligible {
+				require.Positive(t, delta)
+			} else {
+				require.Zero(t, delta)
+			}
+			if tc.ttl {
+				require.InDelta(t, delta, ttlDelta, 1e-9)
+			} else {
+				require.Zero(t, ttlDelta)
+			}
+			stmt.finishStatementRU(nil)
+			require.Equal(t, ttlBefore+ttlDelta, testutil.ToFloat64(metrics.RUV2TTLTotal))
+		})
 	}
 }
