@@ -822,7 +822,7 @@ The response is a JSON object mapping variable names to string values. Example r
 }
 ```
 
-Variable selection follows `SHOW GLOBAL VARIABLES`, including read-only and instance-scoped variables, but excluding session-only variables and disabled no-op variables. With Security Enhanced Mode (SEM v1 or v2) enabled, invisible variables are omitted; the API does not bypass SEM visibility through SQL privileges.
+Variable scope and no-op selection follow `SHOW GLOBAL VARIABLES`, including read-only and instance-scoped variables, but excluding session-only variables and disabled no-op variables. This operator-facing API does not apply Security Enhanced Mode (SEM v1 or v2) visibility filtering: variables hidden by SEM are included, with sensitive values masked as described below.
 
 Values are read through the existing global-variable getters. For every included variable marked `SysVar.IsSensitive`, a non-empty value is replaced with the literal `******`; an empty value remains an empty string. This includes:
 

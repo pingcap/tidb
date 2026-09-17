@@ -53,7 +53,6 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/naming",
-        "//pkg/util/sem/compat",
         "//pkg/util/sqlexec",
         "@com_github_gorilla_mux//:mux",
         "@com_github_pingcap_errors//:errors",

@@ -181,8 +181,8 @@ func TestGlobalVariables(t *testing.T) {
 		sem.Enable()
 		defer sem.Disable()
 		result := fetch()
-		require.NotContains(t, result, vardef.TiDBConfig)
-		require.NotContains(t, result, vardef.TiDBGeneralLog)
+		require.Equal(t, vardef.MaskPwd, result[vardef.TiDBConfig])
+		require.Contains(t, result, vardef.TiDBGeneralLog)
 		require.Contains(t, result, vardef.MaxExecutionTime)
 	})
 
@@ -191,11 +191,13 @@ func TestGlobalVariables(t *testing.T) {
 			TiDBVersion: "v0.0.0",
 			RestrictedVariables: []semv2.VariableRestriction{
 				{Name: vardef.MaxExecutionTime, Hidden: true},
+				{Name: vardef.TiDBConfig, Hidden: true},
 			},
 		}))
 		defer semv2.Disable()
 		result := fetch()
-		require.NotContains(t, result, vardef.MaxExecutionTime)
+		require.Contains(t, result, vardef.MaxExecutionTime)
+		require.Equal(t, vardef.MaskPwd, result[vardef.TiDBConfig])
 		require.Contains(t, result, vardef.Version)
 	})
 

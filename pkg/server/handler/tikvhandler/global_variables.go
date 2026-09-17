@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem/compat"
 	"go.uber.org/zap"
 )
 
@@ -64,10 +63,6 @@ func (h GlobalVariablesHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 	values := make(map[string]string, len(sysVars))
 	for _, sv := range sysVars {
 		if sv.Scope == vardef.ScopeSession || sv.IsNoop && !vardef.EnableNoopVariables.Load() {
-			continue
-		}
-		// The internal session must not bypass SEM visibility for this HTTP API.
-		if compat.IsInvisibleSysVar(sv.Name) {
 			continue
 		}
 		// tidb_cloud_storage_uri's getter already applies ast.RedactURL, preserving
