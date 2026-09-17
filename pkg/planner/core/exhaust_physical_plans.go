@@ -2564,13 +2564,15 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		canUseCache = false
 	}
 
-	// Compute the expected row count for the outer child.  For a semi/anti-semi
-	// join, each outer row produces at most one output row, so if the parent
-	// expects N rows we need N / selectivity outer rows.  For other join types
-	// the ratio may differ, but using the Apply's own selectivity is still a
-	// reasonable approximation.
+	// When the parent requires ordering, compute the expected row count for the
+	// outer child.  For a semi/anti-semi join, each outer row produces at most
+	// one output row, so if the parent expects N rows we need N / selectivity
+	// outer rows.  For other join types the ratio may differ, but using the
+	// Apply's own selectivity is still a reasonable approximation.  Unordered
+	// props keep the unlimited expected count so existing plan choices between
+	// Apply and HashJoin are unchanged (matches #66786 on master).
 	outerExpectedCnt := math.MaxFloat64
-	if prop.ExpectedCnt < math.MaxFloat64 {
+	if !prop.IsSortItemEmpty() && prop.ExpectedCnt < math.MaxFloat64 {
 		outerRowCount := la.Children()[0].StatsInfo().RowCount
 		applyRowCount := la.StatsInfo().RowCount
 		if applyRowCount > 0 && outerRowCount > 0 {
