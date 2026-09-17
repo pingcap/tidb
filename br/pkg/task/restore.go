@@ -1197,23 +1197,28 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// Clear the checkpoint data if needed
-	cleanUpCheckpoints(c, cfg)
+	cleanUpCheckpoints(c, cfg, glue.GetConsole(g))
 	return nil
 }
 
-func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
+func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig, console glue.ConsoleOperations) {
 	if cfg.UseCheckpoint {
+		allRemoved := true
 		log.Info("start to remove checkpoint data restore")
 		if cfg.logCheckpointMetaManager != nil {
 			err := cfg.logCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
+				console.Printf("WARNING: failed to remove checkpoint data for log restore: %v\n", err)
+				allRemoved = false
 			}
 		}
 		if cfg.sstCheckpointMetaManager != nil {
 			err := cfg.sstCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
+				console.Printf("WARNING: failed to remove checkpoint data for compacted restore: %v\n", err)
+				allRemoved = false
 			}
 		}
 		// Skip removing snapshot checkpoint data if this is a pure log restore
@@ -1223,9 +1228,13 @@ func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
 			err := cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
+				console.Printf("WARNING: failed to remove checkpoint data for snapshot restore: %v\n", err)
+				allRemoved = false
 			}
 		}
-		log.Info("all checkpoint data removed.")
+		if allRemoved {
+			log.Info("all checkpoint data removed.")
+		}
 	} else {
 		log.Info("checkpoint not enabled, skip to remove checkpoint data")
 	}
@@ -2983,9 +2992,9 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	}
 
 	// clean up checkpoint data
-	cleanUpCheckpoints(ctx, cfg)
+	cleanUpCheckpoints(ctx, cfg, glue.GetConsole(g))
 
-	log.Info("successfully aborted restore task and cleaned up checkpoint data. "+
+	log.Info("successfully aborted restore task. "+
 		"Use drop statements to clean up the restored data from the cluster if you want to.",
 		zap.Uint64("restoreId", deletedRestoreID))
 	return nil
