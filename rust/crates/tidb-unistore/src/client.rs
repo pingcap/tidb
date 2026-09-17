@@ -656,7 +656,7 @@ mod tests {
             metadata.request_type = RequestType::Dag;
             metadata.data = Some(cop.data.clone());
             metadata.start_ts = cop.start_ts;
-            metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(
+            metadata.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned(
                 cop.ranges
                     .iter()
                     .map(|range| RequestKeyRange {
@@ -664,7 +664,7 @@ mod tests {
                         end_key: range.end.clone().into(),
                     })
                     .collect(),
-            ));
+            )));
             metadata.keep_order = keep_order;
             metadata.concurrency = 2;
             metadata.paging.enabled = false;
