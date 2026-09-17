@@ -505,8 +505,6 @@ func (t *Tracker) Consume(bs int64) {
 				if m.state.Load() == memArbitratorStateDown {
 					m.cleanSmallBudget()
 				}
-			} else if m.smallBudgetUsed() != 0 {
-				m.cleanSmallBudget()
 			}
 		}
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
@@ -1266,9 +1264,7 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		return false
 	}
 
-	if m.smallBudgetUsed() != 0 {
-		m.cleanSmallBudget()
-	}
+	m.cleanSmallBudget()
 
 	if m.isInternal {
 		globalArbitrator.metrics.pools.internal.Add(-1)
@@ -1312,9 +1308,8 @@ func (t *Tracker) InitMemArbitrator(
 	}
 	if t.MemArbitrator != nil {
 		t.MemArbitrator.reset(true, 0)
-		*t.MemArbitrator = memArbitrator{}
 	} else {
-		t.MemArbitrator = &memArbitrator{}
+		t.MemArbitrator = new(memArbitrator)
 	}
 	m := t.MemArbitrator
 	uid := t.SessionID.Load()
