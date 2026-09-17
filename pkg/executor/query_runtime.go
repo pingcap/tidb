@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -104,9 +103,10 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 	}
 	q.SessionVars[vardef.TimeZone] = timeutil.ZoneName(vars.Location())
 	q.PushDownFlags = vars.StmtCtx.PushDownFlags()
+	txnManager := sessiontxn.GetTxnManager(sctx)
 	nodeW := resolve.NewNodeW(node)
 	ret := &plannercore.PreprocessorReturn{
-		InfoSchema: sctx.GetLatestInfoSchema().(infoschema.InfoSchema),
+		InfoSchema: txnManager.GetTxnInfoSchema(),
 	}
 	if err := plannercore.Preprocess(
 		context.Background(), sctx, nodeW,
@@ -132,7 +132,7 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 			q.Tables[dbInfo.ID] = append(q.Tables[dbInfo.ID], tblInfo)
 		}
 	}
-	q.ReadTS, err = sessiontxn.GetTxnManager(sctx).GetStmtReadTS()
+	q.ReadTS, err = txnManager.GetStmtReadTS()
 	if err != nil {
 		return nil, err
 	}
