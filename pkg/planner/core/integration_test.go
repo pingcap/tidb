@@ -232,9 +232,9 @@ func TestBitColumnPushDown(t *testing.T) {
 			{"  └─Selection(Probe)", "root", "not(isnull(Column#9))"},
 			{"    └─StreamAgg", "root", "funcs:min(test.t2.b)->Column#9"},
 			{"      └─TopN", "root", "test.t2.b, offset:0, count:1"},
-			{"        └─TableReader", "root", "data:TopN"},
-			{"          └─TopN", "cop[tikv]", "test.t2.b, offset:0, count:1"},
-			{"            └─Selection", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
+			{"        └─Selection", "root", "lt(test.t2.a, test.t1.a)"},
+			{"          └─TableReader", "root", "data:Selection"},
+			{"            └─Selection", "cop[tikv]", "not(isnull(test.t2.b))"},
 			{"              └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
 		testKit.MustQuery(fmt.Sprintf("explain analyze format = 'brief' %s", sql)).CheckAt([]int{0, 3, 6}, rows)
