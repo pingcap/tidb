@@ -628,9 +628,11 @@ is sufficient for MBR pruning. Per-entry size is small (a point's two float64s ~
 general geometry's 4-float MBR ~32 bytes). Being a pre-filter, it must be conservative (a
 wrong reject is a wrong result, not over-cover): on SRID 4326 a query cap crossing the
 antimeridian yields a wrapping longitude interval whose filter must be split into two
-boxes or dropped, and a stored geometry spanning the antimeridian stores a non-wrapping
-full-width bbox; see the design doc's Query path for the full wraparound rule and the
-axis convention (MySQL `ST_X` on 4326 is latitude).
+boxes, a stored geometry spanning the antimeridian keeps its wrap (`minX > maxX`, as
+MySQL's own MBR does), and a stored geometry's bbox must follow its curved edges rather
+than its vertices; see "SRID 4326: spherical S2 cells" below for the measurements and the
+design doc's Query path for the full rule and the axis convention (MySQL `ST_X` on 4326 is
+latitude).
 
 ### Global vs local spatial index for partitioned tables
 
@@ -831,9 +833,47 @@ flat rectangle (plain geohash) has three correctness hazards:
    non-uniform.
 3. **Distance covering**: "within 10 km" is a spherical cap, not a lat/long box;
    the box approximation is increasingly wrong at high latitude.
+4. **Curved edges**: a geographic geometry's edges are geodesics, so a polygon reaches
+   outside the lat/long box of its own vertices, and even a great-circle approximation of
+   those edges is not conservative against MySQL's ellipsoidal ones.
 
 Given TiDB's correctness-first rule, a knowingly-wrong 4326 index is unacceptable,
-so 4326 uses a true spherical cell system (S2), which handles all three natively.
+so 4326 uses a true spherical cell system (S2), which handles the first three natively
+and the fourth once padded (below).
+
+#### Measured: MySQL's geographic MBRs follow the curve (MySQL 9.7.2, 2026-09-17)
+
+`POLYGON((50 -60, 50 60, 60 60, 60 -60, 50 -60))` on SRID 4326 (MySQL's axis order, so
+latitude first) has vertices only at latitude 50 and 60. Probing its interior along
+longitude 0:
+
+| Latitude at longitude 0 | MySQL `ST_Within` | Inside vertex bbox [50,60] |
+| --- | --- | --- |
+| 55 | false | yes |
+| 67 | false | no |
+| 70 | **true** | no |
+| 73.8 | **true** | no |
+| 74 | false | no |
+
+- The real span at longitude 0 is latitude **67.2665 to 73.9089** (scanned in 0.0005 and
+  0.0002 degree steps).
+- A `POINT NOT NULL SRID 4326` column with a `SPATIAL INDEX` returns the same rows as the
+  same query with `IGNORE INDEX`, so MySQL's R-tree prefilter is curvature-aware
+  (`bg::strategy::envelope::geographic<andoyer>` in `sql/gis/mbr_utils.cc`). A vertex bbox
+  would have lost the latitude 70 and 73.8 rows.
+- MySQL's MBR is **tight, not padded**: `MBRContains` flips between latitude 73.9088 and
+  73.9090, the geodesic crossing itself.
+- S2's great-circle `RectBound` stops at 73.89789, about **1.2 km short** (on the
+  latitude-50 edge: S2 67.23952 against MySQL 67.2665, about 3 km), so an S2-derived bound
+  needs padding to stay conservative under MySQL semantics.
+- MySQL's geographic MBR **wraps** the antimeridian: for
+  `POLYGON((10 170, 10 -170, 20 -170, 20 170, 10 170))`, `MBRContains` is true at longitude
+  175 and 180 and false at 0 and 90, and an indexed scan returns the correct rows. That is
+  the `minX > maxX` convention, not a widened full-width range.
+- `ST_Envelope` on a geographic SRS is `ERROR 3618 ... not implemented`, so this geodesic
+  envelope exists only inside MySQL; no user-facing function exposes it.
+
+Reproduction: database `tidb_spatial_check` on the local MySQL 9.7.2 reference server.
 
 ### The unifying seam
 
