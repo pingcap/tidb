@@ -495,7 +495,15 @@ fn main() {
     // BENCH_ONLY=<substring> runs the benches whose name contains it, so one
     // path can be profiled in isolation (`perf record` on this binary).
     let only = std::env::var("BENCH_ONLY").unwrap_or_default();
-    let wanted = |name: &str| only.is_empty() || name.contains(only.as_str());
+    // A group runs when any of its space-separated names matches the filter
+    // in either direction, so both a group name and one shape's full label
+    // select it; the shape loops then narrow to the label itself.
+    let wanted = |names: &str| {
+        only.is_empty()
+            || names
+                .split(' ')
+                .any(|name| name.contains(only.as_str()) || only.contains(name))
+    };
     if wanted("read_task") {
         bench_read_task_setup();
     }
@@ -633,7 +641,7 @@ impl Executor for Sequence {
             // A unique 25-byte string per row, so a join on this column
             // exercises the byte-key table with one key per build row.
             let mut name = [b'n'; 25];
-            name[..20].copy_from_slice(format!("{:020}", self.next).as_bytes());
+            name[..8].copy_from_slice(&(self.next as u64).to_be_bytes());
             req.append_bytes(2, &name);
             req.append_bytes(3, &[b'a'; 40]);
             req.append_bytes(4, &[b'c'; 117]);
@@ -728,36 +736,73 @@ fn bench_hash_join_probe() {
             continue;
         }
         let keys = rows / fanout;
-        let mut probe_only = || {
+        let mut source = || {
             black_box(drain(&mut Sequence::new(rows, keys as i64)));
             black_box(drain(&mut Sequence::new(keys, keys as i64)));
         };
-        let mut total = || {
-            let mut join = JoinExec::new(
+        let join = |probe_rows: usize| {
+            JoinExec::new(
                 ExecutorMeta::new(schema_of(&out_types), 1, CHUNK, CHUNK),
                 JoinKind::Inner,
                 conditions.clone(),
                 Box::new(Sequence::new(rows, keys as i64)),
-                Box::new(Sequence::new(keys, keys as i64)),
+                Box::new(Sequence::new(probe_rows, keys as i64)),
                 JoinCtx,
                 StatementMemory::new(1 << 30, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
-            );
+            )
+        };
+        let mut build_only = || {
+            let mut join = join(0);
+            assert_eq!(drain(&mut join), 0, "{label}: an empty probe emits nothing");
+        };
+        let mut total = || {
+            let mut join = join(keys);
             let produced = drain(&mut join);
             assert_eq!(
                 produced, rows,
                 "{label}: every probe row matches `fanout` build rows"
             );
         };
-        let results = best_of_blocks(&mut [("source", &mut probe_only), ("total", &mut total)]);
-        let (source, total_m) = (results[0], results[1]);
-        let rows = rows as f64;
-        println!(
-            "{label} ns_per_row {:.1}",
-            (total_m.0.as_secs_f64() - source.0.as_secs_f64()).max(0.0) * 1e9 / rows
-        );
-        println!("{label} total_cal_per_row {:.4}", total_m.1 / rows);
-        println!("{label} source_cal_per_row {:.4}", source.1 / rows);
+        report_join(label, rows, keys, &mut source, &mut build_only, &mut total);
     }
+}
+
+/// Prints one join shape's per-row costs. `build_ns_per_row` is the table
+/// construction per build row (a run with an empty probe side, minus the
+/// build source); `probe_ns_per_row` is the probe and output cost per OUTPUT
+/// row (the full run minus that build-only run and the probe source);
+/// `ns_per_row` is the sum per output row, the number earlier runs printed.
+fn report_join(
+    label: &str,
+    rows: usize,
+    keys: usize,
+    source: &mut dyn FnMut(),
+    build_only: &mut dyn FnMut(),
+    total: &mut dyn FnMut(),
+) {
+    let mut build_source = || {
+        black_box(drain(&mut Sequence::new(rows, keys as i64)));
+    };
+    let results = best_of_blocks(&mut [
+        ("source", source),
+        ("build_source", &mut build_source),
+        ("build_only", build_only),
+        ("total", total),
+    ]);
+    let (source, build_source, build_only, total) =
+        (results[0], results[1], results[2], results[3]);
+    let rows = rows as f64;
+    let build_ns = (build_only.0.as_secs_f64() - build_source.0.as_secs_f64()).max(0.0) * 1e9;
+    let probe_source = source.0.as_secs_f64() - build_source.0.as_secs_f64();
+    let probe_ns =
+        (total.0.as_secs_f64() - build_only.0.as_secs_f64() - probe_source).max(0.0) * 1e9;
+    println!("{label} build_ns_per_row {:.1}", build_ns / rows);
+    println!("{label} probe_ns_per_row {:.1}", probe_ns / rows);
+    println!(
+        "{label} ns_per_row {:.1}",
+        (total.0.as_secs_f64() - source.0.as_secs_f64()).max(0.0) * 1e9 / rows
+    );
+    println!("{label} total_cal_per_row {:.4}", total.1 / rows);
 }
 
 /// The same three shapes through the server's default join, hash join v2
@@ -783,12 +828,12 @@ fn bench_hash_join_v2_probe() {
             continue;
         }
         let keys = rows / fanout;
-        let mut probe_only = || {
+        let mut source = || {
             black_box(drain(&mut Sequence::new(rows, keys as i64)));
             black_box(drain(&mut Sequence::new(keys, keys as i64)));
         };
-        let mut total = || {
-            let mut join = HashJoinV2Executor::new(
+        let join = |probe_rows: usize| {
+            HashJoinV2Executor::new(
                 ExecutorMeta::new(schema_of(&out_types), 1, CHUNK, CHUNK),
                 HashJoinV2Plan {
                     concurrency: 1,
@@ -807,25 +852,25 @@ fn bench_hash_join_v2_probe() {
                     other_condition: vec![],
                     vectorized: true,
                 },
-                Box::new(Sequence::new(keys, keys as i64)),
+                Box::new(Sequence::new(probe_rows, keys as i64)),
                 Box::new(Sequence::new(rows, keys as i64)),
                 JoinCtx,
                 StatementMemory::new(1 << 30, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
-            );
+            )
+        };
+        let mut build_only = || {
+            let mut join = join(0);
+            assert_eq!(drain(&mut join), 0, "{label}: an empty probe emits nothing");
+        };
+        let mut total = || {
+            let mut join = join(keys);
             let produced = drain(&mut join);
             assert_eq!(
                 produced, rows,
                 "{label}: every probe row matches `fanout` build rows"
             );
         };
-        let results = best_of_blocks(&mut [("source", &mut probe_only), ("total", &mut total)]);
-        let (source, total_m) = (results[0], results[1]);
-        let rows = rows as f64;
-        println!(
-            "{label} ns_per_row {:.1}",
-            (total_m.0.as_secs_f64() - source.0.as_secs_f64()).max(0.0) * 1e9 / rows
-        );
-        println!("{label} total_cal_per_row {:.4}", total_m.1 / rows);
+        report_join(label, rows, keys, &mut source, &mut build_only, &mut total);
     }
 }
 
