@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem/compat"
+	"go.uber.org/zap"
 )
 
 // GlobalVariablesHandler serves global variables with sensitive values masked.
@@ -44,10 +46,15 @@ func (h GlobalVariablesHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 		return
 	}
 
+	// Only getters that propagate ctx honor this timeout and client cancellation.
+	// GC getters currently read mysql.tidb through GetTiDBTableValue with
+	// context.TODO(), so storage stalls can keep this handler and its session
+	// alive beyond the deadline.
 	ctx, cancel := context.WithTimeout(req.Context(), requestDefaultTimeout)
 	defer cancel()
 	s, err := session.CreateSession(h.Store)
 	if err != nil {
+		logutil.BgLogger().Error("unable to create session for global variables", zap.Error(err))
 		handler.WriteErrorWithCode(w, http.StatusInternalServerError, errors.New("unable to read global variables"))
 		return
 	}
@@ -67,11 +74,12 @@ func (h GlobalVariablesHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 		// non-secret URI details without needing additional redaction here.
 		value, err := sv.GetGlobalFromHook(ctx, s.GetSessionVars())
 		if err != nil {
+			logutil.BgLogger().Error("unable to read global variable", zap.String("name", sv.Name), zap.Error(err))
 			handler.WriteErrorWithCode(w, http.StatusInternalServerError, errors.New("unable to read global variables"))
 			return
 		}
 		if sv.IsSensitive && value != "" {
-			value = "******"
+			value = vardef.MaskPwd
 		}
 		values[sv.Name] = value
 	}

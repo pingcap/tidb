@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -32,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestGlobalVariables(t *testing.T) {
@@ -115,7 +118,7 @@ func TestGlobalVariables(t *testing.T) {
 			tk.MustExec("SET GLOBAL tidb_redact_log = '" + mode + "'")
 			result := fetch()
 			for _, name := range names {
-				require.Equal(t, "******", result[name], name)
+				require.Equal(t, vardef.MaskPwd, result[name], name)
 			}
 		}
 		require.Equal(t, int64(3*len(names)), called.Load())
@@ -142,7 +145,7 @@ func TestGlobalVariables(t *testing.T) {
 					return value, nil
 				},
 			})
-			expected := "******"
+			expected := vardef.MaskPwd
 			if value == "" {
 				expected = ""
 			}
@@ -197,9 +200,16 @@ func TestGlobalVariables(t *testing.T) {
 	})
 
 	t.Run("safe getter failure", func(t *testing.T) {
+		core, recorded := observer.New(zap.ErrorLevel)
+		restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+			Core:  core,
+			Level: zap.NewAtomicLevelAt(zap.ErrorLevel),
+		})
+		defer restore()
 		const name = "test_http_failing_global_variable"
 		defer variable.UnregisterSysVar(name)
 		for _, sensitive := range []bool{false, true} {
+			recorded.TakeAll()
 			variable.RegisterSysVar(&variable.SysVar{
 				Name: name, Scope: vardef.ScopeGlobal, IsSensitive: sensitive,
 				GetGlobal: func(context.Context, *variable.SessionVars) (string, error) {
@@ -214,6 +224,11 @@ func TestGlobalVariables(t *testing.T) {
 			require.NoError(t, err)
 			require.NotContains(t, string(body), "credential-in-")
 			require.NotContains(t, string(body), vardef.MaxExecutionTime)
+			logs := recorded.FilterMessage("unable to read global variable").All()
+			require.Len(t, logs, 1)
+			require.Equal(t, name, logs[0].ContextMap()["name"])
+			require.Equal(t, "credential-in-error-must-not-leak", logs[0].ContextMap()["error"])
+			require.NotContains(t, logs[0].ContextMap(), "value")
 		}
 	})
 
