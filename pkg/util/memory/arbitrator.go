@@ -2495,7 +2495,7 @@ func (m *MemArbitrator) awaitFreePoolUsed() (res memPoolQuotaUsage) {
 			res.quota += d
 		}
 		if d := m.awaitFree.budget.shards[i].HeapInuse.Load(); d > 0 {
-			res.trackedHeap += d
+			res.trackedHeap += min(d, m.awaitFree.budget.shards[i].approxCapacity())
 		}
 	}
 	m.awaitFree.lastQuotaUsage = res
