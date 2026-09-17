@@ -100,6 +100,15 @@ type Index interface {
 	// The `Delete` deletes the index without considering the partial index condition. The caller should call `MeetPartialCondition` to check whether the
 	// row meets the partial index condition before calling `Delete` to avoid unnecessary index deletion.
 	Delete(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
+	// DeleteWithOwnerCheck supports the `DROP PARTITION` / `TRUNCATE PARTITION` cleanup of
+	// global indexes. It behaves like `Delete`, except that a unique entry is removed only
+	// when its current value is still owned by `ownerPartitionID`. While a partition is being
+	// dropped or truncated, a concurrent write to another (or to a re-created) partition may
+	// legitimately take over an entry that used to belong to the partition being cleaned, and
+	// such an entry must be kept. Only the partition recorded in the entry itself tells which
+	// partition owns it, so the caller passes the partition it is cleaning. The partial index
+	// condition contract described on `Delete` applies here too.
+	DeleteWithOwnerCheck(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, ownerPartitionID int64) error
 	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
 	// `GenIndexKVIter` doesn't consider the partial index condition, the caller should call `MeetPartialCondition` to check. If the row doesn't meet
 	// the condition, it's suggested to use an empty kv generator instead.
