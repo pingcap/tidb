@@ -789,12 +789,20 @@ fn report_join(
     let mut build_source = || {
         black_box(drain(&mut Sequence::new(rows, keys as i64)));
     };
-    // `BENCH_PHASE=build` runs only the build-only block, for profiling one
+    // `BENCH_PHASE=build` (or `total`) runs only that block, for profiling one
     // phase; no per-row number is printed then.
-    if std::env::var("BENCH_PHASE").as_deref() == Ok("build") {
-        best_of_blocks(&mut [("build_only", build_only)]);
-        println!("{label} build phase only");
-        return;
+    match std::env::var("BENCH_PHASE").as_deref() {
+        Ok("build") => {
+            best_of_blocks(&mut [("build_only", build_only)]);
+            println!("{label} build phase only");
+            return;
+        }
+        Ok("total") => {
+            best_of_blocks(&mut [("total", total)]);
+            println!("{label} total only");
+            return;
+        }
+        _ => {}
     }
     let results = best_of_blocks(&mut [
         ("source", source),

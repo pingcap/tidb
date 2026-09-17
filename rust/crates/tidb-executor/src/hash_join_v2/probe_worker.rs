@@ -35,6 +35,10 @@ pub struct ProbeWorkerPorts {
 }
 
 /// Messages on the executor's bounded, shared result/resource channel.
+/// Bounded spin of [`ProbeWorkerV2::receive`] before it parks: about 20 us
+/// of `spin_loop` on this class of CPU, with a `yield_now` every 64 rounds.
+const RECEIVE_SPIN_ROUNDS: u32 = 512;
+
 pub enum ProbeWorkerEvent {
     /// Fully consumed input allocation, reset and ready for the fetcher.
     Input { worker_id: usize, chunk: Chunk },
@@ -168,12 +172,37 @@ impl ProbeWorkerV2 {
         }
     }
 
+    /// Go's scheduler keeps an idle M spinning briefly before it parks
+    /// (`findRunnable`), so a chunk handed over within that window changes
+    /// hands without a futex sleep and wake. A worker thread here does the
+    /// same: it polls for a bounded spin before it blocks. On q09 the four
+    /// handoffs per chunk of this pipeline cost 15% of the node's CPU in
+    /// futex wake and park against Go's 3.4%.
     fn receive<T>(
         &self,
         channel: &Receiver<T>,
         memory: &StatementMemory,
         killed: &Receiver<()>,
     ) -> Result<Option<T>, Stop> {
+        for spin in 0..RECEIVE_SPIN_ROUNDS {
+            match channel.try_recv() {
+                Ok(value) => return Ok(Some(value)),
+                Err(TryRecvError::Disconnected) => return Ok(None),
+                Err(TryRecvError::Empty) => {}
+            }
+            if spin % 64 == 63 {
+                if !matches!(self.close.try_recv(), Err(TryRecvError::Empty)) {
+                    return Err(Stop::Closed);
+                }
+                if !matches!(killed.try_recv(), Err(TryRecvError::Empty)) {
+                    memory.check()?;
+                    return Err(Stop::Closed);
+                }
+                std::thread::yield_now();
+            } else {
+                std::hint::spin_loop();
+            }
+        }
         select_biased! {
             recv(self.close) -> _ => Err(Stop::Closed),
             recv(killed) -> _ => {
