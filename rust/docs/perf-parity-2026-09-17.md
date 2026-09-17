@@ -161,3 +161,15 @@ over the int one is the per-candidate re-verification, which builds two `Datum`s
 and two collation sort keys per candidate where Go's `EqualChunkRow` compares
 encoded keys in place; that is the next step. Executor tests: 1,332 + 329 + 6
 pass; clippy clean on the crate.
+
+## Fix 4: string join keys verified in place (Go `EqualChunkRow`)
+
+The per-candidate re-check on the general path built a `Datum` and an owned
+collation sort key per side; it now compares the collation's immutable key on
+the raw cell bytes (borrowed for binary collations), the same key the batched
+hash path hashes. `join_probe_bytes_key` 1,901 -> 1,547 ns/row; int and
+composite shapes unchanged (their keys are integers). The composite shape's
+remaining profile is flat: memmove 13% spread over the ten output columns'
+`copy_row_ids_from` / `append_cell_n_times` closures, `BuildTable::probe` 3%,
+allocator 5%; nothing single dominates, so the next check is the workload
+effect (Q9's `lineitem x partsupp` on `l_partkey, l_suppkey`).
