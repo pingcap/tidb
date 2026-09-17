@@ -27,12 +27,9 @@ fn rpc_read_timeout_does_not_expire_a_lazy_query_before_dispatch() {
     let mut request_metadata = metadata("a", "z");
     request_metadata.tikv_client_read_timeout_ms = 10;
     let transport = transport_with_loader_calls_and_config(
-        Rc::clone(&calls),
-        [Ok(response(b"still-valid"))],
-        [location(1, "a", "z", "tikv-1:20160")],
-        9001,
-        Rc::new(RefCell::new(Vec::new())),
-        DirectUnaryRuntimeConfig::default(),
+        Rc::clone(&calls), [Ok(response(b"still-valid"))],
+        [location(1, "a", "z", "tikv-1:20160")], 9001,
+        Rc::new(RefCell::new(Vec::new())), DirectUnaryRuntimeConfig::default(),
     );
     let mut runtime = InjectedQueryRuntime::new(transport);
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
@@ -357,7 +354,10 @@ fn unordered_rebuild_replaces_the_completed_region_instead_of_the_first_region()
     let mut runtime = InjectedQueryRuntime::new(transport);
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
-    assert_eq!(result.next_raw().unwrap(), Some(b"split-middle".to_vec()));
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"split-middle".to_vec())
+    );
     assert_eq!(result.next_raw().unwrap(), Some(b"split-right".to_vec()));
     assert_eq!(
         calls

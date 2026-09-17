@@ -19,9 +19,9 @@ use std::collections::BTreeMap;
 
 use prost::Message;
 use tidb_distsql::{
-    KvRequestBuilder, KvRequestMetadata, ReadBytesEma, RegionTaskEnvelope, RegionTaskPeer,
-    RegionTaskTopology, RequestKeyRange, RequestKeyRanges, StoreType, TransportBinding,
-    TransportRequest,
+    KvRequestBuilder, KvRequestMetadata, ReadBytesEma, RegionTaskEnvelope,
+    RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, StoreType,
+    TransportBinding, TransportRequest,
 };
 
 fn transport_request(metadata: KvRequestMetadata) -> TransportRequest {
@@ -520,7 +520,10 @@ fn byte_paging_budget_enlarges_channel_and_survives_row_paging_downgrade() {
         .unwrap();
     assert!(!tasks[0].paging);
     assert_eq!(tasks[0].response_channel_capacity, 18);
-    assert_eq!(request.metadata().paging.size_bytes, 4 * 1024 * 1024);
+    assert_eq!(
+        request.metadata().paging.size_bytes,
+        4 * 1024 * 1024
+    );
     assert_eq!(
         tasks[0].predicted_read_bytes(request.metadata().paging.size_bytes, &ema),
         4 * 1024 * 1024
@@ -665,9 +668,12 @@ fn store_batching_requires_a_leader_selected_peer() {
 #[test]
 fn unhinted_store_batching_requires_explicit_merge_opt_in() {
     let topo = topology(&["", "g", "n", "t", ""]);
-    let mut metadata = request(&["a", "c", "d", "e", "h", "x", "y", "z"], None)
-        .metadata()
-        .clone();
+    let mut metadata = request(
+        &["a", "c", "d", "e", "h", "x", "y", "z"],
+        None,
+    )
+    .metadata()
+    .clone();
     metadata.store_batch_size = 3;
 
     let unhinted = transport_request(metadata.clone())

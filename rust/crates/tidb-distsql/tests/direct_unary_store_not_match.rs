@@ -136,6 +136,7 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
 }
 
 impl tidb_txnkv::lock::LockRecoveryClient for DelayedStoreMismatchClient {
+
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
@@ -156,6 +157,7 @@ impl tidb_txnkv::lock::LockRecoveryClient for DelayedStoreMismatchClient {
             "unexpected lock in delayed StoreNotMatch read".to_owned(),
         ))
     }
+
 
     fn pessimistic_rollback_for_lock(
         &mut self,
@@ -287,6 +289,7 @@ impl DirectUnaryClient for ForwardedStaleMismatchClient {
 }
 
 impl tidb_txnkv::lock::LockRecoveryClient for ForwardedStaleMismatchClient {
+
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
@@ -307,6 +310,7 @@ impl tidb_txnkv::lock::LockRecoveryClient for ForwardedStaleMismatchClient {
             "unexpected lock in forwarded stale read".to_owned(),
         ))
     }
+
 
     fn pessimistic_rollback_for_lock(
         &mut self,

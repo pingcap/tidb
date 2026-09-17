@@ -155,7 +155,10 @@ fn test_request_builder_2() {
     let mut builder = RequestBuilder::new();
     builder.set_index_ranges(12, 15, &source_ranges());
     let request = finish_default_dag_request(&mut builder);
-    assert_eq!(request.key_ranges.as_ref().unwrap().partitions(), expected);
+    assert_eq!(
+        request.key_ranges.as_ref().unwrap().partitions(),
+        expected
+    );
 }
 
 // Go pkg/distsql/request_builder_test.go::TestRequestBuilder3.
@@ -194,7 +197,10 @@ fn test_request_builder_5() {
         .set_concurrency(15);
     let analyze = analyze.build().expect("analyze");
     assert_eq!(analyze.request_type, RequestType::Analyze);
-    assert_eq!(analyze.isolation_level, IsolationLevel::ReadCommitted);
+    assert_eq!(
+        analyze.isolation_level,
+        IsolationLevel::ReadCommitted
+    );
     assert_eq!(analyze.priority, KvPriority::Low);
     assert!(analyze.not_fill_cache);
     assert!(analyze.keep_order);
@@ -350,7 +356,10 @@ fn test_index_look_up_push_down_scan_concurrency() {
         builder
             .set_dag_request(dag, DAG_BYTES)
             .set_from_context(&DistSqlContext::new());
-        assert_eq!(builder.build().expect("lookup").concurrency, expected);
+        assert_eq!(
+            builder.build().expect("lookup").concurrency,
+            expected
+        );
     }
 }
 
@@ -464,10 +473,16 @@ fn complete_metadata_setters_and_read_consistency_reach_transport_snapshot() {
     assert_eq!(request.resource_group_name, "rg");
     assert!(request.request_source.internal);
     assert_eq!(request.request_source.source_type, "internal");
-    assert_eq!(request.request_source.explicit_source_type, "explicit");
+    assert_eq!(
+        request.request_source.explicit_source_type,
+        "explicit"
+    );
     assert!(!request.paging.enabled);
     assert_eq!(request.paging.size_bytes, 4096);
-    assert_eq!(request.isolation_level, IsolationLevel::ReadCommitted);
+    assert_eq!(
+        request.isolation_level,
+        IsolationLevel::ReadCommitted
+    );
     assert_eq!(
         request.match_store_labels,
         vec![StoreLabel {
