@@ -1647,6 +1647,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode())] = int(newCol.UniqueID)
 	}
 	newCol.SetCoercibility(expr.Coercibility())
+	newCol.SetRepertoire(expr.Repertoire())
 	return newCol, name, nil
 }
 
