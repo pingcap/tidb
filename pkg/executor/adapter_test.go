@@ -263,6 +263,7 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPDTotal)].Match(ctx.GetSessionVars(), items, time.Duration(tikvExecDetail.WaitPDRespDuration).Seconds()))
 
 	t.Run("plan recording switches", func(t *testing.T) {
+		ctx.Store = testkit.CreateMockStore(t)
 		cfg := config.GetGlobalConfig()
 		oldRecord := atomic.LoadUint32(&cfg.Instance.RecordPlanInSlowLog)
 		oldBinary := variable.GenerateBinaryPlan.Load()
