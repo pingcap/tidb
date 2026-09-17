@@ -1093,7 +1093,7 @@ func (m *memArbitrator) growBigBudget() {
 		upper := m.bigBudget()
 		upper.Lock()
 
-		if m.killer.GetKillSignal() != 0 {
+		if k := m.killer; k != nil && k.GetKillSignal() != 0 {
 			upper.Unlock()
 			return
 		}
@@ -1207,7 +1207,7 @@ func (m *memArbitrator) reserveBigBudget(newCap int64) {
 		upper := m.bigBudget()
 		upper.Lock()
 
-		if m.killer.GetKillSignal() != 0 {
+		if k := m.killer; k != nil && k.GetKillSignal() != 0 {
 			upper.Unlock()
 			return
 		}
@@ -1356,15 +1356,15 @@ func (t *Tracker) InitMemArbitrator(
 }
 
 func (m *memArbitrator) Done() <-chan struct{} {
-	if m.killer == nil {
-		return nil
+	if k := m.killer; k != nil {
+		return k.GetKillEventChan()
 	}
-	return m.killer.GetKillEventChan()
+	return nil
 }
 
 func (m *memArbitrator) Stop(reason ArbitratorStopReason) bool {
-	if m.killer != nil {
-		m.killer.SendKillSignalWithKillEventReason(sqlkiller.KilledByMemArbitrator, reason.String())
+	if k := m.killer; k != nil {
+		k.SendKillSignalWithKillEventReason(sqlkiller.KilledByMemArbitrator, reason.String())
 	}
 	return true
 }
