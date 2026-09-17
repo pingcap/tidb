@@ -270,7 +270,8 @@ type ControllerParam struct {
 	Status *LightningStatus
 	// storage interface to read the dump data
 	DumpFileStorage storeapi.Storage
-	// true if DumpFileStorage is created by lightning. In some cases where lightning is a library, the framework may pass an DumpFileStorage
+	// OwnExtStorage transfers ownership of DumpFileStorage to the controller on
+	// successful construction. On construction failure, the caller retains ownership.
 	OwnExtStorage bool
 	// used by lightning server mode to pause tasks
 	Pauser *common.Pauser
@@ -571,6 +572,9 @@ func (rc *Controller) Close() {
 	}
 	if rc.pdCli != nil {
 		rc.pdCli.Close()
+	}
+	if rc.ownStore && rc.store != nil {
+		rc.store.Close()
 	}
 }
 

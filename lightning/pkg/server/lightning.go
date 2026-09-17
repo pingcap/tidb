@@ -510,6 +510,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		progress.BroadcastInitProgress(dbMetas)
 	}
 
+	ownsSource := o.dumpFileStorage == nil && s != nil
+	defer func() {
+		if ownsSource {
+			s.Close()
+		}
+	}()
+
 	db, keyspaceName, err := initDBAndKeyspace(ctx, taskCfg, o)
 	if err != nil {
 		return err
@@ -533,6 +540,8 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		o.logger.Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
 	}
+	// The importer now owns the source and closes it during teardown.
+	ownsSource = false
 
 	l.cancelLock.Lock()
 	l.importer = procedure
@@ -548,7 +557,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	return errors.Trace(err)
 }
 
-func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, o *options) (*mydump.MDLoader, storeapi.Storage, error) {
+func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, o *options) (_ *mydump.MDLoader, _ storeapi.Storage, err error) {
 	s := o.dumpFileStorage
 	if s == nil {
 		u, err := objstore.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
@@ -559,6 +568,14 @@ func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, 
 		if err != nil {
 			return nil, nil, common.NormalizeError(err)
 		}
+		failpoint.InjectCall("afterCreateSourceStorage", &s)
+	}
+	if o.dumpFileStorage == nil {
+		defer func() {
+			if err != nil {
+				s.Close()
+			}
+		}()
 	}
 
 	// return expectedErr means at least meet one file
