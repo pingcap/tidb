@@ -165,8 +165,13 @@ func TestSetTransactionIsolationOneSho(t *testing.T) {
 func TestStatementErrorInTransaction(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
+	const dbName = "test_statement_error_in_transaction"
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	tk.PrepareDB(dbName)
+	t.Cleanup(func() {
+		cleanupTK := testkit.NewTestKit(t, store)
+		cleanupTK.MustExec("drop database if exists " + dbName)
+	})
 	tk.MustExec("create table statement_side_effect (c int primary key)")
 	tk.MustExec("begin")
 	tk.MustExec("insert into statement_side_effect values (1)")
