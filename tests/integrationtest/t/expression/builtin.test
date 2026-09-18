@@ -1673,3 +1673,12 @@ set sql_mode = default;
 # Issue 59420
 SELECT GET_FORMAT(TIME, 'usa'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'UsA'), GET_FORMAT(time, 'UsA'), GET_FORMAT(TIme, 'UsA');
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
+# Negative real constants must not wrap during unsigned comparison refinement.
+create table unsigned_compare_probe (a bool unsigned not null, b bigint unsigned null, key(a));
+insert into unsigned_compare_probe values (0,null), (1,1), (255,255);
+select a, tan(-0.15) < a, tan(-0.15) <= a, tan(-0.15) > a, tan(-0.15) >= a from unsigned_compare_probe order by a;
+select a, a > tan(-0.15), a >= tan(-0.15), a < tan(-0.15), a <= tan(-0.15) from unsigned_compare_probe order by a;
+select a from unsigned_compare_probe where a > tan(-0.15) order by a;
+select a from unsigned_compare_probe ignore index(a) where a > tan(-0.15) order by a;
+select b, tan(-0.15) < b, tan(0.15) < b from unsigned_compare_probe order by a;
+drop table unsigned_compare_probe;
