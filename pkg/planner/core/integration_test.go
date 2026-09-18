@@ -42,6 +42,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestContradictoryHavingEmptyIndexRange(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table having_l(c char)")
+	tk.MustExec("create table having_r(c char primary key)")
+	tk.MustExec("insert into having_r values ('1'),('2')")
+	check := func() {
+		for _, cond := range []string{
+			"r.c is not null and r.c is null",
+			"r.c is not null and not(r.c is not null)",
+			"r.c is not null and not(r.c is not null) and r.c is null",
+		} {
+			tk.MustQuery("select * from having_l l left join having_r r on true having " + cond).Check(testkit.Rows())
+		}
+	}
+	check()
+	tk.MustExec("insert into having_l values ('a')")
+	check()
+	tk.MustExec("delete from having_r")
+	check()
+	tk.MustQuery("select * from having_l l left join having_r r on true having r.c is null").Check(testkit.Rows("a <nil>"))
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
