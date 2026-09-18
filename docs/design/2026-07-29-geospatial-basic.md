@@ -536,7 +536,7 @@ Out of scope here, each with a home:
 | --- | --- |
 | Partition table, clustered index | None. Geometry cannot be a primary or clustering key, having no meaningful ordering. |
 | Indexes on a geometry column | None in v1, of any kind: not a primary, unique, secondary or composite member. The useful one is the spatial index, which is the other design. |
-| Generated columns | `ST_*` are deterministic scalars, so they are usable in virtual and stored generated column expressions like any other builtin. A geometry-typed generated column is then an ordinary geometry column, and the row above governs indexing it. |
+| Generated columns | No `ST_*` function is allowed in a virtual or stored generated column expression in v1. Nothing structural stops them, since they are deterministic scalars, but each one has to be shown useful and correct there rather than assumed, and that is per function. This costs work rather than saving it: `pkg/ddl/generated_column.go` gates generated columns with a blocklist (`expression.IllegalFunctions4GeneratedColumns`) plus a "is it a registered builtin" check, so every `ST_*` name has to be added to that blocklist explicitly, otherwise registering the builtin already admits it. Functions can be taken off the list one at a time later. The separate `GAFunction4ExpressionIndex` allowlist applies to expression indexes only, which v1 does not have. |
 | Charset and collation | Not applicable; the value is binary. |
 | Parser | Updated in this design. |
 | DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints, at `CREATE TABLE` and `ADD COLUMN`. `MODIFY`/`CHANGE COLUMN` on a geometry column is rejected as unsupported in v1, whatever the change: the `SRID` attribute, the subtype in either direction, or conversion to or from another type. The exception is `NULL`/`NOT NULL`, which the generic nullability path handles without knowing the column is geometry. Anything else means adding a new column and backfilling it. `DROP COLUMN` is ordinary. |
@@ -614,8 +614,12 @@ Out of scope here, each with a home:
 
 - MySQL byte-identical suite for the v1 function surface (the PoC's `spatial_compat`
   integration test is the basis).
-- Dumpling/Lightning round-trip of a table with geometry columns; TiCDC and BR pass-through;
-  behavior unaffected when TiFlash is absent.
+- Dumpling/Lightning round-trip of a table with geometry columns, and BR pass-through, both
+  over the bare path. TiCDC is not pass-through and gets its own test: a changefeed into a
+  MySQL sink must convert the stored value to MySQL's binary format, so the sink is
+  byte-compared against the source. TiFlash is a separate gating test: replicating a table
+  with a geometry column is rejected rather than silently wrong, and behavior is unaffected
+  when TiFlash is absent.
 - Parser, DDL, planner and executor as listed in Compatibility.
 - Upgrade and downgrade paths.
 
@@ -755,8 +759,10 @@ locked in either way, so the outcome can change after GA.
 
 ## Future extensions
 
-Documented, not built here. Each is additive over the v1 surface and needs no format
-change.
+Documented, not built here. Each is additive over the v1 surface: no v1 behavior changes
+and no stored value has to be rewritten. One of them, the compact point layout, does add to
+the stored format, as a new format-version byte beside version 1 rather than a change to
+it. That is what the version byte is for, and old values keep being read as version 1.
 
 | Step | Cost |
 | --- | --- |
@@ -769,7 +775,10 @@ change.
 **A compact point storage version.** The format-version byte leaves room for layouts
 narrower than EWKB, and a point is the case worth it: version 2 could be
 `<version = 2><f64><f64>`, 17 bytes against the 22 that version 1 needs for the same point,
-since EWKB repeats a byte-order flag and a type word the column already implies. It carries
+since EWKB repeats a byte-order flag and a type word the column already implies. Each
+`f64` is IEEE-754 binary64, little-endian, and the pair is in the stored axis order, the
+same one version 1 holds. Dropping the byte-order flag is what makes fixing the
+endianness part of the format rather than a property of the writer. It carries
 no SRID, so it would apply only where a `SRID n` column fixes one, which is the same
 condition under which version 1 already omits the SRID flag.
 
@@ -822,8 +831,11 @@ and 49. All three were accepted by 9.7.2. Only framing errors are rejected: a `L
 with no points, a `POLYGON` with no rings, or any `MULTI*` with no members, since
 `GEOMETRYCOLLECTION` is the only container allowed to be empty.
 
-So no length window can be reserved for another format. Above 66 there is none free, and
-below it a geometry has nowhere to live.
+So no length window can be reserved for a second variable-length format. Above 66 there is
+none free, and below it a geometry of arbitrary size has nowhere to live. A fixed-size
+layout is the exception, since it needs one length rather than a window: 17 is never valid
+above, which is what lets the compact point in
+[Future extensions](#future-extensions) be told apart from a MySQL value by length alone.
 
 ## Appendix: SRS catalog and axis order
 
