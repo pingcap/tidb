@@ -374,13 +374,12 @@ Error 8264 (HY000): Global Index is needed for index 'idx_b', since the unique i
 drop table if exists t;
 drop table if exists t_ft;
 create table t_ft (a text, fulltext key (a));
-show warnings;
-Level	Code	Message
-Warning	1214	The used table type doesn't support FULLTEXT indexes
+Got one of the listed errors
+show tables like 't_ft';
+Tables_in_ddl__db_integration (t_ft)
+create table t_ft (a text);
 alter table t_ft add fulltext key (a);
-show warnings;
-Level	Code	Message
-Warning	1214	The used table type doesn't support FULLTEXT indexes
+Got one of the listed errors
 show create table t_ft;
 Table	Create Table
 t_ft	CREATE TABLE `t_ft` (

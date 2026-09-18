@@ -650,6 +650,11 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 				childArgsHashCode = append(childArgsHashCode, arg.CanonicalHashCode())
 			}
 			switch child.FuncName.L {
+			case ast.FTSMysqlMatchAgainst:
+				if _, local := FTSMysqlMatchAgainstLocalEvalInfo(child); local {
+					sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
+					sf.canonicalhashcode = append(sf.canonicalhashcode, child.CanonicalHashCode()...)
+				}
 			case ast.GT: // not GT  ==> LE  ==> use GE and switch args
 				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GE))
 				for i := len(childArgsHashCode) - 1; i >= 0; i-- {
@@ -685,6 +690,9 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
 		}
 	}
+	if sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig); ok {
+		sf.canonicalhashcode = sig.appendFTSStateHash(sf.canonicalhashcode)
+	}
 }
 
 // Hash64 implements HashEquals.<0th> interface.
@@ -702,6 +710,9 @@ func (sf *ScalarFunction) Hash64(h base.Hasher) {
 	for _, arg := range sf.GetArgs() {
 		arg.Hash64(h)
 	}
+	if sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig); ok && sig.localEvalInfo != nil {
+		h.HashBytes(sig.appendFTSStateHash(nil))
+	}
 }
 
 // Equals implements HashEquals.<1th> interface.
@@ -717,6 +728,12 @@ func (sf *ScalarFunction) Equals(other any) bool {
 		sf2 = &x
 	default:
 		return false
+	}
+	if sig, isMatch := sf.Function.(*builtinFtsMysqlMatchAgainstSig); isMatch {
+		otherSig, isOtherMatch := sf2.Function.(*builtinFtsMysqlMatchAgainstSig)
+		if !isOtherMatch || !sig.sameFTSState(otherSig) {
+			return false
+		}
 	}
 	ok := sf.FuncName.L == sf2.FuncName.L
 	ok = ok && (sf.RetType == nil && sf2.RetType == nil || sf.RetType != nil && sf2.RetType != nil && sf.RetType.Equals(sf2.RetType))
@@ -740,6 +757,9 @@ func ReHashCode(sf *ScalarFunction) {
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
 		sf.hashcode = append(sf.hashcode, arg.HashCode()...)
+	}
+	if sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig); ok {
+		sf.hashcode = sig.appendFTSStateHash(sf.hashcode)
 	}
 	// Cast is a special case. The RetType should also be considered as an argument.
 	// Please see `newFunctionImpl()` for detail.

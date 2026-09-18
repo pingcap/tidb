@@ -19,7 +19,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -54,12 +56,31 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 	}
 
 	mgr := backend.MakeEngineManager(bc.backend)
-	cfg := generateLocalEngineConfig(bc.GetImportTS())
+	baseCfg := generateLocalEngineConfig(bc.GetImportTS())
 
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
+	// Collect the new TiCI indexIDs and initialize the TiCI writer group if needed.
+	var newTiCIIndexIDs []int64
+	for _, indexID := range indexIDs {
+		indexInfo := tbl.Meta().FindIndexByID(indexID)
+		if indexInfo != nil && indexInfo.IsTiCIIndex() {
+			newTiCIIndexIDs = append(newTiCIIndexIDs, indexID)
+		}
+	}
+	if len(newTiCIIndexIDs) > 0 && !bc.ticiWriterGroupInitialized {
+		taskID := ddlutil.BuildBackfillTaskKey(bc.jobID, false)
+		if err := bc.backend.InitTiCIWriterGroup(bc.ctx, nil, tbl.Meta(), bc.schemaName, taskID, newTiCIIndexIDs); err != nil {
+			return nil, err
+		}
+		bc.ticiWriterGroupInitialized = true
+	}
+
 	for i, indexID := range indexIDs {
-		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tbl.Meta().Name.L, int32(indexID))
+		cfg := *baseCfg
+		indexInfo := tbl.Meta().FindIndexByID(indexID)
+		configureTiCIWriteForIndex(&cfg, indexInfo, indexID)
+		openedEngine, err := mgr.OpenEngine(bc.ctx, &cfg, tbl.Meta().Name.L, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
 				zap.Int64("job ID", bc.jobID),
@@ -77,7 +98,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 			bc.jobID,
 			indexID,
 			uniques[i],
-			cfg,
+			&cfg,
 			openedEngine,
 			openedEngine.GetEngineUUID(),
 			bc.memRoot,
@@ -96,6 +117,14 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 		zap.Int64("current memory usage", bc.memRoot.CurrentUsage()),
 		zap.Int64("memory limitation", bc.memRoot.MaxMemoryQuota()))
 	return ret, nil
+}
+
+func configureTiCIWriteForIndex(cfg *backend.EngineConfig, indexInfo *model.IndexInfo, indexID int64) {
+	if indexInfo == nil || !indexInfo.IsTiCIIndex() {
+		return
+	}
+	cfg.TiCIWriteEnabled = true
+	cfg.TiCIIndexID = indexID
 }
 
 // UnregisterOpt controls the behavior of backend context unregistering.
