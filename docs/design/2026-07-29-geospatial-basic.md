@@ -207,14 +207,11 @@ the bound is what turns a crash into an error. It applies one bound across inges
 above real data and below MySQL's storage limit, so unlike MySQL it never persists a value
 it cannot read.
 
-**Size.** A vertex is 16 bytes and nothing compresses it, so a geometry costs 16 bytes a
-vertex plus small per-ring and per-part overhead. TiDB's 6 MiB `txn-entry-size-limit` is
-the real ceiling on a stored value, about 393k vertices, and ordinary data reaches it:
-national boundaries at OSM resolution are 172k vertices for Russia (2.6 MiB) and 369k for
-Canada (5.7 MiB), against 37k and 68k for the same two at Natural Earth 1:10m. No separate
-point-count cap is needed for a stored value, and a large geometry is slow rather than
-unbounded. `ST_Subdivide`, the PostGIS remedy for oversized polygons, is deferred with the
-rest of the processing tail.
+**Size.** A vertex is 16 bytes and does not compress. This design adds no point-count cap,
+since TiDB's entry size limit already bounds a stored value. Unlike most types, geometry
+reaches that limit with ordinary data: national boundaries at OSM resolution run to
+hundreds of thousands of vertices. Hence `ST_Subdivide`, PostGIS's remedy for oversized
+polygons, is deferred rather than dismissed.
 
 Why EWKB rather than the alternatives:
 [Investigation & Alternatives](#investigation--alternatives).
@@ -786,13 +783,6 @@ Two independent checks tell it from a MySQL value, which is what makes it safe t
 first byte is the version, 2 rather than 1, and 17 bytes is a length MySQL's format can
 never produce (see [the appendix](#appendix-binary-format-lengths)). Nothing on the user
 surface changes, since the bare path exchanges MySQL's format either way.
-
-**MySQL byte interop.** A pair of conversion functions, `ST_FromMySQL` and `ST_AsMySQL`,
-would let a MySQL dump land in a `VARBINARY` column and be converted in place, or exposed
-through a generated column, without TiDB adopting MySQL's storage format. It is the
-migration path that
-[rejecting MySQL's stored bytes](#investigation--alternatives) leaves open. The names are
-non-standard, so whether they carry the `ST_` prefix is part of the question.
 
 `ST_Covers` and `ST_CoveredBy` are PostGIS spellings with no MySQL equivalent, worth adding
 once the spatial index lands: they are index-eligible region predicates
