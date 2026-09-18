@@ -550,6 +550,44 @@ func GetLocalIP() string {
 	return ""
 }
 
+// IsIPBoundLocally checks if the given IP address is bound to any local network interface.
+// It returns true if the IP is found on a local interface, false otherwise.
+// Special case: "0.0.0.0" and "::" (bind-all addresses) always return true.
+func IsIPBoundLocally(ipAddr string) bool {
+	// Handle bind-all addresses
+	if ipAddr == "0.0.0.0" || ipAddr == "::" {
+		return true
+	}
+
+	// Parse the input IP
+	targetIP := net.ParseIP(ipAddr)
+	if targetIP == nil {
+		// Invalid IP format
+		return false
+	}
+
+	// Get all network interfaces
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get network interfaces", zap.Error(err))
+		return false
+	}
+
+	// Check each interface address
+	for _, addr := range addrs {
+		ipnet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		// Compare the IP addresses
+		if ipnet.IP.Equal(targetIP) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // CreateCertificates creates and writes a cert based on the params.
 func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyAlgo x509.PublicKeyAlgorithm,
 	signAlgo x509.SignatureAlgorithm) error {
