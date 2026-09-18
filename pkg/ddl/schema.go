@@ -173,6 +173,11 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 	}
 
 	if job.SchemaState == model.StateNone && dbInfo.ReadOnly == args.ReadOnly {
+		// The cached InfoSchema on TiDB nodes may still have an outdated
+		// read-only state, so publish a schema diff even when the meta is unchanged.
+		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+			return ver, errors.Trace(err)
+		}
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 		return ver, nil
 	}

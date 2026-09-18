@@ -533,6 +533,43 @@ func TestAlterSchemaReadonlyBasic(t *testing.T) {
 	tk.MustGetErrMsg("alter database test read only = 1", "[planner:1836]Running in read-only mode")
 }
 
+func TestAlterSchemaReadOnlyRepublishesUnchangedMeta(t *testing.T) {
+	enableReadOnlyDDLFp(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db")
+	tk.MustExec("create table test_db.t (id int primary key)")
+	tk.MustExec("alter database test_db read only = 1")
+
+	dbInfo, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test_db"))
+	require.True(t, ok)
+	require.True(t, dbInfo.ReadOnly)
+	oldSchemaVersion := dom.InfoSchema().SchemaMetaVersion()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		persistedDBInfo, err := m.GetDatabase(dbInfo.ID)
+		if err != nil {
+			return err
+		}
+		persistedDBInfo = persistedDBInfo.Clone()
+		persistedDBInfo.ReadOnly = false
+		return m.UpdateDatabase(persistedDBInfo)
+	}))
+
+	dbInfo, ok = dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test_db"))
+	require.True(t, ok)
+	require.True(t, dbInfo.ReadOnly)
+
+	tk.MustExec("alter database test_db read only = 0")
+	require.Equal(t, oldSchemaVersion+1, dom.InfoSchema().SchemaMetaVersion())
+	dbInfo, ok = dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test_db"))
+	require.True(t, ok)
+	require.False(t, dbInfo.ReadOnly)
+	tk.MustExec("insert into test_db.t values (1)")
+}
+
 func TestAlterSchemaReadonlyPrivilege(t *testing.T) {
 	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
