@@ -402,6 +402,13 @@ func PropagateConstantForJoin(ctx exprctx.ExprContext, keepJoinKey bool, schema1
 	if len(joinKeys) == 0 {
 		return conditions
 	}
+	if len(conditions) == 1 {
+		if _, isConst := conditions[0].(*Constant); isConst {
+			// The predicates collapsed to a single constant (for example an always-false condition),
+			// so keep it alone to let the caller fold the join into a TableDual.
+			return conditions
+		}
+	}
 	return RemoveDupExprs(append(conditions, joinKeys...))
 }
 
