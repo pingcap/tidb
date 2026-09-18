@@ -2934,12 +2934,31 @@ func (k planCacheStmtKey) Hash() []byte {
 	return []byte(k)
 }
 
+func (s *SessionVars) nonPreparedPlanCacheStmtKey(sql string) planCacheStmtKey {
+	charset, collation := s.GetCharsetInfo()
+	client, err := s.GetSessionOrGlobalSystemVar(context.Background(), vardef.CharacterSetClient)
+	if err != nil {
+		client = ""
+	}
+	// Match ParseParameterizedSQL's SQL mode, parse parameters, and parser config.
+	// Preserved literals must not reuse an AST parsed under a different context.
+	key := PrepareDedupCacheKey(sql, charset, collation, s.CurrentDB, s.SQLMode)
+	var flags [2]byte
+	if s.EnableWindowFunction {
+		flags[0] = 1
+	}
+	if s.EnableStrictDoubleTypeCheck {
+		flags[1] = 1
+	}
+	return planCacheStmtKey(key + "\x00" + client + "\x00" + string(flags[:]))
+}
+
 // AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
 func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt any) {
 	if s.nonPreparedPlanCacheStmts == nil {
 		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
 	}
-	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
+	s.nonPreparedPlanCacheStmts.Put(s.nonPreparedPlanCacheStmtKey(sql), stmt)
 }
 
 // GetNonPreparedPlanCacheStmt gets the PlanCacheStmt.
@@ -2947,7 +2966,7 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	if s.nonPreparedPlanCacheStmts == nil {
 		return nil
 	}
-	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
+	stmt, _ := s.nonPreparedPlanCacheStmts.Get(s.nonPreparedPlanCacheStmtKey(sql))
 	return stmt
 }
 
