@@ -418,6 +418,23 @@ func TestStatementRUUsesConfig(t *testing.T) {
 }
 
 func TestStatementRUResultValueContracts(t *testing.T) {
+	t.Run("frontend compile bytes follow plan cache hits", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		vars := fixture.stmt.Ctx.GetSessionVars()
+		for _, originalSQL := range []string{"", statementRUSimpleSelectSQLForTest} {
+			vars.StmtCtx.OriginalSQL = originalSQL
+			for _, hit := range []bool{false, true, false} {
+				vars.FoundInPlanCache = hit
+				bytes := statementRUFrontendCompileBytes(fixture.stmt)
+				if hit {
+					require.Zero(t, bytes)
+				} else {
+					require.Positive(t, bytes)
+				}
+			}
+		}
+	})
+
 	t.Run("calculator finalizes typed units without plan input", func(t *testing.T) {
 		calculator := statementRUCalculator{
 			units: ruv2.StmtUnits{
