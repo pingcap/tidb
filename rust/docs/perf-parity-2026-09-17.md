@@ -497,3 +497,38 @@ queries ran clean with no answer mismatch on either side). Warm sum over
 those 21 queries: go 22.43s, head 24.66s, ratio 1.099 -- in line with the
 2026-09-18 sync-tree measurement (warm ratio 1.084 over all 22), no
 regression.
+
+## 2026-09-19: point_select's throughput ceiling (4/8/16/32/64 threads, single box)
+
+Chasing whether point_select's remaining gap against base (task 9's +25%
+target) is latency-bound only at the harness's fixed 4/16-thread points, or
+whether higher concurrency reveals more headroom. Same box, one core count
+(4), point_select only, fresh tables, fixed at each thread count in turn (not
+ABBA -- a scaling curve, not a paired comparison):
+
+```
+threads   base tps   head tps   head/base   go tps    head/go
+4          6173.8     7036.9     +14.0%     5295.9     +32.9%
+8          8419.3     9815.1     +16.6%     7617.0     +28.9%
+16        10843.1    11684.2      +7.8%     9742.8     +20.0%
+32        13184.5    13716.8      +4.0%    10001.8     +37.1%
+64        14551.7    14965.0      +2.8%    10840.0     +38.1%
+```
+
+Two different stories. Against Go, head's lead widens with concurrency (up
+to +38%): Go's own node saturates a lower ceiling, so head's lower CPU per
+request converts into a real throughput lead once the workload is generating
+enough parallel demand to matter. Against base, the lead SHRINKS with
+concurrency (from +14-17% down to +3-4%): base's throughput ceiling turns out
+to be nearly as high as head's, because at 32-64 threads on this 4-core box
+the shared TiKV+PD processes -- identical binaries under both sides -- become
+the bound, and whatever CPU head saves in its own node has nowhere left to
+turn into extra throughput once TiKV/PD are the box's dominant consumers.
+This is the same conclusion the 2026-09-18 write-up reached from a
+single-connection RPC-share angle (TiKV's own Get service time, 0.3-0.4 ms,
+already dominates head's 0.47 ms average), now confirmed from the opposite
+direction: it survives all the way up the concurrency curve, not just at the
+harness's fixed 4/16-thread points. Node-side generic fixes are exhausted for
+point_select on this single-node-TiKV playground; the remaining lever is
+TiKV/PD capacity, which is out of this task's scope (this campaign changes
+only the tidb node).
