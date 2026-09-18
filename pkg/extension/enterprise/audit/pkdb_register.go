@@ -48,6 +48,9 @@ const (
 	FuncAuditLogRotate = "audit_log_rotate"
 )
 
+// GlobalLogManager is the audit log manager used by the running TiDB instance.
+var GlobalLogManager *LogManager
+
 var enableAuditExtension bool
 
 // Register registers enterprise extension
@@ -73,6 +76,7 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 	if err != nil {
 		return nil, err
 	}
+	GlobalLogManager = manager
 	if intest.InTest {
 		globalManagerForTest = manager
 	}

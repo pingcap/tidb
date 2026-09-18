@@ -277,6 +277,9 @@ func RunTiDBServer(args []string) {
 	setupLog()
 	// register extensions
 	audit.Register()
+	executor.GetGlobalAuditLogPathAndType = func() (string, string) {
+		return audit.GlobalLogManager.GetLogPath(), audit.GlobalLogManager.GetLogFormat()
+	}
 	memory.InitMemoryHook()
 	whitelist.Register()
 	setupExtensions()

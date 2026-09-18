@@ -1,0 +1,23 @@
+# TestAuditLogSystemTables
+# Keep the audit file in a subdirectory. If the executor is not given the audit
+# path, an empty path falls back to the current directory and cannot find it.
+--disable_result_log
+set @audit_log_path = concat('./data/tidb-audit-system-table-', uuid(), '.log');
+set global tidb_audit_log = @audit_log_path;
+--enable_result_log
+set global tidb_audit_log_redacted = 0;
+set global tidb_audit_enabled = 1;
+select audit_log_create_filter('audit_log_system_table_all', '{}');
+select audit_log_create_rule('%@%', 'audit_log_system_table_all');
+select 'audit_log_system_table_marker';
+select audit_log_rotate();
+
+select count(*) from information_schema.audit_log
+  where SQL_TEXT like '%audit_log_system_table_marker%' and SQL_TEXT not like '%COUNT(*)%';
+select count(*) from information_schema.cluster_audit_log
+  where SQL_TEXT like '%audit_log_system_table_marker%' and SQL_TEXT not like '%COUNT(*)%';
+
+select audit_log_remove_rule('%@%', 'audit_log_system_table_all');
+select audit_log_remove_filter('audit_log_system_table_all');
+set global tidb_audit_enabled = 0;
+set global tidb_audit_log_redacted = default;

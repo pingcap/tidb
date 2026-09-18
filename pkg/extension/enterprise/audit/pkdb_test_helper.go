@@ -23,6 +23,7 @@ func Register4Test(t testCleanup) {
 
 func resetForTest() {
 	extension.Reset()
+	GlobalLogManager = nil
 	if intest.InTest {
 		globalManagerForTest = nil
 	}

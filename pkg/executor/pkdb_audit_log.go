@@ -796,6 +796,7 @@ func (e *auditLogRetriever) getColumnValueFactoryByNameAuditLog(colName string, 
 
 // getAllFiles is used to get all audit-log needed to parse, it is exported for test.
 func (e *auditLogRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
+	logFilePath = filepath.Clean(logFilePath)
 	totalFileNum := 0
 	if e.stats != nil {
 		startTime := time.Now()

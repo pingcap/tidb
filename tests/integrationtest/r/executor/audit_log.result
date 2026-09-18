@@ -1,0 +1,32 @@
+set @audit_log_path = concat('./data/tidb-audit-system-table-', uuid(), '.log');
+set global tidb_audit_log = @audit_log_path;
+set global tidb_audit_log_redacted = 0;
+set global tidb_audit_enabled = 1;
+select audit_log_create_filter('audit_log_system_table_all', '{}');
+audit_log_create_filter('audit_log_system_table_all', '{}')
+OK
+select audit_log_create_rule('%@%', 'audit_log_system_table_all');
+audit_log_create_rule('%@%', 'audit_log_system_table_all')
+OK
+select 'audit_log_system_table_marker';
+audit_log_system_table_marker
+audit_log_system_table_marker
+select audit_log_rotate();
+audit_log_rotate()
+OK
+select count(*) from information_schema.audit_log
+where SQL_TEXT like '%audit_log_system_table_marker%' and SQL_TEXT not like '%COUNT(*)%';
+count(*)
+1
+select count(*) from information_schema.cluster_audit_log
+where SQL_TEXT like '%audit_log_system_table_marker%' and SQL_TEXT not like '%COUNT(*)%';
+count(*)
+1
+select audit_log_remove_rule('%@%', 'audit_log_system_table_all');
+audit_log_remove_rule('%@%', 'audit_log_system_table_all')
+OK
+select audit_log_remove_filter('audit_log_system_table_all');
+audit_log_remove_filter('audit_log_system_table_all')
+OK
+set global tidb_audit_enabled = 0;
+set global tidb_audit_log_redacted = default;
