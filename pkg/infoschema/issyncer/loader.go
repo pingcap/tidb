@@ -16,6 +16,7 @@ package issyncer
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -239,7 +240,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	})
 
 	// full load.
-	schemas, err := l.fetchAllSchemasWithTables(m, schemaCacheSize)
+	schemas, pid2tid, err := l.fetchAllSchemasWithTables(m, schemaCacheSize)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -271,7 +272,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		data = infoschema.NewData()
 	}
 	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2).
-		WithCrossKS(l.crossKS)
+		WithCrossKS(l.crossKS).WithPartitionID2TableID(pid2tid)
 	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, maskingPolicies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -418,15 +419,15 @@ func (l *Loader) getTimestampForSchemaVersionWithNonEmptyDiff(m meta.Reader, ver
 
 // fetchAllSchemasWithTables fetches all schemas with their tables.
 func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64) (
-	allSchemas []*model.DBInfo, err error) {
+	allSchemas []*model.DBInfo, pid2tid map[int64]int64, err error) {
 	if l.crossKS {
 		var dbInfo *model.DBInfo
 		dbInfo, err = m.GetDatabase(metadef.SystemDatabaseID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if dbInfo == nil {
-			return nil, errors.New("system database not found")
+			return nil, nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
 	} else if l.filter != nil {
@@ -438,33 +439,47 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else {
 		allSchemas, err = m.ListDatabases()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if len(allSchemas) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	splittedSchemas := l.splitForConcurrentFetch(allSchemas, schemaCacheSize)
 	concurrency := min(len(splittedSchemas), 128)
+
+	pid2tid = make(map[int64]int64)
+	var mu sync.Mutex
 
 	eg, ectx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
 	eg.SetLimit(concurrency)
 	for _, schemas := range splittedSchemas {
 		ss := schemas
 		eg.Go(func() error {
-			return l.fetchSchemasWithTables(ectx, ss, m, schemaCacheSize)
+			localPid2tid, err := l.fetchSchemasWithTables(ectx, ss, m, schemaCacheSize)
+			if err != nil {
+				return err
+			}
+			if len(localPid2tid) > 0 {
+				mu.Lock()
+				for p, t := range localPid2tid {
+					pid2tid[p] = t
+				}
+				mu.Unlock()
+			}
+			return nil
 		})
 	}
 	if err := eg.Wait(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return allSchemas, nil
+	return allSchemas, pid2tid, nil
 }
 
 func (*Loader) fetchPolicies(m meta.Reader) ([]*model.PolicyInfo, error) {
@@ -489,31 +504,36 @@ func (*Loader) fetchMaskingPolicies(_ meta.Reader) ([]*model.MaskingPolicyInfo, 
 	return nil, nil
 }
 
-func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {
+func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) (map[int64]int64, error) {
 	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
-		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
+		failpoint.Return(nil, errors.New("failpoint: failed to fetch schemas with tables"))
 	})
+
+	pid2tid := make(map[int64]int64)
 
 	for _, di := range schemas {
 		// if the ctx has been canceled, stop fetching schemas.
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		var tables []*model.TableInfo
 		var err error
 		if schemaCacheSize > 0 && !infoschema.IsSpecialDB(di.Name.L) {
-			name2ID, specialTableInfos, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
+			name2ID, specialTableInfos, dbPid2tid, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
+			for pid, tid := range dbPid2tid {
+				pid2tid[pid] = tid
+			}
 			if domainutil.RepairInfo.InRepairMode() && len(domainutil.RepairInfo.GetRepairTableList()) > 0 {
 				mustLoadRepairTableIDs := domainutil.RepairInfo.GetMustLoadRepairTableListByDB(di.Name.L, name2ID)
 				for _, id := range mustLoadRepairTableIDs {
 					tblInfo, err := m.GetTable(di.ID, id)
 					if err != nil {
-						return err
+						return nil, err
 					}
 					tables = append(tables, tblInfo)
 				}
@@ -521,7 +541,7 @@ func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		} else {
 			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
@@ -548,7 +568,7 @@ func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		}
 		di.Deprecated.Tables = diTables
 	}
-	return nil
+	return pid2tid, nil
 }
 
 // fetchSchemaConcurrency controls the goroutines to load schemas, but more goroutines
