@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "data.go",
         "unicode_0900_ai_ci_data_generated.go",
+        "unicode_0900_as_cs_data_generated.go",
         "unicode_ci_data_generated.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/collate/ucadata",
