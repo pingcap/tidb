@@ -461,6 +461,60 @@ func (b *builtinRoundWithFracIntSig) Clone() builtinFunc {
 	return newSig
 }
 
+func roundUnsignedInteger(value, shift uint64) (uint64, bool) {
+	result := value / shift * shift
+	if value-result < shift/2 {
+		return result, false
+	}
+	if math.MaxUint64-result < shift {
+		return 0, true
+	}
+	return result + shift, false
+}
+
+func roundIntegerWithFrac(value, frac int64, unsigned bool) (int64, bool) {
+	if frac >= 0 {
+		return value, false
+	}
+
+	digits := uint64(-(frac + 1)) + 1
+	if digits >= 20 {
+		return 0, false
+	}
+	shift := uint64(1)
+	for i := uint64(0); i < digits; i++ {
+		shift *= 10
+	}
+
+	if unsigned || value >= 0 {
+		result, overflow := roundUnsignedInteger(uint64(value), shift)
+		if overflow || !unsigned && result > math.MaxInt64 {
+			return 0, true
+		}
+		return int64(result), false
+	}
+
+	magnitude := uint64(-(value + 1)) + 1
+	result, _ := roundUnsignedInteger(magnitude, shift)
+	if result > uint64(math.MaxInt64)+1 {
+		return 0, true
+	}
+	if result == uint64(math.MaxInt64)+1 {
+		return math.MinInt64, false
+	}
+	return -int64(result), false
+}
+
+func roundIntegerOverflowError(value, frac int64, unsigned bool) error {
+	typeName := "BIGINT"
+	valueText := strconv.FormatInt(value, 10)
+	if unsigned {
+		typeName = "BIGINT UNSIGNED"
+		valueText = strconv.FormatUint(uint64(value), 10)
+	}
+	return types.ErrOverflow.GenWithStackByArgs(typeName, fmt.Sprintf("round(%s, %d)", valueText, frac))
+}
+
 // evalInt evals ROUND(value, frac).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
 func (b *builtinRoundWithFracIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
@@ -472,7 +526,15 @@ func (b *builtinRoundWithFracIntSig) evalInt(ctx EvalContext, row chunk.Row) (in
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return int64(types.Round(float64(val), int(frac))), false, nil
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return val, false, nil
+	}
+	unsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+	result, overflow := roundIntegerWithFrac(val, frac, unsigned)
+	if overflow {
+		return 0, false, roundIntegerOverflowError(val, frac, unsigned)
+	}
+	return result, false, nil
 }
 
 type builtinRoundWithFracDecSig struct {
