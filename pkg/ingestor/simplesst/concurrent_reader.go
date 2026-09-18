@@ -21,12 +21,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/sync/errgroup"
 )
 
 // concurrentFileReader reads a file with multiple chunks concurrently.
 type concurrentFileReader struct {
 	ctx            context.Context
+	cancel         context.CancelFunc
 	concurrency    int
 	readBufferSize int
 
@@ -35,6 +37,18 @@ type concurrentFileReader struct {
 
 	offset   int64
 	fileSize int64
+
+	singleWindow bool
+	bufferSets   [2][][]byte
+	started      bool
+	resultCh     chan concurrentReadResult
+	eg           *util.ErrorGroupWithRecover
+}
+
+type concurrentReadResult struct {
+	bufferSet int
+	buffers   [][]byte
+	err       error
 }
 
 // newConcurrentFileReader creates a new concurrentFileReader.
@@ -46,26 +60,67 @@ func newConcurrentFileReader(
 	fileSize int64,
 	concurrency int,
 	readBufferSize int,
+	singleWindow bool,
 ) (*concurrentFileReader, error) {
+	childCtx, cancel := context.WithCancel(ctx)
 	return &concurrentFileReader{
-		ctx:            ctx,
+		singleWindow:   singleWindow,
+		ctx:            childCtx,
+		cancel:         cancel,
 		concurrency:    concurrency,
 		readBufferSize: readBufferSize,
 		offset:         offset,
 		fileSize:       fileSize,
 		name:           name,
 		storage:        st,
+		resultCh:       make(chan concurrentReadResult, 1),
+		eg:             util.NewErrorGroupWithRecover(),
 	}, nil
 }
 
-// read loads the file content concurrently into the buffer.
+// read returns the next in-order buffer window. Unless the reader was built for a
+// single window, it fills the other one concurrently while the caller consumes the
+// returned one.
 func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
+	if r.singleWindow {
+		return r.readOnce(bufs[:r.concurrency])
+	}
+
+	if !r.started {
+		r.bufferSets[0] = bufs[:r.concurrency]
+		r.bufferSets[1] = bufs[r.concurrency : 2*r.concurrency]
+		r.started = true
+		r.startRead(0)
+	}
+	result := <-r.resultCh
+	if result.err == nil {
+		r.startRead(1 - result.bufferSet)
+	}
+	return result.buffers, result.err
+}
+
+// startRead fills the given window in the background. A panic inside becomes an
+// error rather than taking the process down, matching how readAllData runs the
+// same decode path on its own goroutines.
+func (r *concurrentFileReader) startRead(bufferSet int) {
+	r.eg.Go(func() error {
+		buffers, err := r.readOnce(r.bufferSets[bufferSet])
+		r.resultCh <- concurrentReadResult{
+			bufferSet: bufferSet,
+			buffers:   buffers,
+			err:       err,
+		}
+		return nil
+	})
+}
+
+func (r *concurrentFileReader) readOnce(bufs [][]byte) ([][]byte, error) {
 	if r.offset >= r.fileSize {
 		return nil, io.EOF
 	}
 
 	ret := make([][]byte, 0, r.concurrency)
-	eg := errgroup.Group{}
+	eg, egCtx := errgroup.WithContext(r.ctx)
 	for i := range r.concurrency {
 		if r.offset >= r.fileSize {
 			break
@@ -80,7 +135,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 		r.offset += int64(end)
 		eg.Go(func() error {
 			_, err := objstore.ReadDataInRange(
-				r.ctx,
+				egCtx,
 				r.storage,
 				r.name,
 				offset,
@@ -98,4 +153,9 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 	}
 
 	return ret, nil
+}
+
+func (r *concurrentFileReader) close() {
+	r.cancel()
+	_ = r.eg.Wait()
 }
