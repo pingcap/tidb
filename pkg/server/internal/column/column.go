@@ -152,7 +152,8 @@ func (column *Info) toTextRow() textrow.ColumnInfo {
 		Charset: column.Charset,
 		Flag:    column.Flag,
 		Decimal: column.Decimal,
-		Table:   column.Table,
+		// A derived-table alias does not make an expression a base-table column.
+		Table: column.OrgTable,
 	}
 }
 
