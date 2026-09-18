@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--
+  Standalone, no build step and no network access required: open it in a browser.
+  Every curve is solved in the page at load time. See the footer for the method.
+-->
+<title>Which Curve Is the Line?</title>
+<style>
+:root{
+  --paper:#eef1f5; --panel:#ffffff; --ink:#131a24; --ink-2:#4d5a6b; --rule:#d2d9e2; --rule-2:#e4e9f0;
+  --void:#0b1017; --void-grid:#26364a; --void-grid-far:#16202c;
+  --geo:#e8960c; --gc:#12a3a8; --pln:#cf3f5e; --pt:#f4f6f9;
+  --accent:#12a3a8;
+  --shadow:0 1px 2px rgba(19,26,36,.06),0 8px 24px rgba(19,26,36,.06);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0a0e14; --panel:#121924; --ink:#e6ebf2; --ink-2:#93a2b5;
+    --rule:#26303d; --rule-2:#1b232e;
+    --void:#06090d; --void-grid:#2b3c52; --void-grid-far:#131c26;
+    --geo:#f5ab2e; --gc:#2cc3c8; --pln:#e95c78; --pt:#ffffff;
+    --accent:#2cc3c8;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0a0e14; --panel:#121924; --ink:#e6ebf2; --ink-2:#93a2b5;
+  --rule:#26303d; --rule-2:#1b232e;
+  --void:#06090d; --void-grid:#2b3c52; --void-grid-far:#131c26;
+  --geo:#f5ab2e; --gc:#2cc3c8; --pln:#e95c78; --pt:#ffffff;
+  --accent:#2cc3c8;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:28px 40px}
+header{margin-bottom:20px}
+.eyebrow{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-weight:600;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-2);margin:0 0 6px}
+h1{font-size:clamp(23px,4vw,34px);line-height:1.15;margin:0 0 8px;text-wrap:balance;
+  font-weight:600;letter-spacing:-.015em}
+.sub{margin:0;color:var(--ink-2);max-width:66ch;font-size:15px}
+.sub code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:.92em;
+  background:var(--rule-2);padding:1px 5px;border-radius:3px}
+.stage{display:grid;grid-template-columns:minmax(0,1fr) 268px;gap:16px;align-items:start}
+@media (max-width:840px){.stage{grid-template-columns:minmax(0,1fr)}}
+.viewport{position:relative;background:var(--void);border-radius:10px;overflow:hidden;
+  border:1px solid var(--rule);aspect-ratio:1/1;max-width:100%;box-shadow:var(--shadow)}
+@media (min-width:841px){.viewport{aspect-ratio:auto;height:min(72vh,660px)}}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas.drag{cursor:grabbing}
+.hint{position:absolute;left:12px;bottom:10px;color:#6f8098;font-size:11px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;pointer-events:none;letter-spacing:.02em}
+.rail{display:flex;flex-direction:column;gap:14px;min-width:0}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:14px}
+.card h2{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:11px;
+  font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-2);
+  margin:0 0 10px}
+.keys{display:flex;flex-direction:column;gap:9px}
+.key{display:grid;grid-template-columns:22px minmax(0,1fr);gap:9px;align-items:start;
+  background:none;border:0;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer}
+.key[aria-pressed="false"]{opacity:.38}
+.swatch{height:3px;border-radius:2px;margin-top:8px}
+.key b{display:block;font-size:13px;font-weight:500}
+.key span{display:block;font-size:11.5px;color:var(--ink-2);line-height:1.35}
+label.ctl{display:block;font-size:11.5px;color:var(--ink-2);margin-bottom:7px}
+label.ctl b{color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-weight:500;
+  font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.btns{display:flex;gap:7px;flex-wrap:wrap;margin-top:4px}
+button.v{flex:1 1 auto;background:var(--paper);border:1px solid var(--rule);color:var(--ink);
+  border-radius:7px;padding:7px 9px;font:inherit;font-size:12px;cursor:pointer}
+button.v:hover{border-color:var(--accent);color:var(--accent)}
+button.v:focus-visible,.key:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--rule-2);vertical-align:top}
+thead th{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:10.5px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);font-weight:600}
+tbody tr:last-child td{border-bottom:0}
+td.n{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:7px;
+  vertical-align:1px}
+.tablewrap{overflow-x:auto;margin-top:22px;background:var(--panel);border:1px solid var(--rule);
+  border-radius:10px;padding:4px 10px 6px}
+.cap{font-size:12.5px;color:var(--ink-2);margin:12px 2px 0;max-width:74ch}
+.cap strong{color:var(--ink);font-weight:600}
+footer{margin-top:26px;padding-top:14px;border-top:1px solid var(--rule);
+  font-size:12px;color:var(--ink-2);max-width:74ch}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<style>html{color-scheme:light dark}</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <p class="eyebrow">WGS 84 &middot; SRID 4326 &middot; measured against MySQL 9.7.2</p>
+  <h1>Which curve is the line?</h1>
+  <p class="sub">One <code>LINESTRING(80 0, 0 80)</code> and one <code>POINT(45 70)</code>, in latitude&ndash;longitude.
+  Every engine agrees on the two endpoints and disagrees about the path between them, so
+  <code>ST_Distance</code> and <code>ST_Within</code> give different answers to the same query.
+  Drag to rotate; scroll zooms toward whatever is under the cursor, so you can point at the two curved paths and go right down to them. Every curve is drawn true, at whatever flattening
+  you set.</p>
+</header>
+
+<div class="stage">
+  <div class="viewport"><canvas id="c"></canvas><p class="hint">drag &middot; scroll to zoom toward the cursor</p></div>
+
+  <div class="rail">
+    <div class="card">
+      <h2>Edge models</h2>
+      <div class="keys">
+        <button class="key" id="k-pln" aria-pressed="true">
+          <span class="swatch" style="background:var(--pln)"></span>
+          <span><b>Planar</b><span>Straight in lat/long. PostGIS <code>geometry</code> at 4326.</span></span>
+        </button>
+        <button class="key" id="k-gc" aria-pressed="true">
+          <span class="swatch" style="background:var(--gc)"></span>
+          <span><b>Great circle</b><span>Shortest path on a sphere. PostGIS <code>geography</code>, and S2.</span></span>
+        </button>
+        <button class="key" id="k-geo" aria-pressed="true">
+          <span class="swatch" style="background:var(--geo)"></span>
+          <span><b>Ellipsoidal geodesic</b><span>MySQL&rsquo;s Andoyer and Karney&rsquo;s exact geodesic both sit here, 2&nbsp;m apart.</span></span>
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Earth shape</h2>
+      <label class="ctl" for="fslider">Flattening <b id="fl">1/298.3</b></label>
+      <input type="range" id="fslider" min="0" max="1000" value="92" step="1">
+      <div class="btns">
+        <button class="v" id="f-sphere">Sphere</button>
+        <button class="v" id="f-wgs">WGS 84</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--ink-2);margin:10px 0 0">
+        The geodesic is recomputed for whatever flattening you pick, so at <b>Sphere</b> it
+        <em>becomes</em> the great circle and the gap is zero. Every metre of that gap is the
+        flattening. Push <code>f</code> past WGS&nbsp;84, all the way to 1/1.1, to squash the globe and watch it grow.</p>
+      <p style="font-size:11.5px;color:var(--ink-2);margin:9px 0 0">
+        Nothing here is exaggerated. To see the real 1.9&nbsp;km at WGS&nbsp;84, use
+        <b>Close-up</b>, which drops the camera to about 10&nbsp;km above the point.</p>
+      <p style="font-size:11.5px;color:var(--ink-2);margin:9px 0 0">
+        Watch the markers move as you drag. Geodetic latitude is defined by the surface
+        normal, so <code>80N 0E</code> names a different place on every surface: on a sphere
+        it is one radius out, on WGS&nbsp;84 about 20&nbsp;km less. All three curves are drawn
+        on whichever surface is current, so they always share their endpoints.</p>
+      <p style="font-size:11.5px;color:var(--ink-2);margin:9px 0 0;padding-top:9px;
+                border-top:1px solid var(--rule-2)">
+        Point to geodesic <b id="gap" style="color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">&mdash;</b></p>
+    </div>
+
+    <div class="card">
+      <h2>View</h2>
+      <div class="btns">
+        <button class="v" id="v-all">Whole path</button>
+        <button class="v" id="v-70">Close-up</button>
+        <button class="v" id="v-top">Pole</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Edge model<br><span style="font-weight:400;text-transform:none;letter-spacing:0">at WGS 84</span></th><th>Crosses 70&deg;E at</th><th>ST_Distance to POINT(45 70)</th><th>ST_Intersects</th></tr></thead>
+  <tbody>
+    <tr><td><span class="dot" style="background:var(--pln)"></span>Planar (PostGIS <code>geometry</code>)</td>
+        <td class="n">lat 10.000000</td><td class="n">3,879 km</td><td class="n">false</td></tr>
+    <tr><td><span class="dot" style="background:var(--gc)"></span>Great circle (PostGIS <code>geography</code>)</td>
+        <td class="n">lat 45.000000</td><td class="n">0 m</td><td class="n">true</td></tr>
+    <tr><td><span class="dot" style="background:var(--geo)"></span>Andoyer (MySQL)</td>
+        <td class="n">lat 45.070155</td><td class="n">1,890 m</td><td class="n">false</td></tr>
+    <tr><td><span class="dot" style="background:var(--geo);opacity:.5"></span>Exact geodesic (Karney)</td>
+        <td class="n">lat 45.070235</td><td class="n">1,892 m</td><td class="n">false</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="cap"><strong>The point sits exactly on the great circle</strong>, so PostGIS <code>geography</code>
+returns zero and calls it a hit, while MySQL puts it 1.9&nbsp;km outside the line. Distances are perpendicular
+to each path; along the meridian the geodesic and great-circle crossings are 7,797&nbsp;m apart, and the path is
+running at bearing 166&deg; there, almost due south.</p>
+
+<p class="cap" style="margin-top:9px"><strong>Almost none of that gap is the distance formula.</strong>
+Andoyer and Karney disagree by 9.9&nbsp;cm over 10&nbsp;km as <em>metrics</em>, and by 2&nbsp;m here. PostGIS lands
+1.9&nbsp;km from MySQL not because Karney is inaccurate, but because PostGIS does not use Karney for the
+<em>edge</em>: it draws a great circle and saves Karney for measuring the last hop.</p>
+
+<footer>Geodesics are found by integrating the surface equations along arc length and solving the
+initial bearing by bisection, which holds at any flattening: Vincenty&rsquo;s series, the usual choice,
+returns nonsense past about <code>f</code>&nbsp;=&nbsp;1/2 and so cannot serve this slider. At WGS&nbsp;84
+it agrees with Vincenty to under 2&nbsp;m, and at <code>f</code>&nbsp;=&nbsp;0 it reproduces the great
+circle exactly. The WGS&nbsp;84 path is 9,810&nbsp;km on an initial bearing of 99.80&deg;, falling to
+54.7&deg; at 1/1.1, where it also crosses a vertex at 84.5&deg;N. Crossing latitudes for Andoyer are
+measured on MySQL 9.7.2. Latitude first throughout, as MySQL orders 4326.</footer>
+</div>
+
+<script>
+(function(){
+"use strict";
+const AM=6378137, D2R=Math.PI/180, R2D=180/Math.PI;
+const A_=[80,0], B_=[0,80], P_=[45,70];
+let flat=1/298.257223563;
+
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const mul=(a,k)=>[a[0]*k,a[1]*k,a[2]*k];
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const len=a=>Math.hypot(a[0],a[1],a[2]);
+const norm=a=>{const m=len(a)||1;return[a[0]/m,a[1]/m,a[2]/m];};
+
+// geodetic -> geocentric cartesian, equatorial radius = 1
+function ecef(lat,lon,f){
+  const e2=f*(2-f), p=lat*D2R, l=lon*D2R, s=Math.sin(p);
+  const N=1/Math.sqrt(1-e2*s*s);
+  return [N*Math.cos(p)*Math.cos(l), N*Math.cos(p)*Math.sin(l), N*(1-e2)*s];
+}
+// Geodesic by direct integration of the surface equations, with arc length as
+// the parameter. Vincenty's series assume a small f and return nonsense past
+// about f = 0.5, so they cannot serve a slider that reaches 1/1.1.
+//   dlat/ds = cos(a)/M      dlon/ds = sin(a)/(N cos(lat))      da/ds = sin(a) tan(lat)/N
+// At f = 0 this reduces to the great circle exactly, which is the whole point.
+function geoStep(p,a,f){
+  const sp=Math.sin(p), w=1-f*(2-f)*sp*sp;
+  const N=1/Math.sqrt(w), M=(1-f*(2-f))/Math.pow(w,1.5);
+  return [Math.cos(a)/M, Math.sin(a)/(N*Math.cos(p)), Math.sin(a)*Math.tan(p)/N];
+}
+// Shoot from A on bearing a0 until the path crosses the latitude of B.
+// Returns the longitude reached, plus the state at every step when asked.
+function shoot(a0,f,ds,keep){
+  let p=A_[0]*D2R, lam=0, a=a0*D2R, s=0;
+  const st=keep?[[p,lam,a]]:null;
+  while(s<12){
+    if(Math.abs(p)>89.5*D2R) return {lon:null,st};
+    const k1=geoStep(p,a,f);
+    const k2=geoStep(p+ds/2*k1[0], a+ds/2*k1[2], f);
+    const k3=geoStep(p+ds/2*k2[0], a+ds/2*k2[2], f);
+    const k4=geoStep(p+ds*k3[0],   a+ds*k3[2],   f);
+    const np=p+ds/6*(k1[0]+2*k2[0]+2*k3[0]+k4[0]);
+    const nl=lam+ds/6*(k1[1]+2*k2[1]+2*k3[1]+k4[1]);
+    const na=a+ds/6*(k1[2]+2*k2[2]+2*k3[2]+k4[2]);
+    if(np<=B_[0]*D2R && p>B_[0]*D2R){
+      const w=(p-B_[0]*D2R)/(p-np), le=lam+w*(nl-lam);
+      if(keep) st.push([B_[0]*D2R,le,na]);
+      return {lon:le*R2D, st, s:s+ds*w};
+    }
+    p=np;lam=nl;a=na;s+=ds;
+    if(keep) st.push([p,lam,a]);
+  }
+  return {lon:null,st};
+}
+// bisect the initial bearing so the path lands on B
+function solveAz(f){
+  let lo=1, hi=179;
+  for(let i=0;i<52;i++){
+    const mid=(lo+hi)/2, r=shoot(mid,f,1.5/400,false).lon;
+    if(r===null||r>B_[1]) lo=mid; else hi=mid;
+  }
+  return (lo+hi)/2;
+}
+function slerp(a,b,t){
+  const p1=a[0]*D2R,l1=a[1]*D2R,p2=b[0]*D2R,l2=b[1]*D2R;
+  const d=2*Math.asin(Math.sqrt(Math.sin((p2-p1)/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin((l2-l1)/2)**2));
+  const sa=Math.sin((1-t)*d)/Math.sin(d), sb=Math.sin(t*d)/Math.sin(d);
+  const x=sa*Math.cos(p1)*Math.cos(l1)+sb*Math.cos(p2)*Math.cos(l2);
+  const y=sa*Math.cos(p1)*Math.sin(l1)+sb*Math.cos(p2)*Math.sin(l2);
+  const z=sa*Math.sin(p1)+sb*Math.sin(p2);
+  return [Math.atan2(z,Math.hypot(x,y))*R2D, Math.atan2(y,x)*R2D];
+}
+let GEO=[],GC=[],PLN=[],grat=[],PT=[0,0,0],gapM=0,GEOD=[],GCD=[],AZ=0;
+function rebuild(){
+  const f=flat, DS=1.5/6000;
+  AZ=solveAz(f);
+  const run=shoot(AZ,f,DS,true), st=run.st;
+  GEO=st.map(v=>ecef(v[0]*R2D, v[1]*R2D, f));
+  PT=ecef(P_[0],P_[1],f);
+  const NC=st.length;
+  GC=[];PLN=[];
+  for(let i=0;i<NC;i++){
+    const t=i/(NC-1), c=slerp(A_,B_,t);
+    GC.push(ecef(c[0],c[1],f));
+    PLN.push(ecef(A_[0]+(B_[0]-A_[0])*t, A_[1]+(B_[1]-A_[1])*t, f));
+  }
+  // fine pass over a short window around the closest approach, so the close-up
+  // shows a smooth curve instead of the 1.6 km steps the main pass uses
+  let bi=0,bd=Infinity;
+  for(let i=0;i<NC;i++){const d=len(sub(PT,GEO[i]));if(d<bd){bd=d;bi=i;}}
+  const back=Math.max(0,bi-30), fine=DS/16, ND=960;
+  let p=st[back][0], lam=st[back][1], a=st[back][2];
+  GEOD=[ecef(p*R2D,lam*R2D,f)];
+  for(let i=0;i<ND;i++){
+    const k1=geoStep(p,a,f);
+    const k2=geoStep(p+fine/2*k1[0], a+fine/2*k1[2], f);
+    const k3=geoStep(p+fine/2*k2[0], a+fine/2*k2[2], f);
+    const k4=geoStep(p+fine*k3[0],   a+fine*k3[2],   f);
+    p+=fine/6*(k1[0]+2*k2[0]+2*k3[0]+k4[0]);
+    lam+=fine/6*(k1[1]+2*k2[1]+2*k3[1]+k4[1]);
+    a+=fine/6*(k1[2]+2*k2[2]+2*k3[2]+k4[2]);
+    GEOD.push(ecef(p*R2D,lam*R2D,f));
+  }
+  let gi=0,gd=Infinity;
+  for(let i=0;i<NC;i++){const d=len(sub(PT,GC[i]));if(d<gd){gd=d;gi=i;}}
+  GCD=[];
+  const t0=Math.max(0,(gi-30)/(NC-1)), t1=Math.min(1,(gi+30)/(NC-1));
+  for(let i=0;i<=ND;i++){
+    const c=slerp(A_,B_,t0+(t1-t0)*i/ND);
+    GCD.push(ecef(c[0],c[1],f));
+  }
+  grat=[];
+  for(let lon=-180;lon<180;lon+=15){const s=[];for(let lat=-90;lat<=90;lat+=3)s.push(ecef(lat,lon,f));grat.push(s);}
+  for(let lat=-75;lat<=75;lat+=15){const s=[];for(let lon=-180;lon<=180;lon+=3)s.push(ecef(lat,lon,f));grat.push(s);}
+  gapM=minDist(PT,GEOD)*AM;
+}
+function minDist(p,poly){
+  let best=Infinity;
+  for(let i=0;i<poly.length-1;i++){
+    const a=poly[i], ab=sub(poly[i+1],a), ap=sub(p,a);
+    const dd=dot(ab,ab);
+    let t=dd>0?dot(ap,ab)/dd:0; t=t<0?0:t>1?1:t;
+    const d=len(sub(ap,mul(ab,t)));
+    if(d<best)best=d;
+  }
+  return best;
+}
+
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W=0,H=0,DPR=1;
+const cam={yaw:42*D2R, pitch:32*D2R, dist:3.4};
+const show={pln:true,gc:true,geo:true};
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+function resize(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  const r=cv.getBoundingClientRect();
+  W=Math.max(1,Math.round(r.width));H=Math.max(1,Math.round(r.height));
+  cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);draw();
+}
+function basis(){
+  const eye=[cam.dist*Math.cos(cam.pitch)*Math.cos(cam.yaw),
+             cam.dist*Math.cos(cam.pitch)*Math.sin(cam.yaw),
+             cam.dist*Math.sin(cam.pitch)];
+  const fwd=norm(mul(eye,-1));
+  let up=[0,0,1];
+  if(Math.abs(dot(fwd,up))>0.999) up=[0,1,0];
+  const right=norm(cross(fwd,up));
+  return {eye,fwd,right,up2:cross(right,fwd)};
+}
+function proj(p,B){
+  const d=sub(p,B.eye), z=dot(d,B.fwd);
+  if(z<=1e-7)return null;
+  const f=Math.min(W,H)*0.92;
+  return [W/2+f*dot(d,B.right)/z, H/2-f*dot(d,B.up2)/z];
+}
+const front=(p,B)=>dot(p,B.eye)>=dot(p,p);
+function polyline(pts,B,width,dim){
+  let on=false; ctx.lineWidth=width; ctx.lineJoin='round'; ctx.lineCap='round';
+  for(let i=0;i<pts.length;i++){
+    const f=front(pts[i],B), s=proj(pts[i],B);
+    if(!s||(dim&&f)||(!dim&&!f)){ if(on){ctx.stroke();on=false;} continue; }
+    if(!on){ctx.beginPath();ctx.moveTo(s[0],s[1]);on=true;} else ctx.lineTo(s[0],s[1]);
+  }
+  if(on)ctx.stroke();
+}
+function curve(pts,vis,color,B){
+  if(!vis)return;
+  ctx.strokeStyle=color;
+  ctx.globalAlpha=.20; polyline(pts,B,2,true);
+  ctx.globalAlpha=1;   polyline(pts,B,2.4,false);
+}
+function marker(p,B,fill,r,label){
+  if(!front(p,B))return;
+  const s=proj(p,B); if(!s)return;
+  ctx.beginPath();ctx.arc(s[0],s[1],r,0,6.2832);
+  ctx.fillStyle=fill;ctx.fill();
+  ctx.lineWidth=1.5;ctx.strokeStyle=css('--void');ctx.stroke();
+  if(label){ctx.font='500 11px ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace';ctx.fillStyle='#9fb0c6';
+    ctx.textAlign='left';ctx.fillText(label,s[0]+r+5,s[1]+4);}
+}
+function draw(){
+  const B=basis();
+  ctx.fillStyle=css('--void');ctx.fillRect(0,0,W,H);
+  const c=proj([0,0,0],B);
+  if(c){
+    const f=Math.min(W,H)*0.92, rr=f/Math.sqrt(cam.dist*cam.dist-1);
+    const g=ctx.createRadialGradient(c[0]-rr*.3,c[1]-rr*.35,rr*.1,c[0],c[1],rr);
+    g.addColorStop(0,css('--void-grid-far'));g.addColorStop(1,css('--void'));
+    ctx.globalAlpha=1;ctx.beginPath();ctx.arc(c[0],c[1],rr,0,6.2832);ctx.fillStyle=g;ctx.fill();
+  }
+  ctx.globalAlpha=1;ctx.strokeStyle=css('--void-grid-far');grat.forEach(s=>polyline(s,B,1,true));
+  ctx.strokeStyle=css('--void-grid');grat.forEach(s=>polyline(s,B,1,false));
+  curve(PLN,show.pln,css('--pln'),B);
+  curve(GC,show.gc,css('--gc'),B);
+  curve(GEO,show.geo,css('--geo'),B);
+  curve(GCD,show.gc,css('--gc'),B);
+  curve(GEOD,show.geo,css('--geo'),B);
+  ctx.globalAlpha=1;
+  marker(GEO[0],B,'#b9c6d8',4,'80\u00B0N 0\u00B0E');
+  marker(GEO[GEO.length-1],B,'#b9c6d8',4,'0\u00B0N 80\u00B0E');
+  marker(PT,B,css('--pt'),5,'POINT(45 70)');
+}
+function readout(){
+  const fl=document.getElementById('fl'), gp=document.getElementById('gap');
+  fl.textContent = flat===0 ? '0 (sphere)' : '1/'+(1/flat).toFixed(1);
+  gp.textContent = gapM<1 ? '0 m' : gapM<10000
+    ? Math.round(gapM).toLocaleString()+' m'
+    : (gapM/1000).toFixed(0).toLocaleString()+' km';
+}
+// Drag and zoom both work on altitude, not on distance from the centre, so a
+// pixel of drag moves the same amount of ground whatever the zoom level.
+// One radian of yaw shifts the sub-camera point by one radius, which appears
+// as f/(dist-1) pixels, so the inverse of that is the rate we want.
+function dragRate(){
+  return Math.max(cam.dist-1,1e-6)/(0.92*Math.min(W,H));
+}
+let drag=null;
+cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};
+  cv.setPointerCapture(e.pointerId);cv.classList.add('drag');});
+cv.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  const r=dragRate();
+  // a yaw step covers less ground near the poles, so divide it back out
+  cam.yaw-=(e.clientX-drag.x)*r/Math.max(0.2,Math.cos(cam.pitch));
+  cam.pitch=Math.max(-1.45,Math.min(1.45,cam.pitch+(e.clientY-drag.y)*r));
+  drag={x:e.clientX,y:e.clientY};draw();});
+const endDrag=()=>{drag=null;cv.classList.remove('drag');};
+cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
+function zoomBy(k){
+  cam.dist=1+Math.max(4e-4,Math.min(8,(cam.dist-1)*k));
+}
+// Where on the globe is the cursor pointing? Ray from the eye through the pixel,
+// intersected with the unit sphere. Null when it misses the globe.
+function pick(px,py){
+  const B=basis(), f=0.92*Math.min(W,H);
+  const d=norm(add(add(B.fwd, mul(B.right,(px-W/2)/f)), mul(B.up2,(H/2-py)/f)));
+  const b=dot(B.eye,d), c=dot(B.eye,B.eye)-1, disc=b*b-c;
+  if(disc<0) return null;
+  const t=-b-Math.sqrt(disc);
+  return t>0?norm(add(B.eye,mul(d,t))):null;
+}
+// Zoom toward whatever is under the cursor, so you can point at the two lines
+// and scroll in on them rather than always converging on the globe's centre.
+function zoomAt(k,px,py){
+  const hit=(k<1)?pick(px,py):null;
+  zoomBy(k);
+  if(!hit)return;
+  const blend=Math.min(0.5,Math.max(0,1-k));
+  const ty=Math.atan2(hit[1],hit[0]), tp=Math.asin(Math.max(-1,Math.min(1,hit[2])));
+  let dy=ty-cam.yaw;
+  while(dy>Math.PI)dy-=2*Math.PI;
+  while(dy<-Math.PI)dy+=2*Math.PI;
+  cam.yaw+=dy*blend;
+  cam.pitch=Math.max(-1.45,Math.min(1.45,cam.pitch+(tp-cam.pitch)*blend));
+}
+cv.addEventListener('wheel',e=>{e.preventDefault();
+  const r=cv.getBoundingClientRect();
+  zoomAt(Math.exp(e.deltaY*0.005), e.clientX-r.left, e.clientY-r.top);
+  draw();},{passive:false});
+let pinch=null;
+cv.addEventListener('touchmove',e=>{
+  if(e.touches.length!==2)return;e.preventDefault();
+  const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                     e.touches[0].clientY-e.touches[1].clientY);
+  if(pinch){
+    const r=cv.getBoundingClientRect();
+    zoomAt(pinch/d,
+      (e.touches[0].clientX+e.touches[1].clientX)/2-r.left,
+      (e.touches[0].clientY+e.touches[1].clientY)/2-r.top);
+  }
+  pinch=d;draw();},{passive:false});
+cv.addEventListener('touchend',()=>{pinch=null;});
+
+function key(id,k){const b=document.getElementById(id);
+  b.addEventListener('click',()=>{show[k]=!show[k];b.setAttribute('aria-pressed',String(show[k]));draw();});}
+key('k-pln','pln');key('k-gc','gc');key('k-geo','geo');
+
+const fs=document.getElementById('fslider');
+const WGS=1/298.257223563, WGS_V=Math.round(1000*Math.sqrt(WGS/0.909));
+function applyF(f){ flat=f; rebuild(); readout(); draw(); }
+// the slider is coarse, so the presets set f exactly rather than via its value
+fs.addEventListener('input',()=>applyF(Math.pow(+fs.value/1000,2)*0.909));
+document.getElementById('f-sphere').addEventListener('click',()=>{fs.value=0;applyF(0);});
+document.getElementById('f-wgs').addEventListener('click',()=>{fs.value=WGS_V;applyF(WGS);});
+
+function view(yaw,pitch,dist){cam.yaw=yaw;cam.pitch=pitch;cam.dist=dist;draw();}
+document.getElementById('v-all').addEventListener('click',()=>view(42*D2R,32*D2R,3.4));
+// straight down onto POINT(45 70), aimed along its actual direction: the camera
+// angles are geocentric, and geodetic latitude 45 sits 0.19 deg (about 21 km) off
+// geocentric 45, which is more than this view is wide
+document.getElementById('v-70').addEventListener('click',()=>view(
+  Math.atan2(PT[1],PT[0]), Math.atan2(PT[2],Math.hypot(PT[0],PT[1])), 1.0015));
+document.getElementById('v-top').addEventListener('click',()=>view(40*D2R,1.4,3.0));
+
+new ResizeObserver(resize).observe(cv.parentElement);
+matchMedia('(prefers-color-scheme:dark)').addEventListener('change',draw);
+fs.value=WGS_V;applyF(WGS);
+resize();
+})();
+</script>
+</body>
+</html>
