@@ -86,6 +86,35 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) bool {
 	return true
 }
 
+// collectPlanCacheTableInfo collects the table metadata used by metadata locks and the plan cache key.
+//
+// A table or database can disappear between the preprocess phase and this lookup when a
+// concurrent DDL changes the schema. The failure is recoverable: callers surface it as a
+// schema-change error and the statement is re-prepared, so it is logged at warn level.
+func collectPlanCacheTableInfo(ctx context.Context, is infoschema.InfoSchema, relatedTableIDs map[int64]struct{}) (
+	dbName []ast.CIStr, tbls []table.Table, relateVersion map[int64]uint64, err error,
+) {
+	dbName = make([]ast.CIStr, 0, len(relatedTableIDs))
+	tbls = make([]table.Table, 0, len(relatedTableIDs))
+	relateVersion = make(map[int64]uint64, len(relatedTableIDs))
+	for id := range relatedTableIDs {
+		tbl, ok := is.TableByID(ctx, id)
+		if !ok {
+			logutil.BgLogger().Warn("table not found in info schema", zap.Int64("tableID", id))
+			return nil, nil, nil, errors.New("table not found in info schema")
+		}
+		db, ok := is.SchemaByID(tbl.Meta().DBID)
+		if !ok {
+			logutil.BgLogger().Warn("database not found in info schema", zap.Int64("dbID", tbl.Meta().DBID))
+			return nil, nil, nil, errors.New("database not found in info schema")
+		}
+		dbName = append(dbName, db.Name)
+		tbls = append(tbls, tbl)
+		relateVersion[id] = tbl.Meta().Revision
+	}
+	return dbName, tbls, relateVersion, nil
+}
+
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
@@ -198,23 +227,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	// Collect information for metadata lock.
-	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
-	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
-	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
-	for id := range vars.StmtCtx.RelatedTableIDs {
-		tbl, ok := is.TableByID(ctx, id)
-		if !ok {
-			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
-			return nil, nil, 0, errors.New("table not found in info schema")
-		}
-		db, ok := is.SchemaByID(tbl.Meta().DBID)
-		if !ok {
-			logutil.BgLogger().Error("database not found in info schema", zap.Int64("dbID", tbl.Meta().DBID))
-			return nil, nil, 0, errors.New("database not found in info schema")
-		}
-		dbName = append(dbName, db.Name)
-		tbls = append(tbls, tbl)
-		relateVersion[id] = tbl.Meta().Revision
+	dbName, tbls, relateVersion, err := collectPlanCacheTableInfo(ctx, is, vars.StmtCtx.RelatedTableIDs)
+	if err != nil {
+		return nil, nil, 0, err
 	}
 
 	preparedObj := &PlanCacheStmt{
