@@ -126,10 +126,11 @@ func (r *mockRows) Rows() []chunk.Row {
 
 type mockSessionPool struct {
 	syssession.Pool
-	t           *testing.T
-	se          *mockSession
-	lastSession *mockSession
-	inuse       atomic.Int64
+	t                      *testing.T
+	se                     *mockSession
+	lastSession            *mockSession
+	inuse                  atomic.Int64
+	registeredSessionCalls atomic.Int64
 }
 
 func (p *mockSessionPool) WithSession(fn func(*syssession.Session) error) error {
@@ -146,6 +147,11 @@ func (p *mockSessionPool) WithSession(fn func(*syssession.Session) error) error 
 		p.lastSession.inPool = true
 	}()
 	return fn(s)
+}
+
+func (p *mockSessionPool) WithRegisteredSession(_ context.Context, fn func(*syssession.Session) error) error {
+	p.registeredSessionCalls.Add(1)
+	return p.WithSession(fn)
 }
 
 func (p *mockSessionPool) AssertNoSessionInUse() {
