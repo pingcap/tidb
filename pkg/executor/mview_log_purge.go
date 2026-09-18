@@ -21,7 +21,6 @@ import (
 	"math/bits"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -51,228 +49,16 @@ import (
 )
 
 var errMLogPurgeLockConflict = errors.NewNoStackError("mlog purge lock conflict")
-var errMVTaskCanceledManually = errors.NewNoStackError("materialized view task canceled manually")
 
 const (
-	purgeHistStatusRunning  = "running"
-	purgeHistStatusSuccess  = "success"
-	purgeHistStatusFailed   = "failed"
-	purgeHistStatusOrphaned = "orphaned"
-
 	mlogPurgeAdaptiveCountTimeout   = 30 * time.Second
 	mlogPurgeAdaptiveBatchWindow    = 200 * time.Millisecond
 	mlogPurgeAdaptiveMinBatchSize   = int64(8000)
 	mlogPurgeAdaptiveMaxRangeCount  = int64(16)
 	mlogPurgeAdaptiveDeadlineBuffer = 10 * time.Second
 	// Keep the manual purge budget aligned with the source MV service default.
-	mlogPurgeAdaptiveMaxBudget  = 10*time.Minute - mlogPurgeAdaptiveDeadlineBuffer
-	mvTaskMonitorPollInterval   = 5 * time.Second
-	mvTaskHistHeartbeatInterval = 10 * time.Minute
-	mvTaskMonitorSQLTimeout     = 5 * time.Second
+	mlogPurgeAdaptiveMaxBudget = 10*time.Minute - mlogPurgeAdaptiveDeadlineBuffer
 )
-
-type mvTaskCancelReason uint8
-
-const (
-	mvTaskCancelReasonNone mvTaskCancelReason = iota
-	mvTaskCancelReasonManual
-)
-
-type mvTaskCancelController struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	mu        sync.Mutex
-	reason    mvTaskCancelReason
-	requester string
-}
-
-func newMVTaskCancelController(parent context.Context) *mvTaskCancelController {
-	ctx, cancel := context.WithCancel(parent)
-	return &mvTaskCancelController{ctx: ctx, cancel: cancel}
-}
-
-func (c *mvTaskCancelController) context() context.Context {
-	if c == nil {
-		return nil
-	}
-	return c.ctx
-}
-
-func (c *mvTaskCancelController) requestManualCancelByRequester(requester string) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	if c.reason == mvTaskCancelReasonNone {
-		c.reason = mvTaskCancelReasonManual
-	}
-	if c.requester == "" && requester != "" {
-		c.requester = requester
-	}
-	cancel := c.cancel
-	c.mu.Unlock()
-	cancel()
-}
-
-func (c *mvTaskCancelController) normalizeTaskFailure(taskErr error) (*string, error) {
-	if c == nil {
-		return nil, taskErr
-	}
-	c.mu.Lock()
-	reason := c.reason
-	requester := c.requester
-	c.mu.Unlock()
-	if reason != mvTaskCancelReasonManual {
-		return nil, taskErr
-	}
-	failedReason := formatMVManualCancelFailureReason(requester)
-	return &failedReason, errMVTaskCanceledManually
-}
-
-func (c *mvTaskCancelController) isManualCancelRequested() bool {
-	if c == nil {
-		return false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.reason == mvTaskCancelReasonManual
-}
-
-func formatMVManualCancelFailureReason(requester string) string {
-	if requester == "" {
-		return "cancelled manually"
-	}
-	return "cancelled manually by " + requester
-}
-
-func formatMVManualCancelRequester(user *auth.UserIdentity) string {
-	if user == nil {
-		return ""
-	}
-	username := user.AuthUsername
-	if username == "" {
-		username = user.Username
-	}
-	hostname := user.AuthHostname
-	if hostname == "" {
-		hostname = user.Hostname
-	}
-	if username == "" && hostname == "" {
-		return ""
-	}
-	return "'" + strings.ReplaceAll(username, "'", "''") + "'@'" + strings.ReplaceAll(hostname, "'", "''") + "'"
-}
-
-type mvTaskCancelPoller func(context.Context, sqlexec.SQLExecutor) (requested bool, requester string, err error)
-type mvTaskHeartbeatWriter func(context.Context, sqlexec.SQLExecutor) error
-
-func startMVTaskMonitor(
-	taskCtx context.Context,
-	getSysSession func() (sessionctx.Context, error),
-	releaseWatchSession func(sessionctx.Context),
-	taskCancelController *mvTaskCancelController,
-	monitorName string,
-	poller mvTaskCancelPoller,
-	heartbeatWriter mvTaskHeartbeatWriter,
-) (func(), error) {
-	if taskCancelController == nil {
-		return func() {}, errors.New("mv task monitor: task cancel controller is nil")
-	}
-	monitorSctx, err := getSysSession()
-	if err != nil {
-		return func() {}, err
-	}
-	monitorCtx, stopMonitor := context.WithCancel(taskCtx)
-	monitorDone := make(chan struct{})
-	go func() {
-		defer close(monitorDone)
-		defer releaseWatchSession(monitorSctx)
-
-		sqlExec := monitorSctx.GetSQLExecutor()
-		ticker := time.NewTicker(getMVTaskMonitorPollInterval())
-		defer ticker.Stop()
-		nextHeartbeatAt := time.Now().Add(getMVTaskHistHeartbeatInterval())
-		for {
-			if heartbeatWriter != nil && !time.Now().Before(nextHeartbeatAt) {
-				heartbeatCtx, cancelHeartbeat := context.WithTimeout(monitorCtx, getMVTaskMonitorSQLTimeout())
-				err := heartbeatWriter(heartbeatCtx, sqlExec)
-				cancelHeartbeat()
-				nextHeartbeatAt = time.Now().Add(getMVTaskHistHeartbeatInterval())
-				if err != nil {
-					if monitorCtx.Err() != nil {
-						return
-					}
-					logutil.BgLogger().Warn("materialized view task heartbeat failed", zap.String("monitor", monitorName), zap.Error(err))
-				}
-			}
-
-			pollCtx, cancelPoll := context.WithTimeout(monitorCtx, getMVTaskMonitorSQLTimeout())
-			requested, requester, err := poller(pollCtx, sqlExec)
-			cancelPoll()
-			failpoint.InjectCall("mvTaskMonitorPolled", monitorName)
-			if err != nil {
-				if monitorCtx.Err() != nil {
-					return
-				}
-				logutil.BgLogger().Warn("materialized view task monitor cancel poll failed", zap.String("monitor", monitorName), zap.Error(err))
-			} else if requested {
-				taskCancelController.requestManualCancelByRequester(requester)
-				failpoint.InjectCall("mvTaskCancelWatcherRequested", monitorName)
-				return
-			}
-
-			select {
-			case <-monitorCtx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-	return func() {
-		stopMonitor()
-		<-monitorDone
-	}, nil
-}
-
-func getMVTaskMonitorPollInterval() time.Duration {
-	interval := mvTaskMonitorPollInterval
-	failpoint.Inject("mockMVTaskMonitorPollInterval", func(val failpoint.Value) {
-		switch v := val.(type) {
-		case int:
-			interval = time.Duration(v) * time.Millisecond
-		case int64:
-			interval = time.Duration(v) * time.Millisecond
-		}
-	})
-	return interval
-}
-
-func getMVTaskHistHeartbeatInterval() time.Duration {
-	interval := mvTaskHistHeartbeatInterval
-	failpoint.Inject("mockMVTaskHistHeartbeatInterval", func(val failpoint.Value) {
-		switch v := val.(type) {
-		case int:
-			interval = time.Duration(v) * time.Millisecond
-		case int64:
-			interval = time.Duration(v) * time.Millisecond
-		}
-	})
-	return interval
-}
-
-func getMVTaskMonitorSQLTimeout() time.Duration {
-	timeout := mvTaskMonitorSQLTimeout
-	failpoint.Inject("mockMVTaskMonitorSQLTimeout", func(val failpoint.Value) {
-		switch v := val.(type) {
-		case int:
-			timeout = time.Duration(v) * time.Millisecond
-		case int64:
-			timeout = time.Duration(v) * time.Millisecond
-		}
-	})
-	return timeout
-}
 
 func readPurgeHistCancelRequest(
 	kctx context.Context,
@@ -675,7 +461,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			histSQLExec,
 			purgeJobID,
 			mlogID,
-			purgeHistStatusFailed,
+			mvTaskHistStatusFailed,
 			historyTime(purgeStart, histLocation),
 			historyTime(purgeEnd, histLocation),
 			totalPurgeRows,
@@ -875,7 +661,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		})
 		if historyErr == nil {
 			end := time.Now()
-			historyErr = finalizeMLogPurgeHistWithRetry(finalizeCtx, histSQLExec, purgeJobID, mlogID, purgeHistStatusSuccess, historyTime(purgeStart, histLocation), historyTime(end, histLocation), totalPurgeRows, nil)
+			historyErr = finalizeMLogPurgeHistWithRetry(finalizeCtx, histSQLExec, purgeJobID, mlogID, mvTaskHistStatusSuccess, historyTime(purgeStart, histLocation), historyTime(end, histLocation), totalPurgeRows, nil)
 		}
 		if historyErr != nil {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.Annotate(
@@ -1777,7 +1563,7 @@ func insertMLogPurgeHistRunning(
 PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
 PURGE_START_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_TIME)
 VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
-		purgeJobID, mlogID, baseSchema, baseTable, method, startAt, int64(0), purgeHistStatusRunning, cutoffTSO, startAt,
+		purgeJobID, mlogID, baseSchema, baseTable, method, startAt, int64(0), mvTaskHistStatusRunning, cutoffTSO, startAt,
 	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -1807,7 +1593,7 @@ PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
 PURGE_START_TIME, PURGE_END_TIME, PURGE_ROWS, PURGE_DURATION_SEC, PURGE_STATUS, PURGE_FAILED_REASON)
 VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 		purgeJobID, mlogID, baseSchema, baseTable, method, startAt, endAt, rows,
-		formatPurgeDuration(startAt, endAt), purgeHistStatusFailed, reasonValue,
+		formatPurgeDuration(startAt, endAt), mvTaskHistStatusFailed, reasonValue,
 	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
