@@ -405,3 +405,15 @@ handoff to overlap, so that window now runs on the calling thread. A/B
 select_random_points  1250 tps  3.23 ms  1115 us/q      1336 tps  3.00 ms  1015 us/q
 select_random_ranges  1966 tps  2.04 ms   793 us/q      1991 tps  2.01 ms   796 us/q
 ```
+
+### Where the goal stands on this box
+
+Against Go, the Rust node now spends less CPU per statement on every workload
+measured today (point_select 175 vs Go's ~290 us; read_only 4461 vs 6189 us
+per transaction; random_points 1015 vs 1125 us) and issues the same RPCs per
+statement. Against the pre-campaign base, the +25% target holds on delete,
+update_index, update_non_index (16 threads) and bulk_insert, and not on the
+read workloads, where base itself sits within 10% of Go and the round trip is
+TiKV's: at 4 threads the box is 30% idle and each point get is one RPC that
+TiKV alone takes 0.3-0.4 ms to answer. Node-side work cannot move those
+workloads by another 20% here; a faster storage round trip could.
