@@ -491,7 +491,7 @@ type IndexLookUpExecutor struct {
 	primaryKeyIndex *model.IndexInfo
 	tableRequest    *tipb.DAGRequest
 
-	// columns are only required by union scan.
+	// columns are used by union scan and partial-index consistency checks.
 	columns []*model.ColumnInfo
 	// partitionIDMap are only required by union scan with global index.
 	partitionIDMap map[int64]struct{}
@@ -2019,6 +2019,15 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 	chk := exec.TryNewCacheChunk(tableReader)
 	tblInfo := w.idxLookup.table.Meta()
 	vals := make([]types.Datum, 0, len(w.idxTblCols))
+	var partialIndex table.Index
+	var partialRow []types.Datum
+	if w.idxLookup.index.HasCondition() {
+		partialIndex = tables.GetWritableIndexByName(w.idxLookup.index.Name.L, w.idxLookup.table)
+		if partialIndex == nil {
+			return errors.Errorf("index %s not found for consistency check", w.idxLookup.index.Name.O)
+		}
+		partialRow = make([]types.Datum, len(tblInfo.Columns))
+	}
 
 	// Prepare collator for compare.
 	collators := make([]collate.Collator, 0, len(w.idxColTps))
@@ -2084,6 +2093,23 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			if partialIndex != nil {
+				// The index evaluator expects table-column offsets, not lookup output order.
+				for i, col := range w.idxLookup.columns {
+					if col.ID > 0 {
+						partialRow[col.Offset] = row.GetDatum(i, &col.FieldType)
+					}
+				}
+				matched, err := partialIndex.MeetPartialCondition(partialRow)
+				if err != nil {
+					return err
+				}
+				if !matched {
+					// Leave the index entry unmatched so the existing reporter detects
+					// entries for rows excluded by a false or NULL partial predicate.
+					continue
+				}
+			}
 			handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 			if err != nil {
 				return err
