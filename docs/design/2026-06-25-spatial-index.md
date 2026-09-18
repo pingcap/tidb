@@ -265,8 +265,10 @@ Index maintenance is transactional with the row, identical to any TiDB secondary
 
 ### Query path
 
-1. Compute the query shape (a window rectangle, or a distance-bounded disc on a plane /
-   cap on the sphere) from the predicate's constant arguments.
+1. Compute the query shape from the predicate's constant arguments: a window rectangle, a
+   distance-bounded disc on a plane or cap on the sphere, or an arbitrary polygon from a
+   literal. On 4326 that shape is bounded by curved edges, so it is padded per the rules
+   below before it is covered.
 2. `CoverQuery` the shape into cell ranges.
 3. Range-scan those ranges over the index.
 4. Apply the bbox-intersection filter on the index's bbox columns (`minX <= q_maxX AND
@@ -284,9 +286,9 @@ Index maintenance is transactional with the row, identical to any TiDB secondary
 
 The bbox pre-filter must be **conservative**: unlike over-cover, a wrongly rejected
 candidate is a wrong result the refine never sees. On SRID 0 the plain interval
-comparisons above are exactly that. SRID 4326 needs two further rules, both consequences
+comparisons above are exactly that. SRID 4326 needs three further rules, all consequences
 of geographic edges being curved (MySQL draws them with the same Andoyer approximation it
-uses everywhere else; see the basic design's Unresolved Questions):
+uses everywhere else, which the basic design settles on for all 4326 topology):
 
 - **Curved edges (Phase 2, non-point geometries).** A stored geometry's bbox must not come
   from its vertices' min/max, because a geodesic edge bulges away from the chord between
@@ -303,7 +305,17 @@ uses everywhere else; see the basic design's Unresolved Questions):
   polygon stop at latitude 73.89789, about 1.2 km short of MySQL's 73.9089 (on the
   latitude-50 edge, S2 67.23952 against MySQL 67.2665, about 3 km). MySQL's own MBR is
   tight rather than padded: `MBRContains` flips exactly at the geodesic crossing. The
-  padding bound is an open question below. Points have no edges, so Phase 1 is unaffected.
+  padding bound is an open question below. Points have no edges, so a *stored* point's bbox
+  is exact and needs none of this; the query side below is a separate matter.
+- **Curved edges on the query side (from Phase 1).** The same bulge applies to the query
+  geometry, and this one bites even when every stored geometry is a point. For
+  `ST_Within(g, ST_GeomFromText('POLYGON(...)', 4326))` the cover and the `q_min`/`q_max`
+  bounds both come from the query polygon. Computed with great-circle edges they sit inside
+  the Andoyer polygon the refine will use, so a stored point in the band between the two is
+  a true match that the range scan never returns: a silent missing row, not a slow query.
+  The query cover and its bbox must therefore be padded outward by the same bound, and
+  because a point index has no stored-geometry padding to hide behind, this is the first
+  place the bound is needed.
 - **Antimeridian.** A query cap crossing the antimeridian has a wrapping longitude
   interval, so its pushed filter is split into two boxes (a disjunction); a near-pole cap
   spans all longitudes and is handled the same way. A *stored* geometry that crosses it
@@ -636,11 +648,14 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
 - Geographic `ST_Distance` (ellipsoidal) optimization: the exact conservative inflation
   factor for the spherical-cap cover (WGS 84 deviation bound), and whether to optimize it
   initially or ship `ST_Distance_Sphere`-only.
-- Geographic edge-curvature padding (Phase 2): by how much an S2 covering and an S2
-  `RectBound` must be inflated to stay conservative against MySQL's Andoyer edges, and
-  whether that is derived per geometry (from its longest edge) or applied as one global
-  factor. Measured on one 120-degree-wide polygon: about 1.2 km on its latitude-60 edge
-  and about 3 km on its latitude-50 edge, so a per-edge-length bound is the likely shape.
+- Geographic edge-curvature padding: by how much an S2 covering and an S2 `RectBound` must
+  be inflated to stay conservative against MySQL's Andoyer edges, and whether that is
+  derived per geometry (from its longest edge) or applied as one global factor. Measured on
+  one 120-degree-wide polygon: about 1.2 km on its latitude-60 edge and about 3 km on its
+  latitude-50 edge, so a per-edge-length bound is the likely shape. This is needed from
+  **Phase 1**, not Phase 2: stored points are exact, but a polygon on the query side has
+  edges, and under-padding it drops true matches silently. Now that the basic design has
+  settled on Andoyer edges, the bound is required rather than contingent on that choice.
 - Wrapping bbox representation (Phase 2): `minX > maxX` (what MySQL's own MBR does, and
   the GeoParquet/Sedona convention) against a full-width longitude range, trading a
   two-branch pushed-down filter for pruning quality.
@@ -729,9 +744,10 @@ curved surface** (great-circle on the sphere, geodesic on the ellipsoid), never 
 straight-line **chord** that cuts through the interior. The only straight-line distance in
 the design is SRID 0 `ST_Distance`, which is planar Euclidean in a flat abstract plane
 (coordinate units, no globe, so neither surface-curved nor a chord). The S2 covering is
-spherical, but that only selects candidates; correctness always comes from the exact
-refine, so a spherical cover under an ellipsoidal predicate is merely conservatively
-inflated, not wrong.
+spherical while the refine is ellipsoidal, and that only selects candidates, which is
+precisely why it must not be short: a candidate the cover drops never reaches the refine.
+An S2 bound falls inside MySQL's by the amounts measured under
+[Query path](#query-path), so it has to be padded outward rather than assumed conservative.
 
 ### Tier 3: whole subsystems (out of scope)
 
