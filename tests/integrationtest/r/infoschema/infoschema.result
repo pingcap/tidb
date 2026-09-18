@@ -319,31 +319,36 @@ create database indexusage;
 use indexusage;
 create table idt1(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_3(col_1, col_2));
 create table idt2(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_4(col_2, col_1));
+select index_name from sys.schema_unused_indexes where object_schema='indexusage' and object_name='idt1' order by index_name;
+index_name
+idx_1
+idx_2
+idx_3
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt1	PRIMARY
 indexusage	idt1	idx_1
 indexusage	idt1	idx_2
 indexusage	idt1	idx_3
-indexusage	idt1	primary
+indexusage	idt2	PRIMARY
 indexusage	idt2	idx_1
 indexusage	idt2	idx_2
 indexusage	idt2	idx_4
-indexusage	idt2	primary
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt1	PRIMARY
 indexusage	idt1	idx_1
 indexusage	idt1	idx_2
 indexusage	idt1	idx_3
-indexusage	idt1	primary
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt1	idx_3
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt1';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt1	PRIMARY
 indexusage	idt1	idx_1
 indexusage	idt1	idx_2
 indexusage	idt1	idx_3
-indexusage	idt1	primary
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and INDEX_NAME = 'idx_2';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt1	idx_2
