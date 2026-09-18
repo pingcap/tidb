@@ -261,7 +261,12 @@ func PollStorageClassTransitionsForTest(ctx context.Context, d DDL, se *sess.Ses
 	if !ok {
 		return false, fmt.Errorf("unexpected DDL implementation %T", d)
 	}
-	return dd.storageClassTransitionManager.poll(ctx, se, false)
+	version, err := dd.store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return false, err
+	}
+	return dd.storageClassTransitionManager.poll(ctx, se, false,
+		storageClassTransitionObservationVersion{epoch: version.Ver, sequence: 1})
 }
 
 // ReconcileStorageClassTransitionTopologyForTest exposes topology reconciliation to external tests.
