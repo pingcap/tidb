@@ -74,6 +74,8 @@ type reorgCtx struct {
 	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
+	// maxProgress is the historical maximum progress to prevent progress regression.
+	maxProgress atomicutil.Float64
 
 	mu struct {
 		sync.Mutex
@@ -303,6 +305,21 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
+// setMaxProgress updates the maximum progress if the new progress is greater.
+// It returns the current maximum progress (which may be unchanged if newProgress <= oldMax).
+// This prevents progress regression when statistics change during backfill.
+func (rc *reorgCtx) setMaxProgress(newProgress float64) float64 {
+	for {
+		oldMax := rc.maxProgress.Load()
+		if newProgress <= oldMax {
+			return oldMax
+		}
+		if rc.maxProgress.CompareAndSwap(oldMax, newProgress) {
+			return newProgress
+		}
+	}
+}
+
 // runReorgJob is used as a portal to do the reorganization work.
 // eg:
 // 1: add index
@@ -434,6 +451,7 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
+			failpoint.InjectCall("onRunReorgJobTimeout")
 			return jobCtx.genReorgTimeoutErr()
 		}
 	}
@@ -508,6 +526,11 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		}
 		if progress > 1 {
 			progress = 1
+		}
+		// Prevent progress regression by keeping track of the maximum progress.
+		rc := w.getReorgCtx(reorgInfo.ID)
+		if rc != nil {
+			progress = rc.setMaxProgress(progress)
 		}
 		logutil.DDLLogger().Debug("update progress",
 			zap.Float64("progress", progress),
@@ -623,7 +646,7 @@ func (r *reorgInfo) NewJobContext() *ReorgContext {
 func (r *reorgInfo) String() string {
 	var isEnabled bool
 	if ingest.LitInitialized {
-		_, isEnabled = ingest.LitBackCtxMgr.Load(r.Job.ID)
+		isEnabled = r.ReorgMeta != nil && r.ReorgMeta.IsFastReorg
 	}
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +

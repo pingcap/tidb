@@ -1296,8 +1296,8 @@ AA
 aa
 explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:paaa	data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
+TableReader	10.00	root	partition:paaa	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = 'AA' collate utf8mb4_bin;
 a
@@ -1313,8 +1313,8 @@ AAA
 aaa
 explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:pAAAA	data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
+TableReader	10.00	root	partition:pAAAA	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = 'AAA' collate utf8mb4_bin;
 a
@@ -1362,8 +1362,8 @@ aa
 aaa
 explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:paaa,pAAAA	data:Selection
-└─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+TableReader	20.00	root	partition:paaa,pAAAA	data:Selection
+└─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 a
@@ -1371,8 +1371,8 @@ AAA
 aa
 explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:paaa,pAAAA	data:Selection
-└─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+TableReader	20.00	root	partition:paaa,pAAAA	data:Selection
+└─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 a
@@ -1398,8 +1398,8 @@ AA
 aa
 explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:paaa	keep order:false, stats:pseudo
 select * from t where a = 'AA' collate utf8mb4_bin;
 a
@@ -1415,8 +1415,8 @@ AAA
 aaa
 explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:pAAAA	keep order:false, stats:pseudo
 select * from t where a = 'AAA' collate utf8mb4_bin;
 a
@@ -1475,12 +1475,12 @@ aa
 aaa
 explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 id	estRows	task	access object	operator info
-PartitionUnion	16000.00	root		
-├─TableReader	8000.00	root		data:Selection
-│ └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+PartitionUnion	40.00	root		
+├─TableReader	20.00	root		data:Selection
+│ └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
 │   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:paaa	keep order:false, stats:pseudo
-└─TableReader	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+└─TableReader	20.00	root		data:Selection
+  └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
     └─TableFullScan	10000.00	cop[tikv]	table:t, partition:pAAAA	keep order:false, stats:pseudo
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 a
@@ -1488,12 +1488,12 @@ AAA
 aa
 explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 id	estRows	task	access object	operator info
-PartitionUnion	16000.00	root		
-├─TableReader	8000.00	root		data:Selection
-│ └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+PartitionUnion	40.00	root		
+├─TableReader	20.00	root		data:Selection
+│ └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
 │   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:paaa	keep order:false, stats:pseudo
-└─TableReader	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+└─TableReader	20.00	root		data:Selection
+  └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
     └─TableFullScan	10000.00	cop[tikv]	table:t, partition:pAAAA	keep order:false, stats:pseudo
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 a
@@ -1520,8 +1520,8 @@ AA
 aa
 explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:paaa	data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
+TableReader	10.00	root	partition:paaa	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = 'AA' collate utf8mb4_bin;
 a
@@ -1537,8 +1537,8 @@ AAA
 aaa
 explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:pAAAA	data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
+TableReader	10.00	root	partition:pAAAA	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = 'AAA' collate utf8mb4_bin;
 a
@@ -1586,8 +1586,8 @@ aa
 aaa
 explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:paaa,pAAAA	data:Selection
-└─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+TableReader	20.00	root	partition:paaa,pAAAA	data:Selection
+└─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 a
@@ -1595,8 +1595,8 @@ AAA
 aa
 explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:paaa,pAAAA	data:Selection
-└─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+TableReader	20.00	root	partition:paaa,pAAAA	data:Selection
+└─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 a
@@ -1622,8 +1622,8 @@ AA
 aa
 explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:paaa	keep order:false, stats:pseudo
 select * from t where a = 'AA' collate utf8mb4_bin;
 a
@@ -1639,8 +1639,8 @@ AAA
 aaa
 explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:pAAAA	keep order:false, stats:pseudo
 select * from t where a = 'AAA' collate utf8mb4_bin;
 a
@@ -1699,12 +1699,12 @@ aa
 aaa
 explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 id	estRows	task	access object	operator info
-PartitionUnion	16000.00	root		
-├─TableReader	8000.00	root		data:Selection
-│ └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+PartitionUnion	40.00	root		
+├─TableReader	20.00	root		data:Selection
+│ └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
 │   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:paaa	keep order:false, stats:pseudo
-└─TableReader	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+└─TableReader	20.00	root		data:Selection
+  └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
     └─TableFullScan	10000.00	cop[tikv]	table:t, partition:pAAAA	keep order:false, stats:pseudo
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 a
@@ -1712,12 +1712,12 @@ AAA
 aa
 explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 id	estRows	task	access object	operator info
-PartitionUnion	16000.00	root		
-├─TableReader	8000.00	root		data:Selection
-│ └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+PartitionUnion	40.00	root		
+├─TableReader	20.00	root		data:Selection
+│ └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
 │   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:paaa	keep order:false, stats:pseudo
-└─TableReader	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+└─TableReader	20.00	root		data:Selection
+  └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
     └─TableFullScan	10000.00	cop[tikv]	table:t, partition:pAAAA	keep order:false, stats:pseudo
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 a
@@ -1744,8 +1744,8 @@ AA
 aa
 explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:paaa	data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
+TableReader	10.00	root	partition:paaa	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = 'AA' collate utf8mb4_bin;
 a
@@ -1761,8 +1761,8 @@ AAA
 aaa
 explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:pAAAA	data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
+TableReader	10.00	root	partition:pAAAA	data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = 'AAA' collate utf8mb4_bin;
 a
@@ -1810,8 +1810,8 @@ aa
 aaa
 explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:paaa,pAAAA	data:Selection
-└─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+TableReader	20.00	root	partition:paaa,pAAAA	data:Selection
+└─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 a
@@ -1819,8 +1819,8 @@ AAA
 aa
 explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 id	estRows	task	access object	operator info
-TableReader	8000.00	root	partition:paaa,pAAAA	data:Selection
-└─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+TableReader	20.00	root	partition:paaa,pAAAA	data:Selection
+└─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 a
@@ -1846,8 +1846,8 @@ AA
 aa
 explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AA")
   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:paaa	keep order:false, stats:pseudo
 select * from t where a = 'AA' collate utf8mb4_bin;
 a
@@ -1863,8 +1863,8 @@ AAA
 aaa
 explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(test_range_col_in_string.t.a, "AAA")
   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:pAAAA	keep order:false, stats:pseudo
 select * from t where a = 'AAA' collate utf8mb4_bin;
 a
@@ -1923,12 +1923,12 @@ aa
 aaa
 explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 id	estRows	task	access object	operator info
-PartitionUnion	16000.00	root		
-├─TableReader	8000.00	root		data:Selection
-│ └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+PartitionUnion	40.00	root		
+├─TableReader	20.00	root		data:Selection
+│ └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
 │   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:paaa	keep order:false, stats:pseudo
-└─TableReader	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+└─TableReader	20.00	root		data:Selection
+  └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
     └─TableFullScan	10000.00	cop[tikv]	table:t, partition:pAAAA	keep order:false, stats:pseudo
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 a
@@ -1936,12 +1936,12 @@ AAA
 aa
 explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 id	estRows	task	access object	operator info
-PartitionUnion	16000.00	root		
-├─TableReader	8000.00	root		data:Selection
-│ └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+PartitionUnion	40.00	root		
+├─TableReader	20.00	root		data:Selection
+│ └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
 │   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:paaa	keep order:false, stats:pseudo
-└─TableReader	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
+└─TableReader	20.00	root		data:Selection
+  └─Selection	20.00	cop[tikv]		in(test_range_col_in_string.t.a, "AAA", "aa")
     └─TableFullScan	10000.00	cop[tikv]	table:t, partition:pAAAA	keep order:false, stats:pseudo
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 a

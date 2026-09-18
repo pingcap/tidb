@@ -36,7 +36,7 @@ import (
 	restoremock "github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -105,7 +105,7 @@ func mockTiflashTableInfo(t *testing.T, sql string, replica uint64) *model.Table
 }
 
 func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
-	web.EnableCurrentProgress()
+	progress.EnableCurrentProgress()
 
 	core := mockTiflashTableInfo(t, `CREATE TABLE "table" (
 		a INT,
@@ -1029,7 +1029,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	sqlMock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).
 		AddRow("Release Version: v5.2.1\nEdition: Community\n"))
 
-	web.BroadcastInitProgress(rc.dbMetas)
+	progress.BroadcastInitProgress(rc.dbMetas)
 
 	err = rc.importTables(ctx)
 	require.NoError(s.T(), err)
@@ -1052,11 +1052,11 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/SlowDownCheckpointUpdate")
 	}()
 
-	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
+	progress.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
 		Name:   "test",
 		Tables: []*mydump.MDTableMeta{{DB: "test", Name: "tbl"}},
 	}})
-	web.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
+	progress.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
 
 	saveCpCh := make(chan saveCp)
 
@@ -2397,40 +2397,4 @@ func TestGetDDLStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.JobStateRunning, status.state)
 	require.Equal(t, int64(123)+int64(456), status.rowCount)
-}
-
-func TestGetChunkCompressedSizeForParquet(t *testing.T) {
-	dir := "./testdata/"
-	fileName := "000000_0.parquet"
-	store, err := storage.NewLocalStorage(dir)
-	require.NoError(t, err)
-
-	dataFiles := make([]mydump.FileInfo, 0)
-	dataFiles = append(dataFiles, mydump.FileInfo{
-		TableName: filter.Table{Schema: "db", Name: "table"},
-		FileMeta: mydump.SourceFileMeta{
-			Path:        fileName,
-			Type:        mydump.SourceTypeParquet,
-			Compression: mydump.CompressionNone,
-			SortKey:     "99",
-			FileSize:    192,
-		},
-	})
-
-	chunk := checkpoints.ChunkCheckpoint{
-		Key:      checkpoints.ChunkCheckpointKey{Path: dataFiles[0].FileMeta.Path, Offset: 0},
-		FileMeta: dataFiles[0].FileMeta,
-		Chunk: mydump.Chunk{
-			Offset:       0,
-			EndOffset:    192,
-			PrevRowIDMax: 0,
-			RowIDMax:     100,
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	compressedSize, err := getChunkCompressedSizeForParquet(ctx, &chunk, store)
-	require.NoError(t, err)
-	require.Equal(t, compressedSize, int64(192))
 }

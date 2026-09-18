@@ -367,6 +367,7 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
 	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t_json_guard(id int, j json)")
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 
 	p := parser.New()
@@ -401,6 +402,8 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select count(*) from test.t1 where a > 1 and b < 2 group by a", // group by & partitioned
 		"select * from test.t order by a",                               // order by
 		"select * from test.t1 order by a",                              // order by & partitioned
+		"select /*+ set_var(max_execution_time=2000) */ * from test.t where a > 1",
+		"select /*+ resource_group(rg1) */ * from test.t where a > 1",
 
 		// 2-way joins
 		"select * from test.t inner join test.t3 on test.t.a=test.t3.a",
@@ -440,6 +443,9 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t where a in (select a from test.t where a > t1.a)",
 		// correlated sub-query & partitioned
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",
+
+		// Keep the wrapped JSON-column filter conservatively uncacheable on this release branch.
+		"select * from test.t_json_guard where json_extract(j, '$.a') is not null",
 	}
 
 	sctx := tk.Session()

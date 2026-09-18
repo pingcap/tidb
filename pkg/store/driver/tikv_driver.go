@@ -40,8 +40,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/client-go/v2/util/async"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -159,7 +161,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		CertPath: d.security.ClusterSSLCert,
 		KeyPath:  d.security.ClusterSSLKey,
 	},
-		pd.WithGRPCDialOptions(
+		opt.WithGRPCDialOptions(
 			// keep the same with etcd, see
 			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
@@ -168,8 +170,8 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 			}),
 		),
-		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
-		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
+		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
+		opt.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -427,4 +429,18 @@ func (c *injectTraceClient) SendRequest(ctx context.Context, addr string, req *t
 		source.SessionAlias = info.SessionAlias
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+// SendRequestAsync sends Request asynchronously.
+func (c *injectTraceClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	if info := tracing.TraceInfoFromContext(ctx); info != nil {
+		source := req.Context.SourceStmt
+		if source == nil {
+			source = &kvrpcpb.SourceStmt{}
+			req.Context.SourceStmt = source
+		}
+		source.ConnectionId = info.ConnectionID
+		source.SessionAlias = info.SessionAlias
+	}
+	c.Client.SendRequestAsync(ctx, addr, req, cb)
 }

@@ -144,6 +144,9 @@ func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned.BasePhysicalPlan = *basePlan
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
 	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
+	if op.PrefixCol != nil {
+		cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
+	}
 	return cloned, true
 }
 
@@ -275,6 +278,10 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.AccessConditions = util.CloneExpressions(op.AccessConditions)
 	cloned.ctx = newCtx
+	cloned.unfoldFromWildCard = make([]bool, len(op.unfoldFromWildCard))
+	copy(cloned.unfoldFromWildCard, op.unfoldFromWildCard)
+	cloned.colsInWhereClause = make([]string, len(op.colsInWhereClause))
+	copy(cloned.colsInWhereClause, op.colsInWhereClause)
 	cloned.accessCols = util.CloneColumns(op.accessCols)
 	return cloned, true
 }
@@ -301,6 +308,10 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
 	copy(cloned.PartitionIdxs, op.PartitionIdxs)
+	cloned.unfoldFromWildCard = make([]bool, len(op.unfoldFromWildCard))
+	copy(cloned.unfoldFromWildCard, op.unfoldFromWildCard)
+	cloned.colsInWhereClause = make([]string, len(op.colsInWhereClause))
+	copy(cloned.colsInWhereClause, op.colsInWhereClause)
 	cloned.accessCols = util.CloneColumns(op.accessCols)
 	return cloned, true
 }
@@ -315,6 +326,9 @@ func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, 
 	}
 	cloned.physicalSchemaProducer = *basePlan
 	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
+	if op.PrefixCol != nil {
+		cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
+	}
 	return cloned, true
 }
 

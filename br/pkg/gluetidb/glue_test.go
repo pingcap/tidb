@@ -44,7 +44,7 @@ func TestTheSessionIsoation(t *testing.T) {
 		}
 	})
 
-	require.NoError(t, glueSe.CreateDatabase(ctx, &model.DBInfo{
+	require.NoError(t, glueSe.CreateDatabaseOnExistError(ctx, &model.DBInfo{
 		Name: pmodel.NewCIStr("test_db"),
 	}))
 	tk := testkit.NewTestKit(t, store)

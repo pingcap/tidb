@@ -54,6 +54,7 @@ run_br restore point -s "local://$TEST_DIR/$DB/log" --pd $PD_ADDR && exit 1
 unset BR_LOG_TO_TERM
 run_br log stop --task-name 1234 --pd $PD_ADDR 
 if ! grep -i "dec log backup task" "$TEST_DIR/tidb.log"; then
+    cat $TEST_DIR/tidb.log | grep 'advancer' || true
     echo "TEST: [$TEST_NAME] log stop failed!"
     exit 1
 fi

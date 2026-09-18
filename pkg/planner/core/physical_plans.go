@@ -630,19 +630,27 @@ func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
 }
 
 // tryPushDownLookUp tries to push down the index lookup to TiKV.
-func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
+func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext, tp util.IndexLookUpPushDownByType) {
 	intest.Assert(!p.IndexLookUpPushDown)
+	if tp == util.IndexLookUpPushDownNone {
+		// util.IndexLookUpPushDownNone indicates no index lookup push-down.
+		return
+	}
+
 	if p.keepOrder {
 		// Though most of the index-lookup push-down constraints should be checked in
 		// `checkIndexLookUpPushDownSupported` if possible,
 		// however, the keep order cannot be determined until the final plan is constructed.
 		// So we have to check the keep order here, and if it is required, we should not push down it and use
 		// the normal index-lookup instead.
-		ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
+		if tp == util.IndexLookUpPushDownByHint {
+			// only append warning when the push-down is forced by hint.
+			ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
+		}
 		return
 	}
 
-	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.indexPlan, p.tablePlan)
+	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.indexPlan, p.tablePlan, len(p.CommonHandleCols) > 0)
 	if err != nil {
 		// This should not happen, but if it happens, we just log a warning and continue to use the original plan.
 		intest.AssertNoError(err)
@@ -828,6 +836,13 @@ type PhysicalIndexScan struct {
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
+
+	NotAlwaysValid bool
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1013,6 +1028,11 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 // VectorIndexExtra is the extra information for vector index.
@@ -1081,7 +1101,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	ctx := ts.SCtx()
 	if ts.Table.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(ts.Table)
-		idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
+		idxCols, idxColLens := util.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
 		for _, cond := range access {
 			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 			if err != nil {
@@ -1262,6 +1282,11 @@ type PhysicalTopN struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	PrefixCol *expression.Column
+	// PrefixLen is the prefix index length in bytes.
+	PrefixLen int
 }
 
 // GetPartitionBy returns partition by fields
@@ -1305,7 +1330,8 @@ func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer +
+		size.SizeOfUint64*2 + size.SizeOfInt64 + size.SizeOfInt
 	for _, byItem := range lt.ByItems {
 		sum += byItem.MemoryUsage()
 	}
@@ -1696,6 +1722,9 @@ type PhysicalIndexJoin struct {
 	// InnerHashKeys indicates the inner keys used to build hash table during
 	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
 	InnerHashKeys []*expression.Column
+	// FromDecorrelatedApply is true only when this IndexJoin keeps the original
+	// Apply outer/inner order after decorrelation.
+	FromDecorrelatedApply bool
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1719,6 +1748,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.CompareFilters = p.CompareFilters.Copy()
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	cloned.FromDecorrelatedApply = p.FromDecorrelatedApply
 	return cloned, nil
 }
 
@@ -2052,6 +2082,11 @@ type PhysicalLimit struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	PrefixCol *expression.Column
+	// PrefixLen is the prefix index length in bytes.
+	PrefixLen int
 }
 
 // GetPartitionBy returns partition by fields
@@ -2082,7 +2117,7 @@ func (p *PhysicalLimit) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2 + size.SizeOfInt64 + size.SizeOfInt
 	return
 }
 
@@ -3109,7 +3144,7 @@ func resetPlanIDRecursively(ctx base.PlanContext, p base.PhysicalPlan) {
 }
 
 func buildPushDownIndexLookUpPlan(
-	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan,
+	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan, isCommonHandle bool,
 ) (indexLookUpPlan base.PhysicalPlan, err error) {
 	tablePlan, err = tablePlan.Clone(ctx)
 	if err != nil {
@@ -3117,10 +3152,35 @@ func buildPushDownIndexLookUpPlan(
 	}
 	resetPlanIDRecursively(ctx, tablePlan)
 
+	var indexHandleOffsets []uint32
+	if !isCommonHandle {
+		// - If common handle, we don't need to set the indexHandleOffsets to build the common handle key
+		// which can be read from the index value directly.
+		// - If int handle, it is the last column in the index schema.
+		//   - If the last column is ExtraHandleID, or a non-negative column ID, handle is the last column.
+		//   - Otherwise, we need to find the last column whose ID is not ExtraHandleID and is negative.
+		//     For example, when a partition table needs to append ExtraPhysTblID
+		//     to the end for the upper UnionScanExec.
+		offset := indexPlan.Schema().Len() - 1
+		for offset >= 0 {
+			col := indexPlan.Schema().Columns[offset]
+			if col.ID >= 0 || col.ID == model.ExtraHandleID {
+				break
+			}
+			offset--
+			intest.Assert(offset >= 0, "cannot find handle column in index schema")
+		}
+
+		if offset < 0 {
+			return nil, errors.New("cannot find handle column in index schema")
+		}
+		indexHandleOffsets = []uint32{uint32(offset)}
+	}
+
 	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)
 	indexLookUpPlan = PhysicalLocalIndexLookUp{
 		// Only int handle is supported now, so the handle is always the last column of index schema.
-		IndexHandleOffsets: []uint32{uint32(indexPlan.Schema().Len()) - 1},
+		IndexHandleOffsets: indexHandleOffsets,
 	}.Init(ctx, indexPlan, tableScanPlan, tablePlan.QueryBlockOffset())
 
 	if parentOfTableScan != nil {

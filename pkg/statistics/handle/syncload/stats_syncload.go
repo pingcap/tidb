@@ -374,9 +374,9 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
-		if loadNeeded && !analyzed {
+		if !analyzed {
 			wrapper.col = statistics.EmptyColumn(item.TableID, isPkIsHandle, wrapper.colInfo)
-			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 			return nil
 		}
 	}
@@ -401,7 +401,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if needUpdate {
-		s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+		s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 	}
 	return nil
 }
@@ -425,8 +425,11 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		return nil, err
 	}
 	if hg == nil {
-		statslogutil.StatsLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex),
+		statslogutil.StatsSampleLogger().Warn(
+			"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
+			zap.Int64("tableID", item.TableID),
+			zap.Int64("histID", item.ID),
+			zap.Bool("isIndex", item.IsIndex),
 		)
 		return nil, errGetHistMeta
 	}
@@ -552,7 +555,7 @@ func (*statsSyncLoad) writeToTimeoutChan(taskCh chan *statstypes.NeededItemTask,
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
-func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
+func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
 	s.StatsLoad.Lock()
 	defer s.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
@@ -560,20 +563,6 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
 		return false
-	}
-	if !tbl.ColAndIdxExistenceMap.Checked() {
-		tbl = tbl.Copy()
-		for _, col := range tbl.HistColl.GetColSlice() {
-			if tblInfo.FindColumnByID(col.ID) == nil {
-				tbl.DelCol(col.ID)
-			}
-		}
-		for _, idx := range tbl.HistColl.GetIdxSlice() {
-			if tblInfo.FindIndexByID(idx.ID) == nil {
-				tbl.DelIdx(idx.ID)
-			}
-		}
-		tbl.ColAndIdxExistenceMap.SetChecked()
 	}
 	if !item.IsIndex && colHist != nil {
 		c := tbl.GetCol(item.ID)
@@ -589,9 +578,10 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		if colHist.StatsAvailable() {
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, true)
 		}
-		// All the objects shares the same stats version. Update it here.
+		// All the objects share the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
-			tbl.StatsVer = statistics.Version0
+			// SAFETY: The stats version only has a limited range, it is safe to convert int64 to int here.
+			tbl.StatsVer = int(colHist.StatsVer)
 		}
 		// we have to refresh the map for the possible change to ensure that the map information is not missing.
 		tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.StatsAvailable())
@@ -607,8 +597,9 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
 			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, true)
-			// All the objects shares the same stats version. Update it here.
-			tbl.StatsVer = statistics.Version0
+			// All the objects share the same stats version. Update it here.
+			// SAFETY: The stats version only has a limited range, it is safe to convert int64 to int here.
+			tbl.StatsVer = int(idxHist.StatsVer)
 		}
 	}
 	s.statsHandle.UpdateStatsCache(statstypes.CacheUpdate{

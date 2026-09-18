@@ -226,3 +226,37 @@ select /*+ read_from_storage(tikv[`executor__admin`.`admin_test`]) */ bit_xor(cr
 select bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `executor__admin`.`admin_test` use index(`c2`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024);
 set cte_max_recursion_depth=default;
 --enable_result_log
+
+# TestAdminCheckPartialIndex
+drop table if exists t;
+create table t (col1 int, key idx(col1) where col1 > 0);
+insert into t values (NULL);
+insert into t values (-1);
+insert into t values (1);
+set tidb_enable_fast_table_check = 'OFF';
+--error 8273
+admin check index t idx;
+--error 8273
+admin check table t;
+set tidb_enable_fast_table_check = 'ON';
+admin check index t idx;
+admin check table t;
+
+# TestAdminRecoverPartialIndex
+drop table if exists t;
+create table t (col0 int, col1 int, key idx(col1) where col0 > 0);
+insert into t values (NULL, NULL);
+insert into t values (-1, -1);
+insert into t values (1, 100);
+select /*+ use_index(t, idx) */ * from t where col0 > 0;
+admin recover index t idx;
+select /*+ use_index(t, idx) */ * from t where col0 > 0;
+admin check index t idx;
+truncate table t;
+insert into t values (NULL, NULL);
+insert into t values (-1, -1);
+insert into t values (-2, -2);
+select /*+ use_index(t, idx) */ * from t where col0 > 0;
+admin recover index t idx;
+select /*+ use_index(t, idx) */ * from t where col0 > 0;
+admin check index t idx;

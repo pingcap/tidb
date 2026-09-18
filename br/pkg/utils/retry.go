@@ -41,7 +41,7 @@ func WithRetry(
 	retryableFunc RetryableFunc,
 	backoffer Backoffer,
 ) error {
-	_, err := WithRetryV2[struct{}](ctx, backoffer, func(ctx context.Context) (struct{}, error) {
+	_, err := WithRetryV2(ctx, backoffer, func(ctx context.Context) (struct{}, error) {
 		innerErr := retryableFunc()
 		return struct{}{}, innerErr
 	})

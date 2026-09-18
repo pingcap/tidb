@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
@@ -228,6 +230,78 @@ func TestRole(t *testing.T) {
 	tk.MustExec("SET ROLE ALL EXCEPT role1, role2")
 	tk.MustExec("SET ROLE DEFAULT")
 	tk.MustExec("SET ROLE NONE")
+}
+
+func TestMaxUserConnections(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// test global variables max_user_connections.
+	result := tk.MustQuery(`show variables like 'max_user_connections'`)
+	result.Check(testkit.Rows("max_user_connections 0"))
+	tk.MustExec(`set global max_user_connections = 3;`)
+	tk.MustQuery(`select @@global.max_user_connections, @@max_user_connections`).Check(testkit.Rows("3 0"))
+	tk.MustQuery(`show global variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 3"))
+	tk.MustQuery(`show variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 0"))
+	// if the value < 0, set 0 to max_user_connections.
+	tk.MustExec(`set global max_user_connections = -1;`)
+	tk.MustQuery(`show global variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 0"))
+	// if the value > 100000, set 100000 to max_user_connections.
+	tk.MustExec(`set global max_user_connections = 100001;`)
+	tk.MustQuery(`show global variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 100000"))
+	tk.MustExec(`set global max_user_connections = 0;`)
+	tk.MustQuery(`show global variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 0"))
+
+	// create user with the default max_user_connections 0
+	createUserSQL := `CREATE USER 'test'@'localhost';`
+	tk.MustExec(createUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user where user in ('root', 'test') order by user`)
+	result.Check(testkit.Rows("root 0", "test 0"))
+
+	// create user with max_user_connections 3
+	createUserSQL = `CREATE USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 3;`
+	tk.MustExec(createUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
+	result.Check(testkit.Rows("test1 3"))
+
+	// test alter user with MAX_USER_CONNECTIONS
+	alterUserSQL := `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 4;`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
+	result.Check(testkit.Rows("test1 4"))
+	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS -2;`
+	_, err := tk.Exec(alterUserSQL)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 58 near \"-2;\" ")
+	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 0;`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
+	result.Check(testkit.Rows("test1 0"))
+
+	createUserSQL = `CREATE USER 'test2'@'localhost' WITH MAX_USER_CONNECTIONS 50000;`
+	tk.MustExec(createUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test2"`)
+	result.Check(testkit.Rows("test2 50000"))
+	alterUserSQL = `ALTER USER 'test2'@'localhost' WITH MAX_USER_CONNECTIONS 50000;`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test2"`)
+	result.Check(testkit.Rows("test2 50000"))
+
+	// grant the privilege of 'create user' to 'test1'@'localhost'
+	tkTest1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tkTest1.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "localhost"}, nil, nil, nil))
+	_, err = tkTest1.Exec(`ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 2`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	tk.MustExec(`GRANT CREATE USER ON *.* TO 'test1'@'localhost'`)
+	_, err = tkTest1.Exec(`ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 2`)
+	require.Nil(t, err)
+
+	// revert the privilege of 'create user' for 'test1'@'localhost'
+	tk.MustExec(`REVOKE CREATE USER ON *.* FROM 'test1'@'localhost'`)
+	_, err = tkTest1.Exec(`ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 2`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
 }
 
 func TestUser(t *testing.T) {
@@ -797,4 +871,138 @@ func TestSelectWhereInvalidDSTTime(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'"))
+}
+
+func TestFlushStatsDelta(t *testing.T) {
+	t.Run("full scope", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int)")
+
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		tableID := tbl.Meta().ID
+
+		tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5)")
+		tk.MustExec("flush stats_delta *.*")
+		rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+		require.Len(t, rows, 1, "stats_meta should have entry for the table")
+		modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		require.Equal(t, int64(5), modifyCnt, "modify_count should be 5 after inserting 5 rows and flushing")
+
+		tk.MustExec("insert into t values (6,6), (7,7)")
+		tk.MustExec("flush stats_delta *.*")
+		rows = tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+		require.Len(t, rows, 1, "stats_meta should have entry for the table")
+		modifyCnt, err = strconv.ParseInt(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		require.Equal(t, int64(7), modifyCnt, "modify_count should be 7 after inserting 2 more rows and flushing")
+	})
+
+	t.Run("scoped behavior", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2, tp")
+		tk.MustExec("create table t1 (a int, b int)")
+		tk.MustExec("create table t2 (a int, b int)")
+		tk.MustExec(`create table tp (a int, b int)
+			partition by range(a) (
+				partition p0 values less than (10),
+				partition p1 values less than (20)
+			)`)
+
+		is := dom.InfoSchema()
+		t1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+		require.NoError(t, err)
+		t2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+		require.NoError(t, err)
+		tp, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tp"))
+		require.NoError(t, err)
+		partitionInfo := tp.Meta().GetPartitionInfo()
+		require.NotNil(t, partitionInfo)
+		p0ID := partitionInfo.Definitions[0].ID
+		p1ID := partitionInfo.Definitions[1].ID
+
+		getModifyCount := func(tableID int64) int64 {
+			rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+			if len(rows) == 0 {
+				return -1
+			}
+			modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+			require.NoError(t, err)
+			return modifyCnt
+		}
+
+		tk.MustExec("insert into t1 values (1,1), (2,2)")
+		tk.MustExec("insert into t2 values (3,3), (4,4), (5,5)")
+		tk.MustExec("insert into tp values (1,1), (2,2), (11,11)")
+
+		tk.MustExec("flush stats_delta t1")
+		require.Equal(t, int64(2), getModifyCount(t1.Meta().ID))
+		require.NotEqual(t, int64(3), getModifyCount(t2.Meta().ID), "unrelated table should not be flushed by table scope")
+		require.NotEqual(t, int64(3), getModifyCount(tp.Meta().ID), "partitioned table should not be flushed by unrelated table scope")
+
+		tk.MustExec("flush stats_delta tp")
+		require.Equal(t, int64(3), getModifyCount(tp.Meta().ID), "global stats for the partitioned table should be flushed")
+		require.Equal(t, int64(2), getModifyCount(p0ID), "partition p0 should be flushed")
+		require.Equal(t, int64(1), getModifyCount(p1ID), "partition p1 should be flushed")
+		require.NotEqual(t, int64(3), getModifyCount(t2.Meta().ID), "database scope has not been flushed yet")
+
+		tk.MustExec("flush stats_delta test.*")
+		require.Equal(t, int64(3), getModifyCount(t2.Meta().ID), "database scope should flush the remaining table")
+	})
+
+	t.Run("privilege checks", func(t *testing.T) {
+		store, _ := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_flush_priv")
+		tk.MustExec("create table t_flush_priv (a int)")
+
+		t.Run("table scope requires select", func(t *testing.T) {
+			tk.MustExec("drop user if exists 'flush_reader'@'%'")
+			tk.MustExec("create user 'flush_reader'@'%'")
+
+			tkUser := testkit.NewTestKit(t, store)
+			require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "flush_reader", Hostname: "%"}, nil, nil, nil))
+			tkUser.MustGetErrCode("flush stats_delta test.t_flush_priv", errno.ErrTableaccessDenied)
+
+			tk.MustExec("grant select on test.t_flush_priv to 'flush_reader'@'%'")
+			tkUser.MustExec("flush stats_delta test.t_flush_priv")
+		})
+
+		t.Run("database scope requires select", func(t *testing.T) {
+			tk.MustExec("drop user if exists 'flush_db_reader'@'%'")
+			tk.MustExec("create user 'flush_db_reader'@'%'")
+
+			tkUser := testkit.NewTestKit(t, store)
+			require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "flush_db_reader", Hostname: "%"}, nil, nil, nil))
+			tkUser.MustGetErrCode("flush stats_delta test.*", errno.ErrDBaccessDenied)
+
+			tk.MustExec("grant select on test.* to 'flush_db_reader'@'%'")
+			tkUser.MustExec("flush stats_delta test.*")
+		})
+
+		t.Run("global scope requires global select", func(t *testing.T) {
+			tk.MustExec("drop user if exists 'flush_global_reader'@'%'")
+			tk.MustExec("create user 'flush_global_reader'@'%'")
+
+			tkUser := testkit.NewTestKit(t, store)
+			require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "flush_global_reader", Hostname: "%"}, nil, nil, nil))
+			tkUser.MustGetErrCode("flush stats_delta *.*", errno.ErrPrivilegeCheckFail)
+
+			tk.MustExec("grant select on *.* to 'flush_global_reader'@'%'")
+			tkUser.MustExec("flush stats_delta *.*")
+		})
+	})
+
+	t.Run("requires default db for bare table", func(t *testing.T) {
+		store, _ := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustGetDBError("flush stats_delta t1", plannererrors.ErrNoDB)
+	})
 }

@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
@@ -232,8 +233,23 @@ type TableImporter struct {
 	rowCh chan QueryRow
 }
 
+type storeHelper struct {
+	kvStore tidbkv.Storage
+}
+
+func (*storeHelper) GetTS(_ context.Context) (physical, logical int64, err error) {
+	return 0, 0, nil
+}
+
+func (s *storeHelper) GetTiKVCodec() tikv.Codec {
+	return s.kvStore.GetCodec()
+}
+
+var _ local.StoreHelper = (*storeHelper)(nil)
+
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, helper local.StoreHelper) (*TableImporter, error) {
+func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, kvStore tidbkv.Storage) (*TableImporter, error) {
+	helper := &storeHelper{kvStore: kvStore}
 	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -306,7 +322,8 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
+// GetKVEncoder get the KV encoder.
+func (ti *TableImporter) GetKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        ti.SQLMode,
@@ -319,6 +336,20 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEnc
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
 	return NewTableKVEncoder(cfg, ti)
+}
+
+// GetKVEncoderForDupResolve get the KV encoder.
+func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
+	cfg := &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode: ti.SQLMode,
+			SysVars: ti.ImportantSysVars,
+		},
+		Table:                ti.encTable,
+		Logger:               log.Logger{Logger: ti.logger},
+		UseIdentityAutoRowID: true,
+	}
+	return NewTableKVEncoderForDupResolve(cfg, ti)
 }
 
 func (e *LoadDataController) calculateSubtaskCnt() int {
@@ -443,12 +474,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 func (ti *TableImporter) getTotalRawFileSize(indexCnt int64) int64 {
 	var totalSize int64
 	for _, file := range ti.dataFiles {
-		size := file.RealSize
-		if file.Type == mydump.SourceTypeParquet {
-			// parquet file is compressed, thus estimates with a factor of 2
-			size *= 2
-		}
-		totalSize += size
+		totalSize += file.RealSize
 	}
 	return totalSize * indexCnt
 }
@@ -499,6 +525,7 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	failpoint.InjectCall("mockDataEngineImportErr", &importErr)
 	if common.ErrFoundDuplicateKeys.Equal(importErr) {
 		importErr = local.ConvertToErrFoundConflictRecords(importErr, ti.encTable)
 	}
@@ -778,7 +805,7 @@ func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 
 // RebaseAllocatorBases rebase the allocator bases.
 func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
-	callLog := log.BeginTask(logger, "rebase allocators")
+	callLog := log.BeginTask(logger.With(zap.Any("maxIDs", maxIDs)), "rebase allocators")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()

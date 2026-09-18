@@ -17,22 +17,24 @@ package driver
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 type mockErrInterceptor struct {
 	err error
 }
 
-func (m *mockErrInterceptor) OnGet(_ context.Context, _ kv.Snapshot, _ kv.Key) ([]byte, error) {
-	return nil, m.err
+func (m *mockErrInterceptor) OnGet(_ context.Context, _ kv.Snapshot, k kv.Key, _ ...kv.GetOption) (kv.ValueEntry, error) {
+	return kv.ValueEntry{}, m.err
 }
 
-func (m *mockErrInterceptor) OnBatchGet(_ context.Context, _ kv.Snapshot, _ []kv.Key) (map[string][]byte, error) {
+func (m *mockErrInterceptor) OnBatchGet(_ context.Context, _ kv.Snapshot, _ []kv.Key, _ ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	return nil, m.err
 }
 
@@ -42,6 +44,13 @@ func (m *mockErrInterceptor) OnIter(_ kv.Snapshot, _ kv.Key, _ kv.Key) (kv.Itera
 
 func (m *mockErrInterceptor) OnIterReverse(_ kv.Snapshot, _ kv.Key, _ kv.Key) (kv.Iterator, error) {
 	return nil, m.err
+}
+
+func validCommitTS(t *testing.T, commitTS uint64) {
+	require.Greater(t, commitTS, uint64(0))
+	now := time.Now()
+	tm := oracle.GetTimeFromTS(commitTS)
+	require.InDelta(t, now.Unix(), tm.Unix(), 10)
 }
 
 func TestTxnGet(t *testing.T) {
@@ -58,39 +67,53 @@ func TestTxnGet(t *testing.T) {
 	require.NotNil(t, txn)
 
 	// should return snapshot value if no dirty data
-	v, err := txn.Get(context.Background(), kv.Key("k1"))
+	entry, err := txn.Get(context.Background(), kv.Key("k1"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), v)
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), entry)
+	// should return the CommitTS for option WithReturnCommitTS
+	entry, err = txn.Get(context.Background(), kv.Key("k1"), kv.WithReturnCommitTS())
+	require.NoError(t, err)
+	require.Equal(t, []byte("v1"), entry.Value)
+	validCommitTS(t, entry.CommitTS)
 
 	// insert but not commit
 	err = txn.Set(kv.Key("k1"), kv.Key("v1+"))
 	require.NoError(t, err)
 
 	// should return dirty data if dirty data exists
-	v, err = txn.Get(context.Background(), kv.Key("k1"))
+	entry, err = txn.Get(context.Background(), kv.Key("k1"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1+"), v)
+	require.Equal(t, kv.NewValueEntry([]byte("v1+"), 0), entry)
+	// dirty data's commitTS should be 0
+	entry, err = txn.Get(context.Background(), kv.Key("k1"), kv.WithReturnCommitTS())
+	require.NoError(t, err)
+	require.Equal(t, kv.NewValueEntry([]byte("v1+"), 0), entry)
 
 	err = txn.Set(kv.Key("k2"), []byte("v2+"))
 	require.NoError(t, err)
 
 	// should return dirty data if dirty data exists
-	v, err = txn.Get(context.Background(), kv.Key("k2"))
+	entry, err = txn.Get(context.Background(), kv.Key("k2"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("v2+"), v)
+	require.Equal(t, kv.NewValueEntry([]byte("v2+"), 0), entry)
 
 	// delete but not commit
 	err = txn.Delete(kv.Key("k1"))
 	require.NoError(t, err)
 
 	// should return kv.ErrNotExist if deleted
-	v, err = txn.Get(context.Background(), kv.Key("k1"))
-	require.Nil(t, v)
+	entry, err = txn.Get(context.Background(), kv.Key("k1"))
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// should return kv.ErrNotExist if not exist
-	v, err = txn.Get(context.Background(), kv.Key("kn"))
-	require.Nil(t, v)
+	entry, err = txn.Get(context.Background(), kv.Key("kn"))
+	require.Equal(t, kv.ValueEntry{}, entry)
+	require.True(t, kv.ErrNotExist.Equal(err))
+
+	// should return kv.ErrNotExist if not exist (WithReturnCommitTS specified)
+	entry, err = txn.Get(context.Background(), kv.Key("k1"), kv.WithReturnCommitTS())
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// make snapshot returns error
@@ -98,18 +121,18 @@ func TestTxnGet(t *testing.T) {
 	txn.SetOption(kv.SnapInterceptor, errInterceptor)
 
 	// should return kv.ErrNotExist because k1 is deleted in memBuff
-	v, err = txn.Get(context.Background(), kv.Key("k1"))
-	require.Nil(t, v)
+	entry, err = txn.Get(context.Background(), kv.Key("k1"))
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// should return dirty data because k2 is in memBuff
-	v, err = txn.Get(context.Background(), kv.Key("k2"))
+	entry, err = txn.Get(context.Background(), kv.Key("k2"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("v2+"), v)
+	require.Equal(t, kv.NewValueEntry([]byte("v2+"), 0), entry)
 
 	// should return error because kn is read from snapshot
-	v, err = txn.Get(context.Background(), kv.Key("kn"))
-	require.Nil(t, v)
+	entry, err = txn.Get(context.Background(), kv.Key("kn"))
+	require.Equal(t, kv.ValueEntry{}, entry)
 	require.Equal(t, errInterceptor.err, err)
 }
 
@@ -125,12 +148,27 @@ func TestTxnBatchGet(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
+	// Get the snapshot commit ts
+	entry, err := txn.Get(context.Background(), kv.Key("k1"), kv.WithReturnCommitTS())
+	require.NoError(t, err)
+	validCommitTS(t, entry.CommitTS)
+	commitTS := entry.CommitTS
+
+	// Test BatchGet from snapshot
 	result, err := txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("kn")})
 	require.NoError(t, err)
 	require.Equal(t, 3, len(result))
-	require.Equal(t, []byte("v1"), result["k1"])
-	require.Equal(t, []byte("v2"), result["k2"])
-	require.Equal(t, []byte("v3"), result["k3"])
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), result["k1"])
+	require.Equal(t, kv.NewValueEntry([]byte("v2"), 0), result["k2"])
+	require.Equal(t, kv.NewValueEntry([]byte("v3"), 0), result["k3"])
+
+	// Test BatchGet from snapshot with WithReturnCommitTS option
+	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("kn")}, kv.WithReturnCommitTS())
+	require.NoError(t, err)
+	require.Equal(t, 3, len(result))
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), commitTS), result["k1"])
+	require.Equal(t, kv.NewValueEntry([]byte("v2"), commitTS), result["k2"])
+	require.Equal(t, kv.NewValueEntry([]byte("v3"), commitTS), result["k3"])
 
 	// make some dirty data
 	err = txn.Set(kv.Key("k1"), []byte("v1+"))
@@ -143,16 +181,23 @@ func TestTxnBatchGet(t *testing.T) {
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("k4"), kv.Key("kn")})
 	require.NoError(t, err)
 	require.Equal(t, 3, len(result))
-	require.Equal(t, []byte("v1+"), result["k1"])
-	require.Equal(t, []byte("v3"), result["k3"])
-	require.Equal(t, []byte("v4+"), result["k4"])
+	require.Equal(t, kv.NewValueEntry([]byte("v1+"), 0), result["k1"])
+	require.Equal(t, kv.NewValueEntry([]byte("v3"), 0), result["k3"])
+	require.Equal(t, kv.NewValueEntry([]byte("v4+"), 0), result["k4"])
 
 	// return data if not read from snapshot
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k4")})
 	require.NoError(t, err)
 	require.Equal(t, 2, len(result))
-	require.Equal(t, []byte("v1+"), result["k1"])
-	require.Equal(t, []byte("v4+"), result["k4"])
+	require.Equal(t, kv.NewValueEntry([]byte("v1+"), 0), result["k1"])
+	require.Equal(t, kv.NewValueEntry([]byte("v4+"), 0), result["k4"])
+
+	// test WithReturnCommitTS option
+	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("k4")}, kv.WithReturnCommitTS())
+	require.Equal(t, 3, len(result))
+	require.Equal(t, kv.NewValueEntry([]byte("v1+"), 0), result["k1"])
+	require.Equal(t, kv.NewValueEntry([]byte("v3"), commitTS), result["k3"])
+	require.Equal(t, kv.NewValueEntry([]byte("v4+"), 0), result["k4"])
 
 	// make snapshot returns error
 	errInterceptor := &mockErrInterceptor{err: errors.New("error")}

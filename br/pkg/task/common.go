@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -230,6 +232,8 @@ type Config struct {
 	SendCreds           bool      `json:"send-credentials-to-tikv" toml:"send-credentials-to-tikv"`
 	// LogProgress is true means the progress bar is printed to the log instead of stdout.
 	LogProgress bool `json:"log-progress" toml:"log-progress"`
+	// OperationContext identifies this command for lock metadata.
+	OperationContext operation.Context `json:"-" toml:"-"`
 
 	// CaseSensitive should not be used.
 	//
@@ -252,9 +256,12 @@ type Config struct {
 	// should be removed after TiDB upgrades the BR dependency.
 	Filter filter.MySQLReplicationRules
 
-	FilterStr          []string      `json:"filter-strings" toml:"filter-strings"`
-	TableFilter        filter.Filter `json:"-" toml:"-"`
-	SwitchModeInterval time.Duration `json:"switch-mode-interval" toml:"switch-mode-interval"`
+	FilterStr   []string      `json:"filter-strings" toml:"filter-strings"`
+	TableFilter filter.Filter `json:"-" toml:"-"`
+	// PiTRTableTracker generated from TableFilter during snapshot restore, it has all the db id and table id that needs
+	// to be restored
+	PiTRTableTracker   *utils.PiTRIdTracker `json:"-" toml:"-"`
+	SwitchModeInterval time.Duration        `json:"switch-mode-interval" toml:"switch-mode-interval"`
 	// Schemas is a database name set, to check whether the restore database has been backup
 	Schemas map[string]struct{}
 	// Tables is a table name set, to check whether the restore table has been backup
@@ -284,6 +291,36 @@ type Config struct {
 
 	// Metadata download batch size, such as metadata for log restore
 	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
+}
+
+// EnsureOperationContext initializes command-scoped operation metadata once.
+func (cfg *Config) EnsureOperationContext(command string) error {
+	if cfg.OperationContext.OperationID != "" {
+		if cfg.OperationContext.StartedAt.IsZero() {
+			return errors.New("operation started time is required")
+		}
+		return nil
+	}
+	if !cfg.OperationContext.StartedAt.IsZero() {
+		return errors.New("operation ID is required")
+	}
+
+	operationContext, err := operation.NewContext(command)
+	if err != nil {
+		return err
+	}
+	cfg.OperationContext = operationContext
+	return nil
+}
+
+const operationHintRestoreID = "restore_id"
+
+func setOperationContextRestoreID(operationContext *operation.Context, restoreID uint64) {
+	if restoreID == 0 {
+		operationContext.SetHintField(operationHintRestoreID, "")
+		return
+	}
+	operationContext.SetHintField(operationHintRestoreID, strconv.FormatUint(restoreID, 10))
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -401,7 +438,7 @@ func DefineTableFlags(command *cobra.Command) {
 	_ = command.MarkFlagRequired(flagTable)
 }
 
-// DefineFilterFlags defines the --filter and --case-sensitive flags for `full` subcommand.
+// DefineFilterFlags defines the --filter and --case-sensitive flags.
 func DefineFilterFlags(command *cobra.Command, defaultFilter []string, setHidden bool) {
 	flags := command.Flags()
 	flags.StringArrayP(flagFilter, "f", defaultFilter, "select tables to process")
@@ -596,6 +633,10 @@ func (cfg *Config) normalizePDURLs() error {
 	return nil
 }
 
+func (cfg *Config) UserFiltered() bool {
+	return len(cfg.Schemas) != 0 || len(cfg.Tables) != 0 || len(cfg.FilterStr) != 0
+}
+
 // ParseFromFlags parses the config from the flag set.
 func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
@@ -655,11 +696,14 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 				Schema: db,
 				Name:   tbl,
 			})
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.`%s`", db, tbl)}
 		} else {
 			cfg.TableFilter = filter.NewSchemasFilter(db)
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.*", db)}
 		}
 	} else {
 		cfg.TableFilter, _ = filter.Parse([]string{"*.*"})
+		cfg.FilterStr = []string{"*.*"}
 	}
 	if !caseSensitive {
 		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
@@ -889,6 +933,12 @@ func ReadBackupMeta(
 		return nil, nil, nil, errors.Annotate(err,
 			"parse backupmeta failed because of wrong aes cipher")
 	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptBackupMeta, backupMeta); err != nil {
+		if cfg.CheckRequirements {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", zap.Error(err))
+	}
 	return u, s, backupMeta, nil
 }
 
@@ -999,4 +1049,10 @@ func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, tota
 			log.Warn("failed to update tmp progress file", zap.Error(err))
 		}
 	}
+}
+
+func WriteStringToConsole(g glue.Glue, msg string) error {
+	b := []byte(msg)
+	_, err := glue.GetConsole(g).Out().Write(b)
+	return err
 }

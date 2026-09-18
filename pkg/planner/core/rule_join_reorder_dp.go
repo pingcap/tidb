@@ -18,11 +18,11 @@ import (
 	"math/bits"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type joinReorderDPSolver struct {
@@ -68,15 +68,26 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 	// Build Graph for join group
 	for _, cond := range eqConds {
 		sf := cond.(*expression.ScalarFunction)
-		lCol := sf.GetArgs()[0].(*expression.Column)
-		rCol := sf.GetArgs()[1].(*expression.Column)
-		lIdx, err := findNodeIndexInGroup(joinGroup, lCol)
+		lArg := sf.GetArgs()[0]
+		rArg := sf.GetArgs()[1]
+		lCols := expression.ExtractColumns(lArg)
+		rCols := expression.ExtractColumns(rArg)
+		intest.Assert(len(lCols) > 0 && len(rCols) > 0)
+		if len(lCols) == 0 || len(rCols) == 0 {
+			return nil, plannererrors.ErrInternal.GenWithStack("join reorder dp: eq edge has empty column list")
+		}
+
+		lIdx, err := findNodeIndexForColumns(joinGroup, lCols)
 		if err != nil {
 			return nil, err
 		}
-		rIdx, err := findNodeIndexInGroup(joinGroup, rCol)
+		rIdx, err := findNodeIndexForColumns(joinGroup, rCols)
 		if err != nil {
 			return nil, err
+		}
+		intest.Assert(lIdx != rIdx)
+		if lIdx == rIdx {
+			return nil, plannererrors.ErrInternal.GenWithStack("join reorder dp: eq edge doesn't connect two join-group nodes")
 		}
 		addEqEdge(lIdx, rIdx, sf)
 	}
@@ -252,16 +263,15 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 }
 
 func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	var eqConds []*expression.ScalarFunction
+	eqConds := make([]*expression.ScalarFunction, 0, len(edges))
 	for _, edge := range edges {
-		lCol := edge.edge.GetArgs()[0].(*expression.Column)
-		rCol := edge.edge.GetArgs()[1].(*expression.Column)
-		if leftPlan.Schema().Contains(lCol) {
-			eqConds = append(eqConds, edge.edge)
-		} else {
-			newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
-			eqConds = append(eqConds, newSf)
+		lArg := edge.edge.GetArgs()[0]
+		rArg := edge.edge.GetArgs()[1]
+		lExpr, rExpr, _, ok := alignJoinEdgeArgs(lArg, rArg, leftPlan.Schema(), rightPlan.Schema())
+		if !ok {
+			return nil, plannererrors.ErrInternal.GenWithStack("join reorder dp: eq edge doesn't connect left/right plans")
 		}
+		eqConds = append(eqConds, s.buildJoinEdge(edge.edge, lExpr, rExpr, &leftPlan, &rightPlan))
 	}
 	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin, opt)
 	_, err := join.RecursiveDeriveStats(nil)
@@ -299,4 +309,25 @@ func findNodeIndexInGroup(group []base.LogicalPlan, col *expression.Column) (int
 		}
 	}
 	return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, "JOIN REORDER RULE")
+}
+
+func findNodeIndexForColumns(group []base.LogicalPlan, cols []*expression.Column) (int, error) {
+	if len(cols) == 0 {
+		return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs("empty column list", "JOIN REORDER RULE")
+	}
+
+	firstIdx, err := findNodeIndexInGroup(group, cols[0])
+	if err != nil {
+		return -1, err
+	}
+	for _, col := range cols[1:] {
+		idx, err := findNodeIndexInGroup(group, col)
+		if err != nil {
+			return -1, err
+		}
+		if idx != firstIdx {
+			return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, "JOIN REORDER RULE: columns span multiple nodes")
+		}
+	}
+	return firstIdx, nil
 }

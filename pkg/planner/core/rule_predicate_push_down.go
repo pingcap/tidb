@@ -69,7 +69,7 @@ func addPrefix4ShardIndexes(lp base.LogicalPlan, sc base.PlanContext, conds []ex
 	var err error
 	newConds := conds
 
-	for _, path := range ds.PossibleAccessPaths {
+	for _, path := range ds.AllPossibleAccessPaths {
 		if !path.IsUkShardIndexPath {
 			continue
 		}
@@ -91,7 +91,7 @@ func addPrefix4ShardIndexes(lp base.LogicalPlan, sc base.PlanContext, conds []ex
 func addExprPrefixCond(ds *logicalop.DataSource, sc base.PlanContext, path *util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
 	idxCols, idxColLens :=
-		expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+		util.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	if len(idxCols) == 0 {
 		return conds, nil
 	}

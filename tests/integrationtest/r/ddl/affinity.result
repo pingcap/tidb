@@ -1,0 +1,386 @@
+drop table if exists t1, t2, t3, t4, tp1, tp2, tp3, v1;
+create table t1(a int) affinity = 'table';
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+create table t2(a int) AFFINITY 'TABLE';
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+drop table t2;
+create table t2(a int) /*T![affinity] AFFINITY='table' */;
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+create table tp1(a int) affinity = 'partition' partition by hash(a) partitions 4;
+show create table tp1;
+Table	Create Table
+tp1	CREATE TABLE `tp1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY HASH (`a`) PARTITIONS 4
+create table tp2(a int) /*T![affinity] AFFINITY='partition' */ partition by hash(a) partitions 4;
+show create table tp2;
+Table	Create Table
+tp2	CREATE TABLE `tp2` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY HASH (`a`) PARTITIONS 4
+drop table if exists t2, tp2;
+create table t2 like t1;
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+create table tp2 like tp1;
+show create table tp2;
+Table	Create Table
+tp2	CREATE TABLE `tp2` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY HASH (`a`) PARTITIONS 4
+create table t3 like t2;
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+drop table t3;
+create table t3(a int) affinity = 'none';
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create table t4(a int) affinity = '';
+show create table t4;
+Table	Create Table
+t4	CREATE TABLE `t4` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create table tp3(a int) affinity = 'none' partition by hash(a) partitions 4;
+show create table tp3;
+Table	Create Table
+tp3	CREATE TABLE `tp3` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 4
+create view v1 as select 1;
+select TABLE_NAME, TABLE_TYPE, TIDB_AFFINITY from information_schema.tables where TABLE_SCHEMA = database() and TABLE_NAME in ('t1', 't2', 't3', 't4', 'tp1', 'tp2', 'tp3', 'v1') order by TABLE_NAME;
+TABLE_NAME	TABLE_TYPE	TIDB_AFFINITY
+t1	BASE TABLE	table
+t2	BASE TABLE	table
+t3	BASE TABLE	NULL
+t4	BASE TABLE	NULL
+tp1	BASE TABLE	partition
+tp2	BASE TABLE	partition
+tp3	BASE TABLE	NULL
+v1	VIEW	NULL
+select TABLE_NAME, PARTITION_METHOD, PARTITION_NAME, TIDB_AFFINITY from information_schema.partitions where TABLE_SCHEMA = database() and TABLE_NAME in ('t1', 't2', 't3', 't4', 'tp1', 'tp2', 'tp3', 'v1') order by TABLE_NAME, PARTITION_NAME;
+TABLE_NAME	PARTITION_METHOD	PARTITION_NAME	TIDB_AFFINITY
+t1	NULL	NULL	table
+t2	NULL	NULL	table
+t3	NULL	NULL	NULL
+t4	NULL	NULL	NULL
+tp1	HASH	p0	partition
+tp1	HASH	p1	partition
+tp1	HASH	p2	partition
+tp1	HASH	p3	partition
+tp2	HASH	p0	partition
+tp2	HASH	p1	partition
+tp2	HASH	p2	partition
+tp2	HASH	p3	partition
+tp3	HASH	p0	NULL
+tp3	HASH	p1	NULL
+tp3	HASH	p2	NULL
+tp3	HASH	p3	NULL
+v1	NULL	NULL	NULL
+alter table t1 affinity = 'TABLE';
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+alter table tp1 affinity = 'PARTITION';
+show create table tp1;
+Table	Create Table
+tp1	CREATE TABLE `tp1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY HASH (`a`) PARTITIONS 4
+alter table t1 affinity = '';
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t2 affinity = 'none';
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table tp1 affinity = '';
+show create table tp1;
+Table	Create Table
+tp1	CREATE TABLE `tp1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 4
+alter table t1 affinity = 'table';
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+alter table tp1 affinity = 'partition';
+show create table tp1;
+Table	Create Table
+tp1	CREATE TABLE `tp1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY HASH (`a`) PARTITIONS 4
+alter table t3 /*T![affinity] AFFINITY='table' */;
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+alter table tp2 /*T![affinity] AFFINITY='partition' */;
+show create table tp2;
+Table	Create Table
+tp2	CREATE TABLE `tp2` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY HASH (`a`) PARTITIONS 4
+create table tx(a int) affinity = 'invalid_affinity';
+Error 8266 (HY000): Invalid AFFINITY 'invalid_affinity'
+show tables like 'tx';
+Tables_in_ddl__affinity (tx)
+alter table t1 affinity = 'partition';
+Error 8266 (HY000): Can not set AFFINITY='partition' on a non-partition table.
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+alter table tp1 affinity = 'table';
+Error 8266 (HY000): Can not set AFFINITY='table' on a partition table.
+show create table tp1;
+Table	Create Table
+tp1	CREATE TABLE `tp1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY HASH (`a`) PARTITIONS 4
+alter table t1 affinity = 'invalid_affinity';
+Error 8266 (HY000): Invalid AFFINITY 'invalid_affinity'
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+drop table if exists temp1;
+create temporary table temp1(a int) affinity = 'table';
+Error 8266 (HY000): Can not set AFFINITY on a temporary table.
+show tables like 'temp1';
+Tables_in_ddl__affinity (temp1)
+create temporary table temp1 like t1;
+show create table temp1;
+Table	Create Table
+temp1	CREATE TEMPORARY TABLE `temp1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table temp1 affinity = 'table';
+Error 8200 (HY000): TiDB doesn't support ALTER TABLE for local temporary table
+show create table temp1;
+Table	Create Table
+temp1	CREATE TEMPORARY TABLE `temp1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table temp1;
+create global temporary table temp1 (a int) affinity = 'table' on commit delete rows;
+Error 8266 (HY000): Can not set AFFINITY on a temporary table.
+show tables like 'temp1';
+Tables_in_ddl__affinity (temp1)
+create global temporary table temp1 like t1 on commit delete rows;
+alter table temp1 affinity = 'table';
+Error 8266 (HY000): Can not set AFFINITY on a temporary table.
+show create table temp1;
+Table	Create Table
+temp1	CREATE GLOBAL TEMPORARY TABLE `temp1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
+alter table v1 affinity = 'table';
+Error 1347 (HY000): 'ddl__affinity.v1' is not BASE TABLE
+drop table if exists tp1;
+create table tp1(a int) affinity = 'partition' partition by range(a) (
+PARTITION p0 VALUES LESS THAN (10),
+PARTITION p1 VALUES LESS THAN (20)
+);
+alter table tp1 add partition (PARTITION p2 VALUES LESS THAN (30));
+Error 8200 (HY000): Unsupported ADD PARTITION of a table with AFFINITY option
+alter table tp1 drop partition p1;
+Error 8200 (HY000): Unsupported DROP PARTITION of a table with AFFINITY option
+alter table tp1 reorganize partition p0, p1 into (PARTITION p01 VALUES LESS THAN (20));
+Error 8200 (HY000): Unsupported REORGANIZE PARTITION of a table with AFFINITY option
+alter table tp1 remove partitioning;
+Error 8200 (HY000): Unsupported REMOVE PARTITIONING of a table with AFFINITY option
+alter table tp1 coalesce partition 1;
+Error 8200 (HY000): Unsupported COALESCE PARTITION of a table with AFFINITY option
+drop table if exists t1;
+create table t1(a int) affinity = 'table';
+alter table t1 partition by hash(a) partitions 4;
+Error 8200 (HY000): Unsupported ALTER TABLE PARTITIONING of a table with AFFINITY option
+show create table tp1;
+Table	Create Table
+tp1	CREATE TABLE `tp1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (10),
+ PARTITION `p1` VALUES LESS THAN (20))
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+drop table if exists t1, tp1;
+create table tp1(a int) affinity = 'partition' partition by range(a) (
+PARTITION p0 VALUES LESS THAN (10),
+PARTITION p1 VALUES LESS THAN (20)
+);
+create table t1(a int);
+alter table tp1 exchange partition p0 with table t1;
+Error 8200 (HY000): Unsupported EXCHANGE PARTITION of a table with AFFINITY option
+alter table tp1 affinity = '';
+alter table t1 affinity = 'table';
+alter table tp1 exchange partition p0 with table t1;
+Error 8200 (HY000): Unsupported EXCHANGE PARTITION of a table with AFFINITY option
+drop table if exists tp_drop;
+create table tp_drop(a int) affinity = 'partition' partition by range(a) (
+PARTITION p0 VALUES LESS THAN (10),
+PARTITION p1 VALUES LESS THAN (20),
+PARTITION p2 VALUES LESS THAN (30)
+);
+show create table tp_drop;
+Table	Create Table
+tp_drop	CREATE TABLE `tp_drop` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (10),
+ PARTITION `p1` VALUES LESS THAN (20),
+ PARTITION `p2` VALUES LESS THAN (30))
+alter table tp_drop drop partition p1;
+Error 8200 (HY000): Unsupported DROP PARTITION of a table with AFFINITY option
+alter table tp_drop affinity = '';
+show create table tp_drop;
+Table	Create Table
+tp_drop	CREATE TABLE `tp_drop` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (10),
+ PARTITION `p1` VALUES LESS THAN (20),
+ PARTITION `p2` VALUES LESS THAN (30))
+alter table tp_drop drop partition p1;
+show create table tp_drop;
+Table	Create Table
+tp_drop	CREATE TABLE `tp_drop` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (10),
+ PARTITION `p2` VALUES LESS THAN (30))
+select TABLE_NAME, PARTITION_NAME, TIDB_AFFINITY from information_schema.partitions where TABLE_SCHEMA = database() and TABLE_NAME = 'tp_drop' order by PARTITION_NAME;
+TABLE_NAME	PARTITION_NAME	TIDB_AFFINITY
+tp_drop	p0	NULL
+tp_drop	p2	NULL
+drop table if exists tp_trunc;
+create table tp_trunc(a int) affinity = 'partition' partition by range(a) (
+PARTITION p0 VALUES LESS THAN (10),
+PARTITION p1 VALUES LESS THAN (20)
+);
+insert into tp_trunc values (5), (15);
+select count(*) from tp_trunc partition(p0);
+count(*)
+1
+select count(*) from tp_trunc partition(p1);
+count(*)
+1
+show create table tp_trunc;
+Table	Create Table
+tp_trunc	CREATE TABLE `tp_trunc` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (10),
+ PARTITION `p1` VALUES LESS THAN (20))
+alter table tp_trunc truncate partition p0;
+select count(*) from tp_trunc partition(p0);
+count(*)
+0
+select count(*) from tp_trunc partition(p1);
+count(*)
+1
+show create table tp_trunc;
+Table	Create Table
+tp_trunc	CREATE TABLE `tp_trunc` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (10),
+ PARTITION `p1` VALUES LESS THAN (20))
+drop table if exists t_trunc, tp_trunc2;
+create table t_trunc(a int) affinity = 'table';
+insert into t_trunc values (1), (2), (3);
+select count(*) from t_trunc;
+count(*)
+3
+show create table t_trunc;
+Table	Create Table
+t_trunc	CREATE TABLE `t_trunc` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+truncate table t_trunc;
+select count(*) from t_trunc;
+count(*)
+0
+show create table t_trunc;
+Table	Create Table
+t_trunc	CREATE TABLE `t_trunc` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='table' */
+create table tp_trunc2(a int) affinity = 'partition' partition by range(a) (
+PARTITION p0 VALUES LESS THAN (10),
+PARTITION p1 VALUES LESS THAN (20)
+);
+insert into tp_trunc2 values (5), (15);
+show create table tp_trunc2;
+Table	Create Table
+tp_trunc2	CREATE TABLE `tp_trunc2` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (10),
+ PARTITION `p1` VALUES LESS THAN (20))
+truncate table tp_trunc2;
+select count(*) from tp_trunc2;
+count(*)
+0
+show create table tp_trunc2;
+Table	Create Table
+tp_trunc2	CREATE TABLE `tp_trunc2` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![affinity] AFFINITY='partition' */
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (10),
+ PARTITION `p1` VALUES LESS THAN (20))
+drop table if exists t1, t2, t3, t4, tp1, tp2, tp3, v1, temp1, tp_drop, tp_trunc, tp_trunc2, t_trunc;

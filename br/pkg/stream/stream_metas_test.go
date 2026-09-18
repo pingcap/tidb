@@ -5,6 +5,7 @@ package stream
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -15,13 +16,17 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	. "github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
@@ -33,6 +38,89 @@ func requireMigrationsEqual(t *testing.T, miga, migb *backuppb.Migration) {
 	require.NotNil(t, miga)
 	require.NotNil(t, migb)
 	require.Equal(t, hashMigration(miga), hashMigration(migb), "\n%s\n%s", miga, migb)
+}
+
+func testOperationContext(t *testing.T) operation.Context {
+	t.Helper()
+	ctx, err := operation.NewContext("test")
+	require.NoError(t, err)
+	ctx.SetHintField("restore_id", "123")
+	return ctx
+}
+
+type capturedLockWrite struct {
+	path string
+	meta storage.LockMeta
+}
+
+type lockCaptureStorage struct {
+	storage.ExternalStorage
+	mu     sync.Mutex
+	writes []capturedLockWrite
+}
+
+func (s *lockCaptureStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	s.captureLockWrite(name, data)
+	return s.ExternalStorage.WriteFile(ctx, name, data)
+}
+
+func (s *lockCaptureStorage) captureLockWrite(name string, data []byte) {
+	if !strings.HasPrefix(name, lockPrefix) && !strings.HasPrefix(name, appendLockPrefix) {
+		return
+	}
+
+	var meta storage.LockMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return
+	}
+	if meta.OwnerID == "" || meta.LockType == "" || len(meta.TxnID) == 0 {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writes = append(s.writes, capturedLockWrite{path: name, meta: meta})
+}
+
+func (s *lockCaptureStorage) capturedLockWrites() []capturedLockWrite {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.writes)
+}
+
+func requireCapturedLockMeta(
+	t *testing.T,
+	writes []capturedLockWrite,
+	opCtx operation.Context,
+	resource operation.LockResourceType,
+) capturedLockWrite {
+	t.Helper()
+
+	var matches []capturedLockWrite
+	for _, write := range writes {
+		if write.meta.LockType == string(resource) {
+			matches = append(matches, write)
+		}
+	}
+	require.Len(t, matches, 1)
+
+	meta := matches[0].meta
+	require.Equal(t, opCtx.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=123")
+	return matches[0]
+}
+
+func requireReadLockPath(t *testing.T, p string) {
+	t.Helper()
+	require.True(t, strings.HasPrefix(p, lockPrefix), p)
+	require.Contains(t, p, ".READ.")
+}
+
+func requireWriteLockPath(t *testing.T, p string, prefix string) {
+	t.Helper()
+	require.True(t, strings.HasPrefix(p, prefix), p)
+	require.True(t, strings.HasSuffix(p, ".WRIT"), p)
 }
 
 type effects struct {
@@ -435,6 +523,53 @@ func TestReplaceMetadataTs(t *testing.T) {
 	require.Equal(t, m.MaxTs, uint64(4))
 }
 
+func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storage.ExternalStorage) string {
+	path := fmt.Sprintf("extbackupmeta_%08d", sn)
+	bs, err := fb.Marshal()
+	if err != nil {
+		require.NoError(t, err)
+	}
+
+	err = s.WriteFile(context.Background(), path, bs)
+	require.NoError(t, err)
+	return path
+}
+
+type efOP func(*backuppb.IngestedSSTs)
+
+func extFullBkup(ops ...efOP) *backuppb.IngestedSSTs {
+	ef := &backuppb.IngestedSSTs{}
+	for _, op := range ops {
+		op(ef)
+	}
+	return ef
+}
+
+func finished() efOP {
+	return func(ef *backuppb.IngestedSSTs) {
+		ef.Finished = true
+	}
+}
+
+func makeID() efOP {
+	id := uuid.New()
+	return func(ef *backuppb.IngestedSSTs) {
+		ef.BackupUuid = id[:]
+	}
+}
+
+func prefix(pfx string) efOP {
+	return func(ef *backuppb.IngestedSSTs) {
+		ef.FilesPrefixHint = pfx
+	}
+}
+
+func asIfTS(ts uint64) efOP {
+	return func(ef *backuppb.IngestedSSTs) {
+		ef.AsIfTs = ts
+	}
+}
+
 func m(storeId int64, minTS, maxTS uint64) *backuppb.Metadata {
 	return &backuppb.Metadata{
 		StoreId:     storeId,
@@ -446,19 +581,25 @@ func m(storeId int64, minTS, maxTS uint64) *backuppb.Metadata {
 
 type migOP func(*backuppb.Migration)
 
+func mExtFullBackup(path ...string) migOP {
+	return func(m *backuppb.Migration) {
+		m.IngestedSstPaths = append(m.IngestedSstPaths, path...)
+	}
+}
+
 func mDstrPfx(path ...string) migOP {
 	return func(m *backuppb.Migration) {
 		m.DestructPrefix = append(m.DestructPrefix, path...)
 	}
 }
 
-func mCompaction(cPath, aPath string, fromTs, untilTs uint64) migOP {
+func mCompaction(cPath, aPath string, minTs, maxTs uint64) migOP {
 	return func(m *backuppb.Migration) {
 		c := &backuppb.LogFileCompaction{}
 		c.GeneratedFiles = cPath
 		c.Artifacts = aPath
-		c.CompactionFromTs = fromTs
-		c.CompactionUntilTs = untilTs
+		c.InputMinTs = minTs
+		c.InputMaxTs = maxTs
 		m.Compactions = append(m.Compactions, c)
 	}
 }
@@ -608,6 +749,12 @@ func mTruncatedTo(to uint64) migOP {
 	}
 }
 
+func mVersion(ver backuppb.MigrationVersion) migOP {
+	return func(m *backuppb.Migration) {
+		m.Version = ver
+	}
+}
+
 // tmp creates a temporary storage.
 func tmp(t *testing.T) *storage.LocalStorage {
 	tmpDir := t.TempDir()
@@ -619,7 +766,7 @@ func tmp(t *testing.T) *storage.LocalStorage {
 }
 
 func mig(ops ...migOP) *backuppb.Migration {
-	mig := &backuppb.Migration{}
+	mig := NewMigration()
 	for _, op := range ops {
 		op(mig)
 	}
@@ -2436,7 +2583,7 @@ func TestBasicMigration(t *testing.T) {
 	)
 
 	bs := storage.Batch(s)
-	est := MigerationExtension(bs)
+	est := MigrationExtension(bs)
 	res := MergeMigrations(mig1, mig2)
 
 	resE := mig(
@@ -2454,7 +2601,7 @@ func TestBasicMigration(t *testing.T) {
 	requireMigrationsEqual(t, resE, res)
 
 	ctx := context.Background()
-	mg := est.MigrateTo(ctx, res)
+	mg := est.migrateTo(ctx, res)
 
 	newBaseE := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(0, 42), sp(42, 18))))
 	require.Empty(t, mg.Warnings)
@@ -2470,12 +2617,104 @@ func TestBasicMigration(t *testing.T) {
 
 	delRem := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(60, 1024-60))))
 	newNewBase := MergeMigrations(mg.NewBase, delRem)
-	mg = est.MigrateTo(ctx, newNewBase)
+	mg = est.migrateTo(ctx, newNewBase)
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig())
 }
 
+func testMigrationLockOperationMetadata(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name     string
+		run      func(context.Context, MigrationExt) error
+		validate func(*testing.T, []capturedLockWrite, operation.Context)
+	}{
+		{
+			name: "read lock",
+			run: func(ctx context.Context, est MigrationExt) error {
+				lock, err := est.GetReadLock(ctx, "read lock test")
+				if err != nil {
+					return err
+				}
+				lock.UnlockOnCleanUp(ctx)
+				return nil
+			},
+			validate: func(t *testing.T, writes []capturedLockWrite, opCtx operation.Context) {
+				require.Len(t, writes, 1)
+				write := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationRead)
+				requireReadLockPath(t, write.path)
+			},
+		},
+		{
+			name: "append migration",
+			run: func(ctx context.Context, est MigrationExt) error {
+				_, err := est.AppendMigration(ctx, mig())
+				return err
+			},
+			validate: func(t *testing.T, writes []capturedLockWrite, opCtx operation.Context) {
+				require.Len(t, writes, 2)
+
+				readWrite := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationRead)
+				requireReadLockPath(t, readWrite.path)
+				appendWrite := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationAppend)
+				requireWriteLockPath(t, appendWrite.path, appendLockPrefix)
+				require.Equal(t, readWrite.meta.OwnerID, appendWrite.meta.OwnerID)
+			},
+		},
+		{
+			name: "merge and migrate write lock",
+			run: func(ctx context.Context, est MigrationExt) error {
+				result, err := est.MergeAndMigrateTo(ctx, 0)
+				if err != nil {
+					return err
+				}
+				return multierr.Combine(result.Warnings...)
+			},
+			validate: func(t *testing.T, writes []capturedLockWrite, opCtx operation.Context) {
+				require.Len(t, writes, 1)
+				write := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationWrite)
+				requireWriteLockPath(t, write.path, lockPrefix)
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			opCtx := testOperationContext(t)
+			capturingStorage := &lockCaptureStorage{ExternalStorage: tmp(t)}
+			est := MigrationExtension(capturingStorage).WithOperationContext(opCtx)
+
+			require.NoError(t, c.run(ctx, est))
+
+			writes := capturingStorage.capturedLockWrites()
+			c.validate(t, writes, opCtx)
+		})
+	}
+
+	t.Run("dry run keeps operation context", func(t *testing.T) {
+		opCtx := testOperationContext(t)
+		est := MigrationExtension(tmp(t)).WithOperationContext(opCtx)
+
+		est.DryRun(func(me MigrationExt) {
+			require.Equal(t, opCtx.OperationID, me.operationContext.OperationID)
+			require.Equal(t, opCtx.HintFields(), me.operationContext.HintFields())
+			require.True(t, me.operationContext.StartedAt.Equal(opCtx.StartedAt))
+		})
+	})
+
+	t.Run("missing operation context returns error", func(t *testing.T) {
+		result, err := MigrationExtension(tmp(t)).MergeAndMigrateTo(context.Background(), 0)
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation ID")
+		require.Empty(t, result.Warnings)
+	})
+}
+
 func TestMergeAndMigrateTo(t *testing.T) {
+	t.Run("operation metadata", testMigrationLockOperationMetadata)
+
 	s := tmp(t)
 	dfi := func(o, l uint64) *backuppb.DataFileInfo { return dFile(sp(o, l)) }
 	lN := func(n uint64) string { return fmt.Sprintf("%05d.log", n) }
@@ -2502,7 +2741,7 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	mig3p := pmig(s, 3, mig3)
 
 	bs := storage.Batch(s)
-	est := MigerationExtension(bs)
+	est := MigrationExtension(bs)
 
 	ctx := context.Background()
 	migs, err := est.Load(ctx)
@@ -2514,7 +2753,8 @@ func TestMergeAndMigrateTo(t *testing.T) {
 			spans(lN(3), 100, sp(0, 42), sp(42, 18), sp(60, 40))),
 	))
 
-	mg := est.MergeAndMigrateTo(ctx, 2)
+	mg, err := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
+	require.NoError(t, err)
 
 	require.Len(t, mg.Source, 2)
 	require.Empty(t, mg.Warnings)
@@ -2532,7 +2772,8 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	requireMigrationsEqual(t, &migs.Layers[0].Content, mig3)
 	require.EqualValues(t, migs.Layers[0].SeqNum, 3)
 
-	mg = est.MergeAndMigrateTo(ctx, 3)
+	mg, err = est.MergeAndMigrateTo(ctx, 3, MMOptSkipLockingInTest())
+	require.NoError(t, err)
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig())
 	effs = effectsOf(bs.ReadOnlyEffects())
@@ -2570,7 +2811,7 @@ func TestRemoveCompaction(t *testing.T) {
 		mTruncatedTo(20),
 	)
 	bs := storage.Batch(s)
-	est := MigerationExtension(bs)
+	est := MigrationExtension(bs)
 
 	merged := MergeMigrations(mig1, mig2)
 	requireMigrationsEqual(t, merged, mig(
@@ -2581,7 +2822,7 @@ func TestRemoveCompaction(t *testing.T) {
 		mTruncatedTo(30),
 	))
 
-	mg := est.MigrateTo(ctx, merged)
+	mg := est.migrateTo(ctx, merged)
 	requireMigrationsEqual(t, mg.NewBase, mig(
 		mCompaction(cDir(1), aDir(1), 10, 40),
 		mCompaction(cDir(2), aDir(2), 35, 50),
@@ -2609,13 +2850,15 @@ func TestRetry(t *testing.T) {
 	require.NoError(t,
 		failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/local_write_file_err", `1*return("this disk remembers nothing")`))
 	ctx := context.Background()
-	est := MigerationExtension(s)
-	mg := est.MergeAndMigrateTo(ctx, 2)
+	est := MigrationExtension(s)
+	mg, err := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
+	require.NoError(t, err)
 	require.Len(t, mg.Warnings, 1)
 	require.Error(t, mg.Warnings[0], "this disk remembers nothing")
 	requireMigrationsEqual(t, mg.NewBase, mig(mDel(mN(1), lN(1), lN(2))))
 
-	mg = est.MergeAndMigrateTo(ctx, 2)
+	mg, err = est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
+	require.NoError(t, err)
 	require.Empty(t, slices.DeleteFunc(mg.Warnings, func(err error) bool {
 		return strings.Contains(err.Error(), "failed to delete file")
 	}))
@@ -2640,8 +2883,8 @@ func TestRetryRemoveCompaction(t *testing.T) {
 	)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/local_delete_file_err", `1*return("this disk will never forget")`))
-	est := MigerationExtension(s)
-	mg := est.MigrateTo(ctx, mig1)
+	est := MigrationExtension(s)
+	mg := est.migrateTo(ctx, mig1)
 	require.Len(t, mg.Warnings, 1)
 	require.Error(t, mg.Warnings[0], "this disk will never forget")
 	requireMigrationsEqual(t, mg.NewBase, mig(
@@ -2650,7 +2893,7 @@ func TestRetryRemoveCompaction(t *testing.T) {
 		mDstrPfx(cDir(1), aDir(1)),
 	))
 
-	mg = est.MigrateTo(ctx, mg.NewBase)
+	mg = est.migrateTo(ctx, mg.NewBase)
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig(
 		mCompaction(placeholder(cDir(2)), placeholder(aDir(2)), 28, 32),
@@ -2684,10 +2927,10 @@ func TestWithSimpleTruncate(t *testing.T) {
 		},
 	}))
 
-	est := MigerationExtension(s)
+	est := MigrationExtension(s)
 	m := mig(mTruncatedTo(65))
 	var res MigratedTo
-	effs := est.DryRun(func(me MigrationExt) { res = me.MigrateTo(ctx, m) })
+	effs := est.DryRun(func(me MigrationExt) { res = me.migrateTo(ctx, m) })
 
 	require.Empty(t, res.Warnings)
 	for _, eff := range effs {
@@ -2742,8 +2985,6 @@ func TestAppendingMigs(t *testing.T) {
 			asp(fi(80, 85, WriteCF, 72), sp(34, 5)),
 		},
 	}), lN(2))
-	est := MigerationExtension(s)
-
 	cDir := func(n uint64) string { return fmt.Sprintf("%05d/output", n) }
 	aDir := func(n uint64) string { return fmt.Sprintf("%05d/metas", n) }
 	compaction := mCompaction(placeholder(cDir(1)), placeholder(aDir(1)), 15, 66)
@@ -2754,14 +2995,18 @@ func TestAppendingMigs(t *testing.T) {
 	pmig(s, 1, m)
 	pmig(s, 2, mig(del12))
 
-	res := est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptAlwaysRunTruncate(), MMOptAppendPhantomMigration(*mig(mTruncatedTo(65))))
+	est := MigrationExtension(s).WithOperationContext(testOperationContext(t))
+
+	res, err := est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptAlwaysRunTruncate(), MMOptAppendPhantomMigration(*mig(mTruncatedTo(65))))
+	require.NoError(t, err)
 	require.NoError(t, multierr.Combine(res.Warnings...))
 	requireMigrationsEqual(t, res.NewBase, mig(mTruncatedTo(65), compaction, del2))
 	require.FileExists(t, filepath.Join(s.Base(), cDir(1), "monolith"))
 
-	res = est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
+	res, err = est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
 		return true
 	}), MMOptAlwaysRunTruncate(), MMOptAppendPhantomMigration(*mig(mTruncatedTo(100))))
+	require.NoError(t, err)
 	require.NoError(t, multierr.Combine(res.Warnings...))
 	requireMigrationsEqual(t, res.NewBase, mig(mTruncatedTo(100)))
 	require.NoFileExists(t, filepath.Join(s.Base(), cDir(1), "monolith"))
@@ -2775,14 +3020,216 @@ func TestUserAbort(t *testing.T) {
 
 	pmig(s, 0, mig(mTruncatedTo(42)))
 	pmig(s, 1, mig(mTruncatedTo(96)))
-	est := MigerationExtension(s)
+	est := MigrationExtension(s)
 	var res MergeAndMigratedTo
 	effs := est.DryRun(func(me MigrationExt) {
-		res = me.MergeAndMigrateTo(ctx, 1, MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
+		var err error
+		res, err = me.MergeAndMigrateTo(ctx, 1, MMOptSkipLockingInTest(), MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
 			return false
 		}))
+		require.NoError(t, err)
 	})
 	require.Len(t, res.Warnings, 1)
 	require.ErrorContains(t, res.Warnings[0], "aborted")
 	require.Empty(t, effs)
+}
+
+func TestUnsupportedVersion(t *testing.T) {
+	s := tmp(t)
+	m := mig(mVersion(backuppb.MigrationVersion(65535)))
+	pmig(s, 1, m)
+
+	est := MigrationExtension(s)
+	ctx := context.Background()
+	_, err := est.Load(ctx)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "ErrMigrationVersionNotSupported")
+}
+
+func TestCreator(t *testing.T) {
+	mig := NewMigration()
+	require.Contains(t, mig.Creator, "br")
+	require.Equal(t, mig.Version, SupportedMigVersion)
+}
+
+func TestGroupedExtFullBackup(t *testing.T) {
+	ctx := context.Background()
+	s := tmp(t)
+	placeholder := func(pfx string) string {
+		path := path.Join(pfx, "monolith")
+		require.NoError(t, s.WriteFile(ctx, path, []byte("🪨")))
+		return path
+	}
+	idx := 0
+	somewhere := func() string {
+		idx += 1
+		return placeholder(fmt.Sprintf("%06d", idx))
+	}
+
+	type Case struct {
+		InputGroups []*backuppb.IngestedSSTs
+		TruncatedTo uint64
+
+		RequireRem []int
+	}
+
+	cases := []Case{
+		{
+			InputGroups: []*backuppb.IngestedSSTs{
+				extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
+				extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+			},
+			TruncatedTo: 11,
+			RequireRem:  []int{1},
+		},
+		{
+			InputGroups: []*backuppb.IngestedSSTs{
+				extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
+				extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+			},
+			TruncatedTo: 13,
+			RequireRem:  []int{},
+		},
+		{
+			InputGroups: []*backuppb.IngestedSSTs{
+				extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
+				extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+			},
+			TruncatedTo: 10,
+			RequireRem:  []int{0, 1},
+		},
+		{
+			InputGroups: func() []*backuppb.IngestedSSTs {
+				id := makeID()
+				return []*backuppb.IngestedSSTs{
+					extFullBkup(prefix(somewhere()), id),
+					extFullBkup(prefix(somewhere()), asIfTS(10), id, finished()),
+					extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+				}
+			}(),
+			TruncatedTo: 11,
+			RequireRem:  []int{2},
+		},
+		{
+			InputGroups: func() []*backuppb.IngestedSSTs {
+				id := makeID()
+				return []*backuppb.IngestedSSTs{
+					extFullBkup(prefix(somewhere()), id),
+					extFullBkup(prefix(somewhere()), asIfTS(12), id, finished()),
+					extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
+				}
+			}(),
+			TruncatedTo: 11,
+			RequireRem:  []int{0, 1},
+		},
+		{
+			InputGroups: func() []*backuppb.IngestedSSTs {
+				id := makeID()
+				return []*backuppb.IngestedSSTs{
+					extFullBkup(prefix(somewhere()), asIfTS(999), id),
+					extFullBkup(prefix(somewhere()), asIfTS(10), id, finished()),
+					extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+				}
+			}(),
+			TruncatedTo: 11,
+			RequireRem:  []int{2},
+		},
+		{
+			InputGroups: []*backuppb.IngestedSSTs{
+				extFullBkup(prefix(somewhere()), asIfTS(10), makeID()),
+				extFullBkup(prefix(somewhere()), asIfTS(12), makeID()),
+				extFullBkup(prefix(somewhere()), asIfTS(14), makeID()),
+			},
+			TruncatedTo: 11,
+			RequireRem:  []int{0, 1, 2},
+		},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
+			m := mig()
+			paths := []PathedIngestedSSTs{}
+			for i, input := range c.InputGroups {
+				p := pef(t, input, i, s)
+				paths = append(paths, PathedIngestedSSTs{
+					path:         p,
+					IngestedSSTs: input,
+				})
+				mExtFullBackup(p)(m)
+				require.FileExists(t, path.Join(s.Base(), input.FilesPrefixHint))
+			}
+			mTruncatedTo(c.TruncatedTo)(m)
+			est := MigrationExtension(s)
+			res := est.migrateTo(ctx, m)
+			require.NoError(t, multierr.Combine(res.Warnings...))
+			chosen := []string{}
+			nonChosen := []PathedIngestedSSTs{}
+			forgottenIdx := 0
+			for _, i := range c.RequireRem {
+				chosen = append(chosen, paths[i].path)
+				nonChosen = append(nonChosen, paths[forgottenIdx:i]...)
+				forgottenIdx = i + 1
+			}
+			require.ElementsMatch(t, chosen, res.NewBase.IngestedSstPaths)
+			for _, p := range nonChosen {
+				require.NoFileExists(t, path.Join(s.Base(), p.FilesPrefixHint, "monolith"))
+			}
+		})
+	}
+}
+
+func TestMergeMigrationsPreservesIngestedSstPaths(t *testing.T) {
+	m1 := mig(mExtFullBackup("base/a", "base/b"))
+	m2 := mig(mExtFullBackup("layer/c", "layer/d"))
+
+	merged := MergeMigrations(m1, m2)
+
+	require.ElementsMatch(t,
+		[]string{"base/a", "base/b", "layer/c", "layer/d"},
+		merged.IngestedSstPaths,
+	)
+}
+
+func TestMergeAndMigrateToBoundsIngestedSstPathsOverTruncates(t *testing.T) {
+	ctx := context.Background()
+	s := tmp(t)
+	est := MigrationExtension(s)
+
+	placeholder := func(pfx string) {
+		require.NoError(t, s.WriteFile(ctx, path.Join(pfx, "monolith"), []byte("sst")))
+	}
+
+	// Simulate N rounds of: AppendMigration (one finished ingested-SST group at
+	// ascending AsIfTs) followed by truncate advancing TruncatedTo to that same
+	// ts. Each round the previous round's group becomes eligible for cleanup
+	// (Finished=true, GroupTS < TruncatedTo), while the current round's group
+	// stays (GroupTS == TruncatedTo >= TruncatedTo).
+	const rounds = 10
+	prefixOf := func(i int) string { return fmt.Sprintf("ext_backups/%06d", i) }
+
+	for i := 1; i <= rounds; i++ {
+		ts := uint64(i * 10)
+		pfx := prefixOf(i)
+		placeholder(pfx)
+		ingMeta := extFullBkup(prefix(pfx), asIfTS(ts), makeID(), finished())
+		ingMetaPath := pef(t, ingMeta, i, s)
+		pmig(s, uint64(i), mig(mExtFullBackup(ingMetaPath), mTruncatedTo(ts)))
+
+		res, err := est.MergeAndMigrateTo(ctx, math.MaxInt,
+			MMOptSkipLockingInTest(), MMOptAlwaysRunTruncate())
+		require.NoError(t, err)
+		require.NoError(t, multierr.Combine(res.Warnings...),
+			"round %d warnings: %v", i, res.Warnings)
+
+		require.LessOrEqualf(t, len(res.NewBase.IngestedSstPaths), 1,
+			"round %d: expected at most 1 surviving IngestedSstPath, got %d (%v)",
+			i, len(res.NewBase.IngestedSstPaths), res.NewBase.IngestedSstPaths)
+
+		if i > 1 {
+			require.NoFileExistsf(t,
+				path.Join(s.Base(), prefixOf(i-1), "monolith"),
+				"round %d: previous round's ext_backups directory should have been cleaned",
+				i)
+		}
+	}
 }

@@ -109,7 +109,6 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 		sctx := mock.NewContext()
 		copCtx, err := NewCopContextSingleIndex(
 			sctx.GetExprCtx(),
-			sctx.GetDistSQLCtx(),
 			sctx.GetSessionVars().StmtCtx.PushDownFlags(),
 			mockTableInfo, mockIdxInfo, "",
 		)

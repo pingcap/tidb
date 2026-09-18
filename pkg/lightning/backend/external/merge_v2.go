@@ -145,11 +145,10 @@ func MergeOverlappingFilesV2(
 		readTime := time.Since(now)
 		now = time.Now()
 		sorty.MaxGor = uint64(concurrency)
-		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
+		sorty.Sort(len(loaded.kvs), func(i, k, r, s int) bool {
+			if bytes.Compare(loaded.kvs[i].Key, loaded.kvs[k].Key) < 0 { // strict comparator like < or >
 				if r != s {
-					loaded.keys[r], loaded.keys[s] = loaded.keys[s], loaded.keys[r]
-					loaded.values[r], loaded.values[s] = loaded.values[s], loaded.values[r]
+					loaded.kvs[r], loaded.kvs[s] = loaded.kvs[s], loaded.kvs[r]
 				}
 				return true
 			}
@@ -157,8 +156,8 @@ func MergeOverlappingFilesV2(
 		})
 		sortTime := time.Since(now)
 		now = time.Now()
-		for i, key := range loaded.keys {
-			err1 = writer.WriteRow(ctx, key, loaded.values[i])
+		for _, kv := range loaded.kvs {
+			err1 = writer.WriteRow(ctx, kv.Key, kv.Value)
 			if err1 != nil {
 				logutil.Logger(ctx).Warn("write one row to writer failed", zap.Error(err1))
 				return
@@ -169,11 +168,10 @@ func MergeOverlappingFilesV2(
 			zap.Duration("read time", readTime),
 			zap.Duration("sort time", sortTime),
 			zap.Duration("write time", writeTime),
-			zap.Int("key len", len(loaded.keys)))
+			zap.Int("key len", len(loaded.kvs)))
 
 		curStart = curEnd.Clone()
-		loaded.keys = nil
-		loaded.values = nil
+		loaded.kvs = nil
 		loaded.memKVBuffers = nil
 		loaded.size = 0
 

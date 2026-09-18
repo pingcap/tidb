@@ -39,6 +39,7 @@ const (
 	FlagPushDownTopN
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
+	FlagCorrelate
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagResolveExpand

@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -291,6 +292,55 @@ func TestSelectClusterTable(t *testing.T) {
 	instanceAddr, err := infoschema.GetInstanceAddr(tk.Session())
 	require.NoError(t, err)
 	tk.MustQuery("select instance from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows(instanceAddr))
+}
+
+func TestClusterSlowQuerySessionConnectAttrs(t *testing.T) {
+	// setup suite
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	f, err := os.CreateTemp("", "tidb-cluster-slow-*.log")
+	require.NoError(t, err)
+	_, err = f.WriteString(`# Time: 2024-01-15T10:00:00.000000+08:00
+# Txn_start_ts: 123456789
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.5
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
+select * from t;
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	defer func() { require.NoError(t, os.Remove(f.Name())) }()
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = f.Name()
+	})
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("use information_schema")
+	tk.MustExec("set time_zone = '+08:00';")
+
+	rows := tk.MustQuery("select Session_connect_attrs from information_schema.cluster_slow_query " +
+		"where query = 'select * from t;'").Rows()
+	require.Len(t, rows, 1)
+	attrsStr := rows[0][0].(string)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, attrsStr)
+
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$._client_name') from information_schema.cluster_slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"Go-MySQL-Driver"`))
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$.app_name') from information_schema.cluster_slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"test_app"`))
 }
 
 func TestSelectClusterTablePrivilege(t *testing.T) {
@@ -1905,7 +1955,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
-	bigID := tbl.Meta().ID * 10
+	bigID := tbl.Meta().ID*10 + 1
 	bigTableName := ""
 	// set a hard limitation on 10000 to avoid using too much resource
 	for i := 0; i < 10000; i++ {
@@ -1923,7 +1973,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec(fmt.Sprintf("insert into %s values (1)", bigTableName))
 
-	// Now we have two table: t and `bigTableName`. The later one's ID is 10 times the former one.
+	// Now we have two tables whose IDs have overlapping decimal representations.
 	// Then create two session to run TXNs on these two tables
 	txnTK1 := s.newTestKitWithRoot(t)
 	txnTK2 := s.newTestKitWithRoot(t)

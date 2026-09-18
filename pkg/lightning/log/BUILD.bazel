@@ -11,7 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/logutil",
-        "@com_github_aws_aws_sdk_go//aws/awserr",
+        "@com_github_aws_smithy_go//:smithy-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@org_golang_google_grpc//codes",
@@ -35,8 +35,7 @@ go_test(
     deps = [
         ":log",
         "//pkg/util/logutil",
-        "@com_github_aws_aws_sdk_go//aws/awserr",
-        "@com_github_aws_aws_sdk_go//aws/request",
+        "@com_github_aws_smithy_go//:smithy-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",

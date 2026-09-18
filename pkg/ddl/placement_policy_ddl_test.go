@@ -57,9 +57,11 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.Execu
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, false))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
+	historyJob := checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	policyInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	storedPolicy := testGetPolicyByNameFromIS(t, ctx, policyInfo.Name.L)
+	checkPolicyEquals(t, policyInfo, storedPolicy)
+	require.Equal(t, model.StatePublic, historyJob.SchemaState)
 	policyInfo.State = model.StateNone
 	return job
 }

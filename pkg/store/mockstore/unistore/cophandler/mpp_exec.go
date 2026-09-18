@@ -151,13 +151,13 @@ type tableScanExec struct {
 
 func (e *tableScanExec) SkipValue() bool { return false }
 
-func (e *tableScanExec) Process(key, value []byte) error {
+func (e *tableScanExec) Process(key, value []byte, commitTS uint64) error {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = e.decoder.DecodeToChunk(value, handle, e.chk)
+	err = e.decoder.DecodeToChunk(value, commitTS, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -292,6 +292,8 @@ type indexScanExec struct {
 
 	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
 	physTblIDColIdx *int
+	// if common handle key is requested, fill the common handle in this column
+	commonHandleKeyIdx *int
 	// This is used to update the paging range result, updated in next().
 	paging                 *coprocessor.KeyRange
 	chunkLastProcessedKeys []kv.Key
@@ -308,7 +310,7 @@ func (e *indexScanExec) isNewVals(values [][]byte) bool {
 	return false
 }
 
-func (e *indexScanExec) Process(key, value []byte) error {
+func (e *indexScanExec) Process(key, value []byte, _ uint64) error {
 	values, err := tablecodec.DecodeIndexKV(key, value, e.numIdxCols, e.hdlStatus, e.colInfos)
 	if err != nil {
 		return err
@@ -336,6 +338,20 @@ func (e *indexScanExec) Process(key, value []byte) error {
 		tblID := tablecodec.DecodeTableID(key)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
+
+	// If we need common handle key, we should fill it here.
+	if e.commonHandleKeyIdx != nil && *e.commonHandleKeyIdx >= len(values) {
+		h, err := tablecodec.DecodeIndexHandle(key, value, e.numIdxCols)
+		if err != nil {
+			return err
+		}
+		commonHandle, ok := h.(*kv.CommonHandle)
+		if !ok {
+			return errors.New("common handle expected")
+		}
+		e.chk.AppendBytes(*e.commonHandleKeyIdx, commonHandle.Encoded())
+	}
+
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)
 		if e.paging != nil {
@@ -513,9 +529,14 @@ func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts
 		for i := range chk.NumRows() {
 			row := chk.GetRow(i)
 			indexRows = append(indexRows, row)
+			handle, err := e.buildHandle(row)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+
 			sortedHandles = append(sortedHandles, Handle{
 				IndexOrder: rowCnt,
-				Handle:     e.buildIntHandle(row),
+				Handle:     handle,
 			})
 			rowCnt++
 		}
@@ -632,9 +653,12 @@ func (e *indexLookUpExec) regionContainsKey(r *metapb.Region, key []byte) bool {
 		(bytes.Compare(key, r.GetEndKey()) < 0 || len(r.GetEndKey()) == 0)
 }
 
-func (e *indexLookUpExec) buildIntHandle(row chunk.Row) kv.Handle {
+func (e *indexLookUpExec) buildHandle(row chunk.Row) (kv.Handle, error) {
+	if e.isCommonHandle {
+		return kv.NewCommonHandle(row.GetBytes(row.Len() - 1))
+	}
 	i := row.GetInt64(int(e.indexHandleOffsets[0]))
-	return kv.IntHandle(i)
+	return kv.IntHandle(i), nil
 }
 
 func (e *indexLookUpExec) takeIntermediateResults() (ret []*chunk.Chunk) {
@@ -895,9 +919,20 @@ func (e *exchSenderExec) toTiPBChunk(chk *chunk.Chunk) ([]tipb.Chunk, error) {
 }
 
 func (e *exchSenderExec) next() (*chunk.Chunk, error) {
+	var mppCtx context.Context
+	if e.mppCtx != nil {
+		mppCtx = e.mppCtx.Ctx
+	}
 	defer func() {
 		for _, tunnel := range e.tunnels {
-			<-tunnel.connectedCh
+			if mppCtx == nil {
+				<-tunnel.connectedCh
+			} else {
+				select {
+				case <-tunnel.connectedCh:
+				case <-mppCtx.Done():
+				}
+			}
 			close(tunnel.ErrCh)
 			close(tunnel.DataCh)
 		}

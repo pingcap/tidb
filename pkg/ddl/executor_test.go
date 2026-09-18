@@ -21,11 +21,11 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -33,6 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -57,7 +60,7 @@ func TestGetDDLJobs(t *testing.T) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err := addDDLJobs(sess, txn, jobs[i])
+		err := addDDLJobs(sess, jobs[i])
 		require.NoError(t, err)
 
 		currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
@@ -100,17 +103,14 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	_, err := sess.Execute(context.Background(), "begin")
 	require.NoError(t, err)
 
-	txn, err := sess.Txn(true)
-	require.NoError(t, err)
-
 	// insert 5 drop table jobs to DefaultJobListKey queue
-	enQueueDDLJobs(t, sess, txn, model.ActionDropTable, 10, 15)
+	enQueueDDLJobs(t, sess, model.ActionDropTable, 10, 15)
 
 	// insert 5 create table jobs to DefaultJobListKey queue
-	enQueueDDLJobs(t, sess, txn, model.ActionCreateTable, 0, 5)
+	enQueueDDLJobs(t, sess, model.ActionCreateTable, 0, 5)
 
 	// insert add index jobs to AddIndexJobListKey queue
-	enQueueDDLJobs(t, sess, txn, model.ActionAddIndex, 5, 10)
+	enQueueDDLJobs(t, sess, model.ActionAddIndex, 5, 10)
 
 	currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 	require.NoError(t, err)
@@ -145,14 +145,82 @@ func TestIsJobRollbackable(t *testing.T) {
 	}
 }
 
-func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
+func TestWrappedQueryInterruptedRetriesDDLJobCancellation(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	schedulerBlocked := make(chan struct{})
+	resumeScheduler := make(chan struct{})
+	var blockSchedulerOnce sync.Once
+	var resumeSchedulerOnce sync.Once
+	releaseScheduler := func() {
+		resumeSchedulerOnce.Do(func() {
+			close(resumeScheduler)
+		})
+	}
+	t.Cleanup(releaseScheduler)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		blockSchedulerOnce.Do(func() {
+			close(schedulerBlocked)
+			<-resumeScheduler
+		})
+	})
+	require.Eventually(t, func() bool {
+		select {
+		case <-schedulerBlocked:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFailedCommandOnConcurencyDDL", "1*return(true)->return(false)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
+		// HandleSignal returns a stack-bearing error, so this exercises semantic
+		// equality instead of direct sentinel equality.
+		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tk.ExecToErr("alter table t add index idx(a)")
+	}()
+
+	checkTK := testkit.NewTestKit(t, store)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		jobs, err := ddl.GetAllDDLJobs(context.Background(), checkTK.Session())
+		if !assert.NoError(c, err) {
+			return
+		}
+		assert.True(c, slices.ContainsFunc(jobs, func(job *model.Job) bool {
+			return job.Type == model.ActionAddIndex && job.State == model.JobStateCancelling
+		}))
+	}, 5*time.Second, 10*time.Millisecond)
+	releaseScheduler()
+
+	var execErr error
+	require.Eventually(t, func() bool {
+		select {
+		case execErr = <-errCh:
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond)
+	require.True(t, dbterror.ErrCancelledDDLJob.Equal(execErr), execErr)
+	tk.MustQuery("show index from t").Check(testkit.Rows())
+}
+
+func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, jobType model.ActionType, start, end int) {
 	for i := start; i < end; i++ {
 		job := &model.Job{
 			ID:       int64(i),
 			SchemaID: 1,
 			Type:     jobType,
 		}
-		err := addDDLJobs(sess, txn, job)
+		err := addDDLJobs(sess, job)
 		require.NoError(t, err)
 	}
 }

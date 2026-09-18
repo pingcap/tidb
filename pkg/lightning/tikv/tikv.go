@@ -154,7 +154,7 @@ func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32,
 				ResourceControlContext: &kvrpcpb.ResourceControlContext{
 					ResourceGroupName: resourceGroupName,
 				},
-				RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+				RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeImport),
 			},
 		})
 		return ignoreUnimplementedError(err, task.Logger)

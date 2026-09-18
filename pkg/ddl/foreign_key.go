@@ -292,7 +292,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 		}
 	}
 	// check refer columns should have index.
-	if model.FindIndexByColumns(referTblInfo, referTblInfo.Indices, fkInfo.RefCols...) == nil {
+	if model.FindIndexByColumnsForForeignKey(referTblInfo, referTblInfo.Indices, fkInfo.RefCols...) == nil {
 		return infoschema.ErrForeignKeyNoIndexInParent.GenWithStackByArgs(fkInfo.Name, fkInfo.RefTable)
 	}
 	return nil
@@ -309,19 +309,16 @@ func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName 
 	for _, fkInfo := range tbInfo.ForeignKeys {
 		for i, col := range fkInfo.Cols {
 			if col.L == originalCol.Name.L {
-				if !is.TableExists(fkInfo.RefSchema, fkInfo.RefTable) {
-					continue
-				}
 				referTable, err := is.TableByName(context.Background(), fkInfo.RefSchema, fkInfo.RefTable)
 				if err != nil {
 					return err
 				}
 				referCol := model.FindColumnInfo(referTable.Meta().Columns, fkInfo.RefCols[i].L)
 				if referCol == nil {
-					continue
+					return infoschema.ErrColumnNotExists.GenWithStackByArgs(fkInfo.RefCols[i].L, referTable.Meta().Name.L)
 				}
 				if newCol.GetType() != referCol.GetType() {
-					return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(originalCol.Name, fkInfo.RefCols[i], fkInfo.Name)
+					return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(newCol.Name, fkInfo.RefCols[i], fkInfo.Name)
 				}
 				if !isAcceptableForeignKeyColumnChange(newCol, originalCol, referCol) {
 					return dbterror.ErrForeignKeyColumnCannotChange.GenWithStackByArgs(originalCol.Name, fkInfo.Name)
@@ -456,7 +453,7 @@ func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInf
 		remainIdxs = append(remainIdxs, idx)
 	}
 	checkFn := func(cols []pmodel.CIStr) error {
-		if !model.IsIndexPrefixCovered(tbInfo, idxInfo, cols...) {
+		if !model.IsIndexPrefixCoveredForForeignKey(tbInfo, idxInfo, cols...) {
 			return nil
 		}
 		if tbInfo.PKIsHandle && len(cols) == 1 {
@@ -466,7 +463,7 @@ func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInf
 			}
 		}
 		for _, index := range remainIdxs {
-			if model.IsIndexPrefixCovered(tbInfo, index, cols...) {
+			if model.IsIndexPrefixCoveredForForeignKey(tbInfo, index, cols...) {
 				return nil
 			}
 		}
@@ -664,7 +661,7 @@ func checkAddForeignKeyValidInOwner(infoCache *infoschema.InfoCache, schema stri
 			return nil
 		}
 	}
-	if model.FindIndexByColumns(tbInfo, tbInfo.Indices, fk.Cols...) == nil {
+	if model.FindIndexByColumnsForForeignKey(tbInfo, tbInfo.Indices, fk.Cols...) == nil {
 		return errors.Errorf("Failed to add the foreign key constraint. Missing index for '%s' foreign key columns in the table '%s'", fk.Name, tbInfo.Name)
 	}
 	return nil

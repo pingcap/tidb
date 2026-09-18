@@ -22,7 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -134,6 +136,19 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	}, *tb5Info.ForeignKeys[0])
 	require.Equal(t, 1, len(tb5Info.Indices))
 	require.Equal(t, "fk_1", tb5Info.Indices[0].Name.L)
+
+	tk.MustExec("create table partial_parent (id int key)")
+	tk.MustExec("create table partial_child_unsafe (id int key, pid int, marker int, index unsafe_pid(pid) where marker is not null, foreign key fk_pid(pid) references partial_parent(id))")
+	partialUnsafeInfo := getTableInfo(t, dom, "test2", "partial_child_unsafe")
+	require.Equal(t, 2, len(partialUnsafeInfo.Indices))
+	require.Equal(t, "unsafe_pid", partialUnsafeInfo.Indices[0].Name.L)
+	require.Equal(t, "fk_pid", partialUnsafeInfo.Indices[1].Name.L)
+
+	tk.MustExec("create table partial_child_safe (id int key, pid int, index safe_pid(pid) where pid is not null, foreign key fk_pid(pid) references partial_parent(id))")
+	partialSafeInfo := getTableInfo(t, dom, "test2", "partial_child_safe")
+	require.Equal(t, 1, len(partialSafeInfo.Indices))
+	require.Equal(t, "safe_pid", partialSafeInfo.Indices[0].Name.L)
+
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
 	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
@@ -1166,6 +1181,42 @@ func TestAddForeignKey(t *testing.T) {
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test unsafe partial index should not be used as the child foreign key index.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, b int, c int, index idx_b(b) where c is not null);")
+	tk.MustExec("alter table t2 add constraint fk_b foreign key (b) references t1(id);")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 2, len(tbl2Info.Indices))
+	require.Equal(t, "idx_b", tbl2Info.Indices[0].Name.L)
+	require.Equal(t, "fk_b", tbl2Info.Indices[1].Name.L)
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("insert into t2 values (1, 1, null);")
+	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop index idx_b;")
+	tk.MustGetDBError("alter table t2 drop index fk_b", dbterror.ErrDropIndexNeededInForeignKey)
+
+	// Test IS NOT NULL partial indexes are safe for foreign key checks.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, b int, index idx_b(b) where b is not null);")
+	tk.MustExec("alter table t2 add constraint fk_b foreign key (b) references t1(id);")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 1, len(tbl2Info.Indices))
+	require.Equal(t, "idx_b", tbl2Info.Indices[0].Name.L)
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("insert into t2 values (1, 1);")
+	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+
+	// Test IS NOT NULL partial indexes are safe for referenced columns.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key, a int, index idx_a(a) where a is not null);")
+	tk.MustExec("create table t2 (id int key, b int, index idx_b(b));")
+	tk.MustExec("alter table t2 add constraint fk_b foreign key (b) references t1(a);")
+	tk.MustExec("insert into t1 values (1, 10);")
+	tk.MustExec("insert into t2 values (1, 10);")
+	tk.MustGetDBError("insert into t2 values (2, 20)", plannererrors.ErrNoReferencedRow2)
 }
 
 func TestAlterTableAddForeignKeyError(t *testing.T) {
@@ -1289,6 +1340,30 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 				"create table t2 (a int, b varchar(10));",
 			},
 			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int, index idx_a(a) where b = 1);",
+				"create table t2 (a int, b int, index(b));",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, index idx_a(a) where a is null);",
+				"create table t2 (a int, b int, index(b));",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int, index idx_a(a) where b is not null);",
+				"create table t2 (a int, b int, index(b));",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(a)",
 			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
 		},
 		{
@@ -1631,4 +1706,85 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 			require.Equal(t, ca.err2, err2.Error())
 		}
 	}
+}
+
+func TestForeignKeyWithTableMode(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	de := domain.DDLExecutor()
+	tk := testkit.NewTestKit(t, store)
+	ctx := testkit.NewTestKit(t, store).Session()
+	tk.MustExec("use test")
+	tk.MustExec(`create table parent_1(id int primary key, name varchar(50), index idx_id(id))`)
+	tk.MustExec(`create table parent_2(id int primary key, name varchar(50), index idx_id(id))`)
+	tk.MustExec(`create table parent_3(id int primary key, name varchar(50), index idx_id(id))`)
+	tk.MustExec(`create table parent_4(id int primary key, name varchar(50), index idx_id(id))`)
+
+	// Create child tables with different FK options, include cascade, set null,
+	// restrict, no action and set default options.
+	childTables := []string{"child_delete_cascade", "child_update_cascade", "child_delete_set_null",
+		"child_update_set_null", "child_delete_restrict", "child_update_no_action", "child_update_set_default"}
+	// CASCADE option
+	tk.MustExec(`create table child_delete_cascade(id int primary key, parent_id int,
+        constraint fk_cascade foreign key (parent_id) references parent_1(id) on delete cascade)`)
+	tk.MustExec(`create table child_update_cascade(id int primary key, parent_id int,
+        constraint fk_cascade foreign key (parent_id) references parent_2(id) on update cascade)`)
+	// SET NULL option
+	tk.MustExec(`create table child_delete_set_null(id int primary key, parent_id int,
+        constraint fk_cascade foreign key (parent_id) references parent_3(id) on delete SET NULL)`)
+	tk.MustExec(`create table child_update_set_null(id int primary key, parent_id int,
+        constraint fk_cascade foreign key (parent_id) references parent_4(id) on update SET NULL)`)
+	// RESTRICT/NO ACTION/SET DEFAULT option
+	tk.MustExec(`create table child_delete_restrict(id int primary key, parent_id int,
+		constraint fk_cascade foreign key (parent_id) references parent_2(id) on delete restrict)`)
+	tk.MustExec(`create table child_update_no_action(id int primary key, parent_id int,
+		constraint fk_cascade foreign key (parent_id) references parent_3(id) on update no action)`)
+	tk.MustExec(`create table child_update_set_default(id int primary key, parent_id int,
+		constraint fk_cascade foreign key (parent_id) references parent_3(id) on update set default)`)
+	// Init test data
+	tk.MustExec(`insert into parent_1 values(1, 'parent_1')`)
+	tk.MustExec(`insert into child_delete_cascade values(111, 1)`)
+	tk.MustExec(`insert into parent_2 values(2, 'parent_2'), (22222, 'parent_22')`)
+	tk.MustExec(`insert into child_update_cascade values(222, 2)`)
+	tk.MustExec(`insert into child_delete_restrict values(222222, 22222)`)
+	tk.MustExec(`insert into parent_3 values(3, 'parent_3'), (33333, 'parent_33'), (333333, 'parent_333')`)
+	tk.MustExec(`insert into child_delete_set_null values(333, 3)`)
+	tk.MustExec(`insert into child_update_no_action values(333333, 33333)`)
+	tk.MustExec(`insert into child_update_set_default values(3333333, 333333)`)
+	tk.MustExec(`insert into parent_4 values(4, 'parent_4'),(5, 'parent_5')`)
+	tk.MustExec(`insert into child_update_set_null values(444, 4), (555, 5)`)
+	// Set table mode to import for all child tables
+	dbInfo, ok := domain.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	for _, tbl := range childTables {
+		tblInfo := getTableInfo(t, domain, "test", tbl)
+		testutil.SetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
+	}
+
+	// Test operations for each reference option type
+	// 1. CASCADE
+	tk.MustGetErrCode("delete from parent_1 where id = 1", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("update parent_2 set id = 22 where id = 2", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("insert into parent_2 values (2, 'parent_11') on duplicate key update id =22", errno.ErrProtectedTableMode)
+	// 2. SET NULL
+	tk.MustGetErrCode("delete from parent_3 where id = 3", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("update parent_4 set id = 44 where id = 4", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("insert into parent_4 values (4, 'parent_44') on duplicate key update id =44", errno.ErrProtectedTableMode)
+
+	// set table mode to normal, expect all operations are allowed
+	for _, tbl := range childTables {
+		tblInfo := getTableInfo(t, domain, "test", tbl)
+		testutil.SetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeNormal)
+	}
+	tk.MustExec("delete from parent_1 where id = 1")
+	tk.MustQuery("select * from child_delete_cascade").Check(testkit.Rows())
+	tk.MustExec("update parent_2 set id = 22 where id = 2")
+	tk.MustQuery("select * from child_update_cascade").Check(testkit.Rows("222 22"))
+	tk.MustExec("insert into parent_2 values (22, 'parent_11') on duplicate key update id =222")
+	tk.MustQuery("select * from child_update_cascade").Check(testkit.Rows("222 222"))
+	tk.MustExec("delete from parent_3 where id = 3")
+	tk.MustQuery("select * from child_delete_set_null").Check(testkit.Rows("333 <nil>"))
+	tk.MustExec("update parent_4 set id = 44 where id = 4")
+	tk.MustQuery("select * from child_update_set_null").Check(testkit.Rows("444 <nil>", "555 5"))
+	tk.MustExec("insert into parent_4 values (5, 'parent_55') on duplicate key update id =55")
+	tk.MustQuery("select * from child_update_set_null").Check(testkit.Rows("444 <nil>", "555 <nil>"))
 }

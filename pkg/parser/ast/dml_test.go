@@ -15,6 +15,7 @@ package ast_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -87,6 +88,43 @@ func TestTableNameRestore(t *testing.T) {
 		return node.(*CreateTableStmt).Table
 	}
 	runNodeRestoreTest(t, testCases, "CREATE TABLE %s (id VARCHAR(128) NOT NULL);", extractNodeFunc)
+}
+
+func TestTableSourceRestoreRejectsNonDerivedTableMetadata(t *testing.T) {
+	tableSource := &TableSource{
+		Source: &Join{Left: &TableSource{Source: &TableName{}}},
+	}
+
+	for _, tc := range []struct {
+		name    string
+		prepare func()
+		errMsg  string
+	}{
+		{
+			name: "lateral join source",
+			prepare: func() {
+				tableSource.Lateral = true
+				tableSource.ColumnNames = nil
+			},
+			errMsg: "LATERAL cannot be applied to a table name, only to derived tables",
+		},
+		{
+			name: "column alias list join source",
+			prepare: func() {
+				tableSource.Lateral = false
+				tableSource.ColumnNames = append(tableSource.ColumnNames[:0], tableSource.AsName)
+			},
+			errMsg: "column alias list cannot be applied to a table name",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.prepare()
+
+			var sb strings.Builder
+			err := tableSource.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			require.EqualError(t, err, tc.errMsg)
+		})
+	}
 }
 
 func TestTableNameIndexHintsRestore(t *testing.T) {
@@ -627,6 +665,10 @@ func TestImportIntoSecureText(t *testing.T) {
 		{
 			input:   "import into t from 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
 			secured: "\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'\\E",
+		},
+		{
+			input:   "import into t from 's3://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb' with CLOUD_STORAGE_uri='s3://bucket/prefix?access-key=cccccc&secret-access-key=dddddd'",
+			secured: `^IMPORT INTO .t. FROM \Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|')){2} WITH cloud_storage_uri=\Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|')){2}`,
 		},
 	}
 

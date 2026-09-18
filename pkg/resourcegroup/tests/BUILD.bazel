@@ -6,7 +6,7 @@ go_test(
     srcs = ["resource_group_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//pkg/ddl/resourcegroup",
         "//pkg/domain",
@@ -15,6 +15,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/auth",
         "//pkg/parser/model",
+        "//pkg/resourcegroup/runaway",
         "//pkg/server",
         "//pkg/sessionctx",
         "//pkg/testkit",

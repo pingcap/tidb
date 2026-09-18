@@ -267,6 +267,9 @@ func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
 
 // UnregisterLightningCommonMetricsForDDL unregisters the registered common metrics.
 func UnregisterLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common) {
+	if metrics == nil {
+		return
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	metrics.UnregisterFrom(prometheus.DefaultRegisterer)

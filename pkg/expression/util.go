@@ -16,10 +16,12 @@ package expression
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -124,6 +126,37 @@ func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 	result := make([]*Column, 0, 8)
 	return extractColumns(result, expr, nil)
+}
+
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr, filter)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
+}
+
+func extractColumnsSlices(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		if filter == nil || filter(v) {
+			result = append(result, v)
+		}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsSlices(result, arg, filter)
+		}
+	}
+	return result
 }
 
 // ExtractCorColumns extracts correlated column from given expression.
@@ -407,6 +440,7 @@ func SetExprColumnInOperand(expr Expression) Expression {
 		for i, arg := range args {
 			args[i] = SetExprColumnInOperand(arg)
 		}
+		v.CleanHashCode()
 	}
 	return expr
 }
@@ -472,7 +506,9 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
-					e.(*ScalarFunction).Function.getArgs()[0] = newArg
+					sf := e.(*ScalarFunction)
+					sf.Function.getArgs()[0] = newArg
+					sf.CleanHashCode()
 				}
 				e.SetCoercibility(v.Coercibility())
 				e.GetType(ctx.GetEvalCtx()).SetFlag(flag)
@@ -654,7 +690,9 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf = BuildCastFunction(ctx, newArgs[0], x.RetType)
 		} else if x.FuncName.L == ast.Grouping {
 			newSf = x.Clone()
-			newSf.(*ScalarFunction).GetArgs()[0] = newArgs[0]
+			sf := newSf.(*ScalarFunction)
+			sf.GetArgs()[0] = newArgs[0]
+			sf.CleanHashCode()
 		} else {
 			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
 		}
@@ -747,6 +785,18 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.EQ:     opcode.EQ,
 	opcode.NE:     opcode.NE,
 	opcode.NullEQ: opcode.NullEQ,
+}
+
+// CompareOpMap records all comparison operators.
+var CompareOpMap = map[string]struct{}{
+	ast.LT:     {},
+	ast.GE:     {},
+	ast.GT:     {},
+	ast.LE:     {},
+	ast.EQ:     {},
+	ast.NE:     {},
+	ast.NullEQ: {},
+	ast.In:     {},
 }
 
 func pushNotAcrossArgs(ctx BuildContext, exprs []Expression, not bool) ([]Expression, bool) {
@@ -1026,17 +1076,12 @@ func containOuterNot(expr Expression, not bool) bool {
 
 // Contains tests if `exprs` contains `e`.
 func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
-	for _, expr := range exprs {
-		// Check string equivalence if one of the expressions is a clone.
-		sameString := false
-		if e != nil && expr != nil {
-			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
+	return slices.ContainsFunc(exprs, func(expr Expression) bool {
+		if expr == nil {
+			return e == nil
 		}
-		if e == expr || sameString {
-			return true
-		}
-	}
-	return false
+		return e == expr || expr.Equal(ectx, e)
+	})
 }
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.

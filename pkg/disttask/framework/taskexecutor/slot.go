@@ -25,10 +25,10 @@ import (
 // slotManager is used to manage the slots of the executor.
 type slotManager struct {
 	sync.RWMutex
-	// taskID2Index is the index of the task
+	// taskID2Index maps from task ID to index of the task in executorTasks.
 	taskID2Index map[int64]int
 	// executorTasks is used to record the tasks that is running on the executor,
-	// the slice is sorted in reverse task order.
+	// the slice is sorted in reverse task rank order.
 	executorTasks []*proto.TaskBase
 
 	capacity int
@@ -48,9 +48,14 @@ func newSlotManager(capacity int) *slotManager {
 }
 
 // subtasks inside a task will be run in serial, so they takes task.Concurrency slots.
-func (sm *slotManager) alloc(task *proto.TaskBase) {
+func (sm *slotManager) alloc(task *proto.TaskBase) bool {
 	sm.Lock()
 	defer sm.Unlock()
+
+	canAlloc, tasksNeedFree := sm.canAlloc0(task)
+	if !canAlloc || len(tasksNeedFree) > 0 {
+		return false
+	}
 
 	sm.executorTasks = append(sm.executorTasks, task)
 	slices.SortFunc(sm.executorTasks, func(a, b *proto.TaskBase) int {
@@ -60,6 +65,7 @@ func (sm *slotManager) alloc(task *proto.TaskBase) {
 		sm.taskID2Index[slotInfo.ID] = index
 	}
 	sm.available.Add(int32(-task.Concurrency))
+	return true
 }
 
 func (sm *slotManager) free(taskID int64) {
@@ -79,11 +85,17 @@ func (sm *slotManager) free(taskID int64) {
 	}
 }
 
-// canAlloc is used to check whether the instance has enough slots to run the task.
 func (sm *slotManager) canAlloc(task *proto.TaskBase) (canAlloc bool, tasksNeedFree []*proto.TaskBase) {
 	sm.RLock()
 	defer sm.RUnlock()
+	return sm.canAlloc0(task)
+}
 
+// canAlloc is used to check whether the instance can run the task, it returns 2
+// values:
+// - canAlloc: whether the instance can run the task.
+// - tasksNeedFree: the tasks that need to be preempted before running this task.
+func (sm *slotManager) canAlloc0(task *proto.TaskBase) (canAlloc bool, tasksNeedFree []*proto.TaskBase) {
 	if int(sm.available.Load()) >= task.Concurrency {
 		return true, nil
 	}
@@ -101,6 +113,28 @@ func (sm *slotManager) canAlloc(task *proto.TaskBase) (canAlloc bool, tasksNeedF
 	}
 
 	return false, nil
+}
+
+// exchange is used to exchange the slots of old task with the new one.
+// if there is not enough slots, it will return false.
+func (sm *slotManager) exchange(newTask *proto.TaskBase) bool {
+	sm.Lock()
+	defer sm.Unlock()
+
+	idx, ok := sm.taskID2Index[newTask.ID]
+	if !ok {
+		return false
+	}
+
+	old := sm.executorTasks[idx]
+	delta := newTask.Concurrency - old.Concurrency
+	if delta > 0 && sm.availableSlots() < delta {
+		return false
+	}
+
+	sm.available.Add(int32(-delta))
+	sm.executorTasks[idx] = newTask
+	return true
 }
 
 func (sm *slotManager) availableSlots() int {

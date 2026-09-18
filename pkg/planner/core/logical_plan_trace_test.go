@@ -283,7 +283,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertAction: "join order becomes ((t1*t2)*t3) from original ((t1*t2)*t3)",
-					assertReason: "join cost during reorder: [[((t1*t2)*t3), cost:58125],[(t1*t2), cost:32500],[(t1*t3), cost:32500],[t1, cost:10000],[t2, cost:10000],[t3, cost:10000]]",
+					assertReason: "join cost during reorder: [[((t1*t2)*t3), cost:58125],[((t2*t1)*t3), cost:58125],[(t1*t2), cost:32500],[(t1*t3), cost:32500],[(t2*t1), cost:32500],[(t2*t3), cost:32500],[t1, cost:10000],[t2, cost:10000],[t3, cost:10000]]",
 				},
 			},
 		},
@@ -414,6 +414,8 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		require.NoError(t, err, comment)
 		sctx := MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		// new join reorder doesn't support trace.
+		sctx.GetSessionVars().TiDBOptEnableAdvancedJoinReorder = false
 		sctx.GetSessionVars().AllowAggPushDown = true
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)

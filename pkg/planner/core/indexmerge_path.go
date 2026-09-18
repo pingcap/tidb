@@ -140,6 +140,12 @@ func generateNormalIndexPartialPaths4DNF(
 ) (paths []*util.AccessPath, needSelection bool, usedMap []bool) {
 	paths = make([]*util.AccessPath, 0, len(dnfItems))
 	usedMap = make([]bool, len(dnfItems))
+	candidatePaths = slices.DeleteFunc(candidatePaths, func(path *util.AccessPath) bool {
+		return path.Index != nil && path.Index.HasCondition()
+	})
+	if len(candidatePaths) == 0 {
+		return nil, false, usedMap
+	}
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for offset, item := range dnfItems {
 		cnfItems := expression.SplitCNFItems(item)
@@ -287,7 +293,117 @@ func generateIndexMergeOrPaths(ds *logicalop.DataSource, filters []expression.Ex
 		// only after all partial path is determined, can the countAfterAccess be done, delay it to converging.
 		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, possiblePath)
 	}
+	// release-8.5 does not have the unified OR IndexMerge path from master
+	// (#58396). Keep the old direct DNF generator above, then run a narrow
+	// fallback for OR branches that need top-level AND filters to form ranges.
+	generateIndexMergeOrPathsWithTopLevelFilters(ds, filters, ds.PossibleAccessPaths[:usedIndexCount])
 	return nil
+}
+
+// generateIndexMergeOrPathsWithTopLevelFilters is a release-8.5 backport shim
+// for the master behavior introduced by #58396. On master, #68962 only needs to
+// teach checkAccessFilter4IdxCol() that ordinary-column IN can be an access
+// filter, because the unified OR IndexMerge path already retries OR branches
+// with top-level AND filters. release-8.5 still uses the old direct DNF
+// generator, so cases like e=1 AND (a IN (...) OR b IN (...)) need this
+// fallback to compose e=1 with each OR branch.
+func generateIndexMergeOrPathsWithTopLevelFilters(
+	ds *logicalop.DataSource,
+	filters []expression.Expression,
+	candidatePaths []*util.AccessPath,
+) {
+	normalCandidatePaths := make([]*util.AccessPath, 0, len(candidatePaths))
+	for _, path := range candidatePaths {
+		if !isMVIndexPath(path) {
+			normalCandidatePaths = append(normalCandidatePaths, path)
+		}
+	}
+	if len(normalCandidatePaths) <= 1 {
+		return
+	}
+
+	for current, filter := range filters {
+		sf, ok := filter.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.LogicOr {
+			continue
+		}
+		dnfItems := expression.SplitDNFItems(sf)
+		// If the old release-8.5 OR generator can already build a normal
+		// multi-index OR path directly, do not add a duplicate fallback path.
+		if normalORIndexMergeDirectlyUsable(ds, dnfItems, normalCandidatePaths) {
+			continue
+		}
+		unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
+			ds,
+			dnfItems,
+			normalCandidatePaths,
+		)
+		finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
+			ds,
+			filters,
+			current,
+			normalCandidatePaths,
+			unfinishedIndexMergePath,
+		)
+		if indexMergeUsesMultipleAccessPaths(finishedIndexMergePath) {
+			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, finishedIndexMergePath)
+		}
+	}
+}
+
+// normalORIndexMergeDirectlyUsable mirrors the success condition of the old
+// direct DNF generator for ordinary indexes. It is intentionally conservative:
+// if every OR item already maps to usable paths and those paths span multiple
+// access paths, the fallback is unnecessary.
+func normalORIndexMergeDirectlyUsable(
+	ds *logicalop.DataSource,
+	dnfItems []expression.Expression,
+	candidatePaths []*util.AccessPath,
+) bool {
+	if len(dnfItems) <= 1 {
+		return false
+	}
+	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
+	indexMap := make(map[int64]struct{})
+	for _, item := range dnfItems {
+		cnfItems := expression.SplitCNFItems(item)
+		pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
+		for _, cnfItem := range cnfItems {
+			if expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
+				pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
+			}
+		}
+		itemPaths := accessPathsForConds(ds, pushedDownCNFItems, candidatePaths)
+		if len(itemPaths) == 0 {
+			return false
+		}
+		for _, path := range itemPaths {
+			if path.IsTablePath() {
+				indexMap[-1] = struct{}{}
+			} else if path.Index != nil {
+				indexMap[path.Index.ID] = struct{}{}
+			}
+		}
+	}
+	return len(indexMap) > 1
+}
+
+// indexMergeUsesMultipleAccessPaths keeps the fallback aligned with normal
+// non-MV OR IndexMerge behavior. A single access path wrapped in IndexMerge does
+// not provide a useful alternative and may only disturb plan selection.
+func indexMergeUsesMultipleAccessPaths(path *util.AccessPath) bool {
+	if path == nil {
+		return false
+	}
+	indexMap := make(map[int64]struct{})
+	for _, partialPath := range path.PartialIndexPaths {
+		if partialPath.IsTablePath() {
+			indexMap[-1] = struct{}{}
+		} else if partialPath.Index != nil {
+			indexMap[partialPath.Index.ID] = struct{}{}
+		}
+	}
+	return len(indexMap) > 1
 }
 
 // isInIndexMergeHints returns true if the input index name is not excluded by the IndexMerge hints, which means either
@@ -626,7 +742,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 			ds.Table.Meta(),
 			possibleMVIndexPaths[idx].Index,
-			ds.TblCols,
+			ds.TblColsByID,
 			true,
 		)
 		if !ok {
@@ -719,7 +835,7 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 		skipRangeScanCheck := fixcontrol.GetBoolWithDefault(
 			ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
 			fixcontrol.Fix52869,
-			false,
+			true,
 		)
 		if !skipRangeScanCheck {
 			for i := 1; i < len(ds.PossibleAccessPaths); i++ {
@@ -1051,7 +1167,7 @@ func generateIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, fil
 		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 			ds.Table.Meta(),
 			ds.PossibleAccessPaths[idx].Index,
-			ds.TblCols,
+			ds.TblColsByID,
 			true,
 		)
 		if !ok {
@@ -1288,21 +1404,16 @@ func buildPartialPath4MVIndex(
 func PrepareIdxColsAndUnwrapArrayType(
 	tableInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
-	tblCols []*expression.Column,
+	tblColsByID map[int64]*expression.Column,
 	checkOnly1ArrayTypeCol bool,
 ) (idxCols []*expression.Column, ok bool) {
+	colInfos := tableInfo.Cols()
 	var virColNum = 0
 	for i := range idxInfo.Columns {
 		colOffset := idxInfo.Columns[i].Offset
-		colMeta := tableInfo.Cols()[colOffset]
-		var col *expression.Column
-		for _, c := range tblCols {
-			if c.ID == colMeta.ID {
-				col = c
-				break
-			}
-		}
-		if col == nil { // unexpected, no vir-col on this MVIndex
+		colMeta := colInfos[colOffset]
+		col, found := tblColsByID[colMeta.ID]
+		if !found { // unexpected, no vir-col on this MVIndex
 			return nil, false
 		}
 		if col.GetStaticType().IsArray() {
@@ -1341,7 +1452,7 @@ func collectFilters4MVIndex(
 				usedAsAccess[i] = true
 				found = true
 				// access filter type on mv col overrides normal col for the return value of this function
-				if accessTp == unspecifiedFilterTp || accessTp == eqOnNonMVColTp {
+				if accessTp == unspecifiedFilterTp || accessTp == eqOrInOnNonMVColTp {
 					accessTp = tp
 				}
 				break
@@ -1496,7 +1607,7 @@ func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]st
 
 const (
 	unspecifiedFilterTp int = iota
-	eqOnNonMVColTp
+	eqOrInOnNonMVColTp
 	multiValuesOROnMVColTp
 	multiValuesANDOnMVColTp
 	singleValueOnMVColTp
@@ -1590,7 +1701,23 @@ func checkAccessFilter4IdxCol(
 	}
 
 	// else: non virtual column
-	if sf.FuncName.L != ast.EQ { // only support EQ now
+	if sf.FuncName.L == ast.In {
+		args := sf.GetArgs()
+		if len(args) < 2 {
+			return false, unspecifiedFilterTp
+		}
+		c, isCol := args[0].(*expression.Column)
+		if !isCol || !c.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
+			return false, unspecifiedFilterTp
+		}
+		for _, arg := range args[1:] {
+			if _, isCon := arg.(*expression.Constant); !isCon {
+				return false, unspecifiedFilterTp
+			}
+		}
+		return true, eqOrInOnNonMVColTp
+	}
+	if sf.FuncName.L != ast.EQ {
 		return false, unspecifiedFilterTp
 	}
 	args := sf.GetArgs()
@@ -1609,7 +1736,7 @@ func checkAccessFilter4IdxCol(
 		return false, unspecifiedFilterTp
 	}
 	if argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
-		return true, eqOnNonMVColTp
+		return true, eqOrInOnNonMVColTp
 	}
 	return false, unspecifiedFilterTp
 }

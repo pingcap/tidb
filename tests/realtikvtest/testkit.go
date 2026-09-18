@@ -27,8 +27,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -94,7 +95,7 @@ func RunTestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		// the resolveFlushedLocks goroutine runs in the background to commit or rollback locks.
 		goleak.IgnoreAnyFunction("github.com/tikv/client-go/v2/txnkv/transaction.(*twoPhaseCommitter).resolveFlushedLocks.func1"),
-		goleak.Cleanup(ingest.CheckIngestLeakageForTest),
+		goleak.Cleanup(testutil.CheckIngestLeakageForTest),
 	}
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
@@ -124,7 +125,6 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
-		storeBak := config.GetGlobalConfig().Store
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 			conf.KeyspaceName = *KeyspaceName
@@ -135,10 +135,6 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
-		// TestGetTSFailDirtyState depends on the dirty state to work, i.e. some
-		// special branch on uni-store, else it causes DATA RACE, so we need to switch
-		// back to make sure it works, see https://github.com/pingcap/tidb/issues/57221
-		config.GetGlobalConfig().Store = storeBak
 		sm := testkit.MockSessionManager{}
 		dom.InfoSyncer().SetSessionManager(&sm)
 		tk := testkit.NewTestKit(t, store)
@@ -152,10 +148,13 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 				tables = append(tables, fmt.Sprintf("`%v`", row[0]))
 			}
 			for _, table := range tables {
-				tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
+				err := tk.ExecToErr(fmt.Sprintf("alter table %s nocache", table))
+				if err != nil && !infoschema.ErrTableNotExists.Equal(err) {
+					require.NoError(t, err)
+				}
 			}
 			if len(tables) > 0 {
-				tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
+				tk.MustExec(fmt.Sprintf("drop table if exists %s", strings.Join(tables, ",")))
 			}
 		}
 	} else {

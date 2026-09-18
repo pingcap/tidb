@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -383,6 +384,12 @@ func (builder *RequestBuilder) SetPaging(paging bool) *RequestBuilder {
 // SetConcurrency sets "Concurrency" for "kv.Request".
 func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	builder.Request.Concurrency = concurrency
+	return builder
+}
+
+// SetCoprRequestRateLimit sets a shared in-flight cop request limiter for this request.
+func (builder *RequestBuilder) SetCoprRequestRateLimit(rateLimit *util.RateLimit) *RequestBuilder {
+	builder.Request.CoprRequestRateLimit = rateLimit
 	return builder
 }
 

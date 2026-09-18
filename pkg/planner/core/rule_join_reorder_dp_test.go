@@ -238,3 +238,276 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	expected := "MockJoin{MockJoin{a, b}, MockJoin{c, d}}"
 	require.Equal(t, expected, planToString(result))
 }
+
+func TestInjectedJoinExprMaterializationSafety(t *testing.T) {
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	ctx.GetSessionVars().PlanID.Store(-1)
+
+	makeRandPlusCol := func(col *expression.Column) expression.Expression {
+		randExpr := expression.NewFunctionInternal(ctx, ast.Rand, types.NewFieldType(mysql.TypeDouble))
+		return expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeDouble), randExpr, col)
+	}
+
+	t.Run("repeated rand expressions are not reused", func(t *testing.T) {
+		solver := &baseSingleGroupJoinOrderSolver{
+			ctx:                ctx,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+		plan := newDataSource(ctx, "t", 1)
+		baseCol := plan.Schema().Columns[0]
+
+		expr1 := makeRandPlusCol(baseCol)
+		expr2 := makeRandPlusCol(baseCol)
+		require.True(t, expression.ExpressionsSemanticEqual(expr1, expr2))
+
+		plan, injected1 := solver.injectExpr(plan, expr1)
+		plan, injected2 := solver.injectExpr(plan, expr2)
+
+		proj, ok := plan.(*logicalop.LogicalProjection)
+		require.True(t, ok)
+		require.Len(t, proj.Exprs, 3)
+		require.NotEqual(t, injected1.UniqueID, injected2.UniqueID)
+	})
+
+	t.Run("existing projection append keeps expression in child space", func(t *testing.T) {
+		solver := &baseSingleGroupJoinOrderSolver{
+			ctx:                ctx,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+		plan := newDataSource(ctx, "p", 1)
+		baseCol := plan.Schema().Columns[0]
+
+		proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(plan.Schema().Columns)}.Init(ctx, 0)
+		proj.SetSchema(plan.Schema().Clone())
+		proj.SetChildren(plan)
+
+		derivedExpr := expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeLonglong), baseCol, expression.NewOne())
+		derivedCol := proj.AppendExpr(derivedExpr)
+
+		exprUsingProjOutput := expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeLonglong), derivedCol, expression.NewOne())
+		newPlan, injectedCol := solver.injectExpr(proj, exprUsingProjOutput)
+
+		newProj, ok := newPlan.(*logicalop.LogicalProjection)
+		require.True(t, ok)
+		require.NotNil(t, injectedCol)
+		require.Len(t, newProj.Exprs, 3)
+
+		appendedExpr := newProj.Exprs[2]
+		expectedExpr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			derivedExpr,
+			expression.NewOne(),
+		)
+		require.True(t, expression.ExpressionsSemanticEqual(appendedExpr, expectedExpr))
+
+		appendedCols := expression.ExtractColumns(appendedExpr)
+		require.Len(t, appendedCols, 1)
+		require.Equal(t, baseCol.UniqueID, appendedCols[0].UniqueID)
+	})
+}
+
+func TestSubstituteColsInExprPreservesInOperand(t *testing.T) {
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	baseCol := &expression.Column{
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	projectedCol := &expression.Column{
+		UniqueID:  ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:   types.NewFieldType(mysql.TypeLonglong),
+		InOperand: true,
+	}
+	rhsCol := &expression.Column{
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	eqCond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), projectedCol, rhsCol)
+	require.True(t, expression.IsEQCondFromIn(eqCond))
+
+	substituted := substituteColsInExpr(eqCond, map[int64]expression.Expression{
+		projectedCol.UniqueID: baseCol,
+	})
+	require.True(t, expression.IsEQCondFromIn(substituted))
+	require.False(t, baseCol.InOperand)
+
+	substitutedArg := substituted.(*expression.ScalarFunction).GetArgs()[0].(*expression.Column)
+	require.Equal(t, baseCol.UniqueID, substitutedArg.UniqueID)
+	require.True(t, substitutedArg.InOperand)
+
+	mappedExpr := expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeLonglong), baseCol, expression.NewOne())
+	colExprMap := map[int64]expression.Expression{
+		projectedCol.UniqueID: mappedExpr,
+	}
+
+	substitutedFromIn := substituteColsInExpr(eqCond, colExprMap)
+	require.True(t, expression.IsEQCondFromIn(substitutedFromIn))
+	require.False(t, expression.ExtractColumns(mappedExpr)[0].InOperand)
+
+	normalProjectedCol := projectedCol.Clone().(*expression.Column)
+	normalProjectedCol.InOperand = false
+	normalEqCond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), normalProjectedCol, rhsCol)
+	normalSubstituted := substituteColsInExpr(normalEqCond, colExprMap)
+	require.False(t, expression.IsEQCondFromIn(normalSubstituted))
+}
+
+func TestJoinReorderProjectionInlineSafety(t *testing.T) {
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	ctx.GetSessionVars().PlanID.Store(-1)
+
+	newJoin := func(joinType logicalop.JoinType, left, right base.LogicalPlan) *logicalop.LogicalJoin {
+		join := logicalop.LogicalJoin{JoinType: joinType}.Init(ctx, 0)
+		join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
+		join.SetChildren(left, right)
+		return join
+	}
+
+	newProjection := func(child base.LogicalPlan, exprs ...expression.Expression) *logicalop.LogicalProjection {
+		proj := logicalop.LogicalProjection{Exprs: exprs}.Init(ctx, 0)
+		schema := expression.NewSchema()
+		for _, expr := range exprs {
+			col := &expression.Column{
+				UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  expr.GetType(ctx.GetExprCtx().GetEvalCtx()).Clone(),
+			}
+			col.SetCoercibility(expr.Coercibility())
+			col.SetRepertoire(expr.Repertoire())
+			schema.Append(col)
+		}
+		proj.SetSchema(schema)
+		proj.SetChildren(child)
+		return proj
+	}
+
+	t.Run("selection rejects non-deterministic predicates", func(t *testing.T) {
+		left := newDataSource(ctx, "sel_l", 10)
+		right := newDataSource(ctx, "sel_r", 10)
+		join := newJoin(logicalop.InnerJoin, left, right)
+
+		old := ctx.GetSessionVars().TiDBOptJoinReorderThroughSel
+		ctx.GetSessionVars().TiDBOptJoinReorderThroughSel = true
+		t.Cleanup(func() {
+			ctx.GetSessionVars().TiDBOptJoinReorderThroughSel = old
+		})
+
+		foundRows := expression.NewFunctionInternal(ctx, ast.FoundRows, types.NewFieldType(mysql.TypeLonglong))
+		pred := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), foundRows, expression.NewOne())
+		sel := logicalop.LogicalSelection{Conditions: []expression.Expression{pred}}.Init(ctx, 0)
+		sel.SetChildren(join)
+
+		result := extractJoinGroup(sel)
+		require.Len(t, result.group, 1)
+		require.Same(t, sel, result.group[0])
+	})
+
+	t.Run("projection rejects non-deterministic expressions", func(t *testing.T) {
+		left := newDataSource(ctx, "basic_l", 10)
+		right := newDataSource(ctx, "basic_r", 10)
+		join := newJoin(logicalop.InnerJoin, left, right)
+
+		foundRows := expression.NewFunctionInternal(ctx, ast.FoundRows, types.NewFieldType(mysql.TypeLonglong))
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			left.Schema().Columns[0],
+			foundRows,
+		)
+		proj := newProjection(join, expr)
+		require.False(t, canInlineProjectionBasic(proj))
+	})
+
+	t.Run("projection rejects cross-leaf expressions", func(t *testing.T) {
+		left := newDataSource(ctx, "cross_l", 10)
+		right := newDataSource(ctx, "cross_r", 10)
+		join := newJoin(logicalop.InnerJoin, left, right)
+
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			left.Schema().Columns[0],
+			right.Schema().Columns[0],
+		)
+		proj := newProjection(join, expr)
+		require.True(t, canInlineProjectionBasic(proj))
+		require.False(t, canInlineProjection(proj, &joinGroupResult{
+			group:              []base.LogicalPlan{left, right},
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}))
+	})
+
+	t.Run("projection rejects null-extended expressions", func(t *testing.T) {
+		left := newDataSource(ctx, "outer_l", 10)
+		right := newDataSource(ctx, "outer_r", 10)
+		join := newJoin(logicalop.LeftOuterJoin, left, right)
+
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			right.Schema().Columns[0],
+			expression.NewOne(),
+		)
+		proj := newProjection(join, expr)
+		require.True(t, canInlineProjectionBasic(proj))
+		require.False(t, canInlineProjection(proj, &joinGroupResult{
+			group: []base.LogicalPlan{left, right},
+			basicJoinGroupInfo: &basicJoinGroupInfo{
+				nullExtendedCols: expression.NewSchema(right.Schema().Columns...),
+			},
+		}))
+	})
+
+	t.Run("safe single-leaf projection is inlined", func(t *testing.T) {
+		left := newDataSource(ctx, "inline_l", 10)
+		right := newDataSource(ctx, "inline_r", 10)
+		join := newJoin(logicalop.InnerJoin, left, right)
+
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			left.Schema().Columns[0],
+			expression.NewOne(),
+		)
+		proj := newProjection(join, expr)
+
+		result, handled := tryInlineProjectionForJoinGroup(proj, proj)
+		require.True(t, handled)
+		require.Len(t, result.group, 2)
+		require.Contains(t, result.colExprMap, proj.Schema().Columns[0].UniqueID)
+		require.True(t, expression.ExpressionsSemanticEqual(result.colExprMap[proj.Schema().Columns[0].UniqueID], expr))
+	})
+
+	t.Run("unsafe cross-leaf projection remains atomic", func(t *testing.T) {
+		left := newDataSource(ctx, "atomic_l", 10)
+		right := newDataSource(ctx, "atomic_r", 10)
+		join := newJoin(logicalop.InnerJoin, left, right)
+
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			left.Schema().Columns[0],
+			right.Schema().Columns[0],
+		)
+		proj := newProjection(join, expr)
+
+		result, handled := tryInlineProjectionForJoinGroup(proj, proj)
+		require.True(t, handled)
+		require.Len(t, result.group, 1)
+		require.Same(t, proj, result.group[0])
+	})
+}

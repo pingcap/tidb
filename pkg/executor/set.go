@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -171,18 +170,17 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
-			oldConfig := config.GetGlobalConfig()
-			if oldConfig.Instance.TiDBServiceScope != valStr {
-				newConfig := *oldConfig
-				newConfig.Instance.TiDBServiceScope = valStr
-				config.StoreGlobalConfig(&newConfig)
-			}
+			// SetGlobalSysVar has already updated variable.ServiceScope in the sysvar hook.
+			// Read it here so InitMetaSession uses the latest canonical (case-insensitive) value.
+			serviceScope := variable.ServiceScope.Load()
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
 			taskMgr, err := storage.GetTaskManager()
 			if err != nil {
 				return err
 			}
-			return taskMgr.InitMetaSession(ctx, e.Ctx(), serverID, valStr)
+			return taskMgr.WithNewSession(func(se sessionctx.Context) error {
+				return taskMgr.InitMetaSession(ctx, se, serverID, serviceScope)
+			})
 		}
 		return err
 	}

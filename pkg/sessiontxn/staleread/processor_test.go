@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -427,4 +428,36 @@ func createProcessor(t *testing.T, se sessionctx.Context) staleread.Processor {
 	require.Nil(t, processor.GetStalenessTSEvaluatorForPrepare())
 	require.Nil(t, processor.GetStalenessInfoSchema())
 	return processor
+}
+
+func TestConsistentCalculateAsOfTsExpr(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.Session().GetSessionVars().TimeZone = time.UTC
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(`select now(3) - interval 1 second`, "", "")
+	require.NoError(t, err)
+	secondTsExpr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+	stmt, err = p.ParseOneStmt(`select now(3) - interval 3 second`, "", "")
+	require.NoError(t, err)
+	threeSecondTsExpr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+
+	se := tk.Session()
+	se.GetSessionVars().StmtCtx = stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+
+	ts1, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), secondTsExpr)
+	require.NoError(t, err)
+
+	time.Sleep(10 * time.Millisecond)
+
+	ts2, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), secondTsExpr)
+	require.NoError(t, err)
+	require.Equal(t, ts1, ts2)
+
+	ts3, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), threeSecondTsExpr)
+	require.NoError(t, err)
+	require.True(t, ts3 < ts1)
+	require.Equal(t, ts1-ts3, uint64(2000<<18))
 }

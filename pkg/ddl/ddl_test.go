@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -111,7 +110,7 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 	require.False(t, changed)
 }
 
-func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *types.FieldType {
+func colDefStrToColInfo(t *testing.T, str string, ctx *metabuild.Context) *model.ColumnInfo {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
@@ -119,7 +118,7 @@ func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *typ
 	chs, coll := charset.GetDefaultCharsetAndCollate()
 	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
 	require.NoError(t, err)
-	return &col.FieldType
+	return col.ToInfo()
 }
 
 func TestModifyColumn(t *testing.T) {
@@ -152,9 +151,9 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
 	}
 	for _, tt := range tests {
-		ftA := colDefStrToFieldType(t, tt.origin, ctx)
-		ftB := colDefStrToFieldType(t, tt.to, ctx)
-		err := checkModifyTypes(ftA, ftB, false)
+		colA := colDefStrToColInfo(t, tt.origin, ctx)
+		colB := colDefStrToColInfo(t, tt.to, ctx)
+		err := checkModifyTypes(colA, colB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {
@@ -341,6 +340,43 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
 	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
 	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+}
+
+func TestFindNextNonTouchedPartitionID(t *testing.T) {
+	defs := func(ids ...int64) []model.PartitionDefinition {
+		res := make([]model.PartitionDefinition, 0, len(ids))
+		for _, id := range ids {
+			res = append(res, model.PartitionDefinition{ID: id})
+		}
+		return res
+	}
+	// p2 and p3 are reorganized into new partitions, i.e. they are in
+	// DroppingDefinitions, while p1, p4 and p5 are non-touched.
+	pi := &model.PartitionInfo{
+		Definitions:         defs(1, 2, 3, 4, 5),
+		DroppingDefinitions: defs(2, 3),
+	}
+	for _, c := range []struct {
+		curr int64
+		next int64
+	}{
+		{1, 4},
+		{2, 4},
+		{3, 4},
+		{4, 5},
+		{5, 0},
+	} {
+		require.Equal(t, c.next, findNextNonTouchedPartitionID(c.curr, pi), "curr %d", c.curr)
+	}
+	// Not a partition of the table.
+	require.Equal(t, int64(0), findNextNonTouchedPartitionID(6, pi))
+
+	// No non-touched partitions left after p1.
+	pi = &model.PartitionInfo{
+		Definitions:         defs(1, 2, 3),
+		DroppingDefinitions: defs(2, 3),
+	}
+	require.Equal(t, int64(0), findNextNonTouchedPartitionID(1, pi))
 }
 
 func TestMergeContinuousKeyRanges(t *testing.T) {
