@@ -1162,10 +1162,12 @@ func TestDynamicPrivs(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "notsuper", Hostname: "%"}, nil, nil, nil))
 
 	// test SYSTEM_VARIABLES_ADMIN
+	require.EqualError(t, tk.ExecToErr("SET SESSION sql_log_off = ON"), "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
 	err := tk.ExecToErr("SET GLOBAL wait_timeout = 86400")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
 	rootTk.MustExec("GRANT SYSTEM_VARIABLES_admin ON *.* TO notsuper")
 	tk.MustExec("SET GLOBAL wait_timeout = 86400")
+	tk.MustExec("SET SESSION sql_log_off = ON")
 
 	// test ROLE_ADMIN
 	err = tk.ExecToErr("GRANT anyrolename TO otheruser")
@@ -1175,12 +1177,14 @@ func TestDynamicPrivs(t *testing.T) {
 
 	// revoke SYSTEM_VARIABLES_ADMIN, confirm it is dropped
 	rootTk.MustExec("REVOKE SYSTEM_VARIABLES_AdmIn ON *.* FROM notsuper")
+	require.EqualError(t, tk.ExecToErr("SET SESSION sql_log_off = OFF"), "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
 	err = tk.ExecToErr("SET GLOBAL wait_timeout = 86000")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
 
 	// grant super, confirm that it is also a substitute for SYSTEM_VARIABLES_ADMIN
 	rootTk.MustExec("GRANT SUPER ON *.* TO notsuper")
 	tk.MustExec("SET GLOBAL wait_timeout = 86400")
+	tk.MustExec("SET SESSION sql_log_off = OFF")
 
 	// revoke SUPER, assign SYSTEM_VARIABLES_ADMIN to anyrolename.
 	// confirm that a dynamic privilege can be inherited from a role.

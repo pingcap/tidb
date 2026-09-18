@@ -645,6 +645,38 @@ func TestGeneralLogNonzeroTxnStartTS(t *testing.T) {
 	ts, ok := getTxnStartTS()
 	require.True(t, ts > 0)
 	require.True(t, ok)
+
+	for _, value := range []string{"1", "ON", "0", "OFF"} {
+		tk.MustExec("set session sql_log_off = " + value)
+		marker := "select 'sql_log_off_" + value + "'"
+		tk.MustExec(marker)
+		logged := false
+		for _, fields := range mzc.fields {
+			if sql, ok := fields["sql"]; ok && sql.String == marker {
+				logged = true
+			}
+		}
+		require.Equal(t, value == "0" || value == "OFF", logged, value)
+	}
+	tk.MustContainErrMsg("set session sql_log_off = 2", "can't be set to the value of '2'")
+	tk.MustExec("set global sql_log_off = ON")
+	defer tk.MustExec("set global sql_log_off = OFF")
+	newTk := testkit.NewTestKit(t, store)
+	before := len(mzc.fields)
+	newTk.MustExec("select 'inherited_log_off'")
+	require.Len(t, mzc.fields, before)
+	tk.MustExec("select 'existing_session_logs'")
+	require.Len(t, mzc.fields, before+1)
+	tk.MustExec("set global sql_log_off = OFF")
+	before = len(mzc.fields)
+	newTk.MustExec("prepare stmt from 'select 70981'")
+	newTk.MustQuery("execute stmt").Check(testkit.Rows("70981"))
+	newTk.MustExec("deallocate prepare stmt")
+	require.Len(t, mzc.fields, before)
+	latestTk := testkit.NewTestKit(t, store)
+	before = len(mzc.fields)
+	latestTk.MustExec("select 'new_session_logs'")
+	require.Len(t, mzc.fields, before+1)
 }
 
 func TestGeneralLogBinaryText(t *testing.T) {
