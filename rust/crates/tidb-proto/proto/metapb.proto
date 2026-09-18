@@ -25,6 +25,9 @@ message Store {
   string address = 2;
   StoreState state = 3;
   repeated StoreLabel labels = 4;
+  // Upstream kvproto metapb.proto:7: the HTTP status address, which TiFlash
+  // serves its region sync-status report on.
+  string status_address = 7;
   NodeState node_state = 13;
 }
 

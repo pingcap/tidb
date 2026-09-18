@@ -67,6 +67,7 @@ mod yaml_lite;
 pub use bundle::{
     get_range_start_and_end_key_hex, new_bundle, new_bundle_from_constraints_options,
     new_bundle_from_options, new_bundle_from_sugar_options, new_full_table_bundles,
+    new_tiflash_bundle,
     new_partition_bundle, new_partition_list_bundles, new_table_bundle, Bundle, PolicyGetter,
 };
 pub use common::{

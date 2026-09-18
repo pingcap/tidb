@@ -83,6 +83,7 @@ pub mod cluster_sysvar_load;
 pub mod cluster_sysvar_write;
 pub mod cluster_table_storage;
 pub mod tiflash_mpp_scan;
+pub mod tiflash_replica_manager;
 pub mod compiler;
 pub use tidb_executor::concurrent_entry_map;
 pub mod config_int_json;

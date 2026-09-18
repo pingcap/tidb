@@ -36,7 +36,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_distsql::query_runtime::query_response::QueryResultSubset;
 use tidb_distsql::{
-    QueryResponseError, ResponseChannelError, SelectResponseIter, WarningCollector,
+    QueryResponseError, ResponseChannelError, SelectResponseIter,
     mpp_result_metadata,
 };
 use tidb_executor::remote_scan::{

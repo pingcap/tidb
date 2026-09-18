@@ -73,6 +73,59 @@ pub fn new_bundle(id: i64) -> Bundle {
     }
 }
 
+/// Go `MakeNewRule` (`tiflash_manager.go:380-394`) wrapped in its group
+/// bundle: the single learner rule that pins a table's TiFlash peers, plus
+/// the `tiflash` group identity (`SetTiFlashGroupConfig`, index
+/// `RuleIndexTiFlash`, no override). An empty `rules`-shaped reset is the
+/// caller's business: a zero count deletes the rule in Go, so pass
+/// `rules: Vec::new()` there — posting an empty bundle empties the group.
+///
+/// `start`/`end` are the table's WIRE record range
+/// (`GenTableRecordPrefix` / `EncodeTablePrefix(table+1)`); the rules carry
+/// them hex-encoded exactly as PD expects.
+#[must_use]
+pub fn new_tiflash_bundle(
+    table_id: i64,
+    count: u64,
+    location_labels: &[String],
+) -> Bundle {
+    // Go `codec.EncodeRegionRange` escapes the raw range with
+    // `codec.EncodeBytes` (the PD rule API consumes the escaped form); the
+    // un-escaped bytes are rejected with `invalid marker byte`.
+    let start_key = tidb_codec::gen_table_record_prefix(table_id);
+    let mut start_encoded = Vec::new();
+    tidb_codec::encode_bytes(&mut start_encoded, &start_key);
+    let end_key = tidb_codec::table_key::encode_table_prefix(table_id + 1);
+    let mut end_encoded = Vec::new();
+    tidb_codec::encode_bytes(&mut end_encoded, &end_key);
+    Bundle {
+        id: crate::common::TIFLASH_RULE_GROUP_ID.to_owned(),
+        index: crate::common::RULE_INDEX_TIFLASH,
+        r#override: false,
+        rules: (count > 0)
+            .then(|| {
+                crate::pd::Rule {
+                    group_id: crate::common::TIFLASH_RULE_GROUP_ID.to_owned(),
+                    id: format!("table-{table_id}-r"),
+                    index: 0,
+                    start_key_hex: hex_encode(&start_encoded),
+                    end_key_hex: hex_encode(&end_encoded),
+                    role: crate::pd::PeerRoleType::LEARNER,
+                    is_witness: false,
+                    count: count as i64,
+                    label_constraints: vec![crate::pd::LabelConstraint {
+                        key: crate::common::ENGINE_LABEL_KEY.to_owned(),
+                        op: crate::pd::LabelConstraintOp::IN,
+                        values: vec![crate::common::ENGINE_LABEL_TIFLASH.to_owned()],
+                    }],
+                    location_labels: location_labels.to_vec(),
+                }
+            })
+            .into_iter()
+            .collect(),
+    }
+}
+
 /// Go `NewBundleFromConstraintsOptions`: transforms constraints options into
 /// the bundle.
 ///

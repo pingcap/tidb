@@ -378,6 +378,7 @@ fn project_store_record(store: metapb::Store) -> Result<Option<PdStore>, PdClien
     Ok(Some(PdStore {
         id: store.id,
         address: store.address,
+        status_address: store.status_address,
         state,
         node_state,
         labels: store

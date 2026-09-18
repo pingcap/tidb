@@ -268,6 +268,32 @@ pub enum DdlStatement {
         /// New fixed reservation size, or zero for TiDB's default.
         new_cache: i64,
     },
+    /// `ALTER TABLE ... SET TIFLASH REPLICA n [LOCATION LABELS '...']`, and
+    /// `SET TIFLASH REPLICA 0` as the reset. Go
+    /// `ast.AlterTableSetTiFlashReplica` -> the `ActionSetTiFlashReplica` job
+    /// (pkg/ddl/executor.go:625), which only persists the replica metadata:
+    /// PD placement rules and availability are the replica manager's business
+    /// (pkg/domain/infosync/tiflash_manager.go).
+    SetTiFlashReplica {
+        /// Database containing the table.
+        schema: String,
+        /// Table whose replica metadata is set.
+        table: String,
+        /// Requested replica count; zero clears the replica entirely.
+        count: u64,
+        /// Placement labels, in written order.
+        labels: Vec<String>,
+    },
+    /// Go `UpdateTableReplicaInfo` -> the `ActionUpdateTiFlashReplicaStatus`
+    /// job: the replica manager's poller flips `Available` once TiFlash
+    /// reports every region's learner peer in place. Resolved by PHYSICAL
+    /// table id, never by SQL name (Go's API takes the id).
+    UpdateTiFlashReplicaStatus {
+        /// The table (logical) id whose replica availability changes.
+        table_id: i64,
+        /// Go `Available`.
+        available: bool,
+    },
     /// The AUTO_RANDOM portion of `ALTER TABLE ... MODIFY COLUMN`.
     AlterAutoRandomBits {
         /// Database containing the table.
@@ -1390,6 +1416,22 @@ fn lower_alter_table_catalog(
                 from_table,
                 to_schema,
                 to_table,
+            }))
+        }
+        tidb_ast::AlterTableAction::SetTiFlashReplica { hypo, count, labels } => {
+            if *hypo {
+                // Go `onSetTiFlashReplicaSpec` (ddl/executor/alter_executor.go):
+                // the planner-only HYPO form has no DDL execution.
+                return Err(DdlAdmissionError::unsupported(
+                    "HYPO TIFLASH REPLICA is a planner-only index hint and cannot be executed",
+                ));
+            }
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::SetTiFlashReplica {
+                schema,
+                table,
+                count: *count,
+                labels: labels.clone(),
             }))
         }
         tidb_ast::AlterTableAction::SetTableOptions { options } => {
@@ -7394,6 +7436,91 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_TABLE_AUTO_IDCACHE;
             diff.schema_id = db_id;
             diff.table_id = stored.id;
+        }
+        DdlStatement::SetTiFlashReplica {
+            schema,
+            table,
+            count,
+            labels,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let Some(stored) = find_table(database, table) else {
+                return Err(DdlPlanError::TableNotExists {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                });
+            };
+            // Go `onSetTiFlashReplicaFinish` persists the replica metadata
+            // with Available cleared; the replica manager owns rules and the
+            // availability flip afterwards.
+            let mut info = stored.clone_like_go();
+            if *count == 0 {
+                info.tiflash_replica = None;
+            } else {
+                let mut replica = tidb_model::table::TiFlashReplicaInfo::default();
+                replica.count = *count;
+                replica.location_labels = labels.clone().into();
+                info.tiflash_replica = Some(GoShared::new(replica));
+            }
+            let db_id = database.info.id;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, stored.id),
+                value::serialize_table_info(&info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            diff.action_type = ActionType::ACTION_SET_TI_FLASH_REPLICA;
+            diff.schema_id = db_id;
+            diff.table_id = stored.id;
+            // Go keeps the PD placement rule OUT of the DDL job: the domain
+            // replica manager (`syncTiFlashTableRule`) creates and repairs it
+            // outside the transaction. This node mirrors that split — the
+            // replica manager owns rules and availability.
+        }
+        DdlStatement::UpdateTiFlashReplicaStatus {
+            table_id,
+            available,
+        } => {
+            // Go `onUpdateFlashReplicaStatus`: a metadata-only flip. The
+            // schema version still advances: this framework publishes every
+            // catalog write with a new version, which only churns the reload
+            // trigger, never the answers.
+            let mut found: Option<(i64, tidb_model::table_info::TableInfo)> = None;
+            for database in &catalog.databases {
+                for stored in &database.tables {
+                    if stored.id == *table_id {
+                        found = Some((database.info.id, stored.clone_like_go()));
+                    }
+                }
+            }
+            let Some((db_id, mut info)) = found else {
+                // Go answers ErrTableNotExists and the poller just moves on.
+                return Err(DdlPlanError::TableNotExists {
+                    schema: String::new(),
+                    table: format!("(physical id {table_id})"),
+                });
+            };
+            let Some(replica) = info.tiflash_replica.as_ref() else {
+                return Err(DdlPlanError::Unsupported(
+                    "the table carries no TiFlash replica to mark".to_owned(),
+                ));
+            };
+            if replica.read().available == *available {
+                return Ok(DdlPlan::AlreadySatisfied {
+                    detail: "TiFlash replica status already matches".to_owned(),
+                    warning: None,
+                });
+            }
+            replica.write().available = *available;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, *table_id),
+                value::serialize_table_info(&info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            diff.action_type = ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS;
+            diff.schema_id = db_id;
+            diff.table_id = *table_id;
         }
         DdlStatement::AlterAutoRandomBits {
             schema,

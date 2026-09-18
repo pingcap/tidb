@@ -136,6 +136,9 @@ pub struct PdStore {
     pub id: u64,
     /// TiKV client address.
     pub address: String,
+    /// Go `Store.StatusAddress`: the HTTP status address (TiFlash serves its
+    /// `/tiflash/sync-status/...` region-sync report here).
+    pub status_address: String,
     /// Legacy source state.
     pub state: PdStoreState,
     /// Replacement source state.

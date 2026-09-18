@@ -307,8 +307,11 @@ Commit map so far: `cbfdc7cad4` (M1), `5265825c09` (M2), `31646df17e` (M3 receip
 - [x] M1: live planner TiFlash MPP plan (EXPLAIN shape parity).
 - [x] M2: dispatch to real TiFlash, rows served through the columnar engine.
 - [x] M3: Rust-only cluster read acceptance.
-- [ ] M4: DDL surface (job, PD rules, polling, information_schema) — SCOPED with the
-      full recipe above; not started.
+- [x] M4 (core): SET TIFLASH REPLICA admitted on the Rust node as a persisted job;
+      PD rule synced by the poller; availability flipped through
+      `ActionUpdateTiFlashReplicaStatus` (schema version 76 receipt).
+- [ ] M4 remainder: `information_schema.tiflash_replica` (observability only; the
+      planner reads availability from the table info directly).
 - [x] M5 (partial): M1/M2/M3 pushes + receipts; re-audit after M4.
 
 ## Decision Log
