@@ -16,7 +16,6 @@
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
 NEXT_GEN=$NEXT_GEN
-TIDB_TEST_DIAGNOSTIC_MODE=${TIDB_TEST_DIAGNOSTIC_MODE:-0}
 
 build=1
 mysql_tester="./mysql_tester"
@@ -30,6 +29,8 @@ stats="s"
 collation_opt=2
 runs_on_port=0
 diagnostic_mode=0
+diagnostic_test_case="ddl/diagnostic_mode"
+run_diagnostic_after_regular=0
 diagnostic_store_path=""
 start_in_diagnostic_mode=0
 SERVER_PID=""
@@ -118,18 +119,6 @@ function find_multiple_available_ports() {
     echo "${ports[@]}"
 }
 
-case "${TIDB_TEST_DIAGNOSTIC_MODE}" in
-    1|true|TRUE|on|ON)
-        diagnostic_mode=1
-        ;;
-    0|false|FALSE|off|OFF|"")
-        ;;
-    *)
-        echo "Error: TIDB_TEST_DIAGNOSTIC_MODE must be a boolean value." >&2
-        exit 1
-        ;;
-esac
-
 function build_tidb_server()
 {
     tidb_server="$(pwd)/integrationtest_tidb-server"
@@ -216,6 +205,30 @@ while getopts "t:s:r:b:d:c:i:P:h" opt; do
     esac
 done
 
+selected_case="$tests"
+if [[ $record = 1 ]]; then
+    selected_case="$record_case"
+fi
+
+if [[ -z "$selected_case" || "$selected_case" = "all" ]]; then
+    if [[ "${TIDB_TEST_STORE_NAME}" != "tikv" ]]; then
+        run_diagnostic_after_regular=1
+    fi
+elif [[ "$selected_case" = "$diagnostic_test_case" ]]; then
+    diagnostic_mode=1
+fi
+
+if [[ $run_diagnostic_after_regular = 1 && "$runs_on_port" -ne 0 ]]; then
+    echo "Error: running all integration tests with -P cannot start the additional diagnostic-mode TiDB." >&2
+    echo "Run without -P so the runner can start diagnostic TiDB and check its startup log." >&2
+    exit 1
+fi
+
+if [[ $diagnostic_mode = 1 && "$runs_on_port" -ne 0 ]]; then
+    echo "Error: $diagnostic_test_case does not support -P because its startup log must be checked." >&2
+    exit 1
+fi
+
 extract_stats
 
 if [ $build -eq 1 ]; then
@@ -253,7 +266,7 @@ then
     ports=($(find_multiple_available_ports 4000 2))
     port=6999
     status=${ports[1]}
-    if [[ $diagnostic_mode = 1 ]]; then
+    if [[ $diagnostic_mode = 1 || $run_diagnostic_after_regular = 1 ]]; then
         if [[ "${TIDB_TEST_STORE_NAME}" = "tikv" ]]; then
             echo "Error: the diagnostic integrationtest runner requires a persistent UniStore." >&2
             exit 1
@@ -321,7 +334,7 @@ function stop_tidb_server()
 
 function bootstrap_diagnostic_store()
 {
-    echo "bootstrap persistent UniStore before diagnostic-mode startup"
+    echo "bootstrap storage before diagnostic-mode startup"
     start_in_diagnostic_mode=0
     start_tidb_server
     wait_for_tidb_server
@@ -340,10 +353,10 @@ function run_mysql_tester()
     if [ $record -eq 1 ]; then
       if [ "$record_case" = 'all' ]; then
           echo "record all cases"
-          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record
+          "$mysql_tester" -port "$port" --check-error=true --collation-disable="$coll_disabled" --record
       else
           echo "record result for case: \"$record_case\""
-          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record $record_case
+          "$mysql_tester" -port "$port" --check-error=true --collation-disable="$coll_disabled" --record "$record_case"
       fi
     else
       if [ -z "$tests" ]; then
@@ -351,26 +364,34 @@ function run_mysql_tester()
       else
           echo "run integration test cases($coll_msg): $tests"
       fi
-      $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled $tests
+      "$mysql_tester" -port "$port" --check-error=true --collation-disable="$coll_disabled" $tests
     fi
 }
 
 function run_diagnostic_tester()
 {
-    local test_case="$tests"
-    if [[ $record = 1 ]]; then
-        test_case="$record_case"
-    fi
-    if [[ -z "$test_case" || "$test_case" = "all" ]]; then
-        echo "Error: diagnostic integrationtest runner requires one test case." >&2
-        return 1
-    fi
-
     go run ./diagnostictest \
         -port "$port" \
-        -test "t/${test_case}.test" \
-        -result "r/${test_case}.result" \
+        -test "diagnostictest/testdata/diagnostic_mode.test" \
+        -result "diagnostictest/testdata/diagnostic_mode.result" \
         -record="$record"
+
+    # Starting diagnostic TiDB truncates this file, excluding bootstrap logs.
+    if [[ ! -f "$mysql_tester_log" || ! -r "$mysql_tester_log" || ! -s "$mysql_tester_log" ]]; then
+        echo "Error: diagnostic TiDB log is missing, unreadable or empty: $mysql_tester_log" >&2
+        return 1
+    fi
+    local grep_status
+    if grep -nF 'start DDL' "$mysql_tester_log"; then
+        echo "Error: diagnostic TiDB must not start DDL, but its log contains 'start DDL': $mysql_tester_log" >&2
+        return 1
+    else
+        grep_status=$?
+        if [[ $grep_status -ne 1 ]]; then
+            echo "Error: failed to read diagnostic TiDB log: $mysql_tester_log" >&2
+            return 1
+        fi
+    fi
 }
 
 function run_tester()
@@ -400,27 +421,15 @@ function check_case_name() {
         return
     fi
 
-    case=""
-
-    if [ $record -eq 0 ]; then
-        if [ -z "$tests" ]; then
-            return
-        fi
-        case=$tests
+    if [[ -z "$selected_case" || "$selected_case" = "all" ]]; then
+        return
     fi
 
-    if [ $record -eq 1 ]; then
-        if [ "$record_case" = 'all' ]; then
-            return
-        fi
-        case=$record_case
-    fi
-
-    IFS='/' read -ra parts <<< "$case"
+    IFS='/' read -ra parts <<< "$selected_case"
 
     last_part="${parts[${#parts[@]}-1]}"
 
-    if [[ $last_part == collation* || $tests == collation* ]]; then
+    if [[ $last_part == collation* || $selected_case == collation* ]]; then
         collation_opt=2
     else
         collation_opt=1
@@ -465,6 +474,16 @@ if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     then
         stop_tidb_server
     fi
+    check_data_race
+fi
+
+if [[ $run_diagnostic_after_regular = 1 ]]; then
+    diagnostic_mode=1
+    bootstrap_diagnostic_store
+    start_tidb_server
+    wait_for_tidb_server
+    run_diagnostic_tester
+    stop_tidb_server
     check_data_race
 fi
 
