@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -126,7 +127,10 @@ func newReorgExprCtxWithReorgMeta(reorgMeta *model.DDLReorgMeta, warnHandler con
 		exprstatic.WithErrLevelMap(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode)),
 		exprstatic.WithWarnHandler(warnHandler),
 	)
-	return ctx.Apply(exprstatic.WithEvalCtx(evalCtx)), nil
+	return ctx.Apply(
+		exprstatic.WithEvalCtx(evalCtx),
+		exprstatic.WithNewCollationEnabled(reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled())),
+	), nil
 }
 
 // reorgTableMutateContext implements table.MutateContext for reorganization.
