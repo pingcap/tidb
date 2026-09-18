@@ -87,11 +87,35 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 					if len(expression.ExtractColumns(col.VirtualExpr)) == 0 {
 						continue
 					}
-					exprToColumn[col.VirtualExpr] = col
+					addGenerateColumn(ectx, exprToColumn, col)
 				}
 			}
 		}
 	}
+}
+
+// addGenerateColumn records col as the substitution target for its virtual expression.
+//
+// Several expression indexes on one table may repeat the same expression, and DDL creates a
+// separate hidden generated column per index. Those columns are interchangeable as substitution
+// targets, so only one of them is kept: without this the map holds one entry per index and
+// substitute() picks between them in Go's randomized map order, which makes the resulting plan
+// differ between plan builds of the same statement.
+//
+// The canonical column is the one with the smallest UniqueID, i.e. the one declared earliest on
+// the table, so the choice is stable across plan builds.
+func addGenerateColumn(ectx expression.EvalContext, exprToColumn ExprColumnMap, col *expression.Column) {
+	for candidateExpr, existing := range exprToColumn {
+		if !existing.EqualByExprAndID(ectx, col) {
+			continue
+		}
+		if existing.UniqueID <= col.UniqueID {
+			return
+		}
+		delete(exprToColumn, candidateExpr)
+		break
+	}
+	exprToColumn[col.VirtualExpr] = col
 }
 
 func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candidateExpr expression.Expression, tp types.EvalType, schema *expression.Schema, col *expression.Column) bool {
