@@ -1140,31 +1140,39 @@ func TestTruncateTableAndSchemaDependence(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	var timetk2 time.Time
-	var timetk3 time.Time
+	dropDone := make(chan struct{})
+	dropFinishedBeforeTruncate := make(chan struct{}, 1)
 
-	first := false
+	var once sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if first || job.Type != model.ActionTruncateTable {
+		if job.Type != model.ActionTruncateTable {
 			return
 		}
-		first = true
-		go func() {
-			tk3.MustExec("drop database test")
-			timetk3 = time.Now()
-			wg.Done()
-		}()
-		time.Sleep(3 * time.Second)
+		once.Do(func() {
+			go func() {
+				defer wg.Done()
+				defer close(dropDone)
+				tk3.MustExec("drop database test")
+			}()
+			select {
+			case <-dropDone:
+				dropFinishedBeforeTruncate <- struct{}{}
+			case <-time.After(3 * time.Second):
+			}
+		})
 	})
 
 	go func() {
+		defer wg.Done()
 		tk2.MustExec("truncate table test.t")
-		timetk2 = time.Now()
-		wg.Done()
 	}()
 
 	wg.Wait()
-	require.True(t, timetk3.After(timetk2))
+	select {
+	case <-dropFinishedBeforeTruncate:
+		require.Fail(t, "drop database completed before truncate table job finished")
+	default:
+	}
 }
 
 func TestInsertIgnore(t *testing.T) {
