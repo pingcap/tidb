@@ -206,6 +206,47 @@ func TestArithmeticMinus(t *testing.T) {
 	require.False(t, isNull)
 	require.Equal(t, int64(11), intResult)
 
+	for _, tc := range []struct {
+		name   string
+		args   []any
+		expect any
+		errStr string
+	}{
+		{
+			name:   "zero minus signed min overflows",
+			args:   []any{int64(0), int64(math.MinInt64)},
+			errStr: "BIGINT value is out of range",
+		},
+		{
+			name:   "positive minus signed min overflows",
+			args:   []any{int64(1), int64(math.MinInt64)},
+			errStr: "BIGINT value is out of range",
+		},
+		{
+			name:   "negative one minus signed min stays in range",
+			args:   []any{int64(-1), int64(math.MinInt64)},
+			expect: int64(math.MaxInt64),
+		},
+		{
+			name:   "zero minus negative one stays in range",
+			args:   []any{int64(0), int64(-1)},
+			expect: int64(1),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sig, err := funcs[ast.Minus].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+			require.NoError(t, err)
+			require.NotNil(t, sig)
+			val, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
+			if tc.errStr == "" {
+				require.NoError(t, err)
+				testutil.DatumEqual(t, types.NewDatum(tc.expect), val)
+			} else {
+				require.ErrorContains(t, err, tc.errStr)
+			}
+		})
+	}
+
 	// case 2
 	args = []any{1.01001, -0.01}
 
