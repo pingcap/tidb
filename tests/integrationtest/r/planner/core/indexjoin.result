@@ -1162,4 +1162,126 @@ NULL	xUhXa6=s%j7h~!G,wjBVltcCK	wjBVltcCK	NULL
 NULL	xUhXa6=s%j7h~!G,yKuo#WH)4F30	yKuo#WH)4F30	NULL
 NULL	xUhXa6=s%j7h~!G,zybQlXsQiqNIXAl5p!#	zybQlXsQiqNIXAl5p!#	NULL
 rollback;
+drop table if exists tj1, tj2;
+create table tj1(c1 int, c2 int);
+create table tj2(c1 int, c2 int, key(c2));
+insert into tj1 values(1, 2), (2, 3);
+insert into tj2 values(2, 2), (2, 2), (2, 3);
+set @@sql_mode='';
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c2 from tj2 group by c1) a_t on tj1.c2 = a_t.c2;
+id	estRows	task	access object	operator info
+HashJoin	8000.00	root		inner join, equal:[eq(planner__core__indexjoin.tj1.c2, planner__core__indexjoin.tj2.c2)]
+├─Selection(Build)	6400.00	root		not(isnull(planner__core__indexjoin.tj2.c2))
+│ └─HashAgg	8000.00	root		group by:planner__core__indexjoin.tj2.c1, funcs:firstrow(Column#7)->planner__core__indexjoin.tj2.c2
+│   └─TableReader	8000.00	root		data:HashAgg
+│     └─HashAgg	8000.00	cop[tikv]		group by:planner__core__indexjoin.tj2.c1, funcs:firstrow(planner__core__indexjoin.tj2.c2)->Column#7
+│       └─TableFullScan	10000.00	cop[tikv]	table:tj2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj1.c2))
+    └─TableFullScan	10000.00	cop[tikv]	table:tj1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_JOIN(a_t) */ or /*+ TIDB_INLJ(a_t) */ is inapplicable
+select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.c2 from tj1 inner join (select c2 from tj2 group by c1) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.c2;
+c2	c2
+2	2
+select /*+ HASH_JOIN(a_t) */ tj1.c2, a_t.c2 from tj1 inner join (select c2 from tj2 group by c1) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.c2;
+c2	c2
+2	2
+drop table if exists tj3;
+create table tj3(c1 int, c2 int, key(c1));
+insert into tj3 values(1, 10), (1, 20), (2, 30);
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c1 from tj3 group by c2) a_t on tj1.c1 = a_t.c1;
+id	estRows	task	access object	operator info
+HashJoin	8000.00	root		inner join, equal:[eq(planner__core__indexjoin.tj1.c1, planner__core__indexjoin.tj3.c1)]
+├─Selection(Build)	6400.00	root		not(isnull(planner__core__indexjoin.tj3.c1))
+│ └─HashAgg	8000.00	root		group by:planner__core__indexjoin.tj3.c2, funcs:firstrow(Column#7)->planner__core__indexjoin.tj3.c1
+│   └─TableReader	8000.00	root		data:HashAgg
+│     └─HashAgg	8000.00	cop[tikv]		group by:planner__core__indexjoin.tj3.c2, funcs:firstrow(planner__core__indexjoin.tj3.c1)->Column#7
+│       └─TableFullScan	10000.00	cop[tikv]	table:tj3	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj1.c1))
+    └─TableFullScan	10000.00	cop[tikv]	table:tj1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_JOIN(a_t) */ or /*+ TIDB_INLJ(a_t) */ is inapplicable
+select /*+ INL_JOIN(a_t) */ tj1.c1, a_t.c1 from tj1 inner join (select c1 from tj3 group by c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.c1;
+c1	c1
+1	1
+1	1
+2	2
+select /*+ HASH_JOIN(a_t) */ tj1.c1, a_t.c1 from tj1 inner join (select c1 from tj3 group by c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.c1;
+c1	c1
+1	1
+1	1
+2	2
+set @@sql_mode=default;
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c2, count(*) cnt from tj2 group by c2) a_t on tj1.c2 = a_t.c2;
+id	estRows	task	access object	operator info
+Projection	9990.00	root		planner__core__indexjoin.tj1.c1, planner__core__indexjoin.tj1.c2, planner__core__indexjoin.tj2.c2, Column#7
+└─IndexJoin	9990.00	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.tj1.c2, inner key:planner__core__indexjoin.tj2.c2, equal cond:eq(planner__core__indexjoin.tj1.c2, planner__core__indexjoin.tj2.c2)
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj1.c2))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:tj1	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	9990.00	root		group by:planner__core__indexjoin.tj2.c2, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__indexjoin.tj2.c2)->planner__core__indexjoin.tj2.c2
+    └─IndexReader	9990.00	root		index:HashAgg
+      └─HashAgg	9990.00	cop[tikv]		group by:planner__core__indexjoin.tj2.c2, funcs:count(1)->Column#8
+        └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj2.c2))
+          └─IndexRangeScan	10000.00	cop[tikv]	table:tj2, index:c2(c2)	range: decided by [eq(planner__core__indexjoin.tj2.c2, planner__core__indexjoin.tj1.c2)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
+c2	cnt
+2	2
+3	1
+select /*+ HASH_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
+c2	cnt
+2	2
+3	1
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c1, sum(c2) s from tj3 group by c1, c2) a_t on tj1.c1 = a_t.c1;
+id	estRows	task	access object	operator info
+Projection	9990.00	root		planner__core__indexjoin.tj1.c1, planner__core__indexjoin.tj1.c2, planner__core__indexjoin.tj3.c1, Column#7
+└─IndexJoin	9990.00	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.tj1.c1, inner key:planner__core__indexjoin.tj3.c1, equal cond:eq(planner__core__indexjoin.tj1.c1, planner__core__indexjoin.tj3.c1)
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj1.c1))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:tj1	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	9990.00	root		group by:planner__core__indexjoin.tj3.c1, planner__core__indexjoin.tj3.c2, funcs:sum(Column#9)->Column#7, funcs:firstrow(planner__core__indexjoin.tj3.c1)->planner__core__indexjoin.tj3.c1
+    └─IndexLookUp	9990.00	root		
+      ├─Selection(Build)	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj3.c1))
+      │ └─IndexRangeScan	10000.00	cop[tikv]	table:tj3, index:c1(c1)	range: decided by [eq(planner__core__indexjoin.tj3.c1, planner__core__indexjoin.tj1.c1)], keep order:false, stats:pseudo
+      └─HashAgg(Probe)	9990.00	cop[tikv]		group by:planner__core__indexjoin.tj3.c1, planner__core__indexjoin.tj3.c2, funcs:sum(planner__core__indexjoin.tj3.c2)->Column#9
+        └─TableRowIDScan	9990.00	cop[tikv]	table:tj3	keep order:false, stats:pseudo
+select /*+ INL_JOIN(a_t) */ tj1.c1, a_t.s from tj1 inner join (select c1, sum(c2) s from tj3 group by c1, c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.s;
+c1	s
+1	10
+1	20
+2	30
+select /*+ HASH_JOIN(a_t) */ tj1.c1, a_t.s from tj1 inner join (select c1, sum(c2) s from tj3 group by c1, c2) a_t on tj1.c1 = a_t.c1 order by tj1.c1, a_t.s;
+c1	s
+1	10
+1	20
+2	30
+set @@sql_mode='';
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj1 inner join (select c2, count(*) cnt from tj2 group by c2 % 2) a_t on tj1.c2 = a_t.c2;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		planner__core__indexjoin.tj1.c1, planner__core__indexjoin.tj1.c2, planner__core__indexjoin.tj2.c2, Column#7
+└─HashJoin	8000.00	root		inner join, equal:[eq(planner__core__indexjoin.tj1.c2, planner__core__indexjoin.tj2.c2)]
+  ├─Selection(Build)	6400.00	root		not(isnull(planner__core__indexjoin.tj2.c2))
+  │ └─HashAgg	8000.00	root		group by:Column#8, funcs:count(Column#9)->Column#7, funcs:firstrow(Column#10)->planner__core__indexjoin.tj2.c2
+  │   └─IndexReader	8000.00	root		index:HashAgg
+  │     └─HashAgg	8000.00	cop[tikv]		group by:mod(planner__core__indexjoin.tj2.c2, 2), funcs:count(1)->Column#9, funcs:firstrow(planner__core__indexjoin.tj2.c2)->Column#10
+  │       └─IndexFullScan	10000.00	cop[tikv]	table:tj2, index:c2(c2)	keep order:false, stats:pseudo
+  └─TableReader(Probe)	9990.00	root		data:Selection
+    └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj1.c2))
+      └─TableFullScan	10000.00	cop[tikv]	table:tj1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_JOIN(a_t) */ or /*+ TIDB_INLJ(a_t) */ is inapplicable
+select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2 % 2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
+c2	cnt
+2	2
+3	1
+select /*+ HASH_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2 % 2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
+c2	cnt
+2	2
+3	1
+set @@sql_mode=default;
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
