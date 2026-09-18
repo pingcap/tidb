@@ -689,8 +689,8 @@
       {
         "SQL": "select * from t1, lateral (select t2.a2, count(*) as cnt from t2 where t2.b2 = t1.a1 group by t2.a2) as dt where dt.cnt > 0 -- LATERAL with aggregate: Apply must not be converted to Join",
         "Plan": [
-          "Projection 8.00 root  test.t1.a1, test.t1.b1, test.t2.a2, Column#7",
-          "└─Apply 8.00 root  CARTESIAN inner join",
+          "Projection 64000.00 root  test.t1.a1, test.t1.b1, test.t2.a2, Column#7",
+          "└─Apply 64000.00 root  CARTESIAN inner join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─Selection(Probe) 64000.00 root  gt(Column#7, 0)",
