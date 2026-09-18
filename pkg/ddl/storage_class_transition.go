@@ -256,6 +256,7 @@ func setStorageClassTransitionTargets(operation *storageClassTransitionOperation
 func stageStorageClassTransitions(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 	tblInfo *model.TableInfo,
 	old map[int64]physicalStorageClass,
 	schemaVersion int64,
@@ -277,7 +278,7 @@ func stageStorageClassTransitions(
 		if !storageClassTransitionTouches(operation, changed) {
 			continue
 		}
-		superseded, err := supersedeStorageClassTransition(ctx, se, operation, finishTime)
+		superseded, err := supersedeStorageClassTransition(ctx, se, manager, operation, finishTime)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -329,19 +330,30 @@ func storageClassTransitionTouches(
 func supersedeStorageClassTransition(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 	operation *storageClassTransitionOperation,
 	finishTime time.Time,
 ) (bool, error) {
+	// Persist the owner's last successful observation with the terminal state.
+	// Unknown counts stay NULL, including after an owner change. Leave the cache
+	// intact because the surrounding DDL transaction can still roll back.
+	var totalReplicas, completedReplicas any
+	if observed, ok := manager.cachedObservation(operation); ok {
+		totalReplicas = observed.TotalReplicas
+		completedReplicas = observed.CompletedReplicas
+	}
 	duration := finishTime.Sub(operation.StartTime)
 	if duration < 0 {
 		duration = 0
 	}
 	_, err := se.Execute(ctx,
 		`UPDATE mysql.tidb_storage_class_transition_history
-		 SET state = %?, finish_time = %?, duration = %?
+		 SET state = %?, total_replicas = %?, completed_replicas = %?, finish_time = %?, duration = %?
 		 WHERE table_id = %? AND start_ts = %? AND direction = %? AND state = %?`,
 		"supersede-storage-class-transition",
 		storageClassTransitionStateSuperseded,
+		totalReplicas,
+		completedReplicas,
 		finishTime,
 		uint64(duration/time.Second),
 		operation.TableID,
@@ -543,6 +555,7 @@ func storageClassTransitionTopologyIsStable(tblInfo *model.TableInfo) bool {
 func reconcileStorageClassTransitionTopology(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 	tblInfo *model.TableInfo,
 	operation *storageClassTransitionOperation,
 	schemaVersion int64,
@@ -557,7 +570,7 @@ func reconcileStorageClassTransitionTopology(
 		}
 	}()
 
-	superseded, err := supersedeStorageClassTransition(ctx, se, operation, time.Now())
+	superseded, err := supersedeStorageClassTransition(ctx, se, manager, operation, time.Now())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -730,6 +743,21 @@ func sameStorageClassTransitionStatus(a, b StorageClassTransitionStatus) bool {
 		slices.Equal(a.PhysicalTableIDs, b.PhysicalTableIDs)
 }
 
+func (m *storageClassTransitionManager) cachedObservation(
+	operation *storageClassTransitionOperation,
+) (StorageClassTransitionStatus, bool) {
+	if m == nil {
+		return StorageClassTransitionStatus{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	observed, ok := m.mu.observed[operation.key()]
+	if !ok || !observed.StatusValid || !sameStorageClassTransitionStatus(observed, operation.StorageClassTransitionStatus) {
+		return StorageClassTransitionStatus{}, false
+	}
+	return observed, true
+}
+
 func (m *storageClassTransitionManager) setActive(
 	activeOperations map[storageClassTransitionKey]*storageClassTransitionOperation,
 ) {
@@ -817,28 +845,6 @@ func (operation *storageClassTransitionOperation) key() storageClassTransitionKe
 		direction: operation.Direction,
 		startTS:   operation.startTS,
 	}
-}
-
-func persistStorageClassTransitionProgress(
-	ctx context.Context,
-	se *sess.Session,
-	operation *storageClassTransitionOperation,
-) error {
-	// Preserve the last successful observation if a later DDL or a new owner
-	// supersedes the operation. A late observation must not alter terminal rows.
-	_, err := se.Execute(ctx,
-		`UPDATE mysql.tidb_storage_class_transition_history
-		 SET total_replicas = %?, completed_replicas = %?
-		 WHERE table_id = %? AND start_ts = %? AND direction = %? AND state = %?`,
-		"persist-storage-class-transition-progress",
-		operation.TotalReplicas,
-		operation.CompletedReplicas,
-		operation.TableID,
-		operation.startTS,
-		operation.Direction,
-		storageClassTransitionStateRunning,
-	)
-	return errors.Trace(err)
 }
 
 func completeStorageClassTransition(
@@ -971,7 +977,7 @@ func (m *storageClassTransitionManager) poll(
 		}
 		tbl, exists := is.TableByID(ctx, operation.TableID)
 		if !exists {
-			if _, err := supersedeStorageClassTransition(ctx, se, operation, time.Now()); err != nil {
+			if _, err := supersedeStorageClassTransition(ctx, se, m, operation, time.Now()); err != nil {
 				logutil.DDLLogger().Warn("supersede orphaned storage class transition failed",
 					zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
 				continue
@@ -983,7 +989,7 @@ func (m *storageClassTransitionManager) poll(
 		if storageClassTransitionTargetsExist(tbl.Meta(), operation) || !storageClassTransitionTopologyIsStable(tbl.Meta()) {
 			continue
 		}
-		if err := reconcileStorageClassTransitionTopology(ctx, se, tbl.Meta(), operation, latestSchemaVersion); err != nil {
+		if err := reconcileStorageClassTransitionTopology(ctx, se, m, tbl.Meta(), operation, latestSchemaVersion); err != nil {
 			logutil.DDLLogger().Warn("reconcile storage class transition topology failed",
 				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
 			continue
@@ -1013,10 +1019,6 @@ func (m *storageClassTransitionManager) poll(
 			continue
 		}
 		if !complete {
-			if err := persistStorageClassTransitionProgress(ctx, se, operation); err != nil {
-				logutil.DDLLogger().Warn("persist storage class transition progress failed",
-					zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
-			}
 			continue
 		}
 		if _, err := completeStorageClassTransition(ctx, se, operation); err != nil {

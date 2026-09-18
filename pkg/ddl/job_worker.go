@@ -110,13 +110,14 @@ type jobContext struct {
 	*schemaVersionManager
 	// ctx is the context of job scheduler. When worker is running the job, it should
 	// use stepCtx instead.
-	ctx               context.Context
-	infoCache         *infoschema.InfoCache
-	autoidCli         *autoid.ClientDiscover
-	store             kv.Storage
-	schemaVerSyncer   schemaver.Syncer
-	eventPublishStore notifier.Store
-	sysTblMgr         systable.Manager
+	ctx                           context.Context
+	infoCache                     *infoschema.InfoCache
+	autoidCli                     *autoid.ClientDiscover
+	store                         kv.Storage
+	schemaVerSyncer               schemaver.Syncer
+	eventPublishStore             notifier.Store
+	sysTblMgr                     systable.Manager
+	storageClassTransitionManager *storageClassTransitionManager
 
 	// per job fields, they are not changed in the life cycle of this context.
 

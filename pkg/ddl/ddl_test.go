@@ -277,7 +277,7 @@ func ReconcileStorageClassTransitionTopologyForTest(
 	if len(operations) != 1 {
 		return fmt.Errorf("expected one running storage class transition, got %d", len(operations))
 	}
-	return reconcileStorageClassTransitionTopology(ctx, se, tblInfo, operations[0], operations[0].schemaVersion)
+	return reconcileStorageClassTransitionTopology(ctx, se, nil, tblInfo, operations[0], operations[0].schemaVersion)
 }
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
