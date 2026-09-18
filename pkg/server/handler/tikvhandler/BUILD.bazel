@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "dxf.go",
         "flash_replica.go",
+        "region_cache_handler.go",
         "tikv_handler.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server/handler/tikvhandler",
@@ -39,6 +40,7 @@ go_library(
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
+        "//pkg/store/driver",
         "//pkg/store/gcworker",
         "//pkg/store/helper",
         "//pkg/table",
@@ -71,13 +73,20 @@ go_library(
 go_test(
     name = "tikvhandler_test",
     timeout = "short",
-    srcs = ["dxf_test.go"],
+    srcs = [
+        "dxf_test.go",
+        "region_cache_handler_test.go",
+    ],
     embed = [":tikvhandler"],
     flaky = True,
-    shard_count = 2,
+    shard_count = 11,
     deps = [
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/schstatus",
+        "//pkg/server/handler",
+        "//pkg/store/helper",
+        "@com_github_gorilla_mux//:mux",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
     ],
 )
