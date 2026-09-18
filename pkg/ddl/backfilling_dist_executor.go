@@ -171,7 +171,9 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(
+			ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize,
+			s.GetExecID(), s.GetTaskBase().Concurrency)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
