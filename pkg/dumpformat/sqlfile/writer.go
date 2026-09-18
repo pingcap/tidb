@@ -117,9 +117,11 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 // writes buf out whenever it reaches maxBufferedValueSize. It returns the number
 // of bytes written out.
 func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) (uint64, error) {
-	if val == nil || kind == dumpformat.KindNumber {
-		sw.buf = AppendValue(sw.buf, val, val == nil, kind, sw.cfg.EscapeBackslash)
-		return sw.flushIfFull()
+	// NULL (a nil val) and numbers are written unquoted and are never large.
+	isNull := val == nil
+	if isNull || kind == dumpformat.KindNumber {
+		sw.buf = AppendValue(sw.buf, val, isNull, kind, sw.cfg.EscapeBackslash)
+		return sw.maybeFlush()
 	}
 	sw.buf = appendOpenQuote(sw.buf, kind)
 	var flushed uint64
@@ -127,7 +129,7 @@ func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) (uint64, er
 		piece := val[:min(len(val), maxBufferedValueSize)]
 		val = val[len(piece):]
 		sw.buf = appendQuotedBody(sw.buf, piece, kind, sw.cfg.EscapeBackslash)
-		n, err := sw.flushIfFull()
+		n, err := sw.maybeFlush()
 		if err != nil {
 			return 0, err
 		}
@@ -137,9 +139,9 @@ func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) (uint64, er
 	return flushed, nil
 }
 
-// flushIfFull writes out and empties buf once it reaches maxBufferedValueSize,
-// returning the number of bytes written.
-func (sw *Writer) flushIfFull() (uint64, error) {
+// maybeFlush writes out and empties buf once it reaches maxBufferedValueSize,
+// returning the number of bytes written (0 if buf is not full yet).
+func (sw *Writer) maybeFlush() (uint64, error) {
 	if len(sw.buf) < maxBufferedValueSize {
 		return 0, nil
 	}
