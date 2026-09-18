@@ -318,6 +318,11 @@ Commit map so far: `cbfdc7cad4` (M1), `5265825c09` (M2), `31646df17e` (M3 receip
       live-verified (`Delete rule successfully.`); the DELETE path is
       `/pd/api/v1/config/rule/{group}/{id}` (an early draft added a literal
       `group` segment and 404'd).
+- [x] Empty-group tolerance: PD answers the rules-group GET with JSON `null`
+      once the group carries no rules; the poller treats that as an empty
+      list (fix pushed `ca6577e647`) and now re-creates the rule after a
+      0/1 cycle, with PD placing learners on every tiflash region
+      (one=full=2.0) and availability flipping true — verified live.
 - [x] M5 (partial): M1/M2/M3/M4 pushes + receipts; the remaining documented
       non-blockers (MPP predicate lowering, TLS-cluster HTTP) are design
       boundaries, not verification gaps.
