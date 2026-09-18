@@ -635,6 +635,21 @@ func TestInstanceScopedVars(t *testing.T) {
 	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) == 1
 	require.Equal(t, BoolToOnOff(enabled), val)
 
+	t.Run("record plan boolean values", func(t *testing.T) {
+		cfg := config.GetGlobalConfig()
+		old := atomic.LoadUint32(&cfg.Instance.RecordPlanInSlowLog)
+		defer atomic.StoreUint32(&cfg.Instance.RecordPlanInSlowLog, old)
+		sv := GetSysVar(vardef.TiDBRecordPlanInSlowLog)
+		for _, input := range []string{"0", "OFF", "1", "ON", "0"} {
+			normalized, err := sv.Validate(vars, input, vardef.ScopeGlobal)
+			require.NoError(t, err)
+			require.NoError(t, sv.SetGlobal(context.Background(), vars, normalized))
+			actual, err := sv.GetGlobal(context.Background(), vars)
+			require.NoError(t, err)
+			require.Equal(t, normalized, actual)
+		}
+	})
+
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBEnableSlowLog)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), val)
