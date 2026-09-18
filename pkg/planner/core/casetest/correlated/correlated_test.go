@@ -75,7 +75,7 @@ WHERE NOT (tlc07c2a51.col_1>=
 }
 
 func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
-	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestWithDefaultPlanner(tt, func(t *testing.T, tk *testkit.TestKit) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a int)")
@@ -88,10 +88,6 @@ func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
 			where exists (select 1 from t t3 where t3.a = t1.a)
 			order by t1.a`
 		tk.MustQuery(sql).Check(testkit.Rows("1", "1", "1", "1", "2"))
-
-		if cascades == "on" {
-			return
-		}
 
 		t.Run("AlternativeLogicalPlansChooseApply", func(t *testing.T) {
 			tk.MustExec("use test")
