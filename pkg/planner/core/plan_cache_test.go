@@ -489,9 +489,9 @@ func TestIssue38205(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
 			{"IndexJoin_12"},
-			{"├─TableReader_21(Build)"},
-			{"│ └─Selection_20"},
-			{"│   └─TableFullScan_19"},
+			{"├─TableReader_22(Build)"},
+			{"│ └─Selection_21"},
+			{"│   └─TableFullScan_20"},
 			{"└─IndexReader_11(Probe)"},
 			{"  └─Selection_10"},
 			{"    └─IndexRangeScan_9"},
