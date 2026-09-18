@@ -388,3 +388,20 @@ oltp_insert (4+4)      1944 tps     456 us  2043 tps     420 us   cpu -8%
 sysbench's bulk_insert restarts its ids on every run, so its tables must be
 re-prepared per round; the resulting dropped-table garbage is what fills this
 playground's disk, and the RocksDB side only shrinks at a TiKV restart.
+
+### select_random_points: the last lookup window runs inline (44d0dee6)
+
+Profile of the head node under select_random_points (ten handles per query):
+1112 us of node CPU per query, 15 context switches and 18 futex calls per
+query, with the futex/schedule path at 25% of the node's samples; Go's node
+spends 1125 us and 18.5 context switches on the same query, so the two were
+at parity and the handoffs are the cost. A window shorter than its target is
+the lookup's last one, and with nothing in flight there is nothing for a lane
+handoff to overlap, so that window now runs on the calling thread. A/B
+(results/ab-w3.log, 4 threads, ABBA, four rounds a side):
+
+```
+                      before (fd6bac72)                 after (44d0dee6)
+select_random_points  1250 tps  3.23 ms  1115 us/q      1336 tps  3.00 ms  1015 us/q
+select_random_ranges  1966 tps  2.04 ms   793 us/q      1991 tps  2.01 ms   796 us/q
+```
