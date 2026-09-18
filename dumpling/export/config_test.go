@@ -303,3 +303,25 @@ func parseConfigFromArgsForTestWithErr(t *testing.T, args ...string) (*Config, e
 	}
 	return conf, conf.ParseFromFlags(flags)
 }
+
+func TestParseIncludeGeneratedColumns(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t)
+	require.Equal(t, GeneratedColumnsNone, conf.IncludeGeneratedColumns)
+
+	for _, value := range []string{"none", "NONE", ""} {
+		conf = parseConfigFromArgsForTest(t, "--include-generated-columns", value)
+		require.Equal(t, GeneratedColumnsNone, conf.IncludeGeneratedColumns)
+	}
+
+	// The option only changes data output, so it doesn't require --no-schemas.
+	conf = parseConfigFromArgsForTest(t, "--include-generated-columns", "Stored", "--filetype", "csv")
+	require.Equal(t, GeneratedColumnsStored, conf.IncludeGeneratedColumns)
+	require.False(t, conf.NoSchemas)
+
+	for _, value := range []string{"virtual", "all"} {
+		_, err := parseConfigFromArgsForTestWithErr(t, "--include-generated-columns", value)
+		require.ErrorContains(t, err, "--include-generated-columns="+value+" is not supported yet")
+	}
+	_, err := parseConfigFromArgsForTestWithErr(t, "--include-generated-columns=true")
+	require.ErrorContains(t, err, "invalid --include-generated-columns value 'true'")
+}
