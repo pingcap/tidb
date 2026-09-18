@@ -576,9 +576,8 @@ const (
 
 // nolint:structcheck
 type checkIndexValue struct {
-	idxColTps   []*types.FieldType
-	idxTblCols  []*table.Column
-	tableFilter *physicalop.PhysicalSelection
+	idxColTps  []*types.FieldType
+	idxTblCols []*table.Column
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -2156,21 +2155,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 		return err
 	}
-	var reader exec.Executor = tableReader
-	defer func() { terror.Log(exec.Close(reader)) }()
+	defer func() { terror.Log(exec.Close(tableReader)) }()
 
 	if w.checkIndexValue != nil {
-		if w.tableFilter != nil {
-			selection := w.idxLookup.buildSelectionFromChildExec(w.tableFilter, tableReader)
-			// Each concurrent lookup task needs its own mutable expression state.
-			selection.filters = expression.CNFExprs(selection.filters).Clone()
-			reader = selection
-			// The handle-based table reader is already open.
-			if err := selection.open(ctx); err != nil {
-				return err
-			}
-		}
-		return w.compareData(ctx, task, reader)
+		return w.compareData(ctx, task, tableReader)
 	}
 
 	{

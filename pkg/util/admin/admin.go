@@ -123,9 +123,6 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
-	if idx.Meta().HasCondition() {
-		cols = t.Cols()
-	}
 
 	ir := func() *consistency.Reporter {
 		return &consistency.Reporter{
@@ -157,32 +154,32 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 	}
 
 	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
-	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, _ []*table.Column) (bool, error) {
-		idxVals := vals1
-		if idx.Meta().HasCondition() {
-			meet, err := idx.MeetPartialCondition(vals1)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			if !meet {
-				return true, nil
-			}
-			idxVals, err = idx.FetchValues(vals1, nil)
-			if err != nil {
-				return false, errors.Trace(err)
+	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
+		for i, val := range vals1 {
+			col := cols[i]
+			if val.IsNull() {
+				if mysql.HasNotNullFlag(col.GetFlag()) && col.ToInfo().GetOriginDefaultValue() == nil {
+					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
+				}
+				// NULL value is regarded as its default value.
+				colDefVal, err := table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc.ErrCtx(), sc.TimeZone(), txn, idxVals, h1)
+		isExist, h2, err := idx.Exist(sc.ErrCtx(), sc.TimeZone(), txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
-			record1 := &consistency.RecordData{Handle: h1, Values: idxVals}
-			record2 := &consistency.RecordData{Handle: h2, Values: idxVals}
+			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
+			record2 := &consistency.RecordData{Handle: h2, Values: vals1}
 			return false, ir().ReportAdminCheckInconsistent(ctx, h1, record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
-			record := &consistency.RecordData{Handle: h1, Values: idxVals}
+			record := &consistency.RecordData{Handle: h1, Values: vals1}
 			return false, ir().ReportAdminCheckInconsistent(ctx, h1, nil, record)
 		}
 
@@ -248,18 +245,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		}
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
-			val, found := rowMap[col.ID]
-			// Only a physically missing column uses its origin default. A stored NULL must stay NULL.
-			if !found || (val.IsNull() && mysql.HasNotNullFlag(col.GetFlag())) {
-				if mysql.HasNotNullFlag(col.GetFlag()) && col.ToInfo().GetOriginDefaultValue() == nil {
-					return errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, handle)
-				}
-				val, err = table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			data = append(data, val)
+			data = append(data, rowMap[col.ID])
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {

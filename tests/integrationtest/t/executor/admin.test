@@ -234,40 +234,13 @@ insert into t values (NULL);
 insert into t values (-1);
 insert into t values (1);
 set tidb_enable_fast_table_check = 'OFF';
+--error 8273
 admin check index t idx;
+--error 8273
 admin check table t;
 set tidb_enable_fast_table_check = 'ON';
 admin check index t idx;
 admin check table t;
-
-# Partial-index predicates that cannot be pushed down must still be checked.
-drop table if exists t;
-create table t (id int primary key, a int, s set('a','b'), key idx(a) where s = 1, key idx_null(a) where s is null);
-insert into t values (1, 10, 'a'), (2, 20, 'b'), (3, 30, null);
-set tidb_enable_fast_table_check = 'OFF';
-admin check table t;
-admin check index t idx;
-admin check index t idx_null;
-set tidb_enable_fast_table_check = 'ON';
-admin check table t;
-admin check index t idx;
-admin check index t idx_null;
-
-# Predicate resolution must tolerate the primary key appearing as both a key and a handle.
-drop table t;
-create table t (id int primary key clustered, key idx(id) where id > 0);
-insert into t values (1), (0);
-set tidb_enable_fast_table_check = 'OFF';
-admin check table t;
-admin check index t idx;
-
-# Check predicate column offsets with common handles and virtual index columns.
-drop table t;
-create table t (id varchar(10) primary key clustered, a int, s set('a','b'), key idx((a + 1)) where s = 1);
-insert into t values ('a', 10, 'a'), ('b', 20, 'b'), ('c', 30, null);
-admin check table t;
-admin check index t idx;
-set tidb_enable_fast_table_check = 'ON';
 
 # TestAdminRecoverPartialIndex
 drop table if exists t;

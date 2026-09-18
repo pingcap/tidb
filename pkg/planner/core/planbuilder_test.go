@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -1335,93 +1334,6 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		err = checkNextGenS3PathWithSem(u)
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 		require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
-	}
-}
-
-func TestBuildCheckIndexPlanTableFilter(t *testing.T) {
-	for _, tt := range []struct {
-		name      string
-		columnTp  byte
-		condition string
-		pushable  bool
-	}{
-		{name: "integer", columnTp: mysql.TypeLonglong, condition: "predicate_col > 0", pushable: true},
-		{name: "set numeric", columnTp: mysql.TypeSet, condition: "predicate_col = 1"},
-		{name: "set is null", columnTp: mysql.TypeSet, condition: "predicate_col IS NULL"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := coretestsdk.MockContext()
-			t.Cleanup(func() { domain.GetDomain(ctx).StatsHandle().Close() })
-			builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
-			predicateCol := &model.ColumnInfo{
-				ID: 1, Name: ast.NewCIStr("predicate_col"), Offset: 0, State: model.StatePublic,
-				FieldType: *types.NewFieldType(tt.columnTp),
-			}
-			if tt.columnTp == mysql.TypeSet {
-				predicateCol.SetElems([]string{"a", "b"})
-				predicateCol.SetCharset("utf8mb4")
-				predicateCol.SetCollate("utf8mb4_bin")
-			}
-			valueCol := &model.ColumnInfo{
-				ID: 2, Name: ast.NewCIStr("value_col"), Offset: 1, State: model.StatePublic,
-				FieldType: *types.NewFieldType(mysql.TypeLonglong),
-			}
-			pkCol := &model.ColumnInfo{
-				ID: 3, Name: ast.NewCIStr("id"), Offset: 2, State: model.StatePublic,
-				FieldType: *types.NewFieldType(mysql.TypeLonglong),
-			}
-			pkCol.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
-			idx := &model.IndexInfo{
-				ID: 1, Name: ast.NewCIStr("idx"), State: model.StatePublic,
-				Columns:             []*model.IndexColumn{{Name: valueCol.Name, Offset: valueCol.Offset, Length: types.UnspecifiedLength}},
-				ConditionExprString: tt.condition,
-				AffectColumn:        []*model.IndexColumn{{Name: predicateCol.Name, Offset: predicateCol.Offset, Length: types.UnspecifiedLength}},
-			}
-			tbl := tables.MockTableFromMeta(&model.TableInfo{
-				ID: 1, Name: ast.NewCIStr("t"), State: model.StatePublic, PKIsHandle: true,
-				Columns: []*model.ColumnInfo{predicateCol, valueCol, pkCol},
-				Indices: []*model.IndexInfo{idx},
-			})
-			require.NotNil(t, tbl)
-			plan, err := builder.buildPhysicalIndexLookUpReader(context.Background(), ast.NewCIStr("test"), tbl, idx)
-			require.NoError(t, err)
-			lookup := plan.IndexLookUpReader
-			require.NotNil(t, lookup)
-			require.NotEmpty(t, lookup.TablePlans)
-			scan, ok := lookup.TablePlans[0].(*physicalop.PhysicalTableScan)
-			require.True(t, ok)
-			require.Equal(t, []int{2}, scan.HandleIdx)
-			require.Len(t, scan.Schema().Columns, 3)
-			// Index values precede predicate-only columns and the PK handle in the output,
-			// so the predicate's resolved index must not be its original table offset.
-			require.Equal(t, valueCol.ID, scan.Schema().Columns[0].ID)
-			require.Equal(t, predicateCol.ID, scan.Schema().Columns[1].ID)
-			require.Equal(t, pkCol.ID, scan.Schema().Columns[2].ID)
-
-			var selection *physicalop.PhysicalSelection
-			if tt.pushable {
-				require.Nil(t, plan.TableFilter)
-				require.Len(t, lookup.TablePlans, 2)
-				selection, ok = lookup.TablePlans[1].(*physicalop.PhysicalSelection)
-				require.True(t, ok)
-				require.Same(t, selection, lookup.TablePlan)
-			} else {
-				selection = plan.TableFilter
-				require.NotNil(t, selection)
-				// Only the table scan is sent to TiKV; the unsupported selection stays local.
-				require.Len(t, lookup.TablePlans, 1)
-				require.Len(t, selection.Children(), 1)
-				reader, ok := selection.Children()[0].(*physicalop.PhysicalTableReader)
-				require.True(t, ok)
-				require.Len(t, reader.TablePlans, 1)
-				require.Same(t, lookup.TablePlan, reader.TablePlans[0])
-			}
-			require.Len(t, selection.Conditions, 1)
-			columns := expression.ExtractColumns(selection.Conditions[0])
-			require.Len(t, columns, 1)
-			require.Equal(t, predicateCol.ID, columns[0].ID)
-			require.Equal(t, 1, columns[0].Index)
-		})
 	}
 }
 

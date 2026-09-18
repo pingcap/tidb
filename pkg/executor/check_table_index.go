@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/admin"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -48,6 +50,8 @@ import (
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+var errCheckPartialIndexWithoutFastCheck = dbterror.ClassExecutor.NewStd(errno.ErrCheckPartialIndexWithoutFastCheck)
 
 // CheckTableExec represents a check table executor.
 // It is built from the "admin check table" statement, and it checks if the
@@ -118,6 +122,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 	for {
 		err = exec.Next(ctx, src, chk)
 		if err != nil {
+			e.retCh <- errors.Trace(err)
 			break
 		}
 		if chk.NumRows() == 0 {
@@ -141,15 +146,14 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	defer func() { e.done = true }()
 
 	idxNames := make([]string, 0, len(e.indexInfos))
-	idxOffsets := make([]int, 0, len(e.indexInfos))
-	for offset, idx := range e.indexInfos {
-		// These indexes do not have a one-to-one mapping between table rows and
-		// index entries, so their counts cannot be compared with the table count.
-		if idx.MVIndex || idx.IsColumnarIndex() || idx.HasCondition() {
+	for _, idx := range e.indexInfos {
+		if idx.HasCondition() {
+			return errors.Trace(errCheckPartialIndexWithoutFastCheck)
+		}
+		if idx.MVIndex || idx.IsColumnarIndex() {
 			continue
 		}
 		idxNames = append(idxNames, idx.Name.O)
-		idxOffsets = append(idxOffsets, offset)
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
@@ -158,9 +162,9 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		if greater == admin.IdxCntGreater {
-			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffsets[idxOffset]])
+			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(ctx, idxOffsets[idxOffset])
+			err = e.checkTableRecord(ctx, idxOffset)
 		}
 		return errors.Trace(err)
 	}
@@ -169,7 +173,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
 	if len(e.srcs) == 1 {
 		err = e.checkIndexHandle(ctx, e.srcs[0])
-		if err == nil && (e.srcs[0].index.MVIndex || e.srcs[0].index.HasCondition()) {
+		if err == nil && e.srcs[0].index.MVIndex {
 			err = e.checkTableRecord(ctx, 0)
 		}
 		if err != nil {
@@ -192,7 +196,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				select {
 				case src := <-taskCh:
 					err1 := e.checkIndexHandle(ctx, src)
-					if err1 == nil && (src.index.MVIndex || src.index.HasCondition()) {
+					if err1 == nil && src.index.MVIndex {
 						for offset, idx := range e.indexInfos {
 							if idx.ID == src.index.ID {
 								err1 = e.checkTableRecord(ctx, offset)
@@ -203,7 +207,6 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 					if err1 != nil {
 						failure.Store(true)
 						logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
-						e.retCh <- errors.Trace(err1)
 						return
 					}
 				case <-e.exitCh:
