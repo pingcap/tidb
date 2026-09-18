@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -66,5 +67,41 @@ func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {
 			importTypeCtx := importCtx.GetSessionVars().StmtCtx.TypeCtx()
 			require.EqualValues(t, insertTypeCtx.Flags(), importTypeCtx.Flags())
 		})
+	}
+}
+
+func TestYearComparisonTiKV(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustExec("create table t0(c0 year not null, index i0(c0))")
+	tk.MustExec("insert into t0 values (1935), (1982)")
+	tk.MustQuery("select /*+ read_from_storage(tikv[t0]) */ c0 from t0 where 0.025 <= c0").
+		Sort().Check(testkit.Rows("1935", "1982"))
+
+	tk.MustExec("truncate table t0")
+	tk.MustExec("insert into t0 values (0), (1901), (1935), (1982), (2000), (2001), (2155)")
+	tests := []struct {
+		op       string
+		constant string
+	}{
+		{">=", "-0.025"},
+		{">=", "0.025"},
+		{">", "0.025"},
+		{"<=", "0.025"},
+		{"<", "0.025"},
+		{">=", "69.5"},
+		{"<=", "1935.5"},
+		{">", "1935.5"},
+		{">=", "2155.5"},
+		{">=", "2.5e-2"},
+		{"<=", "1935.25e0"},
+		{">=", "1935.000"},
+	}
+	for _, tt := range tests {
+		indexedSQL := fmt.Sprintf("select /*+ use_index(t0, i0) */ c0 from t0 where c0 %s %s order by c0", tt.op, tt.constant)
+		referenceSQL := fmt.Sprintf("select c0 from t0 where cast(c0 as decimal(10, 3)) %s %s order by c0", tt.op, tt.constant)
+		require.Equal(t, tk.MustQuery(referenceSQL).Rows(), tk.MustQuery(indexedSQL).Rows(), indexedSQL)
 	}
 }
