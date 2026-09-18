@@ -2007,9 +2007,11 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
 			var observed atomic.Int64
+			var frontendBytes float64
 			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(_ uint64, _ string,
-				_, _, _, _, _, _, _, _, _, _, _ float64) {
+				_, _, _, frontendCompileBytes, _, _, _, _, _, _, _ float64) {
 				observed.Add(1)
+				frontendBytes = frontendCompileBytes
 			})
 			totalBefore := testutil.ToFloat64(metrics.RUV2Total)
 			tidbBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))
@@ -2065,17 +2067,44 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 			checkType("commit", "commit")
 			checkType("analyze table ru_report_modes", "analyze")
 			tk.MustExec("set @@tidb_enable_prepared_plan_cache = on")
+			checkCache := func(sql, stmtType string, hit bool) float64 {
+				t.Helper()
+				before := testutil.ToFloat64(metrics.RUV2Total)
+				observedBefore := observed.Load()
+				checkType(sql, stmtType)
+				require.Equal(t, hit, tk.Session().GetSessionVars().FoundInPlanCache, sql)
+				if mode == config.RUReportModeFull {
+					require.Equal(t, observedBefore+1, observed.Load())
+					if hit {
+						require.Zero(t, frontendBytes, sql)
+					} else {
+						require.Positive(t, frontendBytes, sql)
+					}
+				}
+				return testutil.ToFloat64(metrics.RUV2Total) - before
+			}
 			tk.MustExec("prepare ru_report_insert from 'insert into ru_report_modes values (?, ?)'")
 			tk.MustExec("set @ru_id = 4, @ru_v = 5")
-			checkType("execute ru_report_insert using @ru_id, @ru_v", "insert")
+			checkCache("execute ru_report_insert using @ru_id, @ru_v", "insert", false)
 			tk.MustExec("set @ru_id = 5")
-			checkType("execute ru_report_insert using @ru_id, @ru_v", "insert")
+			checkCache("execute ru_report_insert using @ru_id, @ru_v", "insert", true)
 			tk.MustExec("deallocate prepare ru_report_insert")
 			tk.MustExec("prepare ru_report_select from 'select * from ru_report_modes where id > ?'")
 			tk.MustExec("set @ru_id = 0")
-			checkType("execute ru_report_select using @ru_id", "select")
-			checkType("execute ru_report_select using @ru_id", "select")
+			missRU := checkCache("execute ru_report_select using @ru_id", "select", false)
+			hitRU := checkCache("execute ru_report_select using @ru_id", "select", true)
+			require.Greater(t, missRU, hitRU)
+			tk.MustExec("set @@tidb_enable_prepared_plan_cache = off")
+			disabledRU := checkCache("execute ru_report_select using @ru_id", "select", false)
+			require.InDelta(t, missRU, disabledRU, 1e-9)
 			tk.MustExec("deallocate prepare ru_report_select")
+			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = on")
+			missRU = checkCache("select v from ru_report_modes where id > 0", "select", false)
+			hitRU = checkCache("select v from ru_report_modes where id > 0", "select", true)
+			require.Greater(t, missRU, hitRU)
+			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = off")
+			disabledRU = checkCache("select v from ru_report_modes where id > 0", "select", false)
+			require.InDelta(t, missRU, disabledRU, 1e-9)
 			checkType("delete from ru_report_modes where id > 1", "delete")
 			tk.MustExec("update ru_report_modes set v = 2 where id = 1")
 		})

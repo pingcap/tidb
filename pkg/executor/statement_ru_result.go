@@ -203,8 +203,12 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 
 	sql := stmt.StmtNode.OriginalText()
 	if stmt.Ctx != nil {
-		if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil &&
-			sessVars.StmtCtx != nil && sessVars.StmtCtx.OriginalSQL != "" {
+		sessVars := stmt.Ctx.GetSessionVars()
+		// Both prepared and non-prepared cache hits skip plan compilation.
+		if sessVars != nil && sessVars.FoundInPlanCache {
+			return 0
+		}
+		if sessVars != nil && sessVars.StmtCtx != nil && sessVars.StmtCtx.OriginalSQL != "" {
 			stmtCtx := sessVars.StmtCtx
 			normalizedSQL, _ := stmtCtx.SQLDigest()
 			normalizedSQL = trimStatementRUExplainPrefix(normalizedSQL)
