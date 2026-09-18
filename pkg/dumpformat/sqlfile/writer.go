@@ -58,10 +58,6 @@ type Writer struct {
 	statementSize uint64
 	fileSize      uint64
 	inStatement   bool
-	// tupleStart is where the current row's tuple begins in buf, and
-	// tupleFlushed counts the tuple bytes already written out by flushBuf.
-	tupleStart   int
-	tupleFlushed uint64
 }
 
 // NewWriter creates a Writer over w. prefix is the INSERT statement prefix
@@ -93,8 +89,10 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 		// This row's leading ",\n" was counted as the previous row's separator.
 		sw.buf = append(sw.buf, ',', '\n')
 	}
-	sw.tupleStart = len(sw.buf)
-	sw.tupleFlushed = 0
+	// start is where the rest of the tuple begins in buf, and flushed counts the
+	// tuple bytes already written out; start drops to 0 after the first flush.
+	start := len(sw.buf)
+	var flushed uint64
 	sw.buf = append(sw.buf, '(')
 	for i, val := range row {
 		if i > 0 {
@@ -102,21 +100,25 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 		}
 		kind := sw.kinds[i]
 		if val != nil && kind != dumpformat.KindNumber && len(val) > maxBufferedValueSize {
-			if err := sw.writeLargeValue(val, kind); err != nil {
+			n, err := sw.writeLargeValue(val, kind, start)
+			if err != nil {
 				return err
 			}
+			flushed, start = flushed+n, 0
 			continue
 		}
 		sw.buf = AppendValue(sw.buf, val, val == nil, kind, sw.cfg.EscapeBackslash)
 		if len(sw.buf) >= maxBufferedValueSize {
-			if err := sw.flushBuf(); err != nil {
+			n, err := sw.flushBuf(start)
+			if err != nil {
 				return err
 			}
+			flushed, start = flushed+n, 0
 		}
 	}
 	sw.buf = append(sw.buf, ')')
 	// Count the tuple plus the 2-byte separator that will follow it.
-	tupleSize := sw.tupleFlushed + uint64(len(sw.buf)-sw.tupleStart) + 2
+	tupleSize := flushed + uint64(len(sw.buf)-start) + 2
 	sw.statementSize += tupleSize
 	sw.fileSize += tupleSize
 	_, err := sw.w.Write(sw.buf)
@@ -126,12 +128,15 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 // writeLargeValue appends a quoted string or x'..' literal for val, encoding it
 // in pieces of at most maxBufferedValueSize input bytes and flushing after each
 // piece. Hex encoding and both string escapings map every input byte on its
-// own, so the pieces concatenate to exactly what AppendValue produces.
-func (sw *Writer) writeLargeValue(val []byte, kind dumpformat.FieldKind) error {
+// own, so the pieces concatenate to exactly what AppendValue produces. The
+// current tuple begins at offset start in buf; writeLargeValue returns how many
+// tuple bytes it wrote out, and leaves only the closing quote in buf.
+func (sw *Writer) writeLargeValue(val []byte, kind dumpformat.FieldKind, start int) (uint64, error) {
 	if kind == dumpformat.KindBytes {
 		sw.buf = append(sw.buf, 'x')
 	}
 	sw.buf = append(sw.buf, '\'')
+	var flushed uint64
 	for len(val) > 0 {
 		piece := val[:min(len(val), maxBufferedValueSize)]
 		val = val[len(piece):]
@@ -140,21 +145,23 @@ func (sw *Writer) writeLargeValue(val []byte, kind dumpformat.FieldKind) error {
 		} else {
 			sw.buf = appendEscaped(sw.buf, piece, sw.cfg.EscapeBackslash)
 		}
-		if err := sw.flushBuf(); err != nil {
-			return err
+		n, err := sw.flushBuf(start)
+		if err != nil {
+			return 0, err
 		}
+		flushed, start = flushed+n, 0
 	}
 	sw.buf = append(sw.buf, '\'')
-	return nil
+	return flushed, nil
 }
 
-// flushBuf writes out the buffered part of the current row and empties buf.
-func (sw *Writer) flushBuf() error {
-	sw.tupleFlushed += uint64(len(sw.buf) - sw.tupleStart)
-	sw.tupleStart = 0
+// flushBuf writes out and empties buf, returning how many of the written bytes
+// belong to the current tuple, which begins at offset start in buf.
+func (sw *Writer) flushBuf(start int) (uint64, error) {
+	n := uint64(len(sw.buf) - start)
 	_, err := sw.w.Write(sw.buf)
 	sw.buf = sw.buf[:0]
-	return err
+	return n, err
 }
 
 // EstimateFileSize returns the logical file size for rotation. It excludes any
