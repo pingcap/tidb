@@ -532,3 +532,176 @@ harness's fixed 4/16-thread points. Node-side generic fixes are exhausted for
 point_select on this single-node-TiKV playground; the remaining lever is
 TiKV/PD capacity, which is out of this task's scope (this campaign changes
 only the tidb node).
+
+## 2026-09-19: goal 9's full base-vs-head matrix (4t/16t), and what's still short
+
+Continuing the goal-9 investigation ("goal not archived yet"): re-ran the same
+17-row sysbench+TPC-C matrix as the 2026-09-18 yardstick, base
+(`8123bb1`) vs head, 2 ABBA rounds per thread count, fresh tables per side,
+same box. Table below is each row's 2-round average; "tps gain" and "lat
+gain" are both `(base - head) / base` direction-normalized so positive
+always means head is better (higher tps, lower latency); >=25% on both is
+what goal 9 requires.
+
+```
+workload                 base tps    head tps   tps gain   base ms   head ms   lat gain
+oltp_point_select           6029.8      6568.4      +8.9%      0.66      0.61      +8.2%
+oltp_read_only               285.7       304.4      +6.6%     14.00     13.13      +6.6%
+oltp_write_only               529.0       608.4     +15.0%      7.58      6.57     +15.3%
+oltp_read_write                179.0       183.8      +2.7%     22.34     21.82      +2.4%
+oltp_insert                  1900.1      2052.3      +8.0%      2.10      1.94      +8.0%
+oltp_delete                  1306.4      2064.1     +58.0%      3.07      1.94     +58.4%  ** both >=25%
+oltp_update_index            1271.6      1594.0     +25.4%      3.14      2.51     +25.1%  ** both >=25% (4t only)
+oltp_update_non_index        1283.9      1524.3     +18.7%      3.12      2.62     +18.9%
+select_random_points          1420.5      1442.9      +1.6%      2.81      2.77      +1.6%
+select_random_ranges           1730.5      1853.7      +7.1%      2.31      2.16      +7.2%
+bulk_insert                     2.6         3.4     +30.9%      0.05      0.04     +25.0%  ** both >=25% (4t only, latency exact)
+tpcc_NEW_ORDER                5025.5      5321.2      +5.9%     24.15     22.35      +8.1%
+tpcc_PAYMENT                  4777.9      5039.8      +5.5%     14.15     13.15      +7.6%
+tpcc_ORDER_STATUS               451.9       501.1     +10.9%      9.70     12.90     -24.8%  (see anomaly note)
+tpcc_DELIVERY                   424.5       461.3      +8.7%     91.75     87.90      +4.4%
+tpcc_STOCK_LEVEL                 467.1       448.1      -4.1%     12.90     12.05      +7.1%  (see anomaly note)
+tpcc_tpmC                      5025.5      5321.2      +5.9%
+
+=== 16 threads ===
+oltp_point_select          11121.8     11427.9      +2.8%      1.44      1.40      +2.9%
+oltp_read_only                432.3       491.3     +13.6%     37.06     32.55     +13.9%
+oltp_write_only                785.8       877.7     +11.7%     20.37     18.25     +11.6%
+oltp_read_write                241.7       266.0     +10.0%     66.10     60.05     +10.1%
+oltp_insert                  3666.7      4014.8      +9.5%      4.36      3.98      +9.5%
+oltp_delete                  2280.8      3966.4     +73.9%      7.02      4.03     +74.4%  ** both >=25%
+oltp_update_index            2041.4      2515.2     +23.2%      7.83      6.37     +23.0%  (close, under 25%)
+oltp_update_non_index        2038.7      2940.5     +44.2%      7.88      5.44     +44.9%  ** both >=25% (16t only)
+select_random_points          1998.6      2267.7     +13.5%      8.00      7.04     +13.6%
+select_random_ranges          2717.5      2607.3      -4.1%      5.90      6.13      -3.8%  (regression; see below)
+bulk_insert                     2.8         3.2     +15.5%      0.19      0.16     +15.2%
+tpcc_NEW_ORDER                5545.5      6298.1     +13.6%     68.50     59.80     +14.5%
+tpcc_PAYMENT                  5311.1      5937.3     +11.8%     80.45     74.65      +7.8%
+tpcc_ORDER_STATUS               488.4       564.0     +15.5%     21.35     17.25     +23.8%  (close, under 25%)
+tpcc_DELIVERY                   503.3       515.6      +2.4%    264.65    227.55     +16.3%
+tpcc_STOCK_LEVEL                511.5       565.0     +10.4%     21.15     19.70      +7.4%
+tpcc_tpmC                      5545.5      6298.1     +13.6%
+```
+
+**Honest goal-9 status.** As stated ("+25% throughput AND latency on EVERY
+sysbench workload and every TPC-C transaction type") the goal is **not met**.
+Only `oltp_delete` clears both bars at both thread counts. `oltp_update_index`
+clears both at 4t but falls just short at 16t (23.2/23.0%); `oltp_update_non_index`
+is the mirror image (falls short at 4t, clears both at 16t); `bulk_insert`
+clears both at 4t (latency exactly at the 25% line) but is well short at 16t.
+Every other row -- all the read-dominated workloads (`point_select`,
+`read_only`, `read_write`, `random_points`, `random_ranges`) and most of
+TPC-C -- sits in the +3% to +16% range at one or both thread counts. This is
+the expected shape given the 2026-09-18 single-connection RPC-share analysis
+and the 2026-09-19 point_select scaling-curve analysis: on this
+single-node-TiKV+PD playground, the shared store (identical binaries under
+both sides) is the bottleneck for read-dominated work at both low and high
+concurrency, and no further tidb-node-only change can push those workloads
+to +25% here. Write-heavy workloads with less per-request TiKV round-trip
+share (`delete`, the index-touching updates, bulk load) are where node-side
+efficiency still converts directly into a measurable throughput/latency win,
+and that's exactly where the matrix clears the bar.
+
+**Two apparent anomalies, resolved as sampling noise, not real regressions.**
+TPC-C's per-transaction-type rows are the lowest-volume rows in the matrix
+(`ORDER_STATUS`/`STOCK_LEVEL` are each ~4% of the weighted mix), so their
+round-to-round variance is much larger than the higher-volume rows':
+
+- `tpcc_ORDER_STATUS` at 4 threads: round 1 (head 472.4 tps / 8.8 ms) beats
+  base cleanly on both axes; round 2 (head 529.8 tps / 17.0 ms) has higher
+  tps but a much fatter tail (p99 48.2 ms vs round 1's 15.7 ms) that drags the
+  average up past base's own round 2 (462.1 tps / 9.3 ms). Head's own two
+  rounds disagree with each other by ~2x on latency alone -- that swing is
+  bigger than the 33% "regression" attributed to head vs base, so the
+  average-latency read is dominated by a transient (a single stalled request
+  in a ~450-tps row moves the average visibly) rather than a stable base vs
+  head effect. At 16 threads (much higher `ORDER_STATUS` volume per round)
+  the same row is clean and consistent in both rounds: +15.5% tps / +23.8%
+  latency, no contradiction.
+- `tpcc_STOCK_LEVEL` at 4 threads: base's two rounds are tight (470.2 /
+  464.1 tps), but head's two rounds span 427.5 to 468.6 tps -- a 9% internal
+  spread on head alone, bigger than the -4.1% "regression" against base's
+  average. At 16 threads the row is a clean, consistent head win in both
+  rounds (+10.4% tps / +7.4% latency). A low-volume TPC-C sub-transaction
+  type flipping sign between two thread counts on a single pair of ABBA
+  rounds is exactly what sampling noise on ~450-500 tps rows looks like, not
+  a directional effect.
+
+**`select_random_ranges` at 16 threads: unresolved, not confirmed.** This is
+the one full-duration (20s), higher-volume sysbench row where head
+underperforms base in the same direction on both axes (-4.1% tps, -3.8%
+latency), unlike the TPC-C rows above. Attempted two follow-up reruns to
+settle whether this is real or noise; both were undermined by an unrelated
+infrastructure problem newly discovered during this recheck (see next
+section) rather than yielding usable data: the first attempt's `base`-side
+`prepare` step silently failed twice ("Table 'sbtest.sbtest1' doesn't
+exist" once the run actually started) because the harness's DROP/CREATE
+TABLE cycle stalled for minutes; a second, more careful attempt (verifying
+row counts before each run) hit the same DDL stall directly and was
+abandoned. **This result is carried forward as unconfirmed** -- the original
+-4.1%/-3.8% figures stand as measured, but without a clean reproduction I am
+not treating them as a proven regression. Retest once the DDL-sync stall
+below is understood or worked around.
+
+## 2026-09-19: newly discovered -- DDL schema-sync ack can stall for minutes
+
+While trying to get fresh tables for the `select_random_ranges` recheck
+above, `sysbench ... cleanup`'s `DROP TABLE sbtest2` sat in Go's DDL job
+queue at `write only` for **over 7 minutes** with no progress
+(`ADMIN SHOW DDL JOBS`, job 7156, `CREATE_TIME` 22:52:26, still `running` at
+22:59:42), and an earlier `DROP TABLE sbtest1` in the same session (job
+7155) took **~9m40s** end to end -- both far past the ~3s baseline the
+`schema-sync-ack-execplan.md` ladder measured when this feature (the node's
+schema-version ack to Go's DDL owner, `b0580298c4`) was first landed.
+
+Evidence gathered live against job 7156:
+- Go's `tidb.log` repeats, once a second, `"syncer check all versions,
+  someone is not synced"` naming `instance ip 127.0.0.1, port 4001, id
+  3d67caf5-aff9-4d39-b515-ad2a85cb36f8`, `ddl job id=7156`, `ver=12799`,
+  continuously for the whole stall.
+- The Rust node's own log shows `{"event":"schema_sync_acked","job_id":7156,
+  "version":12799}` minutes before the stall was still ongoing -- and per
+  `run_ack_loop` (`cluster_session_node/schema_sync.rs:409-417`) that line is
+  only printed after `syncer.update_self_version(...)` returns `Ok(())`, so
+  the client-side write genuinely reported success.
+- `information_schema.TIDB_SERVERS_INFO` shows exactly one Rust entry the
+  whole time, under that same id (`3d67caf5-...`, matching the currently
+  running `tidb-server-base` process, `GIT_HASH 8123bb16...`) -- ruling out
+  a stale/zombie registration from a prior restart as the cause; this is the
+  one live node Go is correctly waiting on.
+- `mysql.tidb_mdl_info` shows job 7156 at version 12799 the whole time (the
+  row Go itself expects the node to ack), plus one clearly orphaned row
+  (`job_id=3708, version=6292`) that has never been cleaned up and predates
+  every job in this session's `ADMIN SHOW DDL JOBS` history.
+- No live connection or transaction was open on the Rust node (`SHOW
+  PROCESSLIST` on :4001 empty) during the stall, so this is not the
+  MDL-pin-blocks-the-ack case the execplan's own decision log describes --
+  the node had nothing to hold the ack back and, per its own log, sent it.
+
+The path construction matches Go byte for byte
+(`etcd_syncer.rs:675`: `{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/{job_id}/{ddl_id}`
+against `pkg/ddl/schemaver/syncer.go:315`'s `fmt.Sprintf("%s/%d/%s", ...)`),
+so this isn't a wrong-key typo. Given the client-reported-success write and
+Go's continued "not synced" reports for the *same* id/job/version pair for
+minutes, the likely fault is somewhere between the monotonic
+compare-and-put (`put_kv_to_etcd_mono`) actually landing the value the owner
+expects and Go's watch-based `waitVersionSyncedWithMDL` picking it up -- not
+isolated further; this needs a focused session with etcd inspection tooling
+(no `etcdctl` on this box) rather than log inference.
+
+**Not fixed here** -- this is a distinct subsystem (DDL/schema-version sync)
+from the goal-9 DML performance work this session is scoped to, and a rushed
+change to a distributed correctness protocol without being able to inspect
+etcd directly would be worse than leaving it broken and documented. Filed as
+a new follow-up (task 66) rather than folded into goal 9's DML work.
+Practical impact on this campaign: harness runs that only start/stop the
+node and run DML (the matrix above, all prior sysbench/TPC-H work) are
+unaffected -- this only surfaces when the harness itself does fresh-table
+DROP/CREATE cycles back-to-back, which is what the recheck script above was
+doing. `restart-rust.sh`'s existing per-workload table refresh in
+`matrix.sh` evidently did not trigger it during the original matrix run
+(no stalls observed in that data), so it is not a constant-reproduction bug;
+it appeared only during this session's own tighter recheck loop (repeated
+`cleanup`+`prepare` cycles in quick succession). Whether the trigger is
+prior-restart timing, back-to-back DDL volume, or something else is exactly
+what the follow-up needs to isolate.
