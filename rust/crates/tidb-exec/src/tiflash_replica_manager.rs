@@ -194,8 +194,11 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
         let (rules_status, rules_body) =
             http_call("GET", &format!("{endpoint}/pd/api/v1/config/rules/group/tiflash"), None)?;
         if rules_status == 200 {
-            let existing: Vec<serde_json::Value> = serde_json::from_str(&rules_body)
-                .map_err(|error| format!("rules body: {error}"))?;
+            // An empty rules group answers JSON `null`, not `[]`.
+            let existing: Vec<serde_json::Value> = match serde_json::from_str(&rules_body) {
+                Ok(list) => list,
+                Err(_) => Vec::new(),
+            };
             for rule in existing {
                 let id = rule
                     .get("id")
