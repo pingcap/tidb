@@ -54,6 +54,11 @@ var (
 			atomic.Pointer[MemArbitrator]
 			sync.Mutex
 		}
+		runtimeHandler struct {
+			heapProfiler atomic.Pointer[heapProfileCollector]
+			sync.Mutex
+			reset atomic.Bool
+		}
 		metrics struct {
 			last struct {
 				updateUtimeSec atomic.Int64
@@ -67,11 +72,6 @@ var (
 			}
 			init atomic.Bool
 			sync.Mutex
-		}
-		runtimeHandler struct {
-			heapProfiler atomic.Pointer[heapProfileCollector]
-			sync.Mutex
-			reset atomic.Bool
 		}
 		enable atomic.Bool
 	}

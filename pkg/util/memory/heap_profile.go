@@ -53,10 +53,10 @@ var heapProfileLevels = [...]struct {
 
 type heapProfileTriggerState struct {
 	lastCaptureAt          time.Time
+	emergencyLastCaptureAt time.Time
 	lastLimit              int64
 	lastCaptureThreshold   int
 	attempted              uint32
-	emergencyLastCaptureAt time.Time
 	closed                 bool
 }
 
