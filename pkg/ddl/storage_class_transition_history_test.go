@@ -216,4 +216,56 @@ func TestStorageClassTransitionPollDoesNotOverwriteTerminalHistory(t *testing.T)
 			))
 		})
 	}
+
+	t.Run("newer owner progress", func(t *testing.T) {
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		unblock := func() { releaseOnce.Do(func() { close(release) }) }
+		var requestCount atomic.Int32
+		tk, oldOwner, infoCache := newStorageClassTransitionPollTest(t, func(w http.ResponseWriter, _ *http.Request) {
+			if requestCount.Add(1) == 1 {
+				close(entered)
+				<-release
+				_, _ = w.Write([]byte(`{"ready":2,"total":4}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"ready":3,"total":4}`))
+		})
+		oldSession := ddlsess.NewSession(tk.Session())
+		oldPollDone := make(chan error, 1)
+		oldPollExited := make(chan struct{})
+		go func() {
+			defer close(oldPollExited)
+			_, err := ddl.PollStorageClassTransitionsForTest(context.Background(), oldOwner, oldSession)
+			oldPollDone <- err
+		}()
+		t.Cleanup(func() {
+			unblock()
+			<-oldPollExited
+		})
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("old owner did not request a storage class observation")
+		}
+
+		newOwner, _ := ddl.NewDDL(context.Background(), ddl.WithStore(tk.Session().GetStore()), ddl.WithInfoCache(infoCache))
+		t.Cleanup(func() { require.NoError(t, newOwner.Stop()) })
+		newSession := ddlsess.NewSession(testkit.NewTestKit(t, tk.Session().GetStore()).Session())
+		_, err := ddl.PollStorageClassTransitionsForTest(context.Background(), newOwner, newSession)
+		require.NoError(t, err)
+		tk.MustQuery(`SELECT total_replicas, completed_replicas
+			FROM mysql.tidb_storage_class_transition_history`).Check(testkit.Rows("4 3"))
+
+		unblock()
+		select {
+		case err := <-oldPollDone:
+			require.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("old owner poll did not finish")
+		}
+		tk.MustQuery(`SELECT total_replicas, completed_replicas
+			FROM mysql.tidb_storage_class_transition_history`).Check(testkit.Rows("4 3"))
+	})
 }
