@@ -38,7 +38,8 @@ func NewWriter(w io.Writer, kinds []dumpformat.FieldKind, cfg *Config) *Writer {
 }
 
 // Write encodes one row and writes it, with the line terminator, to the
-// underlying writer.
+// underlying writer. A row wider than dumpformat.MaxBufferedValueSize reaches
+// the underlying writer in several Write calls.
 func (cw *Writer) Write(row []sql.RawBytes) error {
 	if len(row) != len(cw.kinds) {
 		return fmt.Errorf("csvfile: row has %d fields, want %d", len(row), len(cw.kinds))
@@ -48,9 +49,46 @@ func (cw *Writer) Write(row []sql.RawBytes) error {
 		if i > 0 {
 			cw.buf = append(cw.buf, cw.cfg.FieldsTerminatedBy...)
 		}
-		cw.buf = appendField(cw.buf, val, val == nil, cw.kinds[i], cw.cfg)
+		if err := cw.appendValue(val, cw.kinds[i]); err != nil {
+			return err
+		}
 	}
 	return cw.flush()
+}
+
+// appendValue appends one field's encoding to buf like appendField, but encodes
+// an enclosed value in pieces of about dumpformat.MaxBufferedValueSize input
+// bytes and writes buf out whenever it reaches that size.
+func (cw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) error {
+	// NULL (a nil val) and numbers are written unenclosed and are never large.
+	isNull := val == nil
+	if isNull || kind == dumpformat.KindNumber {
+		cw.buf = appendField(cw.buf, val, isNull, kind, cw.cfg)
+		return cw.maybeFlush()
+	}
+	cw.buf = append(cw.buf, cw.cfg.FieldsEnclosedBy...)
+	for len(val) > 0 {
+		var n int
+		cw.buf, n = appendFieldBody(cw.buf, val, dumpformat.MaxBufferedValueSize, kind, cw.cfg)
+		val = val[n:]
+		if err := cw.maybeFlush(); err != nil {
+			return err
+		}
+	}
+	cw.buf = append(cw.buf, cw.cfg.FieldsEnclosedBy...)
+	return nil
+}
+
+// maybeFlush writes out and empties buf once it reaches
+// dumpformat.MaxBufferedValueSize.
+func (cw *Writer) maybeFlush() error {
+	if len(cw.buf) < dumpformat.MaxBufferedValueSize {
+		return nil
+	}
+	n, err := cw.w.Write(cw.buf)
+	cw.written += int64(n)
+	cw.buf = cw.buf[:0]
+	return err
 }
 
 // WriteHeader writes a header row: each name as a string field (enclosed when

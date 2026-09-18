@@ -59,7 +59,9 @@ func NewWriter(w io.Writer, prefix []byte, kinds []dumpformat.FieldKind, cfg *Co
 
 // Write encodes one row's `(..)` tuple and writes it, with the statement prefix
 // or row separator, to the underlying writer. len(row) must equal the configured
-// column count; a nil field is treated as NULL.
+// column count; a nil field is treated as NULL. A row wider than
+// dumpformat.MaxBufferedValueSize reaches the underlying writer in several
+// Write calls.
 func (sw *Writer) Write(row []sql.RawBytes) error {
 	if len(row) != len(sw.kinds) {
 		return fmt.Errorf("sqlfile: row has %d fields, want %d", len(row), len(sw.kinds))
@@ -80,20 +82,67 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 		sw.buf = append(sw.buf, ',', '\n')
 	}
 	start := len(sw.buf)
+	// flushed counts the bytes of this row, from the prefix or separator on,
+	// that were already written out to keep buf bounded.
+	var flushed uint64
 	sw.buf = append(sw.buf, '(')
 	for i, val := range row {
 		if i > 0 {
 			sw.buf = append(sw.buf, ',')
 		}
-		sw.buf = AppendValue(sw.buf, val, val == nil, sw.kinds[i], sw.cfg.EscapeBackslash)
+		n, err := sw.appendValue(val, sw.kinds[i])
+		if err != nil {
+			return err
+		}
+		flushed += n
 	}
 	sw.buf = append(sw.buf, ')')
 	// Count the tuple plus the 2-byte separator that will follow it.
-	tupleSize := uint64(len(sw.buf)-start) + 2
+	tupleSize := flushed + uint64(len(sw.buf)) - uint64(start) + 2
 	sw.statementSize += tupleSize
 	sw.fileSize += tupleSize
 	_, err := sw.w.Write(sw.buf)
 	return err
+}
+
+// appendValue appends one field's encoding to buf like AppendValue, but encodes
+// a quoted value in pieces of at most dumpformat.MaxBufferedValueSize input
+// bytes and writes buf out whenever it reaches that size. It returns the number
+// of bytes written out.
+func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) (uint64, error) {
+	// NULL (a nil val) and numbers are written unquoted and are never large.
+	isNull := val == nil
+	if isNull || kind == dumpformat.KindNumber {
+		sw.buf = AppendValue(sw.buf, val, isNull, kind, sw.cfg.EscapeBackslash)
+		return sw.maybeFlush()
+	}
+	sw.buf = appendOpenQuote(sw.buf, kind)
+	var flushed uint64
+	for len(val) > 0 {
+		var n int
+		sw.buf, n = appendQuotedBody(sw.buf, val, dumpformat.MaxBufferedValueSize, kind, sw.cfg.EscapeBackslash)
+		val = val[n:]
+		written, err := sw.maybeFlush()
+		if err != nil {
+			return 0, err
+		}
+		flushed += written
+	}
+	sw.buf = append(sw.buf, '\'')
+	return flushed, nil
+}
+
+// maybeFlush writes out and empties buf once it reaches
+// dumpformat.MaxBufferedValueSize, returning the number of bytes written (0 if
+// buf is not full yet).
+func (sw *Writer) maybeFlush() (uint64, error) {
+	if len(sw.buf) < dumpformat.MaxBufferedValueSize {
+		return 0, nil
+	}
+	n := len(sw.buf)
+	_, err := sw.w.Write(sw.buf)
+	sw.buf = sw.buf[:0]
+	return uint64(n), err
 }
 
 // EstimateFileSize returns the logical file size for rotation. It excludes any
