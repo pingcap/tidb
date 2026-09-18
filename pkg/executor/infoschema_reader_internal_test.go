@@ -27,6 +27,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type cancelAfterSchemaTables struct {
+	infoschema.InfoSchema
+	cancel context.CancelFunc
+}
+
+func (is cancelAfterSchemaTables) SchemaTableInfos(
+	ctx context.Context, schema ast.CIStr,
+) ([]*model.TableInfo, error) {
+	tables, err := is.InfoSchema.SchemaTableInfos(ctx, schema)
+	is.cancel()
+	return tables, err
+}
+
 func TestSetDataFromCheckConstraints(t *testing.T) {
 	tblInfos := []*model.TableInfo{
 		{
@@ -87,6 +100,20 @@ func TestSetDataFromCheckConstraints(t *testing.T) {
 	require.Equal(t, types.NewStringDatum("test"), mt.rows[0][1])
 	require.Equal(t, types.NewStringDatum("t2_c1"), mt.rows[0][2])
 	require.Equal(t, types.NewStringDatum("(id<10)"), mt.rows[0][3])
+
+	t.Run("cancel during table enumeration", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		retriever := memtableRetriever{
+			is: cancelAfterSchemaTables{
+				InfoSchema: mockIs, cancel: cancel,
+			},
+			extractor: &plannercore.InfoSchemaCheckConstraintsExtractor{},
+		}
+		err := retriever.setDataFromCheckConstraints(ctx, sctx)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Empty(t, retriever.rows)
+	})
 }
 
 func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
