@@ -95,12 +95,11 @@ func (d *Datum) Copy(dst *Datum) {
 		dst.b = make([]byte, len(d.b))
 		copy(dst.b, d.b)
 	}
-	switch dst.Kind() {
-	case KindMysqlDecimal:
+	// Time is stored inline in d.i, so the bitwise copy above already
+	// produced an independent value; no KindMysqlTime branch needed.
+	if dst.Kind() == KindMysqlDecimal {
 		d := *d.GetMysqlDecimal()
 		dst.SetMysqlDecimal(&d)
-	case KindMysqlTime:
-		dst.SetMysqlTime(d.GetMysqlTime())
 	}
 }
 
@@ -424,16 +423,28 @@ func (d *Datum) GetVectorFloat32() VectorFloat32 {
 	return v
 }
 
-// GetMysqlTime gets types.Time value
+// GetMysqlTime gets types.Time value. Time is a bit-packed CoreTime
+// (uint64) so it lives directly in d.i, avoiding the per-set heap
+// allocation that storing it via d.x (interface{}) would otherwise pay.
+// The intest assertion catches kind mismatches that the previous
+// `d.x.(Time)` implementation surfaced via panic but which this unchecked
+// reinterpret would otherwise silently return as bogus CoreTime bits.
 func (d *Datum) GetMysqlTime() Time {
-	return d.x.(Time)
+	intest.Assert(d.k == KindMysqlTime, "GetMysqlTime called on Datum of kind ", d.k)
+	return Time{coreTime: CoreTime(uint64(d.i))}
 }
 
-// SetMysqlTime sets types.Time value
+// SetMysqlTime sets types.Time value. Keep the representation inside
+// d.i (8 bytes) rather than boxing through d.x; see GetMysqlTime.
 func (d *Datum) SetMysqlTime(b Time) {
 	d.k = KindMysqlTime
-	d.x = b
+	d.i = int64(uint64(b.coreTime))
 }
+
+// Compile-time guard: GetMysqlTime/SetMysqlTime assume Time fits in
+// d.i (8 bytes). If Time ever gains a field beyond coreTime, the
+// pack/unpack would silently drop data — break the build instead.
+var _ [8]byte = [unsafe.Sizeof(Time{})]byte{}
 
 // SetRaw sets raw value.
 func (d *Datum) SetRaw(b []byte) {
@@ -2235,6 +2246,10 @@ func (d *Datum) MarshalJSON() ([]byte, error) {
 	}
 	switch d.k {
 	case KindMysqlTime:
+		// Time is packed into d.i; emit it through jd.Time only so the
+		// JSON payload doesn't carry the same bits twice. UnmarshalJSON
+		// re-derives d.i from jd.Time via SetMysqlTime.
+		jd.I = 0
 		jd.Time = d.GetMysqlTime()
 	case KindMysqlDecimal:
 		jd.MyDecimal = d.GetMysqlDecimal()
@@ -2716,7 +2731,6 @@ func ChangeReverseResultByUpperLowerBound(
 
 const (
 	sizeOfEmptyDatum = int(unsafe.Sizeof(Datum{}))
-	sizeOfMysqlTime  = int(unsafe.Sizeof(ZeroTime))
 	sizeOfMyDecimal  = MyDecimalStructSize
 )
 
@@ -2740,7 +2754,7 @@ func (d Datum) EstimatedMemUsage() int64 {
 	case KindMysqlDecimal:
 		bytesConsumed += sizeOfMyDecimal
 	case KindMysqlTime:
-		bytesConsumed += sizeOfMysqlTime
+		// Time is packed inline in d.i, already counted in sizeOfEmptyDatum.
 	case KindVectorFloat32:
 		bytesConsumed += d.GetVectorFloat32().EstimatedMemUsage()
 	default:
