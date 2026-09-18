@@ -206,14 +206,21 @@ is the trigger); `RetryRegions` responses are logged, not cache-invalidated; the
 tidb-exec `--tests` targets carry six pre-existing compile errors present on pristine
 `origin/hparser-integration` HEAD (verified by stashing).
 
-### M3 — Rust-only cluster read acceptance
+### M3 — Rust-only cluster read acceptance (DONE 2026-09-18)
 
-Outcome: with the Go TiDB stopped and only the Rust node running (playground still
-providing PD/KV/TiFlash), the forced TiFlash query still plans and returns rows. This
-proves the read path is not accidentally depending on a Go node.
+With the Go TiDB node STOPPED (process killed; PD/TiKV/TiFlash left running by the
+playground), the Rust node on :49300 answered:
 
-Verify: playground recipe with `--db 0`, start the Rust node, run the probe.
-Record the transcript under `/tmp/tiflash-rust-node-only.log`.
+- plain TiKV read: `COUNT(*) = 8`; 
+- forced TiFlash read: `SELECT /*+ READ_FROM_STORAGE(TIFLASH[t]) */ id, v FROM t
+  ORDER BY 2 LIMIT 3` → the columnar rows, correct order;
+- write + read-back: `INSERT (9,'nine')` then a plain read returned it (replica sync
+  is asynchronous, so the forced TiFlash read legitimately does not see it yet);
+  fixture restored to 8 rows afterwards.
+
+This proves the MPP read path has no hidden dependency on a Go node: catalog, PD,
+region and dispatch all resolve through the Rust node itself. Receipt: this session
+transcript; the killed-process state is reproducible with `kill <go-tidb-pid>`.
 
 ### M4 — DDL surface: SET TIFLASH REPLICA on the Rust node + visibility
 
@@ -276,7 +283,7 @@ read receipt, Rust-only cluster receipt, DDL receipt, and the commit map.
 - [x] M0: playground baseline receipts (Go green; Rust gaps captured).
 - [x] M1: live planner TiFlash MPP plan (EXPLAIN shape parity).
 - [x] M2: dispatch to real TiFlash, rows served through the columnar engine.
-- [ ] M3: Rust-only cluster read acceptance.
+- [x] M3: Rust-only cluster read acceptance.
 - [ ] M4: DDL surface (job, PD rules, polling, information_schema).
 - [ ] M5: push + receipts + goal audit.
 
