@@ -265,20 +265,44 @@ func (si *SchemaImporter) runCreateTableJob(ctx context.Context, p *parser.Parse
 	if err != nil {
 		// if the schema supplied by the user is un-parsable by TiDB, we allow
 		// user to create the table by themselves, then import data.
-		exist, err2 := si.isTableExist(ctx, job.dbName, job.tblName)
-		if err2 != nil {
-			return err2
-		}
-		if exist {
-			// we already has this table in TiDB.
-			// we should skip ddl job and let SchemaValid check.
-			si.logger.Info("table already exists in downstream, skip",
-				zap.String("db", job.dbName), zap.String("table", job.tblName))
-			return nil
-		}
-		return errors.Trace(err)
+		return si.skipIfTableExists(ctx, job, errors.Trace(err))
 	}
-	return si.runJob(ctx, job, stmts)
+	if err = si.runJob(ctx, job, stmts); err != nil {
+		// TiDB validates the table definition, e.g. its collation, before it
+		// checks whether the table exists, so CREATE TABLE IF NOT EXISTS still
+		// fails on an existing table whose source definition TiDB rejects. Let
+		// the user create such a table by themselves too. The existence check
+		// only runs on this failure path, so importing many tables stays as
+		// fast as before.
+		return si.skipIfTableExists(ctx, job, err)
+	}
+	return nil
+}
+
+// skipIfTableExists is called after creating the table of job failed with
+// cause. It returns nil if the table already exists in the downstream, so the
+// import goes on with that table and lets SchemaValid check it, and returns
+// cause otherwise.
+func (si *SchemaImporter) skipIfTableExists(ctx context.Context, job *schemaJob, cause error) error {
+	exist, err := si.isTableExist(ctx, job.dbName, job.tblName)
+	if err != nil {
+		si.logger.Warn("failed to check whether the table exists after creating it failed",
+			zap.String("db", job.dbName),
+			zap.String("table", job.tblName),
+			zap.NamedError("createError", cause),
+			zap.Error(err))
+		return cause
+	}
+	if !exist {
+		return cause
+	}
+	// we already has this table in TiDB.
+	// we should skip ddl job and let SchemaValid check.
+	si.logger.Warn("failed to create table but it already exists in downstream, skip",
+		zap.String("db", job.dbName),
+		zap.String("table", job.tblName),
+		zap.Error(cause))
+	return nil
 }
 
 func tableKey(dbName, tblName string) filter.Table {
