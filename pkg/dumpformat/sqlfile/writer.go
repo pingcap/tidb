@@ -22,14 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/dumpformat"
 )
 
-// maxBufferedValueSize bounds how much of a row Write holds in its buffer.
-// Quoted values are encoded in pieces of at most this many input bytes, and the
-// buffer is written out whenever it reaches this size, so the buffer stays at a
-// few MiB however wide the row is. Without it the buffer grows to the encoded
-// size of the widest row, which is several times the raw size for values of
-// hundreds of MiB.
-const maxBufferedValueSize = 1 << 20
-
 // Config holds the SQL framing knobs.
 type Config struct {
 	// StatementSize splits the INSERT statement once the bytes written for the
@@ -68,7 +60,8 @@ func NewWriter(w io.Writer, prefix []byte, kinds []dumpformat.FieldKind, cfg *Co
 // Write encodes one row's `(..)` tuple and writes it, with the statement prefix
 // or row separator, to the underlying writer. len(row) must equal the configured
 // column count; a nil field is treated as NULL. A row wider than
-// maxBufferedValueSize reaches the underlying writer in several Write calls.
+// dumpformat.MaxBufferedValueSize reaches the underlying writer in several
+// Write calls.
 func (sw *Writer) Write(row []sql.RawBytes) error {
 	if len(row) != len(sw.kinds) {
 		return fmt.Errorf("sqlfile: row has %d fields, want %d", len(row), len(sw.kinds))
@@ -113,8 +106,8 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 }
 
 // appendValue appends one field's encoding to buf like AppendValue, but encodes
-// a quoted value in pieces of at most maxBufferedValueSize input bytes and
-// writes buf out whenever it reaches maxBufferedValueSize. It returns the number
+// a quoted value in pieces of at most dumpformat.MaxBufferedValueSize input
+// bytes and writes buf out whenever it reaches that size. It returns the number
 // of bytes written out.
 func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) (uint64, error) {
 	// NULL (a nil val) and numbers are written unquoted and are never large.
@@ -126,23 +119,24 @@ func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) (uint64, er
 	sw.buf = appendOpenQuote(sw.buf, kind)
 	var flushed uint64
 	for len(val) > 0 {
-		piece := val[:min(len(val), maxBufferedValueSize)]
-		val = val[len(piece):]
-		sw.buf = appendQuotedBody(sw.buf, piece, kind, sw.cfg.EscapeBackslash)
-		n, err := sw.maybeFlush()
+		var n int
+		sw.buf, n = appendQuotedBody(sw.buf, val, dumpformat.MaxBufferedValueSize, kind, sw.cfg.EscapeBackslash)
+		val = val[n:]
+		written, err := sw.maybeFlush()
 		if err != nil {
 			return 0, err
 		}
-		flushed += n
+		flushed += written
 	}
 	sw.buf = append(sw.buf, '\'')
 	return flushed, nil
 }
 
-// maybeFlush writes out and empties buf once it reaches maxBufferedValueSize,
-// returning the number of bytes written (0 if buf is not full yet).
+// maybeFlush writes out and empties buf once it reaches
+// dumpformat.MaxBufferedValueSize, returning the number of bytes written (0 if
+// buf is not full yet).
 func (sw *Writer) maybeFlush() (uint64, error) {
-	if len(sw.buf) < maxBufferedValueSize {
+	if len(sw.buf) < dumpformat.MaxBufferedValueSize {
 		return 0, nil
 	}
 	n := len(sw.buf)

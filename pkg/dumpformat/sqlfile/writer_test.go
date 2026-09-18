@@ -108,7 +108,7 @@ func (r *maxWriteRecorder) Write(p []byte) (int, error) {
 }
 
 func TestSQLWriterLargeValues(t *testing.T) {
-	const limit = maxBufferedValueSize
+	const limit = dumpformat.MaxBufferedValueSize
 	// Characters that need escaping sit on both sides of every piece boundary.
 	str := bytes.Repeat([]byte("a"), 3*limit+5)
 	for _, pos := range []int{0, limit - 1, limit, 2*limit - 1, 2 * limit, len(str) - 1} {
@@ -170,7 +170,7 @@ func TestSQLWriterLargeValues(t *testing.T) {
 }
 
 func TestSQLWriterLargeValueBoundsBuffer(t *testing.T) {
-	const limit = maxBufferedValueSize
+	const limit = dumpformat.MaxBufferedValueSize
 	// Every quote doubles, so this value encodes to 20*limit bytes.
 	quotes := sql.RawBytes(bytes.Repeat([]byte("'"), 10*limit))
 	bin := sql.RawBytes(bytes.Repeat([]byte{0xab}, 10*limit))

@@ -28,49 +28,73 @@ func appendField(dst, val []byte, isNull bool, kind dumpformat.FieldKind, cfg *C
 	if isNull {
 		return append(dst, cfg.NullValue...)
 	}
-	switch kind {
-	case dumpformat.KindNumber:
+	if kind == dumpformat.KindNumber {
 		return append(dst, val...)
-	case dumpformat.KindBytes:
-		dst = append(dst, cfg.FieldsEnclosedBy...)
+	}
+	dst = append(dst, cfg.FieldsEnclosedBy...)
+	dst, _ = appendFieldBody(dst, val, len(val), kind, cfg)
+	return append(dst, cfg.FieldsEnclosedBy...)
+}
+
+// appendFieldBody appends the part of an enclosed field between its enclosures
+// for a prefix of val of about limit bytes, and returns how many bytes of val it
+// encoded. The prefix never ends where encoding the rest separately would change
+// the output: base64 pieces other than the last are a multiple of 3 bytes, and
+// a piece never ends inside an enclosure that is doubled. Encoding val piece by
+// piece therefore yields the same bytes as encoding it at once. limit must be at
+// least 3 so that every piece makes progress.
+func appendFieldBody(dst, val []byte, limit int, kind dumpformat.FieldKind, cfg *Config) ([]byte, int) {
+	n := min(len(val), limit)
+	if kind == dumpformat.KindBytes {
 		switch cfg.BinaryFormat {
 		case BinaryFormatHEX:
-			dst = hex.AppendEncode(dst, val)
+			return hex.AppendEncode(dst, val[:n]), n
 		case BinaryFormatBase64:
-			dst = base64.StdEncoding.AppendEncode(dst, val)
-		default:
-			dst = appendEscaped(dst, val, cfg)
+			// Only the end of the whole value may be padded.
+			if n < len(val) {
+				n -= n % 3
+			}
+			return base64.StdEncoding.AppendEncode(dst, val[:n]), n
 		}
-		return append(dst, cfg.FieldsEnclosedBy...)
+	}
+	return appendEscaped(dst, val, n, cfg)
+}
+
+// appendEscaped writes a prefix of s of about limit bytes to dst, escaping per
+// cfg, and returns how many bytes of s it consumed.
+func appendEscaped(dst, s []byte, limit int, cfg *Config) ([]byte, int) {
+	switch {
+	case len(cfg.FieldsEscapedBy) > 0:
+		return appendEscapedBackslash(dst, s[:limit], cfg), limit
+	case len(cfg.FieldsEnclosedBy) > 0:
+		return appendDoubledEnclosure(dst, s, limit, []byte(cfg.FieldsEnclosedBy))
 	default:
-		dst = append(dst, cfg.FieldsEnclosedBy...)
-		dst = appendEscaped(dst, val, cfg)
-		return append(dst, cfg.FieldsEnclosedBy...)
+		return append(dst, s[:limit]...), limit
 	}
 }
 
-// appendEscaped writes s to dst, escaping per cfg.
-func appendEscaped(dst, s []byte, cfg *Config) []byte {
-	switch {
-	case len(cfg.FieldsEscapedBy) > 0:
-		return appendEscapedBackslash(dst, s, cfg)
-	case len(cfg.FieldsEnclosedBy) > 0:
-		// Double each enclosure occurrence (e.g. " -> ""), writing straight into
-		// dst to avoid the intermediate copy that bytes.ReplaceAll would make.
-		d := []byte(cfg.FieldsEnclosedBy)
-		for {
-			j := bytes.Index(s, d)
-			if j < 0 {
-				return append(dst, s...)
-			}
-			dst = append(dst, s[:j]...)
-			dst = append(dst, d...)
-			dst = append(dst, d...)
-			s = s[j+len(d):]
+// appendDoubledEnclosure doubles each occurrence of d (e.g. " -> "") in a prefix
+// of s of about limit bytes, writing straight into dst to avoid the
+// intermediate copy that bytes.ReplaceAll would make, and returns how many bytes
+// of s it consumed. It matches occurrences left to right like bytes.ReplaceAll
+// over the whole of s: a piece ends at limit only if no occurrence starts
+// before limit, or else right after the last occurrence it doubled, so a
+// multi-byte d is never split between pieces.
+func appendDoubledEnclosure(dst, s []byte, limit int, d []byte) ([]byte, int) {
+	// An occurrence that starts before limit ends before this.
+	end := min(len(s), limit+len(d)-1)
+	i := 0
+	for i < limit {
+		j := bytes.Index(s[i:end], d)
+		if j < 0 || i+j >= limit {
+			return append(dst, s[i:limit]...), limit
 		}
-	default:
-		return append(dst, s...)
+		dst = append(dst, s[i:i+j]...)
+		dst = append(dst, d...)
+		dst = append(dst, d...)
+		i += j + len(d)
 	}
+	return dst, i
 }
 
 // appendEscapedBackslash writes s to dst, escaping with cfg.FieldsEscapedBy

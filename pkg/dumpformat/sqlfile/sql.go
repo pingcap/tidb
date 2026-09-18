@@ -37,7 +37,7 @@ func AppendValue(dst, val []byte, isNull bool, kind dumpformat.FieldKind, escape
 		return append(dst, val...)
 	}
 	dst = appendOpenQuote(dst, kind)
-	dst = appendQuotedBody(dst, val, kind, escapeBackslash)
+	dst, _ = appendQuotedBody(dst, val, len(val), kind, escapeBackslash)
 	return append(dst, '\'')
 }
 
@@ -50,15 +50,17 @@ func appendOpenQuote(dst []byte, kind dumpformat.FieldKind) []byte {
 	return append(dst, '\'')
 }
 
-// appendQuotedBody appends the part of a quoted value between its quotes: hex
-// digits for binary values, the escaped text for strings. Every input byte is
-// encoded on its own, so encoding a value piece by piece yields the same bytes
-// as encoding it at once.
-func appendQuotedBody(dst, val []byte, kind dumpformat.FieldKind, escapeBackslash bool) []byte {
+// appendQuotedBody appends the part of a quoted value between its quotes (hex
+// digits for binary values, the escaped text for strings) for the first
+// min(len(val), limit) bytes of val, and returns how many bytes it encoded.
+// Every input byte is encoded on its own, so encoding val piece by piece yields
+// the same bytes as encoding it at once.
+func appendQuotedBody(dst, val []byte, limit int, kind dumpformat.FieldKind, escapeBackslash bool) ([]byte, int) {
+	n := min(len(val), limit)
 	if kind == dumpformat.KindBytes {
-		return hex.AppendEncode(dst, val)
+		return hex.AppendEncode(dst, val[:n]), n
 	}
-	return appendEscaped(dst, val, escapeBackslash)
+	return appendEscaped(dst, val[:n], escapeBackslash), n
 }
 
 // appendEscaped writes s to dst, escaping per escapeBackslash.
