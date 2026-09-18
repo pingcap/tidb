@@ -181,14 +181,13 @@ explain format = 'plan_tree' select dt.id as id, dt.aid as aid, dt.pt as pt, dt.
 id	task	access object	operator info
 Projection	root		explain_complex_stats.dt.id, explain_complex_stats.dt.aid, explain_complex_stats.dt.pt, explain_complex_stats.dt.dic, explain_complex_stats.dt.cm, explain_complex_stats.rr.gid, explain_complex_stats.rr.acd, explain_complex_stats.rr.t, explain_complex_stats.dt.p1, explain_complex_stats.dt.p2, explain_complex_stats.dt.p3, explain_complex_stats.dt.p4, explain_complex_stats.dt.p5, explain_complex_stats.dt.p6_md5, explain_complex_stats.dt.p7_md5
 └─Limit	root		offset:0, count:2000
-  └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:explain_complex_stats.dt.aid, explain_complex_stats.dt.dic, inner key:explain_complex_stats.rr.aid, explain_complex_stats.rr.dic, equal cond:eq(explain_complex_stats.dt.aid, explain_complex_stats.rr.aid), eq(explain_complex_stats.dt.dic, explain_complex_stats.rr.dic)
+  └─HashJoin	root		inner join, equal:[eq(explain_complex_stats.dt.aid, explain_complex_stats.rr.aid) eq(explain_complex_stats.dt.dic, explain_complex_stats.rr.dic)]
     ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		eq(explain_complex_stats.dt.bm, 0), eq(explain_complex_stats.dt.pt, "ios"), gt(explain_complex_stats.dt.t, 1478185592), not(isnull(explain_complex_stats.dt.dic))
-    │   └─TableFullScan	cop[tikv]	table:dt	keep order:false
-    └─IndexLookUp(Probe)	root		
-      ├─IndexRangeScan(Build)	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(explain_complex_stats.rr.aid, explain_complex_stats.dt.aid) eq(explain_complex_stats.rr.dic, explain_complex_stats.dt.dic)], keep order:false
-      └─Selection(Probe)	cop[tikv]		eq(explain_complex_stats.rr.pt, "ios"), gt(explain_complex_stats.rr.t, 1478185592)
-        └─TableRowIDScan	cop[tikv]	table:rr	keep order:false
+    │ └─Selection	cop[tikv]		eq(explain_complex_stats.rr.pt, "ios"), gt(explain_complex_stats.rr.t, 1478185592)
+    │   └─TableFullScan	cop[tikv]	table:rr	keep order:false
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		eq(explain_complex_stats.dt.bm, 0), eq(explain_complex_stats.dt.pt, "ios"), gt(explain_complex_stats.dt.t, 1478185592), not(isnull(explain_complex_stats.dt.dic))
+        └─TableFullScan	cop[tikv]	table:dt	keep order:false
 explain format = 'plan_tree' select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	task	access object	operator info
 Projection	root		explain_complex_stats.pp.pc, explain_complex_stats.pp.cr, Column, Column, Column
