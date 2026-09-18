@@ -131,6 +131,15 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 			},
 		},
 		{
+			field: "tidbDefaultAutoIDCache",
+			extra: func() {
+				sessVars.TiDBDefaultAutoIDCache = 100
+				require.Zero(t, NewMetaBuildContextWithSctx(sctx).GetTiDBDefaultAutoIDCache())
+				ctx := NewMetaBuildContextWithSctx(sctx, metabuild.WithTiDBDefaultAutoIDCache(sessVars.TiDBDefaultAutoIDCache))
+				require.Equal(t, 100, ctx.GetTiDBDefaultAutoIDCache())
+			},
+		},
+		{
 			field: "is",
 			check: func(ctx *metabuild.Context) {
 				sctxInfoSchema := sctx.GetLatestInfoSchema()
