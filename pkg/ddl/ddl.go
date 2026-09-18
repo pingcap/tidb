@@ -1250,6 +1250,12 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 // SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
 	if diagnosticmode.Enabled() {
+		// Diagnostic mode must not participate in cluster-wide DDL tasks. However,
+		// metadata lock is a cluster-wide setting, and a normal TiDB node may still
+		// change it to OFF. Therefore, diagnostic mode can only prevent this node
+		// from changing the metadata lock setting; it cannot prevent the cluster
+		// setting from becoming OFF. If the cluster setting is OFF, this node may
+		// still participate in DDL tasks, which cannot be avoided here.
 		return diagnosticmode.ErrDDLNotAllowed
 	}
 	isEnableBefore := vardef.IsMDLEnabled()
