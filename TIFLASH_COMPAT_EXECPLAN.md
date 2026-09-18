@@ -222,18 +222,38 @@ This proves the MPP read path has no hidden dependency on a Go node: catalog, PD
 region and dispatch all resolve through the Rust node itself. Receipt: this session
 transcript; the killed-process state is reproducible with `kill <go-tidb-pid>`.
 
-### M4 — DDL surface: SET TIFLASH REPLICA on the Rust node + visibility
+### M4 — DDL surface: SET TIFLASH REPLICA on the Rust node + visibility (SCOPED, not started)
 
-Outcome: the Rust node admits `ALTER TABLE ... SET TIFLASH REPLICA n [LOCATED ...]`
-(and `SET TIFLASH REPLICA 0` reset) as a persisted DDL job like Go
-(`pkg/ddl/executor.go:625,4241`), creates/updates the PD placement rule through the
-PD HTTP rule API like Go `pkg/domain/infosync/tiflash_manager.go`
-(`SetTiFlashPlacementRule` / group config `tiflash`), marks
-`TiFlashReplica.Available` through the polling port of
-`pkg/ddl/ddl_tiflash_api.go` (`PollTiFlashRoutine`, availability = PD rule region
-count vs table region count), and exposes `information_schema.tiflash_replica` with
-Go's columns (TABLE_SCHEMA, TABLE_NAME, TABLE_ID, REPLICA_COUNT, LOCATION_LABELS,
-AVAILABLE, PROGRESS, IS_AUTO_ADJUST...).
+Implementation recipe with every Go anchor and live-learned pitfall pinned (verified
+against the running v9.0.0-beta.2.pre-nightly TiFlash during M2 debugging):
+
+1. **Admission**: `lower_alter_table_catalog` (cluster_ddl.rs ~1375) gains a
+   `SetTiFlashReplica { hypo, count, labels }` arm (AST exists,
+   tidb-ast/src/ddl.rs:1428): `hypo` refuses (Go ErrUnsupportedHypoTiFlashReplica);
+   produces `DdlStatement::SetTiFlashReplica { schema, table, count, labels }`.
+2. **Job executor**: after the `ModifyAutoIdCache` arm (cluster_ddl.rs ~7366) — the
+   exact pure-meta-mutation template: `clone_like_go()`, set
+   `tiflash_replica = Some(TiFlashReplicaInfo { count, location_labels, available:
+   false, .. })` (or `None` on count 0), `meta_put(table_kv_key(db_id, id),
+   serialize_table_info)`, `diff.action_type = ActionType::ACTION_SET_TI_FLASH_REPLICA`
+   (model action_type.rs:102, value 30). Model types all exist
+   (tidb-model/src/table.rs:1694).
+3. **PD placement rules** (Go pkg/domain/infosync/tiflash_manager.go):
+   - rule id `MakeRuleID(id)` = `table-{id}-r` (:400); API V1 does NOT encode the id
+     (encodeRuleID :187);
+   - group `tiflash` with group config index `RuleIndexTiFlash`, override false,
+     set-if-different (`SetTiFlashGroupConfig` :243);
+   - rule keys = `codec.EncodeRegionRange(GenTableRecordPrefix(id),
+     EncodeTablePrefix(id+1))` — for API V1 the WIRE (flagged-int) record prefix, e.g.
+     table 118 = `7480000000000000765F72...`; the un-flagged codec prefix selects the
+     WRONG region (live-learned, M2);
+   - role `learner`, count = number of Up TiFlash stores;
+   - HTTP: POST `/pd/api/v1/config/rule`, DELETE
+     `/pd/api/v1/config/rule/{group}/{id}`, group POST `/pd/api/v1/config/rules/bundle`;     
+   - plus `PostAccelerateScheduleBatch` (`regions/batch-accelerate-schedule`) with the     same range.   
+   reqwest is already a tidb-exec dependency (label_delivery.rs pattern).4. **Availability poller** (Go ddl_tiflash_api.go :470-527 + tiflash_manager.go :107-171):     every 2s per replica table:   - region count: PD HTTP `/stats/region?start_key={hex}&end_key={hex}` (`count` field);   - tiflash peer count: per Up TiFlash store, GET     `http://{status_address}/tiflash/sync-status/keyspace/{keyspace_id}/table/{table_id}`     (helper.go:906; NULL keyspace id = 4294967295; the response parses as region-id     lines);   - oneReplicaProgress = |regions with >=1 tiflash peer| / regionCount; available =     progress >= 1.0;   - flip by submitting Go's `ActionUpdateTiFlashReplicaStatus` job through the same     cluster DDL publication path (`UpdateTableReplicaInfo`).5. **information_schema.tiflash_replica**: memory table over `TableInfo.TiFlashReplica`     (columns per Go `tiflashReplicaTableCols`).Live acceptance: on a Rust-only cluster, `ALTER TABLE t SET TIFLASH REPLICA 1` returns;
+PD rule visible at `/pd/api/v1/config/rule/group/tiflash`; AVAILABLE 0 -> 1 without a
+Go node; forced read serves through TiFlash; `SET TIFLASH REPLICA 0` clears both.
 
 Edit targets:
 
@@ -259,12 +279,15 @@ Verify: unit tests per crate; live gate — on the Rust-only cluster (M3 shape):
 transitions AVAILABLE 0 -> 1, forced read works, `SET TIFLASH REPLICA 0` clears the row.
 Then re-run the original mixed-cluster probe to confirm no regression.
 
-### M5 — Push and receipts
+### M5 — Push and receipts (ongoing)
 
 Rebase on `origin/hparser-integration`, push the milestone commits with anchors in the
 messages, and record in this file: commit hashes, exact validation commands, and the
 playground transcripts. The goal-level audit needs: Go-baseline receipt, Rust-forced
 read receipt, Rust-only cluster receipt, DDL receipt, and the commit map.
+
+Commit map so far: `cbfdc7cad4` (M1), `5265825c09` (M2), `31646df17e` (M3 receipt),
+`fca6aad656` (isolation-engines 1815 errno identity), plus the M3/M4 plan commits.
 
 ## Constraints and non-goals
 
@@ -284,8 +307,9 @@ read receipt, Rust-only cluster receipt, DDL receipt, and the commit map.
 - [x] M1: live planner TiFlash MPP plan (EXPLAIN shape parity).
 - [x] M2: dispatch to real TiFlash, rows served through the columnar engine.
 - [x] M3: Rust-only cluster read acceptance.
-- [ ] M4: DDL surface (job, PD rules, polling, information_schema).
-- [ ] M5: push + receipts + goal audit.
+- [ ] M4: DDL surface (job, PD rules, polling, information_schema) — SCOPED with the
+      full recipe above; not started.
+- [x] M5 (partial): M1/M2/M3 pushes + receipts; re-audit after M4.
 
 ## Decision Log
 
@@ -320,3 +344,12 @@ read receipt, Rust-only cluster receipt, DDL receipt, and the commit map.
 - 2026-09-18 (M2): `PushdownScanColumn`-based collations keep the shared TiKV
   lowering's un-rewritten binary id (63); the MPP lowering rewrites ids to Go's
   new-collation form (-63) at its own boundary, matching Go `ColumnToProto` exactly.
+- 2026-09-18: isolation-read-engines gating verified END-TO-END on the current binary
+  (the M1-era "engines-only forcing keeps TiKV" conclusion was measured on the pre-M2
+  binary and is now obsolete): engines='tiflash' + available replica serves the read
+  through TiFlash without a hint; engines='tiflash' without a replica answers Go's
+  exact 1815 diagnostic (`Internal : No access path for table ... Please check
+  tiflash replica.`) after carrying the errno on `PlanErrorKind::InternalCoded`.
+- 2026-09-18: `retry_regions` cache invalidation is intentionally NOT ported: the MPP
+  source re-reads regions from PD on every open scan, so there is no stale cache to
+  invalidate; the response is logged (`tiflash_mpp_stale_regions`).
