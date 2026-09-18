@@ -2558,7 +2558,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 } else {
                     ""
                 };
-                return Err(PlanError::internal(format!(
+                // Go `ErrNoAvailablePath` answers as ErrInternal (1815):
+                // `Internal : No access path for table ... Please check
+                // tiflash replica.` -- the errno template adds the prefix.
+                return Err(PlanError::internal_coded(format!(
                     "No access path for table '{}' is found with 'tidb_isolation_read_engines' = '{}', valid values can be '{}'{help}.",
                     table.table_name,
                     self.isolation_read_engines_value,

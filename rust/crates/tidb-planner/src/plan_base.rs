@@ -336,6 +336,9 @@ pub enum PlanErrorKind {
         name: String,
         base: String,
     },
+    /// Go `ErrInternal` (1815) carrying a planner message verbatim: the
+    /// client renders the errno template (`Internal : %s`) around it.
+    InternalCoded { message: String },
     /// Go window frame errors, retaining the original window name.
     WindowFrame { code: u16, window: String },
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
@@ -499,6 +502,19 @@ impl PlanError {
         Self {
             kind: PlanErrorKind::Internal,
             message: message.into(),
+        }
+    }
+
+    /// Go `ErrInternal.GenWithStack(msg)` (errno 1815): the message IS the
+    /// whole diagnostic; the errno template prefixes `Internal : `.
+    #[must_use]
+    pub fn internal_coded(message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            kind: PlanErrorKind::InternalCoded {
+                message: message.clone(),
+            },
+            message,
         }
     }
 

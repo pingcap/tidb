@@ -560,6 +560,9 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::Internal => {
             DriverError::unsupported(error.to_string())
         }
+        tidb_planner::plan_base::PlanErrorKind::InternalCoded { message } => {
+            DriverError::Mysql(MysqlError::new(1815, format!("Internal : {message}")))
+        }
         tidb_planner::plan_base::PlanErrorKind::UnknownColumnInClause { column, clause } => {
             DriverError::UnknownColumnInClause {
                 column: column.clone(),
