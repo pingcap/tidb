@@ -417,3 +417,17 @@ read workloads, where base itself sits within 10% of Go and the round trip is
 TiKV's: at 4 threads the box is 30% idle and each point get is one RPC that
 TiKV alone takes 0.3-0.4 ms to answer. Node-side work cannot move those
 workloads by another 20% here; a faster storage round trip could.
+
+### A caveat on quick spot-checks
+
+A short base-vs-w3 (44d0dee6) recheck on random_points and oltp_insert
+(results/spot-base-w3.log) does not use fresh tables per round the way
+matrix.sh does; oltp_insert grows the table round over round, and the two
+sides land on different rounds (base first and last, w3 the two middle
+rounds), so a quick script like this one confounds table growth with the
+binary under test. Its random_points number (base ahead by 6%) disagrees with
+the ABBA matrix's fresh-table result (head ahead by 6.5%) for exactly that
+reason. The matrix-goal4t/16t results, which refresh the tables every round
+through the Go node before each side's turn, remain the authoritative
+numbers in this document; a quick recheck script needs the same discipline
+before its numbers can be trusted.
