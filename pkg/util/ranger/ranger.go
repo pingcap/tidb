@@ -723,10 +723,11 @@ func cutPrefixForPoints(points []*point, length int, tp *types.FieldType) {
 		// In two cases, we need to convert the exclusive point to an inclusive point.
 		// case 1: we actually cut the value to accommodate the prefix index.
 		if cut ||
-			// case 2: the value is already equal to the prefix index.
+			// case 2: the value is not longer than the prefix index.
 			// For example, col_varchar > 'xx' should be converted to range [xx, +inf) when the prefix index length of
 			// `col_varchar` is 2. Otherwise, we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
-			(p.start && ReachPrefixLen(&p.value, length, tp)) {
+			// Similarly, col_varchar > 'x' should include values like 'xx'.
+			(p.start && notExceedPrefixLen(&p.value, length, tp)) {
 			p.excl = false
 		}
 	}
@@ -768,6 +769,18 @@ func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 			return len(colValue) == length
 		}
 		return utf8.RuneCount(colValue) == length
+	}
+	return false
+}
+
+func notExceedPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
+	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
+		colCharset := tp.GetCharset()
+		colValue := v.GetBytes()
+		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
+			return len(colValue) <= length
+		}
+		return utf8.RuneCount(colValue) <= length
 	}
 	return false
 }
