@@ -812,18 +812,53 @@ func TestExchangePartitionChecksTargetTablePrivileges(t *testing.T) {
 	rootTk.MustExec(`GRANT ALTER, DROP ON exchange_src.* TO 'exchange_low'@'%'`)
 
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "exchange_low", Hostname: "%", AuthUsername: "exchange_low", AuthHostname: "%",
-	}, nil, nil, nil))
-	err := tk.ExecToErr(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
-	require.Error(t, err)
+	authLow := func() {
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+			Username: "exchange_low", Hostname: "%", AuthUsername: "exchange_low", AuthHostname: "%",
+		}, nil, nil, nil))
+	}
+	exchange := func() error {
+		authLow()
+		return tk.ExecToErr(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
+	}
+
+	// EXCHANGE PARTITION swaps the data of both tables, so to match MySQL it requires
+	// ALTER, INSERT, CREATE and DROP on BOTH the partitioned table (pt) and the
+	// non-partitioned table (nt). Grant them one missing privilege at a time and assert
+	// each is enforced; in particular DROP on nt guards against destroying/replacing nt's
+	// existing data without the DROP privilege.
+
+	// Missing CREATE on the target table nt.
+	err := exchange()
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 	require.Contains(t, err.Error(), "CREATE command denied")
+	require.Contains(t, err.Error(), "'nt'")
 
+	// nt now has CREATE+INSERT, but the partitioned table pt still lacks INSERT.
 	rootTk.MustExec(`GRANT CREATE, INSERT ON exchange_dst.* TO 'exchange_low'@'%'`)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "exchange_low", Hostname: "%", AuthUsername: "exchange_low", AuthHostname: "%",
-	}, nil, nil, nil))
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "INSERT command denied")
+	require.Contains(t, err.Error(), "'pt'")
+
+	// pt now has INSERT+CREATE, but the target table nt still lacks ALTER.
+	rootTk.MustExec(`GRANT INSERT, CREATE ON exchange_src.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "ALTER command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// nt now has ALTER, but still lacks DROP: exchanging replaces nt's existing data, which
+	// MySQL gates behind DROP on nt. Without DROP the statement must still be denied.
+	rootTk.MustExec(`GRANT ALTER ON exchange_dst.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "DROP command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// Full MySQL-aligned privilege set on both tables -> allowed.
+	rootTk.MustExec(`GRANT DROP ON exchange_dst.* TO 'exchange_low'@'%'`)
+	authLow()
 	tk.MustExec(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
 }
 

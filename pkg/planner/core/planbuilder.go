@@ -5430,6 +5430,43 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, newDBName,
 					spec.NewTable.Name.L, "", authErr)
+
+				if spec.Tp == ast.AlterTableExchangePartition {
+					// EXCHANGE PARTITION swaps the data of a partition of the partitioned
+					// table with the whole non-partitioned table, mutating BOTH tables. To
+					// match MySQL, ALTER, INSERT, CREATE and DROP are required on both tables.
+					// The shared path above already covers ALTER+DROP on the partitioned
+					// table and CREATE+INSERT on the non-partitioned table; add the remaining
+					// INSERT+CREATE on the partitioned table and ALTER+DROP on the
+					// non-partitioned table. (RENAME TABLE must not require these extras.)
+					if b.ctx.GetSessionVars().User != nil {
+						authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
+							b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+					}
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
+						v.Table.Name.L, "", authErr)
+
+					if b.ctx.GetSessionVars().User != nil {
+						authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+							b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+					}
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName,
+						v.Table.Name.L, "", authErr)
+
+					if b.ctx.GetSessionVars().User != nil {
+						authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+							b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
+					}
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, newDBName,
+						spec.NewTable.Name.L, "", authErr)
+
+					if b.ctx.GetSessionVars().User != nil {
+						authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+							b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
+					}
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, newDBName,
+						spec.NewTable.Name.L, "", authErr)
+				}
 			} else if spec.Tp == ast.AlterTableDropPartition || spec.Tp == ast.AlterTableTruncatePartition {
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
