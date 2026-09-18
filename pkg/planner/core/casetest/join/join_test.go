@@ -142,3 +142,88 @@ func TestJoinWithNullEQ(t *testing.T) {
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows())
 }
+
+func TestKeepingJoinKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, b int, c int)`)
+	tk.MustExec(`create table t2 (a int, b int, c int)`)
+	tk.MustExec(`set @@tidb_opt_always_keep_join_key=true`)
+
+	// join keys are kept
+	tk.MustQuery(`explain format='brief' select 1 from t1 left join t2 on t1.a=t2.a where t1.a=1`).Check(testkit.Rows(
+		"Projection 12.50 root  1->Column#9",
+		"└─HashJoin 12.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 10.00 root  data:Selection",
+		"  │ └─Selection 10.00 cop[tikv]  eq(1, test.t2.a)",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 10.00 root  data:Selection",
+		"    └─Selection 10.00 cop[tikv]  eq(test.t1.a, 1)",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select 1 from t1 left join t2 on t1.a=t2.a where t2.a=1`).Check(testkit.Rows(
+		"Projection 12.50 root  1->Column#9",
+		"└─HashJoin 12.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 10.00 root  data:Selection",
+		"  │ └─Selection 10.00 cop[tikv]  eq(test.t2.a, 1)",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 10.00 root  data:Selection",
+		"    └─Selection 10.00 cop[tikv]  eq(test.t1.a, 1)",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select 1 from t1, t2 where t1.a=1 and t1.a=t2.a`).Check(testkit.Rows(
+		"Projection 12.50 root  1->Column#9",
+		"└─HashJoin 12.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 10.00 root  data:Selection",
+		"  │ └─Selection 10.00 cop[tikv]  eq(1, test.t2.a)",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 10.00 root  data:Selection",
+		"    └─Selection 10.00 cop[tikv]  eq(test.t1.a, 1)",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+}
+
+func TestIssue60076And63314(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, b int, c int)`)
+	tk.MustExec(`create table t2 (a int, b int, c int)`)
+	tk.MustExec(`create table t3 (a int, b int, c int)`)
+	tk.MustExec(`create table t4 (a int, b int, c int)`)
+	tk.MustExec(`set @@tidb_opt_always_keep_join_key=true`)
+
+	tk.MustQuery(`explain format='brief' select /*+ leading(t1, t4) */ * from t1 join t2 on
+             t1.a=t2.a join t3 on t1.a=t3.a join t4 on t1.a=t4.a`).Check(testkit.Rows(
+		"Projection 19511.72 root  test.t1.a, test.t1.b, test.t1.c, test.t2.a, test.t2.b, test.t2.c, test.t3.a, test.t3.b, test.t3.c, test.t4.a, test.t4.b, test.t4.c",
+		"└─HashJoin 19511.72 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+		"  ├─TableReader(Build) 9990.00 root  data:Selection",
+		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+		"  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+		"    ├─TableReader(Build) 9990.00 root  data:Selection",
+		"    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+		"    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t4.a)]",
+		"      ├─TableReader(Build) 9990.00 root  data:Selection",
+		"      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+		"      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+		"      └─TableReader(Probe) 9990.00 root  data:Selection",
+		"        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warnings
+
+	tk.MustQuery(`explain format='brief' select /*+ leading(t1, t3) */ 1 from
+			t1 left join t2 on t1.a=t2.a join t3 on t1.b=t3.b where t1.a=1`).Check(testkit.Rows(
+		"Projection 15.61 root  1->Column#13",
+		"└─HashJoin 15.61 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 10.00 root  data:Selection",
+		"  │ └─Selection 10.00 cop[tikv]  eq(1, test.t2.a)",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─HashJoin(Probe) 12.49 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+		"    ├─TableReader(Build) 9.99 root  data:Selection",
+		"    │ └─Selection 9.99 cop[tikv]  eq(test.t1.a, 1), not(isnull(test.t1.b))",
+		"    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"    └─TableReader(Probe) 9990.00 root  data:Selection",
+		"      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+		"        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+}
