@@ -17,6 +17,7 @@ package issuetest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -990,4 +991,81 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where a=-1;").Check(testkit.Rows("<nil> <nil>"))
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
+}
+
+func TestSetUnsignedCastRangeScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	members := make([]string, 64)
+	for i := range members {
+		members[i] = fmt.Sprintf("'e%d'", i+1)
+	}
+	tk.MustExec(fmt.Sprintf("create table t (s set(%s), id bigint, primary key(s, id) clustered, key idx_s_id(s, id))", strings.Join(members, ",")))
+	tk.MustExec("insert into t values (0, 0), (1, 1), (9007199254740992, 2), (9007199254740993, 3), (9223372036854775808, 4), (18446744073709551615, 5)")
+
+	tk.MustQuery("select cast(s as unsigned), id from t order by s, id").Check(testkit.Rows(
+		"0 0",
+		"1 1",
+		"9007199254740992 2",
+		"9007199254740993 3",
+		"9223372036854775808 4",
+		"18446744073709551615 5",
+	))
+	tk.MustQuery("select cast(s as unsigned), id from t where cast(s as unsigned) > 9007199254740992 order by s, id").Check(testkit.Rows(
+		"9007199254740993 3",
+		"9223372036854775808 4",
+		"18446744073709551615 5",
+	))
+
+	commonHandleQuery := "select /*+ use_index(t, primary) */ id from t where cast(s as unsigned) > 9007199254740992 order by s, id"
+	tk.MustHavePlan(commonHandleQuery, "TableRangeScan")
+	tk.MustNotHavePlan(commonHandleQuery, "TableFullScan")
+	tk.MustNotHavePlan(commonHandleQuery, "Sort")
+	secondaryIndexQuery := "select /*+ use_index(t, idx_s_id) */ id from t where cast(s as unsigned) > 9007199254740992 order by s, id"
+	tk.MustHavePlan(secondaryIndexQuery, "IndexRangeScan")
+	tk.MustNotHavePlan(secondaryIndexQuery, "IndexFullScan")
+	tk.MustNotHavePlan(secondaryIndexQuery, "Sort")
+
+	// TTL advances a composite cursor one key column at a time. Verify the
+	// disjunction used by that stack remains a keep-order common-handle scan.
+	ttlCursorQuery := "select /*+ use_index(t, primary) */ id from t where (cast(s as unsigned) = 9007199254740992 and id > 2) or cast(s as unsigned) > 9007199254740992 order by s, id limit 2"
+	tk.MustHavePlan(ttlCursorQuery, "TableRangeScan")
+	tk.MustNotHavePlan(ttlCursorQuery, "TableFullScan")
+	tk.MustNotHavePlan(ttlCursorQuery, "Sort")
+	tk.MustQuery(ttlCursorQuery).Check(testkit.Rows("3", "4"))
+
+	tk.MustExec("prepare set_cursor from 'select /*+ use_index(t, primary) */ id from t where cast(s as unsigned) > ? order by s, id'")
+	tk.MustExec("set @set_cursor_value = 9007199254740992")
+	tk.MustQuery("execute set_cursor using @set_cursor_value").Check(testkit.Rows("3", "4", "5"))
+	tk.MustExec("set @set_cursor_value = 9223372036854775808")
+	tk.MustQuery("execute set_cursor using @set_cursor_value").Check(testkit.Rows("5"))
+	tk.MustExec("deallocate prepare set_cursor")
+
+	rowRangeQuery := "select /*+ use_index(t, primary) */ id from t where (cast(s as unsigned), id) > (9007199254740992, 2) order by s, id"
+	tk.MustHavePlan(rowRangeQuery, "TableRangeScan")
+	tk.MustQuery(rowRangeQuery).Check(testkit.Rows("3", "4", "5"))
+	rowInQuery := "select /*+ use_index(t, primary) */ id from t where (cast(s as unsigned), id) in ((9007199254740993, 3), (9223372036854775808, 4)) order by s, id"
+	tk.MustHavePlan(rowInQuery, "Batch_Point_Get")
+	tk.MustQuery(rowInQuery).Check(testkit.Rows("3", "4"))
+
+	// Keep MySQL's distinction between string/real SET comparisons and an explicit
+	// unsigned integer cast. Only the latter is rewritten to physical key ranges.
+	tk.MustNotHavePlan("select /*+ use_index(t, primary) */ id from t where s > 9007199254740992", "TableRangeScan")
+	tk.MustNotHavePlan("select /*+ use_index(t, primary) */ id from t where s + 0 > 9007199254740992", "TableRangeScan")
+	tk.MustNotHavePlan("select /*+ use_index(t, primary) */ id from t where cast(s as signed) > 9007199254740992", "TableRangeScan")
+
+	tk.MustExec("create table empty_member (s set('', 'a'), id bigint, primary key(s, id) clustered)")
+	tk.MustExec("insert into empty_member values (0, 1), (1, 1)")
+	tk.MustQuery("select cast(s as unsigned), id from empty_member order by s").Check(testkit.Rows("0 1", "1 1"))
+	tk.MustQuery("select cast(s as unsigned), id from empty_member where cast(s as unsigned) = 0").Check(testkit.Rows("0 1"))
+	tk.MustQuery("select cast(s as unsigned), id from empty_member where cast(s as unsigned) > -1 order by s").Check(testkit.Rows("0 1", "1 1"))
+	tk.MustQuery("select cast(s as unsigned), id from empty_member where cast(s as unsigned) < 0").Check(testkit.Rows())
+	tk.MustQuery("select cast(s as unsigned), id from empty_member where cast(s as unsigned) > 3").Check(testkit.Rows())
+	tk.MustQuery("select cast(s as unsigned), id from empty_member where cast(s as unsigned) <= 4 order by s").Check(testkit.Rows("0 1", "1 1"))
+	emptyMemberDelete := "delete from empty_member where (cast(s as unsigned), id) in ((0, 1))"
+	tk.MustHavePlan(emptyMemberDelete, "Point_Get")
+	tk.MustExec(emptyMemberDelete)
+	tk.MustQuery("select cast(s as unsigned), id from empty_member").Check(testkit.Rows("1 1"))
 }

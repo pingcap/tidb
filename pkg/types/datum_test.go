@@ -131,6 +131,9 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, NewBinaryLiteralFromUint(100, -1), int64(100))
 	testDatumToInt64(t, Enum{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(t, Set{Name: "a", Value: 1}, int64(1))
+	testDatumToInt64(t, Set{Name: "a", Value: 9007199254740993}, int64(9007199254740993))
+	testDatumToInt64(t, Set{Name: "a", Value: uint64(1) << 63}, int64(math.MinInt64))
+	testDatumToInt64(t, Set{Name: "a", Value: math.MaxUint64}, int64(-1))
 	testDatumToInt64(t, CreateBinaryJSON(int64(3)), int64(3))
 
 	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
