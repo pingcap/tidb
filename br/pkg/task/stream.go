@@ -1444,6 +1444,8 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
+	warnSystemTablesForExplicitPiTRFilter(cfg)
+
 	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, cfg.RestoreID)
 	if err != nil {
 		return errors.Trace(err)
@@ -1463,13 +1465,6 @@ func RunStreamRestore(
 	ddlFiles, err := logClient.LoadDDLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// TODO: pitr filtered restore doesn't support restore system table yet
-	if cfg.ExplicitFilter {
-		if cfg.TableFilter.MatchSchema(mysql.SystemDB) || cfg.TableFilter.MatchSchema(mysql.SysDB) {
-			return errors.Annotatef(berrors.ErrInvalidArgument,
-				"PiTR doesn't support custom filter to include system db, consider to exclude system db")
-		}
 	}
 	metaInfoProcessor := logclient.NewMetaKVInfoProcessor(logClient)
 	// doesn't need to build if id map has been saved
@@ -2096,6 +2091,28 @@ func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) storeapi
 		SendCredentials: cfg.SendCreds,
 		HTTPClient:      httpClient,
 	}
+}
+
+func warnSystemTablesForExplicitPiTRFilter(cfg *RestoreConfig) bool {
+	if !cfg.ExplicitFilter || cfg.TableFilter == nil {
+		return false
+	}
+
+	matchedSystemDBs := make([]string, 0, 3)
+	for _, systemDB := range []string{mysql.SystemDB, mysql.SysDB, mysql.WorkloadSchema} {
+		if cfg.TableFilter.MatchSchema(systemDB) {
+			matchedSystemDBs = append(matchedSystemDBs, systemDB)
+		}
+	}
+	if len(matchedSystemDBs) == 0 {
+		return false
+	}
+
+	log.Warn("PiTR log restore does not support restoring system table changes; matched system schemas are restored only from snapshot backup when --with-sys-table is enabled",
+		zap.Strings("systemSchemas", matchedSystemDBs),
+		zap.Bool("withSysTable", cfg.WithSysTable),
+		zap.Strings("filter", cfg.FilterStr))
+	return true
 }
 
 func checkLogRange(restoreFromTS, restoreToTS, logMinTS, logMaxTS uint64) error {

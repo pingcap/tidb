@@ -92,6 +92,30 @@ verify_tables() {
     done
 }
 
+verify_system_users_restored_from_snapshot_only() {
+    users_result=$(run_sql "SELECT _tidb_rowid, user, host, authentication_string FROM mysql.user WHERE user IN ('test_user', 'post_backup_user')")
+    test_user_count=$(echo "$users_result" | grep -c "test_user" || true)
+
+    if [ "$test_user_count" -eq 0 ]; then
+        echo "Error: test_user not found in mysql.user table"
+        exit 1
+    elif [ "$test_user_count" -gt 1 ]; then
+        echo "Error: Found $test_user_count instances of test_user in mysql.user table, expected exactly 1"
+        echo "Full query result:"
+        echo "$users_result"
+        exit 1
+    fi
+
+    if echo "$users_result" | grep -q "post_backup_user"; then
+        echo "Error: post_backup_user found in mysql.user table but should not be restored"
+        echo "Full query result:"
+        echo "$users_result"
+        exit 1
+    fi
+
+    echo "Verified system tables restored from snapshot only: one test_user exists and post_backup_user does not"
+}
+
 rename_tables() {
     local db_name=$1       # database name
     local db_name_new=$2
@@ -658,48 +682,17 @@ test_system_tables() {
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
 
 
-    # verify system tables are restored from snapshot only
-    # only test_user should exist, post_backup_user should not exist
-    users_result=$(run_sql "SELECT _tidb_rowid, user, host, authentication_string FROM mysql.user WHERE user IN ('test_user', 'post_backup_user')")
+    verify_system_users_restored_from_snapshot_only
 
-    test_user_count=$(echo "$users_result" | grep -c "test_user" || true)
+    echo "Test 2: Verify explicit wildcard filter restores snapshot system tables and skips log system table changes"
+    restart_services || { echo "Failed to restart services"; exit 1; }
+    run_br --pd "$PD_ADDR" restore point -f "*.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
+    verify_system_users_restored_from_snapshot_only
 
-    # Verify there is exactly one test_user
-    if [ "$test_user_count" -eq 0 ]; then
-        echo "Error: test_user not found in mysql.user table"
-        exit 1
-    elif [ "$test_user_count" -gt 1 ]; then
-        echo "Error: Found $test_user_count instances of test_user in mysql.user table, expected exactly 1"
-        echo "Full query result:"
-        echo "$users_result"
-        exit 1
-    fi
-
-    # Check that post_backup_user does not exist (was created after snapshot)
-    if echo "$users_result" | grep -q "post_backup_user"; then
-        echo "Error: post_backup_user found in mysql.user table but should not be restored"
-        echo "Full query result:"
-        echo "$users_result"
-        exit 1
-    fi
-
-    echo "Default restore correctly restored system tables from snapshot only: verified one test_user exists"
-
-    echo "PiTR should error out when system tables are included with explicit filter"
-    restore_fail=0
-    run_br --pd "$PD_ADDR" restore point -f "*.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" || restore_fail=1
-    if [ $restore_fail -ne 1 ]; then
-        echo "Expected restore to fail when including system tables with filter"
-        exit 1
-    fi
-
-    # Also verify that specific system table filters fail
-    restore_fail=0
-    run_br --pd "$PD_ADDR" restore point -f "mysql.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" || restore_fail=1
-    if [ $restore_fail -ne 1 ]; then
-        echo "Expected restore to fail when explicitly filtering system tables"
-        exit 1
-    fi
+    echo "Test 3: Verify explicit system table filter restores snapshot system tables and skips log system table changes"
+    restart_services || { echo "Failed to restart services"; exit 1; }
+    run_br --pd "$PD_ADDR" restore point -f "mysql.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
+    verify_system_users_restored_from_snapshot_only
 
     rm -rf "$TEST_DIR/$TASK_NAME"
     echo "system tables test passed"
