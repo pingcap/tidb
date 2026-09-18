@@ -1842,11 +1842,38 @@ PREPARE prepare_query FROM 'SELECT * FROM test_62564 WHERE CAST((CASE test_62564
 EXECUTE prepare_query USING @b;
 c0
 0
-CREATE TABLE t_commit_ts (a INT PRIMARY KEY, b INT);
-select _tidb_commit_ts from t_commit_ts where a = 1;
-Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
-select _tidb_commit_ts from t_commit_ts where _tidb_commit_ts = 1;
-Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
+CREATE TABLE t_commit_ts (a INT PRIMARY KEY, b INT, c INT, INDEX idx_b(b), INDEX idx_c(c));
+INSERT INTO t_commit_ts VALUES (1, 1, 2), (2, 2, 1);
+explain format = 'plan_tree' select _tidb_commit_ts from t_commit_ts where a = 1;
+id	task	access object	operator info
+TableReader	root		data:Projection
+└─Projection	cop[tikv]		test.t_commit_ts._tidb_commit_ts
+  └─TableRangeScan	cop[tikv]	table:t_commit_ts	range:[1,1], keep order:false, stats:pseudo
+explain format = 'plan_tree' select _tidb_commit_ts from t_commit_ts where a in (1, 2);
+id	task	access object	operator info
+TableReader	root		data:Projection
+└─Projection	cop[tikv]		test.t_commit_ts._tidb_commit_ts
+  └─TableRangeScan	cop[tikv]	table:t_commit_ts	range:[1,1], [2,2], keep order:false, stats:pseudo
+select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts use index (idx_b) where b = 1;
+valid_commit_ts
+1
+select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts where a = 1;
+valid_commit_ts
+1
+select a from t_commit_ts where _tidb_commit_ts > 0 order by a;
+a
+1
+2
+select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts union all select _tidb_commit_ts > 0 from t_commit_ts;
+valid_commit_ts
+1
+1
+1
+1
+explain format = 'plan_tree' select /*+ use_index_merge(t_commit_ts, idx_b, idx_c) */ _tidb_commit_ts from t_commit_ts where b = 1 or c = 1;
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+select _tidb_commit_ts from t_commit_ts tablesample regions();
+Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for TABLESAMPLE
 delete from t_commit_ts where _tidb_commit_ts = 1;
 Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
 update t_commit_ts set b = b + 1 where _tidb_commit_ts = 1;
