@@ -93,6 +93,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
+	pderr "github.com/tikv/pd/client/errs"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -2029,6 +2030,9 @@ func isRetryableError(err error, retryUnknown bool) bool {
 		}
 	}
 	originErr := errors.Cause(err)
+	if pderr.ErrClientCreateTSOStream.Equal(originErr) || pderr.ErrClientTSOStreamClosed.Equal(originErr) {
+		return true
+	}
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
