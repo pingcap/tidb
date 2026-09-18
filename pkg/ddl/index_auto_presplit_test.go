@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -111,7 +112,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		t, statsTbl.GetCol(tblInfo.Columns[1].ID), tblInfo.Columns[1], 25,
 		types.MakeDatums(20, 40, 60, 80, 100), []int64{10, 10, 10, 10, 10})
 	plan, err := planAutoPreSplitWithCache(
-		context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
+		context.Background(), sctx, testAutoPreSplitEvalCtx(), &fakeAutoPreSplitStatsProvider{stats: statsTbl},
 		tblInfo, idxInfo, cfg, make(map[int64]autoPreSplitBoundaryCacheEntry))
 	require.NoError(t, err)
 	require.Equal(t, autoPreSplitPlanPlanned, plan.state)
@@ -127,7 +128,8 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			counts[i] = uint64(i + 1)
 		}
 		topN := buildAutoPreSplitTopN(t, sctx.GetSessionVars().StmtCtx.TimeZone(), topNValues, counts)
-		weightedValues, err := buildAutoPreSplitTopNValues(sctx, topN, tblInfo.Columns[1])
+		weightedValues, err := buildAutoPreSplitTopNValues(
+			testAutoPreSplitEvalCtx(), topN, tblInfo.Columns[1])
 		require.NoError(t, err)
 		require.Len(t, weightedValues, topNSize)
 		for i, value := range weightedValues {
@@ -164,7 +166,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		}
 
 		plan, err := planAutoPreSplitWithCache(
-			planCtx, sctx, provider, tblInfo, idxInfo, cfg,
+			planCtx, sctx, testAutoPreSplitEvalCtx(), provider, tblInfo, idxInfo, cfg,
 			make(map[int64]autoPreSplitBoundaryCacheEntry))
 		require.NoError(t, err)
 		require.Equal(t, autoPreSplitPlanPlanned, plan.state)
@@ -190,7 +192,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		}
 
 		plan, err := planAutoPreSplitWithCache(
-			context.Background(), sctx, provider, tblInfo, idxInfo, timeoutCfg,
+			context.Background(), sctx, testAutoPreSplitEvalCtx(), provider, tblInfo, idxInfo, timeoutCfg,
 			make(map[int64]autoPreSplitBoundaryCacheEntry))
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.Equal(t, autoPreSplitPlanInvalid, plan.state)
@@ -218,7 +220,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			types.MakeDatums(20, 40), []int64{20, 20})
 
 		plan, err := planAutoPreSplitWithCache(
-			context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
+			context.Background(), sctx, testAutoPreSplitEvalCtx(), &fakeAutoPreSplitStatsProvider{stats: statsTbl},
 			tblInfo, idxInfo, cfg, make(map[int64]autoPreSplitBoundaryCacheEntry))
 		require.NoError(t, err)
 		require.Equal(t, autoPreSplitPlanPlanned, plan.state)
@@ -238,7 +240,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		equalCfg := cfg
 		equalCfg.boundaryRatioStep = 0.5
 		plan, err := planAutoPreSplitWithCache(
-			context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
+			context.Background(), sctx, testAutoPreSplitEvalCtx(), &fakeAutoPreSplitStatsProvider{stats: statsTbl},
 			tblInfo, idxInfo, equalCfg, make(map[int64]autoPreSplitBoundaryCacheEntry))
 		require.NoError(t, err)
 		require.Equal(t, autoPreSplitPlanPlanned, plan.state)
@@ -259,7 +261,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			values := make([]autoPreSplitValue, 0, 100)
 			for value := int64(1); value <= 100; value++ {
 				weightedValue, err := newAutoPreSplitValue(
-					sctx, types.NewIntDatum(value), 1, tblInfo.Columns[1])
+					testAutoPreSplitEvalCtx(), types.NewIntDatum(value), 1, tblInfo.Columns[1])
 				require.NoError(t, err)
 				values = append(values, weightedValue)
 			}
@@ -285,7 +287,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		}
 
 		plan, err := planAutoPreSplitWithCache(
-			context.Background(), sctx, provider, tblInfo, idxInfo, cfg,
+			context.Background(), sctx, testAutoPreSplitEvalCtx(), provider, tblInfo, idxInfo, cfg,
 			make(map[int64]autoPreSplitBoundaryCacheEntry))
 		require.ErrorIs(t, err, loadErr)
 		require.Equal(t, autoPreSplitPlanInvalid, plan.state)
@@ -307,12 +309,12 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 				stringTblInfo.ID, 90, 0, stringTblInfo.Columns[1], topN)
 
 			weightedValues, err := buildAutoPreSplitTopNValues(
-				sctx, topN, stringTblInfo.Columns[1])
+				testAutoPreSplitEvalCtx(), topN, stringTblInfo.Columns[1])
 			require.NoError(t, err)
 			require.Equal(t, types.KindBytes, weightedValues[0].value.Kind())
 
 			plan, err := planAutoPreSplitWithCache(
-				context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
+				context.Background(), sctx, testAutoPreSplitEvalCtx(), &fakeAutoPreSplitStatsProvider{stats: statsTbl},
 				stringTblInfo, stringIdxInfo, collationCfg,
 				make(map[int64]autoPreSplitBoundaryCacheEntry))
 			require.NoError(t, err)
@@ -325,7 +327,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 				})
 			}
 			expectedKeys, err := getSplitIdxKeysFromValueList(
-				sctx, stringTblInfo, stringIdxInfo, expectedRows)
+				testAutoPreSplitEvalCtx(), stringTblInfo, stringIdxInfo, expectedRows)
 			require.NoError(t, err)
 			require.Equal(t, sortAndDedupeAutoPreSplitKeys(expectedKeys), plan.splitKeys)
 		})
@@ -351,14 +353,14 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 				statsTbl.GetCol(colInfo.ID).Histogram = *histogram
 
 				plan, err := planAutoPreSplitWithCache(
-					context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
+					context.Background(), sctx, testAutoPreSplitEvalCtx(), &fakeAutoPreSplitStatsProvider{stats: statsTbl},
 					stringTblInfo, stringIdxInfo, collationCfg,
 					make(map[int64]autoPreSplitBoundaryCacheEntry))
 				require.NoError(t, err)
 				require.Equal(t, autoPreSplitPlanPlanned, plan.state)
 
 				expectedKeys, err := getSplitIdxKeysFromValueList(
-					sctx, stringTblInfo, stringIdxInfo, [][]types.Datum{{
+					testAutoPreSplitEvalCtx(), stringTblInfo, stringIdxInfo, [][]types.Datum{{
 						types.NewCollationStringDatum("aa", collation),
 					}})
 				require.NoError(t, err)
@@ -371,7 +373,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		statsTbl := buildAutoPreSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], nil)
 		statsTbl.GetCol(tblInfo.Columns[1].ID).StatsVer = statistics.Version1
 		plan, err := planAutoPreSplitWithCache(
-			context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
+			context.Background(), sctx, testAutoPreSplitEvalCtx(), &fakeAutoPreSplitStatsProvider{stats: statsTbl},
 			tblInfo, idxInfo, cfg, make(map[int64]autoPreSplitBoundaryCacheEntry))
 		require.NoError(t, err)
 		require.Equal(t, autoPreSplitPlanSkipped, plan.state)
@@ -415,7 +417,7 @@ func TestPlanAutoPreSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			plan, err := planAutoPreSplitWithCache(
-				context.Background(), sctx, tc.provider, tc.tblInfo, tc.idxInfo, cfg,
+				context.Background(), sctx, testAutoPreSplitEvalCtx(), tc.provider, tc.tblInfo, tc.idxInfo, cfg,
 				make(map[int64]autoPreSplitBoundaryCacheEntry))
 			require.NoError(t, err)
 			require.Equal(t, autoPreSplitPlanSkipped, plan.state)
@@ -514,7 +516,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 		provider := &fakeAutoPreSplitStatsProvider{stats: statsTbl}
 
 		plan, err := planAutoPreSplitWithCache(
-			context.Background(), sctx, provider, tblInfo, tblInfo.Indices[0],
+			context.Background(), sctx, testAutoPreSplitEvalCtx(), provider, tblInfo, tblInfo.Indices[0],
 			newAutoPreSplitTestConfig(), boundaryCache)
 		require.Error(t, err)
 		firstErr := err
@@ -530,7 +532,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 			t, sctx.GetSessionVars().StmtCtx.TimeZone(), []int64{20, 30}, []uint64{50, 50})
 
 		plan, err = planAutoPreSplitWithCache(
-			context.Background(), sctx, provider, tblInfo, tblInfo.Indices[1],
+			context.Background(), sctx, testAutoPreSplitEvalCtx(), provider, tblInfo, tblInfo.Indices[1],
 			newAutoPreSplitTestConfig(), boundaryCache)
 		require.ErrorIs(t, err, firstErr)
 		require.Equal(t, autoPreSplitPlanInvalid, plan.state)
@@ -547,7 +549,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 		expectedReason := "leading column stats version 1 is not Analyze V2"
 
 		plan, err := planAutoPreSplitWithCache(
-			context.Background(), sctx, provider, tblInfo, tblInfo.Indices[0],
+			context.Background(), sctx, testAutoPreSplitEvalCtx(), provider, tblInfo, tblInfo.Indices[0],
 			newAutoPreSplitTestConfig(), boundaryCache)
 		require.NoError(t, err)
 		require.Equal(t, autoPreSplitPlanSkipped, plan.state)
@@ -565,7 +567,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 			t, sctx.GetSessionVars().StmtCtx.TimeZone(), []int64{20, 30}, []uint64{50, 50})
 
 		plan, err = planAutoPreSplitWithCache(
-			context.Background(), sctx, provider, tblInfo, tblInfo.Indices[1],
+			context.Background(), sctx, testAutoPreSplitEvalCtx(), provider, tblInfo, tblInfo.Indices[1],
 			newAutoPreSplitTestConfig(), boundaryCache)
 		require.NoError(t, err)
 		require.Equal(t, autoPreSplitPlanSkipped, plan.state)
@@ -697,8 +699,8 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result, skipReason, resultErr := autoPreSplitIndexRegion(
-				context.Background(), sctx, tc.store, tblInfo, idxInfo, hotStatsProvider,
-				make(map[int64]autoPreSplitBoundaryCacheEntry), false)
+				context.Background(), sctx, testAutoPreSplitEvalCtx(), tc.store, tblInfo, idxInfo,
+				hotStatsProvider, make(map[int64]autoPreSplitBoundaryCacheEntry), false)
 			if tc.wantResultErr {
 				require.Error(t, resultErr)
 			} else {
@@ -967,4 +969,200 @@ func splitKeyFirstValuesForIndex(t *testing.T, keys [][]byte, indexID int64) []s
 		}
 	}
 	return values
+}
+
+// testAutoPreSplitEvalCtx returns the kind of eval context the auto pre-split planner is given in
+// production: the reorg one, carrying the submitting session's location and SQL mode.
+func testAutoPreSplitEvalCtx() *exprstatic.EvalContext {
+	return exprstatic.NewEvalContext()
+}
+
+// TestPreSplitIndexRegionsManualValueListTimeZone checks that a manual `SPLIT ... BY` value list is
+// encoded in the time zone it was evaluated in, which is the submitting session's zone carried in
+// the reorg meta, rather than in the time zone of the DDL worker session that happens to run the
+// job. The two are unrelated: DDLReorgMeta.Location exists precisely because the worker session
+// cannot reproduce the submitter's semantics.
+func TestPreSplitIndexRegionsManualValueListTimeZone(t *testing.T) {
+	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(
+		t, "create table t(a bigint, b timestamp, index idx(b))")
+
+	var capturedKeys [][]byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex",
+		func(splitKeys [][]byte) {
+			capturedKeys = append(capturedKeys, splitKeys...)
+		})
+
+	// The submitting session was at +08:00, so '2024-04-08 10:00:00' is 02:00:00 UTC.
+	reorgMeta := &model.DDLReorgMeta{
+		Location: &model.TimeZoneLocation{Name: "+08:00", Offset: 8 * 60 * 60},
+	}
+	args := &model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{{
+		SplitOpt: &model.IndexArgSplitOpt{
+			ValueLists: [][]string{{"'2024-04-08 10:00:00'"}},
+		},
+	}}}
+
+	splitKeysWithWorkerTimeZone := func(t *testing.T, loc *time.Location) [][]byte {
+		t.Helper()
+		capturedKeys = nil
+		sctx := mock.NewContext()
+		sctx.GetSessionVars().TimeZone = loc
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(loc)
+		err := preSplitIndexRegions(
+			context.Background(), sctx, &fakeAutoPreSplitStore{}, tblInfo,
+			[]*model.IndexInfo{idxInfo}, reorgMeta, args, nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, capturedKeys)
+		return capturedKeys
+	}
+
+	utcWorkerKeys := splitKeysWithWorkerTimeZone(t, time.UTC)
+	require.Equal(t, utcWorkerKeys,
+		splitKeysWithWorkerTimeZone(t, time.FixedZone("-05:00", -5*60*60)))
+	require.Equal(t, utcWorkerKeys,
+		splitKeysWithWorkerTimeZone(t, time.FixedZone("+09:30", 9*60*60+30*60)))
+
+	// The key must hold the instant the submitter meant, 02:00:00 UTC.
+	expected, err := types.ParseTimestamp(types.DefaultStmtNoWarningContext, "2024-04-08 02:00:00")
+	require.NoError(t, err)
+	expectedKey, err := getSplitIdxKeysFromValueList(
+		exprstatic.NewEvalContext(exprstatic.WithLocation(time.UTC)), tblInfo, idxInfo,
+		[][]types.Datum{{types.NewTimeDatum(expected)}})
+	require.NoError(t, err)
+	require.Subset(t, utcWorkerKeys, expectedKey[len(expectedKey)-1:])
+}
+
+// TestPlanAutoPreSplitIndexRegionsTimestampTimeZone pins the contract that the eval context in this
+// file exists for: for a TIMESTAMP leading column the auto pre-split boundaries must be a function
+// of the context the DDL carries, never of the DDL worker session that happens to run the job.
+// The TopN and the histogram branch reach the encoder by different routes, so both are covered.
+//
+// Neither branch reacts to the eval context's own zone either, because statistics hold a TIMESTAMP
+// in UTC and are read back in UTC (#52429). A TopN entry is stored as comparable bytes, so it always
+// decoded to the instant ANALYZE saw; a histogram bound is a wall clock, and reading it in UTC is
+// what makes it mean that same instant rather than whatever zone happened to be at hand.
+func TestPlanAutoPreSplitIndexRegionsTimestampTimeZone(t *testing.T) {
+	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(
+		t, "create table t(a bigint, b timestamp, index idx(b))")
+	colInfo := tblInfo.Columns[1]
+
+	parseTime := func(t *testing.T, value string) types.Time {
+		t.Helper()
+		parsed, err := types.ParseTimestamp(types.DefaultStmtNoWarningContext, value)
+		require.NoError(t, err)
+		return parsed
+	}
+
+	// Stand-ins for what statistics hold: TopN keeps comparable bytes, the histogram keeps values.
+	topNBytes := func(t *testing.T, values ...string) *statistics.TopN {
+		t.Helper()
+		topN := statistics.NewTopN(len(values))
+		for i, value := range values {
+			encoded, err := codec.EncodeKey(time.UTC, nil, types.NewTimeDatum(parseTime(t, value)))
+			require.NoError(t, err)
+			topN.AppendTopN(encoded, uint64(50-i*10))
+		}
+		topN.Sort()
+		return topN
+	}
+
+	planWith := func(t *testing.T, evalLoc, workerLoc *time.Location, useTopN bool) [][]byte {
+		t.Helper()
+		sctx := mock.NewContext()
+		sctx.GetSessionVars().TimeZone = workerLoc
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(workerLoc)
+
+		cfg := newAutoPreSplitTestConfig()
+		cfg.boundaryRatioStep = 0.4
+
+		var statsTbl *statistics.Table
+		if useTopN {
+			statsTbl = buildAutoPreSplitTestStats(
+				tblInfo.ID, 90, 0, colInfo, topNBytes(t, "2024-04-08 02:00:00", "2024-04-08 06:00:00"))
+		} else {
+			statsTbl = buildAutoPreSplitTestStats(tblInfo.ID, 100, 0, colInfo, nil)
+			setAutoPreSplitTestHistogram(t, statsTbl.GetCol(colInfo.ID), colInfo, 0,
+				[]types.Datum{
+					types.NewTimeDatum(parseTime(t, "2024-04-08 02:00:00")),
+					types.NewTimeDatum(parseTime(t, "2024-04-08 06:00:00")),
+				},
+				[]int64{50, 50})
+		}
+
+		plan, err := planAutoPreSplitWithCache(
+			context.Background(), sctx,
+			exprstatic.NewEvalContext(exprstatic.WithLocation(evalLoc)),
+			&fakeAutoPreSplitStatsProvider{stats: statsTbl},
+			tblInfo, idxInfo, cfg, make(map[int64]autoPreSplitBoundaryCacheEntry))
+		require.NoError(t, err)
+		require.Equal(t, autoPreSplitPlanPlanned, plan.state)
+		require.NotEmpty(t, plan.splitKeys)
+		return plan.splitKeys
+	}
+
+	// Zones a DDL worker session could plausibly be running in. None of them may reach the keys.
+	workerZones := []*time.Location{
+		time.UTC,
+		time.FixedZone("-05:00", -5*60*60),
+		time.FixedZone("+09:30", 9*60*60+30*60),
+		mustLoadLocation(t, "Europe/Amsterdam"), // a zone with DST, which must not matter either
+	}
+	submitterZone := time.FixedZone("+08:00", 8*60*60)
+
+	for _, branch := range []struct {
+		name    string
+		useTopN bool
+	}{
+		{name: "histogram", useTopN: false},
+		{name: "TopN", useTopN: true},
+	} {
+		t.Run(branch.name, func(t *testing.T) {
+			want := planWith(t, submitterZone, workerZones[0], branch.useTopN)
+			for _, workerZone := range workerZones[1:] {
+				require.Equal(t, want, planWith(t, submitterZone, workerZone, branch.useTopN),
+					"the DDL worker session's time zone must not reach the split keys")
+			}
+
+			// Nor does the eval context's own zone, now that statistics are read in UTC. Verified
+			// failing if the auto path reads them in the zone the DDL was submitted in instead.
+			require.Equal(t, want, planWith(t, time.UTC, workerZones[0], branch.useTopN),
+				"statistics are held in UTC, so no session's time zone may move a boundary")
+		})
+	}
+
+	// Reading statistics in UTC also removes a defect that no zone-dependent reading can avoid: in a
+	// DST zone the autumn fall-back makes one local wall clock cover two UTC instants, and encoding
+	// resolves the ambiguity to the later one, so two distinct statistics values used to collapse
+	// onto a single boundary for the length of that one repeated hour. In UTC there is no ambiguity
+	// to resolve, so they stay distinct whatever zone is passed in.
+	t.Run("DST fall-back no longer collapses the repeated hour", func(t *testing.T) {
+		amsterdam := mustLoadLocation(t, "Europe/Amsterdam")
+		// On 2024-10-27 Amsterdam goes back from 03:00 CEST to 02:00 CET, so local 02:30 is both
+		// 00:30 UTC (still CEST) and 01:30 UTC (already CET).
+		firstPass := topNBytes(t, "2024-10-27 00:30:00")
+		secondPass := topNBytes(t, "2024-10-27 01:30:00")
+
+		encodedIn := func(t *testing.T, topN *statistics.TopN, loc *time.Location) []byte {
+			t.Helper()
+			values, err := buildAutoPreSplitTopNValues(
+				exprstatic.NewEvalContext(exprstatic.WithLocation(loc)), topN, colInfo)
+			require.NoError(t, err)
+			require.Len(t, values, 1)
+			return values[0].encoded
+		}
+
+		require.NotEqual(t,
+			encodedIn(t, firstPass, time.UTC), encodedIn(t, secondPass, time.UTC),
+			"an hour apart, the two instants must stay distinct in a zone without transitions")
+		require.NotEqual(t,
+			encodedIn(t, firstPass, amsterdam), encodedIn(t, secondPass, amsterdam),
+			"and in the repeated hour too, since the values are read in UTC either way")
+	})
+}
+
+func mustLoadLocation(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	require.NoError(t, err)
+	return loc
 }
