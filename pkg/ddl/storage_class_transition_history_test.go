@@ -37,6 +37,17 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
+func mockStorageClassTransitionStores(t *testing.T, handler http.HandlerFunc) {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	previousTiFlash := infosync.GetMockTiFlash()
+	infosync.SetMockTiFlash(&infosync.MockTiFlash{StoreInfo: map[uint64]pdhttp.MetaStore{
+		1: {ID: 1, StatusAddress: strings.TrimPrefix(server.URL, "http://"), StateName: "Up"},
+	}})
+	t.Cleanup(func() { infosync.SetMockTiFlash(previousTiFlash) })
+}
+
 func newStorageClassTransitionPollTest(
 	t *testing.T,
 	handler http.HandlerFunc,
@@ -51,22 +62,19 @@ func newStorageClassTransitionPollTest(
 		(table_schema, table_name, table_id, direction, state, schema_version,
 		 start_ts, start_time, physical_targets)
 		VALUES ('test', 't', 500, 'TO_IA', 'RUNNING', 1, 100,
-		 '2020-01-01 00:00:00', '[{"physical_id":500}]')`)
+		 '2020-01-01 00:00:00', '[{"physical_id":501,"partition_id":501,"partition_name":"p0"}]')`)
 	tblInfo := &model.TableInfo{
 		ID: 500, Name: ast.NewCIStr("t"), StorageClassTier: model.StorageClassTierIA,
+		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
+			{ID: 501, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+		}},
 	}
 	infoCache := infoschema.NewCache(nil, 1)
 	infoCache.Insert(infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{tblInfo}, 2), 0)
 	d, _ := ddl.NewDDL(context.Background(), ddl.WithStore(store), ddl.WithInfoCache(infoCache))
 	t.Cleanup(func() { require.NoError(t, d.Stop()) })
 
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	previousTiFlash := infosync.GetMockTiFlash()
-	infosync.SetMockTiFlash(&infosync.MockTiFlash{StoreInfo: map[uint64]pdhttp.MetaStore{
-		1: {ID: 1, StatusAddress: strings.TrimPrefix(server.URL, "http://"), StateName: "Up"},
-	}})
-	t.Cleanup(func() { infosync.SetMockTiFlash(previousTiFlash) })
+	mockStorageClassTransitionStores(t, handler)
 	return tk, d, infoCache
 }
 
@@ -77,6 +85,8 @@ func TestStorageClassTransitionPollPersistsLastObservation(t *testing.T) {
 		initialCounters string
 		response        string
 		counters        string
+		newOwner        bool
+		replaceTarget   bool
 	}{
 		{
 			name: "partial progress", initialResponse: `{"ready":1,"total":4}`, initialCounters: "4 1",
@@ -84,6 +94,8 @@ func TestStorageClassTransitionPollPersistsLastObservation(t *testing.T) {
 		},
 		{name: "never observed", counters: "<nil> <nil>"},
 		{name: "observed zero replicas", response: `{"ready":0,"total":0}`, counters: "0 0"},
+		{name: "new owner", response: `{"ready":3,"total":4}`, counters: "4 3", newOwner: true},
+		{name: "topology replacement", response: `{"ready":3,"total":4}`, counters: "4 3", replaceTarget: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var fail atomic.Bool
@@ -127,18 +139,36 @@ func TestStorageClassTransitionPollPersistsLastObservation(t *testing.T) {
 			poll()
 			checkRunning(tc.counters)
 
-			// A new manager has no observation cache, as after owner failover.
-			// Removing the table must still preserve its durable observation.
-			infoCache.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 3), 0)
-			newOwner, _ := ddl.NewDDL(context.Background(), ddl.WithStore(tk.Session().GetStore()), ddl.WithInfoCache(infoCache))
-			t.Cleanup(func() { require.NoError(t, newOwner.Stop()) })
-			_, err := ddl.PollStorageClassTransitionsForTest(context.Background(), newOwner, se)
+			var currentTables []*model.TableInfo
+			if tc.replaceTarget {
+				currentTables = []*model.TableInfo{{
+					ID: 500, Name: ast.NewCIStr("t"), StorageClassTier: model.StorageClassTierIA,
+					Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
+						{ID: 502, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+					}},
+				}}
+			}
+			infoCache.Insert(infoschema.MockInfoSchemaWithSchemaVer(currentTables, 3), 0)
+			owner := d
+			if tc.newOwner {
+				// A new manager has no observation cache, as after owner failover.
+				// Superseding must still preserve the durable observation.
+				owner, _ = ddl.NewDDL(context.Background(), ddl.WithStore(tk.Session().GetStore()), ddl.WithInfoCache(infoCache))
+				t.Cleanup(func() { require.NoError(t, owner.Stop()) })
+			}
+			_, err := ddl.PollStorageClassTransitionsForTest(context.Background(), owner, se)
 			require.NoError(t, err)
 			tk.MustQuery(`SELECT state, total_replicas, completed_replicas,
 				finish_time IS NOT NULL, duration IS NOT NULL
-				FROM mysql.tidb_storage_class_transition_history`).Check(
+				FROM mysql.tidb_storage_class_transition_history WHERE start_ts = 100`).Check(
 				testkit.Rows("SUPERSEDED " + tc.counters + " 1 1"))
-			require.Empty(t, newOwner.StorageClassTransitionStatuses())
+			require.Empty(t, owner.StorageClassTransitionStatuses())
+			if tc.replaceTarget {
+				tk.MustQuery(`SELECT total_replicas, completed_replicas, physical_targets
+					FROM mysql.tidb_storage_class_transition_history WHERE state = 'RUNNING'`).Check(testkit.Rows(
+					`<nil> <nil> [{"physical_id":502,"partition_id":502,"partition_name":"p0"}]`,
+				))
+			}
 		})
 	}
 }
@@ -151,7 +181,7 @@ func TestStorageClassTransitionPollDoesNotOverwriteTerminalHistory(t *testing.T)
 			release := make(chan struct{})
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
-			tk, d, _ := newStorageClassTransitionPollTest(t, func(w http.ResponseWriter, _ *http.Request) {
+			tk, d, infoCache := newStorageClassTransitionPollTest(t, func(w http.ResponseWriter, _ *http.Request) {
 				if block.Load() {
 					entered <- struct{}{}
 					<-release
@@ -193,7 +223,8 @@ func TestStorageClassTransitionPollDoesNotOverwriteTerminalHistory(t *testing.T)
 				completedReplicas = 4
 			}
 			writer.MustExec(fmt.Sprintf(`UPDATE mysql.tidb_storage_class_transition_history
-				SET state = '%s', completed_replicas = %d, finish_time = '2020-01-01 00:00:01', duration = 1
+				SET state = '%s', total_replicas = 4, completed_replicas = %d,
+				finish_time = '2020-01-01 00:00:01', duration = 1
 				WHERE table_id = 500 AND start_ts = 100`, state, completedReplicas))
 			// A new operation for the same table and direction must also be
 			// protected from the old operation's in-flight observation.
@@ -201,7 +232,7 @@ func TestStorageClassTransitionPollDoesNotOverwriteTerminalHistory(t *testing.T)
 				(table_schema, table_name, table_id, direction, state, schema_version,
 				 start_ts, start_time, physical_targets, total_replicas, completed_replicas)
 				VALUES ('test', 't', 500, 'TO_IA', 'RUNNING', 3, 200,
-				 '2020-01-01 00:00:01', '[{"physical_id":500}]', 9, 1)`)
+					 '2020-01-01 00:00:01', '[{"physical_id":501,"partition_id":501,"partition_name":"p0"}]', 9, 1)`)
 			unblock()
 			select {
 			case err := <-pollDone:
@@ -214,6 +245,14 @@ func TestStorageClassTransitionPollDoesNotOverwriteTerminalHistory(t *testing.T)
 				fmt.Sprintf("100 %s 4 %d 1", state, completedReplicas),
 				"200 RUNNING 9 1 <nil>",
 			))
+			// Superseding the new operation must not reuse the old operation's
+			// persisted observation even though table, direction and targets match.
+			infoCache.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 3), 0)
+			_, err = ddl.PollStorageClassTransitionsForTest(context.Background(), d, se)
+			require.NoError(t, err)
+			tk.MustQuery(`SELECT state, total_replicas, completed_replicas
+				FROM mysql.tidb_storage_class_transition_history WHERE start_ts = 200`).Check(
+				testkit.Rows("SUPERSEDED 9 1"))
 		})
 	}
 
