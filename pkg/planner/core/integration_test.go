@@ -44,6 +44,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUnionStringCastLength(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table union_text(v longtext)")
+	tk.MustQuery("select 2 in (select 5 union select null)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 2 in (select null union select 5)").Check(testkit.Rows("<nil>"))
+	tk.MustExec("create view nullable_union as select 'a' c union all select null")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
+	tk.MustExec("create view nullable_union as select null c union select 'a'")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
+	tk.MustExec("insert into union_text values(repeat('z',1592)),(repeat('界',600)),(null)")
+	tk.MustQuery("select 2 in (select 5 union select null) from union_text").Check(testkit.Rows("<nil>", "<nil>", "<nil>"))
+	short := "select cast('q' as char(255)) as v where false"
+	text := "select v from union_text"
+	numeric := "select cast(10 as double)*cast(10 as double) as v where false"
+	for _, sql := range []string{
+		short + " union all " + text + " union all " + numeric,
+		numeric + " union all " + short + " union all " + text,
+		"(" + short + " union all " + text + ") union all " + numeric,
+	} {
+		rs, err := tk.Exec(sql)
+		require.NoError(t, err)
+		ft := rs.Fields()[0].Column.FieldType
+		flen := ft.GetFlen()
+		if flen < 0 {
+			flen, _ = mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
+		}
+		require.GreaterOrEqual(t, flen, 1592)
+		require.NoError(t, rs.Close())
+		tk.MustQuery(sql).Sort().Check(testkit.Rows("<nil>", strings.Repeat("z", 1592), strings.Repeat("界", 600)))
+	}
+	tk.MustQuery("select char_length(v) from (select cast('q' as char(255)) v where false union all select repeat('z',1592) union all select cast(10 as double)*cast(10 as double) where false)u").Check(testkit.Rows("1592"))
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
