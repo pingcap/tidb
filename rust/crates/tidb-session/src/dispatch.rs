@@ -611,7 +611,9 @@ impl Session {
                     table_name
                 ))));
             };
-            let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
+            let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST")
+                || table_name.eq_ignore_ascii_case("CLUSTER_PROCESSLIST")
+            {
                 self.process_list_table_rows()
             } else if table_name.eq_ignore_ascii_case("TIDB_INDEX_USAGE") {
                 let visibility = self.schema_visibility();

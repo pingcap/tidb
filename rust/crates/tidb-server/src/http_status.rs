@@ -147,6 +147,20 @@ pub fn start_status_listener_with_routes(
                                  Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                                 body.len(),
                             )
+                        } else if path == "/metrics" {
+                            // Keep the Prometheus scrape endpoint available to
+                            // TiUP/Grafana.  The Rust server does not yet
+                            // expose Go's full registry, but this stable core
+                            // gauge is sufficient for health dashboards.
+                            let body = format!(
+                                "# TYPE tidb_server_connections gauge\ntidb_server_connections {}\n",
+                                tracker.active(),
+                            );
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\
+                                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len(),
+                            )
                         } else if let Some(answer) =
                             settings_response(path, &request, settings_json.as_deref())
                         {

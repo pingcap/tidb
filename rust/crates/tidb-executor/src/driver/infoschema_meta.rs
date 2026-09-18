@@ -2279,6 +2279,10 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("MEMORY_USAGE_OPS_HISTORY", MEMORY_USAGE_OPS_HISTORY_COLUMNS),
     ("PARTITIONS", PARTITIONS_COLUMNS),
     ("PROCESSLIST", PROCESSLIST_COLUMNS),
+    // CLUSTER_PROCESSLIST is backed by the same process registry in the
+    // single-node Rust server.  Keep it visible so dashboard queries and
+    // cluster diagnostics get a real result instead of 1146.
+    ("CLUSTER_PROCESSLIST", PROCESSLIST_COLUMNS),
     ("REFERENTIAL_CONSTRAINTS", REFERENTIAL_CONSTRAINTS_COLUMNS),
     ("SCHEMATA", SCHEMATA_COLUMNS),
     ("SCHEMA_PRIVILEGES", SCHEMA_PRIVILEGES_COLUMNS),
