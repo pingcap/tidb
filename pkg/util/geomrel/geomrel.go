@@ -69,9 +69,10 @@ func Relate(pred Predicate, ewkb1, ewkb2 string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// SRID-4326 region predicates use a geodesic (S2) evaluator for the
-	// point-in-polygon case, so polygon edges are great-circle arcs (matching MySQL);
-	// other operands/predicates use the planar simplefeatures evaluator below.
+	// SRID-4326 region predicates use a curved-edge (S2) evaluator for the
+	// point-in-polygon case, so polygon edges are great-circle arcs rather than planar
+	// lat/long segments; see geodesic4326PointInPolygon for how far that still is from
+	// MySQL. Other operands/predicates use the planar simplefeatures evaluator below.
 	if srid == srid4326 {
 		if res, handled := geodesic4326PointInPolygon(pred, g1, g2); handled {
 			return res, nil

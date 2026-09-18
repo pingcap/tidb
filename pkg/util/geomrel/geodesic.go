@@ -23,10 +23,15 @@ import (
 const srid4326 = 4326
 
 // geodesic4326PointInPolygon evaluates a SRID-4326 region predicate where one operand
-// is a POINT and the other a POLYGON, using S2 so the polygon edges are geodesics
-// (great-circle arcs) — matching MySQL's geographic semantics — rather than the planar
-// lat/long segments the simplefeatures evaluator would use. This is where 4326 results
-// diverge from MySQL (large regions, near the poles / the antimeridian).
+// is a POINT and the other a POLYGON, using S2 so the polygon edges are curved
+// (great-circle arcs) rather than the planar lat/long segments the simplefeatures
+// evaluator would use.
+//
+// This narrows the divergence from MySQL without closing it. MySQL draws geographic
+// edges with boost's Andoyer formula, which approximates the ellipsoidal geodesic,
+// whereas a great circle is the shortest path on a sphere. Measured on 9.7.2 the two
+// differ by 7,796 m on a continental polygon, falling to millimetres at city scale;
+// the planar edges this replaces differ by about 3,900 km.
 //
 // Returns (result, handled); handled=false means the operands are not a point/polygon
 // pair, so the caller falls back to the planar evaluator. 4326 axis order is
