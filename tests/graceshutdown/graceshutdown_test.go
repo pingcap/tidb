@@ -143,12 +143,10 @@ func TestGracefulShutdown(t *testing.T) {
 	_, err = conn1.ExecContext(ctx, "insert into t values(1);")
 	require.NoError(t, err)
 
-	done := make(chan struct{})
+	exitCh := make(chan error, 1)
 	go func() {
 		time.Sleep(time.Second)
-		err = stopService("tidb", tidb)
-		require.NoError(t, err)
-		close(done)
+		exitCh <- stopService("tidb", tidb)
 	}()
 
 	// Graceful shutdown will wait for connections in transaction only.
@@ -165,5 +163,9 @@ func TestGracefulShutdown(t *testing.T) {
 	conn1.Close()
 	conn1 = nil
 
-	<-done
+	// TiDB exits with 128+SIGINT after completing a graceful shutdown.
+	err = <-exitCh
+	exitErr, ok := errors.Cause(err).(*exec.ExitError)
+	require.True(t, ok, "TiDB should exit with a non-zero status after SIGINT")
+	require.Equal(t, 130, exitErr.ExitCode())
 }
