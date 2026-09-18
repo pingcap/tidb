@@ -4796,6 +4796,16 @@ func getBf4TimeAddSub(ctx BuildContext, funcName string, args []Expression) (tp1
 	if err != nil {
 		return
 	}
+	if tp1.GetType() == mysql.TypeTimestamp {
+		// ADDTIME/SUBTIME return DATETIME, so arithmetic must not validate the
+		// result against TIMESTAMP's narrower range.
+		datetimeTp := tp1.Clone()
+		datetimeTp.SetType(mysql.TypeDatetime)
+		bf.args[0], err = BuildCastFunctionWithCheck(ctx, bf.args[0], datetimeTp, false, false)
+		if err != nil {
+			return
+		}
+	}
 	switch retTp {
 	case types.ETDatetime:
 		bf.setDecimalAndFlenForDatetime(min(max(arg0Dec, arg1Dec), types.MaxFsp))
