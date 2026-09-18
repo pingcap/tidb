@@ -385,6 +385,33 @@ func PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expre
 	return newPropConstSolver().PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
 }
 
+// PropagateConstantForJoin propagates constants for inner joins. When keepJoinKey is true, the join keys
+// like `t1.col = t2.col` between schema1 and schema2 are kept in the result even if constant propagation
+// could replace them, since they are crucial for join optimization like join reorder and index join
+// selection. (#63314, #60076)
+func PropagateConstantForJoin(ctx exprctx.ExprContext, keepJoinKey bool, schema1, schema2 *Schema,
+	conditions []Expression) []Expression {
+	if len(conditions) == 0 {
+		return conditions
+	}
+	var joinKeys []Expression
+	if keepJoinKey {
+		joinKeys = cloneJoinKeys(conditions, schema1, schema2)
+	}
+	conditions = PropagateConstant(ctx, conditions)
+	if len(joinKeys) == 0 {
+		return conditions
+	}
+	if len(conditions) == 1 {
+		if _, isConst := conditions[0].(*Constant); isConst {
+			// The predicates collapsed to a single constant (for example an always-false condition),
+			// so keep it alone to let the caller fold the join into a TableDual.
+			return conditions
+		}
+	}
+	return RemoveDupExprs(append(conditions, joinKeys...))
+}
+
 type propOuterJoinConstSolver struct {
 	basePropConstSolver
 	joinConds   []Expression
@@ -658,7 +685,13 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 	}
 }
 
-func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
+func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterConds []Expression) ([]Expression, []Expression) {
+	var joinKeys []Expression
+	if keepJoinKey {
+		// keep join keys in the results since they are crucial for join optimization like join reorder
+		// and index join selection. (#63314, #60076)
+		joinKeys = cloneJoinKeys(joinConds, s.outerSchema, s.innerSchema)
+	}
 	cols := make([]*Column, 0, len(joinConds)+len(filterConds))
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
@@ -681,6 +714,9 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds)
+	if len(joinKeys) > 0 {
+		s.joinConds = RemoveDupExprs(append(s.joinConds, joinKeys...))
+	}
 	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds)
 	return s.joinConds, s.filterConds
 }
@@ -706,7 +742,7 @@ func propagateConstantDNF(ctx exprctx.ExprContext, conds []Expression) []Express
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
 func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
-	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
+	outerSchema, innerSchema *Schema, keepJoinKey, nullSensitive bool) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
 		outerSchema:   outerSchema,
 		innerSchema:   innerSchema,
@@ -714,7 +750,37 @@ func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Ex
 	}
 	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx
-	return solver.solve(joinConds, filterConds)
+	return solver.solve(keepJoinKey, joinConds, filterConds)
+}
+
+// cloneJoinKeys clones all join keys like `t1.col = t2.col` in these expressions.
+// schema1 and schema2 are used to identify join keys.
+func cloneJoinKeys(exprs []Expression, schema1, schema2 *Schema) (joinKeys []Expression) {
+	if schema1 == nil || schema2 == nil {
+		return nil
+	}
+	for _, expr := range exprs {
+		if isJoinKey(expr, schema1, schema2) {
+			joinKeys = append(joinKeys, expr.Clone())
+		}
+	}
+	return
+}
+
+// isJoinKey returns true if this expression could be a join key like `t1.col = t2.col`.
+func isJoinKey(expr Expression, schema1, schema2 *Schema) bool {
+	binop, ok := expr.(*ScalarFunction)
+	if !ok || binop.FuncName.L != ast.EQ {
+		return false
+	}
+	col1, lOK := binop.GetArgs()[0].(*Column)
+	col2, rOK := binop.GetArgs()[1].(*Column)
+	if !lOK || !rOK {
+		return false
+	}
+	// from different tables
+	return (schema1.Contains(col1) && schema2.Contains(col2)) ||
+		(schema1.Contains(col2) && schema2.Contains(col1))
 }
 
 // PropagateConstantSolver is a constant propagate solver.

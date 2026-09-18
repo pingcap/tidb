@@ -1693,6 +1693,11 @@ type SessionVars struct {
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
 
+	// AlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	AlwaysKeepJoinKey bool
+
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
 
@@ -2327,6 +2332,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
+		AlwaysKeepJoinKey:             DefOptAlwaysKeepJoinKey,
 		CostModelVersion:              DefTiDBCostModelVer,
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
