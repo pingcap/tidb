@@ -306,7 +306,10 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 		return statementRUFailed(statementRUOperatorInvalid), false
 	}
 	engineRU := calculator.engineResult(weights)
+	// TotalRU already includes the original TiFlash RU, so add only the extra
+	// (multiplier - 1) copies: total - original TiFlash RU + scaled TiFlash RU.
 	result.TotalRU += engineRU.TiFlash * (statementRUTiFlashMultiplier - 1)
+	// Keep the per-engine value consistent with the adjusted statement total.
 	engineRU.TiFlash *= statementRUTiFlashMultiplier
 	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV, engineRU.TiFlash} {
 		if ru < 0 || math.IsNaN(ru) || math.IsInf(ru, 0) {
