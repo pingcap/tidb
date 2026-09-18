@@ -349,16 +349,13 @@ func TestValidateIncludeGeneratedColumns(t *testing.T) {
 		require.Equal(t, GeneratedColumnsNone, conf.IncludeGeneratedColumns)
 	}
 
-	for _, fileType := range []string{FileFormatCSVString, FileFormatParquetString} {
-		conf := newConf(GeneratedColumnsStored)
-		conf.FileType = fileType
-		require.NoError(t, validateIncludeGeneratedColumns(conf))
-	}
-
 	conf := newConf(GeneratedColumnsStored)
+	require.NoError(t, validateIncludeGeneratedColumns(conf))
+
+	conf = newConf(GeneratedColumnsStored)
 	conf.FileType = FileFormatSQLTextString
 	require.EqualError(t, validateIncludeGeneratedColumns(conf),
-		"--include-generated-columns=stored is only supported with --filetype csv or parquet")
+		"--include-generated-columns=stored is only supported with --filetype csv")
 
 	conf = newConf(GeneratedColumnsStored)
 	conf.SQL = "select * from t"
