@@ -131,6 +131,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_enable_advanced_join_reorder":           {},
 	"tidb_hash_join_version":                          {},
 	"tidb_enable_cache_prepare_stmt":                  {},
+	"tidb_dml_max_execution_time":                     {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},
