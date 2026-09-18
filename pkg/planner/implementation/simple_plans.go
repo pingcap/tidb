@@ -136,6 +136,16 @@ func NewLimitImpl(limit *plannercore.PhysicalLimit) *LimitImpl {
 	return &LimitImpl{baseImpl{plan: limit}}
 }
 
+// AttachChildren implements Implementation AttachChildren interface.
+func (impl *LimitImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	child := children[0].GetPlan()
+	impl.plan.SetChildren(child)
+	// An index scan can output extra index columns not present in the logical
+	// group schema. LIMIT preserves those columns, especially in coprocessors.
+	impl.plan.(*plannercore.PhysicalLimit).SetSchema(child.Schema().Clone())
+	return impl
+}
+
 // TiDBTopNImpl is the implementation of PhysicalTopN in TiDB layer.
 type TiDBTopNImpl struct {
 	baseImpl

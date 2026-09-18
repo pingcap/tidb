@@ -2466,3 +2466,21 @@ func TestIssue58829(t *testing.T) {
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
 }
+
+func TestCascadesCoveringIndexColumnOffsets(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cover_offsets (a int not null, b decimal(10,4), c int not null, key idx(a,b,c))")
+	tk.MustExec("insert into cover_offsets values (1,1.0,1), (2,3.1250,99)")
+	tk.MustExec("create table cover_float (a int not null, b float, c int, key idx(a,b,c))")
+	tk.MustExec("insert into cover_float values (20,213.9958336986293,57)")
+	for _, enabled := range []string{"off", "on"} {
+		tk.MustExec("set tidb_enable_cascades_planner = " + enabled)
+		tk.MustQuery("select a from cover_float where a is not null and c is not null order by a limit 70").Check(testkit.Rows("20"))
+		tk.MustQuery("select c from cover_offsets order by a limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("select a,c from cover_offsets order by a limit 2").Check(testkit.Rows("1 1", "2 99"))
+		tk.MustQuery("select c,c from cover_offsets order by a desc limit 1 offset 1").Check(testkit.Rows("1 1"))
+		tk.MustQuery("select b,c from cover_offsets order by a desc limit 1").Check(testkit.Rows("3.1250 99"))
+	}
+}
