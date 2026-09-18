@@ -33,18 +33,32 @@ func AppendValue(dst, val []byte, isNull bool, kind dumpformat.FieldKind, escape
 	if isNull {
 		return append(dst, nullToken...)
 	}
-	switch kind {
-	case dumpformat.KindNumber:
+	if kind == dumpformat.KindNumber {
 		return append(dst, val...)
-	case dumpformat.KindBytes:
-		dst = append(dst, 'x', '\'')
-		dst = hex.AppendEncode(dst, val)
-		return append(dst, '\'')
-	default: // dumpformat.KindString
-		dst = append(dst, '\'')
-		dst = appendEscaped(dst, val, escapeBackslash)
-		return append(dst, '\'')
 	}
+	dst = appendOpenQuote(dst, kind)
+	dst = appendQuotedBody(dst, val, kind, escapeBackslash)
+	return append(dst, '\'')
+}
+
+// appendOpenQuote appends the opening of a quoted value: x' for binary values
+// and ' for strings. Both are closed by a single quote.
+func appendOpenQuote(dst []byte, kind dumpformat.FieldKind) []byte {
+	if kind == dumpformat.KindBytes {
+		dst = append(dst, 'x')
+	}
+	return append(dst, '\'')
+}
+
+// appendQuotedBody appends the part of a quoted value between its quotes: hex
+// digits for binary values, the escaped text for strings. Every input byte is
+// encoded on its own, so encoding a value piece by piece yields the same bytes
+// as encoding it at once.
+func appendQuotedBody(dst, val []byte, kind dumpformat.FieldKind, escapeBackslash bool) []byte {
+	if kind == dumpformat.KindBytes {
+		return hex.AppendEncode(dst, val)
+	}
+	return appendEscaped(dst, val, escapeBackslash)
 }
 
 // appendEscaped writes s to dst, escaping per escapeBackslash.
