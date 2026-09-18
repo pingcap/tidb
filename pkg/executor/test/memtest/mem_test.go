@@ -154,8 +154,12 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 
 	tk.MustQuery("select /*+ resource_group(rg1) set_var(tidb_mem_arbitrator_query_reserved=100000) */ * from t").Check(testkit.Rows("1"))
+	stmtArbitrator := tk.Session().GetSessionVars().StmtCtx.MemTracker.MemArbitrator
+	require.NotNil(t, stmtArbitrator)
 	tk.MustQuery("select /*+ resource_group(rg2) set_var(tidb_mem_arbitrator_query_reserved=100000) */ * from t").Check(testkit.Rows("1"))
+	require.NotSame(t, stmtArbitrator, tk.Session().GetSessionVars().StmtCtx.MemTracker.MemArbitrator)
 	tk.MustQuery("select /*+ resource_group(rg3) set_var(tidb_mem_arbitrator_query_reserved=100000) */ * from t").Check(testkit.Rows("1"))
+	require.Same(t, stmtArbitrator, tk.Session().GetSessionVars().StmtCtx.MemTracker.MemArbitrator)
 
 	{
 		execMetrics := memory.GlobalMemArbitrator().ExecMetrics()
