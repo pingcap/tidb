@@ -15,8 +15,11 @@
 package cardinality
 
 import (
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -66,6 +69,31 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 		return statistics.DefaultRowEst(0), errors.Trace(err)
 	}
 	return result, nil
+}
+
+// toStatsTimeZone shifts a predicate value from the session time zone into UTC in place.
+//
+// A TIMESTAMP identifies an instant, and ANALYZE collects it in UTC: the value is stored in TiKV as
+// a UTC wall clock, and TopN and index bounds are encoded with codec.EncodeKey, which normalizes
+// TIMESTAMP to UTC. Column histogram bucket bounds follow the same convention, so a predicate,
+// which the user expressed in the session time zone, has to be shifted before it can be compared
+// with a bound. See issue #52429.
+//
+// Everything else is left alone: DATE and DATETIME carry no time zone, and index bounds are encoded
+// bytes rather than a decoded time.
+func toStatsTimeZone(loc *time.Location, d *types.Datum) error {
+	if loc == time.UTC || d.Kind() != types.KindMysqlTime {
+		return nil
+	}
+	t := d.GetMysqlTime()
+	if t.Type() != mysql.TypeTimestamp {
+		return nil
+	}
+	if err := t.ConvertTimeZone(loc, time.UTC); err != nil {
+		return err
+	}
+	d.SetMysqlTime(t)
+	return nil
 }
 
 // equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
@@ -136,16 +164,24 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		if lowVal.Kind() == types.KindString {
 			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
+		if err := toStatsTimeZone(sc.TimeZone(), &lowVal); err != nil {
+			return statistics.DefaultRowEst(0), errors.Trace(err)
+		}
+		if err := toStatsTimeZone(sc.TimeZone(), &highVal); err != nil {
+			return statistics.DefaultRowEst(0), errors.Trace(err)
+		}
 		cmp, err := lowVal.Compare(sc.TypeCtx(), &highVal, collate.GetBinaryCollator())
 		if err != nil {
 			return statistics.DefaultRowEst(0), errors.Trace(err)
 		}
-		lowEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, lowVal)
+		// lowVal/highVal are already in UTC, so encode them in UTC as well. The encoding normalizes
+		// TIMESTAMP to UTC anyway, so the bytes still match what TopN holds.
+		lowEncoded, err := codec.EncodeKey(time.UTC, nil, lowVal)
 		err = sc.HandleError(err)
 		if err != nil {
 			return statistics.DefaultRowEst(0), err
 		}
-		highEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, highVal)
+		highEncoded, err := codec.EncodeKey(time.UTC, nil, highVal)
 		err = sc.HandleError(err)
 		if err != nil {
 			return statistics.DefaultRowEst(0), err

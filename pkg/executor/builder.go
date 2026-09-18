@@ -93,7 +93,6 @@ import (
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	clientkv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
@@ -3230,8 +3229,6 @@ func (b *executorBuilder) updateForUpdateTS() error {
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, planID int) *analyzeTask {
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
-	_, offset := timeutil.Zone(b.sctx.GetSessionVars().Location())
-	sc := b.sctx.GetSessionVars().StmtCtx
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -3246,14 +3243,13 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
-		analyzePB: &tipb.AnalyzeReq{
-			Tp:             tipb.AnalyzeType_TypeIndex,
-			Flags:          sc.PushDownFlags(),
-			TimeZoneOffset: offset,
-		},
-		opts:     opts,
-		job:      job,
-		snapshot: startTS,
+		// ANALYZE deliberately carries no session state: TiKV builds an EvalConfig::default() for
+		// analyze and reads neither Flags nor TimeZoneOffset, and statistics must not depend on the
+		// session that happened to run ANALYZE. See issue #52429.
+		analyzePB: &tipb.AnalyzeReq{Tp: tipb.AnalyzeType_TypeIndex},
+		opts:      opts,
+		job:       job,
+		snapshot:  startTS,
 	}
 	e := &AnalyzeIndexExec{
 		baseAnalyzeExec: base,
@@ -3305,7 +3301,6 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		}
 	}
 
-	_, offset := timeutil.Zone(b.sctx.GetSessionVars().Location())
 	sc := b.sctx.GetSessionVars().StmtCtx
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -3365,14 +3360,13 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
-		analyzePB: &tipb.AnalyzeReq{
-			Tp:             tipb.AnalyzeType_TypeFullSampling,
-			Flags:          sc.PushDownFlags(),
-			TimeZoneOffset: offset,
-		},
-		opts:     opts,
-		job:      job,
-		snapshot: startTS,
+		// ANALYZE deliberately carries no session state: TiKV builds an EvalConfig::default() for
+		// analyze and reads neither Flags nor TimeZoneOffset, and statistics must not depend on the
+		// session that happened to run ANALYZE. See issue #52429.
+		analyzePB: &tipb.AnalyzeReq{Tp: tipb.AnalyzeType_TypeFullSampling},
+		opts:      opts,
+		job:       job,
+		snapshot:  startTS,
 	}
 	e := &AnalyzeColumnsExec{
 		baseAnalyzeExec:         base,

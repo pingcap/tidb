@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/domain",
         "//pkg/metrics",
@@ -19,6 +19,7 @@ go_test(
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
+        "//pkg/testkit/external",
         "//pkg/testkit/testsetup",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_model//go",
