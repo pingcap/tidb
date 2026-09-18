@@ -1822,8 +1822,7 @@ pub fn statement_storage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCap
 fn staged_mutations(
     buffer: &MutationBuffer,
 ) -> Result<(Vec<OptimisticMutation>, usize), OptimisticCoordinatorError> {
-    let staged = buffer.snapshot();
-    staged_mutations_from_entries(buffer, staged)
+    staged_mutations_from_entries(buffer.snapshot_staged())
 }
 
 /// Builds mutations from entries already detached from the session buffer.
@@ -1831,9 +1830,10 @@ fn staged_mutations(
 /// bytes are handed to TiKV without a second clone; explicit transactions keep
 /// [`staged_mutations`] because their buffer remains live after each statement.
 fn staged_mutations_from_entries(
-    buffer: &MutationBuffer,
-    staged: Vec<(Key, Option<Vec<u8>>)>,
+    staged: Vec<(Key, Option<Vec<u8>>, bool)>,
 ) -> Result<(Vec<OptimisticMutation>, usize), OptimisticCoordinatorError> {
+    let mut mutations = Vec::with_capacity(staged.len());
+    let mut planned_bytes = 0usize;
     // Keys an INSERT staged presumed absent (`kv.SetPresumeKeyNotExists`)
     // prewrite as Go's own lazy inserts do: `Op_Insert`, which TiKV rejects
     // when a committed version of the key turns out to exist. This is the
@@ -1841,15 +1841,10 @@ fn staged_mutations_from_entries(
     // pessimistic transaction reports 1062 from exactly this mechanism
     // (`twoPhaseCommitter.initKeysAndMutations` typing presume keys as
     // insert).
-    let presumed_absent = buffer.take_presume_not_exists();
-    let mut mutations = Vec::with_capacity(staged.len());
-    let mut planned_bytes = 0usize;
-    for (key, value) in staged {
+    for (key, value, presumed_absent) in staged {
         planned_bytes += key.as_bytes().len() + value.as_ref().map_or(0, Vec::len);
         let mutation = match value {
-            Some(value) if presumed_absent.contains(&key) => {
-                OptimisticMutation::insert(key.into_bytes(), value)
-            }
+            Some(value) if presumed_absent => OptimisticMutation::insert(key.into_bytes(), value),
             Some(value) => OptimisticMutation::index_put(key.into_bytes(), value),
             None => OptimisticMutation::index_delete(key.into_bytes()),
         }
@@ -1909,8 +1904,8 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     // An autocommit buffer is no longer needed by the session after this
     // boundary. Move its entries into the mutation set, matching Go's
     // MemBuffer hand-off and avoiding a second copy of every inserted row.
-    let (mutations, planned_bytes) = staged_mutations_from_entries(buffer, buffer.take_snapshot())
-        .map_err(coordinator_sql_error)?;
+    let (mutations, planned_bytes) =
+        staged_mutations_from_entries(buffer.take_staged()).map_err(coordinator_sql_error)?;
     if mutations.is_empty() {
         return Ok(None);
     }

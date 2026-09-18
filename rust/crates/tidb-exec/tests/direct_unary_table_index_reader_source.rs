@@ -190,12 +190,13 @@ fn request(cancel: std::sync::Arc<tidb_distsql::CancelHandle>) -> TransportReque
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(b"table-scan-dag".to_vec());
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![
-        RequestKeyRange {
+    metadata.key_ranges = Some(
+        RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
-        },
-    ]));
+        }])
+        .into(),
+    );
     metadata.keep_order = true;
     metadata.store_type = StoreType::TiKv;
     metadata.start_ts = 42;
