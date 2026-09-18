@@ -2448,6 +2448,18 @@ func testProtectUserAndRoleWithRestrictedPrivileges(t *testing.T, semVer string)
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
 	tk2 := testkit.NewTestKit(t, store)
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "restricted_user", Hostname: "%"}, nil, nil, nil))
+	for _, sql := range []string{
+		"RENAME USER restricted_user_1 TO renamed_restricted_user",
+		"RENAME USER normal_user_1 TO restricted_user_1",
+		"RENAME USER normal_user_1 TO renamed_normal_user, restricted_user_1 TO renamed_restricted_user",
+	} {
+		require.EqualError(t, tk1.ExecToErr(sql), "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+	// Rejected multi-account renames must not rename even an unprotected source.
+	tk1.MustExec("RENAME USER normal_user_1 TO renamed_normal_user")
+	tk1.MustExec("RENAME USER renamed_normal_user TO normal_user_1")
+	tk2.MustExec("RENAME USER restricted_user_1 TO renamed_restricted_user")
+	tk2.MustExec("RENAME USER renamed_restricted_user TO restricted_user_1")
 	err = tk2.ExecToErr("DROP USER restricted_user_1")
 	require.NoError(t, err)
 
