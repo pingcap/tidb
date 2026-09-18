@@ -431,3 +431,69 @@ reason. The matrix-goal4t/16t results, which refresh the tables every round
 through the Go node before each side's turn, remain the authoritative
 numbers in this document; a quick recheck script needs the same discipline
 before its numbers can be trusted.
+
+## 2026-09-19: task 26's three TPC-H milestones were already fixed
+
+Re-investigated the three items task 26 named against a fresh instrumented
+build of current head (c31929a8): all three were already resolved on this
+tree, and my first EXPLAIN comparison earlier in this conversation had used
+the stale pre-campaign baseline binary (8123bb1) left running from the
+previous session, not head -- that binary predates 182e2a7e (2026-09-13),
+the commit that actually fixed Q15's join choice.
+
+**Q15's join algorithm.** Fresh head picks Go's `IndexHashJoin` and its
+`Selection` under lineitem's `TableFullScan` estimates 225322.33 rows
+(3.75% of 6001215, matching Go and the true row count 225954) rather than
+1624669.40 (27%, the pre-182e2a7e bug: `l_shipdate >= a AND l_shipdate < b`
+estimated as two independent per-condition selectivities multiplied,
+instead of one histogram range). Traced the whole pipeline with temporary
+`eprintln!` instrumentation (`DBG-SEL`/`DBG-SELSTAT`/`DBG-EXPLAIN`, removed
+before commit) to confirm `analyzed_filter_selectivity` groups the two
+conditions correctly at every stage: DataSource derive_stats, the physical
+Selection's own stats, and the EXPLAIN-rendered row count. The only gap
+found: the existing regression test for this fix used an Int column with
+no TopN; commit c31929a8 adds the Date + v2-histogram + TopN case that
+actually matches `lineitem.l_shipdate`'s real ANALYZEd shape.
+
+**Q2/Q11 execution cost.** Q11's plan matches Go byte-for-byte. Q2's plan
+matches Go on every operator's estimated row count and the overall shape
+(same join order, same build/probe sides, same IndexHashJoin). Two purely
+cosmetic EXPLAIN-text mismatches remain, neither affecting cost or plan
+choice:
+  - the `partsupp` `TableReader(Build)` under Q2's `IndexHashJoin` labels
+    its child `data:TableFullScan` where Go says `data:TableRangeScan`
+    (the child operator itself correctly prints `TableRangeScan` with
+    `range: decided by [...]`; only the reader's own label is wrong). Root
+    cause: `find_best_task_4_logical_data_source_without_enforcer`'s
+    `scan_kind` decision (`rust/crates/tidb-planner/src/find_best_task/dispatch.rs`,
+    the `ResolvedTableScanKind::Full`-vs-`Range` branch around line 2497)
+    computes `ranges.iter().all(is_full_range)` over the STATIC ranges built
+    at plan time; `partsupp`'s primary key is a common (composite) handle,
+    and the placeholder range this index-join probe path builds for a
+    common handle appears to satisfy `is_full_range` where the equivalent
+    int-handle placeholder (exercised correctly by Q15's `supplier` probe
+    and Q11) does not. Not fixed here: no cost/answer impact, and isolating
+    the common-handle placeholder's exact shape needs more time than this
+    pass had.
+  - the same `IndexHashJoin`'s operator info says `inner:Join` where Go
+    says `inner:HashJoin` (a less specific type name in the "inner" plan
+    descriptor).
+
+**Parallel hash-join build.** Already implemented:
+`hash_join_v2/build_worker.rs::split_build_chunks` runs `concurrency` build
+workers on their own `LanePool` (`"hash-join-build"`), each pulling chunks
+from a shared bounded channel and building its own row-table partition --
+the same shape as Go's per-worker goroutines. This sits under a
+1-lane `"hash-join-build-coordinator"` that only exists so the calling
+thread can fetch the first probe chunk while the whole build (including its
+internal N-way fan-out) runs elsewhere, matching Go's
+`fetchAndBuildHashTable`/`wait4BuildSide` ordering.
+
+**Full-harness validation.** `tpch-run.sh final26`, Go vs head, SF1, 1 round,
+`--check` (query answers verified). One setup collision on both sides (the
+harness's own `CREATE VIEW revenue0` for Q15 failed with "already exists"
+because the view was left over from earlier interactive testing -- 21/22
+queries ran clean with no answer mismatch on either side). Warm sum over
+those 21 queries: go 22.43s, head 24.66s, ratio 1.099 -- in line with the
+2026-09-18 sync-tree measurement (warm ratio 1.084 over all 22), no
+regression.
