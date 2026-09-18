@@ -54,8 +54,8 @@ type ExecBeginInfo struct {
 // ExecFinishInfo carries optional execution-finish context for extensible stats collection.
 type ExecFinishInfo struct {
 	RUDetails       *util.RUDetails
-	TotalRUV2       float64 // Finalized statement RU v2, available only at execution finish.
 	User            string
+	TotalRUV2       float64 // Finalized statement RU v2, available only at execution finish.
 	OutNetworkBytes uint64
 	ExecDuration    time.Duration
 	TopRUEnabled    bool
