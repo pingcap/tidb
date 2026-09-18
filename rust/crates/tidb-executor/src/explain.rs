@@ -29,8 +29,8 @@ use tidb_planner::physical::{PhysicalPlan, RedactMode};
 use tidb_proto::tipb::{ExplainData, ExplainOperator as PbExplainOperator, OperatorLabel};
 
 use crate::driver::{
-    run_delete_stmt_with_physical_and_stats, run_insert_stmt_with_physical_and_stats,
-    run_update_stmt_with_physical_and_stats, Catalog, DriverError, SelectMeta,
+    Catalog, DriverError, SelectMeta, run_delete_stmt_with_physical_and_stats,
+    run_insert_stmt_with_physical_and_stats, run_update_stmt_with_physical_and_stats,
 };
 /// The `EXPLAIN FORMAT = '...'` this tier accepts. Go's `'row'` (the
 /// default, also the explicit spelling) and `'brief'` render the identical
@@ -1031,6 +1031,7 @@ fn physical_operator_info(
         PhysicalPlan::LocalIndexLookUp(lookup) => {
             format!("index handle offsets:{:?}", lookup.index_handle_offsets)
         }
+        PhysicalPlan::ExchangeSender(sender) => sender.explain_info(ignore_explain_id_suffix),
         PhysicalPlan::PointGet(point) => {
             let common_handle = catalog
                 .kv_table_by_id(point.table_id)
@@ -1146,13 +1147,38 @@ fn physical_explain_operator(
             .table_plan
             .as_deref()
             .map(|child| {
+                // Go `explainChildOperator` renders the pushed-down tier's
+                // task from the reader's request type and store: an MPP
+                // reader (TiFlash store over an ExchangeSender,
+                // `physical_table_reader.go:299` adjustReadReqType) labels
+                // the fragment `mpp[tiflash]`; everything else so far is a
+                // plain cop request.
+                let task = match reader.read_req_type {
+                    tidb_planner::physical_table_reader::ReadReqType::Mpp => ExplainTask::Cop {
+                        request: "mpp".to_owned(),
+                        store: "tiflash".to_owned(),
+                    },
+                    tidb_planner::physical_table_reader::ReadReqType::BatchCop
+                    | tidb_planner::physical_table_reader::ReadReqType::Cop
+                    | tidb_planner::physical_table_reader::ReadReqType::Unknown(_) => {
+                        ExplainTask::Cop {
+                            request: "cop".to_owned(),
+                            store: match reader.store_type {
+                                tidb_planner::physical_table_reader::StoreType::TiFlash => {
+                                    "tiflash".to_owned()
+                                }
+                                tidb_planner::physical_table_reader::StoreType::TiKv
+                                | tidb_planner::physical_table_reader::StoreType::Unknown(_) => {
+                                    "tikv".to_owned()
+                                }
+                            },
+                        }
+                    }
+                };
                 vec![physical_explain_operator(
                     child,
                     catalog,
-                    ExplainTask::Cop {
-                        request: "cop".to_owned(),
-                        store: "tikv".to_owned(),
-                    },
+                    task,
                     "",
                     runtime,
                     ignore_explain_id_suffix,

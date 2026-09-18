@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use tidb_expr::aggregation::{AggFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::expression::{Expression, ScalarFunction};
-use tidb_expr::schema::{merge_schema, Schema};
+use tidb_expr::schema::{Schema, merge_schema};
 use tidb_expr::simple_expr::resolve_indices_in_place;
 use tidb_util::disjointset::SimpleIntSet;
 
@@ -362,6 +362,17 @@ impl PhysicalPlan {
 
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
         match self {
+            Self::ExchangeSender(op) => {
+                // Go `PhysicalExchangeSender.ResolveIndices`
+                // (`physical_exchange_sender.go`): resolve each hash column
+                // against the child schema.
+                let input = child_schema(&op.base, 0)?;
+                for partition in &mut op.hash_cols {
+                    *partition = partition
+                        .resolve_indices(input)
+                        .map_err(PlanError::internal)?;
+                }
+            }
             Self::Expand(op) => {
                 let input = child_schema(&op.base, 0)?;
                 for level in &mut op.level_exprs {

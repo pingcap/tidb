@@ -57,7 +57,7 @@ use crate::logical::LogicalPlan;
 use crate::physical::{self, PhysicalPlan};
 use crate::physical_property::PhysicalProperty;
 use crate::plan_base::{PlanError, PlanIdAllocator};
-use crate::task::{attach2_task, Task};
+use crate::task::{Task, attach2_task};
 use crate::task_type::TaskType;
 
 /// Go `getTaskPlanCost`'s pricing half: what a built task costs.
@@ -4091,8 +4091,8 @@ mod tests {
     #[test]
     fn read_from_storage_tiflash_selects_the_tiflash_table_path() {
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::PREFER_TIFLASH;
         use crate::logical::DataSource;
+        use crate::logical::data_source::PREFER_TIFLASH;
 
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
@@ -4122,8 +4122,24 @@ mod tests {
             reader.store_type,
             crate::physical_table_reader::StoreType::TiFlash
         );
-        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
-            panic!("the TiFlash scan hangs off TablePlan");
+        // Go `adjustReadReqType` (`physical_table_reader.go:299`): a TiFlash
+        // reader whose table plan is an ExchangeSender reads through MPP, and
+        // the single-fragment root shape is
+        // TableReader -> ExchangeSender(PassThrough) -> TableScan
+        // (`GenerateRootMPPTasks`, `fragment.go:167`).
+        assert_eq!(
+            reader.read_req_type,
+            crate::physical_table_reader::ReadReqType::Mpp
+        );
+        let Some(PhysicalPlan::ExchangeSender(sender)) = reader.table_plan.as_deref() else {
+            panic!("the TiFlash fragment hangs off TablePlan");
+        };
+        assert_eq!(
+            sender.exchange_type,
+            crate::physical::ExchangeType::PassThrough
+        );
+        let Some(PhysicalPlan::TableScan(scan)) = sender.base.children().first() else {
+            panic!("the TiFlash scan hangs off the exchange sender");
         };
         assert_eq!(
             scan.store_type,
@@ -4137,8 +4153,8 @@ mod tests {
         // table scan's ranges with `(5, +inf]`; an indexed `b = 7` fills
         // the index scan's ranges with the point.
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -4341,8 +4357,8 @@ mod tests {
         // becomes one lexicographic range per deciding handle column rather
         // than stopping after the declared `a` key part.
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
         use tidb_expr::constant::Constant;
@@ -4451,8 +4467,8 @@ mod tests {
         // `BuildIndexLookUpTask` — while a covering index still plans the
         // plain IndexReader.
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -4584,8 +4600,8 @@ mod tests {
 
     #[test]
     fn a_constant_index_prefix_is_skipped_when_matching_order() {
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -4693,8 +4709,8 @@ mod tests {
     #[test]
     fn index_join_keeps_a_usable_prefix_when_trailing_columns_are_pruned() {
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::physical_property::IndexJoinRuntimeProp;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{FieldType, FieldTypeCode};

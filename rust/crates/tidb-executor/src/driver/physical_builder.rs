@@ -39,7 +39,7 @@ use crate::index_merge_reader::{
     PushedDownLimit as ExecutorPushedDownLimit,
 };
 use crate::join::{IndexLookupPlan, IndexLookupSource, IndexProbeKeyDomain, JoinExec, JoinKind};
-use crate::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
+use crate::joiner::{JoinType as JoinerType, JoinerChunkSizes, new_joiner};
 use crate::kv_table::{IndexRange, RowDecodeContext, TableHandle, TableScanExec};
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
@@ -268,11 +268,7 @@ fn sort_handles_for_keep_order(
         } else {
             left.cmp(right)
         };
-        if desc {
-            ordering.reverse()
-        } else {
-            ordering
-        }
+        if desc { ordering.reverse() } else { ordering }
     });
 }
 
@@ -1969,13 +1965,15 @@ fn index_join_probe_key_domains(
             })
             .collect::<Result<Vec<_>, _>>()?
     } else {
-        vec![table
-            .pk_handle_offset()
-            .and_then(|offset| table.logical_columns().get(offset))
-            .map_or_else(
-                || FieldType::new(FieldTypeCode::LongLong),
-                |column| column.field_type.clone(),
-            )]
+        vec![
+            table
+                .pk_handle_offset()
+                .and_then(|offset| table.logical_columns().get(offset))
+                .map_or_else(
+                    || FieldType::new(FieldTypeCode::LongLong),
+                    |column| column.field_type.clone(),
+                ),
+        ]
     };
 
     let dynamic_count = probe_parts
@@ -3145,11 +3143,7 @@ fn unique_index_point_values(
     if keep_order {
         encoded_values.sort_by(|left, right| {
             let order = left.0.cmp(&right.0);
-            if desc {
-                order.reverse()
-            } else {
-                order
-            }
+            if desc { order.reverse() } else { order }
         });
     }
     Ok(encoded_values
@@ -3699,7 +3693,7 @@ fn index_merge_partition_indexes(
                 .children()
                 .first()
                 .ok_or_else(|| DriverError::unsupported("index-merge partial has no scan"))
-                .and_then(|child| index_merge_partition_indexes(child, table))
+                .and_then(|child| index_merge_partition_indexes(child, table));
         }
     };
     Ok(table
@@ -4097,7 +4091,7 @@ fn build_with_state(
                                 _ => {
                                     return Err(crate::ExecError::internal(
                                         "invalid integer lock handle",
-                                    ))
+                                    ));
                                 }
                             }
                         } else {
@@ -4464,6 +4458,10 @@ fn build_with_state(
             Ok(Box::new(MaxOneRowExec::new(executor_meta, child)) as Box<dyn Executor>)
         }
         PhysicalPlan::NominalSort(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
+        // Interim M1 seam: a PassThrough sender adds no local semantics, so
+        // the fragment still executes in place. M2 replaces this with real
+        // DispatchMPPTask routing to the TiFlash store.
+        PhysicalPlan::ExchangeSender(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
         PhysicalPlan::CTE(cte) => build_cte(plan, cte, catalog, ctx, state),
         PhysicalPlan::CTETable(table) => build_cte_table(plan, table, state, ctx),
         _ => Err(DriverError::unsupported(format!(
@@ -5542,7 +5540,10 @@ mod tests {
                             if order == Some(true) {
                                 expected.reverse();
                             }
-                            assert_eq!(rows, expected, "{handle_kind}, partitioned={partitioned}, global={global}, selection={selection:?}");
+                            assert_eq!(
+                                rows, expected,
+                                "{handle_kind}, partitioned={partitioned}, global={global}, selection={selection:?}"
+                            );
                             executor.close().unwrap();
                             if let PhysicalPlan::IndexMergeReader(reader) = &plan {
                                 for partial in &reader.partial_plans_raw {

@@ -1699,6 +1699,63 @@ pub fn build_physical_join_schema(
     }
 }
 
+/// Go `tipb.ExchangeType`: the data exchange shape an MPP fragment's
+/// sender uses to hand rows to the next tier.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ExchangeType {
+    /// Go `ExchangeType_PassThrough`: every row goes to one target task.
+    #[default]
+    PassThrough,
+    /// Go `ExchangeType_Broadcast`: every row goes to every target task.
+    Broadcast,
+    /// Go `ExchangeType_Hash`: rows are partitioned by [`Self::hash_cols`].
+    Hash,
+}
+
+/// Go `physicalop.PhysicalExchangeSender`
+/// (`pkg/planner/core/operator/physicalop/physical_exchange_sender.go`):
+/// the last operator of an MPP fragment, shipping its child's rows to the
+/// consumer tier. Go's `TargetTasks`/`Tasks` and `CompressionMode` are
+/// dispatch-time state and stay unset in the planned tree, so this slice
+/// carries only what EXPLAIN and the DAG encoder read.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalExchangeSender {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `ExchangeType`.
+    pub exchange_type: ExchangeType,
+    /// Go `HashCols`: the hash-exchange keys; empty unless
+    /// [`Self::exchange_type`] is [`ExchangeType::Hash`].
+    pub hash_cols: Vec<crate::physical_property::MppPartitionColumn>,
+}
+
+impl PhysicalExchangeSender {
+    /// Go `PhysicalExchangeSender.ExplainInfo` (`physical_exchange_sender.go:107`):
+    /// `ExchangeType: PassThrough|Broadcast|HashPartition`, the hash columns
+    /// when the type is hash. Go's compression suffix only renders for a
+    /// non-NONE mode, which the planned tree never carries, and Go's `tasks:`
+    /// suffix only renders once dispatch has populated the target list.
+    #[must_use]
+    pub fn explain_info(&self, ignore_suffix: bool) -> String {
+        let mut info = String::from("ExchangeType: ");
+        match self.exchange_type {
+            ExchangeType::PassThrough => info.push_str("PassThrough"),
+            ExchangeType::Broadcast => info.push_str("Broadcast"),
+            ExchangeType::Hash => {
+                info.push_str("HashPartition");
+                if !self.hash_cols.is_empty() {
+                    info.push_str(", Hash Cols: ");
+                    info.push_str(&String::from_utf8_lossy(
+                        &crate::physical_property::explain_column_list(&self.hash_cols),
+                    ));
+                }
+            }
+        }
+        let _ = ignore_suffix;
+        info
+    }
+}
+
 /// Go `physicalop.PhysicalTableReader` (the reader half of
 /// `convertToRootTaskImpl`'s table branch, `task_base.go:571`): the
 /// TiDB-side operator that reads a pushed-down table plan's results. The
@@ -1816,13 +1873,24 @@ impl PhysicalTableReader {
         }
     }
 
-    /// Go `ExplainInfo` for an ordinary cop reader.
+    /// Go `ExplainInfo` (`physical_table_reader.go:258`): an MPP reader
+    /// prefixes the pushed-down explain id with the chosen mpp version;
+    /// Go reads it through `SessionVars.ChooseMppVersion`, whose default
+    /// answers the newest version (`kv.GetNewestMppVersion`, `mpp.go:47`,
+    /// `MppVersionV3`).
     #[must_use]
     pub fn explain_info(&self, ignore_suffix: bool) -> String {
-        format!(
+        let data = format!(
             "data:{}",
             self.table_plan_explain(ignore_suffix).unwrap_or_default()
-        )
+        );
+        if self.read_req_type == ReadReqType::Mpp {
+            return format!(
+                "MppVersion: {}, {data}",
+                tidb_txnkv::MppVersion::NEWEST.as_i64()
+            );
+        }
+        data
     }
 
     /// Go `ExplainNormalizedInfo`.
@@ -2756,6 +2824,8 @@ pub enum PhysicalPlan {
     Apply(PhysicalApply),
     /// Go `physicalop.PhysicalTableReader`.
     TableReader(PhysicalTableReader),
+    /// Go `physicalop.PhysicalExchangeSender`.
+    ExchangeSender(PhysicalExchangeSender),
     /// Go `physicalop.PhysicalIndexScan` (planning slice).
     IndexScan(PhysicalIndexScan),
     /// Go `physicalop.PhysicalIndexReader`.
@@ -2810,6 +2880,7 @@ impl PhysicalPlan {
             Self::Sequence(op) => &op.base,
             Self::Apply(op) => &op.hash_join.base,
             Self::TableReader(op) => &op.base,
+            Self::ExchangeSender(op) => &op.base,
             Self::IndexScan(op) => &op.base,
             Self::IndexReader(op) => &op.base,
             Self::IndexLookUpReader(op) => &op.base,
@@ -2851,6 +2922,7 @@ impl PhysicalPlan {
             Self::Sequence(op) => &mut op.base,
             Self::Apply(op) => &mut op.hash_join.base,
             Self::TableReader(op) => &mut op.base,
+            Self::ExchangeSender(op) => &mut op.base,
             Self::IndexScan(op) => &mut op.base,
             Self::IndexReader(op) => &mut op.base,
             Self::IndexLookUpReader(op) => &mut op.base,
@@ -3469,6 +3541,11 @@ impl PhysicalPlan {
                 store_type: op.store_type,
                 is_common_handle: op.is_common_handle,
                 read_req_type: op.read_req_type,
+            }),
+            Self::ExchangeSender(op) => Self::ExchangeSender(PhysicalExchangeSender {
+                base: base_of(&op.base),
+                exchange_type: op.exchange_type,
+                hash_cols: op.hash_cols.clone(),
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
                 data_source_schema: op.data_source_schema.clone(),

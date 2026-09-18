@@ -814,6 +814,36 @@ impl CopTask {
         let is_common_handle = scan
             .resolved_is_common_handle()
             .unwrap_or(!self.common_handle_cols.is_empty());
+        // Go `adjustReadReqType` (`physical_table_reader.go:299`): a TiFlash
+        // store whose table plan is an `PhysicalExchangeSender` is an MPP
+        // reader; Go's root conversion for a TiFlash mpp task wraps the
+        // fragment in the PassThrough sender
+        // (`GenerateRootMPPTasks`, `fragment.go:167`). This port keeps that
+        // shape for the single-fragment table scan; multi-fragment MPP
+        // planning stays a documented gap.
+        let (table_plan, read_req_type) =
+            if store_type == crate::physical_table_reader::StoreType::TiFlash {
+                let mut sender_base = crate::physical::BasePhysicalPlan::new(
+                    allocator,
+                    "ExchangeSender",
+                    table_plan.query_block_offset(),
+                );
+                sender_base.base.set_stats(table_plan.stats_info().cloned());
+                sender_base.base.set_schema(table_plan.schema().cloned());
+                sender_base.set_children(vec![*table_plan]);
+                (
+                    Box::new(PhysicalPlan::ExchangeSender(
+                        crate::physical::PhysicalExchangeSender {
+                            base: sender_base,
+                            exchange_type: crate::physical::ExchangeType::PassThrough,
+                            hash_cols: Vec::new(),
+                        },
+                    )),
+                    crate::physical_table_reader::ReadReqType::Mpp,
+                )
+            } else {
+                (table_plan, crate::physical_table_reader::ReadReqType::Cop)
+            };
         let mut base = crate::physical::BasePhysicalPlan::new(
             allocator,
             "TableReader",
@@ -823,10 +853,10 @@ impl CopTask {
         base.base.set_schema(table_plan.schema().cloned());
         let reader = PhysicalPlan::TableReader(crate::physical::PhysicalTableReader {
             base,
-            table_plan: Some(Box::new(*table_plan)),
+            table_plan: Some(table_plan),
             store_type,
             is_common_handle,
-            read_req_type: crate::physical_table_reader::ReadReqType::Cop,
+            read_req_type,
         });
         let mut root = RootTask::default();
         root.set_plan(reader);
@@ -2139,7 +2169,7 @@ pub fn attach2_task(
                     return Err(PlanError::internal(
                         "attach2Task4PhysicalLimit's MPP arm (task.go:713) is \
                          not ported",
-                    ))
+                    ));
                 }
             };
             // "Skip limit with partition on the root."
@@ -2156,6 +2186,11 @@ pub fn attach2_task(
             let converted = first.into_root_task(allocator)?;
             Ok(attach_plan_to_task(plan, converted))
         }
+        // An ExchangeSender is born at root conversion (and at MPP fragment
+        // generation), never as an attach parent.
+        PhysicalPlan::ExchangeSender(_) => Err(PlanError::internal(
+            "attach2_task: an ExchangeSender is never an attach parent",
+        )),
         // `PhysicalLock` has no override: the default convert-then-attach
         // body, exactly as `PhysicalMaxOneRow`'s arm above.
         PhysicalPlan::Lock(_) => {
@@ -2339,7 +2374,7 @@ pub fn attach2_task(
                 Task::Mpp(_) => {
                     return Err(PlanError::internal(
                         "attach2Task4PhysicalTopN's MPP arm is not ported",
-                    ))
+                    ));
                 }
             };
             if !topn.partition_by.is_empty() {
@@ -2685,8 +2720,10 @@ mod attach_tests {
         let Expression::ScalarFunction(restored) = &join.other_conditions[0] else {
             panic!("the unused equality is residual")
         };
-        let [Expression::Column(restored_outer), Expression::Column(restored_inner)] =
-            restored.args.as_slice()
+        let [
+            Expression::Column(restored_outer),
+            Expression::Column(restored_inner),
+        ] = restored.args.as_slice()
         else {
             panic!("the restored equality keeps both columns")
         };

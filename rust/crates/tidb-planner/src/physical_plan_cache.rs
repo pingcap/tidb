@@ -35,7 +35,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
 use crate::physical::{PhysicalPlan, PhysicalTableScan};
-use crate::ranger::types::{has_full_range, Ranges};
+use crate::ranger::types::{Ranges, has_full_range};
 
 /// Session inputs read by Go's `isPlanCacheable` /
 /// `isPhysicalPlanCacheable` after physical optimization.
@@ -537,6 +537,7 @@ fn bind_plan_expressions(
         | PhysicalPlan::UnionAll(_)
         | PhysicalPlan::Sequence(_)
         | PhysicalPlan::TableReader(_)
+        | PhysicalPlan::ExchangeSender(_)
         | PhysicalPlan::IndexScan(_)
         | PhysicalPlan::IndexReader(_)
         | PhysicalPlan::IndexLookUpReader(_)

@@ -3926,6 +3926,7 @@ dependencies = [
  "tidb-proto",
  "tidb-resolve",
  "tidb-stats",
+ "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
 ]
