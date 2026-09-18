@@ -806,12 +806,24 @@ invariant there forbids.
   far cheaper than a geodesic relate and it is consistent, at the cost of the divergence in
   the table above.
 
-**How much of DE-9IM a sphere can answer.** Reaching the great-circle rung uniformly
-assumes S2 can decide all eight predicates, and that is not established. Containment and
-intersection are well covered, but `Touches`, `Crosses` and `Overlaps` are distinctions
-between interior, boundary and exterior that a containment test does not make on its own.
-If they cannot be answered there, the rung is not uniform and the ladder has a hole in the
-middle, which would leave Andoyer edges as the only consistent option above the plane.
+**How much of DE-9IM a sphere can answer.** Checked against the Go S2 port. Four of the
+eight come straight out of it: `ST_Contains` and `ST_Within` from `Polygon.Contains`,
+`ST_Intersects` from `Polygon.Intersects`, and `ST_Disjoint` as its negation. The other
+four do not. `Polygon` has no equality method, and nothing answers `Touches`, `Crosses` or
+`Overlaps`, because those turn on whether a meeting is interior or boundary and a
+containment test does not draw that line. The Go port also has no equivalent of C++'s
+`S2BooleanOperation`, which is what would have supplied a relate outright.
+
+What it does supply is the layer below. `CrossingSign` separates a proper crossing from a
+vertex touch, `EdgeOrVertexCrossing` and `CrossingEdgeQuery` find crossings against an
+index, and `WedgeRelation` classifies how two boundaries meet at a shared vertex as equal,
+containing, contained, overlapping or disjoint. That is what a 9-intersection matrix is
+assembled from.
+
+So the rung is reachable and the gap is in the assembly, not the primitives. It is also the
+same assembly the Andoyer rung needs, since building DE-9IM out of crossing tests is the
+formula-independent work named above. The two rungs are therefore closer than "S2 gives it
+to us" suggests: S2 gives the crossing primitives for great-circle edges, not the relate.
 
 Erroring instead of answering was considered and rejected: it needs an arbitrary size
 limit, and the error is itself a difference from MySQL, which answers.
