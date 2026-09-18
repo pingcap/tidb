@@ -282,9 +282,9 @@ calls.
 1. **Andoyer edges**, matching MySQL exactly. Boost decides which side of a segment a point
    falls on by comparing azimuths taken from the inverse solution, so a point-in-polygon
    crossing test needs only the inverse problem with azimuths. That is closed form, and an
-   extension of the twenty lines already written rather than new machinery. `ST_Distance`
-   with edge operands additionally needs the direct problem, which Boost publishes and which
-   is iterative.
+   extension of the Andoyer inverse the proof of concept already carries rather than new
+   machinery. `ST_Distance` with edge operands additionally needs the direct problem, which
+   Boost publishes and which is iterative.
 2. **Exact geodesic edges**, where a library is already at hand. Being more exact than MySQL
    is not a goal, but it is the closest reachable approximation to it, 8.9 m against 7,796 m
    for a sphere on a continental polygon, the exception being near antipodes where Andoyer
@@ -425,7 +425,7 @@ the exact geodesic:
 
 v1 uses Andoyer as its metric and inherits those errors on purpose. A more accurate library
 would be off from MySQL by exactly those amounts, so for the metric, being more accurate
-makes us less compatible and costs more than the twenty lines Andoyer takes.
+makes us less compatible and costs more than Andoyer's closed form does.
 
 The edge model is the choice this does not settle, because matching MySQL there is a
 question of algorithms rather than of formulas. It has its own ladder in
@@ -804,8 +804,14 @@ invariant there forbids.
 - Falling back to **great-circle edges** is a single decision applied everywhere, which
   means polygon/polygon moves to S2 rather than staying on the planar evaluator. That is
   far cheaper than a geodesic relate and it is consistent, at the cost of the divergence in
-  the table above. Open: how much of DE-9IM S2 covers, since containment and intersection
-  are not the whole of `Touches`, `Crosses` and `Overlaps`.
+  the table above.
+
+**How much of DE-9IM a sphere can answer.** Reaching the great-circle rung uniformly
+assumes S2 can decide all eight predicates, and that is not established. Containment and
+intersection are well covered, but `Touches`, `Crosses` and `Overlaps` are distinctions
+between interior, boundary and exterior that a containment test does not make on its own.
+If they cannot be answered there, the rung is not uniform and the ladder has a hole in the
+middle, which would leave Andoyer edges as the only consistent option above the plane.
 
 Erroring instead of answering was considered and rejected: it needs an arbitrary size
 limit, and the error is itself a difference from MySQL, which answers.
@@ -1007,8 +1013,9 @@ Nothing in this design forecloses it, and little of it would be new work:
   means reproducing that split, not being as exact as possible, and a `GEOGRAPHY` built on
   Karney edges throughout would be more exact than PostGIS and disagree with its predicates
   by the same margin a sphere disagrees with MySQL. The split is legitimate under
-  [the consistency invariant](#srid-model), since one edge model still decides all topology.
-  It is also the cheaper reading, because great-circle edges are a rung already reachable.
+  the consistency invariant in [Reference surface](#srid-model), since one edge model still
+  decides all topology. It is also the cheaper reading, because great-circle edges are a
+  rung already reachable.
   With that, one engine covers all three audiences:
 
   | Spelling | Edge model | Metric | Matches |
@@ -1038,7 +1045,8 @@ Nothing in this design forecloses it, and little of it would be new work:
 
 | Area | PostGIS | This design |
 | --- | --- | --- |
-| Ellipsoidal accuracy | Karney via PROJ's `geodesic.c`, exact to round-off and convergent near antipodes | Andoyer, because MySQL is Andoyer (see [Function set](#function-set)). Both are "ellipsoidal", so a PostGIS user should still expect differences: centimetres at 10 km, kilometres near antipodes |
+| Metric accuracy | Karney via PROJ's `geodesic.c`, exact to round-off and convergent near antipodes | Andoyer, because MySQL is Andoyer (see [Function set](#function-set)). Both are "ellipsoidal", so a PostGIS user should still expect differences: centimetres at 10 km, kilometres near antipodes |
+| Edge model | Great circle on a sphere for all `geography` topology, so both the predicates and the edges `ST_Distance` measures to are spherical | Whichever rung [Reference surface](#srid-model) reaches. At Andoyer, TiDB is closer to MySQL and further from PostGIS; at great circle the two agree. This is the larger of the two deltas: kilometres on a continental polygon against centimetres for the metric |
 | Axis order | One fixed longitude-first order for every SRS, so `ST_X` on 4326 is the longitude where TiDB and MySQL give the latitude. Roughly a third of the SRIDs in MySQL's catalog disagree with that fixed order, across both geographic and projected systems | The SRS's own order, as MySQL, so latitude-first on 4326, with the `axis-order` option and `ST_Latitude`/`ST_Longitude` as the unambiguous paths |
 | SRID / CRS | Full EPSG catalog in `spatial_ref_sys`, on-the-fly `ST_Transform` | SRID 0 and 4326 only; other codes rejected by DDL but storable in an unrestricted column; no `ST_Transform`. Both are in [Future extensions](#future-extensions) |
 | Function breadth | 300+ `ST_*` | The v1 allowlist, then MySQL's ~70. Absent families include buffer/convex-hull/simplify, overlay set operations, spatial clustering and aggregates, linear referencing, `ST_MakeValid`, and the `ST_AsMVT`/KML/GML/SVG output formats |
