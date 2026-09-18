@@ -21,6 +21,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -45,8 +47,20 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	ast.GetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.In:       {},
-	ast.BitCount: {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}}},
+	ast.In: {},
+	ast.BitCount: {
+		{retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{types.ETInt}},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder().
+				SetType(mysql.TypeBlob).SetFlag(mysql.BinaryFlag).
+				SetCharset(charset.CharsetBin).
+				SetCollate(charset.CollationBin).BuildP()},
+			geners: []dataGenerator{newRandLenStrGener(0, 32)},
+		},
+	},
 	ast.GetParam: {
 		{
 			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt},
