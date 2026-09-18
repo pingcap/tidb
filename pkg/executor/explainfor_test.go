@@ -296,11 +296,12 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_10 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─HashJoin_12 10.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_13(Build) 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader_15(Probe) 10.00 root  data:TableRangeScan_14`,
-		`    └─TableRangeScan_14 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
+		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─MergeJoin_12 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
+		`  ├─TableReader_41(Build) 10.00 root  data:TableRangeScan_40`,
+		`  │ └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo`,
+		`  └─Selection_39(Probe) 0.80 root  1`,
+		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -310,11 +311,12 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_10 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─HashJoin_12 10.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_13(Build) 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader_15(Probe) 10.00 root  data:TableRangeScan_14`,
-		`    └─TableRangeScan_14 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
+		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─MergeJoin_12 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
+		`  ├─TableReader_41(Build) 10.00 root  data:TableRangeScan_40`,
+		`  │ └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[2,2], keep order:true, stats:pseudo`,
+		`  └─Selection_39(Probe) 0.80 root  1`,
+		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))

@@ -327,6 +327,11 @@ const (
 	// TiDBOptPreferRangeScan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
 	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
 
+	// TiDBOptAlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	TiDBOptAlwaysKeepJoinKey = "tidb_opt_always_keep_join_key"
+
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
@@ -1385,6 +1390,7 @@ const (
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
+	DefOptAlwaysKeepJoinKey                 = true
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false
