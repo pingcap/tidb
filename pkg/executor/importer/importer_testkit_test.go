@@ -16,6 +16,7 @@ package importer_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -323,6 +325,60 @@ func TestProcessChunkWith(t *testing.T) {
 
 	keyspace := store.GetCodec().GetKeyspace()
 	prefixLenForOneRow := uint64(len(keyspace))
+	tk.MustExec("create table t_close(a int, b int, c int, key(b))")
+	for _, tc := range []struct {
+		name                  string
+		dataClose, indexClose bool
+		writeFailure          bool
+	}{
+		{"data close", true, false, false},
+		{"index close", false, true, false},
+		{"both close", true, true, false},
+		{"write and close", true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ti := getTableImporter(ctx, t, store, "t_close", fileName, importer.DataFormatCSV, nil)
+			defer ti.LoadDataController.Close()
+			defer ti.Backend().CloseEngineMgr()
+			ctrl := gomock.NewController(t)
+			be := mock.NewMockBackend(ctrl)
+			be.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(2)
+			mgr := backend.MakeEngineManager(be)
+			dataEngine, err := mgr.OpenEngine(ctx, &backend.EngineConfig{}, "test.t", 1)
+			require.NoError(t, err)
+			indexEngine, err := mgr.OpenEngine(ctx, &backend.EngineConfig{}, "test.t", 2)
+			require.NoError(t, err)
+			dataWriter, indexWriter := mock.NewMockEngineWriter(ctrl), mock.NewMockEngineWriter(ctrl)
+			gomock.InOrder(
+				be.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), gomock.Any()).Return(dataWriter, nil),
+				be.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), gomock.Any()).Return(indexWriter, nil),
+			)
+			var dataErr, indexErr, writeErr error
+			if tc.dataClose {
+				dataErr = errors.New("injected data close error")
+			}
+			if tc.indexClose {
+				indexErr = errors.New("injected index close error")
+			}
+			if tc.writeFailure {
+				writeErr = errors.New("injected append error")
+			}
+			dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(writeErr).AnyTimes()
+			indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			dataWriter.EXPECT().Close(gomock.Any()).Return(nil, dataErr)
+			indexWriter.EXPECT().Close(gomock.Any()).Return(nil, indexErr)
+			chunkInfo := &importer.Chunk{Path: "test.csv", Type: mydump.SourceTypeCSV, EndOffset: int64(len(sourceData)), RowIDMax: 10000}
+			err = importer.ProcessChunk(ctx, chunkInfo, ti, dataEngine, indexEngine, zap.NewNop(), verify.NewKVGroupChecksumWithKeyspace(keyspace), nil)
+			want := dataErr
+			if indexErr != nil {
+				want = indexErr
+			}
+			if writeErr != nil {
+				want = writeErr
+			}
+			require.ErrorIs(t, err, want)
+		})
+	}
 	t.Run("file chunk", func(t *testing.T) {
 		chunkInfo := &importer.Chunk{
 			Path:      "test.csv",
