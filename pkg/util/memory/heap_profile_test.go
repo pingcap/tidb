@@ -245,7 +245,8 @@ func TestHeapProfileTriggerState(t *testing.T) {
 		e.now = start.Add(heapProfileEmergencyInterval)
 		e.p.tryCapture(e.m)
 		require.Equal(t, 2, e.writes)
-		require.Contains(t, heapProfileNames(t, e.p.dir), "2026-08-14T10-00-10+0800.95pct.pprof")
+		expected := start.Add(heapProfileEmergencyInterval).Format(heapProfileTimestampLayout) + ".95pct.pprof"
+		require.Contains(t, heapProfileNames(t, e.p.dir), expected)
 	})
 }
 
