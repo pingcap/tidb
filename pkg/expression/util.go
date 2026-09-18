@@ -578,6 +578,20 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 	case *ScalarFunction:
 		substituted := false
 		hasFail := false
+		// A collation equality on a non-binary string does not establish byte identity.
+		// Keep a byte-sensitive cast on the original column instead of folding it after
+		// constant propagation substitutes a collation-equal value.
+		if ctx.IsConstantPropagateCheck() && v.FuncName.L == ast.Cast && types.IsBinaryStr(v.RetType) {
+			arg0, isColumn := v.GetArgs()[0].(*Column)
+			if isColumn {
+				id := schema.ColumnIndex(arg0)
+				if id != -1 && types.IsNonBinaryStr(schema.Columns[id].GetStaticType()) {
+					if _, isConstant := newExprs[id].(*Constant); isConstant {
+						return false, false, v
+					}
+				}
+			}
+		}
 		if v.FuncName.L == ast.Cast || v.FuncName.L == ast.Grouping {
 			var newArg Expression
 			substituted, hasFail, newArg = ColumnSubstituteImpl(ctx, v.GetArgs()[0], schema, newExprs, fail1Return)
