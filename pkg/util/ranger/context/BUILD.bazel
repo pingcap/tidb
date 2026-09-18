@@ -10,6 +10,7 @@ go_library(
         "//pkg/expression/exprctx",
         "//pkg/types",
         "//pkg/util/context",
+        "//pkg/util/memory",
     ],
 )
 
