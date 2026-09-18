@@ -22,8 +22,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -41,6 +49,88 @@ const (
 )
 
 var errMVTaskCanceledManually = errors.NewNoStackError("materialized view task canceled manually")
+
+// CancelMaterializedViewJobExec executes a materialized view task cancellation request.
+type CancelMaterializedViewJobExec struct {
+	exec.BaseExecutor
+	stmt *ast.CancelMaterializedViewJobStmt
+	done bool
+}
+
+func checkCancelMaterializedViewJobPrivilege(
+	kctx context.Context,
+	ctx sessionctx.Context,
+	sqlExec sqlexec.SQLExecutor,
+	stmt *ast.CancelMaterializedViewJobStmt,
+) error {
+	pm := privilege.GetPrivilegeManager(ctx)
+	user := ctx.GetSessionVars().User
+	if pm == nil || user == nil {
+		return nil
+	}
+	is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		return errors.New("cannot resolve current infoschema for materialized view log purge cancellation")
+	}
+	dbName, tableName, found, err := resolveCancelPurgeJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+	if err != nil {
+		return err
+	}
+	if !found {
+		return cancelMaterializedViewJobUserError(stmt)
+	}
+	if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.OperateViewPriv) {
+		return nil
+	}
+	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, tableName)
+}
+
+func validateCancelMaterializedViewJobStmt(stmt *ast.CancelMaterializedViewJobStmt) error {
+	if stmt == nil {
+		return errors.New("cancel materialized view job: missing statement")
+	}
+	if stmt.Tp != ast.CancelMaterializedViewJobTypeLogPurge {
+		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
+	}
+	return nil
+}
+
+func cancelMaterializedViewJobUserError(stmt *ast.CancelMaterializedViewJobStmt) error {
+	return errors.NewNoStackErrorf("cannot cancel materialized view log purge job %d", stmt.JobID)
+}
+
+// Next implements the Executor Next interface.
+func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+	if err := validateCancelMaterializedViewJobStmt(e.stmt); err != nil {
+		return err
+	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
+	requester := formatMVManualCancelRequester(e.Ctx().GetSessionVars().User)
+	var requesterArg any
+	if requester != "" {
+		requesterArg = requester
+	}
+	sctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(ctx, sctx)
+	if err := checkCancelMaterializedViewJobPrivilege(ctx, e.Ctx(), sctx.GetSQLExecutor(), e.stmt); err != nil {
+		return err
+	}
+	applied, err := requestPurgeHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return cancelMaterializedViewJobUserError(e.stmt)
+	}
+	return nil
+}
 
 type mvTaskCancelReason uint8
 

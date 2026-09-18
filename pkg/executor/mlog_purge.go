@@ -151,84 +151,6 @@ WHERE PURGE_JOB_ID = %? AND PURGE_STATUS = 'running'`, purgeJobID)
 	return dbInfo.Name.L, mlogMeta.Name.L, true, nil
 }
 
-func checkCancelMaterializedViewJobPrivilege(
-	kctx context.Context,
-	ctx sessionctx.Context,
-	sqlExec sqlexec.SQLExecutor,
-	stmt *ast.CancelMaterializedViewJobStmt,
-) error {
-	if err := validateCancelMaterializedViewJobStmt(stmt); err != nil {
-		return err
-	}
-	pm := privilege.GetPrivilegeManager(ctx)
-	user := ctx.GetSessionVars().User
-	if pm == nil || user == nil {
-		return nil
-	}
-	is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	if !ok {
-		return errors.New("cannot resolve current infoschema for materialized view log purge cancellation")
-	}
-	dbName, tableName, found, err := resolveCancelPurgeJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
-	if err != nil {
-		return err
-	}
-	if !found {
-		return cancelMaterializedViewJobUserError(stmt)
-	}
-	if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.OperateViewPriv) {
-		return nil
-	}
-	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, tableName)
-}
-
-func validateCancelMaterializedViewJobStmt(stmt *ast.CancelMaterializedViewJobStmt) error {
-	if stmt == nil {
-		return errors.New("cancel materialized view job: missing statement")
-	}
-	if stmt.Tp != ast.CancelMaterializedViewJobTypeLogPurge {
-		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
-	}
-	return nil
-}
-
-func cancelMaterializedViewJobUserError(stmt *ast.CancelMaterializedViewJobStmt) error {
-	return errors.NewNoStackErrorf("cannot cancel materialized view log purge job %d", stmt.JobID)
-}
-
-// Next implements the Executor Next interface.
-func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	if e.done {
-		return nil
-	}
-	e.done = true
-	if err := validateCancelMaterializedViewJobStmt(e.stmt); err != nil {
-		return err
-	}
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
-	requester := formatMVManualCancelRequester(e.Ctx().GetSessionVars().User)
-	var requesterArg any
-	if requester != "" {
-		requesterArg = requester
-	}
-	sctx, err := e.GetSysSession()
-	if err != nil {
-		return err
-	}
-	defer e.ReleaseSysSession(ctx, sctx)
-	if err := checkCancelMaterializedViewJobPrivilege(ctx, e.Ctx(), sctx.GetSQLExecutor(), e.stmt); err != nil {
-		return err
-	}
-	applied, err := requestPurgeHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
-	if err != nil {
-		return err
-	}
-	if !applied {
-		return cancelMaterializedViewJobUserError(e.stmt)
-	}
-	return nil
-}
-
 type mlogPurgeThrottleConfig struct {
 	minRate     float64
 	budgetRatio float64
@@ -265,13 +187,6 @@ type mlogPurgeDeletePlan struct {
 type PurgeMaterializedViewLogExec struct {
 	exec.BaseExecutor
 	stmt *ast.PurgeMaterializedViewLogStmt
-	done bool
-}
-
-// CancelMaterializedViewJobExec executes a purge-job cancellation request.
-type CancelMaterializedViewJobExec struct {
-	exec.BaseExecutor
-	stmt *ast.CancelMaterializedViewJobStmt
 	done bool
 }
 
