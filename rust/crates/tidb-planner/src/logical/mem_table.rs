@@ -106,6 +106,8 @@ pub const PRUNABLE_MEM_TABLES: &[&str] = &[
     "TABLES",
     // `infoschema.TablePartitions`
     "PARTITIONS",
+    // `infoschema.TableTiFlashReplica`
+    "TIFLASH_REPLICA",
 ];
 
 /// What the ported `LogicalMemTable` bodies read off a `*model.ColumnInfo`.

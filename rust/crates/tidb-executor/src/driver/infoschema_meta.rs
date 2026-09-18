@@ -1450,6 +1450,65 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
 ///
 /// Rows come from the server-info syncer, like `TIDB_SERVERS_INFO`; see
 /// `Session::cluster_info_table_rows`.
+const TIFLASH_REPLICA_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "TABLE_SCHEMA",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "TABLE_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "TABLE_ID",
+        tp: FieldTypeCode::Long,
+        size: 21,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "REPLICA_COUNT",
+        tp: FieldTypeCode::Long,
+        size: 21,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "LOCATION_LABELS",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "AVAILABLE",
+        tp: FieldTypeCode::Tiny,
+        size: 1,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "PROGRESS",
+        tp: FieldTypeCode::Double,
+        size: 22,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
 const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
         name: "TYPE",
@@ -2205,6 +2264,7 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
         WORKLOAD_CLIENT_ERRORS_SUMMARY_GLOBAL_COLUMNS,
     ),
     ("CLUSTER_INFO", CLUSTER_INFO_COLUMNS),
+    ("TIFLASH_REPLICA", TIFLASH_REPLICA_COLUMNS),
     ("COLLATIONS", COLLATIONS_COLUMNS),
     (
         "COLLATION_CHARACTER_SET_APPLICABILITY",

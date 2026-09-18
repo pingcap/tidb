@@ -167,19 +167,64 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
         if stores.is_empty() {
             return Ok(());
         }
+        // Collect EVERY replica-carrying table first: the rule pass needs the
+        // full desired set (available tables keep their rule too), while the
+        // progress pass only advances not-yet-available ones.
+        let mut replica_tables: Vec<(i64, u64, Vec<String>)> = Vec::new();
         for database in &catalog.databases {
             for stored in &database.tables {
                 let Some(replica) = stored.tiflash_replica.as_ref() else {
                     continue;
                 };
                 let replica = replica.read();
-                if replica.available || replica.count == 0 {
+                if replica.count == 0 {
                     continue;
                 }
-                let table_id = stored.id;
-                let count = replica.count;
-                let labels: Vec<String> = replica.location_labels.iter().cloned().collect();
-                drop(replica);
+                replica_tables.push((
+                    stored.id,
+                    replica.count,
+                    replica.location_labels.iter().cloned().collect(),
+                ));
+            }
+        }
+
+        // Go `refreshTiFlashPlacementRules`: rules whose tables no longer
+        // carry a replica (reset, dropped, or gone) are removed, so stale
+        // learners stop being placed.
+        let (rules_status, rules_body) =
+            http_call("GET", &format!("{endpoint}/pd/api/v1/config/rules/group/tiflash"), None)?;
+        if rules_status == 200 {
+            let existing: Vec<serde_json::Value> = serde_json::from_str(&rules_body)
+                .map_err(|error| format!("rules body: {error}"))?;
+            for rule in existing {
+                let id = rule
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let desired = replica_tables
+                    .iter()
+                    .any(|(table_id, _, _)| *id == format!("table-{table_id}-r"));
+                if desired || id.is_empty() {
+                    continue;
+                }
+                let (delete_status, delete_body) = http_call(
+                    "DELETE",
+                    &format!(
+                        "{endpoint}/pd/api/v1/config/rule/tiflash/{id}"
+                    ),
+                    None,
+                )?;
+                eprintln!(
+                    "{{\"event\":\"tiflash_rule_removed\",\"rule\":{id:?},\"status\":{delete_status},\"detail\":{delete_body:?}}}"
+                );
+            }
+        }
+
+        for (table_id, count, labels) in &replica_tables {
+                let table_id = *table_id;
+                let count = *count;
+                let labels = labels.clone();
 
                 // Go `syncTiFlashTableRule`: ensure the ONE learner rule
                 // (`table-{id}-r`) exists with the requested count — the
@@ -253,7 +298,6 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
                     self.flip(table_id)?;
                 }
             }
-        }
         Ok(())
     }
 

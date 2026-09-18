@@ -310,9 +310,17 @@ Commit map so far: `cbfdc7cad4` (M1), `5265825c09` (M2), `31646df17e` (M3 receip
 - [x] M4 (core): SET TIFLASH REPLICA admitted on the Rust node as a persisted job;
       PD rule synced by the poller; availability flipped through
       `ActionUpdateTiFlashReplicaStatus` (schema version 76 receipt).
-- [ ] M4 remainder: `information_schema.tiflash_replica` (observability only; the
-      planner reads availability from the table info directly).
-- [x] M5 (partial): M1/M2/M3 pushes + receipts; re-audit after M4.
+- [x] M4 remainder: `information_schema.tiflash_replica` served from the catalog
+      (TABLE_SCHEMA, TABLE_NAME, TABLE_ID, REPLICA_COUNT, LOCATION_LABELS,
+      AVAILABLE, PROGRESS mirroring AVAILABLE) — live-verified.
+- [x] Rule deletion on reset: the poller removes `table-{id}-r` rules whose
+      tables no longer carry a replica (Go `refreshTiFlashPlacementRules`),
+      live-verified (`Delete rule successfully.`); the DELETE path is
+      `/pd/api/v1/config/rule/{group}/{id}` (an early draft added a literal
+      `group` segment and 404'd).
+- [x] M5 (partial): M1/M2/M3/M4 pushes + receipts; the remaining documented
+      non-blockers (MPP predicate lowering, TLS-cluster HTTP) are design
+      boundaries, not verification gaps.
 
 ## Decision Log
 
