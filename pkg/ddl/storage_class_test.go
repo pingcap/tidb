@@ -1089,6 +1089,9 @@ func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
 	))
 	tk.MustQuery("SHOW COLUMNS FROM mysql.tidb_storage_class_transition_history LIKE 'progress'").Check(testkit.Rows())
 
+	// A replacement DDL preserves the counters persisted by the poller.
+	tk.MustExec(`UPDATE mysql.tidb_storage_class_transition_history
+		SET total_replicas = 4, completed_replicas = 3 WHERE direction = 'TO_IA'`)
 	tk.MustExec("ALTER TABLE t STORAGE_CLASS STANDARD")
 	tk.MustQuery(`SELECT direction, state, COUNT(*)
 		FROM mysql.tidb_storage_class_transition_history
@@ -1096,6 +1099,15 @@ func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
 		"TO_IA SUPERSEDED 1",
 		"TO_STANDARD RUNNING 1",
 	))
+	tk.MustQuery(`SELECT total_replicas, completed_replicas, finish_time IS NOT NULL, duration IS NOT NULL
+		FROM mysql.tidb_storage_class_transition_history WHERE state = 'SUPERSEDED'`).Check(testkit.Rows("4 3 1 1"))
+	tk.MustQuery(`SELECT total_replicas, completed_replicas
+		FROM mysql.tidb_storage_class_transition_history WHERE state = 'RUNNING'`).Check(testkit.Rows("<nil> <nil>"))
+	// Without a successful observation, superseding must keep the counts unknown.
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+	tk.MustQuery(`SELECT state, total_replicas, completed_replicas
+		FROM mysql.tidb_storage_class_transition_history WHERE direction = 'TO_STANDARD'`).Check(
+		testkit.Rows("SUPERSEDED <nil> <nil>"))
 
 	// Replacing a physical partition ends the old operation and starts a new
 	// one for every current physical target configured for the same tier.

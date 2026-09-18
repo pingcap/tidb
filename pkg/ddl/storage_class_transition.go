@@ -819,6 +819,28 @@ func (operation *storageClassTransitionOperation) key() storageClassTransitionKe
 	}
 }
 
+func persistStorageClassTransitionProgress(
+	ctx context.Context,
+	se *sess.Session,
+	operation *storageClassTransitionOperation,
+) error {
+	// Preserve the last successful observation if a later DDL or a new owner
+	// supersedes the operation. A late observation must not alter terminal rows.
+	_, err := se.Execute(ctx,
+		`UPDATE mysql.tidb_storage_class_transition_history
+		 SET total_replicas = %?, completed_replicas = %?
+		 WHERE table_id = %? AND start_ts = %? AND direction = %? AND state = %?`,
+		"persist-storage-class-transition-progress",
+		operation.TotalReplicas,
+		operation.CompletedReplicas,
+		operation.TableID,
+		operation.startTS,
+		operation.Direction,
+		storageClassTransitionStateRunning,
+	)
+	return errors.Trace(err)
+}
+
 func completeStorageClassTransition(
 	ctx context.Context,
 	se *sess.Session,
@@ -991,6 +1013,10 @@ func (m *storageClassTransitionManager) poll(
 			continue
 		}
 		if !complete {
+			if err := persistStorageClassTransitionProgress(ctx, se, operation); err != nil {
+				logutil.DDLLogger().Warn("persist storage class transition progress failed",
+					zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
+			}
 			continue
 		}
 		if _, err := completeStorageClassTransition(ctx, se, operation); err != nil {
