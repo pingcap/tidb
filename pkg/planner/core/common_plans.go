@@ -85,15 +85,22 @@ type ShowNextRowID struct {
 	TableName *ast.TableName
 }
 
+// CheckIndexPlan pairs an admin lookup with an optional TiDB-side table filter.
+type CheckIndexPlan struct {
+	IndexLookUpReader *physicalop.PhysicalIndexLookUpReader
+	// TableFilter runs on the table reader's output before consistency comparison.
+	TableFilter *physicalop.PhysicalSelection
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	physicalop.SimpleSchemaProducer
 
-	DBName             string
-	Table              table.Table
-	IndexInfos         []*model.IndexInfo
-	IndexLookUpReaders []*physicalop.PhysicalIndexLookUpReader
-	CheckIndex         bool
+	DBName     string
+	Table      table.Table
+	IndexInfos []*model.IndexInfo
+	IndexPlans []*CheckIndexPlan
+	CheckIndex bool
 }
 
 // RecoverIndex is used for backfilling corrupted index data.

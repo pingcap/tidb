@@ -563,14 +563,16 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 		return e
 	}
 
-	readerExecs := make([]*IndexLookUpExecutor, 0, len(v.IndexLookUpReaders))
-	for _, readerPlan := range v.IndexLookUpReaders {
+	readerExecs := make([]*IndexLookUpExecutor, 0, len(v.IndexPlans))
+	for _, indexPlan := range v.IndexPlans {
+		readerPlan := indexPlan.IndexLookUpReader
 		readerExec, err := buildNoRangeIndexLookUpReader(b, readerPlan)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
 		buildIndexLookUpChecker(b, readerPlan, readerExec)
+		readerExec.tableFilter = indexPlan.TableFilter
 
 		readerExecs = append(readerExecs, readerExec)
 	}
@@ -2351,12 +2353,15 @@ func (b *executorBuilder) buildSelection(v *physicalop.PhysicalSelection) exec.E
 	if b.err != nil {
 		return nil
 	}
-	e := &SelectionExec{
+	return b.buildSelectionFromChildExec(v, childExec)
+}
+
+func (b *executorBuilder) buildSelectionFromChildExec(v *physicalop.PhysicalSelection, childExec exec.Executor) *SelectionExec {
+	return &SelectionExec{
 		selectionExecutorContext: newSelectionExecutorContext(b.sctx),
 		BaseExecutorV2:           exec.NewBaseExecutorV2(b.sctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
 		filters:                  v.Conditions,
 	}
-	return e
 }
 
 func (b *executorBuilder) buildExpand(v *physicalop.PhysicalExpand) exec.Executor {

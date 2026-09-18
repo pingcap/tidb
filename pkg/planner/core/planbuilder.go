@@ -1780,10 +1780,10 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 	return ret, nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName ast.CIStr, tbl table.Table, idx *model.IndexInfo) (base.Plan, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName ast.CIStr, tbl table.Table, idx *model.IndexInfo) (*CheckIndexPlan, error) {
 	tblInfo := tbl.Meta()
 	physicalID, isPartition := getPhysicalID(tbl, idx.Global)
-	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), dbName, tblInfo)
+	fullExprCols, fullNames, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), dbName, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -1828,8 +1828,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetIsPartition(isPartition)
 	ts.SetSchema(idxColSchema)
-	// The consistency checker evaluates partial-index predicates in TiDB, since
-	// valid predicates (for example, those on SET columns) may not be pushable.
+	// Include predicate columns before expanding virtual columns and laying out handles.
 	for _, affectedCol := range idx.AffectColumn {
 		exprCol := fullExprCols.Columns[affectedCol.Offset]
 		if !ts.Schema().Contains(exprCol) {
@@ -1878,11 +1877,38 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 		ExtraHandleCol:   extraCol,
 		CommonHandleCols: commonCols,
 	}
+	var rootConditions []expression.Expression
+	if idx.HasCondition() {
+		condition, err := expression.ParseSimpleExpr(b.ctx.GetExprCtx(), idx.ConditionExprString,
+			expression.WithInputSchemaAndNames(fullExprCols, fullNames, tblInfo))
+		if err != nil {
+			return nil, err
+		}
+		conditions := []expression.Expression{condition}
+		conditions, rootConditions = expression.PushDownExprs(util.GetPushDownCtx(b.ctx), conditions, kv.TiKV)
+		if len(conditions) > 0 {
+			cop.FinishIndexPlan()
+			selection := physicalop.PhysicalSelection{Conditions: conditions}.Init(b.ctx, ts.StatsInfo(), b.getSelectOffset())
+			selection.SetChildren(ts)
+			cop.TablePlan = selection
+		}
+	}
 	rootT := cop.ConvertToRootTask(b.ctx).(*physicalop.RootTask)
 	if err := rootT.GetPlan().ResolveIndices(); err != nil {
 		return nil, err
 	}
-	return rootT.GetPlan(), nil
+	plan := &CheckIndexPlan{IndexLookUpReader: rootT.GetPlan().(*physicalop.PhysicalIndexLookUpReader)}
+	if len(rootConditions) > 0 {
+		// Filter table-reader output before comparing it with index entries. A selection
+		// above the whole index lookup would run after the consistency comparison.
+		reader := physicalop.PhysicalTableReader{TablePlan: plan.IndexLookUpReader.TablePlan, StoreType: kv.TiKV}.Init(b.ctx, b.getSelectOffset())
+		plan.TableFilter = physicalop.PhysicalSelection{Conditions: rootConditions}.Init(b.ctx, reader.TablePlan.StatsInfo(), b.getSelectOffset())
+		plan.TableFilter.SetChildren(reader)
+		if err := plan.TableFilter.ResolveIndices(); err != nil {
+			return nil, err
+		}
+	}
+	return plan, nil
 }
 
 func getIndexColumnInfos(tblInfo *model.TableInfo, idx *model.IndexInfo) []*model.ColumnInfo {
@@ -1951,11 +1977,11 @@ func tryGetPkHandleCol(tblInfo *model.TableInfo, allColSchema *expression.Schema
 	return nil, nil, false
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName ast.CIStr, tbl table.Table, indices []table.Index) ([]base.Plan, []*model.IndexInfo, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName ast.CIStr, tbl table.Table, indices []table.Index) ([]*CheckIndexPlan, []*model.IndexInfo, error) {
 	tblInfo := tbl.Meta()
 	// get index information
 	indexInfos := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-	indexLookUpReaders := make([]base.Plan, 0, len(tblInfo.Indices))
+	indexLookUpReaders := make([]*CheckIndexPlan, 0, len(tblInfo.Indices))
 
 	check := b.isForUpdateRead || b.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && b.ctx.GetSessionVars().ConnectionID > 0
@@ -2036,7 +2062,7 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 		DBName: tblName.Schema.O,
 		Table:  tbl,
 	}
-	var readerPlans []base.Plan
+	var readerPlans []*CheckIndexPlan
 	var indexInfos []*model.IndexInfo
 	var err error
 	if as.Tp == ast.AdminCheckIndex {
@@ -2063,12 +2089,8 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	readers := make([]*physicalop.PhysicalIndexLookUpReader, 0, len(readerPlans))
-	for _, plan := range readerPlans {
-		readers = append(readers, plan.(*physicalop.PhysicalIndexLookUpReader))
-	}
 	p.IndexInfos = indexInfos
-	p.IndexLookUpReaders = readers
+	p.IndexPlans = readerPlans
 	return p, nil
 }
 
