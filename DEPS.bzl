@@ -4528,8 +4528,8 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
         replace = "github.com/lhy1024/client-go/v2",
-        sum = "h1:T9CcdNFuesfekUJoWPJ/VczyxnPDwpWn7QUNfZFCyzo=",
-        version = "v2.0.0-20260918060039-e8a40e73f481",
+        sum = "h1:OqjrdZgRYgiCWhMkbxAkMKNcbp2eupuPFnz9+Ixhboc=",
+        version = "v2.0.0-20260918075032-654cf7db21fa",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
