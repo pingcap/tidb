@@ -17,13 +17,16 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
@@ -162,6 +165,293 @@ func TestParameterPushDown(t *testing.T) {
 	}
 }
 
+func TestPreparePlanCache4Function(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	checkExplainForConnContains := func(includes []string, excludes []string) {
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*sessmgr.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		rows := testdata.ConvertRowsToStrings(
+			tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Rows(),
+		)
+		explain := strings.Join(rows, "\n")
+		for _, include := range includes {
+			require.Contains(t, explain, include)
+		}
+		for _, exclude := range excludes {
+			require.NotContains(t, explain, exclude)
+		}
+	}
+
+	// Testing for non-deterministic functions
+	tk.MustExec("prepare stmt from 'select rand()';")
+	res := tk.MustQuery("execute stmt;")
+	require.Equal(t, 1, len(res.Rows()))
+
+	res1 := tk.MustQuery("execute stmt;")
+	require.Equal(t, 1, len(res1.Rows()))
+	require.NotEqual(t, res.Rows()[0][0], res1.Rows()[0][0])
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Testing for control functions
+	tk.MustExec("prepare stmt from 'SELECT IFNULL(?,0);';")
+	tk.MustExec("set @a = 1, @b = null;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'select a, case when a = ? then 0 when a <=> ? then 1 else 2 end b from t order by a;';")
+	tk.MustExec("insert into t values(0), (1), (2), (null);")
+	tk.MustExec("set @a = 0, @b = 1, @c = 2, @d = null;")
+	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows("<nil> 2", "0 0", "1 1", "2 2"))
+	tk.MustQuery("execute stmt using @c, @d;").Check(testkit.Rows("<nil> 1", "0 2", "1 2", "2 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec(`CREATE TABLE t0(c0 DOUBLE);`)
+	tk.MustExec(`CREATE TABLE t1 LIKE t0;`)
+	tk.MustExec(`CREATE INDEX i0 ON t1(c0 ASC);`)
+	tk.MustExec(`ALTER TABLE t1  CHANGE c0 c0 DOUBLE NOT NULL ;`)
+	// 1 or ((Null <=> t1.c0) AND (Null <=> t1.c0))
+	tk.MustExec(`SET @a = 0.7481117056976476;`)
+	tk.MustExec(`SET @b = NULL;`)
+	tk.MustExec(`SET @c = NULL;`)
+	tk.MustExec(`PREPARE prepare_query FROM 'SELECT t0.c0 FROM t0, t1 WHERE ? OR ((? <=> t1.c0) AND (? <=> t1.c0))';`)
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	checkExplainForConnContains(
+		[]string{
+			`CARTESIAN inner join`,
+			`IndexFullScan_`,
+			`table:t1, index:i0(c0)`,
+			`TableFullScan_`,
+			`table:t0`,
+		},
+		[]string{
+			`TableDual_`,
+		},
+	)
+	// 0 or ((Null <=> t1.c0) AND (Null <=> t1.c0))
+	tk.MustExec(`SET @a = 0`)
+	tk.MustExec(`SET @b = NULL;`)
+	tk.MustExec(`SET @c = NULL;`)
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`show warnings`).Check(
+		testkit.Rows(`Warning 1105 skip prepared plan-cache: some parameters may be overwritten when constant propagation`))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	checkExplainForConnContains(
+		[]string{
+			`CARTESIAN inner join`,
+			`TableFullScan_`,
+			`table:t0`,
+		},
+		nil,
+	)
+	// 0 or ((1 <=> t1.c0) AND (1 <=> t1.c0))
+	tk.MustExec(`SET @a = 0`)
+	tk.MustExec(`SET @b = 1;`)
+	tk.MustExec(`SET @c = 1;`)
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`show warnings`).Check(
+		testkit.Rows(`Warning 1105 skip prepared plan-cache: some parameters may be overwritten when constant propagation`))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	checkExplainForConnContains(
+		[]string{
+			`CARTESIAN inner join`,
+			`IndexRangeScan_`,
+			`table:t1, index:i0(c0) range:[1,1]`,
+			`TableFullScan_`,
+			`table:t0`,
+		},
+		[]string{
+			`TableDual_`,
+		},
+	)
+	// 1 or ((1 <=> t1.c0) AND (1 <=> t1.c0))
+	tk.MustExec(`SET @a = 1`)
+	tk.MustExec(`SET @b = 1;`)
+	tk.MustExec(`SET @c = 1;`)
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`show warnings`).Check(
+		testkit.Rows(`Warning 1105 skip prepared plan-cache: some parameters may be overwritten`))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	checkExplainForConnContains(
+		[]string{
+			`CARTESIAN inner join`,
+			`IndexFullScan_`,
+			`table:t1, index:i0(c0)`,
+			`TableFullScan_`,
+			`table:t0`,
+		},
+		[]string{
+			`TableDual_`,
+		},
+	)
+	tk.MustExec(`PREPARE prepare_query FROM 'SELECT t0.c0 FROM t0, t1 WHERE ((? <=> t1.c0) AND (? <=> t1.c0) or (? > t1.c0))';`)
+	// ((1 <=> t1.c0) AND (1 <=> t1.c0) or (1 > t1.c0))
+	tk.MustExec(`SET @a = 1`)
+	tk.MustExec(`SET @b = 1;`)
+	tk.MustExec(`SET @c = 1;`)
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`show warnings`).Check(
+		testkit.Rows(`Warning 1105 skip prepared plan-cache: some parameters may be overwritten`))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	checkExplainForConnContains(
+		[]string{
+			`CARTESIAN inner join`,
+			`IndexRangeScan_`,
+			`table:t1, index:i0(c0) range:[-inf,1]`,
+			`TableFullScan_`,
+			`table:t0`,
+		},
+		[]string{
+			`TableDual_`,
+		},
+	)
+
+	tk.MustExec(`CREATE TABLE t2(a int NOT NULL, b int NOT NULL, KEY i0(a, b));`)
+	tk.MustExec(`PREPARE prepare_query FROM 'SELECT /* issue:63914 */ * FROM t2 WHERE a = ? AND (? <=> b) AND (? <=> b)';`)
+	tk.MustExec(`SET @a = 1`)
+	tk.MustExec(`SET @b = NULL;`)
+	tk.MustExec(`SET @c = NULL;`)
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT 1;`).Check(testkit.Rows("1"))
+}
+
+func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+
+	// Testing for 'sql_select_limit'
+	tk.MustExec("set @@sql_select_limit = 1")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(0), (1), (null);")
+	tk.MustExec("prepare stmt from 'select a from t order by a;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("set @@sql_select_limit = 2")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("<nil>", "0"))
+	// The 'sql_select_limit' will be stored in the cache key. So if the `sql_select_limit`
+	// have been changed, the plan cache can not be reused.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@sql_select_limit = 18446744073709551615")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("<nil>", "0", "1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	// test for 'tidb_enable_index_merge'
+	tk.MustExec("set @@tidb_enable_index_merge = 1;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("prepare stmt from 'select * from t use index(idx_a, idx_b) where a > 1 or b > 1;';")
+	tk.MustExec("execute stmt;")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.Equal(t, 4, len(res.Rows()))
+	require.Contains(t, res.Rows()[0][0], "IndexMerge")
+
+	tk.MustExec("set @@tidb_enable_index_merge = 0;")
+	tk.MustExec("execute stmt;")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.Equal(t, 4, len(res.Rows()))
+	require.Contains(t, res.Rows()[0][0], "IndexMerge")
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	// test for 'tidb_enable_parallel_apply'
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (null, null)")
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.Contains(t, res.Rows()[1][0], "Apply")
+	require.Contains(t, res.Rows()[1][5], "Concurrency")
+
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.Contains(t, res.Rows()[1][0], "Apply")
+	executionInfo := fmt.Sprintf("%v", res.Rows()[1][4])
+	// Do not use the parallel apply.
+	require.False(t, strings.Contains(executionInfo, "Concurrency"))
+	tk.MustExec("execute stmt;")
+	// The subquery plan with PhysicalApply can't be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
+
+	// test for apply cache
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tk.MustExec("set tidb_mem_quota_apply_cache=33554432")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (null, null)")
+
+	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.Contains(t, res.Rows()[1][0], "Apply")
+	require.Contains(t, res.Rows()[1][5], "cache:ON")
+
+	tk.MustExec("set tidb_mem_quota_apply_cache=0")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.Contains(t, res.Rows()[1][0], "Apply")
+	executionInfo = fmt.Sprintf("%v", res.Rows()[1][5])
+	// Do not use the apply cache.
+	require.True(t, strings.Contains(executionInfo, "cache:OFF"))
+	tk.MustExec("execute stmt;")
+	// The subquery plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
 func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
