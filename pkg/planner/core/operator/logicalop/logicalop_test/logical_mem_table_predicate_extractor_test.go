@@ -1878,6 +1878,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		prepared string
 		userVars []any
 		params   []any
+		filter   bool
 		checker  func(extractor base.MemTablePredicateExtractor)
 	}{
 		{
@@ -1917,6 +1918,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.COLUMNS where table_name like ?",
 			userVars: []any{`"a%"`},
 			params:   []any{"a%"},
+			filter:   true,
 			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.LikePatterns["table_name"])
@@ -1958,7 +1960,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*physicalop.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*physicalop.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*physicalop.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 
@@ -1976,13 +1984,35 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(execStmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*physicalop.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*physicalop.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*physicalop.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 }
 
 func TestInfoSchemaTableExtract(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test70825(a int)")
+	for _, ca := range []struct {
+		predicate string
+		count     string
+	}{
+		{"table_name like 'T%'", "0"},
+		{"table_name not like 'T%'", "1"},
+		{"table_name like 'T%' and table_name not like 'T%'", "0"},
+		{"table_name like 't%'", "1"},
+		{"table_name ilike 'T%'", "1"},
+	} {
+		tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and " + ca.predicate).Check(testkit.Rows(ca.count))
+	}
+	tk.MustExec("drop table test70825")
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
