@@ -221,7 +221,14 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 		u.Scheme = "noop"
 		u.Path = "/"
 	case *backuppb.StorageBackend_S3:
-		u.Scheme = "s3"
+		switch b.S3.Provider {
+		case s3like.OSSProvider:
+			u.Scheme = "oss"
+		case s3like.KS3SDKProvider:
+			u.Scheme = "ks3"
+		default:
+			u.Scheme = "s3"
+		}
 		u.Host = b.S3.Bucket
 		u.Path = b.S3.Prefix
 	case *backuppb.StorageBackend_Gcs:
