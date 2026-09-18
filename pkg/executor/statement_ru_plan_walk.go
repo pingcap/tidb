@@ -552,8 +552,10 @@ func calculateStatementRUPlanChildFirst(
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
 	var beforeSubtree ruv2.StmtUnits
+	var beforeSubtreeTiFlashRU float64
 	if operatorRUs != nil {
 		beforeSubtree = calculator.units
+		beforeSubtreeTiFlashRU = calculator.tiFlashRU(currentStatementRUWeights())
 	}
 	children := make([]statementRUOperatorResult, len(operator.ChildrenIdx))
 	childState := statementRUOperatorComplete
@@ -605,8 +607,12 @@ func calculateStatementRUPlanChildFirst(
 	beforeCPU, beforeHashState := calculator.units.CPUWork, calculator.units.HashStateRows
 	beforeJoinOutput, beforeNet, beforeCrossAZ := calculator.units.JoinOutputRows, calculator.units.NetBytes, calculator.units.CrossAZNetBytes
 	var beforeOperator ruv2.StmtUnits
+	var beforeOperatorTiFlashRU float64
 	if calculator.report != nil || operatorRUs != nil {
 		beforeOperator = calculator.units
+	}
+	if operatorRUs != nil {
+		beforeOperatorTiFlashRU = calculator.tiFlashRU(currentStatementRUWeights())
 	}
 
 	switch origin := operator.Origin.(type) {
@@ -1032,6 +1038,9 @@ func calculateStatementRUPlanChildFirst(
 		weights := currentStatementRUWeights()
 		selfResult, _ := ruv2.Calculate(selfUnits, weights)
 		cumResult, _ := ruv2.Calculate(cumUnits, weights)
+		tiFlashRU := calculator.tiFlashRU(weights)
+		selfResult.TotalRU += (tiFlashRU - beforeOperatorTiFlashRU) * (statementRUTiFlashMultiplier - 1)
+		cumResult.TotalRU += (tiFlashRU - beforeSubtreeTiFlashRU) * (statementRUTiFlashMultiplier - 1)
 		operatorRUs[operatorIndex].SelfRU = selfResult.TotalRU
 		operatorRUs[operatorIndex].CumRU = cumResult.TotalRU
 	}

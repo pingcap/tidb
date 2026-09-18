@@ -306,6 +306,8 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 		return statementRUFailed(statementRUOperatorInvalid), false
 	}
 	engineRU := calculator.engineResult(weights)
+	result.TotalRU += engineRU.TiFlash * (statementRUTiFlashMultiplier - 1)
+	engineRU.TiFlash *= statementRUTiFlashMultiplier
 	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV, engineRU.TiFlash} {
 		if ru < 0 || math.IsNaN(ru) || math.IsInf(ru, 0) {
 			return statementRUFailed(statementRUOperatorInvalid), false
