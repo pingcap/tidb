@@ -4480,7 +4480,11 @@ DefaultValueExpr:
 	}
 |	'(' SignedLiteral ')'
 	{
-		$$ = $2
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		endOffset := parser.endOffset(&yyS[yypt])
+		expr := $2
+		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 
 BuiltinFunction:
