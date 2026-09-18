@@ -514,13 +514,17 @@ where
             .transition(CoordinatorState::PrimaryCommitted)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
 
+        // Go's committer forgets the primary batch (forgetPrimary) and commits
+        // the rest; a linear scan of the primary batch per mutation would make
+        // this O(mutations x batch keys) memcmp on large transactions.
+        let committed_primary_keys: std::collections::HashSet<&[u8]> =
+            committed_primary_batch_keys
+                .iter()
+                .map(Vec::as_slice)
+                .collect();
         let secondary_keys = mutations
             .iter()
-            .filter(|mutation| {
-                !committed_primary_batch_keys
-                    .iter()
-                    .any(|key| key.as_slice() == mutation.key())
-            })
+            .filter(|mutation| !committed_primary_keys.contains(mutation.key()))
             .map(|mutation| mutation.key().to_vec())
             .collect::<Vec<_>>();
         if !secondary_keys.is_empty() {
