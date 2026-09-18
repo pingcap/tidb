@@ -112,10 +112,11 @@ func withMinValue(minVal int64) execConcurrencySysVarOption {
 
 func newEmbeddingAPIKeySysVar(name string, load func() string, swap func(string) string) *SysVar {
 	return &SysVar{
-		Scope: vardef.ScopeGlobal,
-		Name:  name,
-		Value: "",
-		Type:  vardef.TypeStr,
+		Scope:       vardef.ScopeGlobal,
+		Name:        name,
+		Value:       "",
+		Type:        vardef.TypeStr,
+		IsSensitive: true,
 		SetGlobal: func(_ context.Context, _ *SessionVars, value string) error {
 			if oldValue := swap(value); oldValue != value {
 				vardef.EmbeddingConfigVersion.Inc()
@@ -544,7 +545,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(int64(vardef.GlobalLogMaxDays.Load()), 10), nil
 	}},
-	{Scope: vardef.ScopeInstance, Name: vardef.TiDBConfig, Value: "", ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+	{Scope: vardef.ScopeInstance, Name: vardef.TiDBConfig, Value: "", ReadOnly: true, IsSensitive: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return config.GetJSONConfig()
 	}},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBGeneralLog, Value: BoolToOnOff(vardef.DefTiDBGeneralLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
@@ -554,7 +555,7 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(vardef.ProcessGeneralLog.Load()), nil
 	}},
 	// NOTE: The trace-event switch is experimental. It is subject to changes.
-	{Scope: vardef.ScopeInstance, Name: vardef.TiDBTraceEvent, Hidden: kerneltype.IsClassic(), Value: vardef.DefTiDBTraceEvent, Type: vardef.TypeStr,
+	{Scope: vardef.ScopeInstance, Name: vardef.TiDBTraceEvent, Hidden: kerneltype.IsClassic(), Value: vardef.DefTiDBTraceEvent, Type: vardef.TypeStr, IsSensitive: true,
 		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
 			if kerneltype.IsClassic() {
 				return errors.New("can only be set for TiDB X kernel")
@@ -759,7 +760,7 @@ var defaultSysVars = []*SysVar{
 			vardef.MaxPreparedStmtCountValue.Store(num)
 			return nil
 		}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.InitConnect, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+	{Scope: vardef.ScopeGlobal, Name: vardef.InitConnect, Value: "", IsSensitive: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		p := parser.New()
 		p.SetSQLMode(vars.SQLMode)
 		p.SetParserConfig(vars.BuildParserConfig())
@@ -857,7 +858,7 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatInt(int64(vardef.PasswordValidationSpecialCharCount.Load()), 10), nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal, Name: vardef.ValidatePasswordDictionary, Value: "", Type: vardef.TypeStr},
+	{Scope: vardef.ScopeGlobal, Name: vardef.ValidatePasswordDictionary, Value: "", Type: vardef.TypeStr, IsSensitive: true},
 	{Scope: vardef.ScopeGlobal, Name: vardef.DefaultPasswordLifetime, Value: "0", Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: vardef.ScopeGlobal, Name: vardef.DisconnectOnExpiredPassword, Value: vardef.On, Type: vardef.TypeBool, ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(!vardef.IsSandBoxModeEnabled.Load()), nil
@@ -3811,7 +3812,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return ldap.LDAPSASLAuthImpl.GetBindRootDN(), nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.AuthenticationLDAPSASLBindRootPWD, Value: "", Type: vardef.TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+	{Scope: vardef.ScopeGlobal, Name: vardef.AuthenticationLDAPSASLBindRootPWD, Value: "", Type: vardef.TypeStr, IsSensitive: true, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		ldap.LDAPSASLAuthImpl.SetBindRootPW(s)
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
@@ -3896,7 +3897,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return ldap.LDAPSimpleAuthImpl.GetBindRootDN(), nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.AuthenticationLDAPSimpleBindRootPWD, Value: "", Type: vardef.TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+	{Scope: vardef.ScopeGlobal, Name: vardef.AuthenticationLDAPSimpleBindRootPWD, Value: "", Type: vardef.TypeStr, IsSensitive: true, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		ldap.LDAPSimpleAuthImpl.SetBindRootPW(s)
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {

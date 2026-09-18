@@ -3990,8 +3990,8 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
-// if the url is not a valid url, return the original string.
+// RedactURL redacts sensitive query parameters in supported storage URLs.
+// If the URL is not valid, it returns the original string.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
 	u, err := url.Parse(str)
@@ -4016,6 +4016,9 @@ func RedactURL(str string) string {
 			"account-key":    {},
 			"encryption-key": {},
 			"sas-token":      {},
+			// Azure endpoints can contain SAS tokens used directly by the storage
+			// client, so masking only the separate sas-token parameter is insufficient.
+			"endpoint": {},
 		}
 	}
 
