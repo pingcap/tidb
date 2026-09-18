@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -131,7 +132,7 @@ func getAutoPreSplitConfig() autoPreSplitConfig {
 func planAutoPreSplitWithCache(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	evalCtx exprctx.EvalContext,
+	evalCtx *exprstatic.EvalContext,
 	statsProvider autoPreSplitStatsProvider,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
@@ -144,9 +145,13 @@ func planAutoPreSplitWithCache(
 		return skippedAutoPreSplitResult(reason)
 	}
 
+	// Statistics hold a TIMESTAMP in UTC, so every value read out of them is interpreted and
+	// encoded in UTC, whatever zone the DDL was submitted in. The rest of the eval context is
+	// kept, so type flags and error levels still follow the submitting session's SQL mode.
+	utcEvalCtx := evalCtx.Apply(exprstatic.WithLocation(time.UTC))
 	if _, ok := boundaryCache[leadingCol.ID]; !ok {
 		boundaryCache[leadingCol.ID] = planAutoPreSplitBoundaries(
-			ctx, sctx, evalCtx, statsProvider, tblInfo.ID, statsTbl, leadingCol, cfg)
+			ctx, sctx, utcEvalCtx, statsProvider, tblInfo.ID, statsTbl, leadingCol, cfg)
 	}
 	boundaryResult := boundaryCache[leadingCol.ID]
 	switch boundaryResult.state {
@@ -159,7 +164,7 @@ func planAutoPreSplitWithCache(
 	}
 
 	splitKeys, err := buildAutoPreSplitIndexKeys(
-		evalCtx, tblInfo, idxInfo, boundaryResult.boundaryRows)
+		utcEvalCtx, tblInfo, idxInfo, boundaryResult.boundaryRows)
 	if err != nil {
 		return autoPreSplitPlanResult{}, err
 	}
@@ -342,7 +347,7 @@ func newAutoPreSplitValue(
 	if err != nil {
 		return autoPreSplitValue{}, err
 	}
-	encoded, err := codec.EncodeKey(evalCtx.Location(), nil, splitValue)
+	encoded, err := codec.EncodeKey(time.UTC, nil, splitValue)
 	if err != nil {
 		return autoPreSplitValue{}, err
 	}
@@ -377,8 +382,7 @@ func buildAutoPreSplitTopNValues(
 	values := make([]autoPreSplitValue, 0, num)
 	for i := range num {
 		item := topN.TopN[i]
-		datum, err := statistics.DecodeColumnTopNValue(
-			item.Encoded, &colInfo.FieldType, evalCtx.Location())
+		datum, err := statistics.DecodeColumnTopNValue(item.Encoded, &colInfo.FieldType)
 		if err != nil {
 			return nil, err
 		}

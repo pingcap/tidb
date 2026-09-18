@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -81,7 +82,7 @@ func preSplitIndexRegions(
 		var skipReason string
 		if idxArg.AutoPreSplit {
 			splitResult, skipReason, err = autoPreSplitIndexRegion(
-				autoPreSplitCtx, sctx, exprCtx.GetEvalCtx(), store, tblInfo, idxInfo,
+				autoPreSplitCtx, sctx, exprCtx.GetStaticEvalCtx(), store, tblInfo, idxInfo,
 				statsProvider, autoPreSplitBoundaryCache, splitOnTempIdx)
 		} else {
 			splitArgs, evalErr := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
@@ -139,7 +140,7 @@ func preSplitIndexRegions(
 func autoPreSplitIndexRegion(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	evalCtx exprctx.EvalContext,
+	evalCtx *exprstatic.EvalContext,
 	store kv.Storage,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
