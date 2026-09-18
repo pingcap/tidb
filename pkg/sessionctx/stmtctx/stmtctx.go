@@ -630,6 +630,7 @@ func (sc *StatementContext) Reset() bool {
 		}
 		defer sc.StaleTSOProvider.Unlock()
 	}
+	memArbitrator := sc.cache.MemTracker.MemArbitrator
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -644,6 +645,7 @@ func (sc *StatementContext) Reset() bool {
 		stmtCache:           sc.stmtCache,
 		StaleTSOProvider:    sc.StaleTSOProvider,
 	}
+	sc.cache.MemTracker.MemArbitrator = memArbitrator
 	sc.mu = sc.mu.reset()
 	sc.affectedRows.Store(0)
 	sc.stmtCache = sc.stmtCache.reset()
