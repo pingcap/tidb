@@ -1773,6 +1773,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.checkPlanReplayerCapture(txnTS)
 
 	sessVars := a.Ctx.GetSessionVars()
+	internal := sessVars.StmtCtx.InRestrictedSQL
 	sessVars.StmtCtx.ExecRetryCount += uint64(a.retryCount)
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
@@ -1823,9 +1824,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.updatePrevStmt()
 	a.recordLastQueryInfo(err, statementRUTotal)
 	a.recordAffectedRows2Metrics()
-	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
+	a.observePhaseDurations(internal, execDetail.CommitDetail)
 	executeDuration := sessVars.GetExecuteDuration()
-	if sessVars.InRestrictedSQL {
+	if internal {
 		executor_metrics.SessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
 	} else {
 		executor_metrics.SessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
@@ -2024,6 +2025,7 @@ func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
+	internal := stmtCtx.InRestrictedSQL
 	cfg := config.GetGlobalConfig()
 	var slowItems *variable.SlowQueryLogItems
 	var matchRules bool
@@ -2080,7 +2082,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 	}
 	costTime := slowItems.TimeTotal
 	execDetail := slowItems.ExecDetail
-	if sessVars.InRestrictedSQL {
+	if internal {
 		executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
 		executor_metrics.TotalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
 		executor_metrics.TotalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
@@ -2119,7 +2121,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 			DB:         sessVars.CurrentDB,
 			TableIDs:   tableIDs,
 			IndexNames: slowItems.IndexNames,
-			Internal:   sessVars.InRestrictedSQL,
+			Internal:   internal,
 		})
 	}
 }
@@ -2264,6 +2266,8 @@ func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.Dump
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+	internal := stmtCtx.InRestrictedSQL
 	var userString string
 	if sessVars.User != nil {
 		userString = sessVars.User.Username
@@ -2271,7 +2275,7 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
 	// If this SQL is under `explain explore {SQL}`, we still want to record them in stmt summary.
-	isInternalSQL := (sessVars.InRestrictedSQL || len(userString) == 0) && !sessVars.InExplainExplore
+	isInternalSQL := (internal || len(userString) == 0) && !sessVars.InExplainExplore
 	if !stmtsummaryv2.Enabled() || (isInternalSQL && !stmtsummaryv2.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
 		return
@@ -2280,7 +2284,6 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	if _, ok := a.StmtNode.(*ast.PrepareStmt); ok {
 		return
 	}
-	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
 		stmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), a.StmtNode)
@@ -2396,7 +2399,7 @@ func (a *ExecStmt) GetEncodedPlan() (p string, h string, e any) {
 	}()
 
 	sessVars := a.Ctx.GetSessionVars()
-	p, h = getEncodedPlan(sessVars.StmtCtx, !sessVars.InRestrictedSQL)
+	p, h = getEncodedPlan(sessVars.StmtCtx, !sessVars.StmtCtx.InRestrictedSQL)
 	return
 }
 
