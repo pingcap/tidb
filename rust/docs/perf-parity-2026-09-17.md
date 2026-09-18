@@ -376,4 +376,15 @@ primary batch's keys per mutation (fixed in 1e66243d: a key set, as Go's
 forgetPrimary implies); the mutation buffer's three trees per key were 5%
 (a3d33aa9: one tree with per-entry marks, Go's memdb node); the 1 MB statement
 was normalized twice (95684d90: once, as Go's StmtCtx.SQLDigest). A/B of the
-last two against 1e66243d: <pending>
+last two (fd6bac72) against 1e66243d, same box, ABBA, node CPU per statement
+from /proc stat (results/ab-w2b.log, ab-w2c.log):
+
+```
+                       1e66243d             fd6bac72
+bulk_insert (3+3)      3.24 stmt/s  268 ms  3.38 stmt/s  242 ms   cpu -10%
+oltp_insert (4+4)      1944 tps     456 us  2043 tps     420 us   cpu -8%
+```
+
+sysbench's bulk_insert restarts its ids on every run, so its tables must be
+re-prepared per round; the resulting dropped-table garbage is what fills this
+playground's disk, and the RocksDB side only shrinks at a TiKV restart.
