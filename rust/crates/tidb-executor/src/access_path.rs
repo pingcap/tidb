@@ -69,6 +69,11 @@ use crate::executor::{ExecError, Executor, ExecutorMeta};
 /// only point-select-sized windows are cheaper inline than that handoff.
 /// Larger windows stay asynchronous so the index worker can overlap table
 /// response waits exactly as Go does. The answer is byte-identical.
+///
+/// The last window of a lookup with nothing in flight is also fetched inline
+/// whatever its size: the index stream is exhausted, so no table wait can
+/// overlap anything, and Go's goroutine handoff to its table worker costs
+/// nothing measurable where a native lane handoff costs two context switches.
 const INDEX_LOOKUP_INLINE_HANDLES: usize = 4;
 use crate::kv_table::{
     IndexRange, IndexRangeCursor, KvTable, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor,
@@ -2521,7 +2526,10 @@ impl IndexRangeSourceExec {
                     stream_exhausted = true;
                     break;
                 }
-                let job = self.build_lookup_job(handles)?;
+                // A short window means the index stream ended inside it; with
+                // no earlier window in flight there is nothing to overlap.
+                let last_window_alone = handles.len() < target && inflight == 0;
+                let job = self.build_lookup_job(handles, last_window_alone)?;
                 let pipeline = self.lookup_pipeline.get_or_insert_with(|| LookupPipeline {
                     inflight: VecDeque::new(),
                     // A directly-consumed source never opened itself;
@@ -2628,7 +2636,11 @@ impl IndexRangeSourceExec {
     /// consume their response here; larger jobs move cloneable table/request
     /// state to the lookup worker, which opens and consumes the lazy response
     /// there. A response iterator never crosses an OS-thread boundary.
-    fn build_lookup_job(&mut self, handles: Vec<TableHandle>) -> Result<LookupBatchJob, ExecError> {
+    fn build_lookup_job(
+        &mut self,
+        handles: Vec<TableHandle>,
+        last_window_alone: bool,
+    ) -> Result<LookupBatchJob, ExecError> {
         let handle_count = handles.len();
         let allow_lookup_chunks = self
             .filter
@@ -2772,6 +2784,15 @@ impl IndexRangeSourceExec {
                 Err(error) => Err(format!("{error:?}")),
             }
         };
+        if last_window_alone {
+            // See INDEX_LOOKUP_INLINE_HANDLES: the same request, without the
+            // lane handoff that nothing could overlap.
+            return Ok(LookupBatchJob {
+                handle_count,
+                receiver: None,
+                ready: Some(worker()),
+            });
+        }
         // Go's table worker is persistent across lookup tasks. Submit the
         // whole window to the source-owned lane set instead of creating one
         // native thread per window. Only Send table/request state enters the
