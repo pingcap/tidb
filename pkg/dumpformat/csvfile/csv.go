@@ -17,7 +17,7 @@ package csvfile
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
+	"encoding/hex"
 
 	"github.com/pingcap/tidb/pkg/dumpformat"
 )
@@ -35,7 +35,7 @@ func appendField(dst, val []byte, isNull bool, kind dumpformat.FieldKind, cfg *C
 		dst = append(dst, cfg.FieldsEnclosedBy...)
 		switch cfg.BinaryFormat {
 		case BinaryFormatHEX:
-			dst = fmt.Appendf(dst, "%x", val)
+			dst = hex.AppendEncode(dst, val)
 		case BinaryFormatBase64:
 			dst = base64.StdEncoding.AppendEncode(dst, val)
 		default:

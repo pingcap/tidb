@@ -16,11 +16,20 @@ package sqlfile
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 
 	"github.com/pingcap/tidb/pkg/dumpformat"
 )
+
+// maxBufferedValueSize bounds how much of a row Write holds in its buffer. A
+// string or binary value longer than this is encoded in pieces of at most this
+// many input bytes, each written out as soon as it is encoded, and the buffer
+// is flushed whenever it reaches this size between values. Without it the
+// buffer grows to the encoded size of the widest row, which is several times
+// the raw size for values of hundreds of MiB.
+const maxBufferedValueSize = 1 << 20
 
 // Config holds the SQL framing knobs.
 type Config struct {
@@ -49,6 +58,10 @@ type Writer struct {
 	statementSize uint64
 	fileSize      uint64
 	inStatement   bool
+	// tupleStart is where the current row's tuple begins in buf, and
+	// tupleFlushed counts the tuple bytes already written out by flushBuf.
+	tupleStart   int
+	tupleFlushed uint64
 }
 
 // NewWriter creates a Writer over w. prefix is the INSERT statement prefix
@@ -59,7 +72,8 @@ func NewWriter(w io.Writer, prefix []byte, kinds []dumpformat.FieldKind, cfg *Co
 
 // Write encodes one row's `(..)` tuple and writes it, with the statement prefix
 // or row separator, to the underlying writer. len(row) must equal the configured
-// column count; a nil field is treated as NULL.
+// column count; a nil field is treated as NULL. A row wider than
+// maxBufferedValueSize reaches the underlying writer in several Write calls.
 func (sw *Writer) Write(row []sql.RawBytes) error {
 	if len(row) != len(sw.kinds) {
 		return fmt.Errorf("sqlfile: row has %d fields, want %d", len(row), len(sw.kinds))
@@ -79,20 +93,67 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 		// This row's leading ",\n" was counted as the previous row's separator.
 		sw.buf = append(sw.buf, ',', '\n')
 	}
-	start := len(sw.buf)
+	sw.tupleStart = len(sw.buf)
+	sw.tupleFlushed = 0
 	sw.buf = append(sw.buf, '(')
 	for i, val := range row {
 		if i > 0 {
 			sw.buf = append(sw.buf, ',')
 		}
-		sw.buf = AppendValue(sw.buf, val, val == nil, sw.kinds[i], sw.cfg.EscapeBackslash)
+		kind := sw.kinds[i]
+		if val != nil && kind != dumpformat.KindNumber && len(val) > maxBufferedValueSize {
+			if err := sw.writeLargeValue(val, kind); err != nil {
+				return err
+			}
+			continue
+		}
+		sw.buf = AppendValue(sw.buf, val, val == nil, kind, sw.cfg.EscapeBackslash)
+		if len(sw.buf) >= maxBufferedValueSize {
+			if err := sw.flushBuf(); err != nil {
+				return err
+			}
+		}
 	}
 	sw.buf = append(sw.buf, ')')
 	// Count the tuple plus the 2-byte separator that will follow it.
-	tupleSize := uint64(len(sw.buf)-start) + 2
+	tupleSize := sw.tupleFlushed + uint64(len(sw.buf)-sw.tupleStart) + 2
 	sw.statementSize += tupleSize
 	sw.fileSize += tupleSize
 	_, err := sw.w.Write(sw.buf)
+	return err
+}
+
+// writeLargeValue appends a quoted string or x'..' literal for val, encoding it
+// in pieces of at most maxBufferedValueSize input bytes and flushing after each
+// piece. Hex encoding and both string escapings map every input byte on its
+// own, so the pieces concatenate to exactly what AppendValue produces.
+func (sw *Writer) writeLargeValue(val []byte, kind dumpformat.FieldKind) error {
+	if kind == dumpformat.KindBytes {
+		sw.buf = append(sw.buf, 'x')
+	}
+	sw.buf = append(sw.buf, '\'')
+	for len(val) > 0 {
+		piece := val[:min(len(val), maxBufferedValueSize)]
+		val = val[len(piece):]
+		if kind == dumpformat.KindBytes {
+			sw.buf = hex.AppendEncode(sw.buf, piece)
+		} else {
+			sw.buf = appendEscaped(sw.buf, piece, sw.cfg.EscapeBackslash)
+		}
+		if err := sw.flushBuf(); err != nil {
+			return err
+		}
+	}
+	sw.buf = append(sw.buf, '\'')
+	return nil
+}
+
+// flushBuf writes out the buffered part of the current row and empties buf.
+func (sw *Writer) flushBuf() error {
+	sw.tupleFlushed += uint64(len(sw.buf) - sw.tupleStart)
+	sw.tupleStart = 0
+	_, err := sw.w.Write(sw.buf)
+	sw.buf = sw.buf[:0]
 	return err
 }
 

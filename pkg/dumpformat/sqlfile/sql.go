@@ -16,7 +16,7 @@ package sqlfile
 
 import (
 	"bytes"
-	"fmt"
+	"encoding/hex"
 
 	"github.com/pingcap/tidb/pkg/dumpformat"
 )
@@ -37,7 +37,9 @@ func AppendValue(dst, val []byte, isNull bool, kind dumpformat.FieldKind, escape
 	case dumpformat.KindNumber:
 		return append(dst, val...)
 	case dumpformat.KindBytes:
-		return fmt.Appendf(dst, "x'%x'", val)
+		dst = append(dst, 'x', '\'')
+		dst = hex.AppendEncode(dst, val)
+		return append(dst, '\'')
 	default: // dumpformat.KindString
 		dst = append(dst, '\'')
 		dst = appendEscaped(dst, val, escapeBackslash)
