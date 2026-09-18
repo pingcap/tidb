@@ -218,12 +218,10 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 }
 
 // InjectProjBelowSort extracts the ScalarFunctions of `orderByItems` into a
-// PhysicalProjection and injects it below PhysicalTopN/PhysicalSort. The schema
-// of PhysicalSort and PhysicalTopN are the same as the schema of their
-// children. When a projection is injected as the child of PhysicalSort and
-// PhysicalTopN, some extra columns will be added into the schema of the
-// Projection, thus we need to add another Projection upon them to prune the
-// redundant columns.
+// PhysicalProjection and injects it below PhysicalTopN/PhysicalSort. Sort passes
+// through its child's columns, while TopN may have a pruned output schema.
+// Keep the helper columns through sorting, then use an upper projection to
+// restore the original output schema.
 func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base.PhysicalPlan {
 	hasScalarFunc, numOrderByItems := false, len(orderByItems)
 	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
@@ -234,10 +232,11 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 		return p
 	}
 
+	childPlan := p.Children()[0]
 	topProjExprs := make([]expression.Expression, 0, p.Schema().Len())
 	for i := range p.Schema().Columns {
 		col := p.Schema().Columns[i].Clone().(*expression.Column)
-		col.Index = i
+		col.Index = childPlan.Schema().ColumnIndex(col)
 		topProjExprs = append(topProjExprs, col)
 	}
 	topProj := physicalop.PhysicalProjection{
@@ -246,7 +245,6 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 	topProj.SetSchema(p.Schema().Clone())
 	topProj.SetChildren(p)
 
-	childPlan := p.Children()[0]
 	bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns)+numOrderByItems)
 	bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns)+numOrderByItems)
 	for _, col := range childPlan.Schema().Columns {
@@ -278,6 +276,11 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
 	p.SetChildren(bottomProj)
+	if topN, ok := p.(*physicalop.PhysicalTopN); ok {
+		// TopN can have a pruned output schema. Keep all helper columns here;
+		// the upper projection restores the original output after sorting.
+		topN.SetSchema(bottomProj.Schema().Clone())
+	}
 
 	if origChildProj, isChildProj := childPlan.(*physicalop.PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
