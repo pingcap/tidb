@@ -286,3 +286,94 @@ harness takes. Pooled over both runs: q03 wall 1.16 s vs 1.18 s, CPU 826 vs
 845 ms; q10 0.83 vs 0.84 s, 1146 vs 1149 ms. The change stays: it is Go's
 shape (key column types fixed at build) and removes two allocations per probe
 row, but it is recorded as unmeasured, not as a gain.
+
+## 2026-09-18: the goal yardstick on this box, and where the round trips go
+
+### Base vs head, sysbench and TPC-C, same box, 2 ABBA rounds, fresh tables per run
+
+The pre-campaign base 8123bb1 was rebuilt here (one libc cast: `statvfs.f_bsize`
+is `i64` on this VM) and measured against head 1e66243d on the same playground
+(4 cores). Throughput, latency and tail are head over base
+(results/matrix-goal4t, matrix-goal16t).
+
+```
+workload (4 threads)     base     head    tps%    lat%   tail%
+oltp_point_select      6294.7   6675.4    +6.0    -6.3   -10.1
+oltp_read_only          287.6    308.8    +7.4    -6.9    -7.8
+oltp_write_only         523.4    598.3   +14.3   -12.5   -15.7
+oltp_read_write         183.1    199.4    +8.9    -8.1    -6.8
+oltp_insert            1820.7   2010.5   +10.4    -9.6   -12.5
+oltp_delete            1369.3   1934.6   +41.3   -29.4   -18.0
+oltp_update_index      1346.0   1639.5   +21.8   -17.8   -20.2
+oltp_update_non_index  1307.5   1555.9   +19.0   -16.0   -18.7
+select_random_points   1368.5   1457.1    +6.5    -6.2    -7.1
+select_random_ranges   1771.4   1844.8    +4.1    -3.8    -6.9
+bulk_insert               2.8      3.6   +29.7   -33.3    +0.0
+tpcc_NEW_ORDER         4716.9   4983.9    +5.7    -8.6    +8.0
+tpcc_PAYMENT           4497.8   4778.1    +6.2    -4.0   -10.0
+tpcc_ORDER_STATUS       421.7    436.8    +3.6   -25.3   -15.6
+tpcc_DELIVERY           419.2    469.6   +12.0   -15.8    -2.2
+tpcc_STOCK_LEVEL        429.4    409.9    -4.5    -9.1   -33.8
+
+workload (16 threads)    base     head    tps%    lat%   tail%
+oltp_point_select     11162.5  11504.6    +3.1    -3.5   -10.8
+oltp_read_only          464.0    509.1    +9.7    -8.7    -9.4
+oltp_write_only         760.4    870.5   +14.5   -12.7    -8.6
+oltp_read_write         235.2    275.6   +17.2   -14.6   -10.2
+oltp_insert            3560.8   3882.3    +9.0    -8.4    -9.5
+oltp_delete            2251.2   3591.9   +59.6   -37.3   -17.2
+oltp_update_index      2031.0   2708.8   +33.4   -25.2   -25.8
+oltp_update_non_index  1954.6   2861.0   +46.4   -31.8   -34.6
+select_random_points   1878.6   1912.6    +1.8    -2.9    -6.1
+select_random_ranges   2847.3   3138.0   +10.2    -9.3   -10.3
+bulk_insert               3.1      3.6   +16.7   -17.6    +0.0   (one round; the disk filled)
+```
+
+The 16-thread TPC-C rows were lost: the playground's TiKV had grown from 2.8 GB
+to 11 GB over the day's table churn (raft-engine 4.4 GB without a purge
+threshold, RocksDB 5.5 GB of dropped-table garbage) and filled the disk.
+`raft-engine.purge-threshold = "1GB"` is now in the playground's TiKV config
+and a restart released the RocksDB garbage (1.6 GB after).
+
+### Why point_select is where it is
+
+Same-run, same box: Go 5613 tps, base 6100, head 6800 at 4 threads, so head
+over Go is 1.21 (the r14-era table had 1.28) and base over Go is 1.09. Node
+CPU per query: base 225 us, head 175 us; TiKV 169 us; the box is 30% idle at
+4 threads, so the loop is latency-bound, not CPU-bound. One-connection round
+trips: Go 0.58-0.61 ms, base 0.52, head 0.47. Go's own EXPLAIN ANALYZE puts
+its TiKV Get RPC at 0.67-0.79 ms of a 0.73-0.85 ms idle point get, so the
+node's share is a few tens of microseconds above the storage floor. Syscalls
+per query: head 9 (Go 15), context switches 3.5 (Go 4). A further 20% off the
+round trip cannot come from the node on this cluster.
+
+### RPCs per statement: the write path matches Go
+
+TiKV gRPC counters around 300-statement explicit transactions:
+
+```
+                      head                          go
+INSERT                lock 1.00  prewrite 1.00      lock 1.00  prewrite 1.00
+DELETE                lock 1.00  prewrite 1.00      lock 1.00  prewrite 1.00
+UPDATE (non-index)    lock 1.00  prewrite 1.00      lock 1.00  prewrite 1.00
+UPDATE (index)        lock 1.00  prewrite 1.00      lock 1.00  prewrite 1.00
+DELETE then INSERT    lock 1.00  prewrite 1.00      lock 1.00  prewrite 1.00
+autocommit INSERT     prewrite 0.98 (1PC)           prewrite 0.97
+autocommit UPDATE idx get 0.95  prewrite 1.00       get 0.97  prewrite 0.97
+write_only txn        lock 2.98 prewrite 2.52       lock 2.95 prewrite 2.26
+                      commit 2.24 get 0.22          commit 2.20
+```
+
+No missing round trip; the write-side gap against +25% is node CPU per
+statement, not protocol.
+
+### bulk_insert: 40% behind Go at the start of the day
+
+Profile of the head node under sysbench bulk_insert (about 50k rows per
+autocommit statement): 17% of node CPU was a memcmp in the coordinator's
+secondary-key filter after the primary batch committed, a linear scan of the
+primary batch's keys per mutation (fixed in 1e66243d: a key set, as Go's
+forgetPrimary implies); the mutation buffer's three trees per key were 5%
+(a3d33aa9: one tree with per-entry marks, Go's memdb node); the 1 MB statement
+was normalized twice (95684d90: once, as Go's StmtCtx.SQLDigest). A/B of the
+last two against 1e66243d: <pending>
