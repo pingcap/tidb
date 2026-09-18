@@ -161,10 +161,11 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 	useLateMaterializationCost := p.StoreType == kv.TiFlash && len(p.LateMaterializationFilterCondition) > 0 && p.lateMaterializationSelectivity > 0
 	if useLateMaterializationCost {
+		filterRows := rows / p.lateMaterializationSelectivity
 		cols := make([]*expression.Column, 0, len(p.Columns))
 		cols = expression.ExtractColumnsFromExpressions(cols, p.LateMaterializationFilterCondition, nil)
 		lmRowSize := getAvgRowSize(p.StatsInfo(), cols)
-		totalRowCount := rows/p.lateMaterializationSelectivity + TiFlashStartupRowPenalty
+		totalRowCount := filterRows + TiFlashStartupRowPenalty
 		p.PlanCostVer2 = costusage.NewCostVer2(option, scanFactor,
 			totalRowCount*max(math.Log2(lmRowSize), 0)*scanFactor.Value,
 			func() string {
@@ -175,6 +176,8 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 			func() string {
 				return fmt.Sprintf("lm_rest_col_scan(%v*logrowsize(%v)*%v*lm_scan_factor(%v))", rows, rowSize-lmRowSize, scanFactor, defaultVer2Factors.LateMaterializationScan.Value)
 			}))
+		filterCost := filterCostVer2(option, filterRows, p.LateMaterializationFilterCondition, getTaskCPUFactorVer2(p, taskType))
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, filterCost)
 	} else {
 		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 	}
