@@ -416,6 +416,14 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 	if !c.enabled {
 		return nil
 	}
+	c.doWithMetaLock(func() {
+		c.resetCommitting()
+	})
+	// Publish only durable metadata: a failed restore retry uses a new path and
+	// cannot repair a missing object referenced by an earlier migration.
+	if err := c.persistExtraBackupMeta(ctx); err != nil {
+		return err
+	}
 
 	est := stream.MigrationExtension(c.taskStorage).WithOperationContext(c.operationContext)
 
@@ -427,12 +435,7 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 		return errors.Annotatef(err, "failed to add the extra backup at path %s", c.metaPath())
 	}
 
-	c.doWithMetaLock(func() {
-		c.resetCommitting()
-	})
-	// Persist the metadata in case of SSTs were uploaded but the meta wasn't,
-	// which leads to a leakage.
-	return c.persistExtraBackupMeta(ctx)
+	return nil
 }
 
 func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {

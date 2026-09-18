@@ -39,11 +39,15 @@ type capturedLockWrite struct {
 
 type lockCaptureStorage struct {
 	storeapi.Storage
-	mu     sync.Mutex
-	writes []capturedLockWrite
+	failWritePath string
+	mu            sync.Mutex
+	writes        []capturedLockWrite
 }
 
 func (s *lockCaptureStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if name == s.failWritePath {
+		return fmt.Errorf("injected metadata write failure: %s", name)
+	}
 	s.captureLockWrite(name, data)
 	return s.Storage.WriteFile(ctx, name, data)
 }
@@ -201,6 +205,25 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 }
 
 func TestPiTRCollectorPrepareMigWritesOperationMetadata(t *testing.T) {
+	t.Run("failed metadata publication", func(t *testing.T) {
+		coll := newPiTRCollForTest(t)
+		defer coll.coll.writerRoutine.close()
+		coll.coll.taskStorage = &lockCaptureStorage{
+			Storage: coll.coll.taskStorage, failWritePath: coll.coll.metaPath(),
+		}
+		err := coll.coll.prepareMig(coll.cx)
+		require.ErrorContains(t, err, "injected metadata write failure")
+		ext := stream.MigrationExtension(coll.coll.taskStorage)
+		migrations, err := ext.Load(coll.cx)
+		require.NoError(t, err)
+		for _, migration := range migrations.ListAll() {
+			require.Empty(t, migration.IngestedSstPaths)
+		}
+		coll.Reopen()
+		defer coll.Done()
+		require.NoError(t, coll.coll.prepareMig(coll.cx))
+		require.Len(t, coll.ExtFullBkups(), 1)
+	})
 	coll := newPiTRCollForTest(t)
 	defer coll.Done()
 	capturingStorage := &lockCaptureStorage{Storage: coll.coll.taskStorage}
