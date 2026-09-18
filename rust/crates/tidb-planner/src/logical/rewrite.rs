@@ -3026,6 +3026,117 @@ mod analyzed_filter_selectivity_tests {
         );
     }
 
+    /// Same shape as
+    /// [`two_range_conditions_on_one_column_estimate_as_one_range`] but over
+    /// a `DATE` column with a v2 histogram plus TopN, reproducing TPC-H
+    /// Q15's `l_shipdate >= '1996-01-01' AND l_shipdate < '1996-04-01'`
+    /// window against `lineitem`'s real ANALYZEd stats.
+    #[test]
+    fn two_range_conditions_on_one_date_column_estimate_as_one_range() {
+        use tidb_datatype::{CoreTime, Time, TimeType};
+
+        let unique_id = 9;
+        let date = |y: u16, m: u8, d: u8| {
+            Datum::Time(
+                Time::new(CoreTime::from_date(y, m, d, 0, 0, 0, 0), TimeType::Date, 0).unwrap(),
+            )
+        };
+        let histogram = Histogram {
+            id: 1,
+            ndv: 3,
+            last_update_version: 1,
+            buckets: vec![
+                Bucket {
+                    count: 3_349_756,
+                    repeat: 2_647,
+                    ndv: 0,
+                    lower_bound: date(1995, 12, 31),
+                    upper_bound: date(1996, 1, 9),
+                },
+                Bucket {
+                    count: 3_565_968,
+                    repeat: 2_431,
+                    ndv: 0,
+                    lower_bound: date(1996, 4, 1),
+                    upper_bound: date(1996, 4, 9),
+                },
+            ],
+            ..Histogram::default()
+        };
+        // The TopN rows Q15's window crosses (real lineitem values), so the
+        // fix's grouped estimate is checked against the same histogram +
+        // TopN sum the production estimator computes.
+        let mut topn = tidb_stats::cmsketch::TopN::new(3);
+        let encode =
+            |value: &Datum| tidb_codec::encode_key(std::slice::from_ref(value)).unwrap_or_default();
+        topn.append(&encode(&date(1996, 1, 20)), 3_450);
+        topn.append(&encode(&date(1996, 2, 16)), 3_669);
+        topn.append(&encode(&date(1996, 3, 2)), 3_340);
+        topn.sort();
+        let hist_coll = HistColl::new(false, 6_001_215, [])
+            .with_histograms([(
+                unique_id,
+                std::sync::Arc::new(ColumnStats {
+                    histogram,
+                    topn: Some(topn),
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )])
+            .with_modify_count(0);
+        let table_stats =
+            StatsInfo::new(6_001_215.0, [(unique_id, 2_526.0)]).with_hist_coll(hist_coll);
+        let date_type = || FieldType::new(FieldTypeCode::Date);
+        let compare = |name: &str, value: Datum| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                date_type(),
+                vec![
+                    Expression::Column(Column::new(unique_id, date_type())),
+                    Expression::Constant(Constant::new(value, date_type())),
+                ],
+            ))
+        };
+        let joint = analyzed_filter_selectivity(
+            &table_stats,
+            &[
+                compare("ge", date(1996, 1, 1)),
+                compare("lt", date(1996, 4, 1)),
+            ],
+        )
+        .expect("an analyzed profile keeps the ranges");
+        let ge_alone =
+            analyzed_filter_selectivity(&table_stats, &[compare("ge", date(1996, 1, 1))]).unwrap();
+        let lt_alone =
+            analyzed_filter_selectivity(&table_stats, &[compare("lt", date(1996, 4, 1))]).unwrap();
+        let hist = table_stats.hist_coll().unwrap();
+        let one_range = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+            hist.histogram(unique_id).map(|stats| stats.as_ref()),
+            &[crate::cardinality::row_count_estimator::ColumnRange::new(
+                date(1996, 1, 1),
+                date(1996, 4, 1),
+                false,
+                true,
+            )],
+            date_type().collation(),
+            hist.realtime_count(),
+            hist.modify_count(),
+            false,
+            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        )
+        .est / 6_001_215.0;
+        assert!(
+            (joint - one_range).abs() < 1e-9,
+            "{joint} != {one_range} (the [1996-01-01, 1996-04-01) range)"
+        );
+        assert!(
+            (joint - ge_alone * lt_alone).abs() > 1e-6,
+            "{joint} is the independent product {ge_alone} * {lt_alone} \
+             (this is TPC-H Q15's bug: 27% of lineitem instead of ~3.8%)"
+        );
+    }
+
     /// Go `Selectivity` runs a single-column DNF through the ranger: two
     /// equalities under `OR` become two point ranges against the histogram.
     /// The rule used to answer any `OR` with the 0.8 default, which is what
