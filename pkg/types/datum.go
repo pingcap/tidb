@@ -1547,7 +1547,17 @@ func (d *Datum) convertToMysqlDuration(typeCtx Context, target *FieldType) (Datu
 			return ret, errors.Trace(err)
 		}
 	case KindString, KindBytes:
-		t, _, err := ParseDuration(typeCtx, d.GetString(), fsp)
+		s := d.GetString()
+		if len(s) == 0 {
+			// MySQL treats an empty string as a zero duration when storing it into
+			// a TIME column, even in strict mode, unlike DATE/DATETIME which reject
+			// it (see #69902). This is specific to column value conversion: other
+			// callers of ParseDuration (CAST, ADDTIME/SUBTIME, TIMEDIFF, ...) still
+			// treat an empty duration string as invalid.
+			ret.SetMysqlDuration(Duration{Duration: 0, Fsp: fsp})
+			return ret, nil
+		}
+		t, _, err := ParseDuration(typeCtx, s, fsp)
 		ret.SetMysqlDuration(t)
 		if err != nil {
 			return ret, errors.Trace(err)

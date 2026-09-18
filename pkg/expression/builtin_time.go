@@ -596,6 +596,12 @@ func (b *builtinDurationStringTimeDiffSig) evalDuration(ctx EvalContext, row chu
 	}
 
 	tc := typeCtx(ctx)
+	if len(rhsStr) == 0 {
+		// Unlike storing '' into a TIME column, TIMEDIFF never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", rhsStr))
+		return d, true, nil
+	}
 	rhs, _, isDuration, err := convertStringToDuration(tc, rhsStr, b.tp.GetDecimal())
 	if err != nil || !isDuration {
 		return d, true, err
@@ -632,6 +638,12 @@ func (b *builtinStringDurationTimeDiffSig) evalDuration(ctx EvalContext, row chu
 	}
 
 	tc := typeCtx(ctx)
+	if len(lhsStr) == 0 {
+		// Unlike storing '' into a TIME column, TIMEDIFF never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", lhsStr))
+		return d, true, nil
+	}
 	lhs, _, isDuration, err := convertStringToDuration(tc, lhsStr, b.tp.GetDecimal())
 	if err != nil || !isDuration {
 		return d, true, err
@@ -693,6 +705,12 @@ func (b *builtinTimeStringTimeDiffSig) evalDuration(ctx EvalContext, row chunk.R
 	}
 
 	tc := typeCtx(ctx)
+	if len(rhsStr) == 0 {
+		// Unlike storing '' into a TIME column, TIMEDIFF never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", rhsStr))
+		return d, true, nil
+	}
 	_, rhs, isDuration, err := convertStringToDuration(tc, rhsStr, b.tp.GetDecimal())
 	if err != nil || isDuration {
 		return d, true, err
@@ -729,6 +747,12 @@ func (b *builtinStringTimeTimeDiffSig) evalDuration(ctx EvalContext, row chunk.R
 	}
 
 	tc := typeCtx(ctx)
+	if len(lhsStr) == 0 {
+		// Unlike storing '' into a TIME column, TIMEDIFF never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", lhsStr))
+		return d, true, nil
+	}
 	_, lhs, isDuration, err := convertStringToDuration(tc, lhsStr, b.tp.GetDecimal())
 	if err != nil || isDuration {
 		return d, true, err
@@ -766,6 +790,16 @@ func (b *builtinStringStringTimeDiffSig) evalDuration(ctx EvalContext, row chunk
 
 	tc := typeCtx(ctx)
 	fsp := b.tp.GetDecimal()
+	if len(lhs) == 0 || len(rhs) == 0 {
+		// Unlike storing '' into a TIME column, TIMEDIFF never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		empty := lhs
+		if len(rhs) == 0 {
+			empty = rhs
+		}
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", empty))
+		return d, true, nil
+	}
 	lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(tc, lhs, fsp)
 	if err != nil {
 		return d, true, err
@@ -2414,6 +2448,13 @@ func (b *builtinTimeSig) evalDuration(ctx EvalContext, row chunk.Row) (res types
 	expr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
+	}
+	if len(expr) == 0 {
+		// Unlike storing '' into a TIME column, TIME() never treats an empty
+		// string as a zero duration: MySQL always warns and returns NULL.
+		tc := typeCtx(ctx)
+		err = tc.HandleTruncate(types.ErrTruncatedWrongVal.FastGenByArgs("time", expr))
+		return res, true, err
 	}
 
 	fsp := 0
@@ -5050,10 +5091,16 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return types.ZeroDatetime, true, nil
+	}
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, types.GetFsp(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -5144,10 +5191,16 @@ func (b *builtinAddDurationAndStringSig) evalDuration(ctx EvalContext, row chunk
 	if isNull || err != nil {
 		return types.ZeroDuration, isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return types.ZeroDuration, true, nil
+	}
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, types.GetFsp(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -5259,6 +5312,12 @@ func (b *builtinAddStringAndStringSig) evalString(ctx EvalContext, row chunk.Row
 		return "", isNull, err
 	}
 	tc := typeCtx(ctx)
+	if len(arg1Str) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+		// empty duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1Str))
+		return "", true, nil
+	}
 	arg1, _, err = types.ParseDuration(tc, arg1Str, getFsp4TimeAddSub(arg1Str))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -5360,10 +5419,16 @@ func (b *builtinAddDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+		// empty duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return "", true, nil
+	}
 	if !isDuration(s) {
 		return "", true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, getFsp4TimeAddSub(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -6096,10 +6161,16 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, SUBTIME never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return types.ZeroDatetime, true, nil
+	}
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, types.GetFsp(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -6212,6 +6283,12 @@ func (b *builtinSubStringAndStringSig) evalString(ctx EvalContext, row chunk.Row
 		return "", isNull, err
 	}
 	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+		// empty duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return "", true, nil
+	}
 	arg1, _, err = types.ParseDuration(tc, s, getFsp4TimeAddSub(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -6309,10 +6386,16 @@ func (b *builtinSubDurationAndStringSig) evalDuration(ctx EvalContext, row chunk
 	if isNull || err != nil {
 		return types.ZeroDuration, isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, SUBTIME never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return types.ZeroDuration, true, nil
+	}
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, types.GetFsp(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -6412,10 +6495,16 @@ func (b *builtinSubDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+		// empty duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return "", true, nil
+	}
 	if !isDuration(s) {
 		return "", true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, getFsp4TimeAddSub(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
