@@ -20,6 +20,8 @@ enum ExecType {
   TypeTopN = 4;
   TypeLimit = 5;
   TypeStreamAgg = 6;
+  // Upstream tipb executor.proto:32.
+  TypeExchangeSender = 9;
 }
 
 enum EngineType {
@@ -453,7 +455,31 @@ message Executor {
   optional TopN topN = 6;
   optional Limit limit = 7;
   optional string executor_id = 10;
+  // Upstream tipb executor.proto:59. The tree form is what TiFlash DAG
+  // dispatch consumes (DAGRequest.root_executor).
+  optional ExchangeSender exchange_sender = 12;
   optional uint32 parent_idx = 25;
+}
+
+// Upstream tipb executor.proto:77.
+enum ExchangeType {
+  PassThrough = 0;
+  Broadcast = 1;
+  Hash = 2;
+}
+
+// Upstream tipb executor.proto:91. This projection carries the fields the
+// single-fragment root sender sets (tp, encoded_task_meta, child); partition
+// keys, compression, and CTE/zone fields stay out until the corresponding
+// planner tiers exist.
+message ExchangeSender {
+  optional ExchangeType tp = 1;
+  // The sender task's own TaskMeta (upstream repeated bytes; Go sets one
+  // entry for a root fragment: the coordinator-side receiver, task_id -1).
+  repeated bytes encoded_task_meta = 2;
+  optional Executor child = 4;
+  // Upstream tipb executor.proto:97: the fragment's output field types.
+  repeated FieldType all_field_types = 6;
 }
 
 // TiKV list-based DAG request fields owned by ConstructDAGReq. TiFlash's
@@ -469,6 +495,9 @@ message DAGRequest {
   optional bool collect_execution_summaries = 12;
   optional ChunkMemoryLayout chunk_memory_layout = 14;
   optional uint32 div_precision_increment = 19;
+  // Upstream tipb select.proto: the tree-form executor tree, currently only
+  // consumed by TiFlash. When set, the list-form `executors` is ignored.
+  optional Executor root_executor = 17;
 }
 
 message ChunkMemoryLayout {

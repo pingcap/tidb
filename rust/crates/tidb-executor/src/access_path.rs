@@ -5181,6 +5181,8 @@ impl IndexJoinLookupExec {
                 true,
                 &self.decode_context,
                 &self.statement,
+                crate::remote_scan::PushdownReadEngine::TiKv,
+                0,
             )
             .map_err(|error| {
                 ExecError::unsupported(format!(
@@ -5357,6 +5359,8 @@ impl IndexJoinLookupExec {
                 true,
                 &self.decode_context,
                 &self.statement,
+                crate::remote_scan::PushdownReadEngine::TiKv,
+                0,
             )
             .map_err(|error| {
                 ExecError::unsupported(format!(

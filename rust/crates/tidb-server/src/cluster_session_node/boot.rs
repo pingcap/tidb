@@ -187,8 +187,23 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // surviving rows come back. The session's own staged writes are merged on
     // top of them client-side, which is Go's `UnionScan` over a distsql
     // reader.
-    let cop_scans: Arc<dyn PushdownScanner> =
-        Arc::new(CopScanSource::new(authority.transport_factory()));
+    //
+    // The TiFlash MPP lowering shares the node's PD seeds: one client for
+    // the store listing (`engine=tiflash`) and the record-range region scan
+    // the dispatch needs (Go's `MPPClient.ConstructMPPTasks`).
+    let cop_scans: Arc<dyn PushdownScanner> = {
+        let catalog = Arc::clone(&catalog);
+        let tiflash_mpp = crate::cluster_session_node::build_tiflash_mpp_source(
+            &config.pd_endpoints,
+            move || catalog.load().schema_version,
+        );
+        match tiflash_mpp {
+            Some(source) => Arc::new(
+                CopScanSource::new(authority.transport_factory()).with_tiflash_mpp(source),
+            ),
+            None => Arc::new(CopScanSource::new(authority.transport_factory())),
+        }
+    };
     // This node's identity in the cluster: `/tidb/server/info/<uuid>` under
     // a lease, plus the `/topology/tidb/<host:port>` pair, refreshed for as
     // long as the process lives -- Go's `Domain.Init` starting the

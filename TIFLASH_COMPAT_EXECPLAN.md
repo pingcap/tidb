@@ -150,36 +150,61 @@ Validation: `cargo test -p tidb-planner --lib` (941 pass; the single failure
 `cargo test -p tidb-executor --lib` (1332 pass),
 `cargo test -p tidb-planner --test tiflash_mpp_root_shape_source` (4 pass).
 
-### M2 — Dispatch: run the MPP task against real TiFlash
+### M2 — Dispatch: run the MPP task against real TiFlash (DONE 2026-09-18)
 
-Outcome: the planned fragment actually executes: encode the DAG request (tipb
-executors: TableScan + ExchangeSender; `mpp_version=3`), dispatch
-`DispatchMPPTask` to a TiFlash store address resolved from PD (label
-`engine=tiflash`, via the ported `mpp_probe` manager), stream
-`EstablishMPPConnection`/`MPPDataIngest` responses, decode CHBlock
-(`tidb-distsql/src/chblock.rs`), return rows through the existing record-set path.
+Implemented and verified live:
 
-Edit targets:
+- `rust/crates/tidb-proto/proto/mpp.proto`: DispatchTaskRequest /
+  CancelTaskRequest / EstablishMPPConnectionRequest / MPPDataPacket projections
+  (upstream kvproto mpp.proto:54-109); `tikvpb.proto`: DispatchMPPTask /
+  CancelMPPTask / EstablishMPPConnection / ReportMPPTaskStatus RPCs; `select.proto`:
+  tree-form `root_executor` (tipb select.proto: field 17), `ExchangeSender` +
+  `ExchangeType` (executor.proto:77-99), `Executor.exchange_sender` (field 12),
+  `ExecType.TypeExchangeSender` (executor.proto:32).
+- `rust/crates/tidb-exec/src/tiflash_mpp_scan.rs` (new): the single-fragment MPP
+  lowering — TiFlash store selection via PD `GetAllStores` + `engine=tiflash`, region
+  collection via PD `BatchScanRegions` over the executor's wire record ranges,
+  tree-form DAG marshal (`TableScan` under PassThrough sender, TypeChunk, little
+  endian), TaskMeta with Go's field set (start_ts, task 1, store address, mpp version
+  3, NULL keyspace 4294967295, api version 1), `DispatchMPPTask` then
+  `EstablishMPPConnection` streaming, packets decoded through the shared
+  `SelectResponseIter`.
+- Engine plumbing: `PushdownScanRequest.read_engine`/`.schema_version` (Go
+  `PhysicalTableScan.StoreType` + `SchemaMetaVersion`) carried from the physical scan
+  through `TableScanExec` into the pushdown request; `CopScanSource` routes TiFlash
+  requests to the MPP source and refuses by name (Backend error, never a silent TiKV
+  answer) anything it cannot lower (Selection/TopN/aggregate/ordered/index shapes).
+- Node wiring: `cluster_session_node/boot.rs` builds the source over the node's PD
+  seeds plus the catalog schema-version watch (`is.SchemaMetaVersion` at dispatch
+  time; a stale or zero version makes TiFlash treat a synced table as missing).
 
-- `rust/crates/tidb-txnkv/src/rpc/` (new mpp client functions beside
-  `tonic_coprocessor.rs`, mirroring `pkg/store/copr/mpp.go` request/response handling:
-  meta, retry, cancellation, store address selection).
-- `rust/crates/tidb-distsql/src/` request builder: MPP task meta fields
-  (`mpp_version`, query ts, task id, `exchange_sender` encodings) following Go
-  `buildMPPDispatchTasks`.
-- `rust/crates/tidb-executor/src/driver/` (or a new `mpp.rs` module beside the table
-  reader): the coordinator loop port of `local_mpp_coordinator.go` narrowed to the
-  PassThrough single-fragment case; errors surface with Go's message shapes
-  (`MPP coordinator error` family).
-- Unit tests with a fixture transport for dispatch/receive (existing
-  `direct_unary_*` test patterns in `tidb-distsql/tests/` are the template).
+Live receipt (Rust node :49300, playground `tiflash-rust`, table `tiflashv.t`, 8 rows,
+replica set by Go DDL, AVAILABLE=1):
 
-Verify: `cargo test -p tidb-txnkv -p tidb-distsql -p tidb-executor`; then the live
-probe on the playground: forced TiFlash SELECT returns the 8 rows via TiFlash
-(confirm engine: EXPLAIN ANALYZE task label + TiFlash grpc log or
-`information_schema.cluster_statements_summary` digest engine counters; simplest hard
-evidence: stop-the-world check — read succeeds with `tikv` removed from
-`tidb_isolation_read_engines`).
+    SELECT /*+ READ_FROM_STORAGE(TIFLASH[t]) */ * FROM t
+
+returns exactly Go's 8 rows; TiFlash's own log records the task
+(`finish with 0.026 seconds, 8 rows, 1 blocks, 144 bytes`) — the data crossed the
+columnar engine. TiFlash also logged the exact failure ladder this slice debugged
+through: duplicate executor ids -> missing DispatchTaskRequest.schema_ver -> keyspace
+0 instead of the NULL keyspace 4294967295 -> retry_regions being advisory (Go
+mpp.go:174-189 invalidates the cache; it does not fail the dispatch).
+
+Refusals by name (Backend error, statement fails): pushed Selection / TopN /
+partial aggregate / ordered scans / index scans — a later milestone lowers them.
+Plain (non-hinted) queries are unchanged (`cop[tikv]`).
+
+Validation: `cargo test -p tidb-proto -p tidb-distsql -p tidb-executor --lib --tests`
+(all green: 30/249/1332/329/...), `cargo test -p tidb-exec --lib` (332 pass),
+`cargo test -p tidb-planner --lib` (941 pass, one pre-existing unrelated failure),
+release build clean; live dispatch transcript in `/tmp/tiflash-rust-node.log` and
+`~/.tiup/data/tiflash-rust/tiflash-0/tiflash.log`.
+
+Known boundaries (documented, not approximated): isolation-read-engines-only
+enforcement is not wired into the executor request (hint or planner store assignment
+is the trigger); `RetryRegions` responses are logged, not cache-invalidated; the
+tidb-exec `--tests` targets carry six pre-existing compile errors present on pristine
+`origin/hparser-integration` HEAD (verified by stashing).
 
 ### M3 — Rust-only cluster read acceptance
 
@@ -250,7 +275,7 @@ read receipt, Rust-only cluster receipt, DDL receipt, and the commit map.
 
 - [x] M0: playground baseline receipts (Go green; Rust gaps captured).
 - [x] M1: live planner TiFlash MPP plan (EXPLAIN shape parity).
-- [ ] M2: dispatch to real TiFlash, CHBlock decode, rows served.
+- [x] M2: dispatch to real TiFlash, rows served through the columnar engine.
 - [ ] M3: Rust-only cluster read acceptance.
 - [ ] M4: DDL surface (job, PD rules, polling, information_schema).
 - [ ] M5: push + receipts + goal audit.
@@ -277,3 +302,14 @@ read receipt, Rust-only cluster receipt, DDL receipt, and the commit map.
 - 2026-09-18: pre-existing failure `union_unsigned_widening_uses_the_in_union_cast_signature`
   reproduces on pristine `origin/hparser-integration` HEAD (verified by stashing the
   change); it is outside this plan's scope and left for its owning surface.
+- 2026-09-18 (M2): the single-fragment lowering computes the dispatch regions from
+  the executor's wire record ranges (`PushdownScanRequest.ranges`) via PD
+  `BatchScanRegions`, NOT from a recomputed table prefix — the raw table prefix lacks
+  the flagged-int key encoding and selects the wrong region.
+- 2026-09-18 (M2): the planner's read_engine trigger covers hint/planner store
+  assignment; `tidb_isolation_read_engines` pruning is still absent from
+  `DispatchContext`, so an engines-only forced read keeps planning TiKV. Recorded as
+  the M4-adjacent gap; the goal's claim is demonstrated through the hint path.
+- 2026-09-18 (M2): `PushdownScanColumn`-based collations keep the shared TiKV
+  lowering's un-rewritten binary id (63); the MPP lowering rewrites ids to Go's
+  new-collation form (-63) at its own boundary, matching Go `ColumnToProto` exactly.

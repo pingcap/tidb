@@ -549,6 +549,8 @@ fn count_star_lowers_to_count_with_one_constant_child() {
         let request = PushdownScanRequest {
             table_id: 91,
             index: None,
+            read_engine: tidb_executor::remote_scan::PushdownReadEngine::TiKv,
+            schema_version: 0,
             columns: vec![PushdownScanColumn {
                 id: 1,
                 field_type: FieldType::new(FieldTypeCode::LongLong),
@@ -640,6 +642,8 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
     let request = PushdownScanRequest {
         table_id: 91,
         index: None,
+        read_engine: tidb_executor::remote_scan::PushdownReadEngine::TiKv,
+        schema_version: 0,
         columns: vec![PushdownScanColumn {
             id: 1,
             field_type: FieldType::new(FieldTypeCode::LongLong),

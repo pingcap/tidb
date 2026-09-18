@@ -611,6 +611,13 @@ fn build_table_scan(
             ));
         }
     }
+    // Go `PhysicalTableScan.StoreType`: the planner assigned this scan to the
+    // columnar replica, so the pushdown request names TiFlash and the storage
+    // seam lowers it through MPP dispatch instead of the TiKV cop path.
+    if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiFlash {
+        source.set_read_engine(crate::remote_scan::PushdownReadEngine::TiFlash);
+        source.set_schema_version(catalog.metadata_version());
+    }
     if let Some(rows) = scan.base.base.stats_info().map(|stats| stats.row_count()) {
         source.accept_scan_estimate(rows);
     }

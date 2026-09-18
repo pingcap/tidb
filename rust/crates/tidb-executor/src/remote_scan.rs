@@ -66,6 +66,17 @@ use tidb_expr::expression::Expression;
 use tidb_txnkv::Key;
 
 use crate::predicate_pushdown::ScanPredicate;
+
+/// Go `kv.StoreType` narrowed to the engines a pushdown scan names.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PushdownReadEngine {
+    /// Go `kv.TiKV`: the row storage (the only engine the TiKV lowering
+    /// serves).
+    #[default]
+    TiKv,
+    /// Go `kv.TiFlash`: the columnar replica, served through MPP dispatch.
+    TiFlash,
+}
 use crate::storage::StorageError;
 
 /// One column a remote scan must return, in the order the caller wants it.
@@ -446,6 +457,16 @@ pub struct PushdownScanRequest {
     /// The timestamp the remote scan must read at: the statement's own
     /// snapshot, filled in by the storage that owns it.
     pub snapshot_ts: u64,
+    /// Go `PhysicalTableScan.StoreType`: which engine serves this scan.
+    /// TiFlash requests are lowered by the MPP dispatch source when the node
+    /// has one; the TiKV lowering must refuse them by name instead of
+    /// silently serving the table from row storage.
+    pub read_engine: PushdownReadEngine,
+    /// Go `MPPDispatchRequest.SchemaVar` (`is.SchemaMetaVersion()`): the
+    /// schema generation the request's table was resolved against. TiFlash
+    /// refuses a dispatch whose version cannot resolve the table, so this
+    /// must be nonzero for a TiFlash read; zero names no schema.
+    pub schema_version: u64,
     /// The scanned record ranges, as half-open `[start, end)` pairs in
     /// ascending key order.
     ///
@@ -778,8 +799,8 @@ mod tests {
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
     use crate::driver::{
-        build_prepared_select_plan, run_select_on, Catalog, PreparedPlanCacheEnvironment,
-        DEFAULT_DATABASE,
+        Catalog, DEFAULT_DATABASE, PreparedPlanCacheEnvironment, build_prepared_select_plan,
+        run_select_on,
     };
     use crate::executor::{Executor, ExecutorMeta};
     use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
@@ -787,7 +808,7 @@ mod tests {
     use crate::mem_table::MemTableSourceExec;
     use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
     use crate::run_prepared_select_for_test;
-    use crate::storage::{capture_storage_ops, MemTableStorage, TableStorage};
+    use crate::storage::{MemTableStorage, TableStorage, capture_storage_ops};
 
     /// The committed half of a cluster read, shared by the snapshot the
     /// session reads through and by the coprocessor below it.
@@ -1726,7 +1747,9 @@ mod tests {
                 (" LIMIT 1 OFFSET 1", vec![13]),
                 (" DESC LIMIT 1", vec![13]),
             ] {
-                let sql = format!("SELECT b FROM t FORCE INDEX(check_stored) WHERE c>=21 AND b>11 ORDER BY c{suffix}");
+                let sql = format!(
+                    "SELECT b FROM t FORCE INDEX(check_stored) WHERE c>=21 AND b>11 ORDER BY c{suffix}"
+                );
                 assert_eq!(
                     run_select_on(&sql, &catalog, &ctx).unwrap(),
                     expected

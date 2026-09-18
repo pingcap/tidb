@@ -48,9 +48,10 @@ crossbeam-channel = "0.5"
 prost.workspace = true
 regex.workspace = true
 serde_json = { workspace = true }
+tokio = { workspace = true }
+tonic.workspace = true
 reqwest = { workspace = true }
 tidb-placement = { path = "../tidb-placement" }
-tokio = { workspace = true }
 
 [dev-dependencies]
 chrono-tz.workspace = true

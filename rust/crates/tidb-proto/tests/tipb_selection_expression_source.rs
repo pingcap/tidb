@@ -56,6 +56,7 @@ fn selection_executor_and_nonnullable_defaults_keep_exact_wire_tags() {
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
+        exchange_sender: None,
     };
     let expected = vec![
         0x08, 0x02, // Executor.tp = TypeSelection (field 1).

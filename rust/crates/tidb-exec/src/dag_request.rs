@@ -23,18 +23,18 @@
 use std::{error::Error, fmt};
 
 use tidb_ast::BinaryOp;
-use tidb_distsql::{system_endian, EncodeType as DistSqlEncodeType, SystemEndian};
+use tidb_distsql::{EncodeType as DistSqlEncodeType, SystemEndian, system_endian};
 use tidb_expr::{
     expression::Expression,
-    pb_predicate::{bigint_column_field_type, int_comparison_to_pb, IntPbOperand},
+    pb_predicate::{IntPbOperand, bigint_column_field_type, int_comparison_to_pb},
     pushdown_catalog::ColumnDescriptor,
 };
 use tidb_planner::{
     physical::{PhysicalIndexScan, PhysicalSelection, PhysicalTableScan},
     signed_bigint_ranger::{BigIntComparison, ComparisonOp, ComparisonOperand},
     tikv_scan_spec::{
-        check_cover_index, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
-        UnsupportedScanFeature,
+        ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec, UnsupportedScanFeature,
+        check_cover_index,
     },
 };
 use tidb_proto::tipb::{
@@ -214,6 +214,7 @@ pub fn limit_to_pb(limit: u64) -> Executor {
         limit: Some(Limit { limit: Some(limit) }),
         executor_id: Some(String::new()),
         parent_idx: None,
+        exchange_sender: None,
     }
 }
 
@@ -410,6 +411,7 @@ pub fn construct_index_aggregated_dag_req(
         limit: None,
         executor_id: None,
         parent_idx: None,
+        exchange_sender: None,
     }];
     if !conditions.is_empty() {
         executors.push(selection_executor(conditions)?);
@@ -445,6 +447,7 @@ pub fn construct_index_aggregated_dag_req(
         div_precision_increment: (context.div_precision_increment
             != DEFAULT_DIV_PRECISION_INCREMENT)
             .then_some(context.div_precision_increment),
+        root_executor: None,
     })
 }
 
@@ -464,6 +467,7 @@ fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
+        exchange_sender: None,
     }
 }
 
@@ -596,6 +600,7 @@ fn construct_dag_req_assembled(
         div_precision_increment: (context.div_precision_increment
             != DEFAULT_DIV_PRECISION_INCREMENT)
             .then_some(context.div_precision_increment),
+        root_executor: None,
     })
 }
 
@@ -748,6 +753,7 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
         // remains empty for TiKV's list form.
         executor_id: Some(String::new()),
         parent_idx: None,
+        exchange_sender: None,
     })
 }
 
@@ -780,6 +786,7 @@ fn aggregation_to_pb(
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
+        exchange_sender: None,
     })
 }
 
@@ -814,6 +821,7 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
         // even for TiKV, so field 10 is present with an empty string.
         executor_id: Some(String::new()),
         parent_idx: None,
+        exchange_sender: None,
     })
 }
 
@@ -839,6 +847,7 @@ fn index_scan_to_pb(plan: &PhysicalIndexScan) -> Result<Executor, DagRequestBuil
         limit: None,
         executor_id: None,
         parent_idx: None,
+        exchange_sender: None,
     })
 }
 

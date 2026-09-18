@@ -22,7 +22,7 @@
 //! pulls. Concrete TiKV routing, RPC, retries, cancellation, memory accounting,
 //! and asynchronous production stay outside this dependency-closed runtime.
 
-mod query_response;
+pub mod query_response;
 
 pub use query_response::{QueryResponse, QueryResponseError, QueryResultSubset, QuerySelectResult};
 

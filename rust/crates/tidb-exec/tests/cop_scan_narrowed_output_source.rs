@@ -232,6 +232,8 @@ fn request_over(
     PushdownScanRequest {
         table_id: 91,
         index: None,
+        read_engine: tidb_executor::remote_scan::PushdownReadEngine::TiKv,
+        schema_version: 0,
         columns,
         handle_index: None,
         primary_column_ids: vec![1],

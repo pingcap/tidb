@@ -91,8 +91,8 @@ pub use kv_request::{
     GLOBAL_REPLICA_SCOPE,
 };
 pub use query_runtime::{
-    InjectedQueryRuntime, QueryDispatch, QueryOperation, QueryResponseError, QueryResultContext,
-    QueryRuntimeError, QueryTransport,
+    InjectedQueryRuntime, QueryDispatch, QueryOperation, QueryResponse, QueryResponseError,
+    QueryResultContext, QueryRuntimeError, QueryTransport,
 };
 pub use read_bytes_ema::ReadBytesEma;
 pub use region_location::RegionTaskLocation;

@@ -472,6 +472,8 @@ impl KvTable {
         retain_identity: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
+        read_engine: crate::remote_scan::PushdownReadEngine,
+        schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         let common_handle = !self.common_handle_offsets.is_empty();
         let common_primary = crate::handle_range::clustered_primary_metadata(self);
@@ -658,6 +660,8 @@ impl KvTable {
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
             snapshot_ts: 0,
+            read_engine,
+            schema_version,
             ranges,
             range_hints: request_range_hints.map_or_else(Vec::new, <[usize]>::to_vec),
             statement: statement.clone(),
@@ -865,6 +869,8 @@ impl KvTable {
             true,
             &RowDecodeContext::legacy_default(zone),
             statement,
+            crate::remote_scan::PushdownReadEngine::TiKv,
+            0,
         )
     }
 
@@ -1029,6 +1035,8 @@ impl KvTable {
             true,
             &context,
             statement,
+            crate::remote_scan::PushdownReadEngine::TiKv,
+            0,
         )?
         else {
             return Ok(None);
@@ -1334,6 +1342,8 @@ impl KvTable {
             // Order-free responses are opted into per call site below.
             allow_unordered_response: false,
             snapshot_ts: 0,
+            read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+            schema_version: 0,
             ranges,
             range_hints: Vec::new(),
             statement: statement.clone(),
@@ -1554,6 +1564,8 @@ impl KvTable {
             // Order-free responses are opted into per call site below.
             allow_unordered_response: false,
             snapshot_ts: 0,
+            read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+            schema_version: 0,
             ranges: key_ranges,
             range_hints: Vec::new(),
             statement: statement.clone(),
@@ -1887,6 +1899,8 @@ impl KvTable {
             keep_order,
             allow_unordered_response: unordered,
             snapshot_ts: 0,
+            read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+            schema_version: 0,
             ranges: key_ranges,
             range_hints: Vec::new(),
             statement: statement.clone(),
@@ -2015,6 +2029,8 @@ impl KvTable {
             true,
             context,
             &PushdownStatementContext::from_stmt(context.expression()),
+            crate::remote_scan::PushdownReadEngine::TiKv,
+            0,
         )? {
             let decoder = self.row_decoder_projected(None, context)?;
             let mut rows = Vec::new();
@@ -3596,6 +3612,14 @@ pub struct TableScanExec {
     /// output schema.
     partial_input_types: Option<Vec<FieldType>>,
     partial_context: Option<crate::StmtContext>,
+    /// Go `PhysicalTableScan.StoreType`, projected onto the pushdown
+    /// request. The default is row storage; the driver sets TiFlash for a
+    /// scan the planner assigned to the columnar replica.
+    read_engine: crate::remote_scan::PushdownReadEngine,
+    /// Go `is.SchemaMetaVersion()`: the schema generation this scan's table
+    /// was resolved against, dispatched with the request so TiFlash resolves
+    /// the table in a matching schema.
+    schema_version: u64,
     /// Go's `desc` on the `TableScan`: walk the record ranges BACKWARDS.
     /// Set by [`crate::table_access::TableAccess::accept_keep_order`], and
     /// honored on the remote and the local cursor alike -- acceptance is a
@@ -3727,6 +3751,22 @@ impl PartialSum {
 }
 
 impl TableScanExec {
+    /// Names the engine the planner assigned this scan to. Only the driver's
+    /// physical builder calls this, once per built scan.
+    pub fn set_read_engine(
+        &mut self,
+        engine: crate::remote_scan::PushdownReadEngine,
+    ) -> &mut Self {
+        self.read_engine = engine;
+        self
+    }
+
+    /// Records the schema generation this scan was resolved against, so the
+    /// dispatch names a schema that actually contains the table.
+    pub fn set_schema_version(&mut self, version: u64) -> &mut Self {
+        self.schema_version = version;
+        self
+    }
     /// A coprocessor receipt covers only the descriptions sent to it, not
     /// conditions retained solely in the executable Selection. Operations
     /// after Selection may move remote only when that entire input is known.
@@ -3772,6 +3812,8 @@ impl TableScanExec {
             limit: None,
             emitted: 0,
             handle_ranges: None,
+            read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+            schema_version: 0,
             decode_context,
             statement,
             extra_handle_slot: None,
@@ -4480,6 +4522,8 @@ impl Executor for TableScanExec {
                 self.table.has_dirty_content() || self.extra_handle_slot.is_some(),
                 &self.decode_context,
                 &self.statement,
+                self.read_engine,
+                self.schema_version,
             )
             .map_err(ExecError::from)?;
         if self.remote.is_some() {
@@ -5308,6 +5352,8 @@ mod remote_cursor_tests {
                         retain_identity,
                         &RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
                         &PushdownStatementContext::default(),
+                        crate::remote_scan::PushdownReadEngine::TiKv,
+                        0,
                     )
                     .expect("remote scan construction succeeds")
                     .expect("the capture backend serves the request");
@@ -5447,6 +5493,8 @@ mod remote_cursor_tests {
                 true,
                 &RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
                 &PushdownStatementContext::default(),
+                crate::remote_scan::PushdownReadEngine::TiKv,
+                0,
             )
             .expect("remote scan construction succeeds")
             .expect("the capture backend serves the requests");

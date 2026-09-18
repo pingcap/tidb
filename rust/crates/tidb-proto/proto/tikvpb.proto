@@ -11,6 +11,7 @@ syntax = "proto3";
 package tikvpb;
 
 import "coprocessor.proto";
+import "mpp.proto";
 
 // Key/value store API for TiKV.
 service Tikv {
@@ -18,6 +19,14 @@ service Tikv {
   rpc Coprocessor(coprocessor.Request) returns (coprocessor.Response) {}
   // Multiplexes opaque TiKV commands over one persistent duplex stream.
   rpc BatchCommands(stream BatchCommandsRequest) returns (stream BatchCommandsResponse) {}
+  // Dispatches one MPP task to a TiFlash store (upstream tikvpb.proto:100).
+  rpc DispatchMPPTask(mpp.DispatchTaskRequest) returns (mpp.DispatchTaskResponse) {}
+  // Cancels running MPP tasks (upstream tikvpb.proto:101).
+  rpc CancelMPPTask(mpp.CancelTaskRequest) returns (mpp.CancelTaskResponse) {}
+  // Streams a task's results to the coordinator (upstream tikvpb.proto:102).
+  rpc EstablishMPPConnection(mpp.EstablishMPPConnectionRequest) returns (stream mpp.MPPDataPacket) {}
+  // Polls a task's execution status (upstream tikvpb.proto:104).
+  rpc ReportMPPTaskStatus(mpp.ReportTaskStatusRequest) returns (mpp.ReportTaskStatusResponse) {}
 }
 
 // Opaque, dependency-closed projection of TiKV's BatchCommands envelopes.

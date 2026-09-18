@@ -7259,5 +7259,29 @@ fn detached_storage() -> ClusterTableStorage {
     ClusterTableStorage::new(MutationBuffer::new(), slot)
 }
 
+/// Builds the TiFlash MPP dispatch source over the node's PD seeds.
+///
+/// A node that cannot reach PD still boots: the MPP capability degrades to
+/// refusal, which surfaces at the statement as "no live TiFlash store" only
+/// when a query actually names the columnar engine.
+#[must_use]
+pub fn build_tiflash_mpp_source(
+    pd_endpoints: &[String],
+    schema_version: impl Fn() -> i64 + Send + Sync + 'static,
+) -> Option<tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource> {
+    if pd_endpoints.is_empty() {
+        return None;
+    }
+    match tidb_pd_client::PdClient::connect_seeds(pd_endpoints.to_vec(), Duration::from_secs(10)) {
+        Ok(client) => {
+            Some(tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource::new(client, schema_version))
+        }
+        Err(error) => {
+            eprintln!("{{\"event\":\"tiflash_mpp_pd_unreachable\",\"error\":\"{error}\"}}");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

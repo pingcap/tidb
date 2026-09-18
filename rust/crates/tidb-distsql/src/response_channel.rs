@@ -773,7 +773,7 @@ impl SelectResponseIter {
         }
     }
 
-    pub(crate) fn from_query_response(
+    pub fn from_query_response(
         response: Box<dyn QueryResponse + Send>,
         final_field_types: Vec<FieldType>,
         intermediate_output_types: Vec<Vec<FieldType>>,

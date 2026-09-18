@@ -2,6 +2,7 @@ syntax = "proto3";
 package mpp;
 
 import "metapb.proto";
+import "coprocessor.proto";
 
 // Wire-compatible dependency-closed projection of kvproto mpp.proto.
 message TaskMeta {
@@ -44,4 +45,44 @@ message ReportTaskStatusRequest {
 
 message ReportTaskStatusResponse {
   Error error = 1;
+}
+
+// Upstream kvproto mpp.proto:54. `table_regions` (6) and
+// `table_shard_infos` (7) stay out of this bounded projection until the
+// partition-table and TiCI/FTS dispatch paths exist; regions keep their
+// exact upstream field numbers and wire shape.
+message DispatchTaskRequest {
+  TaskMeta meta = 1;
+  bytes encoded_plan = 2;
+  int64 timeout = 3;
+  repeated coprocessor.RegionInfo regions = 4;
+  int64 schema_ver = 5;
+}
+
+// Upstream kvproto mpp.proto:74.
+message CancelTaskRequest {
+  TaskMeta meta = 1;
+  Error error = 2;
+}
+
+message CancelTaskResponse {
+  Error error = 1;
+}
+
+// Upstream kvproto mpp.proto:96: build connection between different tasks.
+// Data is sent by the tasks that are closer to the data sources.
+message EstablishMPPConnectionRequest {
+  TaskMeta sender_meta = 1;
+  TaskMeta receiver_meta = 2;
+}
+
+// Upstream kvproto mpp.proto:103. When TiFlash sends data to TiDB the data
+// blocks wrap tipb.SelectResponse; `version` selects the data-packet
+// format (string serdes version for MppVersionV2+ stores).
+message MPPDataPacket {
+  bytes data = 1;
+  Error error = 2;
+  repeated bytes chunks = 3;
+  repeated uint64 stream_ids = 4;
+  int64 version = 5;
 }

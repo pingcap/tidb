@@ -70,8 +70,9 @@ use tidb_distsql::{
 };
 use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::remote_scan::{
-    PushdownAggregateKind, PushdownPartialAggregate, PushdownRowStream, PushdownScanColumn,
-    PushdownScanRequest, PushdownScanner, PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
+    EXTRA_HANDLE_COLUMN_ID, PushdownAggregateKind, PushdownPartialAggregate, PushdownReadEngine,
+    PushdownRowStream, PushdownScanColumn, PushdownScanRequest, PushdownScanner,
+    PushdownScannerError,
 };
 use tidb_executor::storage::StorageError;
 use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
@@ -85,9 +86,9 @@ use tidb_proto::tipb::{
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{
-    construct_aggregate_read_only_dag_req_with_conditions,
+    DagRequestContext, TiKvScanPlan, construct_aggregate_read_only_dag_req_with_conditions,
     construct_capped_read_only_dag_req_with_conditions,
-    construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
+    construct_grouped_aggregate_read_only_dag_req_with_conditions,
 };
 
 enum LoweredAggregate {
@@ -111,8 +112,8 @@ use crate::wide_scan_selection::{accepts, wide_scan_selection_conditions};
 /// it; the RealTiKV harness greps those lines as the pushdown receipt
 /// instead of trusting a claimed number.
 pub mod scan_receipt {
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     static WIRE_ROWS: AtomicU64 = AtomicU64::new(0);
     static SHAPE: Mutex<String> = Mutex::new(String::new());
@@ -159,6 +160,9 @@ const BINARY_COLLATION_ID: i32 = 63;
 /// by the underlying response owner, without a second decoded-row producer.
 pub struct CopScanSource<F> {
     factory: Arc<F>,
+    /// The TiFlash MPP lowering; `None` leaves TiFlash-named scans refused
+    /// at the storage seam instead of silently served from row storage.
+    tiflash: Option<crate::tiflash_mpp_scan::TiFlashMppScanSource>,
     /// The same table lookup opens several region scans with identical
     /// columns and predicates. Keep the lowered Selection for that request
     /// shape so a large `IN` list is encoded once per node instead of once per
@@ -195,8 +199,18 @@ impl<F> CopScanSource<F> {
     pub fn new(factory: Arc<F>) -> Self {
         Self {
             factory,
+            tiflash: None,
             selection_cache: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Attaches the TiFlash MPP lowering over the node's PD membership.
+    pub fn with_tiflash_mpp(
+        mut self,
+        source: crate::tiflash_mpp_scan::TiFlashMppScanSource,
+    ) -> Self {
+        self.tiflash = Some(source);
+        self
     }
 }
 
@@ -209,6 +223,19 @@ where
         &self,
         request: &PushdownScanRequest,
     ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
+        // Go's TableReaderExecutor picks the MPP client when the plan reads
+        // the columnar replica; a request named TiFlash never reaches the
+        // TiKV lowering here, and a node without the MPP seam refuses it
+        // rather than silently answering from row storage.
+        if request.read_engine == PushdownReadEngine::TiFlash {
+            return match &self.tiflash {
+                Some(source) => source.open_mpp(request),
+                None => Err(PushdownScannerError::Backend(StorageError::Backend(
+                    "tiflash mpp: this node has no TiFlash dispatch seam;                      the read cannot be served from the columnar replica"
+                        .to_owned(),
+                ))),
+            };
+        }
         let refuse = |reason: &str| PushdownScannerError::Unsupported(reason.to_owned());
         if request.snapshot_ts == 0 {
             return Err(refuse("the statement's snapshot has no timestamp"));
@@ -556,6 +583,7 @@ where
                 limit: None,
                 executor_id: Some(String::new()),
                 parent_idx: None,
+                exchange_sender: None,
             });
         }
 
@@ -920,7 +948,7 @@ impl Drop for CopRowStream {
     }
 }
 
-fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
+pub(crate) fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     let code = column.field_type.code();
     // `FieldTypeCode::Unknown` and `Unspecified` have no stable TiPB
     // interpretation. Every named code below is accepted by Go's
