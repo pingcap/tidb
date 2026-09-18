@@ -1,0 +1,31 @@
+use test;
+set sql_mode='';
+drop table if exists load_hard_errors;
+create table load_hard_errors (id int primary key, s varchar(10), g json as (cast(s as json)) stored);
+load data local infile './t/executor/load_data_hard_errors.csv' into table load_hard_errors (id) set s='oops';
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+select count(*) from load_hard_errors;
+count(*)
+0
+drop table load_hard_errors;
+create table load_hard_errors (id int primary key, s varchar(10), g tinyint as (regexp_like('a',s)) stored);
+load data local infile './t/executor/load_data_hard_errors.csv' into table load_hard_errors (id) set s='(';
+Error 1139 (42000): Got error 'error parsing regexp: missing closing ): `(`' from regexp
+select count(*) from load_hard_errors;
+count(*)
+0
+drop table load_hard_errors;
+create table load_hard_errors (id int primary key, v vector(3) not null);
+load data local infile './t/executor/load_data_hard_errors.csv' into table load_hard_errors;
+Error 1105 (HY000): VECTOR column 'v' cannot be null
+select count(*) from load_hard_errors;
+count(*)
+0
+drop table load_hard_errors;
+create table load_hard_errors (id int primary key, v int not null);
+load data local infile './t/executor/load_data_hard_errors.csv' into table load_hard_errors;
+select * from load_hard_errors;
+id	v
+1	0
+drop table load_hard_errors;
+set sql_mode=default;
