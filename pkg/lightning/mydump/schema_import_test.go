@@ -181,10 +181,49 @@ func TestSchemaImporter(t *testing.T) {
 		}
 		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").
 			WillReturnError(errors.New("non retryable create table error"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t1`").
+			WillReturnError(&dmysql.MySQLError{Number: tmysql.ErrNoSuchTable})
 		require.ErrorContains(t, importer2.Run(ctx, dbMetas), "non retryable create table error")
 		require.NoError(t, mock.ExpectationsWereMet())
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameT1)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameT2)))
+	})
+
+	t.Run("table: create failed but table exists", func(t *testing.T) {
+		importer2 := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 1)
+		fileName := "test01.t1-schema.sql"
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName),
+			[]byte("CREATE TABLE t1(a int) COLLATE utf8mb4_unicode_520_ci;"), 0o644))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test01", Tables: []*MDTableMeta{
+				{DB: "test01", Name: "t1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
+			}},
+		}
+		unsupportedCollation := &dmysql.MySQLError{
+			Number:  tmysql.ErrUnknownCollation,
+			Message: "Unsupported collation when new collation is enabled: 'utf8mb4_unicode_520_ci'",
+		}
+
+		// the user created t1 downstream manually as a workaround
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
+		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").WillReturnError(unsupportedCollation)
+		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t1`").
+			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t1", "CREATE TABLE `t1` (a int);"))
+		require.NoError(t, importer2.Run(ctx, dbMetas))
+		require.NoError(t, mock.ExpectationsWereMet())
+
+		// checking the table fails, so the error of creating it is returned
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
+		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").WillReturnError(unsupportedCollation)
+		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t1`").
+			WillReturnError(errors.New("non retryable show create table error"))
+		err := importer2.Run(ctx, dbMetas)
+		require.ErrorIs(t, err, common.ErrCreateSchema)
+		require.ErrorContains(t, err, "Unsupported collation when new collation is enabled")
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
 	})
 
 	t.Run("table: ignore drop table in schema file", func(t *testing.T) {
