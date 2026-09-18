@@ -3574,7 +3574,7 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-	if isReservedSchemaObjInNextGen(ntMeta.ID) {
+	if metadef.IsReservedID(ntMeta.ID) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
 	}
 	err = checkExchangePartition(ptMeta, ntMeta)

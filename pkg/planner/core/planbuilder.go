@@ -5416,18 +5416,19 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName,
 					v.Table.Name.L, "", authErr)
 
+				newDBName := getLowerDB(spec.NewTable.Schema, b.ctx.GetSessionVars())
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, newDBName,
 					spec.NewTable.Name.L, "", authErr)
 
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, newDBName,
 					spec.NewTable.Name.L, "", authErr)
 			} else if spec.Tp == ast.AlterTableDropPartition || spec.Tp == ast.AlterTableTruncatePartition {
 				if b.ctx.GetSessionVars().User != nil {
