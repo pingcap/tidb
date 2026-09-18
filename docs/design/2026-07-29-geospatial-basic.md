@@ -207,11 +207,11 @@ the bound is what turns a crash into an error. It applies one bound across inges
 above real data and below MySQL's storage limit, so unlike MySQL it never persists a value
 it cannot read.
 
-**Size.** A vertex is 16 bytes and does not compress. This design adds no point-count cap,
-since TiDB's entry size limit already bounds a stored value. Unlike most types, geometry
-reaches that limit with ordinary data: national boundaries at OSM resolution run to
-hundreds of thousands of vertices. Hence `ST_Subdivide`, PostGIS's remedy for oversized
-polygons, is deferred rather than dismissed.
+**Size.** An XY vertex is 16 bytes and does not compress, 24 with Z or M and 32 with both.
+This design adds no point-count cap, since TiDB's entry size limit already bounds a stored
+value. Unlike most types, geometry reaches that limit with ordinary data: national
+boundaries at OSM resolution run to hundreds of thousands of vertices. Hence
+`ST_Subdivide`, PostGIS's remedy for oversized polygons, is deferred rather than dismissed.
 
 Why EWKB rather than the alternatives:
 [Investigation & Alternatives](#investigation--alternatives).
