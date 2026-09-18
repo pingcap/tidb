@@ -2376,6 +2376,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AutoIncrementOffset:              vardef.DefAutoIncrementOffset,
 		StmtCtx:                          stmtctx.NewStmtCtx(),
 		AllowAggPushDown:                 false,
+		ReplicaClosestReadThreshold:      vardef.DefAdaptiveClosestReadThreshold,
 		AllowCartesianBCJ:                vardef.DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:       vardef.DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:       vardef.DefBroadcastJoinThresholdSize,
