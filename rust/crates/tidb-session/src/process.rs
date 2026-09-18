@@ -198,7 +198,11 @@ impl ProcessEntry {
     }
 
     fn statement_started(&mut self, sql: &str, state: &str) {
-        self.publish_statement(sql, state);
+        self.statement_started_with_digest(sql, None, state);
+    }
+
+    fn statement_started_with_digest(&mut self, sql: &str, digest: Option<&str>, state: &str) {
+        self.publish_statement_with_digest(sql, digest, state);
         if let Some(transaction) = &mut self.transaction {
             if !self.digest.is_empty()
                 && transaction.all_sql_digests.len() < MAX_TRANSACTION_STMT_HISTORY
@@ -318,6 +322,21 @@ impl ProcessRegistry {
     /// recording another execution.
     pub fn statement_started(&self, id: u64, sql: &str, state: &str) {
         self.with_entry(id, |entry| entry.statement_started(sql, state));
+    }
+
+    /// [`Self::statement_started`] with the statement's digest already
+    /// computed by the caller, so the process list does not normalize the
+    /// statement text a second time.
+    pub fn statement_started_with_digest(
+        &self,
+        id: u64,
+        sql: &str,
+        digest: Option<&str>,
+        state: &str,
+    ) {
+        self.with_entry(id, |entry| {
+            entry.statement_started_with_digest(sql, digest, state);
+        });
     }
 
     pub(crate) fn statement_metadata(

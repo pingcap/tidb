@@ -470,6 +470,10 @@ pub struct Session {
     /// no AST restoration or binding-specific database qualification is needed.
     /// It is computed only while the arbitrator is enabled.
     current_sql_digest_key: String,
+    /// The running statement's normalized text, computed once at statement
+    /// start with its digest (Go `StmtCtx.SQLDigest`) and consumed by the
+    /// memory arbitration key; `None` when arbitration is off.
+    statement_normalized_sql: Option<String>,
     /// The open transaction, if any.
     txn: Option<Transaction>,
     /// Go `LazyTxn.writeSLI`: transaction write-throughput state shared by
@@ -818,6 +822,7 @@ impl Session {
             ),
             statement_result_authority: std::cell::RefCell::new(None),
             current_sql_digest_key: String::new(),
+            statement_normalized_sql: None,
             txn: None,
             write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
@@ -1962,9 +1967,21 @@ impl Session {
         // long as it runs, which is why the process list is updated here --
         // the one door every statement of this session goes through -- rather
         // than in one front end's command loop.
+        // Go normalizes a statement and digests it once (`StmtCtx.SQLDigest`)
+        // for the process list and memory arbitration alike; this is the one
+        // door every statement passes, so the text is normalized here once.
+        let arbitrated = self.session_memory.arbitrator_enabled();
+        let normalized =
+            (self.process.is_some() || arbitrated).then(|| tidb_parser::normalize_digest(sql));
         if let Some(guard) = &self.process {
             let registry = guard.registry();
-            registry.statement_started(guard.id(), sql, &self.status_text());
+            let digest = normalized.as_ref().map(|(_, digest)| digest.to_string());
+            registry.statement_started_with_digest(
+                guard.id(),
+                sql,
+                digest.as_deref(),
+                &self.status_text(),
+            );
             // Go reads these off typed `SessionVars` fields; the snapshot is
             // their parsed form, refreshed only when the variable table
             // changes, so a statement start does not re-parse five values.
@@ -1982,6 +1999,11 @@ impl Session {
                 },
             );
         }
+        self.statement_normalized_sql = if arbitrated {
+            normalized.map(|(text, _)| text)
+        } else {
+            None
+        };
         // Go's `ResetContextOfStmt` promotes the PRECEDING statement's
         // publication into the `Prev*` fields the next statement reads, so
         // the promotion happens at the boundary, once, for every statement.

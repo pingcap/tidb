@@ -1725,7 +1725,10 @@ impl Session {
     // supplies PREPARE's original text, so bound values do not change the key.
     fn set_statement_arbitration_key(&mut self, sql: &str) {
         self.current_sql_digest_key = if self.session_memory.arbitrator_enabled() {
-            tidb_parser::normalize(sql, tidb_parser::RedactMode::Enabled)
+            // `begin_statement_execution` normalized this statement already.
+            self.statement_normalized_sql
+                .take()
+                .unwrap_or_else(|| tidb_parser::normalize(sql, tidb_parser::RedactMode::Enabled))
         } else {
             String::new()
         };
