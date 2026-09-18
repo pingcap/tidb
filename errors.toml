@@ -386,6 +386,11 @@ error = '''
 server is busy
 '''
 
+["Ingest:SetTSBeforeImport"]
+error = '''
+failed to set TS before importing engine %s after %d attempts: %s
+'''
+
 ["Ingest:StoreDiskFull"]
 error = '''
 store disk full
