@@ -240,7 +240,7 @@ Planar versus curved follows the **SRS class** (SRID 0 and projected are Cartesi
 geographic is curved), as in MySQL. Adding SRIDs later therefore adds catalog rows and
 per-class parameters, not code paths.
 
-**Reference surface.** SRS class decides *whether* a computation is planar; on a curved
+**Reference surface.** SRS class decides *whether* a computation is planar. On a curved
 surface two independent choices remain, and separating them is what keeps 4326 coherent:
 
 - The **edge model** is what curve joins two vertices. It decides all topology: inside or
@@ -248,9 +248,9 @@ surface two independent choices remain, and separating them is what keeps 4326 c
 - The **metric** is how many metres lie between two given points. It decides only the
   number reported.
 
-A distance formula answers the second and says nothing about the first. `ST_Distance`
-between two points needs only the metric, because no edge exists between them, which is why
-that case matches MySQL today while every case involving a line or polygon does not.
+A distance formula answers the second and says nothing about the first, which is why
+`ST_Distance` between two points needs no edge model at all and every case involving a line
+or polygon does.
 
 **One edge model, everywhere.** All 4326 topology uses a single edge model, and the metric
 is Andoyer throughout. This is a requirement rather than a preference, because mixing edge
@@ -259,10 +259,24 @@ models makes the function set contradict itself:
 > `ST_Distance(g1, g2) = 0` if and only if the predicates report the two as meeting, for
 > every pair of geometry types.
 
-Without it a point can sit at distance zero from a polygon while `ST_Within` calls it
-outside, since the two answers were decided on different surfaces. That rules out the plane
-for anything on 4326, and it rules out today's split of sphere for point-in-polygon and
-plane for polygon/polygon.
+Without it a point can sit at distance zero from a polygon that `ST_Within` calls outside,
+because the two answers were decided on different surfaces.
+
+**That model is Andoyer, and v1 takes only point operands.** Every other part of v1 is a
+strict MySQL subset, so predicates would otherwise be the one surface shipping a *different
+answer* rather than a *smaller* one, and a predicate is a boolean in a `WHERE` clause rather
+than a number a reader might round away.
+
+Matching MySQL is affordable on the half that matters. Boost decides which side of a segment
+a point falls on by comparing azimuths from the inverse solution, so a point-in-polygon
+crossing test needs only the inverse with azimuths: closed form, and an extension of the
+Andoyer inverse the proof of concept already carries. The expensive half is a predicate
+between two extended geometries, which needs geodesic segment intersection feeding a
+9-intersection matrix. **v1 therefore restricts the predicates to pairs where at least one
+operand is a `POINT`** and defers the rest ([Future extensions](#future-extensions)).
+Dropping those pairs to a cheaper surface instead would break the invariant above, so the
+lever is the operand type rather than the surface;
+[Unresolved Questions](#unresolved-questions) carries what that defers and what it costs.
 
 | 4326 operation | Needs | v1 | MySQL |
 | --- | --- | --- | --- |
@@ -276,65 +290,23 @@ Everything on SRID 0 is planar throughout, with no operand restriction: the plan
 edge model. Every MySQL cell above is measured against a running engine rather than taken
 from documentation.
 
-The two v1 rows that need an edge are unequal in cost even so. The predicate row needs only
-the closed-form crossing test; the `ST_Distance` row additionally needs the nearest point on
-a geodesic edge, which brings in the direct problem and iteration. If v1 has to be cut
-further, that is the row to cut, back to point-to-point.
-
-**The edge model is Andoyer, and v1 takes only point operands.** Every other part of v1 is
-a strict MySQL subset, so predicates are the one surface where the design would otherwise
-ship a *different answer* rather than a *smaller* one, and a predicate is a boolean in a
-`WHERE` clause rather than a number a reader might round away. Two consequences settle the
-rest of this section.
-
-The first is that matching MySQL is affordable where it matters most. Boost decides which
-side of a segment a point falls on by comparing azimuths taken from the inverse solution,
-so a point-in-polygon crossing test needs only the inverse problem with azimuths: closed
-form, no iteration, and an extension of the Andoyer inverse the proof of concept already
-carries. That covers point-in-polygon, which is the common geofencing case.
-
-The second is that the expensive half is cut by scope rather than by surface. A predicate
-between two extended geometries needs geodesic segment intersection feeding a
-9-intersection matrix, which is a great deal more work. **v1 therefore restricts the
-predicates to pairs where at least one operand is a `POINT`**, and the rest are deferred
-([Future extensions](#future-extensions)). Dropping those pairs to a cheaper surface
-instead would violate the invariant above, so the surface is not the lever; the operand
-types are.
-
-This is a narrower function surface, not a wrong answer, which is the trade the rest of
-this design already makes. It is also why this is not the erroring that
-[Unresolved Questions](#unresolved-questions) rejects: that needed an arbitrary size
-threshold and produced an error where MySQL answers, whereas an operand-type rule is
-predictable from the query text alone and never returns a boolean MySQL would not.
-
 **The alternatives, and why not.**
 
-- **Exact geodesic edges (Karney).** Being more exact than MySQL is not a goal, and it
-  costs compatibility: 8.9 m from MySQL, against 7,796 m for a sphere on a continental
-  polygon. Near antipodes the ranking even inverts, since Andoyer is itself 5,973 m from
-  exact there. Its point-to-line and intersection solutions are iterative where Andoyer's
-  side test is closed form, so it is not the cheaper option either.
+- **Exact geodesic edges (Karney).** Being more exact than MySQL costs compatibility: 8.9 m
+  from MySQL against 7,796 m for a sphere on a continental polygon, and near antipodes the
+  ranking inverts, since Andoyer is itself 5,973 m from exact there. Its point-to-line and
+  intersection solutions iterate where Andoyer's side test is closed form, so it is not the
+  cheaper option either.
 - **Great-circle edges on a sphere.** What PostGIS `geography` ships, so a spherical answer
-  is normal practice rather than a corner cut, and S2 hands over crossing primitives and an
-  indexed crossing search. It would buy a wider predicate surface at the price of a measured
-  945 m of boundary position: `ST_Intersects` on one point returns true in MySQL and false
-  in PostGIS. Breadth of surface was judged the lesser prize.
-- **The plane.** Not a candidate at all. Its error does not shrink with polygon size the way
-  the curved options do, and whole regions flip rather than boundary cases.
+  is normal practice rather than a corner cut, and S2 supplies crossing primitives. It would
+  buy a wider operand set for a measured 945 m of boundary position: `ST_Intersects` on the
+  same point is true in MySQL and false in PostGIS.
+- **The plane.** Not a candidate: its error does not shrink with polygon size the way the
+  curved options do, and whole regions flip rather than boundary cases.
 
-Changing this after GA is the reason to settle it now. No stored bytes are involved, so the
-design once said the outcome could change later, but the behavior cannot change quietly: a
-user's `ST_Within` would flip between releases with nothing in the schema to explain it, and
-the invariant means such a flip is all-or-nothing across the whole predicate set.
-
-**What the ecosystem supplies.** Andoyer exists as a library only in Boost, which is why
-MySQL has it: neither Go nor Rust has any implementation, so this means writing it, and the
-cost above is what writing it comes to. Karney is available in all three, as GeographicLib
-and PROJ's `geodesic.c` in C++, `geographiclib-rs` in Rust, and pure-Go ports that carry the
-`Gnomonic` projection. None of them, in any language, supplies what a predicate needs. Every
-one gives the direct and inverse problems and stops there; point-to-segment, segment
-intersection and DE-9IM are built on top, with the algorithms published in Karney's
-intersection and point-to-line work.
+Andoyer exists as a library only in Boost, which is why MySQL has it and why TiDB has to
+write it. No geodesic library in any language supplies the topology primitives regardless;
+they all stop at the direct and inverse problems.
 
 **Catalog.** `information_schema.st_spatial_reference_systems` returns exactly two rows,
 SRID 0 and 4326, with MySQL's columns and the values MySQL gives for them; no dataset is
@@ -811,22 +783,12 @@ A cheaper surface would have cost very different amounts depending on the operan
 | polygon/polygon relate | planar, straight lat/long edges | **degrees.** For `POLYGON((0 0, 0 80, 60 0, 0 0))`, MySQL 8.4.6 answers `ST_Within` true for `(30 40)`, `(33 40)`, `(36 40)` and `(40 40)`; planar answers false for all four. Whole regions flip, not boundary cases |
 | point-in-polygon | sphere, S2 great-circle edges | **metres to kilometres**, scaling with edge length. On the polygon above, MySQL and S2 disagree across a 7,796 m band at longitude 70: every point between latitude 45.000000 and 45.070155 is within for MySQL and outside for S2 |
 
-The second scales sharply with edge length, making it a continental-polygon problem rather
-than a geofence one:
-
-| Edge length | Great circle vs ellipsoidal geodesic |
-| --- | --- |
-| 8 km (city) | 4 mm |
-| 79 km (metro) | 0.4 m |
-| 394 km (region) | 10 m |
-| 1,573 km (country) | 163 m |
-| 3,501 km (continent) | 824 m |
-| 6,690 km | 3.1 km |
-
-So small polygons, the common geofence case, would have been barely affected by either, and
-that is what made a cheaper surface tempting. What ruled it out is the other end of the
-scale: the divergence is real on continental polygons and it flips a boolean rather than
-shifting a number, and restricting the operand types buys exactness without paying it.
+The second scales sharply with edge length, which makes it a continental-polygon problem
+rather than a geofence one: a great circle and an ellipsoidal geodesic differ by 4 mm over an
+8 km city edge, 10 m over 394 km, and 3.1 km over 6,690 km. Small polygons would have been
+barely affected either way, which is what made a cheaper surface tempting. What ruled it out
+is the other end of the scale, where the divergence flips a boolean rather than shifting a
+number, and where restricting the operand types buys exactness without paying it.
 
 **Settled: Andoyer edges, and v1 takes only point operands.** The decision and the reasons
 for it are in [Reference surface](#srid-model). What is left open here is the cost of the
@@ -842,26 +804,16 @@ Reaching Andoyer edges is not one cost but three, and they are very unequal:
   and it is what the extended-geometry pairs wait on. It is an algorithm rather than a
   formula, so a cheaper surface would not have avoided it: only a smaller operand set does.
 
-**How much of DE-9IM a sphere can answer**, measured before the spherical option was ruled
-out. Checked against the Go S2 port. Four of the
-eight come straight out of it: `ST_Contains` and `ST_Within` from `Polygon.Contains`,
-`ST_Intersects` from `Polygon.Intersects`, and `ST_Disjoint` as its negation. The other
-four do not. `Polygon` has no equality method, and nothing answers `Touches`, `Crosses` or
-`Overlaps`, because those turn on whether a meeting is interior or boundary and a
-containment test does not draw that line. The Go port also has no equivalent of C++'s
-`S2BooleanOperation`, which is what would have supplied a relate outright.
-
-What it does supply is the layer below. `CrossingSign` separates a proper crossing from a
-vertex touch, `EdgeOrVertexCrossing` and `CrossingEdgeQuery` find crossings against an
-index, and `WedgeRelation` classifies how two boundaries meet at a shared vertex as equal,
-containing, contained, overlapping or disjoint. That is what a 9-intersection matrix is
-assembled from.
-
-So the spherical option was reachable and the gap was in the assembly, not the primitives.
-That assembly is the same work Andoyer needs, since building DE-9IM out of crossing tests is
-the formula-independent cost named above. S2 gives the crossing primitives for great-circle
-edges, not the relate, which is why dropping to a sphere would have bought a wider operand
-set for a measured 945 m of boundary position rather than for free.
+**What the spherical option would still have cost.** Checked against the Go S2 port: four of
+the eight predicates come straight out of it, `ST_Contains` and `ST_Within` from
+`Polygon.Contains`, `ST_Intersects` from `Polygon.Intersects` and `ST_Disjoint` as its
+negation, but `Equals`, `Touches`, `Crosses` and `Overlaps` do not, because those turn on
+whether a meeting is interior or boundary. The port has no equivalent of C++'s
+`S2BooleanOperation`. What it does supply is the layer below, `CrossingSign`,
+`EdgeOrVertexCrossing`, `CrossingEdgeQuery` and `WedgeRelation`, which is what a
+9-intersection matrix is assembled from. So a sphere would have bought the crossing
+primitives but not the relate, leaving the same assembly to do for a measured 945 m of
+boundary position.
 
 Erroring instead of answering was considered and rejected **as a fallback for large
 geometries**: that needs an arbitrary size limit, and the error is itself a difference from
@@ -869,14 +821,10 @@ MySQL, which answers. The operand restriction is a different thing and survives 
 test: it has no threshold, it is predictable from the query text alone, and it never returns
 a boolean MySQL would not.
 
-**Why uniformity is a requirement rather than a preference.** Mixing edge models makes the
-function set contradict itself, in two ways that are artefacts of the mixing rather than of
-approximating any one surface. Spherical point-in-polygon beside planar polygon/polygon
-answers a point and an infinitesimal polygon at the same location differently:
-`ST_Within(POINT(30 70), ...)` against the polygon above is true while the same test on a
-tiny polygon there is false, where MySQL answers true for both. And once `ST_Distance`
-accepts edge operands, the same split lets a point sit at distance zero from a polygon that
-`ST_Within` reports as outside.
+What the invariant rules out, concretely: an earlier draft paired spherical point-in-polygon
+with planar polygon/polygon, and that answers a point and an infinitesimal polygon at the
+same location differently. `ST_Within(POINT(30 70), ...)` against the polygon above is true
+while the same test on a tiny polygon there is false, where MySQL answers true for both.
 
 This design owns the decision, since the type layer owns predicate semantics. No bytes are
 locked in either way, but the behavior is: widening the operand set later only makes queries
