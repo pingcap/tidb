@@ -493,10 +493,14 @@ func TestLoadDataFromServerFile(t *testing.T) {
 }
 
 var fix56408Store kv.Storage
+var loadDataLowPriorityClient checkKVPrioClient
 
 func prepareFix56408Store() func() {
 	gctuner.GlobalMemoryLimitTuner.Stop()
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
+		loadDataLowPriorityClient.Client = c
+		return &loadDataLowPriorityClient
+	}))
 	if err != nil {
 		panic(err)
 	}
@@ -606,16 +610,13 @@ func (c *checkKVPrioClient) SendRequest(ctx context.Context, addr string, req *t
 }
 
 func TestLoadDataLowPrioritySetsKVLowPriority(t *testing.T) {
-	cli := &checkKVPrioClient{}
-	store := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}))
+	require.NotNil(t, fix56408Store)
+	cli := &loadDataLowPriorityClient
 
 	// Use a context marker so the priority checker only applies to requests issued by this test execution.
 	ctx := context.WithValue(context.Background(), cli, 42)
 
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, fix56408Store)
 	sctx := tk.Session().(sessionctx.Context)
 
 	tk.MustExec("use test")
