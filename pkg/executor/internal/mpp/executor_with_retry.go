@@ -127,6 +127,13 @@ func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err
 	return resp, nil
 }
 
+// ReportsExecutionSummariesDirectly follows the current coordinator after recovery.
+// It is read by the response consumer, on the same goroutine that performs recovery.
+func (r *ExecutorWithRetry) ReportsExecutionSummariesDirectly() bool {
+	coord, ok := r.coord.(*localMppCoordinator)
+	return ok && coord.reportExecutionInfo
+}
+
 // Close implements kv.Response interface.
 func (r *ExecutorWithRetry) Close() error {
 	r.mppErrRecovery.ResetHolder()
