@@ -9289,7 +9289,7 @@ FunctionCallKeyword:
 	}
 |	"MOD" '(' Expression ',' Expression ')'
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.Mod, L: $3, R: $5}
+		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Mod), Args: []ast.ExprNode{$3, $5}}
 	}
 |	"PASSWORD" '(' ExpressionListOpt ')'
 	{

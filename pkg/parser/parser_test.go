@@ -1813,7 +1813,7 @@ func TestBuiltin(t *testing.T) {
 		{"SELECT POW(-1, 1)", true, "SELECT POW(-1, 1)"},
 		{"SELECT RAND();", true, "SELECT RAND()"},
 		{"SELECT RAND(1);", true, "SELECT RAND(1)"},
-		{"SELECT MOD(10, 2);", true, "SELECT 10%2"},
+		{"SELECT MOD(10, 2);", true, "SELECT MOD(10, 2)"},
 		{"SELECT ROUND(-1.23);", true, "SELECT ROUND(-1.23)"},
 		{"SELECT ROUND(1.23, 1);", true, "SELECT ROUND(1.23, 1)"},
 		{"SELECT ROUND(1.23, 1, 1);", true, "SELECT ROUND(1.23, 1, 1)"},
@@ -7894,9 +7894,9 @@ func TestWithoutCharsetFlags(t *testing.T) {
 
 func TestRestoreBinOpWithBrackets(t *testing.T) {
 	cases := []testCase{
-		{"select mod(a+b, 4)+1", true, "SELECT (((`a` + `b`) % 4) + 1)"},
-		{"SELECT MOD(10, 2 BETWEEN 0 and 5)", true, "SELECT (10 % (2 BETWEEN 0 AND 5))"}, // issue #59000
-		{"select mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1", true, "SELECT (((year(`a`) - abs((weekday(`a`) + dayofweek(`a`)))) % 4) + 1)"},
+		{"select mod(a+b, 4)+1", true, "SELECT (mod((`a` + `b`), 4) + 1)"},
+		{"SELECT MOD(10, 2 BETWEEN 0 and 5)", true, "SELECT mod(10, 2 BETWEEN 0 AND 5)"}, // issue #59000
+		{"select mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1", true, "SELECT (mod((year(`a`) - abs((weekday(`a`) + dayofweek(`a`)))), 4) + 1)"},
 	}
 
 	p := parser.New()
