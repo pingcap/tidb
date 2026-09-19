@@ -438,6 +438,7 @@ mod tests {
         let projected = store(PdStore {
             id: 5,
             address: "127.0.0.1:20160".to_owned(),
+            status_address: String::new(),
             state: PdStoreState::Offline,
             node_state: PdNodeState::Removing,
             labels: vec![("zone".to_owned(), "east".to_owned())],

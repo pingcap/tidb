@@ -491,17 +491,26 @@ impl<L> RegionCache<L> {
         let expire_after_ttl = !loaded.down_peer_ids.is_empty();
         let index = insert_loaded_into(&mut next_regions, loaded)?;
         self.regions = next_regions;
+        // Like Go insertRegionToCache, publishing an independent region must
+        // not invalidate concurrent loads when their store metadata is still
+        // current. Retain the generation guard for actual store changes.
+        let stores_changed = self.stores != next_stores;
         self.stores = next_stores;
-        self.advance_store_revision();
+        if stores_changed {
+            self.advance_store_revision();
+        }
+        // Membership must not rescan every region for every cache entry while
+        // holding the canonical cache write lock.
+        let live_regions: BTreeSet<_> = self.regions.iter().map(|region| region.region).collect();
         self.entry_states
-            .retain(|cached, _| self.regions.iter().any(|region| region.region == *cached));
+            .retain(|cached, _| live_regions.contains(cached));
         let mut state = CacheEntryState::new(self.next_expiry_at(now_seconds, region));
         if expire_after_ttl {
             state.mark(CacheReloadState::ExpireAfterTtl);
         }
         self.entry_states.insert(region, state);
         self.preferred_proxies
-            .retain(|region, _| self.regions.iter().any(|cached| cached.region == *region));
+            .retain(|region, _| live_regions.contains(region));
         Ok(index)
     }
 
@@ -703,4 +712,155 @@ fn ranges_intersect(left: &RegionLocation, right: &RegionLocation) -> bool {
     let left_before_right = !left.end_key.is_empty() && left.end_key <= right.start_key;
     let right_before_left = !right.end_key.is_empty() && right.end_key <= left.start_key;
     !left_before_right && !right_before_left
+}
+
+#[cfg(test)]
+mod insertion_tests {
+    use super::*;
+    use crate::region::{Peer, PeerRole};
+    use std::time::{Duration, Instant};
+
+    fn region(id: u64) -> RegionLocation {
+        RegionLocation {
+            region: RegionVerId::new(id, 1, 1),
+            start_key: id.to_be_bytes().to_vec(),
+            end_key: (id + 1).to_be_bytes().to_vec(),
+            ..RegionLocation::default()
+        }
+    }
+
+    fn region_with_store(id: u64, address: &str) -> RegionLocation {
+        let mut location = region(id);
+        location.peers.push(Peer {
+            id: id + 100,
+            store_id: 1,
+            role: PeerRole::Voter,
+            is_witness: false,
+            store_epoch: 0,
+        });
+        location.leader_peer_id = Some(id + 100);
+        location.stores.push(Store {
+            id: 1,
+            address: address.to_owned(),
+            epoch: 0,
+        });
+        location
+    }
+
+    #[test]
+    fn independent_region_publication_does_not_invalidate_pending_load() {
+        let mut cache = RegionCache::new(());
+        cache
+            .insert_loaded_with_labels_at(
+                region_with_store(0, "store-1"),
+                StoreLabels::default(),
+                cache_now_seconds(),
+            )
+            .unwrap();
+        let RegionLookupSelection::Load(first) = cache
+            .select_region_lookup(&1_u64.to_be_bytes(), false)
+            .unwrap()
+        else {
+            panic!("cache miss");
+        };
+        let RegionLookupSelection::Load(second) = cache
+            .select_region_lookup(&2_u64.to_be_bytes(), false)
+            .unwrap()
+        else {
+            panic!("cache miss");
+        };
+        assert!(matches!(
+            cache
+                .publish_region_lookup(RegionLookupResult {
+                    plan: first,
+                    loaded: Ok((region_with_store(1, "store-1"), StoreLabels::default())),
+                })
+                .unwrap(),
+            RegionLookupApplication::Published(_)
+        ));
+        assert!(
+            matches!(
+                cache
+                    .publish_region_lookup(RegionLookupResult {
+                        plan: second,
+                        loaded: Ok((region_with_store(2, "store-1"), StoreLabels::default())),
+                    })
+                    .unwrap(),
+                RegionLookupApplication::Published(_)
+            ),
+            "an unrelated region insertion must not force another PD round trip"
+        );
+    }
+
+    #[test]
+    fn changed_store_still_invalidates_pending_region_load() {
+        let mut cache = RegionCache::new(());
+        cache
+            .insert_loaded_with_labels_at(
+                region_with_store(0, "store-1"),
+                StoreLabels::default(),
+                cache_now_seconds(),
+            )
+            .unwrap();
+        let RegionLookupSelection::Load(plan) = cache
+            .select_region_lookup(&2_u64.to_be_bytes(), false)
+            .unwrap()
+        else {
+            panic!("cache miss");
+        };
+        cache
+            .insert_loaded_with_labels_at(
+                region_with_store(1, "store-1-new"),
+                StoreLabels::default(),
+                cache_now_seconds(),
+            )
+            .unwrap();
+        assert!(matches!(
+            cache
+                .publish_region_lookup(RegionLookupResult {
+                    plan,
+                    loaded: Ok((region_with_store(2, "store-1"), StoreLabels::default())),
+                })
+                .unwrap(),
+            RegionLookupApplication::Retry
+        ));
+        assert_eq!(cache.stores[&1].address, "store-1-new");
+    }
+
+    fn insertion_time(count: u64) -> Duration {
+        let mut best = Duration::MAX;
+        for _ in 0..3 {
+            let mut cache = RegionCache::new(());
+            for id in 0..count {
+                let location = region(id);
+                cache
+                    .entry_states
+                    .insert(location.region, CacheEntryState::new(1000));
+                cache.regions.push(location);
+            }
+            let start = Instant::now();
+            for id in count..count + 20 {
+                cache
+                    .insert_loaded_with_labels_at(region(id), StoreLabels::default(), 0)
+                    .unwrap();
+            }
+            best = best.min(start.elapsed());
+            assert_eq!(cache.entry_states.len(), (count + 20) as usize);
+        }
+        best
+    }
+
+    // Run explicitly on an idle host: this checks lock-held insertion work,
+    // excluding PD I/O and cache construction, at two cache sizes.
+    #[test]
+    #[ignore = "performance scaling check; requires an idle host"]
+    fn region_insertion_does_not_scale_quadratically() {
+        let small = insertion_time(2000);
+        let large = insertion_time(8000);
+        eprintln!("region insertion: 2000={small:?}, 8000={large:?}");
+        assert!(
+            large < small * 8,
+            "4x cache size must cost less than 8x insertion time: {small:?} -> {large:?}"
+        );
+    }
 }
