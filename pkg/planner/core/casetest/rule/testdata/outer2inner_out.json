@@ -632,7 +632,7 @@
           "├─TableReader(Build) root  data:TableFullScan",
           "│ └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
           "└─Projection(Probe) root  1->Column",
-          "  └─HashJoin root  CARTESIAN inner join, other cond:le(1, cast(case(istrue_with_null(cast(case(istrue_with_null(cast(test.t1.c_jbb, double BINARY)), from_binary(inet6_aton(test.t1.c_foveoe)), test.t1.c_cz), double BINARY)), \"1\", case(istrue_with_null(cast(test.t1.c_jbb, double BINARY)), from_binary(inet6_aton(test.t1.c_foveoe)), test.t1.c_cz)), double BINARY))",
+          "  └─HashJoin root  CARTESIAN inner join, other cond:le(1, cast(case(istrue_with_null(cast(case(istrue_with_null(cast(test.t1.c_jbb, double BINARY)), cast(from_binary(inet6_aton(test.t1.c_foveoe)), text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), test.t1.c_cz), double BINARY)), \"1\", case(istrue_with_null(cast(test.t1.c_jbb, double BINARY)), cast(from_binary(inet6_aton(test.t1.c_foveoe)), text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), test.t1.c_cz)), double BINARY))",
           "    ├─TableReader(Build) root  data:TableFullScan",
           "    │ └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo",
           "    └─HashJoin(Probe) root  CARTESIAN right outer join, left side:TableReader, right cond:ne(test.t2.c_g7eofzlxn, 1)",
