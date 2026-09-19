@@ -169,10 +169,14 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return
 		}
 		err = util2.GetRecoverError(r)
+		if a.stmt != nil {
+			a.stmt.abortStatementRU()
+		}
 		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			a.stmt.abortStatementRU()
 			return err
 		}
 	}
@@ -202,6 +206,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	numRows := req.NumRows()
 	if numRows == 0 {
 		if a.stmt != nil {
+			a.stmt.recordStatementRURootEOF()
 			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
 		}
 		return nil
@@ -283,12 +288,30 @@ func (a *recordSet) Finish() error {
 }
 
 func (a *recordSet) Close() error {
+	return a.close(nil)
+}
+
+func (a *recordSet) close(lastErr error) error {
 	err := a.Finish()
 	if err != nil {
 		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
 	}
-	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(a.lastErrs...))
+	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(errors.Join(a.lastErrs...), lastErr))
 	return err
+}
+
+// CloseRecordSetWithError closes an executor-owned record set and passes the
+// execution error to statement completion, including slow logs and RU accounting.
+func CloseRecordSetWithError(rs sqlexec.RecordSet, lastErr error) error {
+	switch rs := rs.(type) {
+	case *recordSet:
+		return rs.close(lastErr)
+	case *chunkRowRecordSet:
+		rs.execStmt.CloseRecordSet(rs.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, lastErr)
+		return nil
+	default:
+		return rs.Close()
+	}
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -360,6 +383,10 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan base.Plan
+	// statementRUOwner is nil unless the current statement RU calculation policy
+	// or a test hook installs it. It must be installed before the ExecStmt
+	// is published and must not be replaced after execution begins.
+	statementRUOwner *statementRUOwner
 
 	StmtNode ast.StmtNode
 
@@ -398,6 +425,11 @@ func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "ExecStmt.PointGet")
 	defer r.End()
+	failpoint.Inject("statementRUPointGetErrorForTest", func(val failpoint.Value) {
+		if a.Ctx != nil && val.(int) == int(a.Ctx.GetSessionVars().ConnectionID) {
+			failpoint.Return(nil, errors.New("statement RU PointGet test error"))
+		}
+	})
 	if r.Span != nil {
 		r.Span.LogKV("sql", a.Text())
 	}
@@ -1115,6 +1147,8 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e exec.Exe
 			break
 		}
 		if req.NumRows() == 0 {
+			// The returned record set only drains buffered rows; execution ends here.
+			a.recordStatementRURootEOF()
 			return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
@@ -1155,6 +1189,12 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	err = a.next(ctx, e, exec.TryNewCacheChunk(e))
 	if err != nil {
 		return nil, err
+	}
+	switch classifyStatementRUPlan(a.Plan).kind {
+	case statementRUPlanAnalyze, statementRUPlanWrite, statementRUPlanCommit:
+		// These targets complete in their only Next call. Any EXPLAIN result
+		// set reports work that has already finished executing.
+		a.recordStatementRURootEOF()
 	}
 	err = a.handleStmtForeignKeyTrigger(ctx, e)
 	return nil, err
@@ -1687,9 +1727,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
+	statementRUTotal := a.finishStatementRU(err)
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.LogSlowQuery(txnTS, succ, hasMoreResults)
-	a.SummaryStmt(succ)
+	a.LogSlowQuery(txnTS, succ, hasMoreResults, statementRUTotal)
+	a.SummaryStmt(succ, statementRUTotal)
 	a.observeStmtFinishedForTopProfiling()
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
@@ -1700,7 +1741,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 	}
 	a.updatePrevStmt()
-	a.recordLastQueryInfo(err)
+	a.recordLastQueryInfo(err, statementRUTotal)
 	a.recordAffectedRows2Metrics()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := sessVars.GetExecuteDuration()
@@ -1773,7 +1814,7 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 }
 
 // finalizeStatementRUV2Metrics transfers pending TiKV coprocessor response bytes
-// into statement metrics.
+// into statement metrics before RUv2 calculation.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
@@ -1788,7 +1829,14 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
 }
 
-func (a *ExecStmt) recordLastQueryInfo(err error) {
+func firstStatementRUTotal(statementRUTotal []float64) float64 {
+	if len(statementRUTotal) == 0 {
+		return 0
+	}
+	return statementRUTotal[0]
+}
+
+func (a *ExecStmt) recordLastQueryInfo(err error, statementRUTotal float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	// Record diagnostic information for DML statements
 	recordLastQuery := false
@@ -1809,10 +1857,11 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 		})
 		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
 		sessVars.LastQueryInfo = sessionstates.QueryInfo{
-			TxnScope:      sessVars.CheckAndGetTxnScope(),
-			StartTS:       sessVars.TxnCtx.StartTS,
-			ForUpdateTS:   sessVars.TxnCtx.GetForUpdateTS(),
-			RUConsumption: lastRUConsumption,
+			TxnScope:        sessVars.CheckAndGetTxnScope(),
+			StartTS:         sessVars.TxnCtx.StartTS,
+			ForUpdateTS:     sessVars.TxnCtx.GetForUpdateTS(),
+			RUConsumption:   lastRUConsumption,
+			RUV2Consumption: statementRUTotal,
 		}
 		if err != nil {
 			sessVars.LastQueryInfo.ErrMsg = err.Error()
@@ -1839,6 +1888,7 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
+	failpoint.InjectCall("observeCloseRecordSetForTest", a, &lastErr)
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
@@ -1888,7 +1938,7 @@ func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cfg := config.GetGlobalConfig()
@@ -1934,7 +1984,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			}
 		}
 	})
-	slowLog := sessVars.SlowLogFormat(slowItems)
+	slowLog := sessVars.SlowLogFormat(slowItems, statementRUTotal...)
 	logutil.SlowQueryLogger.Warn(slowLog)
 
 	if trace.IsEnabled() {
@@ -2129,7 +2179,7 @@ func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.Dump
 }
 
 // SummaryStmt collects statements for information_schema.statements_summary
-func (a *ExecStmt) SummaryStmt(succ bool) {
+func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	var userString string
 	if sessVars.User != nil {
@@ -2232,7 +2282,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
 	stmtExecInfo.RUDetail = ruDetail
-	stmtExecInfo.TotalRUV2 = 0
+	stmtExecInfo.TotalRUV2 = firstStatementRUTotal(statementRUTotal)
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()

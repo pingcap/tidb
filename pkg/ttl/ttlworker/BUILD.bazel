@@ -74,7 +74,9 @@ go_test(
     race = "on",
     shard_count = 50,
     deps = [
+        "//pkg/config",
         "//pkg/domain",
+        "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/kv",
@@ -109,6 +111,7 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//mock",
