@@ -28,7 +28,7 @@ mod flightrecorder;
 
 pub use adapter::register_with_client_go;
 #[cfg(test)]
-use adapter::test_support::handle_trace_control_extractor;
+use adapter::test_support::{field_value, handle_trace_control_extractor};
 pub use flightrecorder::{
     check_flight_recorder_dump_trigger, get_flight_recorder, start_http_flight_recorder,
     start_log_flight_recorder, DevDebugConfig, DumpTriggerConfig, FlightRecorderConfig,

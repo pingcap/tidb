@@ -52,14 +52,50 @@ fn local_context(context: &client_trace::TraceContext) -> TraceContext {
 /// impls, plus the `&'static str` literals it still uses directly, e.g. its
 /// own doctest).
 ///
-/// A field whose concrete type is none of these (currently only
-/// region-cache's raw `Vec<pdpb::KeyRange>`/`Vec<RegionWithLeader>` batches)
-/// has no structured representation left to recover. The client removed the
-/// very mechanism (`TraceValue::Array`/`Object`) that used to carry one, so
-/// this keeps the field's NAME for correlation and marks its value
-/// unavailable rather than guessing at an internal type this crate has no
-/// business depending on.
-fn field_value(field: &TraceField) -> Value {
+/// `region_cache.rs`'s batch fields (`ranges`, `cachedRegions`,
+/// `uncachedRanges`, `regions`, `locations`) pass one of exactly two
+/// concrete collection types; downcasting against those recovers the same
+/// structure Go's own `zap.Array`/`zap.Object` would have carried for them.
+///
+/// A field whose concrete type is none of these has no structured
+/// representation left to recover, so this keeps the field's NAME for
+/// correlation and marks its value unavailable rather than guessing at an
+/// internal type this crate has no business depending on.
+pub(crate) fn field_value(field: &TraceField) -> Value {
+    if let Some(ranges) = field.value::<Vec<tikv_client::proto::pdpb::KeyRange>>() {
+        return Value::Array(
+            ranges
+                .iter()
+                .map(|range| {
+                    Value::Object(vec![
+                        Field::new("start_key", Value::Binary(range.start_key.clone())),
+                        Field::new("end_key", Value::Binary(range.end_key.clone())),
+                    ])
+                })
+                .collect(),
+        );
+    }
+    if let Some(regions) = field.value::<Vec<tikv_client::RegionWithLeader>>() {
+        return Value::Array(
+            regions
+                .iter()
+                .map(|region| {
+                    let epoch = region.region.region_epoch.as_ref();
+                    Value::Object(vec![
+                        Field::new("id", Value::U64(region.region.id)),
+                        Field::new(
+                            "ver",
+                            Value::U64(epoch.map(|epoch| epoch.version).unwrap_or_default()),
+                        ),
+                        Field::new(
+                            "confVer",
+                            Value::U64(epoch.map(|epoch| epoch.conf_ver).unwrap_or_default()),
+                        ),
+                    ])
+                })
+                .collect(),
+        );
+    }
     if let Some(value) = field.value::<String>() {
         return Value::Str(value.clone());
     }
@@ -159,5 +195,6 @@ pub(crate) fn map_category(category: Category) -> TraceCategory {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    pub(crate) use super::field_value;
     pub(crate) use super::handle_trace_control_extractor;
 }

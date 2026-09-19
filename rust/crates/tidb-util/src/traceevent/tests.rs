@@ -956,3 +956,60 @@ fn register_installs_live_client_hooks() {
 
     get_flight_recorder().unwrap().close();
 }
+
+// `field_value`'s recovery of the client's two composite batch-field types
+// (`region_cache.rs`'s `ranges`/`cachedRegions`/`regions`/... fields), which
+// the scalar-only downcast list would otherwise drop to the "unrepresentable
+// type" placeholder.
+#[test]
+fn field_value_recovers_known_composite_batch_types() {
+    let ranges = vec![
+        tikv_client::proto::pdpb::KeyRange {
+            start_key: b"a".to_vec(),
+            end_key: b"b".to_vec(),
+        },
+        tikv_client::proto::pdpb::KeyRange {
+            start_key: b"c".to_vec(),
+            end_key: Vec::new(),
+        },
+    ];
+    let field = tikv_client::trace::TraceField::new("ranges", ranges);
+    let Value::Array(entries) = field_value(&field) else {
+        panic!("expected an array value");
+    };
+    assert_eq!(entries.len(), 2);
+    let Value::Object(fields) = &entries[0] else {
+        panic!("expected an object entry");
+    };
+    assert!(matches!(
+        &fields[0].value,
+        Value::Binary(key) if key == b"a"
+    ));
+    assert!(matches!(
+        &fields[1].value,
+        Value::Binary(key) if key == b"b"
+    ));
+
+    let regions = vec![tikv_client::RegionWithLeader::new(
+        tikv_client::proto::metapb::Region {
+            id: 7,
+            region_epoch: Some(tikv_client::proto::metapb::RegionEpoch {
+                conf_ver: 2,
+                version: 3,
+            }),
+            ..Default::default()
+        },
+        None,
+    )];
+    let field = tikv_client::trace::TraceField::new("regions", regions);
+    let Value::Array(entries) = field_value(&field) else {
+        panic!("expected an array value");
+    };
+    assert_eq!(entries.len(), 1);
+    let Value::Object(fields) = &entries[0] else {
+        panic!("expected an object entry");
+    };
+    assert!(matches!(&fields[0].value, Value::U64(7)));
+    assert!(matches!(&fields[1].value, Value::U64(3)));
+    assert!(matches!(&fields[2].value, Value::U64(2)));
+}
