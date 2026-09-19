@@ -38,7 +38,7 @@ type FKCheck struct {
 	BasePhysicalPlan
 	FK         *model.FKInfo
 	ReferredFK *model.ReferredFKInfo
-	Tbl        table.Table
+	Tbl        table.Table // nil when a child check references a missing parent table
 	Idx        table.Index
 	Cols       []ast.CIStr
 
@@ -93,6 +93,9 @@ const (
 
 // AccessObject implements DataAccesser interface.
 func (f *FKCheck) AccessObject() base.AccessObject {
+	if f.Tbl == nil && f.FK != nil {
+		return access.OtherAccessObject(fmt.Sprintf("table:%s", f.FK.RefTable))
+	}
 	if f.Idx == nil {
 		return access.OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
 	}
@@ -453,7 +456,12 @@ func isMapContainAnyCols(colsMap map[string]struct{}, cols ...ast.CIStr) bool {
 func buildFKCheckOnModifyChildTable(ctx base.PlanContext, is infoschema.InfoSchema, fk *model.FKInfo, failedErr error) (*FKCheck, error) {
 	referTable, err := is.TableByName(context.Background(), fk.RefSchema, fk.RefTable)
 	if err != nil {
-		return nil, nil
+		if !infoschema.ErrTableNotExists.Equal(err) {
+			return nil, err
+		}
+		// Defer failure until a non-NULL child key is written; empty statements
+		// and NULL foreign keys do not require a referenced row.
+		return FKCheck{FK: fk, CheckExist: true, FailedErr: failedErr}.Init(ctx), nil
 	}
 	fkCheck, err := buildFKCheck(ctx, referTable, fk.RefCols, failedErr)
 	if err != nil {
