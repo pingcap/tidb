@@ -384,6 +384,8 @@ impl From<CopPagingError> for CopReadTaskError {
 
 /// Deterministic coordinator that stops immediately before RPC transport.
 pub struct CopReadTaskRuntime {
+    // Go cop requests alias worker.req.Data, including across retries.
+    data: prost::bytes::Bytes,
     metadata: Arc<KvRequestMetadata>,
     tasks: Vec<LogicalCopReadTask>,
     in_flight: BTreeMap<u64, InFlightCopReadTask>,
@@ -451,6 +453,7 @@ impl CopReadTaskRuntime {
             .unwrap_or(u64::MAX)
             .saturating_add(1);
         let mut runtime = Self {
+            data: metadata.data.clone().unwrap_or_default().into(),
             metadata: Arc::new(metadata.clone()),
             tasks,
             in_flight: BTreeMap::new(),
@@ -508,6 +511,7 @@ impl CopReadTaskRuntime {
                 (
                     id,
                     Self {
+                        data: self.data.clone(),
                         metadata: Arc::clone(&self.metadata),
                         tasks: vec![task],
                         in_flight,
@@ -936,8 +940,12 @@ impl CopReadTaskRuntime {
             &self.next_paging_task_index,
             task.paging || self.metadata.paging.size_bytes > 0,
         );
-        let mut request = CoprocessorRequestEnvelope::from_metadata(&self.metadata, ranges)
-            .with_paging_size(paging_size);
+        let mut request = CoprocessorRequestEnvelope::from_metadata_with_data(
+            &self.metadata,
+            ranges,
+            self.data.clone(),
+        )
+        .with_paging_size(paging_size);
         let lookup = self.cache.as_ref().and_then(|cache| {
             cache.prepare_request(
                 &mut request,
@@ -1096,6 +1104,45 @@ fn bucket_keys_are_current(region: &RegionTaskTopology) -> bool {
 #[cfg(test)]
 mod tests {
     use super::allocate_paging_task_index;
+
+    #[test]
+    fn region_attempts_share_immutable_dag_bytes() {
+        use super::*;
+        use prost::Message;
+        let key = |i: u64| format!("{i:08}").into_bytes();
+        let topology: Vec<_> = (0..64).map(|i| RegionTaskTopology {
+            region_id: i + 1, start_key: key(i), end_key: key(i + 1),
+            ..Default::default()
+        }).collect();
+        let mut metadata = KvRequestMetadata::default();
+        metadata.request_type = RequestType::Dag;
+        metadata.store_type = StoreType::TiKv;
+        metadata.data = Some(vec![42; 4096]);
+        metadata.keep_order = true;
+        metadata.start_ts = 100;
+        metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
+            start_key: key(0).into(), end_key: key(64).into(),
+        }]).into());
+        let mut runtime = CopReadTaskRuntime::prepare(&metadata, &topology, None,
+            ReadEngineGeneration::Classic, 0).unwrap();
+        let data = &runtime.prepared[0].request.data;
+        let ptr = data.as_ptr();
+        assert_eq!(&data[..], metadata.data.as_ref().unwrap().as_slice());
+        for attempt in &runtime.prepared {
+            assert_eq!(attempt.request.data.as_ptr(), ptr,
+                "Go cop requests share worker.req.Data across region tasks");
+        }
+        for (_, mut worker) in runtime.take_tasks() {
+            let ranges = worker.tasks[0].task.ranges.clone();
+            let id = worker.prepare_attempt(0, ranges, 0).unwrap();
+            let retry = worker.prepared_attempt(id).unwrap();
+            assert_eq!(retry.request.data.as_ptr(), ptr,
+                "retry preparation must retain the same immutable DAG");
+            let decoded = tidb_proto::CoprocessorRequest::decode(
+                retry.request.encode_to_vec().as_slice()).unwrap();
+            assert_eq!(decoded.data, metadata.data.as_ref().unwrap().as_slice());
+        }
+    }
 
     #[test]
     #[ignore = "scaling regression; run explicitly without competing CPU load"]

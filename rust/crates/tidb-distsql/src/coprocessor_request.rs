@@ -37,7 +37,7 @@ pub struct CoprocessorRequestEnvelope {
     /// Source `kv.Request.Tp` (field 2).
     pub tp: i64,
     /// Exact source `kv.Request.Data` bytes (field 3).
-    pub data: Vec<u8>,
+    pub data: prost::bytes::Bytes,
     /// Ordered half-open ranges for this coprocessor task (field 4).
     pub ranges: Vec<RequestKeyRange>,
     /// Optional cache flag supplied by a future cache owner (field 5).
@@ -75,9 +75,21 @@ impl CoprocessorRequestEnvelope {
     /// boundaries or pretending that a region router already exists.
     #[must_use]
     pub fn from_metadata(metadata: &KvRequestMetadata, ranges: Vec<RequestKeyRange>) -> Self {
+        Self::from_metadata_with_data(
+            metadata,
+            ranges,
+            metadata.data.clone().unwrap_or_default().into(),
+        )
+    }
+
+    pub(crate) fn from_metadata_with_data(
+        metadata: &KvRequestMetadata,
+        ranges: Vec<RequestKeyRange>,
+        data: prost::bytes::Bytes,
+    ) -> Self {
         Self {
             tp: metadata.request_type.raw(),
-            data: metadata.data.clone().unwrap_or_default(),
+            data,
             ranges,
             start_ts: metadata.start_ts,
             schema_ver: metadata.schema_version,

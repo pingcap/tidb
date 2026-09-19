@@ -89,7 +89,7 @@ fn test_build_cache_key() {
     let mut request = CoprocessorRequestEnvelope {
         tp: 0xab,
         start_ts: 0xaa_bb_cc,
-        data: vec![0x18, 0, 0x20, 0, 0x40, 0, 0x5a, 0],
+        data: vec![0x18, 0, 0x20, 0, 0x40, 0, 0x5a, 0].into(),
         ranges: vec![
             RequestKeyRange {
                 start_key: vec![0x01].into(),
@@ -124,7 +124,7 @@ fn test_build_cache_key() {
     request = CoprocessorRequestEnvelope {
         tp: 0xabcc,
         start_ts: 0xaa_bb_cc,
-        data: vec![0x18],
+        data: vec![0x18].into(),
         ..CoprocessorRequestEnvelope::default()
     };
     assert_eq!(
@@ -311,7 +311,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
 
     let mut request = CoprocessorRequestEnvelope {
         tp: 0xab,
-        data: b"dag".to_vec(),
+        data: b"dag".to_vec().into(),
         ranges: vec![RequestKeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
@@ -474,7 +474,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
     let cache = cache();
     let mut request = CoprocessorRequestEnvelope {
         tp: 1,
-        data: b"range-presence".to_vec(),
+        data: b"range-presence".to_vec().into(),
         ranges: vec![RequestKeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
@@ -523,7 +523,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
     assert_eq!(empty_range_hit.range, Some(CoprocessorKeyRange::default()));
 
     let absent_key = build_copr_cache_key(&CoprocessorRequestEnvelope {
-        data: b"absent-range".to_vec(),
+        data: b"absent-range".to_vec().into(),
         ..request.clone()
     })
     .unwrap();
@@ -540,7 +540,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
         },
     ));
     let mut absent_request = CoprocessorRequestEnvelope {
-        data: b"absent-range".to_vec(),
+        data: b"absent-range".to_vec().into(),
         ..request
     };
     let absent_lookup = cache
