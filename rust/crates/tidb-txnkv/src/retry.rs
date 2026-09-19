@@ -63,10 +63,12 @@ pub enum RegionBackoffKind {
     /// CheckTxnStatus found a secondary lock whose primary record does not
     /// exist yet, which a concurrent prewrite resolves on its own.
     TxnNotFound,
+    /// A PD region-lookup RPC failed (client-go `retry.BoPDRPC`).
+    PdRpc,
 }
 
 impl RegionBackoffKind {
-    const COUNT: usize = 13;
+    const COUNT: usize = 14;
     const ALL: [Self; Self::COUNT] = [
         Self::TikvRpc,
         Self::RegionMiss,
@@ -81,6 +83,7 @@ impl RegionBackoffKind {
         Self::TxnLock,
         Self::TxnLockFast,
         Self::TxnNotFound,
+        Self::PdRpc,
     ];
 
     const fn is_sleep_excluded(self) -> bool {
@@ -101,6 +104,8 @@ impl RegionBackoffKind {
             Self::TxnLock => (100, 3_000, true),
             Self::TxnLockFast => (2, 3_000, true),
             Self::TxnNotFound => (2, 500, false),
+            // client-go `config/retry.BoPDRPC`: NewBackoffFnCfg(500, 3000, EqualJitter).
+            Self::PdRpc => (500, 3_000, true),
         }
     }
 }

@@ -249,6 +249,9 @@ fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> Lock
             StorageDriverError::Other("region not Initialized".to_owned())
         }
         RegionBackoffKind::IsWitness => StorageDriverError::Other("peer is witness".to_owned()),
+        RegionBackoffKind::PdRpc => StorageDriverError::PdServerTimeout {
+            message: detail.to_owned(),
+        },
     };
     match to_tidb_driver_error(&source) {
         ConvertedDriverError::Terror(converted) => LockSqlError {
@@ -508,6 +511,11 @@ mod tests {
             (
                 RegionBackoffKind::TxnNotFound,
                 Some(errcode::ErrResolveLockTimeout),
+                None,
+            ),
+            (
+                RegionBackoffKind::PdRpc,
+                Some(errcode::ErrPDServerTimeout),
                 None,
             ),
         ];

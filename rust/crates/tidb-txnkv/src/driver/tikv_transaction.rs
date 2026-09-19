@@ -531,6 +531,26 @@ fn classify_cause(error: &TikvTransactionError) -> crate::transaction::Transacti
                 key: tikv_client::redact::key(&lost.key),
             }
         }
+        // Go: `pkg/store/driver/error/error.go`'s `ToTiDBErr` special-cases
+        // `*tikverr.ErrPDServerTimeout` distinctly from a generic transport
+        // failure. client-go's own `Backoffer.BackoffWithCfgAndMaxSleep`
+        // picks the config with the longest accumulated sleep and returns
+        // *that* config's sentinel error once the overall budget is
+        // exhausted; `retry.BoPDRPC`'s sentinel is exactly `ErrPDServerTimeout`
+        // (`config/retry/config.go`). The vendored client models the same
+        // "longest sleep wins" selection in `RetryError::Exhausted { terminal, .. }`.
+        ClientError::RegionLookupRetry(retry_error) => match retry_error.as_ref() {
+            tikv_client::retry::RetryError::Exhausted {
+                terminal: Some(tikv_client::retry::RetryTerminal::PdServerTimeout),
+                ..
+            } => TransactionCause::BackoffExhausted {
+                kind: crate::retry::RegionBackoffKind::PdRpc,
+                detail: retry_error.to_string(),
+            },
+            _ => TransactionCause::Region {
+                detail: retry_error.to_string(),
+            },
+        },
         _ => TransactionCause::Transport {
             detail: client_error.to_string(),
         },
@@ -766,5 +786,49 @@ mod tests {
             unreachable!()
         };
         assert_eq!(key, tikv_client::redact::key(b"primary"));
+    }
+
+    // Go: `pkg/store/driver/error/error.go`'s `ToTiDBErr` maps
+    // `*tikverr.ErrPDServerTimeout` distinctly from a generic transport
+    // error; `retry.BoPDRPC` is the config whose sentinel is exactly that
+    // error, so a PD region-lookup backoff exhaustion selecting it as the
+    // longest-slept config must classify the same way.
+    #[test]
+    fn a_pd_rpc_backoff_exhaustion_classifies_as_pd_server_timeout() {
+        let error = TikvTransactionError::Client(tikv_client::Error::RegionLookupRetry(Box::new(
+            tikv_client::retry::RetryError::Exhausted {
+                max_sleep_ms: 20_000,
+                terminal: Some(tikv_client::retry::RetryTerminal::PdServerTimeout),
+                reason: "pd region lookup backoff exhausted".to_owned(),
+                recent_errors: Vec::new(),
+            },
+        )));
+
+        let cause = classify_cause(&error);
+        assert!(matches!(
+            cause,
+            TransactionCause::BackoffExhausted {
+                kind: crate::retry::RegionBackoffKind::PdRpc,
+                ..
+            }
+        ));
+    }
+
+    // A `RegionLookupRetry` that is NOT a PD-timeout-terminal exhaustion
+    // (cancellation, a cluster mismatch, or exhaustion under a different
+    // terminal) has no Go sentinel to match; `Region` is the closest honest
+    // classification, distinct from swallowing it into generic `Transport`.
+    #[test]
+    fn a_cancelled_region_lookup_retry_classifies_as_region_not_backoff_exhausted() {
+        let error = TikvTransactionError::Client(tikv_client::Error::RegionLookupRetry(Box::new(
+            tikv_client::retry::RetryError::Cancelled {
+                reason: "context cancelled".to_owned(),
+            },
+        )));
+
+        assert!(matches!(
+            classify_cause(&error),
+            TransactionCause::Region { .. }
+        ));
     }
 }
