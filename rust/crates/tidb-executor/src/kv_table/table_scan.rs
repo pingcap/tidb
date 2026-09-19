@@ -1551,12 +1551,23 @@ impl KvTable {
                 functions,
                 ..
             } => {
+                // A group key the chosen index does not carry at all is the
+                // same "this pushdown shape does not apply" signal every
+                // other remap failure in this function answers with --
+                // `Ok(None)`, never a hard error: the caller already retains
+                // the ordinary index stream and falls back to a local
+                // partial aggregate over it (see the comment at this
+                // function's call site in `access_path.rs`). Erroring here
+                // instead would turn an internal "try the slower path"
+                // signal into a query-failing error the statement never
+                // recovers from -- go-tpc's own TPC-C consistency check
+                // (task 75) hit exactly this: a decorrelated aggregate
+                // grouped on a column the planner's chosen access path for
+                // `orders` does not cover.
                 for offset in group_offsets {
-                    remap(offset).ok_or_else(|| {
-                        KvTableError::Encode(
-                            "a grouped aggregate key is not covered by the index".to_owned(),
-                        )
-                    })?;
+                    if remap(offset).is_none() {
+                        return Ok(None);
+                    }
                 }
                 for function in functions {
                     if let Some(input) = function.input.as_mut() {
@@ -5693,6 +5704,91 @@ mod remote_cursor_tests {
             assert_eq!(request.desc, desc);
             assert_eq!(request.keep_order, keep_order);
         }
+    }
+
+    /// Task 75: go-tpc's TPC-C consistency check (condition 3.3.2.10) failed
+    /// the whole statement with "index aggregate request failed: a grouped
+    /// aggregate key is not covered by the index" -- a decorrelated
+    /// aggregate over `orders` grouped by `o_d_id, o_c_id` chose an index
+    /// access path that does not carry `o_c_id`. Every OTHER "this pushdown
+    /// shape does not apply" case in this function answers with `Ok(None)`
+    /// (the caller already falls back to the ordinary index stream and a
+    /// local partial aggregate); this is the one spot that instead
+    /// hard-errored, turning an internal fallback signal into a query
+    /// failure. A group key naming a column the chosen index does not carry
+    /// at all must degrade the same way its siblings do, not fail the
+    /// statement.
+    #[test]
+    fn a_grouped_aggregate_key_the_index_does_not_carry_falls_back_instead_of_erroring() {
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let mut table = KvTable::with_storage(
+            91,
+            vec![
+                bigint_column(1, "a"),
+                bigint_column(2, "b"),
+                bigint_column(3, "c"),
+            ],
+            Box::new(RequestCapture {
+                captured: std::sync::Arc::clone(&captured),
+            }),
+        );
+        // idx_a carries only `a` (offset 0); the aggregate below groups by
+        // `c` (offset 2), which this index does not carry in any position.
+        table.add_index(
+            crate::kv_table::table_meta::KvIndex {
+                id: 7,
+                name: "idx_a".to_owned(),
+                comment: String::new(),
+                unique: false,
+                prefix_lengths: vec![UNSPECIFIED_LENGTH],
+                column_offsets: vec![0],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+
+        let aggregate = crate::remote_scan::PushdownPartialAggregate::Grouped {
+            group_offsets: vec![2],
+            group_types: vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)],
+            functions: vec![crate::remote_scan::PushdownAggregateFunction {
+                kind: crate::remote_scan::PushdownAggregateKind::Count,
+                input: None,
+                output_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            }],
+            streamed: true,
+        };
+        let ranges = [IndexRange {
+            low: vec![Datum::Int(1)],
+            high: vec![Datum::Int(9)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let statement = PushdownStatementContext::default();
+        let stream = table
+            .pushdown_index_partial_aggregate_cursor(
+                7,
+                &ranges,
+                &[0, 1, 2],
+                &[],
+                &aggregate,
+                &crate::StmtContext::default(),
+                &tidb_datatype::SessionTimeZone::utc(),
+                &statement,
+                false,
+                false,
+            )
+            .expect("an uncovered group key is a pushdown refusal, not an error");
+        assert!(
+            stream.is_none(),
+            "the caller retains the ordinary index stream and its local fallback"
+        );
+        assert!(
+            captured.lock().unwrap().is_none(),
+            "no coprocessor request is built for a refused shape"
+        );
     }
 
     #[test]
