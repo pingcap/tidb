@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -382,31 +383,63 @@ func TestInetNtoa(t *testing.T) {
 	require.True(t, r.IsNull())
 }
 
+// inet6NtoaArg builds an INET6_NTOA argument constant with either a binary or a
+// non-binary (utf8mb4) charset, so the tests can exercise MySQL's rule that only
+// a binary string of 4 or 16 bytes is rendered (see issue #59461).
+func inet6NtoaArg(val []byte, binaryChs bool) Expression {
+	var ft *types.FieldType
+	if binaryChs {
+		ft = types.NewFieldType(mysql.TypeVarString)
+		types.SetBinChsClnFlag(ft)
+	} else {
+		ft = types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationUTF8MB4, types.UnspecifiedLength)
+	}
+	return &Constant{Value: types.NewBytesDatum(val), RetType: ft}
+}
+
+func TestInet6NtoaArgInvalid(t *testing.T) {
+	binTp := types.NewFieldType(mysql.TypeVarString)
+	types.SetBinChsClnFlag(binTp)
+	strTp := types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationUTF8MB4, types.UnspecifiedLength)
+	// A binary string of 4 or 16 bytes is the only valid shape.
+	require.False(t, inet6NtoaArgInvalid(binTp, 4))
+	require.False(t, inet6NtoaArgInvalid(binTp, 16))
+	// A binary string of any other length is rejected.
+	require.True(t, inet6NtoaArgInvalid(binTp, 5))
+	require.True(t, inet6NtoaArgInvalid(binTp, 0))
+	// A non-binary argument is rejected even at a valid length.
+	require.True(t, inet6NtoaArgInvalid(strTp, 4))
+	require.True(t, inet6NtoaArgInvalid(strTp, 16))
+}
+
 func TestInet6NtoA(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		ip     []byte
-		expect any
+		ip        []byte
+		binaryChs bool
+		expect    any
 	}{
-		// Success cases
-		{[]byte{0x00, 0x00, 0x00, 0x00}, "0.0.0.0"},
-		{[]byte{0x0A, 0x00, 0x05, 0x09}, "10.0.5.9"},
+		// Success cases: binary strings of 4 or 16 bytes.
+		{[]byte{0x00, 0x00, 0x00, 0x00}, true, "0.0.0.0"},
+		{[]byte{0x0A, 0x00, 0x05, 0x09}, true, "10.0.5.9"},
 		{[]byte{0xFD, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5A, 0x55, 0xCA, 0xFF, 0xFE,
-			0xFA, 0x90, 0x89}, "fdfe::5a55:caff:fefa:9089"},
+			0xFA, 0x90, 0x89}, true, "fdfe::5a55:caff:fefa:9089"},
 		{[]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01,
-			0x02, 0x03, 0x04}, "::ffff:1.2.3.4"},
+			0x02, 0x03, 0x04}, true, "::ffff:1.2.3.4"},
 		{[]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
-			0xFF, 0xFF, 0xFF}, "::ffff:255.255.255.255"},
-		// Fail cases
-		{[]byte{}, nil},                 // missing bytes
-		{[]byte{0x0A, 0x00, 0x05}, nil}, // missing a byte ipv4
+			0xFF, 0xFF, 0xFF}, true, "::ffff:255.255.255.255"},
+		// Fail cases: wrong length, still a binary string.
+		{[]byte{}, true, nil},                 // missing bytes
+		{[]byte{0x0A, 0x00, 0x05}, true, nil}, // missing a byte ipv4
 		{[]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
-			0xFF, 0xFF}, nil}, // missing a byte ipv6
+			0xFF, 0xFF}, true, nil}, // missing a byte ipv6
+		// Fail cases: non-binary argument at a valid length (issue #59461).
+		{[]byte("1234"), false, nil},             // INET6_NTOA(1234) -> "1234", 4 bytes
+		{[]byte("abcdefghijklmnop"), false, nil}, // 16 bytes, non-binary
 	}
 	fc := funcs[ast.Inet6Ntoa]
 	for _, test := range tests {
-		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		f, err := fc.getFunction(ctx, []Expression{inet6NtoaArg(test.ip, test.binaryChs)})
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
