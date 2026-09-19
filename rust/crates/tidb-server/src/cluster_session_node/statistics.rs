@@ -358,6 +358,14 @@ impl ClusterServerSession {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(1);
+            statement.scan_concurrency = self
+                .session
+                .vars()
+                .get_system(analyze_scan_concurrency_variable(statement.auto_analyze))
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY);
+            statement.push_down_flags = self.session.analyze_push_down_flags();
             statement.time_zone = self.session.session_time_zone();
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
@@ -527,5 +535,15 @@ impl ClusterServerSession {
                 SampleMemoryQuota::unlimited,
                 SampleMemoryQuota::from_setting,
             )
+    }
+}
+
+// Go executor/adapter.go temporarily applies the system-process scan setting
+// to auto ANALYZE; user statements retain their own session setting.
+pub(super) fn analyze_scan_concurrency_variable(auto_analyze: bool) -> &'static str {
+    if auto_analyze {
+        tidb_vardef::tidb_vars::TIDB_SYS_PROC_SCAN_CONCURRENCY
+    } else {
+        tidb_vardef::tidb_vars::TIDB_ANALYZE_DIST_SQL_SCAN_CONCURRENCY
     }
 }

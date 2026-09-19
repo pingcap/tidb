@@ -31,6 +31,8 @@
 //!   layer reads the zone.
 //! * `mppCtx` / `HandleMPPDAGReq`: the MPP arm follows the MPP course.
 
+mod analyze;
+
 use prost::Message;
 use tidb_proto::coprocessor;
 use tidb_proto::tipb;
@@ -107,18 +109,7 @@ pub fn handle_cop_request(
 ) -> coprocessor::Response {
     match req.tp {
         REQ_TYPE_DAG => handle_cop_dag_request(store, req),
-        // The analyze arm is a deliberate architectural refusal, not a
-        // pending port: this tier serves ANALYZE in-process
-        // (`tidb-exec/src/cluster_analyze.rs`, whose receipts pin Go's
-        // histogram/TopN/CMS/FM shapes) and nothing in the production
-        // stack produces a `ReqTypeAnalyze` cop request, so Go's
-        // `handleCopAnalyzeRequest` has no reachable consumer here. See
-        // `rust/docs/unistore-lock-parity-audit.md` for the closure
-        // chain; reopen the arm if ANALYZE ever routes through the
-        // coprocessor.
-        REQ_TYPE_ANALYZE => other_error(
-            "handleCopAnalyzeRequest is refused by this tier: ANALYZE is served in-process by cluster_analyze (see unistore-lock-parity-audit.md)",
-        ),
+        REQ_TYPE_ANALYZE => analyze::handle(store, req),
         // Go's stub (`cop_handler.go:750`): a marshalled
         // `tipb.ChecksumResponse{Checksum:1, TotalKvs:1, TotalBytes:1}` --
         // unistore never computes real checksums. The trimmed tipb build
@@ -4982,24 +4973,13 @@ mod tests {
     }
 
     #[test]
-    fn analyze_requests_name_the_in_process_owner() {
-        // The analyze arm is a deliberate architectural refusal, not a
-        // pending port: this tier serves ANALYZE in-process
-        // (`cluster_analyze`), and no production path produces a
-        // `ReqTypeAnalyze` request — see `unistore-lock-parity-audit.md`.
+    fn analyze_empty_ranges_return_empty_response_like_go() {
         let mut store = MvccStore::new();
-        let resp = handle_cop_request(
-            &mut store,
-            &coprocessor::Request {
-                tp: REQ_TYPE_ANALYZE,
-                ..coprocessor::Request::default()
-            },
-        );
-        assert!(
-            resp.other_error.contains("cluster_analyze"),
-            "the refusal must name the in-process owner: {}",
-            resp.other_error
-        );
+        let response = handle_cop_request(&mut store, &coprocessor::Request {
+            tp: REQ_TYPE_ANALYZE, ..Default::default()
+        });
+        assert!(response.other_error.is_empty());
+        assert!(response.data.is_empty());
     }
 
     #[test]

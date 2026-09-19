@@ -8574,3 +8574,35 @@ fn a_failed_prelocked_update_releases_its_row() {
         "the failed statement left neither its lock nor its staged write behind"
     );
 }
+
+#[test]
+fn analyze_sampling_memory_quota_rejects_then_session_recovers() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(991)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.sample_quota (id INT PRIMARY KEY, v VARCHAR(100))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.sample_quota VALUES (1,'one'),(2,'two'),(3,'three')",
+    );
+    rows(&mut session, "SET GLOBAL tidb_mem_quota_analyze = 1");
+    let error = session
+        .execute_write("ANALYZE TABLE test.sample_quota WITH 1 SAMPLERATE")
+        .expect_err("sample exceeds quota");
+    assert!(
+        error.message.contains("memory") || error.message.contains("quota"),
+        "{}",
+        error.message
+    );
+    rows(&mut session, "SET GLOBAL tidb_mem_quota_analyze = -1");
+    rows(
+        &mut session,
+        "ANALYZE TABLE test.sample_quota WITH 1 SAMPLERATE",
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT count(*) FROM test.sample_quota").len(),
+        1
+    );
+}

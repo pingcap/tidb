@@ -3,6 +3,7 @@
 fn main() {
     println!("cargo:rerun-if-changed=proto/resourcetag.proto");
     println!("cargo:rerun-if-changed=proto/select.proto");
+    println!("cargo:rerun-if-changed=proto/analyze.proto");
     println!("cargo:rerun-if-changed=proto/errorpb.proto");
     println!("cargo:rerun-if-changed=proto/kvrpcpb.proto");
     println!("cargo:rerun-if-changed=proto/coprocessor.proto");
@@ -39,6 +40,7 @@ fn main() {
             &[
                 "proto/resourcetag.proto",
                 "proto/select.proto",
+                "proto/analyze.proto",
                 "proto/errorpb.proto",
                 "proto/kvrpcpb.proto",
                 "proto/coprocessor.proto",

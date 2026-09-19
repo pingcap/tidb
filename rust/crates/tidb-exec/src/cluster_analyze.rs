@@ -12,63 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `ANALYZE TABLE` over CLUSTER storage: reading a table's rows out of a
-//! transaction's snapshot and storing the statistics as `mysql.stats_*` rows.
+//! Cluster ANALYZE schema planning and statistics construction.
 //!
-//! This is the WRITE half of [`crate::cluster_stats_load`]. That module reads
-//! `mysql.stats_*` rows a Go `ANALYZE` wrote; this one produces the same
-//! rows, in the same shapes, so that a Go TiDB reading them back cannot tell
-//! which node wrote them. The value of the pair is the differential: `SHOW
-//! STATS_BUCKETS` on a Go server renders what this builds, and its `EXPLAIN`
-//! estimates from it.
+//! The production path in [`sampling`] sends Go-compatible `AnalyzeReq`
+//! requests to TiKV and merges regional row collectors before building
+//! histograms. Only sampled rows and aggregate sketches cross that boundary.
+//! The snapshot-scanning helpers remain available for storage fixtures and
+//! independent index analysis; they are not the production table sampler.
 //!
-//! # What is here, and what is not
-//!
-//! Only the storage-facing half. WHICH columns and indexes an `ANALYZE`
-//! covers, what a scanned row contributes to the sample, and how a histogram
-//! and TopN are built from it all live in [`tidb_executor::analyze`], which
-//! the in-process tier drives too -- so a table analyzed here and the same
-//! table analyzed in-process estimate identically rather than nearly so. This
-//! module turns a `TableInfo` into that module's [`AnalyzePlan`], feeds it the
-//! rows of the record range, and dresses the result as `ClusterStatsItem`s.
-//!
-//! # Where the samples come from, and how that differs from Go
-//!
-//! Go pushes sampling into TiKV: the coprocessor runs `AnalyzeReq` against
-//! each region, samples there, and TiDB merges the per-region collectors
-//! (`analyze_col_sampling.go`). This node scans the table's record range
-//! through the same snapshot every other read on it uses and samples
-//! in-process. The *mechanism* differs; the *algorithm* does not --
-//! [`tidb_stats::row_sample_collector`] is Go's collector, weight rule and
-//! all -- and the sample it draws has the same distribution, because both
-//! Bernoulli and reservoir selection are indifferent to where the rows were
-//! split.
-//!
-//! Two consequences are worth stating rather than hiding. Every row crosses
-//! the wire, so this costs a full table read where Go costs a sampled one;
-//! and the transaction that reads the rows is the transaction that writes the
-//! statistics, so the row count and the histograms are one consistent view
-//! rather than two.
-//!
-//! # The one deliberate divergence, and why it is harmless
-//!
-//! Go's FM sketch hashes a value's *doubly* encoded form -- its column
-//! encoding, wrapped again as a byte string by `codec.EncodeValue` -- because
-//! the collector receives a coprocessor result set whose fields are already
-//! bytes. This hashes the value's own `codec.EncodeValue` once. An FM
-//! sketch's NDV depends only on the *set* of distinct hashes, so any
-//! injective encoding gives the same estimator; only the sketch's
-//! randomisation differs, which is already different between two Go runs.
-//! What must match, and does, is which values are considered the same: a
-//! new-collation string column is hashed by its collation key here exactly as
-//! it is there, so `'a'` and `'A'` are one distinct value under
-//! `utf8mb4_general_ci` on both.
-//!
-//! # What this refuses, and why refusing is the honest answer
-//!
-//! Anything whose sampled value this node cannot reproduce *exactly* is
-//! refused by name rather than approximated, because a wrong histogram is
-//! worse than no histogram: the planner trusts it. See [`AnalyzeError`].
+//! [`tidb_executor::analyze`] owns histogram and TopN construction. This
+//! module projects `TableInfo` into its plan and converts its result into
+//! the `mysql.stats_*` representation read by [`crate::cluster_stats_load`].
+//! Unsupported schema/value shapes return [`AnalyzeError`] rather than
+//! publishing approximate encodings as usable statistics.
+
+pub(crate) mod sampling;
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -298,6 +256,14 @@ pub(crate) fn analyze_physical_table_with_progress<S: PagedMetaSnapshot>(
     }
     let analyzed = run.finish()?;
 
+    Ok(report_from_analyzed(analyzed, physical_id, version))
+}
+
+fn report_from_analyzed(
+    analyzed: tidb_executor::analyze::AnalyzedTable,
+    physical_id: i64,
+    version: u64,
+) -> AnalyzeReport {
     let stats = ClusterTableStats {
         table_id: physical_id,
         version,
@@ -332,12 +298,12 @@ pub(crate) fn analyze_physical_table_with_progress<S: PagedMetaSnapshot>(
             .collect(),
     };
 
-    Ok(AnalyzeReport {
+    AnalyzeReport {
         stats,
         scanned_rows: analyzed.scanned_rows,
         sampled_rows: analyzed.sampled_rows,
         sample_rate: analyzed.sample_rate,
-    })
+    }
 }
 
 /// Runs one pinned-Go independent global-index task.
@@ -583,6 +549,82 @@ mod tests {
     use tidb_model::index::{IndexColumn, IndexInfo};
     use tidb_model::table_info::TableInfo;
     use tidb_model::SchemaState;
+
+    #[test]
+    fn sampling_request_keeps_common_handle_order_and_index_slots() {
+        let table = TableInfo {
+            is_common_handle: true,
+            columns: vec![
+                ColumnInfo::new(7, "a", FieldType::new(FieldTypeCode::LongLong)),
+                ColumnInfo {
+                    offset: 1,
+                    ..ColumnInfo::new(8, "b", FieldType::new(FieldTypeCode::LongLong))
+                },
+            ]
+            .into(),
+            indices: vec![IndexInfo {
+                id: 1,
+                primary: true,
+                unique: true,
+                state: SchemaState::PUBLIC,
+                columns: vec![
+                    IndexColumn {
+                        offset: 1,
+                        length: UNSPECIFIED_LENGTH,
+                        ..IndexColumn::default()
+                    },
+                    IndexColumn {
+                        offset: 0,
+                        length: UNSPECIFIED_LENGTH,
+                        ..IndexColumn::default()
+                    },
+                ]
+                .into(),
+                ..IndexInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        };
+        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let schema = super::sampling::SamplingSchema::new(&table, &plan).unwrap();
+        assert_eq!(schema.handle_positions, vec![1, 0]);
+        assert_eq!(schema.statistics_slots(&plan), vec![0, 1, 2]);
+        let request = schema
+            .request(&plan, &AnalyzeOptions::default(), 0.01, 0, 0)
+            .unwrap();
+        let columns = request.col_req.unwrap();
+        assert_eq!(columns.primary_column_ids, vec![8, 7]);
+        assert_eq!(columns.column_groups[0].column_offsets, vec![1, 0]);
+        assert_eq!(columns.columns_info.len(), 2);
+        assert!(columns
+            .columns_info
+            .iter()
+            .all(|column| column.pk_handle == Some(false)));
+    }
+
+    #[test]
+    fn sampling_request_carries_hidden_handle_without_persisting_its_stats() {
+        let table = TableInfo {
+            columns: vec![ColumnInfo::new(
+                7,
+                "a",
+                FieldType::new(FieldTypeCode::LongLong),
+            )]
+            .into(),
+            ..TableInfo::default()
+        };
+        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let schema = super::sampling::SamplingSchema::new(&table, &plan).unwrap();
+        let request = schema
+            .request(&plan, &AnalyzeOptions::default(), 0.01, 0, 0)
+            .unwrap();
+        let columns = request.col_req.unwrap();
+        assert_eq!(columns.columns_info.len(), 2);
+        assert_eq!(columns.columns_info[1].column_id, Some(-1));
+        assert_eq!(columns.columns_info[1].pk_handle, Some(true));
+        assert_eq!(schema.statistics_slots(&plan), vec![0]);
+        assert_eq!(columns.sample_rate, Some(0.01));
+    }
 
     #[test]
     fn ordinary_global_index_is_sampled_with_partition_rows_like_go() {

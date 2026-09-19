@@ -611,17 +611,21 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         if cancellation.is_cancelled() {
             return Err(DirectUnaryTransportError::CallerCancelled.to_string());
         }
-        if !matches!(
-            dispatch.operation,
-            QueryOperation::Select | QueryOperation::SelectWithRuntimeStats
-        ) {
+        let metadata = request
+            .metadata_for_send()
+            .map_err(|error| DirectUnaryTransportError::Request(error).to_string())?;
+        let supported = match dispatch.operation {
+            QueryOperation::Select | QueryOperation::SelectWithRuntimeStats => {
+                metadata.request_type == crate::RequestType::Dag
+            }
+            QueryOperation::Analyze => metadata.request_type == crate::RequestType::Analyze,
+            _ => false,
+        };
+        if !supported {
             return Err(
                 DirectUnaryTransportError::UnsupportedOperation(dispatch.operation).to_string(),
             );
         }
-        let metadata = request
-            .metadata_for_send()
-            .map_err(|error| DirectUnaryTransportError::Request(error).to_string())?;
         let mut read_policy =
             read_policy_from_metadata(metadata).map_err(|error| error.to_string())?;
         read_policy.forwarding = self.config.enable_forwarding;
@@ -2295,8 +2299,7 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
         // like Go's worker receiving successive copTasks. Small-task lanes
         // still need independent admission and retain the split path below.
         if self.metadata.concurrency <= 1
-            && (self.metadata.request_source.internal
-                || !self.runtime.has_small_tasks())
+            && (self.metadata.request_source.internal || !self.runtime.has_small_tasks())
         {
             return vec![self];
         }

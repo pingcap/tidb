@@ -324,6 +324,13 @@ pub struct RowSampleCollector {
 }
 
 impl RowSampleCollector {
+    /// Go's sampling builder replaces prefix/virtual index NDV and NULL
+    /// facts with their independent index scan, retaining the shared samples.
+    pub fn replace_special_index_stats(&mut self, slot: usize, null_count: i64, sketch: FmSketch) {
+        self.null_counts[slot] = null_count;
+        self.sketches[slot] = Some(sketch);
+    }
+
     /// Creates a collector with `slot_count` slots under `policy`.
     #[must_use]
     pub fn new(slot_count: usize, policy: SamplePolicy) -> Self {
@@ -647,8 +654,18 @@ impl RowSampleCollector {
     /// keeping it as a supplied typed key avoids pretending scan/heap order is
     /// handle order after distributed collectors merge.
     pub fn into_parts<E>(
-        mut self,
+        self,
         mut build_handle: impl FnMut(&[Datum]) -> Result<Handle, E>,
+    ) -> Result<(i64, Vec<SlotStats>, Vec<SampledRow>), E> {
+        self.into_decoded_parts(|columns| build_handle(columns))
+    }
+
+    /// Decodes merged wire samples and builds their handles before sorting.
+    /// Counts, sketches and reservoir weights have already been merged; this
+    /// phase must not feed the sampled rows through the sampler again.
+    pub fn into_decoded_parts<E>(
+        mut self,
+        mut decode_and_build_handle: impl FnMut(&mut Vec<Datum>) -> Result<Handle, E>,
     ) -> Result<(i64, Vec<SlotStats>, Vec<SampledRow>), E> {
         assert_eq!(
             self.null_counts.len(),
@@ -676,8 +693,8 @@ impl RowSampleCollector {
             })
             .collect();
         let mut rows_with_handles = Vec::with_capacity(self.samples.len());
-        for (_, columns) in self.samples.drain(..) {
-            let handle = build_handle(&columns)?;
+        for (_, mut columns) in self.samples.drain(..) {
+            let handle = decode_and_build_handle(&mut columns)?;
             rows_with_handles.push((columns, handle));
         }
         rows_with_handles.sort_unstable_by(|left, right| {
@@ -753,4 +770,21 @@ fn proto_memory_usage(proto: &RowSampleCollectorProto) -> i64 {
             total.wrapping_add(column.len() as i64)
         })
     })
+}
+
+#[cfg(test)]
+mod special_index_tests {
+    use super::*;
+    #[test]
+    fn special_index_overrides_only_ndv_and_nulls() {
+        let mut collector = RowSampleCollector::new(1, SamplePolicy::choose(10, 0.0).unwrap());
+        let mut sketch = FmSketch::new(1000);
+        sketch.insert_hash(17);
+        collector.replace_special_index_stats(0, 2, sketch);
+        let proto = collector.to_proto();
+        assert_eq!(proto.null_counts, [2]);
+        assert_eq!(proto.total_sizes, [0]);
+        assert_eq!(proto.fm_sketches[0].as_ref().unwrap().hashset, [17]);
+        assert_eq!(proto.count, 0);
+    }
 }

@@ -133,3 +133,20 @@ fn unsupported_request_shape_fails_before_pd_or_tikv() {
         assert!(loader_calls.borrow().is_empty());
     }
 }
+
+#[test]
+fn analyze_operation_sends_raw_collector_response() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut runtime = InjectedQueryRuntime::new(transport(
+        Rc::clone(&calls),
+        [Ok(response(b"collector"))],
+        [location(1, "a", "z", "one")],
+    ));
+    let mut request = metadata("a", "z");
+    request.request_type = RequestType::Analyze;
+    request.paging.enabled = false;
+    let mut result = runtime.analyze(&transport_request(request), false).unwrap();
+    assert_eq!(result.next_raw().unwrap(), Some(b"collector".to_vec()));
+    assert!(result.next_raw().unwrap().is_none());
+    assert_eq!(calls.borrow().len(), 1);
+}

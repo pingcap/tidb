@@ -551,3 +551,15 @@ fn analyze_with_insert_and_select_on_the_table_reaches_the_seam() {
         "a privileged account must reach the statistics seam: {refusal}"
     );
 }
+
+#[test]
+fn analyze_scan_concurrency_uses_system_setting_only_for_auto_analyze() {
+    assert_eq!(
+        super::super::statistics::analyze_scan_concurrency_variable(false),
+        tidb_vardef::tidb_vars::TIDB_ANALYZE_DIST_SQL_SCAN_CONCURRENCY
+    );
+    assert_eq!(
+        super::super::statistics::analyze_scan_concurrency_variable(true),
+        tidb_vardef::tidb_vars::TIDB_SYS_PROC_SCAN_CONCURRENCY
+    );
+}

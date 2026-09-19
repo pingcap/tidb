@@ -1081,7 +1081,9 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     if metadata.store_type != StoreType::TiKv {
         return Err(CopReadTaskError::UnsupportedStore);
     }
-    if metadata.request_type != RequestType::Dag {
+    if !matches!(metadata.request_type, RequestType::Dag | RequestType::Analyze)
+        || (metadata.request_type == RequestType::Analyze && metadata.paging.enabled)
+    {
         return Err(CopReadTaskError::UnsupportedRequestType);
     }
     if metadata.batch_cop {

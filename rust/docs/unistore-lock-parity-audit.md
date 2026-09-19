@@ -94,6 +94,15 @@ Go tests. Audit findings against `mvcc.go` @ a85e0fd5df:
   implementation-architecture difference (2026-09-14, section below) —
   with them, the cophandler tail carries NO open parity gap.
 
+## ANALYZE routing update (2026-09-19, validation in progress)
+
+The historical architecture closure below no longer describes the current
+production path. FullSampling ANALYZE now uses the shared coprocessor transport
+and `cophandler/analyze.rs` in unistore. The remote TiKV path no longer transfers
+every table row to TiDB for sampling. Other Analyze RPC types remain unsupported;
+independent index tasks still use their existing path. This change is not a
+claim of a complete cophandler package port or verified performance parity.
+
 ## cophandler analyze arm — CLOSED, parity-by-architecture (2026-09-13)
 
 Go's unistore implements `handleCopAnalyzeRequest`

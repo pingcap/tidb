@@ -492,6 +492,12 @@ impl Session {
         context
     }
 
+    /// Captures the statement flags used by a server-owned ANALYZE request.
+    #[must_use]
+    pub fn analyze_push_down_flags(&self) -> u64 {
+        self.statement_context(false).push_down_flags()
+    }
+
     /// Starts a statement executed by a server-owned route and returns the
     /// same statement memory and SQL killer ordinary execution receives.
     #[must_use]

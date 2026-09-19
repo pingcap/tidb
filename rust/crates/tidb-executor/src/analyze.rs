@@ -230,6 +230,10 @@ pub struct AnalyzeStatement {
     pub enable_async_merge_global_stats: bool,
     /// Pinned `tidb_merge_partition_stats_concurrency` TopN worker count.
     pub partition_merge_concurrency: usize,
+    /// Session ANALYZE coprocessor concurrency; nonpositive selects adaptive sizing.
+    pub scan_concurrency: i64,
+    /// Statement flags sent to TiKV's sampling processor.
+    pub push_down_flags: u64,
     /// Statement timezone used to decode column TopN candidates.
     pub time_zone: tidb_datatype::SessionTimeZone,
     /// The effective knobs.
@@ -550,6 +554,8 @@ pub fn lower_analyze_admin(
             analyze_snapshot: false,
             enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
+            scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
+            push_down_flags: crate::StmtContext::for_query().push_down_flags(),
             time_zone: tidb_datatype::SessionTimeZone::utc(),
             options,
         });
@@ -705,7 +711,7 @@ impl AnalyzePlan {
     /// Go's collector counts one slot per column and per column group. An
     /// ordinary single-column index reuses its column's facts; a prefix index
     /// is special and needs the separately cut key's facts.
-    fn slot_count(&self) -> usize {
+    pub fn slot_count(&self) -> usize {
         self.columns.len()
             + self
                 .indexes
@@ -714,7 +720,7 @@ impl AnalyzePlan {
                 .count()
     }
 
-    fn index_slot(&self, index_position: usize) -> usize {
+    pub fn index_slot(&self, index_position: usize) -> usize {
         let index = &self.indexes[index_position];
         if !index.needs_own_slot() {
             return index.column_positions[0];
@@ -836,7 +842,8 @@ impl AnalyzedIndex {
             .any(|length| *length != crate::index_prefix_cut::UNSPECIFIED_LENGTH)
     }
 
-    fn needs_own_slot(&self) -> bool {
+    /// Whether this index needs distinct collector facts rather than its column slot.
+    pub fn needs_own_slot(&self) -> bool {
         self.column_positions.len() > 1 || self.has_prefix()
     }
 }
@@ -978,6 +985,52 @@ impl<'a> AnalyzeRun<'a> {
                 )),
             })?;
 
+        Self::build_collector_parts(
+            plan,
+            self.options,
+            self.sample_rate,
+            scanned_rows,
+            slot_stats,
+            sampled,
+        )
+    }
+
+    /// Builds statistics from merged TiKV region collectors without sampling
+    /// their rows again. The schema owner decodes values and reconstructs the
+    /// integer or common handle before the collector assigns correlation order.
+    pub fn finish_collector(
+        self,
+        collector: RowSampleCollector,
+        decode_and_build_handle: impl FnMut(&mut Vec<Datum>) -> Result<tidb_txnkv::Handle, AnalyzeError>,
+    ) -> Result<AnalyzedTable, AnalyzeError> {
+        let (count, slots, samples) = collector.into_decoded_parts(decode_and_build_handle)?;
+        if slots.len() != self.plan.slot_count()
+            || samples
+                .iter()
+                .any(|row| row.columns.len() < self.plan.columns.len())
+        {
+            return Err(AnalyzeError::Unsupported(
+                "ANALYZE collector does not match its schema".to_owned(),
+            ));
+        }
+        Self::build_collector_parts(
+            self.plan,
+            self.options,
+            self.sample_rate,
+            count,
+            slots,
+            samples,
+        )
+    }
+
+    fn build_collector_parts(
+        plan: &AnalyzePlan,
+        options: AnalyzeOptions,
+        sample_rate: f64,
+        scanned_rows: i64,
+        slot_stats: Vec<tidb_stats::row_sample_collector::SlotStats>,
+        sampled: Vec<tidb_stats::row_sample_collector::SampledRow>,
+    ) -> Result<AnalyzedTable, AnalyzeError> {
         let mut columns = Vec::with_capacity(plan.columns.len());
         for (position, column) in plan.columns.iter().enumerate() {
             let slot = &slot_stats[position];
@@ -1008,7 +1061,7 @@ impl<'a> AnalyzeRun<'a> {
                     ordinal: row.ordinal,
                 });
             }
-            let mut built_with = self.options.build_options();
+            let mut built_with = options.build_options();
             // A column a single-column unique index covers has no repeated
             // value to put in a TopN, so Go asks for none rather than storing
             // a list of ones.
@@ -1048,7 +1101,7 @@ impl<'a> AnalyzeRun<'a> {
                     ordinal: 0,
                 });
             }
-            let mut built_with = self.options.build_options();
+            let mut built_with = options.build_options();
             if index.single_column_unique {
                 built_with.num_topn = 0;
             }
@@ -1065,7 +1118,7 @@ impl<'a> AnalyzeRun<'a> {
         Ok(AnalyzedTable {
             scanned_rows,
             sampled_rows: sampled.len() as i64,
-            sample_rate: self.sample_rate,
+            sample_rate,
             columns,
             indexes,
         })
@@ -1103,6 +1156,61 @@ mod tests {
             "t",
         )
         .unwrap()
+    }
+
+    #[test]
+    fn merged_region_collector_builds_statistics_without_resampling() {
+        let plan = one_int_column_plan();
+        let full_options = AnalyzeOptions {
+            sample_rate: Some(1.0),
+            ..AnalyzeOptions::default()
+        };
+        let mut region = AnalyzeRun::start(&plan, &full_options, None).unwrap();
+        for value in 0..100 {
+            region.push(&[Datum::Int(value)]).unwrap();
+        }
+        let mut proto = region.collector.to_proto();
+        proto.samples = (0..10)
+            .map(|value| tidb_stats::row_sample_collector::RowSampleProto {
+                row: vec![
+                    encode_value(&[Datum::Int(value)]).unwrap(),
+                    encode_value(&[Datum::Int(value)]).unwrap(),
+                ],
+                weight: 0,
+            })
+            .collect();
+        let collector = RowSampleCollector::from_proto(
+            &proto,
+            SamplePolicy::Bernoulli { sample_rate: 0.1 },
+            SampleMemoryQuota::unlimited(),
+        )
+        .unwrap();
+        let options = AnalyzeOptions {
+            sample_rate: Some(0.1),
+            ..full_options
+        };
+        let run = AnalyzeRun::start(&plan, &options, Some(100)).unwrap();
+        let built = run
+            .finish_collector(collector, |row| {
+                for datum in row.iter_mut() {
+                    let Datum::Bytes(bytes) = datum else {
+                        panic!("expected encoded sample")
+                    };
+                    *datum = tidb_codec::decode_value(bytes)
+                        .unwrap()
+                        .1
+                        .decode_datum()
+                        .unwrap();
+                }
+                let Datum::Int(handle) = row[1] else {
+                    panic!("expected handle")
+                };
+                Ok(tidb_txnkv::IntHandle::new(handle).into())
+            })
+            .unwrap();
+        assert_eq!(built.scanned_rows, 100);
+        assert_eq!(built.sampled_rows, 10);
+        assert_eq!(built.columns[0].histogram.ndv, 100);
     }
 
     #[test]

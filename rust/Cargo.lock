@@ -4467,6 +4467,7 @@ dependencies = [
  "tidb-distsql",
  "tidb-hack",
  "tidb-proto",
+ "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
 ]

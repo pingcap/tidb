@@ -26,13 +26,10 @@
 //!
 //! # The order, and what a failure leaves behind
 //!
-//! 1. one transaction, one `start_ts`;
-//! 2. read the catalog, the table's previous `mysql.stats_meta` row, and
-//!    every one of the table's rows, all at that timestamp;
-//! 3. build the histograms and plan the `mysql.stats_*` mutations;
-//! 4. commit;
-//! 5. only then reload this node's own [`SharedStats`], so its planner
-//!    estimates from what it just wrote.
+//! 1. resolve the catalog and previous statistics at the sampling TSO;
+//! 2. collect regional samples using Go's configured RC/SI analyze policy;
+//! 3. build histograms and persist `mysql.stats_*` in a save transaction;
+//! 4. reload this node's own [`SharedStats`] after the commit.
 //!
 //! Nothing the node serves from is touched until the 2PC commits. A statement
 //! rejected before execution never reaches storage; a commit rejected by a
@@ -40,7 +37,7 @@
 //! cluster's statistics exactly as that other node wrote them, and the client
 //! is told. There is no rollback path to get wrong.
 //!
-//! Step 5 is deliberately not a failure of the statement. The rows are
+//! Step 4 is deliberately not a failure of the statement. The rows are
 //! durable; a node that could not refresh its own copy is a node whose next
 //! reload tick finds them, which is precisely how
 //! [`RealClusterDdl::refresh_catalog`] treats the same situation.
@@ -197,7 +194,7 @@ where
 
 impl<C, L, P> ClusterAnalyze for RealClusterAnalyze<C, L, P>
 where
-    C: StoreWriteClient,
+    C: StoreWriteClient + tidb_txnkv::DirectUnaryClient,
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
@@ -232,6 +229,7 @@ where
         let mut report = commit_cluster_analyze(
             &self.opener,
             &statement,
+            resource_group,
             self.timeout,
             self.stats_lease,
             killer,

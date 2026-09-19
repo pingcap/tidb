@@ -12,20 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! One `ANALYZE TABLE`, as one real transaction.
+//! Cluster ANALYZE sampling and statistics persistence.
 //!
-//! Everything the statement does happens at one `start_ts`: the catalog it
-//! resolves the table in, the previous statistics it reads its sample rate
-//! from, the rows it samples, and the `mysql.stats_*` rows it stores. That is
-//! not tidiness -- it is the correctness argument. `mysql.stats_meta.count`
-//! and the histograms must describe the *same* rows, and a second timestamp
-//! anywhere in between would let a concurrent `INSERT` land between the count
-//! and the buckets, giving the planner a row count its histogram cannot
-//! account for.
-//!
-//! The stamp on every stored row is that same `start_ts`, which is also what
-//! makes a Go TiDB's concurrent `ANALYZE` a plain write conflict at prewrite:
-//! both write the same keys, and exactly one of them commits.
+//! Catalog selection and previous statistics are read at the sampling TSO.
+//! Coprocessor sampling follows Go's analyze snapshot setting: snapshot reads
+//! use that TSO, while the default reads use RC at the latest version.
+//! Statistics are saved in a separate transaction; its version and the
+//! sampling snapshot serve distinct purposes in concurrent-ANALYZE checks.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -54,8 +47,8 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use tidb_util::sqlkiller::SqlKiller;
 
 use crate::cluster_analyze::{
-    analyze_independent_index_with_progress, analyze_physical_table_with_progress, lower_analyze,
-    resolve_analyze_options, AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
+    analyze_independent_index_with_progress, lower_analyze, resolve_analyze_options,
+    AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
 };
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::{
@@ -1003,9 +996,14 @@ fn realtime_count_of(row_count: u64) -> i64 {
 }
 
 /// Runs and commits one `ANALYZE TABLE`.
-pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+pub fn commit_cluster_analyze<
+    C: StoreWriteClient + tidb_txnkv::DirectUnaryClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     resolved: &ResolvedClusterAnalyze,
+    resource_group: &str,
     timeout: Duration,
     stats_lease: Duration,
     killer: &SqlKiller,
@@ -1065,6 +1063,8 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
                 &|count| job.update(jobs, count),
                 selected_columns,
                 predicate_columns_empty,
+                killer,
+                resource_group,
             )
         }));
         let task_result = match task_result {
@@ -2157,7 +2157,11 @@ fn refresh_stats_meta_version<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     })
 }
 
-fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+fn commit_cluster_analyze_target<
+    C: StoreWriteClient + tidb_txnkv::DirectUnaryClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     statement: &AnalyzeStatement,
     options: &tidb_executor::analyze::PhysicalAnalyzeOptions,
@@ -2167,6 +2171,8 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
     progress: &dyn Fn(i64),
     selected_columns_for_task: Option<&HashSet<i64>>,
     predicate_columns_empty_for_task: bool,
+    killer: &SqlKiller,
+    resource_group: &str,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut sample_transaction = opener
         .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
@@ -2205,14 +2211,23 @@ fn commit_cluster_analyze_target<C: StoreWriteClient, L: StoreWriteLoader, P: St
         target_statement.options.memory_quota = statement.options.memory_quota;
         let (_, cleanup, _) = selected_columns(&mut snapshot, &catalog, &table, &target_statement)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let report = analyze_physical_table_with_progress(
-            &mut snapshot,
+        let report = crate::cluster_analyze::sampling::analyze_table(
+            opener,
             &table,
             options.physical_id,
-            &target_statement.options,
+            &target_statement,
             realtime_count,
             sample_ts,
             selected_columns_for_task,
+            crate::cluster_analyze::sampling::scan_concurrency(
+                statement.scan_concurrency,
+                opener.pd(),
+                timeout,
+            ),
+            statement.push_down_flags,
+            timeout,
+            killer,
+            resource_group,
             progress,
         )
         .map_err(|error: AnalyzeError| ClusterAnalyzeError::Other(error.to_string()))?;
@@ -2524,6 +2539,8 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
         analyze_snapshot: false,
         enable_async_merge_global_stats: true,
         partition_merge_concurrency: 1,
+        scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
+        push_down_flags: tidb_executor::StmtContext::for_query().push_down_flags(),
         time_zone: tidb_datatype::SessionTimeZone::utc(),
         options: Default::default(),
     };
@@ -2862,6 +2879,8 @@ mod tests {
             analyze_snapshot: false,
             enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
+            scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
+            push_down_flags: tidb_executor::StmtContext::for_query().push_down_flags(),
             time_zone: tidb_datatype::SessionTimeZone::utc(),
             options: Default::default(),
         }
