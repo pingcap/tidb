@@ -600,8 +600,10 @@ where
         if !conditions.is_empty() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
-        if remote_limit.is_some() {
-            shapes.push(ExecutorShape::new(ExecutorKind::Other));
+        if let Some(limit) = remote_limit {
+            // Go SetDAGRequest derives both LimitSize and the small-scan
+            // concurrency from the actual Limit executor in the wire DAG.
+            shapes.push(ExecutorShape::limit(limit, None));
         }
         if request.topn.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));

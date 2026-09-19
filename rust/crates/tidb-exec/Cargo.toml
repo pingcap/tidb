@@ -61,6 +61,11 @@ sha2.workspace = true
 name = "all"
 path = "tests/all.rs"
 
+# Keep the scan request/row-cap regressions independently runnable.
+[[test]]
+name = "cop_scan_partial_predicate_limit_source"
+path = "tests/cop_scan_partial_predicate_limit_source.rs"
+
 # These schema tests intentionally stay standalone: their source-backed test
 # modules compile several implementation files at the integration crate root,
 # and those files use `crate::...` imports. Nesting them under a shard would

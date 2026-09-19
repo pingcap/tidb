@@ -22,6 +22,8 @@
 //! rows the `SELECT` returns, because a DAG-shape assertion would pass for a
 //! request that still answers wrongly.
 
+// aggregate-test: standalone
+
 #![allow(missing_docs)]
 
 use std::sync::{Arc, Mutex};
@@ -90,6 +92,8 @@ fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
 /// half of the seam produced the answer.
 #[derive(Clone, Debug, Default)]
 struct Observation {
+    request_concurrency: isize,
+    request_limit_size: u64,
     /// Go `SessionVars.GetReplicaRead()` carried by RequestBuilder.
     replica_read: tidb_txnkv::ReplicaReadType,
     /// Direction carried by the DistSQL request, which orders region tasks.
@@ -173,6 +177,8 @@ impl QueryTransport for FakeTransport {
             .map(|column| column.column_id.unwrap_or(-1))
             .collect();
         let mut observation = Observation::default();
+        observation.request_concurrency = metadata.concurrency;
+        observation.request_limit_size = metadata.limit_size;
         observation.replica_read = metadata.replica_read;
         observation.request_desc = metadata.desc;
         observation.scan_desc = scan.desc.unwrap_or(false);
@@ -323,6 +329,32 @@ fn fixture() -> (Catalog, Arc<FakeRegion>) {
     (catalog, region)
 }
 
+#[test]
+fn simple_scan_limit_preserves_request_builder_concurrency_and_limit_size() {
+    for (limit, concurrency) in [(1, 1), (100_000, 15)] {
+        let (catalog, region) = fixture();
+        let rows = run_select_on(
+            &format!("SELECT id FROM t LIMIT {limit}"),
+            &catalog,
+            &StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), (limit as usize).min(region_rows().len()));
+        let observations = region.observations.lock().unwrap();
+        let [observation] = observations.as_slice() else {
+            panic!("one cop request: {observations:?}");
+        };
+        assert_eq!(observation.remote_limit, Some(limit));
+        assert_eq!(
+            (
+                observation.request_concurrency,
+                observation.request_limit_size
+            ),
+            (concurrency, limit)
+        );
+    }
+}
+
 /// A `LIMIT` over a predicate only half of which reached TiKV must still
 /// return the rows the query asked for. With the cap travelling regardless,
 /// TiKV counted five rows against `id > 0` alone, the local `tag = 7` pass
@@ -464,6 +496,8 @@ fn a_limit_over_a_fully_lowered_builtin_predicate_travels_with_it() {
         panic!("exactly one coprocessor request: {observations:?}");
     };
     assert_eq!(observation.conditions, 1);
+    assert_eq!(observation.request_concurrency, 15);
+    assert_eq!(observation.request_limit_size, 5);
     assert_eq!(
         observation.remote_limit,
         Some(5),
