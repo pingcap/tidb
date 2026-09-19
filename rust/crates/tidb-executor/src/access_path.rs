@@ -2668,6 +2668,19 @@ impl IndexRangeSourceExec {
         // the fetch itself, and the answer is byte-identical. Larger batches
         // keep the dedicated thread so lookups still overlap planning.
         if handles.len() <= INDEX_LOOKUP_INLINE_HANDLES {
+            // Go's index worker exits fetchHandles and closes its result once
+            // PushedLimit is exhausted, independently of the table worker.
+            // Our inline lookup must stop the index producer before blocking
+            // on the table RPC, or it keeps fetching unused region results.
+            if self.table.partition().is_none()
+                && (self.filter.is_none() || self.index_filter)
+                && self.limit.is_some_and(|limit| {
+                    self.limit_scanned_keys >= self.lookup_offset.saturating_add(limit)
+                })
+            {
+                self.retain_remote_index_stats();
+                self.remote_index = None;
+            }
             // A clean, unpartitioned table with no residual predicate can
             // answer the lookup directly from the record keys.  The index
             // stream has already applied the complete range, so opening a
@@ -5782,12 +5795,15 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct CoveringIndexStorage {
+        closed: Arc<std::sync::atomic::AtomicBool>,
+        require_closed_before_get: Arc<std::sync::atomic::AtomicBool>,
         inner: MemTableStorage,
         gets: Arc<AtomicUsize>,
         request: Arc<std::sync::Mutex<Option<crate::remote_scan::PushdownScanRequest>>>,
     }
 
     struct CoveringIndexRows {
+        closed: Arc<std::sync::atomic::AtomicBool>,
         rows: std::collections::VecDeque<Vec<Datum>>,
         returned: u64,
     }
@@ -5807,16 +5823,30 @@ mod tests {
             true
         }
 
-        fn close(&mut self) {}
+        fn close(&mut self) {
+            self.closed.store(true, Ordering::SeqCst);
+        }
     }
 
     impl TableStorage for CoveringIndexStorage {
         fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+            if self.require_closed_before_get.load(Ordering::SeqCst) {
+                assert!(
+                    self.closed.load(Ordering::SeqCst),
+                    "exhausted pushed-limit index stream must close before inline table lookup"
+                );
+            }
             self.gets.fetch_add(1, Ordering::Relaxed);
             self.inner.get(key)
         }
 
         fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
+            if self.require_closed_before_get.load(Ordering::SeqCst) {
+                assert!(
+                    self.closed.load(Ordering::SeqCst),
+                    "exhausted pushed-limit index stream must close before inline table lookup"
+                );
+            }
             self.gets.fetch_add(1, Ordering::Relaxed);
             self.inner.batch_get(keys)
         }
@@ -5859,7 +5889,17 @@ mod tests {
             Some(Ok(crate::remote_scan::PushdownScan {
                 // Full index executor schema: indexed b, then integer handle.
                 stream: Box::new(CoveringIndexRows {
-                    rows: std::collections::VecDeque::from([vec![Datum::Int(7), Datum::Int(101)]]),
+                    closed: Arc::clone(&self.closed),
+                    rows: std::collections::VecDeque::from([
+                        if let Some(offsets) = &request.output_offsets {
+                            offsets
+                                .iter()
+                                .map(|i| [Datum::Int(7), Datum::Int(101)][*i].clone())
+                                .collect()
+                        } else {
+                            vec![Datum::Int(7), Datum::Int(101)]
+                        },
+                    ]),
                     returned: 0,
                 }),
                 staged: Vec::new(),
@@ -6198,6 +6238,8 @@ mod tests {
             89,
             vec![column("a", 1), column("b", 2)],
             Box::new(CoveringIndexStorage {
+                closed: Arc::default(),
+                require_closed_before_get: Arc::default(),
                 inner: MemTableStorage::new(),
                 gets: Arc::clone(&gets),
                 request: Arc::clone(&request),
@@ -6259,6 +6301,68 @@ mod tests {
             "the physical scan order must reach TiKV"
         );
         assert!(request.desc, "the physical scan direction must reach TiKV");
+        source.close().unwrap();
+    }
+
+    #[test]
+    fn pushed_limit_closes_index_before_inline_table_lookup() {
+        let check_close = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut table = KvTable::with_storage(
+            89,
+            vec![column("a", 1), column("b", 2)],
+            Box::new(CoveringIndexStorage {
+                inner: MemTableStorage::new(),
+                gets: Arc::default(),
+                request: Arc::default(),
+                closed: Arc::default(),
+                require_closed_before_get: Arc::clone(&check_close),
+            }),
+        );
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "ib".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        table
+            .insert_row_with_row_id(
+                &[Datum::Int(42), Datum::Int(7)],
+                Some(101),
+                0,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+        let mut source = IndexRangeSourceExec::new_with_context(
+            ExecutorMeta::new(
+                Schema::new(vec![
+                    tidb_expr::column::Column::new(1, long()),
+                    tidb_expr::column::Column::new(2, long()),
+                ]),
+                0,
+                1,
+                32,
+            ),
+            table,
+            1,
+            vec![IndexRange::full()],
+            crate::RowDecodeContext::for_test_query_utc(),
+        );
+        check_close.store(true, Ordering::SeqCst);
+        source.limit = Some(1);
+        source.open().unwrap();
+        let mut chunk = source.new_chunk();
+        source.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 1);
+        assert_eq!(chunk.get_row(0).get_int64(0), 42);
         source.close().unwrap();
     }
 
