@@ -1565,6 +1565,9 @@ type SessionVars struct {
 
 	// SysdateIsNow indicates whether Sysdate is an alias of Now function
 	SysdateIsNow bool
+	// EnableIsNotNullScalarFunc indicates whether `IS NOT NULL` is built as the single
+	// `isnotnull` ScalarFunction instead of the composed `not(isnull(x))` form.
+	EnableIsNotNullScalarFunc bool
 	// EnableMutationChecker indicates whether to check data consistency for mutations
 	EnableMutationChecker bool
 	// AssertionLevel controls how strict the assertions on data mutations should be.

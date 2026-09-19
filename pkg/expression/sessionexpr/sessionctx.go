@@ -94,6 +94,12 @@ func (ctx *ExprContext) GetSysdateIsNow() bool {
 	return ctx.sctx.GetSessionVars().SysdateIsNow
 }
 
+// IsNotNullScalarFuncEnabled returns whether `IS NOT NULL` should be built as the single
+// `isnotnull` ScalarFunction. It is the value of variable `tidb_enable_isnotnull_scalar_function`.
+func (ctx *ExprContext) IsNotNullScalarFuncEnabled() bool {
+	return ctx.sctx.GetSessionVars().EnableIsNotNullScalarFunc
+}
+
 // GetNoopFuncsMode returns the noop function mode: OFF/ON/WARN values as 0/1/2.
 func (ctx *ExprContext) GetNoopFuncsMode() int {
 	return ctx.sctx.GetSessionVars().NoopFuncsMode

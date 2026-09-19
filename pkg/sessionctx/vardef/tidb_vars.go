@@ -300,6 +300,10 @@ const (
 	// TiDBSysdateIsNow is the name of the `tidb_sysdate_is_now` system variable
 	TiDBSysdateIsNow = "tidb_sysdate_is_now"
 
+	// TiDBEnableIsNotNullScalarFunc controls whether `IS NOT NULL` is built as the single
+	// `isnotnull` ScalarFunction instead of the composed `not(isnull(x))` form.
+	TiDBEnableIsNotNullScalarFunc = "tidb_enable_isnotnull_scalar_function"
+
 	// RequireSecureTransport indicates the secure mode for data transport
 	RequireSecureTransport = "require_secure_transport"
 
@@ -1746,6 +1750,7 @@ const (
 	DefTiDBStatsLoadSyncWait                          = 100
 	DefTiDBStatsLoadPseudoTimeout                     = true
 	DefSysdateIsNow                                   = false
+	DefTiDBEnableIsNotNullScalarFunc                  = false
 	DefTiDBEnableParallelHashaggSpill                 = true
 	DefTiDBEnableMutationChecker                      = false
 	DefTiDBTxnAssertionLevel                          = AssertionOffStr

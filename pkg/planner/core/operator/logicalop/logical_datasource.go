@@ -783,8 +783,9 @@ func (ds *DataSource) IsIndexCoveringCondition(condition expression.Expression, 
 	case *expression.Column:
 		return ds.indexCoveringColumn(v, indexColumns, idxColLens, false)
 	case *expression.ScalarFunction:
-		// Even if the index only contains prefix `col`, the index can cover `col is null`.
-		if v.FuncName.L == ast.IsNull {
+		// Even if the index only contains prefix `col`, the index can cover `col is null`
+		// and `col is not null`.
+		if v.FuncName.L == ast.IsNull || v.FuncName.L == ast.IsNotNull {
 			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
 				return ds.indexCoveringColumn(col, indexColumns, idxColLens, true)
 			}

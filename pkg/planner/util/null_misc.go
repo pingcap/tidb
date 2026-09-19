@@ -217,6 +217,13 @@ func proveNullRejectedScalarFunc(
 		return proveNullRejectedIn(ctx, innerSchema, expr, allowNullifiedFold)
 	case ast.IsNull:
 		return nullRejectProof{}
+	case ast.IsNotNull:
+		// ISNOTNULL(x) is the single-ScalarFunction form of NOT(IS NULL(x)) and proves
+		// the same thing: when x is mustNull the result is FALSE, so nonTrue holds while
+		// mustNull does not. See expression.BuildNotNullExpr.
+		return nullRejectProof{
+			nonTrue: proveNullRejected(ctx, innerSchema, expr.GetArgs()[0], allowNullifiedFold).mustNull,
+		}
 	case ast.Week, ast.YearWeek:
 		// Only the date argument is NULL-preserving. A NULL mode argument is
 		// treated as mode 0 by MySQL/TiDB, so these functions cannot be listed

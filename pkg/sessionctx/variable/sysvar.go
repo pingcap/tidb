@@ -3120,6 +3120,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableIsNotNullScalarFunc, Value: BoolToOnOff(vardef.DefTiDBEnableIsNotNullScalarFunc), Type: vardef.TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.EnableIsNotNullScalarFunc = TiDBOptOn(s)
+			return nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableParallelHashaggSpill, Value: BoolToOnOff(vardef.DefTiDBEnableParallelHashaggSpill), Type: vardef.TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.EnableParallelHashaggSpill = TiDBOptOn(s)

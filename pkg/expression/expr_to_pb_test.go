@@ -2233,3 +2233,65 @@ func TestProjectionColumn2Pb(t *testing.T) {
 	_, err = ProjectionExpressionsToPBList(ctx, colExprs, client)
 	require.NoError(t, err)
 }
+
+func TestIsNotNull2Pb(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+
+	cases := []struct {
+		colTp     byte
+		isNullSig tipb.ScalarFuncSig
+	}{
+		{mysql.TypeLonglong, tipb.ScalarFuncSig_IntIsNull},
+		{mysql.TypeDouble, tipb.ScalarFuncSig_RealIsNull},
+		{mysql.TypeNewDecimal, tipb.ScalarFuncSig_DecimalIsNull},
+		{mysql.TypeVarchar, tipb.ScalarFuncSig_StringIsNull},
+		{mysql.TypeDatetime, tipb.ScalarFuncSig_TimeIsNull},
+		{mysql.TypeDuration, tipb.ScalarFuncSig_DurationIsNull},
+	}
+
+	for _, c := range cases {
+		expr, err := NewFunction(ctx, ast.IsNotNull, types.NewFieldType(mysql.TypeTiny), genColumn(c.colTp, 1))
+		require.NoError(t, err)
+
+		pushed, remained := PushDownExprs(pushDownCtx, []Expression{expr}, kv.UnSpecified)
+		require.Len(t, pushed, 1, "type: %v", c.colTp)
+		require.Len(t, remained, 0, "type: %v", c.colTp)
+
+		pbExprs, err := ExpressionsToPBList(ctx, []Expression{expr}, client)
+		require.NoError(t, err)
+		require.Len(t, pbExprs, 1)
+
+		// The coprocessors have no native ISNOTNULL signature yet, so `isnotnull(x)` is
+		// serialized as `not(isnull(x))`.
+		notExpr := pbExprs[0]
+		require.Equal(t, tipb.ExprType_ScalarFunc, notExpr.Tp)
+		require.Equal(t, tipb.ScalarFuncSig_UnaryNotInt, notExpr.Sig)
+		require.Len(t, notExpr.Children, 1)
+		require.Equal(t, c.isNullSig, notExpr.Children[0].Sig, "type: %v", c.colTp)
+		require.Len(t, notExpr.Children[0].Children, 1)
+		require.Equal(t, tipb.ExprType_ColumnRef, notExpr.Children[0].Children[0].Tp)
+	}
+}
+
+func TestIsNotNullPushDownBlacklist(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+
+	expr, err := NewFunction(ctx, ast.IsNotNull, types.NewFieldType(mysql.TypeTiny), genColumn(mysql.TypeLonglong, 1))
+	require.NoError(t, err)
+
+	original := DefaultExprPushDownBlacklist.Load()
+	defer DefaultExprPushDownBlacklist.Store(original)
+
+	// `isnotnull` is pushed down as `not(isnull(x))`, so blacklisting either underlying
+	// function must stop it from being pushed down as well.
+	for _, blocked := range []string{ast.IsNull, ast.UnaryNot, ast.IsNotNull} {
+		DefaultExprPushDownBlacklist.Store(&map[string]uint32{blocked: 1<<uint(kv.TiKV) | 1<<uint(kv.TiFlash) | 1<<uint(kv.TiDB)})
+		pushed, remained := PushDownExprs(pushDownCtx, []Expression{expr}, kv.TiKV)
+		require.Len(t, pushed, 0, "blocked: %s", blocked)
+		require.Len(t, remained, 1, "blocked: %s", blocked)
+	}
+}
