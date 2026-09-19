@@ -648,7 +648,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             None => CoprCache::from_optional_config(self.config.cache.as_ref())
                 .map_err(|error| DirectUnaryTransportError::Cache(error.to_string()).to_string())?,
         };
-        let runtime = CopPagingState::prepare_read_tasks(
+        let runtime = super::CopReadTaskRuntime::prepare_for_transport(
             &coordinator_metadata,
             &topology,
             cache,
@@ -660,12 +660,12 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let mut logical_order = Vec::new();
         let mut active_attempts = BTreeMap::new();
         let mut seen = BTreeSet::new();
-        for prepared in runtime.prepared_attempts() {
-            task_region_ver_id(prepared.task()).map_err(|error| error.to_string())?;
-            if seen.insert(prepared.logical_task_id()) {
-                logical_order.push(prepared.logical_task_id());
+        for (attempt_id, task) in runtime.initial_tasks() {
+            task_region_ver_id(task).map_err(|error| error.to_string())?;
+            if seen.insert(task.task_id) {
+                logical_order.push(task.task_id);
             }
-            active_attempts.insert(prepared.logical_task_id(), prepared.attempt_id());
+            active_attempts.insert(task.task_id, attempt_id);
         }
         if logical_order.is_empty() {
             return Err(DirectUnaryTransportError::Coordinator(
@@ -1301,9 +1301,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         attempt_id: u64,
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
-        let prepared = self.runtime.prepared_attempt_shared(attempt_id).ok_or(
-            DirectUnaryTransportError::ResponseState("active attempt is not prepared"),
-        )?;
+        let prepared = self.runtime.activate_attempt(attempt_id)?;
         let region = task_region_ver_id(prepared.task())?;
         let replace_selector = self
             .request_selectors
@@ -2298,7 +2296,7 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
         // still need independent admission and retain the split path below.
         if self.metadata.concurrency <= 1
             && (self.metadata.request_source.internal
-                || !self.runtime.prepared_attempts().any(|attempt| attempt.task().is_small()))
+                || !self.runtime.has_small_tasks())
         {
             return vec![self];
         }

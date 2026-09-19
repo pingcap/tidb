@@ -389,6 +389,8 @@ pub struct CopReadTaskRuntime {
     metadata: Arc<KvRequestMetadata>,
     tasks: Vec<LogicalCopReadTask>,
     in_flight: BTreeMap<u64, InFlightCopReadTask>,
+    // Initial request IDs reserve identity without copying ranges or querying cache.
+    deferred: BTreeMap<u64, usize>,
     prepared: Vec<Arc<PreparedCopReadTask>>,
     completed_attempts: BTreeSet<u64>,
     next_attempt_id: u64,
@@ -413,12 +415,33 @@ impl std::fmt::Debug for CopReadTaskRuntime {
 }
 
 impl CopReadTaskRuntime {
+    pub(super) fn prepare_for_transport(
+        metadata: &KvRequestMetadata,
+        topology: &[RegionTaskTopology],
+        cache: Option<CoprCache>,
+        generation: ReadEngineGeneration,
+        seed_read_bytes: u64,
+    ) -> Result<Self, CopReadTaskError> {
+        Self::prepare_inner(metadata, topology, cache, generation, seed_read_bytes, true)
+    }
+
     pub(super) fn prepare(
         metadata: &KvRequestMetadata,
         topology: &[RegionTaskTopology],
         cache: Option<CoprCache>,
         generation: ReadEngineGeneration,
         seed_read_bytes: u64,
+    ) -> Result<Self, CopReadTaskError> {
+        Self::prepare_inner(metadata, topology, cache, generation, seed_read_bytes, false)
+    }
+
+    fn prepare_inner(
+        metadata: &KvRequestMetadata,
+        topology: &[RegionTaskTopology],
+        cache: Option<CoprCache>,
+        generation: ReadEngineGeneration,
+        seed_read_bytes: u64,
+        deferred: bool,
     ) -> Result<Self, CopReadTaskError> {
         validate_request(metadata)?;
         validate_topology(topology)?;
@@ -457,6 +480,7 @@ impl CopReadTaskRuntime {
             metadata: Arc::new(metadata.clone()),
             tasks,
             in_flight: BTreeMap::new(),
+            deferred: BTreeMap::new(),
             prepared: Vec::new(),
             completed_attempts: BTreeSet::new(),
             next_attempt_id: 1,
@@ -466,11 +490,40 @@ impl CopReadTaskRuntime {
             ema,
         };
         for logical_task_index in 0..runtime.tasks.len() {
+            if deferred {
+                let id = runtime.next_attempt_id;
+                runtime.next_attempt_id = id.saturating_add(1);
+                runtime.deferred.insert(id, logical_task_index);
+                continue;
+            }
             let ranges = runtime.tasks[logical_task_index].task.ranges.clone();
             let paging_size = runtime.tasks[logical_task_index].task.paging_size;
             runtime.prepare_attempt(logical_task_index, ranges, paging_size)?;
         }
         Ok(runtime)
+    }
+
+    /// Go's handleTaskOnce constructs the wire request/cache predicate only
+    /// for the task a worker is about to send. LIMIT may discard the rest.
+    pub(super) fn activate_attempt(
+        &mut self,
+        attempt_id: u64,
+    ) -> Result<Arc<PreparedCopReadTask>, CopReadTaskError> {
+        if let Some(index) = self.deferred.remove(&attempt_id) {
+            let task = &self.tasks[index].task;
+            let ranges = task.ranges.clone();
+            let paging_size = task.paging_size;
+            self.prepare_attempt_with_id(index, ranges, paging_size, attempt_id)?;
+        }
+        self.prepared_attempt_shared(attempt_id).ok_or(CopReadTaskError::UnmatchedResponse)
+    }
+
+    pub(super) fn initial_tasks(&self) -> impl Iterator<Item = (u64, &RegionTaskEnvelope)> {
+        self.deferred.iter().map(|(&id, &index)| (id, &self.tasks[index].task))
+    }
+
+    pub(super) fn has_small_tasks(&self) -> bool {
+        self.tasks.iter().any(|task| task.task.is_small())
     }
 
     /// Returns all immutable attempts in source preparation order.
@@ -490,6 +543,11 @@ impl CopReadTaskRuntime {
             flight.logical_task_index = 0;
             flights[index].insert(id, flight);
         }
+        let mut deferred_by_task: Vec<BTreeMap<u64, usize>> =
+            (0..tasks.len()).map(|_| BTreeMap::new()).collect();
+        for (id, index) in std::mem::take(&mut self.deferred) {
+            deferred_by_task[index].insert(id, 0);
+        }
         // Go dispatches each copTask once. Index attempts once as well,
         // rather than scanning every attempt for each region task.
         let mut prepared_by_task: BTreeMap<u64, Vec<Arc<PreparedCopReadTask>>> = BTreeMap::new();
@@ -499,8 +557,9 @@ impl CopReadTaskRuntime {
         tasks
             .into_iter()
             .zip(flights)
-            .filter(|(task, _)| !task.paging.complete || task.paging.queued_responses != 0)
-            .map(|(task, in_flight)| {
+            .zip(deferred_by_task)
+            .filter(|((task, _), _)| !task.paging.complete || task.paging.queued_responses != 0)
+            .map(|((task, in_flight), deferred)| {
                 let id = task.task.task_id;
                 let prepared = prepared_by_task.remove(&id).unwrap_or_default();
                 let completed_attempts = prepared
@@ -515,6 +574,7 @@ impl CopReadTaskRuntime {
                         metadata: Arc::clone(&self.metadata),
                         tasks: vec![task],
                         in_flight,
+                        deferred,
                         prepared,
                         completed_attempts,
                         next_attempt_id: self.next_attempt_id,
@@ -585,7 +645,7 @@ impl CopReadTaskRuntime {
 
     /// Returns the bounded cache owner after all in-flight attempts are done.
     pub fn into_cache(self) -> Result<Option<CoprCache>, CopReadTaskError> {
-        if self.in_flight.is_empty() {
+        if self.in_flight.is_empty() && self.deferred.is_empty() {
             Ok(self.cache)
         } else {
             Err(CopReadTaskError::UnmatchedResponse)
@@ -847,6 +907,11 @@ impl CopReadTaskRuntime {
             inserted += 1;
         }
         if inserted > 0 {
+            for index in self.deferred.values_mut() {
+                if *index > failed.logical_task_index {
+                    *index = index.saturating_add(inserted);
+                }
+            }
             for in_flight in self.in_flight.values_mut() {
                 if in_flight.logical_task_index > failed.logical_task_index {
                     in_flight.logical_task_index =
@@ -928,6 +993,18 @@ impl CopReadTaskRuntime {
         ranges: Vec<RequestKeyRange>,
         paging_size: u64,
     ) -> Result<u64, CopReadTaskError> {
+        let attempt_id = self.next_attempt_id;
+        self.next_attempt_id = self.next_attempt_id.saturating_add(1);
+        self.prepare_attempt_with_id(logical_task_index, ranges, paging_size, attempt_id)
+    }
+
+    fn prepare_attempt_with_id(
+        &mut self,
+        logical_task_index: usize,
+        ranges: Vec<RequestKeyRange>,
+        paging_size: u64,
+        attempt_id: u64,
+    ) -> Result<u64, CopReadTaskError> {
         // The attempt carries its own ranges; the base task's are not copied
         // along with the rest of the envelope.
         let base_task = &mut self.tasks[logical_task_index].task;
@@ -957,8 +1034,6 @@ impl CopReadTaskRuntime {
                 },
             )
         });
-        let attempt_id = self.next_attempt_id;
-        self.next_attempt_id = self.next_attempt_id.saturating_add(1);
         let prepared = Arc::new(PreparedCopReadTask {
             attempt_id,
             logical_task_id: task.task_id,
@@ -1104,6 +1179,49 @@ fn bucket_keys_are_current(region: &RegionTaskTopology) -> bool {
 #[cfg(test)]
 mod tests {
     use super::allocate_paging_task_index;
+
+    #[test]
+    fn transport_only_prepares_dispatched_region_requests() {
+        use super::*;
+        let key = |i: u64| format!("{i:08}").into_bytes();
+        let topology: Vec<_> = (0..64).map(|i| RegionTaskTopology {
+            region_id: i + 1, start_key: key(i), end_key: key(i + 1),
+            ..Default::default()
+        }).collect();
+        let mut metadata = KvRequestMetadata::default();
+        metadata.request_type = RequestType::Dag;
+        metadata.store_type = StoreType::TiKv;
+        metadata.data = Some(vec![42; 4096]);
+        metadata.keep_order = true;
+        metadata.start_ts = 100;
+        metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
+            start_key: key(0).into(), end_key: key(64).into(),
+        }]).into());
+        let mut runtime = CopReadTaskRuntime::prepare_for_transport(&metadata, &topology, None,
+            ReadEngineGeneration::Classic, 0).unwrap();
+        assert_eq!(runtime.tasks.len(), 64);
+        assert!(runtime.prepared.is_empty(),
+            "Go creates cop requests only inside an admitted worker, not for unsent regions");
+        assert!(runtime.in_flight.is_empty());
+        let first = runtime.activate_attempt(1).unwrap();
+        assert_eq!(first.logical_task_id(), 1);
+        assert_eq!(first.request().data.as_ref(), metadata.data.as_ref().unwrap());
+        assert_eq!(first.request().ranges, first.task().ranges);
+        assert!(Arc::ptr_eq(&first, &runtime.activate_attempt(1).unwrap()));
+        assert_eq!(runtime.prepared.len(), 1);
+        assert_eq!(runtime.deferred.len(), 63);
+        let mut workers = runtime.take_tasks();
+        assert_eq!(workers.len(), 64);
+        for (id, worker) in &mut workers {
+            let prepared = worker.activate_attempt(*id).unwrap();
+            assert_eq!(prepared.logical_task_id(), *id);
+            assert_eq!(prepared.request().data.as_ptr(), first.request().data.as_ptr());
+            assert_eq!(worker.prepared.len(), 1);
+            assert!(worker.deferred.is_empty());
+            let retry = worker.prepare_attempt(0, prepared.task().ranges.clone(), 0).unwrap();
+            assert!(retry > 64, "retry IDs must not collide with deferred initial requests");
+        }
+    }
 
     #[test]
     fn region_attempts_share_immutable_dag_bytes() {
