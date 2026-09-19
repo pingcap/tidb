@@ -72,6 +72,7 @@ func TestToPhysicalPlan(t *testing.T) {
 		ChunkMap:          map[int32][]importer.Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
+		SourceStep:   proto.ImportStepImport,
 		NextTaskStep: proto.ImportStepImport,
 	}
 	physicalPlan, err := logicalPlan.ToPhysicalPlan(planCtx)
@@ -114,11 +115,13 @@ func TestToPhysicalPlan(t *testing.T) {
 	bs, err = json.Marshal(subtaskMeta1)
 	require.NoError(t, err)
 	planCtx = planner.PlanCtx{
+		SourceStep:   proto.ImportStepImport,
 		NextTaskStep: proto.ImportStepPostProcess,
 	}
 	physicalPlan, err = logicalPlan.ToPhysicalPlan(planCtx)
 	require.NoError(t, err)
 	subtaskMetas2, err := physicalPlan.ToSubtaskMetas(planner.PlanCtx{
+		SourceStep: proto.ImportStepImport,
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			proto.ImportStepImport: {bs},
 		},
@@ -133,6 +136,7 @@ func TestToPhysicalPlan(t *testing.T) {
 	require.Equal(t, [][]byte{bs}, subtaskMetas2)
 
 	planCtx = planner.PlanCtx{
+		SourceStep:   proto.ImportStepImport,
 		NextTaskStep: proto.ImportStepImport,
 		GlobalSort:   true,
 	}
@@ -157,7 +161,7 @@ func TestToPhysicalPlan(t *testing.T) {
 		}
 		require.NoError(t, preparedMeta.WriteJSONToExternalStorage(context.Background(), store, preparedMeta))
 
-		specs, err := generateImportSpecs(planner.PlanCtx{Ctx: context.Background()}, &LogicalPlan{
+		specs, err := generateImportSpecs(planner.PlanCtx{SourceStep: proto.ImportStepImport, Ctx: context.Background()}, &LogicalPlan{
 			Plan: importer.Plan{
 				CloudStorageURI: cloudStorageURI,
 			},
@@ -228,8 +232,9 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 	})
 	encodeStepMetaBytes := genEncodeStepMetas(t, 3)
 	planCtx := planner.PlanCtx{
-		Ctx:    context.Background(),
-		TaskID: 1,
+		SourceStep: proto.ImportStepEncodeAndSort,
+		Ctx:        context.Background(),
+		TaskID:     1,
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 		},
@@ -341,6 +346,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/dxf/importinto/forceMergeSort"))
 	})
 	allKVMetas, err := getSortedKVMetasForIngest(planner.PlanCtx{
+		SourceStep: proto.ImportStepEncodeAndSort,
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 			proto.ImportStepMergeSort:     mergeStepMetas,

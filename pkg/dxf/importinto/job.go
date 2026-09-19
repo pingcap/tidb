@@ -71,11 +71,12 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 // synchronous prepare is fast and provides more responsive validation feedback.
 // Nextgen only supports global sort for IMPORT INTO in production, but local
 // sort can still be exercised in tests, so keep the IsGlobalSort check.
+// Query imports have no source files to discover during asynchronous prepare.
 func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
 	failpoint.Inject("mockDisableAsyncPrepare", func() {
 		failpoint.Return(false)
 	})
-	return plan != nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
+	return plan != nil && plan.Query == nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
 }
 
 func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
@@ -222,8 +223,8 @@ func (ri *RuntimeInfo) isConflictStep() bool {
 
 // Percent returns the progress percentage of the current step.
 func (ri *RuntimeInfo) Percent() string {
-	// Currently, we can't track the progress of post process
-	if ri.Step == proto.ImportStepPostProcess || ri.Step == proto.StepInit {
+	// Query output size is unknown; initialization and post-process have no measurable total.
+	if ri.Step == proto.ImportStepPostProcess || ri.Step == proto.StepInit || ri.Step == proto.ImportStepQuery {
 		return notAvailable
 	}
 
@@ -249,6 +250,9 @@ func FormatSecondAsTime(sec int64) string {
 
 // ETA returns the estimated time of arrival (ETA) for the current step.
 func (ri *RuntimeInfo) ETA() string {
+	if ri.Step == proto.ImportStepQuery {
+		return notAvailable
+	}
 	remainTime := notAvailable
 	if ri.Speed > 0 && ri.Total > 0 {
 		remainSecond := max((ri.Total-ri.Processed)/ri.Speed, 0)
@@ -260,6 +264,9 @@ func (ri *RuntimeInfo) ETA() string {
 
 // TotalSize returns the total size of the current step in human-readable format.
 func (ri *RuntimeInfo) TotalSize() string {
+	if ri.Step == proto.ImportStepQuery {
+		return notAvailable
+	}
 	if ri.isConflictStep() {
 		return fmt.Sprintf("%d conflicts", ri.Total)
 	}
@@ -366,7 +373,7 @@ func GetRuntimeInfoForJob(
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
 		ri.Total = taskMeta.Summary.IngestSummary.Bytes
-	case proto.ImportStepEncodeAndSort:
+	case proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		ri.Total = taskMeta.Summary.EncodeSummary.Bytes
 	case proto.ImportStepMergeSort:
 		ri.Total = taskMeta.Summary.MergeSummary.Bytes

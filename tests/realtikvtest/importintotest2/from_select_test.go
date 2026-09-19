@@ -23,13 +23,29 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 )
 
-func (s *mockGCSSuite) TestImportFromSelectBasic() {
+func (s *mockGCSSuite) prepareImportFromSelect() {
+	s.tk = testkit.NewTestKit(s.T(), s.store)
 	s.prepareAndUseDB("from_select")
+	if kerneltype.IsNextGen() {
+		previousURI := vardef.CloudStorageURI.Load()
+		s.tk.MustExec("set global tidb_cloud_storage_uri = ?", realtikvtest.GetNextGenObjStoreURI("from-select"))
+		s.T().Cleanup(func() { s.tk.MustExec("set global tidb_cloud_storage_uri = ?", previousURI) })
+	} else {
+		previousURI := vardef.CloudStorageURI.Load()
+		vardef.CloudStorageURI.Store("s3://unused-for-classic-query")
+		s.T().Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+	}
+}
+
+func (s *mockGCSSuite) TestImportFromSelectBasic() {
+	s.prepareImportFromSelect()
 	s.tk.MustExec("create table src(id int, v varchar(64))")
 	s.tk.MustExec("create table dst(id int, v varchar(64))")
 	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
@@ -76,29 +92,41 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 }
 
 func (s *mockGCSSuite) TestImportFromSelectColumnList() {
-	s.prepareAndUseDB("from_select")
+	s.prepareImportFromSelect()
 	s.tk.MustExec("create table src(id int, a varchar(64))")
 	s.tk.MustExec("create table dst(id int auto_increment primary key, a varchar(64), b int default 10, c int)")
 	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
-	s.tk.MustExec(`import into dst(c, a) FROM select * from src order by id`)
-	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 aaaaaa 10 4", "2 bbbbbb 10 5", "3 cccccc 10 6", "4 dddddd 10 7"))
+	if kerneltype.IsNextGen() {
+		s.ErrorContains(s.tk.ExecToErr(`import into dst(c, a) FROM select * from src order by id`), "TiDB Sort")
+		s.tk.MustExec(`import into dst(c, a) FROM select * from src`)
+		// Generated IDs need not follow source order without ORDER BY.
+		s.tk.MustQuery("select c,a,b from dst order by c").Check(testkit.Rows("4 aaaaaa 10", "5 bbbbbb 10", "6 cccccc 10", "7 dddddd 10"))
+		s.tk.MustQuery("select count(distinct id),min(id)>0 from dst").Check(testkit.Rows("4 1"))
+	} else {
+		s.tk.MustExec(`import into dst(c, a) FROM select * from src order by id`)
+		s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 aaaaaa 10 4", "2 bbbbbb 10 5", "3 cccccc 10 6", "4 dddddd 10 7"))
+	}
 
 	s.tk.MustExec("truncate table dst")
 	s.tk.MustExec("create table src2(id int, a varchar(64))")
 	s.tk.MustExec("insert into src2 values(4, 'four'), (5, 'five')")
-	s.tk.MustExec(`import into dst(c, a) FROM select y.id, y.a from src x join src2 y on x.id = y.id order by y.id`)
-	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 four 10 4", "2 five 10 5"))
+	if kerneltype.IsNextGen() {
+		s.ErrorContains(s.tk.ExecToErr(`import into dst(c, a) FROM select y.id, y.a from src x join src2 y on x.id = y.id`), "TiDB HashJoin")
+	} else {
+		s.tk.MustExec(`import into dst(c, a) FROM select y.id, y.a from src x join src2 y on x.id = y.id order by y.id`)
+		s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 four 10 4", "2 five 10 5"))
+	}
 }
 
 func (s *mockGCSSuite) TestWriteAfterImportFromSelect() {
-	s.prepareAndUseDB("from_select")
+	s.prepareImportFromSelect()
 	s.tk.MustExec("create table dt(id int, v varchar(64))")
 	s.tk.MustExec("insert into dt values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
 	s.testWriteAfterImport(`import into t FROM select * from from_select.dt`, importer.DataSourceTypeQuery)
 }
 
 func (s *mockGCSSuite) TestImportFromSelectStaleRead() {
-	s.prepareAndUseDB("from_select")
+	s.prepareImportFromSelect()
 	// set tidb_snapshot might fail without this, not familiar about this part.
 	s.tk.MustExec(`replace into mysql.tidb(variable_name, variable_value) values ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800')`)
 	s.tk.MustExec("create table src(id int, v varchar(64))")
@@ -111,6 +139,10 @@ func (s *mockGCSSuite) TestImportFromSelectStaleRead() {
 	staleReadSQL := fmt.Sprintf("select * from src as of timestamp '%s'", now)
 	s.tk.MustQuery(staleReadSQL).Check(testkit.Rows("1 a"))
 	s.tk.MustExec("create table dst(id int, v varchar(64))")
+	if kerneltype.IsNextGen() {
+		s.ErrorContains(s.tk.ExecToErr("import into dst from "+staleReadSQL), "stale reads in IMPORT INTO FROM SELECT")
+		return
+	}
 
 	//
 	// in below cases, dst table not exists at time 'now'
@@ -162,7 +194,7 @@ func (s *mockGCSSuite) TestImportFromSelectStaleRead() {
 }
 
 func (s *mockGCSSuite) TestCastNegativeToUnsigned() {
-	s.prepareAndUseDB("from_select")
+	s.prepareImportFromSelect()
 	s.tk.MustExec("create table dt(id int unsigned)")
 	s.ErrorContains(s.tk.ExecToErr("import into dt from select -1"), "constant -1 overflows int")
 	s.tk.MustExec("set sql_mode=''")

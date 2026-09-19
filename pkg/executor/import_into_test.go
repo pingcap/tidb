@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -405,12 +406,12 @@ func TestCancelImportJobWithoutDXFTask(t *testing.T) {
 }
 
 func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, initFn func(t *testing.T, tk *testkit.TestKit)) {
-	t.Run("import from select", func(t *testing.T) {
+	t.Run("import from select requires global sort", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		initFn(t, tk)
 		err := tk.ExecToErr("IMPORT INTO test.t FROM select 1")
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-		require.ErrorContains(t, err, "IMPORT INTO from select")
+		require.ErrorContains(t, err, "IMPORT INTO with local sort")
 	})
 
 	t.Run("local sort", func(t *testing.T) {
@@ -526,6 +527,15 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 	tk.MustExec("create table src (a int)")
 	tk.MustExec("insert into src values (1), (2)")
 	tk.MustExec("create table dst (a int)")
+	previousURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+	vardef.CloudStorageURI.Store("")
+	expectedError := "mock import from select setup error"
+	if kerneltype.IsNextGen() {
+		vardef.CloudStorageURI.Store("s3://maintenance-flag-test")
+		tk.MustExec("insert into dst values (0)")
+		expectedError = "target table is not empty"
+	}
 
 	sessionVars := tk.Session().GetSessionVars()
 	origRestricted := sessionVars.InRestrictedSQL
@@ -545,7 +555,7 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", `return(true)`)
 
 	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
-	require.ErrorContains(t, err, "mock import from select setup error")
+	require.ErrorContains(t, err, expectedError)
 	require.True(t, invoked)
 	require.True(t, childMaintenance)
 }
@@ -561,4 +571,69 @@ func TestImportIntoRejectsMaterializedViewLogBaseTable(t *testing.T) {
 
 	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
 	require.ErrorContains(t, err, "IMPORT INTO on tables with materialized view log")
+}
+
+func TestImportQueryRouting(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table query_route_src(id int)")
+	tk.MustExec("create table query_route_dst(id int)")
+	oldURI, oldDist := vardef.CloudStorageURI.Load(), vardef.EnableDistTask.Load()
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(oldURI); vardef.EnableDistTask.Store(oldDist) })
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", `return(true)`)
+	for _, enabled := range []bool{false, true} {
+		vardef.EnableDistTask.Store(enabled)
+		for _, uri := range []string{"", "s3://query-sort"} {
+			vardef.CloudStorageURI.Store(uri)
+			tk.MustExec("delete from query_route_dst")
+			if kerneltype.IsNextGen() && uri != "" {
+				tk.MustExec("insert into query_route_dst values (1)")
+			}
+			err := tk.ExecToErr("import into query_route_dst from select id from query_route_src with disable_precheck")
+			switch {
+			case kerneltype.IsNextGen() && uri != "":
+				require.ErrorContains(t, err, "target table is not empty")
+			case kerneltype.IsNextGen():
+				require.ErrorContains(t, err, "IMPORT INTO FROM SELECT without global sort storage")
+			default:
+				require.ErrorContains(t, err, "mock import from select setup error")
+			}
+		}
+	}
+	t.Run("reject unsupported plan before submission", func(t *testing.T) {
+		vardef.EnableDistTask.Store(true)
+		vardef.CloudStorageURI.Store("s3://query-sort")
+		tk.MustExec("delete from query_route_dst")
+		if kerneltype.IsNextGen() {
+			// The plan check must precede even the target-table precheck.
+			tk.MustExec("insert into query_route_dst values (1)")
+		}
+		for _, tt := range []struct{ sql, operator string }{
+			{"select /*+ HASH_AGG() */ count(*) from query_route_src group by id", "HashAgg"},
+			{"select id from query_route_src order by id", "Sort"},
+			{"select id from query_route_src order by id limit 1", "TopN"},
+		} {
+			err := tk.ExecToErr("import into query_route_dst from (" + tt.sql + ") with disable_precheck")
+			if kerneltype.IsNextGen() {
+				require.ErrorIs(t, err, plannererrors.ErrNotSupportedYet)
+				require.ErrorContains(t, err, "TiDB "+tt.operator)
+			} else {
+				require.ErrorContains(t, err, "mock import from select setup error")
+			}
+		}
+	})
+	t.Run("allow TiFlash aggregation for MV maintenance", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("query task precheck is nextgen only")
+		}
+		testkit.SetTiFlashReplica(t, dom, "test", "query_route_src")
+		tk.MustExec("set tidb_allow_mpp=1, tidb_enforce_mpp=1")
+		vars := tk.Session().GetSessionVars()
+		previousMaintenance := vars.InMViewMaintenance
+		vars.InMViewMaintenance = true
+		defer func() { vars.InMViewMaintenance = previousMaintenance }()
+		err := tk.ExecToErr("import into query_route_dst from (select /*+ READ_FROM_STORAGE(TIFLASH[query_route_src]) MPP_1PHASE_AGG() */ count(*) from query_route_src group by id) with disable_precheck")
+		require.ErrorContains(t, err, "target table is not empty")
+	})
 }
