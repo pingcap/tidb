@@ -106,6 +106,21 @@ where
         self.codec.decode_region(region)
     }
 
+    async fn get_region_for_cache(
+        self: Arc<Self>,
+        key: Vec<u8>,
+        previous: bool,
+        leader_only: bool,
+    ) -> Result<RegionWithLeader> {
+        let key = self.codec.encode_region_key(&key);
+        let region = self
+            .inner
+            .clone()
+            .get_region_for_cache(key, previous, leader_only)
+            .await?;
+        self.codec.decode_region(region)
+    }
+
     async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
         let key = self.codec.encode_region_key(&key);
         let region = self.inner.clone().get_prev_region(key).await?;
@@ -236,6 +251,7 @@ mod tests {
     #[derive(Clone, Debug, PartialEq)]
     enum PdCall {
         Get(Vec<u8>),
+        CacheLookup(Vec<u8>, bool, bool),
         GetWithBuckets(Vec<u8>),
         Prev(Vec<u8>),
         PrevWithBuckets(Vec<u8>),
@@ -268,6 +284,19 @@ mod tests {
     impl RetryClientTrait for RecordingPdClient {
         async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
             self.calls.lock().unwrap().push(PdCall::Get(key));
+            Ok(self.region.clone())
+        }
+
+        async fn get_region_for_cache(
+            self: Arc<Self>,
+            key: Vec<u8>,
+            previous: bool,
+            leader_only: bool,
+        ) -> Result<RegionWithLeader> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(PdCall::CacheLookup(key, previous, leader_only));
             Ok(self.region.clone())
         }
 
@@ -409,6 +438,32 @@ mod tests {
         assert_eq!(
             region.buckets.as_ref().unwrap().keys,
             [Vec::new(), b"middle".to_vec(), Vec::new()]
+        );
+    }
+
+    #[tokio::test]
+    async fn region_cache_lookup_preserves_codec_and_leader_only_retry() {
+        let codec = PdRegionCodec::v2(KeyMode::Txn, 7).unwrap();
+        let inner = Arc::new(RecordingPdClient::new(physical_region(codec)));
+        let client = Arc::new(CodecPdClient::new(inner.clone(), codec));
+        for previous in [false, true] {
+            for leader_only in [false, true] {
+                let region = client
+                    .clone()
+                    .get_region_for_cache(b"key".to_vec(), previous, leader_only)
+                    .await
+                    .unwrap();
+                assert_decoded_region(&region);
+            }
+        }
+        assert_eq!(
+            inner.calls(),
+            vec![
+                PdCall::CacheLookup(codec.encode_region_key(b"key"), false, false),
+                PdCall::CacheLookup(codec.encode_region_key(b"key"), false, true),
+                PdCall::CacheLookup(codec.encode_region_key(b"key"), true, false),
+                PdCall::CacheLookup(codec.encode_region_key(b"key"), true, true),
+            ]
         );
     }
 

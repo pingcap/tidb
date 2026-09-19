@@ -25,6 +25,7 @@ use tidb_proto::pdpb::{
     self,
     pd_server::{Pd, PdServer},
 };
+use tidb_txnkv::driver::tikv_pd_bridge::TidbPdBridge;
 use tidb_txnkv::region::{
     BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, KeyRange,
     RegionCache, RegionLoader, RegionQuery, RegionQueryLoader, RegionQueryOptions,
@@ -33,7 +34,6 @@ use tidb_txnkv::region::{
 use tidb_txnkv::region::{
     PeerRole, RegionMetadata, RegionMetadataPeer, RegionRecoveryLoader, RegionVerId,
 };
-use tidb_txnkv::driver::tikv_pd_bridge::TidbPdBridge;
 use tidb_txnkv::PdRegionLoader;
 use tikv_client::region_cache::RegionCache as EngineRegionCache;
 use tokio_stream::wrappers::ReceiverStream;
@@ -810,7 +810,9 @@ fn current_region_hydration_reresolves_stores_and_preserves_unknown_roles() {
         ],
     };
 
-    let hydrated = loader.hydrate_region(&metadata, 101, &mut Default::default()).unwrap();
+    let hydrated = loader
+        .hydrate_region(&metadata, 101, &mut Default::default())
+        .unwrap();
     assert_eq!(hydrated.start_key, b"split-start");
     assert_eq!(hydrated.end_key, b"split-end");
     assert_eq!(hydrated.leader_peer_id, Some(21));
@@ -855,7 +857,9 @@ fn split_child_without_old_store_keeps_client_go_first_usable_peer() {
         ],
     };
 
-    let hydrated = loader.hydrate_region(&metadata, 101, &mut Default::default()).unwrap();
+    let hydrated = loader
+        .hydrate_region(&metadata, 101, &mut Default::default())
+        .unwrap();
     assert_eq!(hydrated.leader_peer_id, Some(22));
     assert_eq!(
         hydrated
@@ -891,7 +895,9 @@ fn epoch_hydration_never_preserves_a_witness_as_the_observed_leader() {
         ],
     };
 
-    let hydrated = loader.hydrate_region(&metadata, 103, &mut Default::default()).unwrap();
+    let hydrated = loader
+        .hydrate_region(&metadata, 103, &mut Default::default())
+        .unwrap();
     assert_eq!(hydrated.leader_peer_id, Some(14));
     assert_eq!(
         hydrated
@@ -1092,6 +1098,7 @@ fn store_response(
             state: state as i32,
             labels: Vec::new(),
             node_state: node_state as i32,
+            status_address: String::new(),
         }),
     }
 }
@@ -1118,7 +1125,10 @@ fn engine_region_cache_routes_through_the_injected_tidb_pd_client() {
     assert_eq!(region.region.id, 7);
     assert_eq!(region.region.start_key, encoded(b"logical-start"));
     assert_eq!(region.region.end_key, encoded(b"logical-end"));
-    let epoch = region.region.region_epoch.expect("epoch survives the bridge");
+    let epoch = region
+        .region
+        .region_epoch
+        .expect("epoch survives the bridge");
     assert_eq!((epoch.conf_ver, epoch.version), (3, 4));
     assert_eq!(region.leader.expect("leader survives the bridge").id, 11);
 }

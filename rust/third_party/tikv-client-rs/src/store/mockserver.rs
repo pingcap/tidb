@@ -316,9 +316,11 @@ where
                     core: self.core.clone(),
                 };
                 Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(ProstCodec::default())
-                        .unary(service, request)
-                        .await)
+                    Ok(
+                        tonic::server::Grpc::new(ProstCodec::default())
+                            .unary(service, request)
+                            .await,
+                    )
                 })
             }
             "/tikvpb.Tikv/KvPrewrite" => {
@@ -326,9 +328,11 @@ where
                     core: self.core.clone(),
                 };
                 Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(ProstCodec::default())
-                        .unary(service, request)
-                        .await)
+                    Ok(
+                        tonic::server::Grpc::new(ProstCodec::default())
+                            .unary(service, request)
+                            .await,
+                    )
                 })
             }
             "/tikvpb.Tikv/CoprocessorStream" => {
@@ -336,9 +340,11 @@ where
                     core: self.core.clone(),
                 };
                 Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(ProstCodec::default())
-                        .server_streaming(service, request)
-                        .await)
+                    Ok(
+                        tonic::server::Grpc::new(ProstCodec::default())
+                            .server_streaming(service, request)
+                            .await,
+                    )
                 })
             }
             "/tikvpb.Tikv/BatchCommands" => {
@@ -346,9 +352,11 @@ where
                     core: self.core.clone(),
                 };
                 Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(ProstCodec::default())
-                        .streaming(service, request)
-                        .await)
+                    Ok(
+                        tonic::server::Grpc::new(ProstCodec::default())
+                            .streaming(service, request)
+                            .await,
+                    )
                 })
             }
             _ => Box::pin(async move {

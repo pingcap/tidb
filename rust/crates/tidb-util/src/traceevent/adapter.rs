@@ -16,10 +16,9 @@
 //! TiDB's trace-event recorder.
 
 use std::sync::Arc;
+use std::time::Duration;
 use tidb_log::{Field, Value};
-use tikv_client::trace::{
-    self as client_trace, Category, TraceControlFlags, TraceField, TraceValue,
-};
+use tikv_client::trace::{self as client_trace, Category, TraceControlFlags, TraceField};
 
 use super::{get_flight_recorder, is_enabled, trace_event, Trace, TraceCategory};
 use crate::tracing::{self, Sink, TraceContext};
@@ -45,26 +44,53 @@ fn local_context(context: &client_trace::TraceContext) -> TraceContext {
     local
 }
 
-fn field_value(value: &TraceValue) -> Value {
-    match value {
-        TraceValue::String(value) => Value::Str(value.clone()),
-        TraceValue::Bool(value) => Value::Bool(*value),
-        TraceValue::I64(value) => Value::I64(*value),
-        TraceValue::U64(value) => Value::U64(*value),
-        TraceValue::Duration(value) => Value::Duration(value.as_nanos() as i64),
-        TraceValue::Binary(value) => Value::Binary(value.clone()),
-        TraceValue::Array(values) => Value::Array(values.iter().map(field_value).collect()),
-        TraceValue::Object(fields) => Value::Object(
-            fields
-                .iter()
-                .map(|field| Field::new(&field.name, field_value(field.encoded_value())))
-                .collect(),
-        ),
-        TraceValue::Error(value) => Value::Error {
-            basic: value.clone(),
-            verbose: None,
-        },
+/// The client's `TraceField` carries its value as a type-erased
+/// `Arc<dyn Any + Send + Sync>` (no more `IntoTraceValue`/`TraceValue`
+/// encoding), so the only way to recover it is a downcast against a type
+/// this handler already knows. This covers every scalar the client's own
+/// call sites pass through `TraceField::new` (its old `IntoTraceValue`
+/// impls, plus the `&'static str` literals it still uses directly, e.g. its
+/// own doctest).
+///
+/// A field whose concrete type is none of these (currently only
+/// region-cache's raw `Vec<pdpb::KeyRange>`/`Vec<RegionWithLeader>` batches)
+/// has no structured representation left to recover. The client removed the
+/// very mechanism (`TraceValue::Array`/`Object`) that used to carry one, so
+/// this keeps the field's NAME for correlation and marks its value
+/// unavailable rather than guessing at an internal type this crate has no
+/// business depending on.
+fn field_value(field: &TraceField) -> Value {
+    if let Some(value) = field.value::<String>() {
+        return Value::Str(value.clone());
     }
+    if let Some(value) = field.value::<&'static str>() {
+        return Value::Str((*value).to_owned());
+    }
+    if let Some(value) = field.value::<bool>() {
+        return Value::Bool(*value);
+    }
+    if let Some(value) = field.value::<Duration>() {
+        return Value::Duration(value.as_nanos() as i64);
+    }
+    if let Some(value) = field.value::<i64>() {
+        return Value::I64(*value);
+    }
+    if let Some(value) = field.value::<u64>() {
+        return Value::U64(*value);
+    }
+    if let Some(value) = field.value::<i32>() {
+        return Value::I64(i64::from(*value));
+    }
+    if let Some(value) = field.value::<u32>() {
+        return Value::U64(u64::from(*value));
+    }
+    if let Some(value) = field.value::<isize>() {
+        return Value::I64(*value as i64);
+    }
+    if let Some(value) = field.value::<usize>() {
+        return Value::U64(*value as u64);
+    }
+    Value::Str(format!("<{} field, unrepresentable type>", field.name))
 }
 
 fn handle_client_go_trace_event(
@@ -79,7 +105,7 @@ fn handle_client_go_trace_event(
     }
     let mut fields = fields
         .iter()
-        .map(|field| Field::new(&field.name, field_value(field.encoded_value())))
+        .map(|field| Field::new(&field.name, field_value(field)))
         .collect::<Vec<_>>();
     if mapped == TraceCategory::UNKNOWN_CLIENT {
         fields.push(Field::new(

@@ -350,12 +350,12 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
         KvRequestMetadata::from_request(tidb_txnkv::Request {
             request_type: RequestType::Dag,
             data: Some(TABLE_SCAN_DAG.to_vec()),
-            key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
-                RequestKeyRange {
+            key_ranges: Some(std::sync::Arc::new(RequestKeyRanges::new_non_partitioned(
+                vec![RequestKeyRange {
                     start_key: TABLE_START.to_vec().into(),
                     end_key: TABLE_END.to_vec().into(),
-                },
-            ])),
+                }],
+            ))),
             keep_order: true,
             store_type: StoreType::TiKv,
             start_ts: 1,

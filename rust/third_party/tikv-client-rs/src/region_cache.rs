@@ -43,6 +43,9 @@ use crate::Key;
 use crate::Result;
 
 const MAX_RETRY_WAITING_CONCURRENT_REQUEST: usize = 4;
+// Compatibility entry points have no caller budget; use the existing PD
+// client region-lookup budget. The explicit API below shares a caller budget.
+const REGION_LOOKUP_BACKOFF_MS: u64 = 20_000;
 const REGION_CACHE_TTL_SECS: i64 = 600;
 const REGION_CACHE_TTL_JITTER_SECS: i64 = 60;
 static REGION_CACHE_TTL: AtomicI64 = AtomicI64::new(REGION_CACHE_TTL_SECS);
@@ -570,72 +573,6 @@ fn ranges_after_key(mut ranges: Vec<pdpb::KeyRange>, split_key: &[u8]) -> Vec<pd
         ranges[0].start_key = split_key.to_vec();
     }
     ranges
-}
-
-fn trace_key_field(name: &'static str, key: &[u8]) -> crate::trace::TraceField {
-    if crate::redact::need_redact() {
-        crate::trace::TraceField::new(name, "?")
-    } else {
-        crate::trace::TraceField::binary(name, key.to_vec())
-    }
-}
-
-fn trace_ranges_field(name: &'static str, ranges: &[pdpb::KeyRange]) -> crate::trace::TraceField {
-    let mut fields = vec![crate::trace::TraceField::new("count", ranges.len())];
-    if !ranges.is_empty() {
-        fields.push(crate::trace::TraceField::array(
-            "ranges",
-            ranges
-                .iter()
-                .map(|range| {
-                    crate::trace::TraceValue::Object(vec![
-                        trace_key_field("start", &range.start_key),
-                        trace_key_field("end", &range.end_key),
-                    ])
-                })
-                .collect(),
-        ));
-    }
-    crate::trace::TraceField::object(name, fields)
-}
-
-fn trace_region_value(region: &RegionWithLeader) -> crate::trace::TraceValue {
-    let epoch = region.region.region_epoch.as_ref();
-    crate::trace::TraceValue::Object(vec![
-        crate::trace::TraceField::new("regionID", region.region.id),
-        crate::trace::TraceField::new("confVer", epoch.map_or(0, |epoch| epoch.conf_ver)),
-        crate::trace::TraceField::new("version", epoch.map_or(0, |epoch| epoch.version)),
-        trace_key_field("startKey", &region.region.start_key),
-        trace_key_field("endKey", &region.region.end_key),
-    ])
-}
-
-fn trace_regions_field(
-    name: &'static str,
-    regions: &[RegionWithLeader],
-) -> crate::trace::TraceField {
-    let mut fields = vec![crate::trace::TraceField::new("count", regions.len())];
-    if !regions.is_empty() {
-        fields.push(crate::trace::TraceField::array(
-            "regions",
-            regions.iter().map(trace_region_value).collect(),
-        ));
-    }
-    crate::trace::TraceField::object(name, fields)
-}
-
-fn trace_locations_field(
-    name: &'static str,
-    locations: &[RegionWithLeader],
-) -> crate::trace::TraceField {
-    let mut fields = vec![crate::trace::TraceField::new("count", locations.len())];
-    if !locations.is_empty() {
-        fields.push(crate::trace::TraceField::array(
-            "locations",
-            locations.iter().map(trace_region_value).collect(),
-        ));
-    }
-    crate::trace::TraceField::object(name, fields)
 }
 
 fn contains_by_end(region: &RegionWithLeader, key: &[u8]) -> bool {
@@ -1494,6 +1431,23 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
 
     // Retrieve cache entry by key. If there's no entry, query PD and update cache.
     pub async fn get_region_by_key(&self, key: &Key) -> Result<RegionWithLeader> {
+        self.get_region_by_key_inner(key, None).await
+    }
+
+    /// Locate a cached key or load it using the caller's shared PD retry budget.
+    pub async fn get_region_by_key_with_backoff(
+        &self,
+        key: &Key,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<RegionWithLeader> {
+        self.get_region_by_key_inner(key, Some(backoffer)).await
+    }
+
+    async fn get_region_by_key_inner(
+        &self,
+        key: &Key,
+        backoffer: Option<&mut RetryBackoffer>,
+    ) -> Result<RegionWithLeader> {
         let mut region_cache_guard = self.region_cache.write().await;
         let res = {
             region_cache_guard
@@ -1523,13 +1477,23 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             None
         };
         drop(region_cache_guard);
+        // Keep the cache-hit path allocation-free; only a PD load needs its
+        // own cancellation state and retry accounting.
+        let mut default_backoffer;
+        let backoffer = match backoffer {
+            Some(backoffer) => backoffer,
+            None => {
+                default_backoffer = RetryBackoffer::new(
+                    self.background_cancellation.child(),
+                    REGION_LOOKUP_BACKOFF_MS,
+                );
+                &mut default_backoffer
+            }
+        };
         if let Some((ver_id, old_region)) = reload {
-            let loaded = pd_region_meta_call(
-                self.inner_client
-                    .clone()
-                    .get_region_with_buckets(key.clone().into()),
-            )
-            .await;
+            let loaded = self
+                .query_region_with_backoff(key, false, false, backoffer)
+                .await;
             let loaded = match loaded {
                 Ok(region) => self.prepare_region_from_pd(region).await,
                 Err(error) => Err(error),
@@ -1553,7 +1517,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 }
             };
         }
-        self.read_through_region_by_key(key.clone()).await
+        self.read_through_region_by_key_with_backoff(key.clone(), backoffer)
+            .await
     }
 
     /// Groups ordered keys by their current cached/PD region and also returns
@@ -1610,12 +1575,17 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         if region.buckets.is_some() {
             return Ok(region);
         }
-        let region = pd_region_meta_call(
-            self.inner_client
-                .clone()
-                .get_region_with_buckets(key.clone().into()),
-        )
-        .await?;
+        let region = self
+            .query_region_with_backoff(
+                key,
+                false,
+                false,
+                &mut RetryBackoffer::new(
+                    self.background_cancellation.child(),
+                    REGION_LOOKUP_BACKOFF_MS,
+                ),
+            )
+            .await?;
         let region = self.prepare_region_from_pd(region).await?;
         self.add_region(region.clone()).await;
         Ok(region)
@@ -1656,12 +1626,17 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         };
         drop(region_cache_guard);
         if let Some((ver_id, old_region)) = reload {
-            let loaded = pd_region_meta_call(
-                self.inner_client
-                    .clone()
-                    .get_prev_region_with_buckets(key.clone().into()),
-            )
-            .await;
+            let loaded = self
+                .query_region_with_backoff(
+                    key,
+                    true,
+                    false,
+                    &mut RetryBackoffer::new(
+                        self.background_cancellation.child(),
+                        REGION_LOOKUP_BACKOFF_MS,
+                    ),
+                )
+                .await;
             let loaded = match loaded {
                 Ok(region) => self.prepare_region_from_pd(region).await,
                 Err(error) => Err(error),
@@ -1794,52 +1769,94 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         self.load_region_by_key_with_stale_retry(key).await
     }
 
-    /// Source `findRegionByKey` retries one rejected cache-miss load. The
-    /// second request is the leader-only equivalent in client-go; Rust's PD
-    /// trait has no router/follower option, but preserves the acceptance and
-    /// retry boundary.
+    /// Load a key with the caller's cumulative PD budget and cancellation.
+    /// Empty region responses are represented by `RegionForKeyNotFound` at
+    /// the PD boundary. Like client-go's loadRegion, retry them and PD RPC
+    /// errors, but leave codec errors and invalid returned metadata terminal.
+    pub async fn read_through_region_by_key_with_backoff(
+        &self,
+        key: Key,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<RegionWithLeader> {
+        self.load_region_with_backoff(key, false, backoffer).await
+    }
+
     async fn load_region_by_key_with_stale_retry(&self, key: Key) -> Result<RegionWithLeader> {
-        let region = pd_region_meta_call(
-            self.inner_client
-                .clone()
-                .get_region_with_buckets(key.clone().into()),
-        )
-        .await?;
+        let mut backoffer = RetryBackoffer::new(
+            self.background_cancellation.child(),
+            REGION_LOOKUP_BACKOFF_MS,
+        );
+        self.load_region_with_backoff(key, false, &mut backoffer)
+            .await
+    }
+
+    async fn load_region_by_end_key_with_stale_retry(&self, key: Key) -> Result<RegionWithLeader> {
+        let mut backoffer = RetryBackoffer::new(
+            self.background_cancellation.child(),
+            REGION_LOOKUP_BACKOFF_MS,
+        );
+        self.load_region_with_backoff(key, true, &mut backoffer)
+            .await
+    }
+
+    async fn load_region_with_backoff(
+        &self,
+        key: Key,
+        previous: bool,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<RegionWithLeader> {
+        let region = self
+            .query_region_with_backoff(&key, previous, false, backoffer)
+            .await?;
         let region = self.prepare_region_from_pd(region).await?;
         if self.add_region(region.clone()).await {
             return Ok(region);
         }
-        let region = pd_region_meta_call(
-            self.inner_client
-                .clone()
-                .get_region_with_buckets(key.into()),
-        )
-        .await?;
+        // findRegionByKey retries a rejected cache insertion once. Keep the
+        // same budget, and force that second load to the PD leader too.
+        let region = self
+            .query_region_with_backoff(&key, previous, true, backoffer)
+            .await?;
         let region = self.prepare_region_from_pd(region).await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
 
-    async fn load_region_by_end_key_with_stale_retry(&self, key: Key) -> Result<RegionWithLeader> {
-        let region = pd_region_meta_call(
-            self.inner_client
-                .clone()
-                .get_prev_region_with_buckets(key.clone().into()),
-        )
-        .await?;
-        let region = self.prepare_region_from_pd(region).await?;
-        if self.add_region(region.clone()).await {
-            return Ok(region);
+    async fn query_region_with_backoff(
+        &self,
+        key: &Key,
+        previous: bool,
+        mut leader_only: bool,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<RegionWithLeader> {
+        loop {
+            let call = pd_region_meta_call(self.inner_client.clone().get_region_for_cache(
+                key.clone().into(),
+                previous,
+                leader_only,
+            ));
+            let result = tokio::select! {
+                biased;
+                _ = backoffer.cancellation().cancelled() => {
+                    return Err(Error::RegionLookupRetry(Box::new(crate::retry::RetryError::Cancelled {
+                        reason: "PD region lookup cancelled".to_owned(),
+                    })));
+                }
+                result = call => result,
+            };
+            match result {
+                Ok(region) => return Ok(region),
+                Err(error) if crate::request::is_decode_error(&error) => return Err(error),
+                Err(error @ Error::Unimplemented) => return Err(error),
+                Err(error) => {
+                    backoffer
+                        .backoff(BO_PD_RPC, error.to_string())
+                        .await
+                        .map_err(|error| Error::RegionLookupRetry(Box::new(error)))?;
+                    leader_only = true;
+                }
+            }
         }
-        let region = pd_region_meta_call(
-            self.inner_client
-                .clone()
-                .get_prev_region_with_buckets(key.into()),
-        )
-        .await?;
-        let region = self.prepare_region_from_pd(region).await?;
-        self.add_region(region.clone()).await;
-        Ok(region)
     }
 
     /// Source `BatchLoadRegionsFromKey`: always refreshes a bounded run of
@@ -2334,7 +2351,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 "region_cache.batch_locate.start",
                 &[
                     crate::trace::TraceField::new("rangeCount", ranges.len()),
-                    trace_ranges_field("ranges", &ranges),
+                    crate::trace::TraceField::new("ranges", ranges.clone()),
                 ],
             );
         }
@@ -2403,8 +2420,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 &[
                     crate::trace::TraceField::new("cachedRegionCount", cached_regions.len()),
                     crate::trace::TraceField::new("uncachedRangeCount", uncached_ranges.len()),
-                    trace_regions_field("cachedRegions", &cached_regions),
-                    trace_ranges_field("uncachedRanges", &uncached_ranges),
+                    crate::trace::TraceField::new("cachedRegions", cached_regions.clone()),
+                    crate::trace::TraceField::new("uncachedRanges", uncached_ranges.clone()),
                 ],
             );
         }
@@ -2422,7 +2439,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     &[
                         crate::trace::TraceField::new("rangeCount", to_send.len()),
                         crate::trace::TraceField::new("limit", DEFAULT_REGIONS_PER_BATCH),
-                        trace_ranges_field("ranges", to_send),
+                        crate::trace::TraceField::new("ranges", to_send.to_vec()),
                     ],
                 );
             }
@@ -2442,7 +2459,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     "region_cache.batch_locate.pd_response",
                     &[
                         crate::trace::TraceField::new("regionCount", regions.len()),
-                        trace_regions_field("regions", &regions),
+                        crate::trace::TraceField::new("regions", regions.clone()),
                     ],
                 );
             }
@@ -2465,7 +2482,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 "region_cache.batch_locate.merged",
                 &[
                     crate::trace::TraceField::new("locationCount", result.len()),
-                    trace_locations_field("locations", &result),
+                    crate::trace::TraceField::new("locations", result.clone()),
                 ],
             );
         }
@@ -3956,7 +3973,7 @@ mod test {
     use crate::region::RegionId;
     use crate::region::RegionWithLeader;
     use crate::region_cache::is_valid_data_store;
-    use crate::retry::RetryBackoffer;
+    use crate::retry::{RetryBackoffer, BO_PD_RPC};
     use crate::store::EndpointType;
     use crate::Key;
     use crate::Result;
@@ -3975,6 +3992,7 @@ mod test {
         pub regions: Mutex<HashMap<RegionId, RegionWithLeader>>,
         pub stores: Mutex<Vec<metapb::Store>>,
         pub get_region_count: AtomicU64,
+        pub region_lookup_routes: StdMutex<Vec<(bool, bool)>>,
         pub get_region_with_buckets_count: AtomicU64,
         pub get_region_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
         pub get_prev_region_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
@@ -4005,6 +4023,23 @@ mod test {
                 .map(|(_, r)| r.clone())
                 .next()
                 .ok_or_else(|| Error::StringError("MockRetryClient: region not found".to_owned()))
+        }
+
+        async fn get_region_for_cache(
+            self: Arc<Self>,
+            key: Vec<u8>,
+            previous: bool,
+            leader_only: bool,
+        ) -> Result<RegionWithLeader> {
+            self.region_lookup_routes
+                .lock()
+                .unwrap()
+                .push((previous, leader_only));
+            if previous {
+                self.get_prev_region_with_buckets(key).await
+            } else {
+                self.get_region_with_buckets(key).await
+            }
         }
 
         async fn get_region_with_buckets(
@@ -4168,6 +4203,183 @@ mod test {
         async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
             unimplemented!()
         }
+    }
+
+    #[tokio::test]
+    async fn missing_region_lookup_recovers_after_pd_backoff() {
+        let client = Arc::new(MockRetryClient::default());
+        client.get_region_responses.lock().await.extend([
+            Err(Error::RegionForKeyNotFound { key: b"a".to_vec() }),
+            Ok(region_with_leader(42, b"a", b"z")),
+        ]);
+        let cache = RegionCache::new(client.clone());
+        let loaded = cache.read_through_region_by_key(b"a".to_vec().into()).await;
+        assert!(
+            loaded.is_ok(),
+            "transient missing region must recover: {loaded:?}"
+        );
+        assert_eq!(loaded.unwrap().id(), 42);
+        assert_eq!(client.get_region_count.load(SeqCst), 2);
+        assert_eq!(
+            *client.region_lookup_routes.lock().unwrap(),
+            [(false, false), (false, true)]
+        );
+    }
+
+    #[tokio::test]
+    async fn pd_lookup_backoff_recovers_previous_region_and_rpc_errors() {
+        for previous in [false, true] {
+            let client = Arc::new(MockRetryClient::default());
+            let responses = if previous {
+                &client.get_prev_region_responses
+            } else {
+                &client.get_region_responses
+            };
+            responses.lock().await.extend([
+                Err(Error::GrpcAPI(tonic::Status::unavailable(
+                    "transient PD error",
+                ))),
+                Err(Error::RegionForKeyNotFound { key: b"b".to_vec() }),
+                Ok(region_with_leader(42, b"a", b"z")),
+            ]);
+            let cache = RegionCache::new(client.clone());
+            let mut backoffer = RetryBackoffer::new(Cancellation::default(), 1000);
+            let result = cache
+                .load_region_with_backoff(b"b".to_vec().into(), previous, &mut backoffer)
+                .await
+                .unwrap();
+            assert_eq!(result.id(), 42);
+            assert_eq!(backoffer.total_backoff_times(), 2);
+            assert!(backoffer.total_sleep_ms() >= BO_PD_RPC.base_ms * 3 / 2);
+            assert_eq!(
+                *client.region_lookup_routes.lock().unwrap(),
+                [(previous, false), (previous, true), (previous, true)]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn pd_lookup_backoff_exhausts_and_preserves_diagnostics() {
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 1);
+        let error = cache
+            .read_through_region_by_key_with_backoff(b"a".to_vec().into(), &mut backoffer)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::RegionLookupRetry(ref error) if matches!(error.as_ref(),
+            crate::retry::RetryError::Exhausted { terminal: Some(crate::retry::RetryTerminal::PdServerTimeout), .. }))
+        );
+        assert_eq!(backoffer.total_backoff_times(), 1);
+        assert_eq!(client.get_region_count.load(SeqCst), 2);
+        assert_eq!(backoffer.latest_errors().len(), 1);
+        assert!(cache.region_cache.read().await.ver_id_to_region.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pd_lookup_backoff_budget_is_shared_across_keys() {
+        let client = Arc::new(MockRetryClient::default());
+        client.get_region_responses.lock().await.extend([
+            Err(Error::RegionForKeyNotFound { key: b"a".to_vec() }),
+            Ok(region_with_leader(42, b"a", b"b")),
+        ]);
+        let cache = RegionCache::new(client.clone());
+        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 1);
+        assert_eq!(
+            cache
+                .get_region_by_key_with_backoff(&b"a".to_vec().into(), &mut backoffer)
+                .await
+                .unwrap()
+                .id(),
+            42
+        );
+        let sleep = backoffer.total_sleep_ms();
+        let error = cache
+            .get_region_by_key_with_backoff(&b"z".to_vec().into(), &mut backoffer)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::RegionLookupRetry(ref error) if matches!(error.as_ref(), crate::retry::RetryError::Exhausted { .. }))
+        );
+        assert_eq!(backoffer.total_sleep_ms(), sleep);
+        assert_eq!(client.get_region_count.load(SeqCst), 3);
+        assert_eq!(
+            cache
+                .get_region_by_key(&b"a".to_vec().into())
+                .await
+                .unwrap()
+                .id(),
+            42
+        );
+        assert_eq!(client.get_region_count.load(SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn pd_lookup_backoff_keeps_codec_and_peer_errors_terminal() {
+        for malformed in 0..3 {
+            let client = Arc::new(MockRetryClient::default());
+            let response = match malformed {
+                0 => Ok(RegionWithLeader::default()),
+                1 => Err(Error::ApiCodecDecode(Box::new(Error::StringError(
+                    "invalid encoded region key".to_owned(),
+                )))),
+                _ => Err(Error::ExtractedErrors(vec![Error::ApiCodecDecode(
+                    Box::new(Error::StringError("invalid encoded region key".to_owned())),
+                )])),
+            };
+            client.get_region_responses.lock().await.push_back(response);
+            let cache = RegionCache::new(client.clone());
+            let mut backoffer = RetryBackoffer::new(Cancellation::default(), 1000);
+            assert!(cache
+                .read_through_region_by_key_with_backoff(b"a".to_vec().into(), &mut backoffer)
+                .await
+                .is_err());
+            assert_eq!(client.get_region_count.load(SeqCst), 1);
+            assert_eq!(backoffer.total_backoff_times(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn pd_lookup_backoff_cancels_during_sleep_without_another_rpc() {
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        let cancellation = Cancellation::default();
+        let mut backoffer = RetryBackoffer::new(cancellation.clone(), 1000);
+        let lookup =
+            cache.read_through_region_by_key_with_backoff(b"a".to_vec().into(), &mut backoffer);
+        let cancel = async {
+            while client.get_region_count.load(SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            cancellation.cancel();
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(lookup, cancel)
+        })
+        .await
+        .expect("cancellation must interrupt backoff");
+        assert!(
+            matches!(result, Err(Error::RegionLookupRetry(ref error)) if matches!(error.as_ref(), crate::retry::RetryError::Cancelled { .. }))
+        );
+        assert_eq!(client.get_region_count.load(SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn pd_lookup_backoff_stops_on_cancellation() {
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        let cancellation = Cancellation::default();
+        cancellation.cancel();
+        let mut backoffer = RetryBackoffer::new(cancellation, 1000);
+        let error = cache
+            .read_through_region_by_key_with_backoff(b"a".to_vec().into(), &mut backoffer)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::RegionLookupRetry(ref error) if matches!(error.as_ref(), crate::retry::RetryError::Cancelled { .. }))
+        );
+        assert_eq!(client.get_region_count.load(SeqCst), 0);
     }
 
     #[tokio::test]
@@ -6450,8 +6662,20 @@ mod test {
             cache.get_region_by_key(&vec![10].into()).await?,
             region2.clone()
         );
-        assert!(cache.get_region_by_key(&vec![20].into()).await.is_err());
-        assert!(cache.get_region_by_key(&vec![25].into()).await.is_err());
+        assert!(cache
+            .get_region_by_key_with_backoff(
+                &vec![20].into(),
+                &mut RetryBackoffer::noop(Cancellation::default())
+            )
+            .await
+            .is_err());
+        assert!(cache
+            .get_region_by_key_with_backoff(
+                &vec![25].into(),
+                &mut RetryBackoffer::noop(Cancellation::default())
+            )
+            .await
+            .is_err());
         assert_eq!(cache.get_region_by_key(&vec![60].into()).await?, region4);
         Ok(())
     }
@@ -7758,7 +7982,9 @@ mod test {
             .get_region_responses
             .lock()
             .await
-            .push_back(Err(Error::StringError("decode region".to_owned())));
+            .push_back(Err(Error::ApiCodecDecode(Box::new(Error::StringError(
+                "decode region".to_owned(),
+            )))));
         let cache = RegionCache::new(client.clone());
         assert!(cache
             .get_region_by_key(&b"a".to_vec().into())

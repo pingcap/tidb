@@ -190,12 +190,12 @@ fn execute_live_empty_query(
     let mut metadata = KvRequestMetadata::from_request(tidb_txnkv::Request {
         request_type: RequestType::Dag,
         data: Some(TABLE_SCAN_DAG.to_vec()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
-            RequestKeyRange {
+        key_ranges: Some(std::sync::Arc::new(RequestKeyRanges::new_non_partitioned(
+            vec![RequestKeyRange {
                 start_key: TABLE_START.to_vec().into(),
                 end_key: TABLE_END.to_vec().into(),
-            },
-        ])),
+            }],
+        ))),
         keep_order: true,
         store_type: StoreType::TiKv,
         start_ts: 1,
@@ -292,12 +292,12 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
     let mut metadata = KvRequestMetadata::from_request(tidb_txnkv::Request {
         request_type: RequestType::Dag,
         data: Some(TABLE_SCAN_DAG.to_vec()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
-            RequestKeyRange {
+        key_ranges: Some(std::sync::Arc::new(RequestKeyRanges::new_non_partitioned(
+            vec![RequestKeyRange {
                 start_key: TABLE_START.to_vec().into(),
                 end_key: TABLE_END.to_vec().into(),
-            },
-        ])),
+            }],
+        ))),
         keep_order: true,
         store_type: StoreType::TiKv,
         start_ts: 1,
@@ -714,10 +714,9 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
     // This test proves direct/forwarded stream isolation on one physical
     // channel. The default four-connection pool round-robins requests and
     // would compare unrelated channel generations instead.
-    let mut client = TonicCoprocessorClient::with_connection_count(
-        std::num::NonZeroUsize::new(1).unwrap(),
-    )
-    .expect("construct one-channel production tonic client");
+    let mut client =
+        TonicCoprocessorClient::with_connection_count(std::num::NonZeroUsize::new(1).unwrap())
+            .expect("construct one-channel production tonic client");
     let direct_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
     let (direct_completion, mut direct_pull) = completion_pair::<
         OpaqueBatchCommand,

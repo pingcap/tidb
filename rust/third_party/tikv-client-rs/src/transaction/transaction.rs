@@ -332,16 +332,7 @@ fn apply_transaction_resource_group_tagger<R: StoreRequest>(
 
 fn pessimistic_deadlock(error: &Error) -> Option<kvrpcpb::Deadlock> {
     match error {
-        Error::KeyError(error) => error.deadlock.clone().or_else(|| {
-            error
-                .lock_upgrade_conflict
-                .as_ref()
-                .map(|conflict| kvrpcpb::Deadlock {
-                    lock_ts: conflict.owner_start_ts,
-                    lock_key: conflict.key.clone(),
-                    ..Default::default()
-                })
-        }),
+        Error::KeyError(error) => error.deadlock.clone(),
         Error::ExtractedErrors(errors) | Error::MultipleKeyErrors(errors) => {
             errors.iter().find_map(pessimistic_deadlock)
         }
@@ -3241,10 +3232,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 }
                 continue;
             }
-            if self.buffer.is_shared_locked(&key)
-                && !context.in_share_mode
-                && !context.allow_shared_lock_upgrade
-            {
+            if self.buffer.is_shared_locked(&key) && !context.in_share_mode {
                 return Err(Error::StringError(
                     "upgrading a shared lock to an exclusive lock is not supported".to_owned(),
                 ));
@@ -9462,39 +9450,6 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
     use fail::FailScenario;
-
-    #[test]
-    fn source_go_store_driver_txn_lock_upgrade_error_mapping() {
-        let error = Error::KeyError(Box::new(kvrpcpb::KeyError {
-            lock_upgrade_conflict: Some(kvrpcpb::LockUpgradeConflict {
-                key: b"key".to_vec(),
-                start_ts: 101,
-                owner_start_ts: 202,
-                reason: kvrpcpb::lock_upgrade_conflict::Reason::SecondUpgrader as i32,
-            }),
-            ..Default::default()
-        }));
-        let deadlock = super::pessimistic_deadlock(&error).expect("upgrade maps to deadlock");
-        assert_eq!(deadlock.lock_ts, 202);
-        assert_eq!(deadlock.lock_key, b"key");
-        assert_eq!(deadlock.deadlock_key_hash, 0);
-    }
-
-    #[test]
-    fn source_go_store_driver_txn_shared_lock_lost_stays_typed() {
-        let error = Error::from(kvrpcpb::KeyError {
-            shared_lock_lost: Some(kvrpcpb::SharedLockLost {
-                key: b"key".to_vec(),
-                start_ts: 101,
-            }),
-            ..Default::default()
-        });
-        let Error::SharedLockLost(error) = error else {
-            panic!("shared lock loss must not become a generic key error")
-        };
-        assert_eq!(error.shared_lock_lost.start_ts, 101);
-        assert_eq!(error.shared_lock_lost.key, b"key");
-    }
 
     #[test]
     fn source_uncovered_effective_wait_preserves_future_start_time() {
@@ -16995,37 +16950,13 @@ mod tests {
         assert!(pessimistic
             .buffer
             .is_shared_locked(&Key::from(b"shared".to_vec())));
-
-        let mut denied_context = LockContext::new(3, 17, SystemTime::now());
         let error = pessimistic
-            .lock_keys_with_context(&mut denied_context, ["shared".to_owned()])
+            .lock_keys(["shared".to_owned()])
             .await
             .unwrap_err();
         assert!(error
             .to_string()
             .contains("upgrading a shared lock to an exclusive lock is not supported"));
-
-        // Go's session gate sets AllowSharedLockUpgrade on the exclusive
-        // request. With the gate enabled, a second lock call upgrades the
-        // shared key instead of refusing before the RPC is built.
-        let mut upgrade_context = LockContext::new(3, 17, SystemTime::now());
-        upgrade_context.allow_shared_lock_upgrade = true;
-        pessimistic
-            .lock_keys_with_context(&mut upgrade_context, ["shared".to_owned()])
-            .await
-            .unwrap();
-        assert!(pessimistic.buffer.is_locked(&Key::from(b"shared".to_vec())));
-        assert!(!pessimistic
-            .buffer
-            .is_shared_locked(&Key::from(b"shared".to_vec())));
-        pessimistic
-            .buffer
-            .lock_with_returned_value(Key::from(b"shared".to_vec()), false, None)
-            .unwrap();
-        assert!(pessimistic.buffer.is_locked(&Key::from(b"shared".to_vec())));
-        assert!(!pessimistic
-            .buffer
-            .is_shared_locked(&Key::from(b"shared".to_vec())));
         pessimistic
             .buffer
             .delete(Key::from(b"shared".to_vec()))
@@ -17125,11 +17056,6 @@ mod tests {
                 ),
                 (
                     kvrpcpb::Op::SharedPessimisticLock as i32,
-                    17,
-                    kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal as i32,
-                ),
-                (
-                    kvrpcpb::Op::PessimisticLock as i32,
                     17,
                     kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal as i32,
                 ),

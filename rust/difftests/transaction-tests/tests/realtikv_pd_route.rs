@@ -48,12 +48,12 @@ fn pd_only_input_discovers_route_and_reaches_tikv() {
     let metadata = KvRequestMetadata::from_request(tidb_txnkv::Request {
         request_type: RequestType::Dag,
         data: Some(Vec::new()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
-            RequestKeyRange {
+        key_ranges: Some(std::sync::Arc::new(RequestKeyRanges::new_non_partitioned(
+            vec![RequestKeyRange {
                 start_key: Vec::new().into(),
                 end_key: Vec::new().into(),
-            },
-        ])),
+            }],
+        ))),
         keep_order: true,
         store_type: StoreType::TiKv,
         start_ts: 1,

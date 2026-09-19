@@ -25,6 +25,7 @@ fn pd_store(labels: &[(&str, &str)]) -> PdStore {
     PdStore {
         id: 1,
         address: "127.0.0.1:20160".to_owned(),
+        status_address: String::new(),
         state: PdStoreState::Up,
         node_state: PdNodeState::Serving,
         labels: labels

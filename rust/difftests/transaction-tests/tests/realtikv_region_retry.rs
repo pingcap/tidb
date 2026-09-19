@@ -64,7 +64,10 @@ impl RegionRecoveryLoader for SharedPrimedLoader {
         &mut self,
         metadata: &RegionMetadata,
         leader_store_id: u64,
-        resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        resolved_stores: &mut std::collections::BTreeMap<
+            u64,
+            Option<tidb_txnkv::region::StoreMetadata>,
+        >,
     ) -> Result<RegionLocation, RegionLoadError> {
         self.shared
             .borrow_mut()
@@ -119,7 +122,6 @@ impl DirectUnaryClient for RecordingClient {
 }
 
 impl tidb_distsql::LockRecoveryClient for RecordingClient {
-
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
@@ -138,7 +140,6 @@ impl tidb_distsql::LockRecoveryClient for RecordingClient {
     ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
         self.inner.check_txn_status(address, request, context, call)
     }
-
 
     fn pessimistic_rollback_for_lock(
         &mut self,
@@ -248,12 +249,12 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
     let metadata = KvRequestMetadata::from_request(tidb_txnkv::Request {
         request_type: RequestType::Dag,
         data: Some(Vec::new()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
-            RequestKeyRange {
+        key_ranges: Some(std::sync::Arc::new(RequestKeyRanges::new_non_partitioned(
+            vec![RequestKeyRange {
                 start_key: Vec::new().into(),
                 end_key: Vec::new().into(),
-            },
-        ])),
+            }],
+        ))),
         keep_order: true,
         store_type: StoreType::TiKv,
         start_ts: 1,

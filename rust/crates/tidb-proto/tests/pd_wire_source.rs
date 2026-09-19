@@ -85,9 +85,11 @@ fn region_peer_store_projection_round_trips_sparse_source_tags() {
             value: "z1".to_owned(),
         }],
         node_state: metapb::NodeState::Removing as i32,
+        status_address: "127.0.0.1:20180".to_owned(),
     };
     let wire = store.encode_to_vec();
     assert!(wire.contains(&0x22)); // labels, field 4
+    assert!(wire.contains(&0x3a)); // status_address, field 7
     assert!(wire.contains(&0x68)); // node_state, field 13
     assert_eq!(metapb::Store::decode(wire.as_slice()).unwrap(), store);
 }

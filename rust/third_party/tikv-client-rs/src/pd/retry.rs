@@ -50,6 +50,22 @@ pub trait RetryClientTrait {
         self.get_region(key).await
     }
 
+    /// One cache lookup attempt. Retries must bypass follower/router metadata.
+    /// The built-in client already connects to the PD leader; adapters with
+    /// follower reads must override this method and honor `leader_only`.
+    async fn get_region_for_cache(
+        self: Arc<Self>,
+        key: Vec<u8>,
+        previous: bool,
+        _leader_only: bool,
+    ) -> Result<RegionWithLeader> {
+        if previous {
+            self.get_prev_region_with_buckets(key).await
+        } else {
+            self.get_region_with_buckets(key).await
+        }
+    }
+
     async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
 
     async fn get_prev_region_with_buckets(
@@ -219,6 +235,9 @@ macro_rules! retry_core {
             match stats.done(res) {
                 Ok(r) => return Ok(r),
                 Err(Error::Unimplemented) => return Err(Error::Unimplemented),
+                // Empty metadata belongs to RegionCache's BoPDRPC budget,
+                // not the transport's reconnect loop.
+                Err(error @ Error::RegionForKeyNotFound { .. }) => return Err(error),
                 Err(e) => last_err = Err(e),
             }
 
@@ -623,6 +642,32 @@ mod test {
 
     use super::*;
     use crate::internal_err;
+
+    #[tokio::test]
+    async fn missing_region_is_returned_to_cache_without_reconnect() {
+        struct MockClient {
+            cluster: RwLock<((), Instant)>,
+        }
+        #[async_trait]
+        impl Reconnect for MockClient {
+            type Cl = ();
+            async fn reconnect(&self, _: u64) -> Result<()> {
+                panic!("empty region metadata must use the cache PD backoff, not reconnect");
+            }
+        }
+        async fn lookup(client: Arc<MockClient>) -> Result<()> {
+            retry_mut!(client, "test", |_cluster| ready(Err(
+                Error::RegionForKeyNotFound { key: b"a".to_vec() }
+            )))
+        }
+        let client = Arc::new(MockClient {
+            cluster: RwLock::new(((), Instant::now())),
+        });
+        assert!(matches!(
+            lookup(client).await,
+            Err(Error::RegionForKeyNotFound { .. })
+        ));
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_reconnect() {

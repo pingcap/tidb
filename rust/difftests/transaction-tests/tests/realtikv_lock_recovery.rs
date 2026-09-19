@@ -104,7 +104,6 @@ impl DirectUnaryClient for RecordingClient {
 }
 
 impl LockRecoveryClient for RecordingClient {
-
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
@@ -131,7 +130,6 @@ impl LockRecoveryClient for RecordingClient {
         self.evidence.borrow_mut().check_commit_ts = response.commit_version;
         Ok(response)
     }
-
 
     fn pessimistic_rollback_for_lock(
         &mut self,
@@ -160,7 +158,8 @@ impl LockRecoveryClient for RecordingClient {
 #[test]
 #[ignore = "requires the cleanup-safe committed-primary locked-secondary runner"]
 fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
-    let pd_address = std::env::var("LOCK_RECOVERY_PD_ADDR").expect("runner must provide PD address");
+    let pd_address =
+        std::env::var("LOCK_RECOVERY_PD_ADDR").expect("runner must provide PD address");
     let table_id: i64 = std::env::var("LOCK_RECOVERY_LOCK_TABLE_ID")
         .expect("runner must provide table id")
         .parse()
@@ -211,12 +210,12 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
     let metadata = KvRequestMetadata::from_request(tidb_txnkv::Request {
         request_type: RequestType::Dag,
         data: Some(dag.encode_to_vec()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
-            RequestKeyRange {
+        key_ranges: Some(std::sync::Arc::new(RequestKeyRanges::new_non_partitioned(
+            vec![RequestKeyRange {
                 start_key: secondary_key.into(),
                 end_key: end_key.into(),
-            },
-        ])),
+            }],
+        ))),
         keep_order: true,
         store_type: StoreType::TiKv,
         start_ts: current_ts,

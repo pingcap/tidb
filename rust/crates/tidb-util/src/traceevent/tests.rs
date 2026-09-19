@@ -920,25 +920,38 @@ fn register_installs_live_client_hooks() {
         tikv_client::trace::Category::KvRequest
     ));
     let context = tikv_client::trace::TraceContext::new().with_trace_id([1_u8, 2, 3]);
+    // The client's `TraceField` carries its value as a type-erased `Arc<dyn
+    // Any>` now, recoverable only by downcasting against a type the handler
+    // already knows (see `adapter::field_value`'s doc). `region_count` below
+    // is one such known scalar; `route` is a value of no type the adapter
+    // recognizes, exercising the "unrepresentable" fallback the removal of
+    // `TraceValue`/`TraceField::object`/`binary` leaves nothing better than.
+    #[allow(dead_code)]
+    struct Route(Vec<u8>);
     tikv_client::trace::trace_event(
         &context,
         tikv_client::trace::Category::KvRequest,
         "live.client.event",
         &[
             tikv_client::trace::TraceField::new("key", "value"),
-            tikv_client::trace::TraceField::object(
-                "route",
-                vec![tikv_client::trace::TraceField::binary("start", [4_u8, 5])],
-            ),
+            tikv_client::trace::TraceField::new("region_count", 2_u64),
+            tikv_client::trace::TraceField::new("route", Route(vec![4, 5])),
         ],
     );
     let events = flight_recorder().snapshot();
     assert_eq!(events.last().unwrap().name, "live.client.event");
     assert_eq!(events.last().unwrap().trace_id, [1, 2, 3]);
     assert!(matches!(
+        &events.last().unwrap().fields[0].value,
+        Value::Str(value) if value == "value"
+    ));
+    assert!(matches!(
         &events.last().unwrap().fields[1].value,
-        Value::Object(fields)
-            if matches!(fields[0].value, Value::Binary(ref value) if value == &[4, 5])
+        Value::U64(2)
+    ));
+    assert!(matches!(
+        &events.last().unwrap().fields[2].value,
+        Value::Str(value) if value == "<route field, unrepresentable type>"
     ));
 
     get_flight_recorder().unwrap().close();

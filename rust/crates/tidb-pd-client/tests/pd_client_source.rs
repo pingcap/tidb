@@ -47,6 +47,7 @@ fn store_labels_keep_the_pinned_kvproto_field_four_wire_contract() {
             value: "s1".to_owned(),
         }],
         node_state: metapb::NodeState::Preparing as i32,
+        status_address: String::new(),
     };
     assert_eq!(
         store.encode_to_vec(),
@@ -125,7 +126,9 @@ impl Pd for MockPd {
             let mut state = self.state.lock().unwrap();
             state.member_requests.push(request.into_inner());
             let reply = state.members.clone();
-            if let Some(next) = state.members_after_first.take() { state.members = next; }
+            if let Some(next) = state.members_after_first.take() {
+                state.members = next;
+            }
             reply
         };
         reply.send().await
@@ -429,17 +432,23 @@ fn store_response(
             state: state as i32,
             labels: Vec::new(),
             node_state: node_state as i32,
+            status_address: String::new(),
         }),
     }
 }
 
-fn store_record(id: u64, state: metapb::StoreState, node_state: metapb::NodeState) -> metapb::Store {
+fn store_record(
+    id: u64,
+    state: metapb::StoreState,
+    node_state: metapb::NodeState,
+) -> metapb::Store {
     metapb::Store {
         id,
         address: format!("127.0.0.1:{}", 20000 + id),
         state: state as i32,
         labels: Vec::new(),
         node_state: node_state as i32,
+        status_address: String::new(),
     }
 }
 
@@ -1432,7 +1441,10 @@ fn bootstrap_timeout_transport_non_retryable_header_and_zero_cluster_never_retry
 fn bootstrap_retries_not_bootstrapped_until_pd_is_ready() {
     for (error_type, message) in [
         (pdpb::ErrorType::NotBootstrapped, "not bootstrapped"),
-        (pdpb::ErrorType::Unknown, "[PD:server:ErrServerNotStarted]server not started"),
+        (
+            pdpb::ErrorType::Unknown,
+            "[PD:server:ErrServerNotStarted]server not started",
+        ),
     ] {
         let server = Server::start(valid_state());
         let mut state = server.state.lock().unwrap();
@@ -1440,7 +1452,10 @@ fn bootstrap_retries_not_bootstrapped_until_pd_is_ready() {
         state.members = Reply::Value(pdpb::GetMembersResponse {
             header: Some(pdpb::ResponseHeader {
                 cluster_id: CLUSTER_ID,
-                error: Some(pdpb::Error { r#type: error_type as i32, message: message.to_owned() }),
+                error: Some(pdpb::Error {
+                    r#type: error_type as i32,
+                    message: message.to_owned(),
+                }),
             }),
             ..pdpb::GetMembersResponse::default()
         });

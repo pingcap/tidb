@@ -50,7 +50,7 @@ let value = txn.get("key".to_owned()).await?;
 txn.commit().await?;
 ```
 
-Since the TiKV client provides an async API, you'll need to use an async runtime (we currently only support Tokio). See [getting-started.md](getting-started.md) for a complete example.
+Since the TiKV client provides an async API, you'll need to use an async runtime (we currently only support Tokio).
 
 ## API summary
 
