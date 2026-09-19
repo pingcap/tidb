@@ -39,6 +39,7 @@ var (
 		"builtinRealIsTrueSig":     {},
 		"builtinDecimalIsTrueSig":  {},
 		"builtinIntIsTrueSig":      {},
+		"builtinJSONIsTrueSig":     {},
 		"builtinRealIsFalseSig":    {},
 		"builtinDecimalIsFalseSig": {},
 		"builtinIntIsFalseSig":     {},
