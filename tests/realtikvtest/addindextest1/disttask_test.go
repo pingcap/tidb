@@ -592,10 +592,6 @@ func TestAddIndexScheduleAway(t *testing.T) {
 func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`)
-	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/processCleanupTaskBatch", func() {
-		<-ch
-	})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	if store.Name() != "TiKV" {
 		t.Skip("TiKV store only")
@@ -608,6 +604,17 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	if kerneltype.IsClassic() {
 		tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	}
+	ch := make(chan struct{})
+	var unblockCleanup sync.Once
+	unblockCleanupTask := func() {
+		unblockCleanup.Do(func() {
+			close(ch)
+		})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/processCleanupTaskBatch", func() {
+		<-ch
+	})
+	t.Cleanup(unblockCleanupTask)
 	var wg sync.WaitGroup
 	for i := range 4 {
 		wg.Add(1)
@@ -620,7 +627,7 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	close(ch)
+	unblockCleanupTask()
 }
 
 func TestUseClusterIdInGlobalSortPath(t *testing.T) {
