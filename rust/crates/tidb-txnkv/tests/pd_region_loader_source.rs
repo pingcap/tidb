@@ -1132,3 +1132,57 @@ fn engine_region_cache_routes_through_the_injected_tidb_pd_client() {
     assert_eq!((epoch.conf_ver, epoch.version), (3, 4));
     assert_eq!(region.leader.expect("leader survives the bridge").id, 11);
 }
+
+#[test]
+fn tidb_pd_bridge_get_region_for_cache_honors_leader_only() {
+    // Go: `internal/locate/region_cache.go`'s `reloadRegion` escalates a
+    // cache-reload retry to `WithAllowPDLeaderOnly()` so it bypasses a stale
+    // follower/router route. `pd::RetryClientTrait::get_region_for_cache`'s
+    // default body (`pd/retry.rs`) drops `leader_only` and always uses
+    // `get_region_with_buckets`, which routes through the active endpoint
+    // regardless of the flag. Two independent servers (a "leader" and a
+    // "follower", per client-go's own vocabulary) prove the override
+    // actually changes *which* endpoint is contacted: this fails under the
+    // old default, which would send both calls to the follower.
+    use tikv_client::pd::RetryClientTrait;
+
+    let leader = Server::start(valid_state());
+    let follower = Server::start(valid_state());
+    let leader_url = format!("http://{}", leader.address);
+    let follower_url = format!("http://{}", follower.address);
+    let members = membership_response(&leader_url, &follower_url);
+    leader.state.lock().unwrap().members = Some(members.clone());
+    follower.state.lock().unwrap().members = Some(members);
+
+    // A fresh connection's active endpoint is the discovered leader; force
+    // one failover to the follower so a later `leader_only` call has a
+    // *different* active endpoint to prove it bypasses.
+    leader.state.lock().unwrap().region_unavailable = true;
+    let pd = tidb_pd_client::PdClient::connect(&leader.address, Duration::from_secs(2)).unwrap();
+    let bridge = Arc::new(TidbPdBridge::new(Arc::new(pd)));
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let routed = runtime
+        .block_on(Arc::clone(&bridge).get_region_for_cache(encoded(b"logical-start"), false, false))
+        .unwrap();
+    assert_eq!(routed.region.id, 7);
+    assert_eq!(bridge.client().active_endpoint(), follower_url);
+    assert_eq!(follower.state.lock().unwrap().region_requests.len(), 1);
+    // The leader recorded the one failed attempt failover probed past.
+    assert_eq!(leader.state.lock().unwrap().region_requests.len(), 1);
+
+    // The leader recovers, but the active endpoint is still the follower;
+    // `leader_only` must reach the leader specifically, not the active one.
+    leader.state.lock().unwrap().region_unavailable = false;
+    let leader_only = runtime
+        .block_on(bridge.get_region_for_cache(encoded(b"logical-start"), false, true))
+        .unwrap();
+    assert_eq!(leader_only.region.id, 7);
+    assert_eq!(leader.state.lock().unwrap().region_requests.len(), 2);
+    assert_eq!(follower.state.lock().unwrap().region_requests.len(), 1);
+}

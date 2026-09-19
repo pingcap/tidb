@@ -216,6 +216,29 @@ impl RetryClientTrait for TidbPdBridge {
             .map(region_with_leader)
     }
 
+    // Go: `internal/locate/region_cache.go`'s `reloadRegion` escalates to
+    // `WithAllowPDLeaderOnly()` after the first failed lookup attempt so a
+    // retry bypasses a stale follower/router route. The default body of this
+    // method (`pd/retry.rs`) drops `leader_only` entirely; this bridge routes
+    // it through to the underlying PD client, which already threads it to the
+    // worker (`get_region_routed`/`get_prev_region_routed`).
+    async fn get_region_for_cache(
+        self: Arc<Self>,
+        key: Vec<u8>,
+        previous: bool,
+        leader_only: bool,
+    ) -> Result<RegionWithLeader> {
+        if previous {
+            self.dispatch(move |client| client.get_prev_region_routed(&key, true, leader_only))
+                .await
+                .map(region_with_leader)
+        } else {
+            self.dispatch(move |client| client.get_region_routed(&key, true, leader_only))
+                .await
+                .map(region_with_leader)
+        }
+    }
+
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
         self.dispatch(move |client| client.get_region_by_id(region_id, false))
             .await

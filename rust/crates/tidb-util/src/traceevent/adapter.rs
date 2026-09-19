@@ -55,7 +55,10 @@ fn local_context(context: &client_trace::TraceContext) -> TraceContext {
 /// `region_cache.rs`'s batch fields (`ranges`, `cachedRegions`,
 /// `uncachedRanges`, `regions`, `locations`) pass one of exactly two
 /// concrete collection types; downcasting against those recovers the same
-/// structure Go's own `zap.Array`/`zap.Object` would have carried for them.
+/// `{count, ranges/regions/locations: [...]}` shape and key redaction Go's
+/// own `encodeRangeArray`/`formatRegionSliceField`/`formatKeyLocationsField`
+/// (`internal/locate/region_cache.go`) produce for them, keyed off the same
+/// process-wide `redact.NeedRedact()` gate.
 ///
 /// A field whose concrete type is none of these has no structured
 /// representation left to recover, so this keeps the field's NAME for
@@ -63,38 +66,70 @@ fn local_context(context: &client_trace::TraceContext) -> TraceContext {
 /// internal type this crate has no business depending on.
 pub(crate) fn field_value(field: &TraceField) -> Value {
     if let Some(ranges) = field.value::<Vec<tikv_client::proto::pdpb::KeyRange>>() {
-        return Value::Array(
-            ranges
-                .iter()
-                .map(|range| {
-                    Value::Object(vec![
-                        Field::new("start_key", Value::Binary(range.start_key.clone())),
-                        Field::new("end_key", Value::Binary(range.end_key.clone())),
-                    ])
-                })
-                .collect(),
-        );
+        let redact = tikv_client::redact::need_redact();
+        return Value::Object(vec![
+            Field::new("count", Value::U64(ranges.len() as u64)),
+            Field::new(
+                "ranges",
+                Value::Array(
+                    ranges
+                        .iter()
+                        .map(|range| {
+                            Value::Object(vec![
+                                Field::new("start", redacted_key(&range.start_key, redact)),
+                                Field::new("end", redacted_key(&range.end_key, redact)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]);
     }
     if let Some(regions) = field.value::<Vec<tikv_client::RegionWithLeader>>() {
-        return Value::Array(
-            regions
-                .iter()
-                .map(|region| {
-                    let epoch = region.region.region_epoch.as_ref();
-                    Value::Object(vec![
-                        Field::new("id", Value::U64(region.region.id)),
-                        Field::new(
-                            "ver",
-                            Value::U64(epoch.map(|epoch| epoch.version).unwrap_or_default()),
-                        ),
-                        Field::new(
-                            "confVer",
-                            Value::U64(epoch.map(|epoch| epoch.conf_ver).unwrap_or_default()),
-                        ),
-                    ])
-                })
-                .collect(),
-        );
+        let redact = tikv_client::redact::need_redact();
+        // Go's `formatKeyLocationsField` nests its array under "locations";
+        // every other caller (`formatRegionSliceField`) nests it under
+        // "regions" regardless of the field's own outer name (e.g.
+        // `cachedRegions`).
+        let inner_key = if field.name == "locations" {
+            "locations"
+        } else {
+            "regions"
+        };
+        return Value::Object(vec![
+            Field::new("count", Value::U64(regions.len() as u64)),
+            Field::new(
+                inner_key,
+                Value::Array(
+                    regions
+                        .iter()
+                        .map(|region| {
+                            let epoch = region.region.region_epoch.as_ref();
+                            Value::Object(vec![
+                                Field::new("regionID", Value::U64(region.region.id)),
+                                Field::new(
+                                    "confVer",
+                                    Value::U64(
+                                        epoch.map(|epoch| epoch.conf_ver).unwrap_or_default(),
+                                    ),
+                                ),
+                                Field::new(
+                                    "version",
+                                    Value::U64(
+                                        epoch.map(|epoch| epoch.version).unwrap_or_default(),
+                                    ),
+                                ),
+                                Field::new(
+                                    "startKey",
+                                    redacted_key(&region.region.start_key, redact),
+                                ),
+                                Field::new("endKey", redacted_key(&region.region.end_key, redact)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]);
     }
     if let Some(value) = field.value::<String>() {
         return Value::Str(value.clone());
@@ -127,6 +162,17 @@ pub(crate) fn field_value(field: &TraceField) -> Value {
         return Value::U64(*value as u64);
     }
     Value::Str(format!("<{} field, unrepresentable type>", field.name))
+}
+
+/// Go's `encodeRangeArray`/`formatRegionSliceField`/`formatKeyLocationsField`
+/// redact a key by rendering it as the literal string `"?"` instead of its
+/// bytes; otherwise the raw bytes are kept (Go `AddBinary`, base64 here).
+fn redacted_key(key: &[u8], redact: bool) -> Value {
+    if redact {
+        Value::Str("?".to_owned())
+    } else {
+        Value::Binary(key.to_vec())
+    }
 }
 
 fn handle_client_go_trace_event(

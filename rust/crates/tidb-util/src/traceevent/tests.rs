@@ -963,6 +963,9 @@ fn register_installs_live_client_hooks() {
 // type" placeholder.
 #[test]
 fn field_value_recovers_known_composite_batch_types() {
+    let _guard = lock_global_state();
+    tikv_client::redact::set_redact_log_enabled(false);
+
     let ranges = vec![
         tikv_client::proto::pdpb::KeyRange {
             start_key: b"a".to_vec(),
@@ -974,42 +977,129 @@ fn field_value_recovers_known_composite_batch_types() {
         },
     ];
     let field = tikv_client::trace::TraceField::new("ranges", ranges);
-    let Value::Array(entries) = field_value(&field) else {
+    // Go `encodeRangeArray`: `{count, ranges: [{start, end}, ...]}`.
+    let Value::Object(outer) = field_value(&field) else {
+        panic!("expected an object value");
+    };
+    assert!(matches!(outer[0].value, Value::U64(2)));
+    assert_eq!(outer[1].key, "ranges");
+    let Value::Array(entries) = &outer[1].value else {
         panic!("expected an array value");
     };
     assert_eq!(entries.len(), 2);
     let Value::Object(fields) = &entries[0] else {
         panic!("expected an object entry");
     };
+    assert_eq!(fields[0].key, "start");
     assert!(matches!(
         &fields[0].value,
         Value::Binary(key) if key == b"a"
     ));
+    assert_eq!(fields[1].key, "end");
     assert!(matches!(
         &fields[1].value,
         Value::Binary(key) if key == b"b"
     ));
 
-    let regions = vec![tikv_client::RegionWithLeader::new(
-        tikv_client::proto::metapb::Region {
-            id: 7,
-            region_epoch: Some(tikv_client::proto::metapb::RegionEpoch {
-                conf_ver: 2,
-                version: 3,
-            }),
-            ..Default::default()
-        },
-        None,
-    )];
-    let field = tikv_client::trace::TraceField::new("regions", regions);
-    let Value::Array(entries) = field_value(&field) else {
+    let region = |id: u64| {
+        tikv_client::RegionWithLeader::new(
+            tikv_client::proto::metapb::Region {
+                id,
+                start_key: b"start".to_vec(),
+                end_key: b"end".to_vec(),
+                region_epoch: Some(tikv_client::proto::metapb::RegionEpoch {
+                    conf_ver: 2,
+                    version: 3,
+                }),
+                ..Default::default()
+            },
+            None,
+        )
+    };
+
+    // Go `formatRegionSliceField`: nests its array under "regions" regardless
+    // of the field's own outer name (`cachedRegions` here).
+    let field = tikv_client::trace::TraceField::new("cachedRegions", vec![region(7)]);
+    let Value::Object(outer) = field_value(&field) else {
+        panic!("expected an object value");
+    };
+    assert!(matches!(outer[0].value, Value::U64(1)));
+    assert_eq!(outer[1].key, "regions");
+    let Value::Array(entries) = &outer[1].value else {
         panic!("expected an array value");
     };
-    assert_eq!(entries.len(), 1);
     let Value::Object(fields) = &entries[0] else {
         panic!("expected an object entry");
     };
-    assert!(matches!(&fields[0].value, Value::U64(7)));
-    assert!(matches!(&fields[1].value, Value::U64(3)));
-    assert!(matches!(&fields[2].value, Value::U64(2)));
+    assert_eq!(fields[0].key, "regionID");
+    assert!(matches!(fields[0].value, Value::U64(7)));
+    assert_eq!(fields[1].key, "confVer");
+    assert!(matches!(fields[1].value, Value::U64(2)));
+    assert_eq!(fields[2].key, "version");
+    assert!(matches!(fields[2].value, Value::U64(3)));
+    assert_eq!(fields[3].key, "startKey");
+    assert!(matches!(&fields[3].value, Value::Binary(key) if key == b"start"));
+    assert_eq!(fields[4].key, "endKey");
+    assert!(matches!(&fields[4].value, Value::Binary(key) if key == b"end"));
+
+    // Go `formatKeyLocationsField`: nests its array under "locations".
+    let field = tikv_client::trace::TraceField::new("locations", vec![region(9)]);
+    let Value::Object(outer) = field_value(&field) else {
+        panic!("expected an object value");
+    };
+    assert_eq!(outer[1].key, "locations");
+}
+
+// Go's `encodeRangeArray`/`formatRegionSliceField` render a key as the
+// literal string "?" under `redact.NeedRedact()` instead of its bytes.
+#[test]
+fn field_value_redacts_batch_keys_when_the_client_enables_redaction() {
+    let _guard = lock_global_state();
+    tikv_client::redact::set_redact_log_enabled(true);
+    struct ResetRedaction;
+    impl Drop for ResetRedaction {
+        fn drop(&mut self) {
+            tikv_client::redact::set_redact_log_enabled(false);
+        }
+    }
+    let _reset = ResetRedaction;
+
+    let ranges = vec![tikv_client::proto::pdpb::KeyRange {
+        start_key: b"a".to_vec(),
+        end_key: b"b".to_vec(),
+    }];
+    let field = tikv_client::trace::TraceField::new("ranges", ranges);
+    let Value::Object(outer) = field_value(&field) else {
+        panic!("expected an object value");
+    };
+    let Value::Array(entries) = &outer[1].value else {
+        panic!("expected an array value");
+    };
+    let Value::Object(fields) = &entries[0] else {
+        panic!("expected an object entry");
+    };
+    assert!(matches!(&fields[0].value, Value::Str(marker) if marker == "?"));
+    assert!(matches!(&fields[1].value, Value::Str(marker) if marker == "?"));
+
+    let region = tikv_client::RegionWithLeader::new(
+        tikv_client::proto::metapb::Region {
+            id: 7,
+            start_key: b"start".to_vec(),
+            end_key: b"end".to_vec(),
+            ..Default::default()
+        },
+        None,
+    );
+    let field = tikv_client::trace::TraceField::new("regions", vec![region]);
+    let Value::Object(outer) = field_value(&field) else {
+        panic!("expected an object value");
+    };
+    let Value::Array(entries) = &outer[1].value else {
+        panic!("expected an array value");
+    };
+    let Value::Object(fields) = &entries[0] else {
+        panic!("expected an object entry");
+    };
+    assert!(matches!(&fields[3].value, Value::Str(marker) if marker == "?"));
+    assert!(matches!(&fields[4].value, Value::Str(marker) if marker == "?"));
 }
