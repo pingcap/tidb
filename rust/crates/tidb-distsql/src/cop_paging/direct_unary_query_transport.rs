@@ -2286,6 +2286,12 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
         !self.metadata.request_source.internal
     }
 
+    fn start_worker(&mut self) {
+        // Go creates client policy state for workers, not unsent region tasks.
+        // Detach only when admitted, before this worker can issue any RPC.
+        self.shared_runtime = self.shared_runtime.fork_client();
+    }
+
     fn into_tasks(mut self) -> Vec<Self> {
         let tasks = self.runtime.take_tasks();
         tasks
@@ -2316,7 +2322,7 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
                     .into_iter()
                     .collect();
                 Self {
-                    shared_runtime: self.shared_runtime.fork_client(),
+                    shared_runtime: self.shared_runtime.clone(),
                     locked_response_delegate: Arc::clone(&self.locked_response_delegate),
                     event_callback: self.event_callback.clone(),
                     async_begin: self.async_begin,

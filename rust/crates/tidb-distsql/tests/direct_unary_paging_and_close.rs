@@ -32,10 +32,18 @@ mod concurrent {
         CompletionRequest<DirectUnaryResponse, DirectUnaryClientError>,
     );
 
-    #[derive(Clone)]
     struct Client {
         started: Sender<Attempt>,
         cancelled: Arc<AtomicUsize>,
+        clones: Arc<AtomicUsize>,
+    }
+
+    impl Clone for Client {
+        fn clone(&self) -> Self {
+            self.clones.fetch_add(1, Ordering::SeqCst);
+            Self { started: self.started.clone(), cancelled: Arc::clone(&self.cancelled),
+                clones: Arc::clone(&self.clones) }
+        }
     }
 
     impl AsyncRequestDispatcher for Client {
@@ -131,11 +139,19 @@ mod concurrent {
     fn runtime(
         regions: impl IntoIterator<Item = RegionLocation>,
     ) -> (Runtime, Receiver<Attempt>, Arc<AtomicUsize>) {
+        runtime_with_clones(regions, Arc::default())
+    }
+
+    fn runtime_with_clones(
+        regions: impl IntoIterator<Item = RegionLocation>,
+        clones: Arc<AtomicUsize>,
+    ) -> (Runtime, Receiver<Attempt>, Arc<AtomicUsize>) {
         let (started, incoming) = mpsc::channel();
         let cancelled = Arc::new(AtomicUsize::new(0));
         let client = Client {
             started,
             cancelled: Arc::clone(&cancelled),
+            clones,
         };
         let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
             tidb_txnkv::SharedReadRuntime::new_injected(
@@ -183,6 +199,25 @@ mod concurrent {
             &format!("tikv-{}:20160", attempt.0),
             1,
         )));
+    }
+
+    #[test]
+    fn unopened_region_tasks_do_not_fork_clients() {
+        let clones = Arc::new(AtomicUsize::new(0));
+        let keys: Vec<_> = (0..=64).map(|index| format!("k{index:03}")).collect();
+        let (mut runtime, incoming, _) = runtime_with_clones((0..64).map(|index| {
+            location(index as u64 + 1, &keys[index], &keys[index + 1], "tikv-1:20160")
+        }), Arc::clone(&clones));
+        let baseline = clones.load(Ordering::SeqCst);
+        let mut result = select(&mut runtime, metadata(&keys[0], &keys[64]), Arc::default());
+        let first = started(&incoming);
+        let second = started(&incoming);
+        assert_eq!(clones.load(Ordering::SeqCst) - baseline, 2,
+            "only the two active workers need independent clients, not all 64 regions");
+        result.close();
+        drop((first, second));
+        assert_eq!(clones.load(Ordering::SeqCst) - baseline, 2,
+            "closing must not initialize unsent tasks");
     }
 
     /// Go TestQueryWithConcurrentSmallCop: opening a second single-task

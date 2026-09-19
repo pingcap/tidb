@@ -41,6 +41,7 @@ pub(crate) trait CopWorkerSource: CopTaskSource + Sized {
     fn into_tasks(self) -> Vec<Self>;
     fn task(&self) -> &crate::RegionTaskEnvelope;
     fn use_row_hints(&self) -> bool;
+    fn start_worker(&mut self);
 }
 
 pub(crate) type ConcurrentStart<R> = fn(R, bool) -> Box<dyn QueryResponse + Send>;
@@ -428,13 +429,14 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
     }
 }
 
-async fn run_worker<R: CopTaskSource + Send + 'static>(
+async fn run_worker<R: CopWorkerSource + Send + 'static>(
     exit: WorkerExit<R>,
     wake: Arc<tokio::sync::Notify>,
     lane: usize,
 ) {
     let group = &exit.0;
     while let Some((index, mut source)) = group.next_task(lane).await {
+        source.start_worker();
         source.set_waker(Waker::from(Arc::new(TaskWake(Arc::clone(&wake)))));
         loop {
             let completed = wake.notified();
