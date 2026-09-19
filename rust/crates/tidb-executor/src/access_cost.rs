@@ -277,7 +277,9 @@ impl TableStatistics {
     /// Go `Table.ColumnIsLoadNeeded`.
     #[must_use]
     pub fn column_is_load_needed(&self, id: i64, full_load: bool) -> bool {
-        if self.pseudo {
+        // Go checks the canonical cache table, not the planner's temporary
+        // pseudo estimate while analyzed histograms have not been loaded.
+        if self.cache_pseudo {
             return false;
         }
         let Some(analyzed) = self.column_stats_existence.get(&id).copied() else {

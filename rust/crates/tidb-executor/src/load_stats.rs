@@ -955,8 +955,22 @@ pub fn table_statistics_from_table_schema(
         map.read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     });
-    let mut column_stats_existence = BTreeMap::new();
-    let mut index_stats_existence = BTreeMap::new();
+    // Go keeps ColAndIdxExistenceMap independently of resident histograms.
+    // Unloaded analyzed items must remain discoverable by the load collector.
+    let mut column_stats_existence = schema_columns
+        .iter()
+        .filter(|(id, _)| existence.as_ref().is_some_and(|map| map.has(*id, false)))
+        .map(|(id, _)| {
+            (*id, existence.as_ref().is_some_and(|map| map.has_analyzed(*id, false)))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut index_stats_existence = schema_indexes
+        .iter()
+        .filter(|(id, _, _)| existence.as_ref().is_some_and(|map| map.has(*id, true)))
+        .map(|(id, _, _)| {
+            (*id, existence.as_ref().is_some_and(|map| map.has_analyzed(*id, true)))
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut columns = BTreeMap::new();
     let mut indexes = BTreeMap::new();
     let mut column_load_status = BTreeMap::new();
@@ -1049,6 +1063,24 @@ pub fn table_statistics_from_table_schema(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn projection_keeps_analyzed_items_that_are_not_resident() {
+        let mut stats = statistics_table_from_json_schema(
+            &LoadStatsTableSchema { columns: Vec::new(), indexes: Vec::new(), pk_is_handle: false },
+            41, &JsonTable::default(),
+        ).expect("empty canonical table");
+        let mut existence = ColAndIdxExistenceMap::new(1, 1);
+        existence.insert_column(3, true);
+        existence.insert_index(7, true);
+        stats.existence_map = Some(Arc::new(RwLock::new(existence)));
+        let projected = table_statistics_from_table_schema(&stats, &[(3, false)], &[(7, 1, false)]);
+        assert_eq!(projected.column_stats_existence.get(&3), Some(&true));
+        assert_eq!(projected.index_stats_existence.get(&7), Some(&true));
+        assert!(projected.columns.is_empty());
+        assert!(projected.indexes.is_empty());
+        assert!(projected.column_is_load_needed(3, true));
+    }
 
     fn column(id: i64, name: &str) -> crate::kv_table::KvColumn {
         crate::kv_table::KvColumn {
