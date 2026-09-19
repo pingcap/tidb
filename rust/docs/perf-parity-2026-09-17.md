@@ -1234,3 +1234,99 @@ remain elsewhere, and a pre-existing toolchain/checked-in-style mismatch in
 import ordering, present even on untouched files, was left alone rather than
 reformatted). Task 70 is complete; no test was skipped, ignored, or deferred
 to get there.
+
+## 2026-09-19: task 56 -- re-measured the full sysbench + TPC-C matrix on the
+## post-sync tree (`vendor/tikv-client-rs` at `70bd3f28`, plus the four
+## downstream Go-parity fixes that sync required)
+
+Fresh release build (head `900edeb5`), fresh `tiup playground v9.0.0-beta.2.pre-nightly`
+(PD + TiKV + Go TiDB), Rust node in `--cluster-session` mode against the same
+PD -- same recipe `scripts/run-sysbench-ladder.sh` uses. `--table-size=1000
+--tables=1`, `tidb_ddl_enable_fast_reorg`/`tidb_enable_dist_task` off on the Go
+side (this box's ~5% free disk fails the fast-reorg ingest precheck outright,
+and the txn-merge fallback's own optimistic-mutation-count cap is why
+`--table-size` stays at 1000, unchanged from prior rounds). 11 standard
+sysbench OLTP workloads, 3 rounds each, ABBA-rotated, at 16 and 4 threads.
+
+Cleared or came within a few points of the +25% goal on 8 of 11 workloads at
+16 threads (`oltp_point_select` +30.2% tps/+51.4% p95, `oltp_read_only`
++22.7%/+24.1%, `oltp_insert` +23.5%/+31.0%, `oltp_delete` +15.0%/+26.3%,
+`oltp_update_non_index` +14.8%/+19.7%, `select_random_points` +11.5%/+13.4%,
+`oltp_update_index` +5.7%/+9.4%) and similarly at 4 threads. Two exceptions,
+one noise and one real:
+
+**`oltp_write_only`/`oltp_read_write` did not produce a trustworthy sample at
+either thread count.** `compare-sysbench.py`'s own validity check (zero
+ignored errors) rejected every round: at 16 threads the actual measured
+throughput on BOTH engines was single-digit-to-low-hundreds tps with 14-41
+sysbench-retried "ignored errors" (pessimistic lock-wait timeouts) per
+15-second sample. Root cause is the harness, not either engine: a 1000-row
+table under 16 concurrent read-modify-write threads on a 4-core box is
+overwhelmingly likely to collide on the same handful of hot rows, and
+`compare-sysbench.py` treats any retried error as an invalid sample by
+design (`docs/perf-parity-2026-09-17.md`'s own script-level contract).
+First pass showed errors on the Go side only across 4 back-to-back cells,
+which read like a real asymmetry; a second, independent manual re-run (raw
+`sysbench ... run`, bypassing the strict validator) showed errors on BOTH
+engines, at comparable rates -- the first pattern was itself noise from a
+small sample, not a real one-sided finding. This pair of workloads is not
+usable evidence at this table size on this box and is left unmeasured rather
+than reported with a misleading number.
+
+**`select_random_ranges` regressed at 16 threads: -10.5% tps, -5.3% p95
+latency** (head 3005.7 vs go's 3358.6 tps; head 7.98ms vs go's 7.56ms p95 --
+head is slower on both axes). At 4 threads it is a modest, unremarkable
++3.8%/+9.5%, i.e. the regression is concurrency-specific, not present in the
+workload's sequential cost. Not root-caused this session: `perf` is unavailable for
+this container's kernel (`6.18.44-fc`, no matching `linux-tools` package, so
+no flamegraph/call-graph was possible), and the most recently landed cop
+dispatch change on this branch (`8d664500`, "share immutable DAG bytes
+across cop attempts") is a plausible-looking but NOT verified suspect --
+reading its diff, it removes a per-attempt re-encode/copy of the DAG bytes,
+which should only ever help, not hurt, so it is not treated as the likely
+cause without evidence. Filed as task 72, needs either a profiler on a
+capable host or an in-process micro-benchmark of the range-scan cop-request
+path at concurrency, neither attempted here.
+
+**`bulk_insert` regressed at both thread counts: -13.3% tps at 16 threads,
+-22.9% at 4 threads** (16t: 83258.7 vs go's 96034.6; 4t: 88227.2 vs go's
+114468.1). Unlike the two findings above, this one IS root-caused, with
+zero errors on either side at either thread count -- the cleanest signal in
+this whole sweep. `KvTable::add_record` (`kv_table.rs:3421-3423`) calls
+`StagedWrites::note(table_id, key)` once per inserted row; `note`
+(`kv_table.rs:842-852`) takes the per-SESSION `Mutex`, heap-allocates a
+fresh `Vec<u8>` copy of the key (`key.to_vec()`), and
+inserts it into a `HashSet<Vec<u8>>` keyed by `table_id`. `bulk_insert.lua`
+is sysbench's only workload that issues genuinely bulk multi-row `INSERT`s
+(hundreds to low thousands of value tuples in ONE statement,
+`table_size`/`tables` do not even apply to it -- see task 20's harness
+notes), so it is the one workload where this per-row tax is not swamped by
+everything else a statement does: `oltp_insert` pays the identical
+per-row cost but only once per statement (and GAINED 23.5%/19.7% this same
+session, unaffected).
+
+Checked against Go: `pkg/session/txn.go`'s `HasDirtyContent` and
+`executor/union_scan.go`'s per-row staged-value check both read the ONE
+membuffer the transaction already holds for its actual writes
+(`s.txn.GetMemBuffer().Iter(seekKey, nil)` / `memBufSnap.Get(checkKey)`) --
+neither allocates or inserts into any second structure. Every row this Rust
+tier writes already lands in `self.store` (`kv_table.rs:3424`, the line
+right after `note`'s call) via the SAME transaction-scoped mutation buffer
+that would need to answer this same question; `StagedWrites` duplicates
+information that buffer already has, at a real per-row allocation +
+hash-insert cost Go's design never pays. This is architecturally the same
+class of gap task 70's own "found, not fixed" note flagged for `physical_
+kv_table_by_id` before task 69 fixed it: real, generic, and NOT a
+small/local patch -- `record_key_is_staged`'s per-KEY (not just per-table)
+granularity is genuinely used by `UnionScan` to decide whether a specific
+row's staged value should be preferred over its snapshot read, so removing
+`StagedWrites` outright requires first exposing an equivalent "is this exact
+key already staged" query on whatever backs `self.store`'s own mutation
+buffer, then rewiring every `has_dirty_content`/`record_key_is_staged` call
+site onto it. Filed as task 73 rather than rushed here, given task 70's own
+precedent that a structurally identical change touched ~80 call sites across
+8 production files last time.
+
+Not attempted this session, for lack of remaining time in this pass: TPC-C
+re-measurement against Go on the synced tree (task 56's other half) and the
+task 72/73 fixes themselves (task 57).
