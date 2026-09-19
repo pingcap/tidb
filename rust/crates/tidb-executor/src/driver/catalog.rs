@@ -1622,11 +1622,15 @@ impl Catalog {
     /// Every handle that can change a table takes this, `get_mut_in`
     /// included: a caller holding `&mut TableEntry` may add an index (Go's
     /// DDL owns that, but this tier hands the entry out), so the planner's
-    /// view cannot outlive a version.
+    /// view cannot outlive a version. `table_id_names` does not move here:
+    /// it maps a table's id to its (database, name) key, which only a
+    /// schema-changing operation can move -- `bump_metadata_version` below,
+    /// or `temporary_overlay_table_mut`'s own direct call. An ordinary DML
+    /// write (every `get_mut_in` caller in production) never reassigns a
+    /// table's id or its key, so it does not owe this cache a rebuild.
     fn bump_version(&mut self) {
         self.version += 1;
         self.planner_view.take();
-        self.invalidate_table_id_names();
     }
 
     fn bump_metadata_version(&mut self) {
@@ -3987,7 +3991,10 @@ mod planner_view_tests {
             false,
         );
         let after_index = catalog.planner_schema_view();
-        assert!(!Arc::ptr_eq(&directory, &catalog.table_id_names));
+        // An index does not move a table's id or its (database, name) key,
+        // so the id directory survives even though the planner view (which
+        // does carry index shape) does not.
+        assert!(Arc::ptr_eq(&directory, &catalog.table_id_names));
         assert!(catalog
             .kv_table_by_id(table_id)
             .unwrap()
@@ -4038,7 +4045,11 @@ mod planner_view_tests {
             );
         }
 
-        let TableEntry::Kv(table) = catalog.get_mut_in(DEFAULT_DATABASE, "pv").unwrap() else {
+        // Reassigning a table's id is a schema change, so it goes through
+        // `table_mut_in` (every production caller of it is DDL), not the
+        // DML-narrow `get_mut_in` -- ordinary writes never move an id, so
+        // they no longer pay to rebuild this directory (see `bump_version`).
+        let TableEntry::Kv(table) = catalog.table_mut_in(DEFAULT_DATABASE, "pv").unwrap() else {
             panic!("pv")
         };
         table.table_id = 9000;
@@ -4050,5 +4061,44 @@ mod planner_view_tests {
         assert!(restored.kv_table_by_id(9000).is_none());
         catalog.drop_table_in(DEFAULT_DATABASE, "pv");
         assert!(catalog.physical_kv_table_by_id(9000).is_none());
+    }
+
+    /// Every production caller of `get_mut_in` is a row-content write
+    /// (`INSERT`/`UPDATE`/`DELETE`, sequence advance, stats-delta flush): it
+    /// never moves a table's id or its (database, name) key, so it must not
+    /// force the next id lookup to rebuild this directory from every table
+    /// in the catalog. A profiled `oltp_update_index` run found this
+    /// directory rebuilt and torn down on every single statement -- built
+    /// to resolve the statement's own cached-plan target, then thrown away
+    /// by that same statement's write before anything else could reuse it.
+    #[test]
+    fn ordinary_dml_through_get_mut_in_does_not_rebuild_the_id_directory() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE od(a INT PRIMARY KEY, b INT)", &mut catalog)
+            .unwrap();
+        let TableEntry::Kv(table) = catalog.get_in(DEFAULT_DATABASE, "od").unwrap() else {
+            panic!("od")
+        };
+        let table_id = table.table_id;
+        assert_eq!(catalog.kv_table_by_id(table_id).unwrap().name, "od");
+        let directory = Arc::clone(&catalog.table_id_names);
+        assert!(directory.get().is_some(), "the lookup above built it");
+
+        let TableEntry::Kv(od) = catalog.get_mut_in(DEFAULT_DATABASE, "od").unwrap() else {
+            panic!("od is not a KV table")
+        };
+        od.note_staged_record_key(b"dummy-record-key");
+        assert!(
+            Arc::ptr_eq(&directory, &catalog.table_id_names),
+            "an ordinary write through get_mut_in must not invalidate the id directory"
+        );
+        assert_eq!(catalog.kv_table_by_id(table_id).unwrap().name, "od");
+        assert!(Arc::ptr_eq(&directory, &catalog.table_id_names));
+
+        // A real schema change (here, a second table joining the catalog)
+        // still invalidates it -- the directory is a metadata_version cache,
+        // not a permanently frozen one.
+        crate::run_create_table_on("CREATE TABLE od2(a INT PRIMARY KEY)", &mut catalog).unwrap();
+        assert!(!Arc::ptr_eq(&directory, &catalog.table_id_names));
     }
 }

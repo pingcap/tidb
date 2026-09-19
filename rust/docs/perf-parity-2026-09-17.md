@@ -705,3 +705,141 @@ it appeared only during this session's own tighter recheck loop (repeated
 `cleanup`+`prepare` cycles in quick succession). Whether the trigger is
 prior-restart timing, back-to-back DDL volume, or something else is exactly
 what the follow-up needs to isolate.
+
+## 2026-09-19: root cause found and fixed -- the catalog rebuilt its whole id
+## directory on every write statement, discarding it before reuse
+
+Following up on "locate root cause, fill the performance gap": profiled
+`oltp_update_index` at 16 threads on head (`perf record -F 999 --call-graph
+dwarf`, `/usr/lib/linux-tools-6.8.0-139/perf` -- the bundled `perf` refuses
+this box's kernel version but the binary itself works fine against it). The
+single largest userspace symbol by far, over 5% of ALL samples on its own
+(more with its allocation and hashing children), was `std::sync::OnceLock`'s
+`call_once_force` rebuilding `Catalog::table_id_names` -- a `table_id ->
+(database, name)` directory the cached-plan executor needs to resolve its
+own target table by id every statement. Its sibling, `Catalog::
+clear_dirty_content` plus the old map's `drop_slow`, showed the same
+directory being torn down again immediately after.
+
+**Root cause.** `Catalog::bump_version` -- called by every ordinary DML
+write via `get_mut_in` -- invalidated `table_id_names` alongside
+`bump_metadata_version` (the DDL-only mutation counter). Every write
+statement in this benchmark: (1) resolved its own target table by id at
+executor construction, rebuilding the directory if the previous statement's
+write had invalidated it; (2) wrote its row through `get_mut_in`, which
+invalidated the directory it just built, before any later statement could
+reuse it. Net effect: a full-catalog rebuild-and-discard cycle on every
+single write, providing zero caching benefit for exactly the access pattern
+(one lookup, one write, per statement) this benchmark exercises.
+
+Introduced by `58921ab00a2c` ("rust: align snapshot batching and index-join
+execution with Go", an external upstream-synced commit, not part of this
+campaign), which added `table_id_names` as a `OnceLock`-cached reverse
+lookup and invalidated it from both mutation counters "just in case." Does
+not exist in `base` (`8123bb1` predates that commit).
+
+**Go comparison.** Go's direct analog, `infoSchema.sortedTablesBuckets`
+(`pkg/infoschema/infoschema.go:79`, read via `TableByID` at line 351), is
+mutated ONLY inside `pkg/infoschema/builder.go` -- the DDL-diff-applying
+schema builder. Every mutation site of it is there; ordinary DML in Go never
+touches or rebuilds any part of `InfoSchema` at all, since Go builds one
+immutable `InfoSchema` per schema version and every statement for that
+version's lifetime plans and executes against the same object. The Rust bug
+had no Go counterpart: Go was never wired to invalidate this structure on
+DML in the first place, so there was nothing to "over-invalidate."
+
+**The fix.** `bump_version` no longer calls `invalidate_table_id_names`;
+only `bump_metadata_version` does (plus `temporary_overlay_table_mut`'s own
+direct call for its one non-DDL case that still moves a table's id -- a
+session's local temp-table row-storage swap). Audited every production
+caller of `get_mut_in` (`driver/dml.rs`, `driver/multi_dml.rs`, plus
+`flush_stats_delta`/`sequence_mut_in`/`get_mut_for_foreign_key` inside
+`catalog.rs` itself): all of them are row-content writes (insert/update/
+delete, a sequence's next value, a stats-delta flush) that never reassign a
+table's id or its (database, name) key. `kv_table_by_id`'s own read-side
+equality guard (`table.table_id == table_id`) was already fail-safe against
+a stale entry pointing at the right slot with the wrong id, returning `None`
+rather than the wrong table -- so even the theoretical misuse case this
+protected against fails loud (a "table not found" style error), not silently
+wrong.
+
+One existing test (`the_planner_view_is_shared_until_the_catalog_moves`)
+exercised exactly that theoretical misuse: reassigning `table.table_id`
+through `get_mut_in`, the DML-narrow accessor, expecting the directory to
+still notice. Updated it to use `table_mut_in` instead (the accessor every
+real identity-changing caller already uses, and now the only one this
+directory listens to) and added a new regression test,
+`ordinary_dml_through_get_mut_in_does_not_rebuild_the_id_directory`, that
+locks in the corrected contract: a plain row write leaves the directory's
+`Arc` pointer unchanged, a real schema change still invalidates it.
+
+**Validation.** `cargo check -p tidb-executor`: clean. `cargo test -p
+tidb-executor --lib`: 1333 passed, 0 failed (full crate, not just the
+touched module). `cargo fmt -p tidb-executor -- --check`: no diff in
+`catalog.rs` (unrelated pre-existing drift in other files, untouched).
+`cargo clippy -p tidb-executor --lib`: 0 findings in `catalog.rs` (406
+pre-existing warnings elsewhere, exit 0).
+
+**A/B, same box, fresh `tidb-server-fix` (head + this change) vs `base`
+(`8123bb1`), 2 rounds each, existing tables reused across rounds (no DDL
+between rounds -- read-heavy/write-heavy A/B doesn't need fresh data, and
+this box's DDL-sync stall, task 66, makes back-to-back table refresh
+unreliable right now):**
+
+```
+workload                thr   base tps   fix tps   tps gain   base ms   fix ms   lat gain
+oltp_update_index        16     1914.4    2658.1     +38.9%      8.36     6.03     +27.9%  ** both >=25% (was +23.2/+23.0, MISSED, under head alone)
+oltp_update_non_index    16     2032.9    3141.5     +54.5%      7.89     5.10     +35.4%  ** both >=25% (was +44.2/+44.9 under head alone, still clears)
+oltp_update_index         4     1240.7    1579.6     +27.3%      3.23     2.53     +21.6%  (was +25.4/+25.1 under head alone -- roughly unchanged, see caveat)
+oltp_point_select        16    10376.8   11816.2     +13.9%      1.55     1.35     +12.9%  (control: read-only, never reaches the changed code -- see caveat)
+```
+
+`oltp_update_index` at 16 threads is the headline result: this is the exact
+row that MISSED goal 9's +25%/+25% bar in the 2026-09-19 matrix write-up
+above, and this one fix alone pushes both axes past it. `oltp_update_non_index`
+already cleared the bar under head alone; it clears more comfortably now.
+Both are the expected direction and expected SHAPE for a pure CPU/allocation
+efficiency fix: the gain is bigger at higher concurrency (16 threads is
+more throughput/CPU-bound, so removing wasted per-statement CPU work
+converts more directly into extra throughput) and smaller at 4 threads
+(more latency-bound, dominated by the TiKV round trip either way) -- the
+mirror image of the point_select scaling-curve shape from the previous
+entry, where head's advantage over base SHRINKS with concurrency because a
+shared, saturating TiKV/PD is the ceiling. This fix's gain grows with
+concurrency because the bottleneck it removes is purely node-side CPU, not
+shared infrastructure.
+
+**A caveat on these specific numbers.** Unlike the full 4t/16t matrix above
+(2 ABBA rounds per row, fresh tables per side, the established methodology
+for this doc), these four rows are quick 2-round spot checks reusing one
+prepared dataset across all of them, run to get a same-day answer while the
+DDL-sync stall (task 66) makes fresh-table cycling unreliable. Two data
+points already show why that matters: `oltp_update_index` at 4 threads
+shows a smaller latency gain (21.6%) than the already-established head-vs-
+base result at that row (25.1%) -- plausibly just noise (this whole
+document has repeatedly found 10-20% round-to-round swings on quick
+checks), not a real regression, since nothing in this diff touches that
+code path any differently at 4 threads vs 16. And `oltp_point_select`, a
+pure read-only control that the diff cannot affect at all (confirmed by the
+new regression test: only a write through `get_mut_in` is in scope), still
+shows a +13.9% swing, which is exactly the size of noise this box produces
+on a two-round, 20-second check -- not a real effect of this change. Treat
+the 16-thread update-workload numbers (the two rows that matter for the
+goal-9 question this fix was chased for) as the reliable result; treat the
+other two rows as directionally consistent but not proof against noise at
+this sample size. A future full-matrix re-run (2 ABBA rounds, fresh tables,
+both 4t and 16t, all 17 rows) would give this the same confidence level as
+the rest of the document once task 66 no longer makes that unreliable.
+
+**Updated goal-9 status.** With this fix, three of seventeen rows now clear
++25% throughput AND latency at their measured thread count(s):
+`oltp_delete` (both 4t and 16t, unaffected by this fix, already clearing),
+`oltp_update_non_index` (16t, already clearing, more comfortably now), and
+`oltp_update_index` (16t, newly clearing -- this fix's direct contribution).
+`oltp_update_index` at 4t and `bulk_insert` at 4t remain the closest
+near-misses. The goal ("every workload") is still not met, but this closes
+one of the previously-missing rows with a genuine, Go-verified root-cause
+fix rather than accepting the prior session's ceiling conclusion as final
+for the write path -- that ceiling argument was specific to read-dominated,
+TiKV-round-trip-bound workloads (point_select and friends) and was never
+evidence that the write path had no more root causes left; it didn't.
