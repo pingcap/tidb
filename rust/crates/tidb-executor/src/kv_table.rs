@@ -817,6 +817,21 @@ fn read_stored_record(
     Ok(None)
 }
 
+/// One staged record key, stored inline rather than as a fresh heap
+/// allocation.
+///
+/// Go answers `HasDirtyContent`/`GetLocal` straight from the transaction's
+/// own write buffer -- the SAME tree its real mutation already updated, at
+/// no extra cost. [`StagedWrites`] is a deliberately separate side index (see
+/// its own item doc), so unlike Go it does pay a second write per staged
+/// key; keeping that key inline instead of a heap `Vec<u8>` keeps the second
+/// cost close to zero for a plain record key's usual width. An
+/// integer-handle record key is `t{id}_r{handle}`: 11 bytes of prefix plus an
+/// 8-byte memcomparable handle, 19 bytes total, well under this inline
+/// capacity; a longer common-handle or index-entry key spills to the heap
+/// like an ordinary `Vec` would, so correctness never depends on the size.
+type StagedKey = smallvec::SmallVec<[u8; 32]>;
+
 /// Go `txn.GetMemBuffer()`: the ONE membuffer a transaction owns, narrowed to
 /// the record keys row writes stage, keyed by the logical table id they
 /// belong to.
@@ -836,7 +851,7 @@ fn read_stored_record(
 /// through the whole executor.
 #[derive(Debug, Default)]
 pub struct StagedWrites(
-    std::sync::Mutex<std::collections::HashMap<i64, std::collections::HashSet<Vec<u8>>>>,
+    std::sync::Mutex<std::collections::HashMap<i64, std::collections::HashSet<StagedKey>>>,
 );
 
 impl StagedWrites {
@@ -848,7 +863,7 @@ impl StagedWrites {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(table_id)
             .or_default()
-            .insert(key.to_vec());
+            .insert(StagedKey::from_slice(key));
     }
 
     /// Marks `table_id` dirty with no specific key -- DDL that rewrites a
@@ -4720,6 +4735,59 @@ mod tests {
             t.stored_keys().unwrap(),
             Vec::<Vec<u8>>::new(),
             "the delete left orphaned index entries behind"
+        );
+    }
+
+    /// [`StagedWrites`]'s own behavior must not change when its per-key
+    /// storage moves from a heap `Vec<u8>` to an inline [`StagedKey`]:
+    /// `note`/`has_dirty_content`/`contains` still answer exactly as they did
+    /// before, for a key that fits inline and one that spills to the heap.
+    #[test]
+    fn staged_writes_answers_the_same_regardless_of_key_width() {
+        let staged = StagedWrites::default();
+        let short_key = encode_row_key_with_handle(1, &RecordHandle::Int(7));
+        let long_key = vec![b'x'; 64];
+
+        assert!(!staged.has_dirty_content(1));
+        assert!(!staged.contains(1, &short_key));
+
+        staged.note(1, &short_key);
+        staged.note(1, &long_key);
+
+        assert!(staged.has_dirty_content(1));
+        assert!(
+            !staged.has_dirty_content(2),
+            "a different table stays clean"
+        );
+        assert!(staged.contains(1, &short_key));
+        assert!(staged.contains(1, &long_key));
+        assert!(
+            !staged.contains(1, &[b'y'; 64]),
+            "a key that was never staged must not read back as staged"
+        );
+        assert!(!staged.contains(2, &short_key), "table id is not shared");
+    }
+
+    /// The inline capacity this optimization relies on: a plain
+    /// integer-handle record key must stay inline (no heap allocation), or
+    /// the whole point of the change is lost. A wider key (a long
+    /// common-handle or index entry) is still correct, just heap-backed like
+    /// the `Vec<u8>` this replaces.
+    #[test]
+    fn a_plain_integer_handle_key_stays_inline() {
+        let key = encode_row_key_with_handle(1, &RecordHandle::Int(7));
+        let staged_key = StagedKey::from_slice(&key);
+        assert!(
+            !staged_key.spilled(),
+            "a {}-byte integer-handle record key must not heap-allocate",
+            key.len()
+        );
+        assert_eq!(staged_key.as_slice(), key.as_slice());
+
+        let wide_key = vec![b'x'; 64];
+        assert!(
+            StagedKey::from_slice(&wide_key).spilled(),
+            "a key wider than the inline capacity must still be stored correctly, on the heap"
         );
     }
 }
