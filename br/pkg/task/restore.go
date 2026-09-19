@@ -107,6 +107,7 @@ const (
 
 	// flagCheckpointStorage use
 	flagCheckpointStorage = "checkpoint-storage"
+	flagRestoreRegion     = "experimental-restore-region"
 
 	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
 	FlagWaitTiFlashReady = "wait-tiflash-ready"
@@ -315,6 +316,7 @@ type RestoreConfig struct {
 	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
+	RestoreRegion                 bool                            `json:"experimental-restore-region,omitempty" toml:"experimental-restore-region"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
 	UpstreamClusterID             uint64                          `json:"-" toml:"-"`
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT `json:"-" toml:"-"`
@@ -388,6 +390,7 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
 func DefineRestoreFlags(flags *pflag.FlagSet) {
+	flags.Bool(flagRestoreRegion, false, "(experimental) restore a full snapshot through CSE Workers; automatic retry and checkpoint resume are unsupported")
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
 	flags.Bool(flagFastLoadSysTables, true, "load system tables (including statistics) by renaming the temporary system tables")
@@ -487,6 +490,10 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 // ParseFromFlags parses the restore-related flags from the flag set.
 func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
 	var err error
+	cfg.RestoreRegion, err = flags.GetBool(flagRestoreRegion)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	cfg.NoSchema, err = flags.GetBool(flagNoSchema)
 	if err != nil {
 		return errors.Trace(err)
@@ -607,6 +614,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 			return errors.New("invalid full backup type")
 		}
 		cfg.FullBackupType = FullBackupType(fullBackupType)
+		if cfg.RestoreRegion && cfg.FullBackupType == FullBackupTypeEBS {
+			return errors.New("experimental RestoreRegion does not support EBS restore")
+		}
 		cfg.Prepare, err = flags.GetBool(flagPrepare)
 		if err != nil {
 			return errors.Trace(err)
@@ -823,6 +833,7 @@ func (cfg *RestoreConfig) CloseCheckpointMetaManager() {
 }
 
 func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, cfg *RestoreConfig) error {
+	client.SetRestoreRegion(cfg.RestoreRegion)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
@@ -980,6 +991,9 @@ func checkSnapshotRestoreMode(ctx context.Context, cfg *RestoreConfig) error {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
+	if err := cfg.validateRestoreRegionConfig(cmdName); err != nil {
+		return err
+	}
 	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
 		return errors.Trace(err)
 	}
@@ -1329,6 +1343,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
+	if cfg.RestoreRegion {
+		if isPiTR || (backupMeta.StartVersion != 0 && backupMeta.StartVersion != backupMeta.EndVersion) {
+			return errors.New("experimental RestoreRegion only supports full snapshots outside PiTR")
+		}
+		if u.GetS3() == nil {
+			return errors.New("experimental RestoreRegion requires S3-compatible source storage")
+		}
+	}
 	if cfg.UpstreamClusterID == 0 {
 		cfg.UpstreamClusterID = backupMeta.ClusterId
 	}
@@ -1471,6 +1493,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 	log.Info("checkpoint status in restore", zap.Bool("enabled", cfg.UseCheckpoint), zap.Bool("exists", cpEnabledAndExists))
+	if cfg.RestoreRegion && cpEnabledAndExists {
+		return errors.New("experimental RestoreRegion cannot resume an existing checkpoint; use a fresh restore target")
+	}
 	if err := checkMandatoryClusterRequirements(client, cfg, cpEnabledAndExists, cmdName); err != nil {
 		return errors.Trace(err)
 	}
