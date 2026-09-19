@@ -1971,3 +1971,75 @@ common `ALTER TABLE` subset above is fixed and live-verified, but
 `MULTI_SCHEMA_CHANGE` still force a full reload, and the original
 multi-minute stall was not reproduced byte-for-byte to confirm this closes
 100% of it.
+
+## task 65 fixed: an index-join inner probe's `TableReader` mislabelled
+## `data:TableFullScan` for a common-handle table, matching its own child
+
+Root-caused via Go source, not just the Rust code: `PhysicalTableScan.IsFullScan`
+(`pkg/planner/core/operator/physicalop/physical_table_scan.go:666`) reads
+
+```go
+func (p *PhysicalTableScan) IsFullScan() bool {
+	if len(p.RangeInfo) > 0 || p.haveCorCol() {
+		return false
+	}
+	...ranges check...
+}
+```
+
+`haveCorCol()` is true whenever any access condition carries a correlated
+column, which is exactly how Go builds an index-join inner probe's access
+path -- the join key is a correlated reference to the outer row, not a
+literal value. So Go answers "not full" for ANY index-join inner probe
+before it ever looks at the ranges, regardless of the placeholder range's
+shape. Rust's `scan_kind` decision (`find_best_task/dispatch.rs`, ~line
+2498) only ever inspected the plan-time placeholder ranges
+(`ranges.iter().all(is_full_range(...))`). By coincidence, an int-handle
+placeholder (`full_int_range`) happens to fail that boundary check and so
+was already labelled correctly; a common-handle placeholder (`full_range`)
+happens to pass it, so it was labelled `TableFullScan` -- while the SAME
+scan's own child (whose text is built by a different, correct code path)
+already said `TableRangeScan` with `range: decided by [...]`.
+
+Fix: gate `scan_kind` on `prop.index_join_prop.is_some()` directly (mirrors
+`haveCorCol()`), not on the coincidental range shape:
+`if prop.index_join_prop.is_some() || !ranges.iter().all(is_full_range) {
+Range } else { Full }`. Outside an index join this is unchanged: the name
+is still decided purely by the ranges (a predicate on a handle component
+can leave every per-partition range full after partition pruning, and Go
+still renders `TableFullScan` there).
+
+Reproduced minimally, no TPC-H needed: `CREATE TABLE ps (a INT NOT NULL, b
+INT NOT NULL, v INT, PRIMARY KEY(a,b) CLUSTERED)` plus `CREATE TABLE o (a
+INT NOT NULL)`, then `EXPLAIN SELECT /*+ INL_JOIN(ps) */ * FROM o JOIN ps
+ON o.a = ps.a` (a probe on a PREFIX of the composite key, same shape as
+Q2's partsupp probe). Verified against a live Go oracle (`tidb_version()` =>
+`844818561a477dc6de4bf521d500ffbd56340b1e`) on exactly this schema/query:
+Go's `TableReader(Probe)` prints `data:TableRangeScan_25`. Pre-fix Rust
+printed `data:TableFullScan_14` for the same node while its own child said
+`TableRangeScan_14`; post-fix it says `TableRangeScan_14` on both,
+matching Go.
+
+Regression test: `tests_index_join_inner_pattern.rs`'s
+`a_common_handle_probes_prefix_key_reader_labels_table_range_scan`, an
+in-process `Session` test (no cluster needed) using the exact minimal
+schema above. Fail-before/pass-after verified by reverting just the
+`dispatch.rs` change and confirming the test fails with the pre-fix
+`TableFullScan` label, then restoring the fix.
+
+Not investigated further: the task's secondary note that the same
+`IndexHashJoin`'s `inner:` descriptor names its child less specifically
+than Go does in the original Q2 plan (`Join` vs `HashJoin`). This needs
+the actual multi-join TPC-H Q2 shape to reproduce and was not chased
+given the primary bug (the one with a concrete, minimal repro and a
+confirmed root cause) was the bulk of this task and is cosmetic/low
+priority; left as a known residual gap rather than guessed at.
+
+Validated: `cargo test -p tidb-planner --lib` (942/943, the one failure
+--union_unsigned_widening_uses_the_in_union_cast_signature-- confirmed
+pre-existing and unrelated by reproducing it against the pre-fix source
+too) and `cargo test -p tidb-session --lib` (1729/1730, the one failure
+--show_create_table_matches_go_for_every_served_information_schema_table--
+likewise confirmed pre-existing and unrelated); every index-join-specific
+test module in both crates passes outright. `cargo fmt`/`cargo clippy`
+clean on every touched line.

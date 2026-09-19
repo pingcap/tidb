@@ -2490,19 +2490,32 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     root.set_plan(point);
                     return Ok(Task::Root(root));
                 }
-                // Go `PhysicalTableScan.IsFullScan`: the name is decided by the
-                // RANGES, not by whether an access condition exists. A
-                // predicate on a handle component can leave every per-partition
-                // range full (this table's `part > 199999` after partition
-                // pruning), and Go still renders `TableFullScan`.
+                // Go `PhysicalTableScan.IsFullScan`: `len(p.RangeInfo) > 0 ||
+                // p.haveCorCol()` short-circuits to "not full" before the
+                // ranges are even inspected. An index-join inner probe's
+                // access condition is built against the outer row's join key
+                // (a correlated column), so `haveCorCol()` is always true
+                // there regardless of what the plan-time placeholder range
+                // happens to look like -- an int-handle placeholder
+                // (`full_int_range`) and a common-handle one (`full_range`)
+                // are equally "whatever the outer row supplies", but only the
+                // former happened to fail `is_full_range`'s boundary check,
+                // so gate on the index-join probe directly rather than on
+                // that coincidence. Outside an index join, the name is
+                // decided by the RANGES, not by whether an access condition
+                // exists: a predicate on a handle component can leave every
+                // per-partition range full (this table's `part > 199999`
+                // after partition pruning), and Go still renders
+                // `TableFullScan`.
                 let unsigned_int_handle = ds.pk_is_handle && handle_type.is_unsigned();
-                let scan_kind = if ranges
-                    .iter()
-                    .all(|range| range.is_full_range(unsigned_int_handle))
+                let scan_kind = if prop.index_join_prop.is_some()
+                    || !ranges
+                        .iter()
+                        .all(|range| range.is_full_range(unsigned_int_handle))
                 {
-                    crate::access_path::ResolvedTableScanKind::Full
-                } else {
                     crate::access_path::ResolvedTableScanKind::Range
+                } else {
+                    crate::access_path::ResolvedTableScanKind::Full
                 };
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     base,

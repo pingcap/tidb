@@ -182,3 +182,50 @@ fn an_index_joins_dedup_build_side_keeps_its_ordered_index_stream_agg() {
         );
     }
 }
+
+/// Task 65: a common (composite/CLUSTERED) handle table probed by an index
+/// join on a PREFIX of its primary key (here just `a` of `PRIMARY KEY(a,b)`)
+/// used to mislabel its `TableReader`'s own `data:` field as
+/// `TableFullScan` even though the scan beneath it correctly printed
+/// `TableRangeScan` with `range: decided by [...]`.
+///
+/// Root cause: Go's `PhysicalTableScan.IsFullScan` short-circuits to "not a
+/// full scan" via `haveCorCol()` (an index-join inner probe's access
+/// condition is built against the outer row, i.e. a correlated column)
+/// BEFORE it ever inspects the ranges. The Rust `scan_kind` decision
+/// (`find_best_task/dispatch.rs`) inspected only the plan-time placeholder
+/// ranges: an int-handle placeholder (`full_int_range`) happened to fail
+/// `is_full_range`'s boundary check and so was already labelled correctly by
+/// coincidence, but a common-handle placeholder (`full_range`) satisfied it,
+/// mislabelling the `TableReader` as `TableFullScan` while its own child
+/// scan (computed by a different, correct code path) still said
+/// `TableRangeScan`.
+///
+/// Refreshed against the LIVE oracle (`SELECT tidb_version()` =>
+/// `844818561a477dc6de4bf521d500ffbd56340b1e`): Go's `TableReader(Probe)`
+/// prints `data:TableRangeScan_25` for this exact schema and query.
+#[test]
+fn a_common_handle_probes_prefix_key_reader_labels_table_range_scan() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ps (a INT NOT NULL, b INT NOT NULL, v INT, PRIMARY KEY(a,b) CLUSTERED)")
+        .unwrap();
+    session.run("CREATE TABLE o (a INT NOT NULL)").unwrap();
+    let plan_text = plan(
+        &mut session,
+        "EXPLAIN SELECT /*+ INL_JOIN(ps) */ * FROM o JOIN ps ON o.a = ps.a",
+    );
+    let probe_reader_line = plan_text
+        .lines()
+        .find(|line| line.contains("TableReader") && line.contains("(Probe)"))
+        .unwrap_or_else(|| panic!("expected a probe-side TableReader:\n{plan_text}"));
+    assert!(
+        probe_reader_line.contains("data:TableRangeScan"),
+        "the probe-side TableReader must label itself TableRangeScan, matching \
+         its own child scan and Go's live oracle, not TableFullScan:\n{plan_text}"
+    );
+    assert!(
+        plan_text.contains("range: decided by"),
+        "the child TableRangeScan already correctly names its runtime range:\n{plan_text}"
+    );
+}
