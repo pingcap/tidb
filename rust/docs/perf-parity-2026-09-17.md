@@ -1003,3 +1003,51 @@ nearest miss, worth returning to before `NEW_ORDER`/`PAYMENT`/`DELIVERY`/
 `STOCK_LEVEL`, which are further out and, per task 68, partly bound by the
 same thread-per-connection/futex cost as the sysbench round-trip-bound
 workloads.
+
+## 2026-09-19: found, not fixed -- physical_kv_table_by_id deep-clones a
+## whole KvTable (including per-transaction staged keys) per point-get
+
+Profiled the full TPC-C mix at 16 threads on the binary carrying both
+catalog fixes above. `__memmove_evex_unaligned_erms` is tied with
+`finish_task_switch` as the #1 hotspot, at ~8% of all CPU -- much higher
+than the ~2% seen under plain `oltp_write_only` in the same session,
+because TPC-C repeatedly point-gets against tables it has already written
+to earlier in the SAME transaction (stock updates, then later stock
+reads), which is exactly what makes this cost compound.
+
+Traced to `Catalog::physical_kv_table_by_id` (`driver/catalog.rs:2408`):
+it unconditionally deep-clones the whole `KvTable` (`table.clone()`)
+before optionally restricting it to one partition -- restriction that
+only nonpartitioned tables (every table in this benchmark, and most real
+schemas) never need. `columns` and `indexes` are already `Arc`-shared
+metadata (an earlier, similar fix -- see `kv_table.rs:467-477`'s own doc
+comment), so this clone's real remaining cost is `staged_record_keys`
+(`Mutex<HashSet<Vec<u8>>>`), whose `Clone` impl deep-copies every staged
+key's bytes -- a set that only grows as the transaction writes more rows
+to that table.
+
+The obvious fix -- wrap `staged_record_keys` in `Arc` so cloning a
+`KvTable` is cheap, the same move already made for `columns`/`indexes` --
+is WRONG and was caught before writing any code: a transaction's first
+write to a table clones its `TableEntry` via `Arc::make_mut` (Go's
+`session.HasDirtyContent` isolation, done here as copy-on-write); if
+`staged_record_keys` were `Arc`-shared, that COW clone would still point
+at the SAME `Mutex<HashSet>` as the pre-write entry every OTHER
+concurrent transaction's snapshot references -- leaking one transaction's
+uncommitted staged keys into another transaction's view of the same
+table. The deep clone is load-bearing for isolation, not an oversight.
+
+The safe direction, not attempted this session: have
+`physical_kv_table_by_id` hand out a cheap `Arc::clone` of the table
+already sitting in this transaction's own (already-private,
+already-copy-on-write'd) `self.databases`, and reserve `Arc::make_mut` for
+the partitioned branch alone, so only the case that actually needs an
+independent copy pays for one. That requires `TableEntry::Kv` to hold
+`Arc<KvTable>` internally instead of `KvTable` by value -- a structural
+change touching every existing `TableEntry::Kv(table) => ...` match site
+project-wide, plus the 9+ call sites of `physical_kv_table_by_id` in
+`physical_builder.rs` and 5+ in `explain.rs`, most of which currently
+receive and hold an owned `KvTable` and would need `Arc<KvTable>`
+instead. Large blast radius, and it sits exactly on the transaction-
+isolation-critical path reasoned about above, so it needs careful,
+dedicated design and review -- tracked as task 69, not attempted here.
