@@ -1,0 +1,16 @@
+create table add_source(id int, base varchar(30), delta varchar(30));
+insert into add_source values (1,'2024-01-01 00:00:00','2024-01-02 03:04:05'),(2,'2024-01-01 00:00:00','0000-00-00 01:02:03'),(3,'2024-01-01 00:00:00','01:02:03');
+create table add_target(id int primary key, d datetime not null, marker varchar(10));
+insert into add_target values (1,'2000-01-01','old'),(2,'2000-01-01','old'),(3,'2000-01-01','old');
+set tidb_enable_vectorized_expression=0;
+--error 1048
+replace into add_target select id,addtime(base,delta),'new' from add_source;
+select * from add_target order by id;
+set tidb_enable_vectorized_expression=1;
+--error 1048
+replace into add_target select id,addtime(base,delta),'new' from add_source;
+select * from add_target order by id;
+replace into add_target select id,addtime(base,delta),'new' from add_source where id=3;
+select * from add_target order by id;
+drop table add_source, add_target;
+set tidb_enable_vectorized_expression=default;
