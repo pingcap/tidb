@@ -144,7 +144,7 @@ func TestMergePartialResult4MaxMinCount(t *testing.T) {
 		desc, err := aggregation.NewAggFuncDesc(ctx, funcName, args, false)
 		require.NoError(t, err)
 
-		partialDesc, finalDesc := desc.Split([]int{0, 1})
+		partialDesc, finalDesc := desc.Split(ctx, []int{0, 1})
 		partialFunc := aggfuncs.Build(ctx, partialDesc, 0)
 		finalFunc := aggfuncs.Build(ctx, finalDesc, 0)
 		require.NotNil(t, partialFunc)
@@ -200,7 +200,7 @@ func TestMergePartialResult4MaxMinCount(t *testing.T) {
 	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMaxCount, strArgs, false)
 	require.NoError(t, err)
 
-	partialDesc, finalDesc := desc.Split([]int{0, 1})
+	partialDesc, finalDesc := desc.Split(ctx, []int{0, 1})
 	require.Equal(t, mysql.TypeString, finalDesc.Args[0].GetType(nil).GetType())
 	require.Equal(t, "utf8mb4_general_ci", finalDesc.Args[0].GetType(nil).GetCollate())
 
@@ -328,6 +328,16 @@ func TestMaxMinCountSQL(t *testing.T) {
 		}
 	}
 	require.True(t, hasParallelHashAgg)
+	for _, name := range []string{"max_count", "min_count"} {
+		tk.MustExec("prepare s from 'select /*+ hash_agg() */ " + name + "(?) from t'")
+		for _, value := range []string{"5", "8", "'abc'"} {
+			tk.MustExec("set @pv=" + value)
+			tk.MustQuery("execute s using @pv").Check(testkit.Rows("6"))
+		}
+		tk.MustExec("set @pv=null")
+		tk.MustQuery("execute s using @pv").Check(testkit.Rows("0"))
+		tk.MustExec("deallocate prepare s")
+	}
 
 	tk.MustContainErrMsg("select max_count(distinct a) from t", "You have an error in your SQL syntax")
 	tk.MustContainErrMsg("select min_count(distinct a) from t", "You have an error in your SQL syntax")
