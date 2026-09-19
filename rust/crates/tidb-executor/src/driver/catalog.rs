@@ -231,6 +231,15 @@ pub struct Catalog {
     /// Go InfoSchema's table-ID index. Names resolve against this image's
     /// current entries without retaining a second copy of table storage.
     table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
+    /// Every table entry in this image, flattened once. [`Self::
+    /// clear_dirty_content`] runs at every non-continuing statement (every
+    /// autocommit statement, every `BEGIN`), so it cannot re-walk the nested
+    /// database/table maps each time without paying that cost on the
+    /// statement path Go does not have at all (a fresh membuffer starts with
+    /// nothing to clear). Shares the same lifetime as [`Self::
+    /// table_id_names`]: only a schema-membership change can add or remove a
+    /// table entry, so the same two invalidation sites cover both.
+    kv_tables_flat: Arc<std::sync::OnceLock<Vec<Arc<TableEntry>>>>,
     /// The entries a session's LOCAL temporary tables are DISPLACING while
     /// they are attached: `(folded database, folded name, the entry that was
     /// there)`.
@@ -448,6 +457,7 @@ struct CatalogSnapshot {
     latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
     table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
+    kv_tables_flat: Arc<std::sync::OnceLock<Vec<Arc<TableEntry>>>>,
     shadowed_by_local_temporary: Vec<(String, String, Arc<TableEntry>)>,
     temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
 }
@@ -470,6 +480,7 @@ impl CatalogSnapshot {
             latest_index_schema: catalog.latest_index_schema.clone(),
             planner_view: catalog.planner_view.clone(),
             table_id_names: catalog.table_id_names.clone(),
+            kv_tables_flat: catalog.kv_tables_flat.clone(),
             shadowed_by_local_temporary: catalog.shadowed_by_local_temporary.clone(),
             temporary_sweep: catalog.temporary_sweep.clone(),
         }
@@ -491,6 +502,7 @@ impl CatalogSnapshot {
             latest_index_schema: self.latest_index_schema.clone(),
             planner_view: self.planner_view.clone(),
             table_id_names: self.table_id_names.clone(),
+            kv_tables_flat: self.kv_tables_flat.clone(),
             shadowed_by_local_temporary: self.shadowed_by_local_temporary.clone(),
             statistics: Arc::clone(&owner.statistics),
             statistics_view: owner.statistics_view.clone(),
@@ -594,6 +606,7 @@ impl Default for Catalog {
             latest_index_schema: std::sync::OnceLock::new(),
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
+            kv_tables_flat: Arc::default(),
             shadowed_by_local_temporary: Vec::new(),
             statistics: Arc::default(),
             statistics_view: None,
@@ -1639,6 +1652,7 @@ impl Catalog {
         self.planner_view.take();
         self.statistics_schemas = Arc::default();
         self.invalidate_table_id_names();
+        self.invalidate_kv_tables_flat();
     }
 
     fn invalidate_table_id_names(&mut self) {
@@ -1646,6 +1660,14 @@ impl Catalog {
             names.take();
         } else {
             self.table_id_names = Arc::default();
+        }
+    }
+
+    fn invalidate_kv_tables_flat(&mut self) {
+        if let Some(tables) = Arc::get_mut(&mut self.kv_tables_flat) {
+            tables.take();
+        } else {
+            self.kv_tables_flat = Arc::default();
         }
     }
 
@@ -1729,13 +1751,25 @@ impl Catalog {
         // Committed snapshots can retain true marks from their former owner.
         // Resetting these shared cells does not clear another transaction's
         // private writes: every writer detaches its entry before marking it.
-        for database in self.databases.values() {
-            for entry in database.tables.values() {
-                if let TableEntry::Kv(table) = &**entry {
-                    table.clear_dirty_content();
-                }
+        for entry in self.kv_tables_flat() {
+            if let TableEntry::Kv(table) = entry.as_ref() {
+                table.clear_dirty_content();
             }
         }
+    }
+
+    /// Every table entry in this image, in the shape [`Self::
+    /// clear_dirty_content`] walks. Built once per metadata version and
+    /// shared by every catalog clone at that version, the same way
+    /// [`Self::table_id_names`] is; see [`Self::kv_tables_flat`]'s own doc.
+    fn kv_tables_flat(&self) -> &[Arc<TableEntry>] {
+        self.kv_tables_flat.get_or_init(|| {
+            self.databases
+                .values()
+                .flat_map(|database| database.tables.values())
+                .cloned()
+                .collect()
+        })
     }
 
     /// Publishes one table's loaded statistics, which the access-path choice
@@ -2655,6 +2689,7 @@ impl Catalog {
         // The row overlay keeps the schema epoch, but this public handle
         // can also change an ID. Never retain a directory across that borrow.
         self.invalidate_table_id_names();
+        self.invalidate_kv_tables_flat();
         match self
             .database_mut(database)?
             .tables
@@ -4100,5 +4135,47 @@ mod planner_view_tests {
         // not a permanently frozen one.
         crate::run_create_table_on("CREATE TABLE od2(a INT PRIMARY KEY)", &mut catalog).unwrap();
         assert!(!Arc::ptr_eq(&directory, &catalog.table_id_names));
+    }
+
+    /// `clear_dirty_content` runs at every non-continuing statement, so it
+    /// must not re-walk every database and table map each time either --
+    /// same reasoning as the id directory above, same cache lifetime. An
+    /// ordinary write leaves the flattened table list alone; a real schema
+    /// change still invalidates it, and a table created after that rebuild
+    /// is still reachable through it.
+    #[test]
+    fn clearing_dirty_content_does_not_rebuild_the_flat_table_list() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE cd(a INT PRIMARY KEY, b INT)", &mut catalog)
+            .unwrap();
+        catalog.clear_dirty_content();
+        let flat = Arc::clone(&catalog.kv_tables_flat);
+        assert!(flat.get().is_some(), "the clear above built it");
+
+        let TableEntry::Kv(cd) = catalog.get_mut_in(DEFAULT_DATABASE, "cd").unwrap() else {
+            panic!("cd is not a KV table")
+        };
+        cd.note_staged_record_key(b"dummy-record-key");
+        assert!(
+            Arc::ptr_eq(&flat, &catalog.kv_tables_flat),
+            "an ordinary write through get_mut_in must not invalidate the flat table list"
+        );
+        catalog.clear_dirty_content();
+        assert!(Arc::ptr_eq(&flat, &catalog.kv_tables_flat));
+
+        // A real schema change (a second table joining the catalog) still
+        // invalidates the cache, and the new table is reachable through the
+        // rebuilt one -- this is a cache of what clear_dirty_content walks,
+        // not a permanently frozen snapshot of it.
+        let before_len = catalog.kv_tables_flat().len();
+        crate::run_create_table_on("CREATE TABLE cd2(a INT PRIMARY KEY)", &mut catalog).unwrap();
+        assert!(!Arc::ptr_eq(&flat, &catalog.kv_tables_flat));
+        catalog.clear_dirty_content();
+        assert!(catalog.get_in(DEFAULT_DATABASE, "cd2").is_some());
+        assert_eq!(
+            catalog.kv_tables_flat().len(),
+            before_len + 1,
+            "the rebuilt cache must include the newly created table too"
+        );
     }
 }

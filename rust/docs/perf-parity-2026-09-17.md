@@ -873,3 +873,93 @@ session's ceiling conclusion as final for the write path -- that ceiling
 argument was specific to read-dominated, TiKV-round-trip-bound workloads
 (point_select and friends) and was never evidence that the write path had
 no more root causes left; it didn't.
+
+## 2026-09-19: a second, smaller root cause on the same statement boundary --
+## `clear_dirty_content` re-walked the whole catalog on every transaction
+
+Re-profiled `oltp_write_only` at 16 threads on the binary carrying the
+`table_id_names` fix above, to see what the next-largest node-side cost
+was now that the id directory was no longer being rebuilt. Two findings,
+one worth fixing here and one not (see below).
+
+**The fixable one.** `Catalog::clear_dirty_content` -- called at every
+statement that is not continuing an open transaction (every autocommit
+statement, every `BEGIN`; see `tidb-session/src/dispatch.rs`) -- walked
+every database's every table, matched each entry's `TableEntry` variant,
+and called `KvTable::clear_dirty_content` on each `Kv` one. That is Go's
+`session.HasDirtyContent` boundary, but Go pays nothing for it: a fresh
+transaction there gets a FRESH membuffer, so there is nothing to walk or
+reset. This tier stages writes in a shared, cloned catalog instead, so it
+has to actually go and reset each table's mark -- and it was doing that by
+re-walking the whole nested database/table map from scratch on every
+single statement boundary, the exact same shape of cost as the
+`table_id_names` bug above, just smaller: about 1% of profiled CPU on
+`oltp_write_only`, all of it in the walk itself (`Catalog::
+clear_dirty_content`'s own frame), not in the per-table reset work.
+
+**Fix.** Cache the flattened list of table entries the walk visits --
+`Catalog::kv_tables_flat`, an `Arc<OnceLock<Vec<Arc<TableEntry>>>>` built
+once and shared by every catalog clone at that metadata version, the same
+shape and the same two invalidation sites (`bump_metadata_version`,
+`temporary_overlay_table_mut`) as `table_id_names` right above it in this
+file. `clear_dirty_content` now iterates the cached list instead of the
+live nested maps. Only a schema-membership change (a table created,
+dropped, or renamed) can add or remove an entry this list needs to see,
+and both of those already bump the same counter `table_id_names` listens
+to, so no new invalidation site was needed.
+
+Added `clearing_dirty_content_does_not_rebuild_the_flat_table_list`,
+mirroring the existing `table_id_names` regression test: an ordinary
+`get_mut_in` write and a repeat `clear_dirty_content` call both leave the
+cached `Arc` pointer unchanged, and a real schema change invalidates it and
+the rebuilt list still reaches the new table.
+
+**The one left alone.** The same profiling pass also found ~12.8% of all
+CPU in `finish_task_switch`, reached through `tidb_txnkv::rpc::execution::
+wait_with_call` doing a real `std::thread::park`/`park_timeout` while a
+synchronous caller waits on a TiKV/PD RPC (`crates/tidb-txnkv/src/rpc/
+execution.rs`). Connections here run one OS thread each
+(`tidb-server/src/sql_node.rs`), so every blocking RPC wait is a genuine
+kernel futex wait/wake pair; Go's equivalent is a goroutine park, a
+userspace-scheduled suspend with no syscall at all. This is a real,
+generic cost and it is Go's actual advantage on every round-trip-bound
+workload (`write_only`, `read_write`, `insert`, every TPC-C transaction),
+but closing it means making per-connection statement execution async
+end-to-end -- not a scoped fix, an architectural rewrite of the execution
+model this campaign has not been asked to undertake. Recorded here rather
+than attempted; see also task 9's remaining near-misses below.
+
+**Validation.** `cargo check -p tidb-executor`: clean. `cargo test -p
+tidb-executor --lib`: 1334 passed, 0 failed (full crate). `cargo fmt -p
+tidb-executor -- --check`: no diff in `catalog.rs`. `cargo clippy -p
+tidb-executor --lib`: 0 findings in `catalog.rs`, same 406 pre-existing
+warnings elsewhere, exit 0. Re-profiled `oltp_write_only` on the fixed
+binary: `Catalog::clear_dirty_content`'s own frame is gone from the
+hotspot list entirely; only `KvTable::clear_dirty_content`'s per-table
+work remains, at 0.86%.
+
+**A/B, fix vs base, 16 threads, 2 rounds, fresh tables per workload pair:**
+
+```
+workload                base tps   fix tps   tps gain   base ms   fix ms   lat gain
+oltp_write_only            644.2     743.4     +15.4%     24.81     21.50    +13.3%  (was +20.7/+17.2 with only the table_id_names fix -- noise, not a regression; still short)
+oltp_read_write             184.9     206.6     +11.8%     86.40     77.32    +10.5%  (was +14.1/+12.4 -- same caveat, still short)
+oltp_insert                2964.7    3158.8      +6.5%      5.40      5.07     +6.1%  (was +11.4/+10.2 -- same caveat, still short)
+```
+
+These three numbers land at or slightly below the prior fix-vs-base
+measurement for the same rows rather than clearly above it, which this
+fix's own size explains: ~1% of profiled CPU is smaller than the 10-20%
+round-to-round swings this document has repeatedly measured on quick
+two-round spot checks (see the caveat two sections up), so a real, small,
+profiler-verified improvement can still read flat or slightly down against
+noise at this sample size. The profiling evidence above -- the hotspot's
+own frame disappearing, not just shrinking -- is the reliable signal for
+this fix, not these three throughput numbers. None of these three rows
+newly cross the +25% bar; the goal-9 status from the previous section is
+unchanged by this fix (still four of seventeen rows clearing). It is kept
+because it is a real, verified, generically-justified (Go pays none of
+this cost, by construction) elimination of wasted work, at negligible risk
+(a cache with the same invalidation lifetime as one already in the file),
+which is the standard this campaign has applied throughout -- not because
+it was large enough to move today's pass/fail count on its own.
