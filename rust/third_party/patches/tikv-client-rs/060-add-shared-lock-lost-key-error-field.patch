@@ -1,0 +1,24 @@
+diff --git a/proto/kvrpcpb.proto b/proto/kvrpcpb.proto
+index 63faa9f..8f90e89 100644
+--- a/proto/kvrpcpb.proto
++++ b/proto/kvrpcpb.proto
+@@ -1103,6 +1103,7 @@ message KeyError {
+   AssertionFailed assertion_failed = 10; // Assertion of a `Mutation` is evaluated as a failure.
+   PrimaryMismatch primary_mismatch = 11; // CheckTxnStatus is sent to a lock that's not the primary.
+   TxnLockNotFound txn_lock_not_found = 12; // TxnLockNotFound indicates the txn lock is not found.
++  SharedLockLost shared_lock_lost = 14; // A shared-lock upgrade lost the race; the caller should abort.
+ 
+   // Extra information for error debugging
+   DebugInfo debug_info = 100;
+@@ -1131,6 +1132,11 @@ message AlreadyExist {
+   bytes key = 1;
+ }
+ 
++message SharedLockLost {
++  bytes key = 1;
++  uint64 start_ts = 2;
++}
++
+ message Deadlock {
+   uint64 lock_ts = 1;
+   bytes lock_key = 2;

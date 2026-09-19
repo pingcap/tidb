@@ -519,6 +519,18 @@ fn classify_cause(error: &TikvTransactionError) -> crate::transaction::Transacti
                 .unwrap_or_default(),
             detail: client_error.to_string(),
         },
+        // Go: `pkg/store/driver/txn/error.go`'s `extractKeyErr` special-cases
+        // `*tikverr.ErrSharedLockLost` before falling through to a generic
+        // mapping. The client's own `KeyError` doesn't decode this into a
+        // dedicated variant, so it surfaces here as the generic `KeyError`
+        // fallback instead.
+        ClientError::KeyError(key_error) if key_error.shared_lock_lost.is_some() => {
+            let lost = key_error.shared_lock_lost.as_ref().unwrap();
+            TransactionCause::SharedLockLost {
+                start_ts: lost.start_ts,
+                key: tikv_client::redact::key(&lost.key),
+            }
+        }
         _ => TransactionCause::Transport {
             detail: client_error.to_string(),
         },
@@ -721,5 +733,38 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             values,
             max_locked_with_conflict_ts: context.max_locked_with_conflict_ts,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tikv_client::proto::kvrpcpb::{KeyError, SharedLockLost};
+
+    use super::{classify_cause, TikvTransactionError};
+    use crate::transaction::TransactionCause;
+
+    // Go: `pkg/store/driver/txn/driver_test.go`'s
+    // `TestSharedLockLostErrorMapping` proves the same classification for
+    // `*tikverr.ErrSharedLockLost`.
+    #[test]
+    fn a_shared_lock_lost_key_error_classifies_as_shared_lock_lost() {
+        let error =
+            TikvTransactionError::Client(tikv_client::Error::KeyError(Box::new(KeyError {
+                shared_lock_lost: Some(SharedLockLost {
+                    key: b"primary".to_vec(),
+                    start_ts: 42,
+                }),
+                ..KeyError::default()
+            })));
+
+        let cause = classify_cause(&error);
+        assert!(matches!(
+            cause,
+            TransactionCause::SharedLockLost { start_ts: 42, .. }
+        ));
+        let TransactionCause::SharedLockLost { key, .. } = cause else {
+            unreachable!()
+        };
+        assert_eq!(key, tikv_client::redact::key(b"primary"));
     }
 }

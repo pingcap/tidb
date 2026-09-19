@@ -2171,6 +2171,9 @@ pub struct KeyError {
     /// TxnLockNotFound indicates the txn lock is not found.
     #[prost(message, optional, tag = "12")]
     pub txn_lock_not_found: ::core::option::Option<TxnLockNotFound>,
+    /// A shared-lock upgrade lost the race; the caller should abort.
+    #[prost(message, optional, tag = "14")]
+    pub shared_lock_lost: ::core::option::Option<SharedLockLost>,
     /// Extra information for error debugging
     #[prost(message, optional, tag = "100")]
     pub debug_info: ::core::option::Option<DebugInfo>,
@@ -2283,6 +2286,23 @@ impl ::prost::Name for AlreadyExist {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/kvrpcpb.AlreadyExist".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SharedLockLost {
+    #[prost(bytes = "vec", tag = "1")]
+    pub key: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, tag = "2")]
+    pub start_ts: u64,
+}
+impl ::prost::Name for SharedLockLost {
+    const NAME: &'static str = "SharedLockLost";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.SharedLockLost".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.SharedLockLost".into()
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]

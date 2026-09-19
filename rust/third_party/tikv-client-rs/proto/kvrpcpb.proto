@@ -1103,6 +1103,7 @@ message KeyError {
   AssertionFailed assertion_failed = 10; // Assertion of a `Mutation` is evaluated as a failure.
   PrimaryMismatch primary_mismatch = 11; // CheckTxnStatus is sent to a lock that's not the primary.
   TxnLockNotFound txn_lock_not_found = 12; // TxnLockNotFound indicates the txn lock is not found.
+  SharedLockLost shared_lock_lost = 14; // A shared-lock upgrade lost the race; the caller should abort.
 
   // Extra information for error debugging
   DebugInfo debug_info = 100;
@@ -1129,6 +1130,11 @@ message WriteConflict {
 
 message AlreadyExist {
   bytes key = 1;
+}
+
+message SharedLockLost {
+  bytes key = 1;
+  uint64 start_ts = 2;
 }
 
 message Deadlock {
