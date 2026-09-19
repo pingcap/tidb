@@ -501,11 +501,20 @@ pub(crate) fn run_cluster_session_node_with_spill(
             binding_reloader,
             async_stats_loader,
         )| {
+            let status_catalog = Arc::clone(&factory);
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                     crate::real_tikv_node::emit_connections_startup_failure(&error);
                     RunConfiguredNodeError::Node(error)
                 })?;
+            let _status_server = start_cluster_status(
+                &config,
+                node.tracker(),
+                Arc::new(move || status_catalog.catalog_snapshot()),
+            )
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
+            })?;
             let address = node.local_addr().map_err(|error| {
                 crate::real_tikv_node::emit_connections_startup_failure(&error);
                 RunConfiguredNodeError::Node(error)
@@ -554,4 +563,108 @@ fn render_skipped(skipped: &[SkippedTable]) -> String {
         })
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn start_cluster_status(
+    config: &NodeConfig,
+    tracker: Arc<crate::sql_node::ConnectionTracker>,
+    schema: crate::http_status::SchemaSource,
+) -> std::io::Result<Option<crate::http_status::StatusServer>> {
+    // Go Server.Run starts status HTTP beside SQL when ReportStatus is set.
+    // Publishing server info alone does not make that endpoint reachable.
+    if !config.report_status {
+        return Ok(None);
+    }
+    match crate::http_status::start_status_listener_with_routes(
+        &config.status_host,
+        config.status_port,
+        tracker,
+        tidb_mysql::runtime_versions().server_version,
+        tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
+        crate::http_status::StatusRoutes {
+            schema: Some(schema),
+            settings_json: Some(config.startup_config_json()),
+        },
+    ) {
+        Ok(server) => {
+            eprintln!(
+                "{{\"event\":\"status_listener_ready\",\"address\":\"{}\"}}",
+                server.local_addr()
+            );
+            Ok(Some(server))
+        }
+        Err(error) => {
+            eprintln!("{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}");
+            Err(error)
+        }
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    #[test]
+    fn cluster_status_respects_disabled_flag_and_bind_failure() {
+        let mut config = NodeConfig::parse([
+            "--store=tikv",
+            "--path=127.0.0.1:2379",
+            "--status=0",
+            "--status-host=127.0.0.1",
+            "--report-status=false",
+        ])
+        .unwrap();
+        let tracker = Arc::new(crate::sql_node::ConnectionTracker::default());
+        let schema: crate::http_status::SchemaSource =
+            Arc::new(|| tidb_exec::cluster_catalog::ClusterCatalog {
+                databases: Vec::new(),
+                schema_version: 1,
+            });
+        assert!(
+            start_cluster_status(&config, Arc::clone(&tracker), Arc::clone(&schema))
+                .unwrap()
+                .is_none()
+        );
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        config.report_status = true;
+        config.status_port = occupied.local_addr().unwrap().port();
+        assert!(start_cluster_status(&config, tracker, schema).is_err());
+    }
+
+    #[test]
+    fn cluster_status_serves_health_settings_and_metrics() {
+        let config = NodeConfig::parse([
+            "--store=tikv",
+            "--path=127.0.0.1:2379",
+            "--status=0",
+            "--status-host=127.0.0.1",
+        ])
+        .unwrap();
+        let tracker = Arc::new(crate::sql_node::ConnectionTracker::default());
+        let schema = Arc::new(|| tidb_exec::cluster_catalog::ClusterCatalog {
+            databases: Vec::new(),
+            schema_version: 1,
+        });
+        let server = start_cluster_status(&config, tracker, schema)
+            .unwrap()
+            .expect("cluster startup must bind the advertised status service like Go");
+        for path in ["/status", "/metrics", "/settings", "/config", "/schema"] {
+            let mut stream = std::net::TcpStream::connect(server.local_addr()).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            write!(
+                stream,
+                "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"), "{path}: {response}");
+            if path == "/metrics" {
+                assert!(response.contains("tidb_server_connections"));
+            }
+        }
+    }
 }

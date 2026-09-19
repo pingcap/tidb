@@ -4018,6 +4018,7 @@ dependencies = [
  "crossbeam-channel",
  "ctrlc",
  "fail",
+ "prometheus 0.14.0",
  "prost 0.14.4",
  "rcgen",
  "rustix 1.1.4",

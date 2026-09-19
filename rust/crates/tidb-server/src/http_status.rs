@@ -20,13 +20,12 @@
 //! (`http_status.go:689`), whose body is the `Status` struct
 //! (`:675`): `{connections, version, git_hash, status:{init_stats_percentage}}`
 //! in exactly that field order. This module serves that endpoint over a
-//! hand-rolled HTTP/1.1 loop and answers 404 for every other path.
+//! hand-rolled HTTP/1.1 loop, alongside metrics and the configured routes.
 //!
 //! # Narrowings, each naming its Go symbol
 //!
-//! * `/metrics` (the prometheus registry) and the rest of the router —
-//!   `/settings`, `/schema`, pprof — are unported handlers; they answer 404
-//!   here where Go serves them.
+//! * Unported handlers such as pprof answer 404. Metrics export the shared
+//!   Prometheus registry; configuration and schema routes require node sources.
 //! * `s.health.Load()` — the 500-during-shutdown arm — narrows with the
 //!   graceful-shutdown integration; this listener lives for the process.
 use std::io::{Read, Write};
@@ -148,14 +147,15 @@ pub fn start_status_listener_with_routes(
                                 body.len(),
                             )
                         } else if path == "/metrics" {
-                            // Keep the Prometheus scrape endpoint available to
-                            // TiUP/Grafana.  The Rust server does not yet
-                            // expose Go's full registry, but this stable core
-                            // gauge is sufficient for health dashboards.
-                            let body = format!(
+                            // Go's promhttp handler exports the shared registry,
+                            // including metrics registered by statistics and SLI.
+                            let mut body = prometheus::TextEncoder::new()
+                                .encode_to_string(&prometheus::gather())
+                                .expect("registered metrics encode as Prometheus text");
+                            body.push_str(&format!(
                                 "# TYPE tidb_server_connections gauge\ntidb_server_connections {}\n",
                                 tracker.active(),
-                            );
+                            ));
                             format!(
                                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\
                                  Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -235,6 +235,14 @@ mod tests {
             response
         };
 
+        let healthy = tidb_stats_handle_metrics::stats_healthy_gauges();
+        healthy[tidb_stats_handle_metrics::STATS_HEALTHY_BUCKET_TOTAL].set(37.0);
+        let metrics = fetch("/metrics");
+        assert!(
+            metrics.contains("tidb_statistics_stats_healthy{type=\"[0,100]\"} 37"),
+            "{metrics}"
+        );
+
         let status = fetch("/status");
         assert!(status.starts_with("HTTP/1.1 200 OK"), "{status}");
         assert!(
@@ -277,7 +285,9 @@ fn settings_response(
     request: &str,
     settings_json: Option<&[u8]>,
 ) -> Option<Result<String, String>> {
-    if path.split('?').next() != Some("/settings") {
+    // Go /config returns GetGlobalConfig; Dashboard reads its security flags
+    // before checking SHOW GRANTS. Both GET routes expose this node's config.
+    if !matches!(path.split('?').next(), Some("/settings" | "/config")) {
         return None;
     }
     let method = request.split_whitespace().next().unwrap_or_default();

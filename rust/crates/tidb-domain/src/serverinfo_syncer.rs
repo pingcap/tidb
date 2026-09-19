@@ -273,6 +273,21 @@ impl Syncer {
         etcd.lease_keep_alive_once(lease)
     }
 
+    /// Renews the independent topology session, as Go concurrency.Session does.
+    pub fn keep_topology_alive_once(&self) -> Result<(), String> {
+        let Some(etcd) = self.etcd.as_ref() else {
+            return Ok(());
+        };
+        let lease = *self
+            .topology_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match lease {
+            Some(lease) => etcd.lease_keep_alive_once(lease),
+            None => Ok(()),
+        }
+    }
+
     /// Go `UpdateServerLabel`: merge the labels into the dynamic info and
     /// republish, but ONLY when something actually changed -- an
     /// unchanged label set writes nothing, and the local info is updated
@@ -642,7 +657,9 @@ impl SyncerRunner {
 
         let keepalive_syncer = Arc::clone(&syncer);
         let keepalive_stop = Arc::clone(&stop);
-        let keep_alive = intervals.keep_alive;
+        let keep_alive = intervals
+            .keep_alive
+            .min(std::time::Duration::from_secs(TOPOLOGY_SESSION_TTL / 3));
         threads.push(
             std::thread::Builder::new()
                 .name("server-info-syncer".to_owned())
@@ -651,6 +668,9 @@ impl SyncerRunner {
                         if keepalive_syncer.keep_alive_once().is_err() {
                             // The lease is gone: Go's `Done` fired.
                             let _ = keepalive_syncer.restart();
+                        }
+                        if keepalive_syncer.keep_topology_alive_once().is_err() {
+                            let _ = keepalive_syncer.restart_topology();
                         }
                     }
                 })
@@ -1122,7 +1142,11 @@ mod tests {
             !etcd.keepalives.lock().unwrap().is_empty(),
             "the server-info lease is kept alive"
         );
-        let (later_ttl, _) = etcd.value("/topology/tidb/10.0.0.1:4000/ttl").unwrap();
+        let (later_ttl, topology_lease) = etcd.value("/topology/tidb/10.0.0.1:4000/ttl").unwrap();
+        assert!(
+            etcd.keepalives.lock().unwrap().contains(&topology_lease),
+            "Go topology concurrency.Session renews its lease independently of TTL key writes"
+        );
         assert_ne!(first_ttl, later_ttl, "the topology stamp is refreshed");
 
         drop(runner);
