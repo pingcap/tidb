@@ -1072,9 +1072,8 @@ pub fn build_prepared_point_get_plan(
         let offsets = table.common_handle_offsets();
         // A composite common handle encodes its prefix columns in order; the
         // walker below pins each of them exactly once, so any width works.
-        if offsets.is_empty() {
-            return None;
-        }
+        // A nonclustered table has no SQL-visible handle columns, but its
+        // unique indexes can still supply a PointGet below, as in Go.
         (None, offsets.to_vec())
     };
     let columns = entry.column_list();
@@ -1154,13 +1153,10 @@ pub fn build_prepared_point_get_plan(
         Some(offset) => vec![offset],
         None => common_handle_offsets.to_vec(),
     };
-    if handle_offsets.is_empty() {
-        return None;
-    }
     // Go tries the full primary/common handle first, then the first public
     // non-prefix UNIQUE index whose complete key is pinned. A partial key is
     // an ordinary range plan and belongs to the general cached physical tree.
-    let (target, pin_offsets) = if handle_offsets
+    let (target, pin_offsets) = if !handle_offsets.is_empty() && handle_offsets
         .iter()
         .all(|offset| column_pinned_once(*offset, &resolved))
     {
