@@ -82,7 +82,13 @@ func TestTimeoutRecv(t *testing.T) {
 
 	// Timeout Not At First
 	{
+		const stalledAfterResponses = 6
+		successfulResponseDelay := TimeoutOneResponse / 4
+		// A first refresh alone would expire before this many successful responses.
+		require.Greater(t, successfulResponseDelay*time.Duration(stalledAfterResponses-1), TimeoutOneResponse)
+
 		count := 0
+		stalledRecvStarted := false
 		timeoutObserved := make(chan bool, 1)
 		err := startBackup(ctx, 0, NewResourceMemoryLimiter(100), backuppb.BackupRequest{}, &MockBackupClient{
 			recvFunc: func(ctx context.Context) (*backuppb.BackupResponse, error) {
@@ -90,17 +96,19 @@ func TestTimeoutRecv(t *testing.T) {
 					timeoutObserved <- true
 					return nil, err
 				}
-				if count == 15 {
-					time.Sleep(time.Second)
+				if count == stalledAfterResponses {
+					stalledRecvStarted = true
+					time.Sleep(TimeoutOneResponse + successfulResponseDelay)
 					return nil, recordTimeoutErr(ctx, timeoutObserved)
 				}
 				count += 1
-				time.Sleep(time.Millisecond * 80)
+				time.Sleep(successfulResponseDelay)
 				return &backuppb.BackupResponse{}, nil
 			},
-		}, 1, make(chan *ResponseAndStore, 15))
+		}, 1, make(chan *ResponseAndStore, stalledAfterResponses))
 		require.Error(t, err)
-		require.Equal(t, count, 15)
+		require.True(t, stalledRecvStarted)
+		require.Equal(t, stalledAfterResponses, count)
 		require.True(t, <-timeoutObserved)
 	}
 }
