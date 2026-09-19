@@ -1559,6 +1559,12 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.resetPhaseDurations()
 
 	a.inheritContextFromExecuteStmt()
+	// Materialized CTE rows belong to the failed attempt's snapshot. Reusing
+	// them after advancing the read timestamp can mix old and new row values.
+	if err = resetCTEStorageMap(a.Ctx); err != nil {
+		return nil, err
+	}
+	a.Ctx.GetSessionVars().StmtCtx.CTEStorageMap = make(map[int]*CTEStorages)
 	e, err := a.buildExecutor(ctx)
 	if err != nil {
 		return nil, err
