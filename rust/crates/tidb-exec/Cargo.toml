@@ -89,3 +89,10 @@ path = "tests/result_schema_projection_source.rs"
 [[test]]
 name = "result_schema_source"
 path = "tests/result_schema_source.rs"
+
+# Keep the incremental catalog reload regressions independently runnable, so
+# they are not blocked by an unrelated compile failure elsewhere in the
+# aggregate "all" binary.
+[[test]]
+name = "catalog_reload_source"
+path = "tests/catalog_reload_source.rs"

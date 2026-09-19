@@ -21,6 +21,8 @@
 //! `pkg/infoschema/issyncer/loader.go` `tryLoadSchemaDiffs`, and
 //! `pkg/infoschema/builder.go` `ApplyDiff`.
 
+// aggregate-test: standalone
+
 use std::collections::BTreeMap;
 
 use tidb_exec::catalog_reload::{
@@ -81,6 +83,20 @@ fn go_table(id: i64, original: &str, lower: &str) -> String {
 {{"id":1,"name":{{"O":"id","L":"id"}},"offset":0,"type":{{"Tp":8,"Flag":3,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false}},"state":5,"version":2}},
 {{"id":2,"name":{{"O":"balance","L":"balance"}},"offset":1,"type":{{"Tp":8,"Flag":1,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false}},"state":5,"version":2}}
 ],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":2,"version":5}}"#
+    )
+}
+
+/// The same table shape as [`go_table`] plus one more `BIGINT` column, as if
+/// an `ADD COLUMN`-shaped DDL had just committed and this is the fresh
+/// `TableInfo` a reload reads back.
+fn go_table_with_extra_column(id: i64, original: &str, lower: &str, col_id: i64, col_name: &str) -> String {
+    let extra = format!(
+        r#",{{"id":{col_id},"name":{{"O":"{col_name}","L":"{col_name}"}},"offset":2,"type":{{"Tp":8,"Flag":1,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false}},"state":5,"version":2}}"#
+    );
+    go_table(id, original, lower).replacen(
+        "],\"index_info\"",
+        &format!("{extra}],\"index_info\""),
+        1,
     )
 }
 
@@ -294,9 +310,13 @@ fn a_create_tables_diff_panics_on_a_nil_affected_option() {
 fn an_unsupported_diff_type_forces_a_full_reload_rather_than_a_partial_guess() {
     let (mut snapshot, catalog) = started_cluster();
     // A second table exists in the store but no diff this tier can apply says
-    // so; only the full load can find it.
+    // so; only the full load can find it. Renaming a table changes its
+    // schema-map key (its name) rather than swapping its `TableInfo` in
+    // place, so Go's own `getTableIDs` gives it a distinct old/new ID pair
+    // instead of the same-ID case this tier's generic tier handles --
+    // deliberately still refused here.
     snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
-    snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_ADD_COLUMN, 3, 77));
+    snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_RENAME_TABLE, 3, 77));
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
     let ReloadedCatalog::Full { catalog: next, reason } = reloaded else {
@@ -306,11 +326,106 @@ fn an_unsupported_diff_type_forces_a_full_reload_rather_than_a_partial_guess() {
         reason,
         FullReloadReason::UnsupportedAction {
             version: 101,
-            action: ActionType::ACTION_ADD_COLUMN,
+            action: ActionType::ACTION_RENAME_TABLE,
         }
     );
     assert_eq!(next.schema_version, 101);
     assert_eq!(next.databases[0].tables.len(), 2);
+}
+
+/// Go `applyDefaultAction` -> `applyTableUpdate` -> `getTableIDs`'s `default:`
+/// case (`oldTableID = newTableID = diff.TableID`): the dominant shape of an
+/// ordinary `ALTER TABLE`. Exercises a handful of the action types this tier
+/// now covers, each rebuilding only the one table the diff names.
+#[test]
+fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
+    for action in [
+        ActionType::ACTION_ADD_COLUMN,
+        ActionType::ACTION_DROP_COLUMN,
+        ActionType::ACTION_MODIFY_COLUMN,
+        ActionType::ACTION_ADD_INDEX,
+        ActionType::ACTION_DROP_INDEX,
+        ActionType::ACTION_SET_DEFAULT_VALUE,
+        ActionType::ACTION_MODIFY_TABLE_COMMENT,
+        ActionType::ACTION_REBASE_AUTO_ID,
+        ActionType::ACTION_ADD_FOREIGN_KEY,
+        ActionType::ACTION_ALTER_TTLINFO,
+    ] {
+        let (mut snapshot, catalog) = started_cluster();
+        // Seed a second table first (its own diff, its own reload), so the
+        // action under test can be applied against a catalog that already
+        // has something to leave untouched.
+        snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+        snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_TABLE, 3, 78));
+        let catalog = reload_cluster_catalog(&mut snapshot, &catalog)
+            .expect("seed reload runs")
+            .catalog()
+            .expect("seed catalog published")
+            .clone();
+        assert_eq!(catalog.databases[0].tables.len(), 2);
+
+        // A second, untouched table exists purely to prove the reload did not
+        // fall back to walking the whole catalog: an incremental reload never
+        // reads it, so if the fallback fires, `applied`/table count below
+        // would still look identical -- the real proof is `ReloadedCatalog`
+        // being `Diffs`, not `Full`, which only the fixed tier produces for
+        // these action types.
+        snapshot.put(
+            key::table_kv_key(3, 77),
+            go_table_with_extra_column(77, "Rows", "rows", 3, "note"),
+        );
+        snapshot.commit_diff(102, &diff_json(102, action, 3, 77));
+
+        let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+        let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+            panic!("expected an incremental diff reload for {action}, got {reloaded:?}");
+        };
+        assert_eq!(applied, 1, "action {action}");
+        assert_eq!(next.schema_version, 102, "action {action}");
+        let (_, table) = next
+            .find_table("campaign", "rows")
+            .unwrap_or_else(|| panic!("table 'rows' survives {action}"));
+        assert_eq!(table.cols().len(), 3, "action {action} picks up the new column");
+        // Table 78 was never named by this diff and is untouched, and so is
+        // the count -- the diff reloaded table 77 in place, it did not walk
+        // the whole catalog; the catalog the node was already serving is
+        // untouched too.
+        assert_eq!(next.databases[0].tables.len(), 2, "action {action}");
+        let (_, notes) = next.find_table("campaign", "notes").expect("table 78 survives untouched");
+        assert_eq!(notes.cols().len(), 2, "action {action} does not touch table 78");
+        assert_eq!(catalog.databases[0].tables.len(), 2, "action {action}");
+    }
+}
+
+#[test]
+fn a_common_alter_table_diff_also_reloads_every_affected_table() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+    snapshot.put(
+        key::table_kv_key(3, 77),
+        go_table_with_extra_column(77, "Rows", "rows", 3, "note"),
+    );
+    snapshot.put(
+        key::table_kv_key(3, 78),
+        go_table_with_extra_column(78, "Notes", "notes", 3, "note"),
+    );
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":3,"table_id":77,"old_table_id":0,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":[{{"schema_id":3,"table_id":78,"old_table_id":0,"old_schema_id":0}}]}}"#,
+            ActionType::ACTION_ADD_COLUMN.0
+        ),
+    );
+
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+        panic!("expected an incremental diff reload, got {reloaded:?}");
+    };
+    assert_eq!(applied, 1);
+    let (_, rows) = next.find_table("campaign", "rows").expect("primary table reloads");
+    assert_eq!(rows.cols().len(), 3);
+    let (_, notes) = next.find_table("campaign", "notes").expect("affected table reloads too");
+    assert_eq!(notes.cols().len(), 3);
 }
 
 #[test]

@@ -345,6 +345,65 @@ fn apply_schema_diff<S: MetaSnapshot>(
                 return Ok(Err(reason));
             }
         }
+        // Go `getTableIDs`'s `default:` case (`oldTableID = newTableID =
+        // diff.TableID`), reached through `ApplyDiff`'s own `default:` arm
+        // (`applyDefaultAction` -> `applyTableUpdate`) for every action type
+        // below: the table keeps its ID and its database, so re-reading its
+        // one `TableInfo` and swapping it in for the old copy is exactly what
+        // Go's `applyCreateTable` does for this case (`m.GetTable` then
+        // replace), modulo the in-memory caches (auto-ID allocators,
+        // placement bundles, masking-policy cache, `sortedTablesBuckets`)
+        // this simpler catalog does not keep at all -- there is nothing here
+        // for those Go side effects to go stale, so there is nothing to
+        // replicate for them. Excluded on purpose: anything that moves a
+        // table across schemas or changes its ID (`RENAME_TABLE(S)`,
+        // `CREATE_VIEW`, partition/placement/multi-schema-change actions,
+        // ...), which Go's `getTableIDs` and `dropTableForUpdate` special-case
+        // and this tier does not attempt to.
+        ActionType::ACTION_ADD_COLUMN
+        | ActionType::ACTION_DROP_COLUMN
+        | ActionType::ACTION_ADD_COLUMNS
+        | ActionType::ACTION_DROP_COLUMNS
+        | ActionType::ACTION_MODIFY_COLUMN
+        | ActionType::ACTION_ADD_INDEX
+        | ActionType::ACTION_DROP_INDEX
+        | ActionType::ACTION_RENAME_INDEX
+        | ActionType::ACTION_ALTER_INDEX_VISIBILITY
+        | ActionType::ACTION_ADD_PRIMARY_KEY
+        | ActionType::ACTION_DROP_PRIMARY_KEY
+        | ActionType::ACTION_SET_DEFAULT_VALUE
+        | ActionType::ACTION_MODIFY_TABLE_COMMENT
+        | ActionType::ACTION_MODIFY_TABLE_CHARSET_AND_COLLATE
+        | ActionType::ACTION_SHARD_ROW_ID
+        | ActionType::ACTION_REBASE_AUTO_ID
+        | ActionType::ACTION_REBASE_AUTO_RANDOM_BASE
+        | ActionType::ACTION_MODIFY_TABLE_AUTO_IDCACHE
+        | ActionType::ACTION_ADD_FOREIGN_KEY
+        | ActionType::ACTION_DROP_FOREIGN_KEY
+        | ActionType::ACTION_ADD_CHECK_CONSTRAINT
+        | ActionType::ACTION_DROP_CHECK_CONSTRAINT
+        | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
+        | ActionType::ACTION_LOCK_TABLE
+        | ActionType::ACTION_UNLOCK_TABLE
+        | ActionType::ACTION_REPAIR_TABLE
+        | ActionType::ACTION_SET_TI_FLASH_REPLICA
+        | ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS
+        | ActionType::ACTION_ALTER_TABLE_ATTRIBUTES
+        | ActionType::ACTION_ALTER_CACHE_TABLE
+        | ActionType::ACTION_ALTER_NO_CACHE_TABLE
+        | ActionType::ACTION_ALTER_TABLE_STATS_OPTIONS
+        | ActionType::ACTION_ALTER_TTLINFO
+        | ActionType::ACTION_ALTER_TTLREMOVE
+        | ActionType::ACTION_ADD_COLUMNAR_INDEX
+        | ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE
+        | ActionType::ACTION_ALTER_TABLE_MODE
+        | ActionType::ACTION_ALTER_TABLE_AFFINITY
+        | ActionType::ACTION_ALTER_TABLE_SOFT_DELETE_INFO
+        | ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY => {
+            if let Err(reason) = apply_table_update(snapshot, catalog, version, diff)? {
+                return Ok(Err(reason));
+            }
+        }
         action => return Ok(Err(FullReloadReason::UnsupportedAction { version, action })),
     }
     Ok(Ok(()))
@@ -386,6 +445,34 @@ fn create_table<S: MetaSnapshot>(
         .map_err(|error| ClusterCatalogError::Decode(format!("TableInfo {table_id}: {error}")))?;
     database.tables.retain(|existing| existing.id != table.id);
     database.tables.push(table);
+    Ok(Ok(()))
+}
+
+/// Go `applyTableUpdate`'s same-ID case: reload the diff's own table, then
+/// (Go `applyAffectedOpts`) do the same for every table an `AffectedOption`
+/// names, in case a covered action type's diff ever lists more than one
+/// table under a single schema version even though none of them changed ID
+/// (`ACTION_MULTI_SCHEMA_CHANGE` itself is not one of this tier's covered
+/// action types -- it stays on the `UnsupportedAction` path below).
+fn apply_table_update<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &mut ClusterCatalog,
+    version: i64,
+    diff: &SchemaDiff,
+) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+    if let Err(reason) = create_table(snapshot, catalog, version, diff.schema_id, diff.table_id)? {
+        return Ok(Err(reason));
+    }
+    for affected in diff.affected_options.iter_handles() {
+        let affected = affected.expect("nil affected option in schema diff");
+        let (schema_id, table_id) = {
+            let affected = affected.read();
+            (affected.schema_id, affected.table_id)
+        };
+        if let Err(reason) = create_table(snapshot, catalog, version, schema_id, table_id)? {
+            return Ok(Err(reason));
+        }
+    }
     Ok(Ok(()))
 }
 

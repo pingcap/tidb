@@ -1820,3 +1820,154 @@ Environment/tooling notes worth keeping for that follow-up:
   already exhausted (`Check ingest environment failed: no enough space`),
   independent of anything in this codebase. A real reproduction attempt
   should budget disk headroom for that.
+
+## task 66 fixed (the common-`ALTER TABLE` subset): a generic single-table
+## reload tier, matched line-for-line against Go's `getTableIDs` default case
+
+On rereading `rust/crates/tidb-exec/src/cluster_catalog.rs`, the "why this
+session did not implement the fix" reasoning above turned out to be
+overcautious: it worried about porting Go's auto-ID allocator reuse,
+placement-bundle invalidation, and masking-policy cache resets alongside the
+single-table reload, but `ClusterCatalog` doesn't cache any of those at all
+-- it is exactly `{schema_version, databases: Vec<{info, tables:
+Vec<TableInfo>}>}`, nothing else. There is no allocator cache, no bundle
+cache, no masking-policy cache to keep in sync, so there is nothing here for
+those Go-side effects to go stale. That leaves exactly one thing to port:
+the table re-read itself, which the existing `create_table` helper (already
+used by `ACTION_CREATE_TABLE`/`ACTION_CREATE_TABLES`/`ACTION_TRUNCATE_TABLE`)
+already implements correctly -- it retains every table but the diff's ID and
+pushes the freshly read one.
+
+The fix (`crates/tidb-exec/src/catalog_reload.rs`) adds one more match arm to
+`apply_schema_diff` for the exact set of action types where Go's own
+`getTableIDs` (`pkg/infoschema/builder.go:480`) falls to its `default:` case
+-- `oldTableID = newTableID = diff.TableID`, i.e. the table keeps its ID and
+its schema, so re-reading its one `TableInfo` and swapping it in is Go's
+entire `applyCreateTable` reduced to what this simpler catalog needs. The
+new `apply_table_update` helper does exactly that, then (Go
+`applyAffectedOpts`) repeats it for every table an `AffectedOption` names,
+matching the same recursive handling `ACTION_CREATE_TABLES` already used.
+
+Both switches were checked directly against Go source, not from memory, to
+pick the covered action types: every type in the list below is confirmed
+absent from both `ApplyDiff`'s own switch (`builder.go:72-113`, which would
+otherwise route it to a schema-level or multi-table handler before
+`applyDefaultAction` ever runs) and `getTableIDs`'s own switch
+(`builder.go:481-524`, whose non-default cases are exactly `CreateSequence`,
+`RecoverTable`, `CreateTable`, `DropTable`/`DropView`/`DropSequence`,
+`TruncateTable`, `CreateView`, `ExchangeTablePartition`,
+`AlterTablePartitioning`, `RemovePartitioning` -- everything else is the
+same-ID default). Covered: `ADD_COLUMN`, `DROP_COLUMN`, `ADD_COLUMNS`,
+`DROP_COLUMNS`, `MODIFY_COLUMN`, `ADD_INDEX`, `DROP_INDEX`, `RENAME_INDEX`,
+`ALTER_INDEX_VISIBILITY`, `ADD_PRIMARY_KEY`, `DROP_PRIMARY_KEY`,
+`SET_DEFAULT_VALUE`, `MODIFY_TABLE_COMMENT`,
+`MODIFY_TABLE_CHARSET_AND_COLLATE`, `SHARD_ROW_ID`, `REBASE_AUTO_ID`,
+`REBASE_AUTO_RANDOM_BASE`, `MODIFY_TABLE_AUTO_IDCACHE`, `ADD_FOREIGN_KEY`,
+`DROP_FOREIGN_KEY`, `ADD_CHECK_CONSTRAINT`, `DROP_CHECK_CONSTRAINT`,
+`ALTER_CHECK_CONSTRAINT`, `LOCK_TABLE`, `UNLOCK_TABLE`, `REPAIR_TABLE`,
+`SET_TI_FLASH_REPLICA`, `UPDATE_TI_FLASH_REPLICA_STATUS`,
+`ALTER_TABLE_ATTRIBUTES`, `ALTER_CACHE_TABLE`, `ALTER_NO_CACHE_TABLE`,
+`ALTER_TABLE_STATS_OPTIONS`, `ALTER_TTLINFO`, `ALTER_TTLREMOVE`,
+`ADD_COLUMNAR_INDEX`, `MODIFY_ENGINE_ATTRIBUTE`, `ALTER_TABLE_MODE`,
+`ALTER_TABLE_AFFINITY`, `ALTER_TABLE_SOFT_DELETE_INFO`,
+`ALTER_TABLE_SET_REGION_SPLIT_POLICY`.
+
+Deliberately still excluded, left on the `UnsupportedAction` (full-reload)
+path: `RENAME_TABLE`/`RENAME_TABLES` (Go's own `dropTableForUpdate` special-
+cases a schema-crossing rename to remove the stale entry from the *old*
+schema's map by name; this simpler catalog has no such by-name index to
+patch, and getting that one case wrong would silently leave a duplicate
+behind, so it stays on the always-correct fallback), everything
+partition-shaped (`ADD_TABLE_PARTITION` and the rest, deferred out of an
+abundance of caution even though `ADD_TABLE_PARTITION` itself is actually a
+same-ID default case too), `CREATE_VIEW`, `MULTI_SCHEMA_CHANGE`, and
+anything schema-level or placement/masking-policy-global (already routed
+elsewhere in Go's own outer switch and never reaching this tier regardless).
+
+Regression tests (`crates/tidb-exec/tests/catalog_reload_source.rs`, now a
+standalone `[[test]]` target -- see below):
+- `an_unsupported_diff_type_forces_a_full_reload_rather_than_a_partial_guess`
+  was repointed from `ADD_COLUMN` (now supported, so it no longer proves
+  what its name says) to `RENAME_TABLE`, confirmed still genuinely
+  unsupported.
+- `common_alter_table_diffs_reload_only_the_changed_table_incrementally`
+  exercises ten of the covered action types, each asserting the reload comes
+  back as `Diffs` (not `Full`), the named table picks up the change, and an
+  untouched sibling table survives unread.
+- `a_common_alter_table_diff_also_reloads_every_affected_table` exercises
+  the `AffectedOption` loop.
+- Verified fail-before/pass-after per `AGENTS.md`: reverted only the
+  source change (`git stash` on `catalog_reload.rs` alone, tests
+  unstashed) and confirmed both new tests fail against the pre-fix code
+  (one with the exact expected diagnostic, `expected an incremental diff
+  reload for add column, got Full { ... reason: UnsupportedAction { ...
+  action: ActionType(5) } }`), then restored the fix and confirmed both
+  pass.
+
+Also fixed in passing: `catalog_reload_source.rs` was never reachable by
+`cargo test` on its own -- it is aggregated into `tests/all.rs` by
+`scripts/aggregate-tests.rs`, but that aggregate binary does not currently
+compile (see below), so this file's tests could not run *at all* going into
+this session. Gave it its own `[[test]]` Cargo.toml entry plus the `//
+aggregate-test: standalone` marker the build script looks for, the same
+pattern the crate's five other standalone test files already use ("Keep
+the ... regressions independently runnable").
+
+**Unrelated pre-existing breakage found and NOT fixed here** (out of scope,
+flagged as a separate task instead): `cargo test -p tidb-exec --test all`
+fails to compile on this same `hparser-integration` HEAD, for reasons
+entirely unrelated to catalog reload -- `tests/hash_join_v2_source.rs` calls
+the `ProbeStage`/`ProbeWorkerEvent` APIs by their shape *before* commit
+`edd3f8d6` ("hash join v2 probe worker spins briefly before parking on its
+input", 2026-09-17) changed them, and was never updated to match (three call
+sites: a wrong-type/mutability argument to `ProbeStage::new`, an extra
+argument to `ProbeStage::next`, and two `match`es over `ProbeWorkerEvent`
+missing its two new variants). This blocks the whole aggregate test binary,
+not just that one file, for anyone who runs it -- confirmed via `git status`
+that nothing else was dirty when this was hit. Filed as a follow-up task
+rather than fixed here, since it is unrelated to task 66 and touches a
+different subsystem (hash join v2) this session was not otherwise working
+in.
+
+**Live verification** (fresh playground, Go on `:46000`, this session's
+release Rust binary on `:54000`, same 4839-table synthetic catalog grown
+the same way as above):
+- The Rust node's own event log shows zero `catalog_full_reload` events
+  across 1248 reloads during the schema-growth phase (previously every
+  `add column`-shaped version forced one).
+- Single-stream `ALTER TABLE ADD COLUMN` at 4839 tables: back down to
+  ~0.22s, matching the ~0.21s baseline this session measured at ~10 tables
+  before this fix existed (previously ~0.77-0.98s at 4839 tables, so the
+  catalog-size dependency is gone, not just reduced).
+- 20-way concurrent `ADD COLUMN`: wall 3.21s / max 2.70s (pre-fix) ->
+  wall 1.82s / max 1.30s (post-fix).
+- 150-way concurrent `ADD COLUMN`: wall 20.56s / max 16.95s (pre-fix) ->
+  wall 12.16s / max 7.40s (post-fix).
+- Correctness: `SHOW COLUMNS` from Go and Rust after several of these
+  incremental reloads compared byte-for-byte equal on three different
+  tables; a fresh `ALTER TABLE ADD COLUMN` + `INSERT` + `SELECT` round trip
+  through both nodes returned identical, correct rows.
+
+The remaining latency at high concurrency (150-way: 7.4s max) is not
+claimed to be root-caused further in this session -- it may be Go's own
+DDL job-queue throughput, or some other shared cost this tier does not
+touch; the point proven here is that the full-catalog-reload multiplier
+specifically is gone. This is also, as before, not a byte-for-byte
+reproduction of the original multi-minute stall (this session still did not
+run the actual sysbench cleanup+prepare loop against this cluster), so
+whether it fully explains job 7156/7155's 7-9 minute stalls remains
+unconfirmed; what is confirmed is that a large, real, measured contributor
+to DDL latency under concurrent load is now closed.
+
+Validated: `cargo test -p tidb-exec --test catalog_reload_source` (18/18
+passing, including the two new tests, fail-before/pass-after confirmed);
+`cargo fmt`/`cargo clippy` clean on every touched line (this environment's
+toolchain disagrees with the checked-in formatting of many *untouched*
+files across the crate, confirmed pre-existing and unrelated by checking
+files this session never edited, so that drift was left alone rather than
+used as an excuse to reformat unrelated code). Task 66 stays open: the
+common `ALTER TABLE` subset above is fixed and live-verified, but
+`RENAME_TABLE`/`RENAME_TABLES`, partition-shaped actions, and
+`MULTI_SCHEMA_CHANGE` still force a full reload, and the original
+multi-minute stall was not reproduced byte-for-byte to confirm this closes
+100% of it.
