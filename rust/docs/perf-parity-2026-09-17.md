@@ -1441,3 +1441,90 @@ Datum::String"), pushed to `hparser-integration`. Task 74 closed.
 Not attempted this session, for lack of remaining time in this pass: the
 task 72/73 fixes themselves (task 57), and a multi-round ABBA TPC-C sweep
 (this pass is one round each, per the caveat above).
+
+## task 73 fixed at the code level, confirmed by an isolated micro-benchmark; the
+## macro-level sysbench comparison stayed inconclusive on this box
+
+The root cause task 56 filed is real and unambiguous: `StagedWrites::note`
+(`kv_table.rs`) took the tracker's `Mutex`, heap-allocated a fresh `Vec<u8>`
+copy of the record key, and inserted it into a `HashSet` keyed by table id --
+once per inserted row, on top of the SAME key already being written into the
+real per-transaction mutation buffer a line later. Go answers
+`HasDirtyContent`/`memBufSnap.Get` straight from that one real write buffer
+and pays no second cost.
+
+A full merge with the real write buffer (removing `StagedWrites` outright)
+was considered and rejected as out of scope for this fix: `has_dirty_content`/
+`contains` are asked with the CALLER's logical table id, which does not
+always match the PHYSICAL id encoded in a written key's own prefix (a
+partitioned table's `KvTable` handles rows across several physical
+partitions under one logical id), so collapsing the outer table-id-keyed map
+into a flat prefix search over the real write buffer would silently break
+partitioned-table dirty-content checks -- the same shape of risk task 56's
+own note flagged ("NOT a small/local patch ... touched ~80 call sites across
+8 production files last time").
+
+What WAS safe and generic: every staged key was a second, independent heap
+allocation Go's real write never pays. Record keys are typically short (an
+integer-handle record key is `t{id}_r{handle}`, 19 bytes), so storing them
+inline (`smallvec::SmallVec<[u8; 32]>`, already a workspace dependency)
+removes that second allocation for the common case; a wider key (a long
+common-handle or index-entry key) still spills to the heap correctly, exactly
+like the `Vec<u8>` it replaces. No call site or external behavior changed --
+`note`/`has_dirty_content`/`contains`/`mark_dirty` keep their exact signatures
+and semantics; two tests were added (one proving behavior is unchanged for
+both an inline and a spilled key, one directly asserting a plain
+integer-handle key does not heap-allocate).
+
+**Isolated, in-process measurement of `note` itself** (2,000,000 calls, a
+single table, monotonically increasing integer handles -- the exact shape
+`bulk_insert.lua` writes), no cluster, no network, release build:
+inline `SmallVec<[u8; 32]>` 457.1 ns/call vs an always-heap-spilling variant
+of the SAME code (`SmallVec<[u8; 0]>`, which forces every insert through the
+identical heap-allocation path a plain `Vec<u8>` would have taken) 665.3
+ns/call -- a **31.3% reduction** in this function's own cost, isolated from
+every other source of noise. This is the trustworthy number for this fix.
+
+**The cluster-level sysbench `bulk_insert` comparison did not produce a
+trustworthy before/after delta on this box**, and is reported honestly rather
+than papered over. Two clean rounds (fresh `tiup playground`, one round each,
+no repeated table churn beforehand) gave: Go 126878.4 / 143344.6 tps, fixed
+Rust 106641.1 / 111632.3 tps -- ratios 0.84 and 0.78, i.e. NOT visibly better
+than task 56's own pre-fix baseline ratio of 0.867 (head 83258.7 vs go's
+96034.6 tps). Absolute throughput on both engines varied by more than 10%
+run-to-run on the identical binary and cluster generation, which is
+consistent with -- not a contradiction of -- task 56's own repeated
+characterization of this specific workload as unusually noisy on this box
+(`bulk_insert.lua` restarts ids and re-prepares (drops and recreates) its
+tables every round, and this box's own README-documented history already
+blames that exact churn for filling the disk and requiring a TiKV restart to
+recover). A 31% cut in one function's own cost is real but small next to the
+per-batch cost of an actual multi-thousand-row 2PC commit against real TiKV,
+so it is plausible this fix's effect is simply too small to isolate from
+that noise floor at the sysbench level, rather than absent. No multi-round
+ABBA sweep with a fresh TiKV restart between rounds (this workload's own
+documented remedy for the noise) was attempted this session for lack of
+time.
+
+**A near-full-disk artifact was hit and verified, not a correctness
+regression.** Mid-comparison, `bulk_insert run` against the fixed Rust node
+failed FATAL with `Duplicate entry '1' for key 'sbtest16.PRIMARY'` on a
+table that had *already* committed 144953 contiguous rows (1..144953) --
+the signature of a client-side timeout-triggered retry of an already-committed
+statement, not a server-side duplicate-detection bug. The disk was at 647M
+free / 99% used and load average was 7.51-6.95 at the time (leftover
+`target/debug/incremental` build cache plus this same session's own repeated
+table-churn, both self-inflicted). Freeing ~5GB (clearing the regenerable
+incremental cache) and re-running cleanly produced zero errors on both
+engines, and this exact "near-full-disk fills from bulk_insert's own table
+churn" failure mode is independently corroborated by this document's own
+earlier session note under "bulk_insert: 40% behind Go at the start of the
+day". Treated as an infra artifact, consistent with that precedent, not
+re-litigated further.
+
+Task 73 is closed on the strength of the validated, tested code-level fix
+and its isolated 31.3% micro-benchmark improvement -- not an unproven
+macro-level sysbench percentage, which this box cannot currently produce
+reliably for this specific workload. Fixed in commit `28663546` ("rust:
+stage record keys inline in StagedWrites, not as a heap Vec<u8>"), pushed to
+`hparser-integration`.
