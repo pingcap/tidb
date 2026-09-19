@@ -1783,12 +1783,13 @@ impl Session {
         // Go hands every statement that is not continuing an open transaction
         // a FRESH membuffer, so `session.HasDirtyContent` answers false for
         // every table at this point -- and `BEGIN` therefore starts from an
-        // empty one. A transaction here is a private catalog copy instead, so
-        // the staged-write marks have to be told where that boundary is; this
-        // is the only door a statement arrives through, so it is the only
-        // place that has to say. See `Catalog::clear_dirty_content`.
+        // empty one. This tier's `staged_writes` handle is that membuffer:
+        // replacing it with a fresh, empty one is the O(1) equivalent of Go
+        // discarding its old one, no catalog walk involved. This is the only
+        // door a statement arrives through, so it is the only place that has
+        // to say. See [`Session::staged_writes`]'s own doc.
         if !self.in_transaction() {
-            self.lock_catalog()?.clear_dirty_content();
+            self.staged_writes = std::sync::Arc::default();
             // The same boundary is where a GLOBAL temporary table empties.
             // Its rows live in Go's `TxnCtx.TemporaryTables`, which is built
             // fresh for each transaction and whose keys `temporaryTableKV

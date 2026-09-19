@@ -330,6 +330,9 @@ pub struct StmtContextSessionState {
     pub last_insert_id: Arc<Mutex<Option<u64>>>,
     /// Live transaction timestamp authority.
     pub current_tso: CurrentTso,
+    /// The current transaction's (or, in autocommit, current statement's)
+    /// staged-write tracker. See [`StmtContextData::staged_writes`].
+    pub staged_writes: Arc<crate::kv_table::StagedWrites>,
     /// Retry ID history retained across attempts.
     pub retry_auto_ids: Arc<Mutex<RetryAutoIds>>,
     /// Session row-ID shard generator.
@@ -358,6 +361,7 @@ impl Default for StmtContextSessionState {
             breakpoint_notify_func: None,
             last_insert_id: Arc::default(),
             current_tso: CurrentTso::default(),
+            staged_writes: Arc::default(),
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
             planned_apply: Arc::default(),
@@ -550,6 +554,13 @@ pub struct StmtContextData {
     /// snapshots, this handle may be published after the context is built
     /// when an autocommit statement performs its first storage read.
     current_tso: CurrentTso,
+    /// Go `txn.GetMemBuffer()`, narrowed to this tier's staged-write tracking
+    /// (see [`crate::kv_table::StagedWrites`]). Shared by every statement of
+    /// the CURRENT transaction (or, in autocommit, just this one statement),
+    /// so every write and every dirty-content read sees the same answer
+    /// without a catalog-wide walk to reset it: a fresh transaction gets a
+    /// fresh, empty handle here, exactly as Go's fresh membuffer is empty.
+    staged_writes: Arc<crate::kv_table::StagedWrites>,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Arc<AtomicU64>,
@@ -1729,6 +1740,7 @@ impl StmtContext {
             last_found_rows: None,
             client_found_rows: false,
             current_tso: session.current_tso,
+            staged_writes: session.staged_writes,
             given_insert_id: Arc::default(),
             retry_auto_ids: session.retry_auto_ids,
             row_id_shards: session.row_id_shards,
@@ -3336,6 +3348,35 @@ impl StmtContext {
     pub fn with_current_tso(mut self, current_tso: CurrentTso) -> Self {
         self.current_tso = current_tso;
         self
+    }
+
+    /// Replaces the staged-write tracker with a fresh, empty one -- the
+    /// state a new autocommit statement (or a freshly opened transaction)
+    /// starts with. Test fixtures that build rows and then run a query as if
+    /// no statement boundary had passed use this in place of the old
+    /// `Catalog::clear_dirty_content`, which cleared marks stored on the
+    /// catalog itself; this tier's marks live on the context instead, so
+    /// there is nothing on the catalog left to clear.
+    #[must_use]
+    pub fn with_fresh_staged_writes(mut self) -> Self {
+        self.staged_writes = Arc::default();
+        self
+    }
+
+    /// The current transaction's (or, in autocommit, current statement's)
+    /// staged-write tracker, for [`crate::kv_table::KvTable::has_dirty_content`]
+    /// and [`crate::kv_table::KvTable::record_key_is_staged`].
+    #[must_use]
+    pub fn staged_writes(&self) -> &crate::kv_table::StagedWrites {
+        &self.staged_writes
+    }
+
+    /// The shared handle behind [`Self::staged_writes`], for a coprocessor
+    /// context ([`crate::remote_scan::PushdownStatementContext`]) built once
+    /// per statement and carried by executors that outlive this borrow.
+    #[must_use]
+    pub fn staged_writes_handle(&self) -> Arc<crate::kv_table::StagedWrites> {
+        Arc::clone(&self.staged_writes)
     }
 
     /// Go `StmtCtx.InsertID`: the explicit non-zero value a row GAVE the

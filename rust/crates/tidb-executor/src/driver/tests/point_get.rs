@@ -1153,7 +1153,6 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
         &crate::StmtContext::for_query(),
     )
     .unwrap();
-    catalog.clear_dirty_content();
     let stmt =
         tidb_parser::parse("SELECT * FROM ycsb_scan WHERE id >= 'user-0002' LIMIT 1").unwrap();
     let select = match &stmt {
@@ -2353,7 +2352,7 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
         ],
         &ctx,
     );
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
 
     let sql = "SELECT c_balance, c_first, c_middle, c_id FROM customer \
         IGNORE INDEX(idx_customer) \

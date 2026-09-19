@@ -628,32 +628,6 @@ pub struct KvTable {
     /// Writes ignore it: a row's partition is a function of the ROW (Go's
     /// `locatePartition`), never of the statement's restriction.
     read_partitions: Option<Vec<i64>>,
-    /// Go `session.HasDirtyContent(tid)` (`pkg/session/txn.go`): whether the
-    /// transaction this table copy belongs to has STAGED a row write to it.
-    ///
-    /// Go answers the question by seeking the table's key prefix in the
-    /// transaction's membuffer -- `it.Valid() && bytes.HasPrefix(it.Key(),
-    /// seekKey)`. This tier stages a transaction as a private catalog COPY
-    /// rather than a membuffer, so the staged keys are indistinguishable from
-    /// the committed ones once written; the flag is what keeps the question
-    /// answerable. It is set by the three row writes below, and cleared for
-    /// every statement that does not continue an open transaction
-    /// (`tidb_session`'s `execute_statement`) -- which is precisely when Go's
-    /// membuffer is empty.
-    ///
-    /// Its ONE reader is the planner-side gate Go spells
-    /// `tableHasDirtyContent` (`pkg/planner/core/util.go:156`), which decides
-    /// whether a `UnionScan` sits above the reader; see
-    /// [`crate::access_path::IndexRangeSourceExec`] for the row ORDER that
-    /// operator imposes.
-    dirty_content: DirtyMark,
-    /// The record keys this table's open transaction staged -- Go
-    /// `txn.GetMemBuffer()`'s key set, narrowed to this tier. `DirtyMark`
-    /// answers Go's `HasDirtyContent`; this answers Go's
-    /// `memBufSnap.Get(checkKey)` (`union_scan.go:272`), the per-key probe
-    /// that drops a snapshot row the transaction has written so the staged
-    /// copy replaces it. Cleared with the mark at the transaction boundary.
-    staged_record_keys: StagedRecordKeys,
 }
 
 /// Go PointGetExecutor keeps immutable table metadata and a separate snapshot.
@@ -843,79 +817,71 @@ fn read_stored_record(
     Ok(None)
 }
 
-/// The staged-write mark, interior-mutable ON PURPOSE: a staged-undo image
-/// walks SHARED `Arc<TableEntry>` handles to reset it without detaching
-/// entries. A write DETACHES its entry (`Arc::make_mut`) before setting the
-/// flag, so another transaction cannot reset that writer's private mark.
-/// Committed snapshots may retain marks until a fresh transaction clears them.
+/// Go `txn.GetMemBuffer()`: the ONE membuffer a transaction owns, narrowed to
+/// the record keys row writes stage, keyed by the logical table id they
+/// belong to.
 ///
-/// `Clone` snapshots the VALUE rather than sharing the cell, so a detached
-/// copy's future flips never leak back into the table it was cloned from.
+/// This does NOT live on `KvTable`. Go's `HasDirtyContent`/`memBufSnap.Get`
+/// answer per table by seeking ONE transaction-scoped structure, never by
+/// storing a flag on the table itself -- a fresh transaction gets a fresh,
+/// EMPTY membuffer and the old one is simply dropped, so there is nothing to
+/// walk or reset at a transaction boundary, ever, regardless of how many
+/// tables the catalog holds. Embedding the equivalent state on `KvTable`
+/// instead (an earlier shape of this type) forced exactly that walk: every
+/// autocommit statement and `BEGIN` had to visit every kv table in the whole
+/// catalog to reset a mark a committed table might still be carrying from
+/// its previous writer. See `StmtContext::staged_writes` for how one shared
+/// handle reaches every write and read site for the CURRENT transaction (or,
+/// in autocommit, the current statement) without threading a new parameter
+/// through the whole executor.
 #[derive(Debug, Default)]
-struct DirtyMark(std::sync::atomic::AtomicBool);
+pub struct StagedWrites(
+    std::sync::Mutex<std::collections::HashMap<i64, std::collections::HashSet<Vec<u8>>>>,
+);
 
-impl Clone for DirtyMark {
-    fn clone(&self) -> Self {
-        DirtyMark(std::sync::atomic::AtomicBool::new(
-            self.0.load(std::sync::atomic::Ordering::Relaxed),
-        ))
-    }
-}
-
-/// Go `txn.GetMemBuffer()`'s key set, narrowed to the record keys row writes
-/// stage. Shared across the `Arc`-shared table clones a lookup worker owns,
-/// hence the mutex; writes are single inserts/updates/deletes, so contention
-/// is never a factor.
-#[derive(Default)]
-struct StagedRecordKeys(std::sync::Mutex<std::collections::HashSet<Vec<u8>>>);
-
-impl std::fmt::Debug for StagedRecordKeys {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("StagedRecordKeys")
-            .field(
-                "keys",
-                &self
-                    .0
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .len(),
-            )
-            .finish()
-    }
-}
-
-impl StagedRecordKeys {
-    fn note(&self, key: &[u8]) {
+impl StagedWrites {
+    /// Records that `table_id` staged a row write under `key` -- Go
+    /// `membuf.Set(key)`.
+    pub fn note(&self, table_id: i64, key: &[u8]) {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(table_id)
+            .or_default()
             .insert(key.to_vec());
     }
 
-    fn contains(&self, key: &[u8]) -> bool {
+    /// Marks `table_id` dirty with no specific key -- DDL that rewrites a
+    /// table's rows or partition layout in place (a partition rehash,
+    /// COALESCE/ADD/DROP PARTITION) rather than staging individual record
+    /// keys.
+    pub fn mark_dirty(&self, table_id: i64) {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(key)
+            .entry(table_id)
+            .or_default();
     }
 
-    fn clear(&self) {
+    /// Go `session.HasDirtyContent(tid)`: has this transaction staged
+    /// anything under `table_id`.
+    #[must_use]
+    pub fn has_dirty_content(&self, table_id: i64) -> bool {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
+            .contains_key(&table_id)
     }
-}
 
-impl Clone for StagedRecordKeys {
-    fn clone(&self) -> Self {
-        Self(std::sync::Mutex::new(
-            self.0
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone(),
-        ))
+    /// Go `memBufSnap.Get(checkKey)`: does `table_id`'s staged set hold
+    /// exactly `key`.
+    #[must_use]
+    pub fn contains(&self, table_id: i64, key: &[u8]) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&table_id)
+            .is_some_and(|keys| keys.contains(key))
     }
 }
 
@@ -1153,8 +1119,6 @@ impl KvTable {
             partition: None,
             placement_policy: None,
             read_partitions: None,
-            dirty_content: DirtyMark::default(),
-            staged_record_keys: StagedRecordKeys::default(),
         }
     }
 
@@ -1224,39 +1188,33 @@ impl KvTable {
         self.all_columns_public
     }
 
-    /// Go `session.HasDirtyContent(tid)`: whether the open transaction has
-    /// staged a row write to this table. See the field's own doc.
+    /// Go `session.HasDirtyContent(tid)`: whether the CURRENT transaction (or,
+    /// in autocommit, the current statement) has staged a row write to this
+    /// table. `staged` is that transaction's shared [`StagedWrites`] -- see
+    /// [`StmtContext::staged_writes`](crate::StmtContext::staged_writes).
+    ///
+    /// Its readers are the planner-side gate Go spells `tableHasDirtyContent`
+    /// (`pkg/planner/core/util.go:156`), which decides whether a `UnionScan`
+    /// sits above the reader; see [`crate::access_path::IndexRangeSourceExec`]
+    /// for the row ORDER that operator imposes.
     #[must_use]
-    pub fn has_dirty_content(&self) -> bool {
-        self.dirty_content
-            .0
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Forgets the staged writes: the state Go's membuffer is in at the start
-    /// of a transaction. See [`crate::driver::Catalog::clear_dirty_content`].
-    pub fn clear_dirty_content(&self) {
-        self.dirty_content
-            .0
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        self.staged_record_keys.clear();
-    }
-
-    /// Records one staged row write's record key -- Go `membuf.Set(key)`.
-    /// `key` is the full encoded record key, physical table id included, so a
-    /// partitioned write stages under the partition's own prefix.
-    pub fn note_staged_record_key(&self, key: &[u8]) {
-        self.staged_record_keys.note(key);
+    pub fn has_dirty_content(&self, staged: &StagedWrites) -> bool {
+        staged.has_dirty_content(self.table_id)
     }
 
     /// Go `memBufSnap.Get(checkKey)`'s answer for one row handle: does the
-    /// open transaction hold a staged write under this record key? A staged
-    /// DELETE stages a tombstone and still answers true, exactly as Go's
-    /// probe succeeds on the tombstone value.
+    /// current transaction hold a staged write under this record key? A
+    /// staged DELETE stages a tombstone and still answers true, exactly as
+    /// Go's probe succeeds on the tombstone value.
     #[must_use]
-    pub fn record_key_is_staged(&self, physical_id: i64, handle: &TableHandle) -> bool {
+    pub fn record_key_is_staged(
+        &self,
+        staged: &StagedWrites,
+        physical_id: i64,
+        handle: &TableHandle,
+    ) -> bool {
         let key = encode_row_key_with_handle(physical_id, &handle.record_handle());
-        self.staged_record_keys.contains(&key)
+        staged.contains(self.table_id, &key)
     }
 
     /// Builds the table `CREATE TABLE ... LIKE self` creates: Go
@@ -3459,13 +3417,14 @@ impl KvTable {
         // Go writes the row first, then its index entries; a duplicate on a
         // unique index aborts the statement.
         self.write_index_entries(row, &handle, physical_id, &zone, lazy_dup_check)?;
-        self.staged_record_keys.note(key.as_bytes());
+        if let Some(stats_ctx) = stats_ctx {
+            stats_ctx
+                .staged_writes()
+                .note(self.table_id, key.as_bytes());
+        }
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        self.dirty_content
-            .0
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx.update_table_delta(physical_id, 1, 1);
         }
@@ -3820,18 +3779,23 @@ impl KvTable {
             &new_handle.record_handle(),
         ));
         if let Some(old_key) = old_key.filter(|old_key| *old_key != key) {
-            self.staged_record_keys.note(old_key.as_bytes());
+            if let Some(stats_ctx) = stats_ctx {
+                stats_ctx
+                    .staged_writes()
+                    .note(self.table_id, old_key.as_bytes());
+            }
             self.store
                 .delete(old_key)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
-        self.staged_record_keys.note(key.as_bytes());
+        if let Some(stats_ctx) = stats_ctx {
+            stats_ctx
+                .staged_writes()
+                .note(self.table_id, key.as_bytes());
+        }
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        self.dirty_content
-            .0
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(stats_ctx) = stats_ctx {
             if old_physical_id == new_physical_id {
                 stats_ctx.update_table_delta(old_physical_id, 0, 1);
@@ -3877,6 +3841,16 @@ impl KvTable {
         old_row: &[Datum],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<(), KvTableError> {
+        self.delete_row_with_old_in(handle, old_row, ctx, None)
+    }
+
+    fn delete_row_with_old_in(
+        &mut self,
+        handle: &TableHandle,
+        old_row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+        stats_ctx: Option<&crate::StmtContext>,
+    ) -> Result<(), KvTableError> {
         let zone = ctx.time_zone();
         let old_physical_id = self.record_physical_id(old_row, ctx)?;
         let key = Key::from_bytes(encode_row_key_with_handle(
@@ -3886,13 +3860,14 @@ impl KvTable {
         if !self.indexes.is_empty() {
             self.delete_index_entries(old_row, handle, old_physical_id, &zone)?;
         }
-        self.staged_record_keys.note(key.as_bytes());
+        if let Some(stats_ctx) = stats_ctx {
+            stats_ctx
+                .staged_writes()
+                .note(self.table_id, key.as_bytes());
+        }
         self.store
             .delete(key)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        self.dirty_content
-            .0
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -3904,7 +3879,7 @@ impl KvTable {
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
         let physical_id = self.record_physical_id(old_row, ctx)?;
-        self.delete_row_with_old(handle, old_row, ctx)?;
+        self.delete_row_with_old_in(handle, old_row, ctx, Some(ctx))?;
         ctx.update_table_delta(physical_id, -1, 1);
         Ok(())
     }
@@ -3925,12 +3900,14 @@ impl KvTable {
                 self.delete_index_entries(&row, handle, physical_id, zone)?;
             }
         }
+        if let Some(stats_ctx) = stats_ctx {
+            stats_ctx
+                .staged_writes()
+                .note(self.table_id, key.as_bytes());
+        }
         self.store
             .delete(key)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        self.dirty_content
-            .0
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx.update_table_delta(physical_id, -1, 1);
         }

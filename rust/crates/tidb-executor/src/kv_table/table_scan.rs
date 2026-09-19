@@ -737,6 +737,26 @@ impl KvTable {
                 }
                 return Ok(None);
             }
+            // A narrowed response can drop a column the local filter would
+            // need to re-check. That re-check is not optional: a backend may
+            // accept a predicate description without fully applying it (the
+            // "never a wrong answer, only slower" contract), so an
+            // unconfirmed narrowed row can never be trusted verbatim whenever
+            // there is a predicate to re-check in the first place. A bare
+            // range/projection read with no pushed predicate has nothing to
+            // re-verify, so it keeps the coprocessor request either way.
+            if output_offsets.is_some()
+                && !predicates.is_empty()
+                && !scan.stream.predicates_applied()
+            {
+                scan.stream.close();
+                for (_, opened_parts) in partition_scans.drain(..) {
+                    for mut opened in opened_parts {
+                        opened.stream.close();
+                    }
+                }
+                return Ok(None);
+            }
             // One request reached a region. Counted here rather than at the
             // storage seam so a backend that REFUSED the shape (and returned
             // an `Unsupported` the caller turned into a byte-level cursor) is
@@ -922,7 +942,7 @@ impl KvTable {
         if handles.is_empty() {
             return Ok(None);
         }
-        if self.has_dirty_content()
+        if self.has_dirty_content(&statement.staged_writes)
             || self.partition.is_some()
             || handles
                 .iter()
@@ -1269,7 +1289,7 @@ impl KvTable {
         desc: bool,
         keep_order: bool,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
-        if self.has_dirty_content() || self.partition.is_some() {
+        if self.has_dirty_content(&statement.staged_writes) || self.partition.is_some() {
             return Ok(None);
         }
         let ranges = self.record_key_ranges(handle_ranges, zone, false)?;
@@ -1356,6 +1376,17 @@ impl KvTable {
             scan.stream.close();
             return Ok(None);
         }
+        // An aggregate has no residual local re-check: once the rows are
+        // reduced, the columns a caller would re-filter with are gone. A
+        // predicate the backend did not confirm applying must therefore
+        // refuse the whole pushdown here, before anything is reduced --
+        // never here + "trust it anyway", per the "never a wrong answer,
+        // only slower" contract. A predicate-free aggregate has nothing to
+        // re-check and keeps the pushdown either way.
+        if !predicates.is_empty() && !scan.stream.predicates_applied() {
+            scan.stream.close();
+            return Ok(None);
+        }
         crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
         Ok(Some(scan.stream))
     }
@@ -1388,7 +1419,7 @@ impl KvTable {
         // covering index the planner picks post-ANALYZE (`count(*) FROM
         // bmsql_customer`), refusing into the local partial-aggregate walk.
         // Build Go's schema instead.
-        if self.has_dirty_content() || self.partition.is_some() {
+        if self.has_dirty_content(&statement.staged_writes) || self.partition.is_some() {
             return Ok(None);
         }
         let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
@@ -1578,6 +1609,13 @@ impl KvTable {
             scan.stream.close();
             return Ok(None);
         }
+        // See the identical guard in `pushdown_partial_aggregate_cursor`: an
+        // aggregate's rows are already reduced, so a predicate the backend
+        // did not confirm applying must refuse the whole pushdown here.
+        if !request.predicates.is_empty() && !scan.stream.predicates_applied() {
+            scan.stream.close();
+            return Ok(None);
+        }
         crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
         Ok(Some(scan.stream))
     }
@@ -1612,7 +1650,10 @@ impl KvTable {
         // `is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...))`,
         // and a covering prefix read of bmsql_oorder_idx1 plus the ecasdb
         // max(dtlno) stream answer correctly against the real backend again.
-        if self.has_dirty_content() || self.partition.is_some() || ranges.is_empty() {
+        if self.has_dirty_content(&statement.staged_writes)
+            || self.partition.is_some()
+            || ranges.is_empty()
+        {
             return Ok(None);
         }
         // An index-handle cursor only returns index/handle columns. A
@@ -3597,6 +3638,12 @@ pub struct TableScanExec {
     /// A TiKV partial-aggregation row stream. It is separate from `remote`
     /// because aggregate rows have no record handle and no staged merge.
     partial_remote: Option<Box<dyn PushdownRowStream>>,
+    /// How much of `partial_remote`'s [`PushdownRowStream::rows_returned`]
+    /// has already been reported to the storage probe. That count is the
+    /// SCAN's own matched rows (Go's `cop_task` rows stat), which an
+    /// aggregate above it reduces before ever reaching `next_row`/
+    /// `next_chunk`, so it cannot be derived from what this cursor yields.
+    partial_remote_noted: u64,
     /// A remainder when a chunk-capable partial aggregate batch does not fit
     /// in the caller's output chunk. Keeping the decoded batch here avoids
     /// falling back to row materialisation on the next `next` call.
@@ -3753,10 +3800,7 @@ impl PartialSum {
 impl TableScanExec {
     /// Names the engine the planner assigned this scan to. Only the driver's
     /// physical builder calls this, once per built scan.
-    pub fn set_read_engine(
-        &mut self,
-        engine: crate::remote_scan::PushdownReadEngine,
-    ) -> &mut Self {
+    pub fn set_read_engine(&mut self, engine: crate::remote_scan::PushdownReadEngine) -> &mut Self {
         self.read_engine = engine;
         self
     }
@@ -3795,6 +3839,7 @@ impl TableScanExec {
             remote: None,
             remote_materialization: None,
             partial_remote: None,
+            partial_remote_noted: 0,
             partial_pending: None,
             partial_rows: None,
             partial_done: false,
@@ -4445,6 +4490,7 @@ impl Executor for TableScanExec {
         self.emitted = 0;
         self.cursor = None;
         self.partial_remote = None;
+        self.partial_remote_noted = 0;
         self.partial_pending = None;
         self.partial_rows = None;
         self.partial_done = false;
@@ -4519,7 +4565,8 @@ impl Executor for TableScanExec {
                 self.keep_order,
                 // Go plans UnionScan (which needs the handle) only over a dirty
                 // table; `_tidb_rowid` in the schema is the other handle reader.
-                self.table.has_dirty_content() || self.extra_handle_slot.is_some(),
+                self.table.has_dirty_content(&self.statement.staged_writes)
+                    || self.extra_handle_slot.is_some(),
                 &self.decode_context,
                 &self.statement,
                 self.read_engine,
@@ -4546,6 +4593,12 @@ impl Executor for TableScanExec {
                     cap,
                 )? {
                     self.emitted = self.emitted.saturating_add(rows as u64);
+                    let returned = remote.rows_returned();
+                    let fresh = returned.saturating_sub(self.partial_remote_noted);
+                    self.partial_remote_noted = returned;
+                    if fresh > 0 {
+                        crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
+                    }
                     return Ok(());
                 }
                 self.partial_remote = None;
@@ -4558,6 +4611,14 @@ impl Executor for TableScanExec {
                     self.partial_done = true;
                     break;
                 };
+                // The scan's own matched-row count, not this row's presence
+                // in the aggregate output: see `partial_remote_noted`.
+                let returned = remote.rows_returned();
+                let fresh = returned.saturating_sub(self.partial_remote_noted);
+                self.partial_remote_noted = returned;
+                if fresh > 0 {
+                    crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
+                }
                 for (column, value) in row.iter().enumerate() {
                     req.append_datum(column, value);
                 }
@@ -4897,7 +4958,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         // reconstructed from the narrowed response. Local fallback applies
         // the same projection after the optional scan filter.
         if !self.filter_fully_described()
-            || self.table.has_dirty_content()
+            || self.table.has_dirty_content(&self.statement.staged_writes)
             || self.has_virtual_projection()
             || self.partial_aggregate.is_some()
             || self.post_filter_projection.is_some()
@@ -4935,7 +4996,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         // snapshot would break both merge order and replacement semantics.
         if !self.filter_fully_described()
             || topn.order_by.is_empty()
-            || self.table.has_dirty_content()
+            || self.table.has_dirty_content(&self.statement.staged_writes)
             || self.has_virtual_projection()
             || topn.limit == 0
             || topn
@@ -5400,11 +5461,9 @@ mod remote_cursor_tests {
                 }),
             );
             table.set_common_handle_offsets(vec![0]);
+            let statement = PushdownStatementContext::default();
             if dirty {
-                table
-                    .dirty_content
-                    .0
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                statement.staged_writes.mark_dirty(93);
             }
             let schema = tidb_expr::schema::Schema::new(
                 (1..=2)
@@ -5420,7 +5479,7 @@ mod remote_cursor_tests {
                 ExecutorMeta::new(schema, 0, 4, 4),
                 table,
                 SessionTimeZone::utc(),
-                PushdownStatementContext::default(),
+                statement,
             );
             assert!(scan.accept_column_prune(&[1]));
             scan.open().unwrap();

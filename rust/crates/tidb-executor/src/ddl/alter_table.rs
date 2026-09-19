@@ -1512,7 +1512,7 @@ fn add_partition_action(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };
-    std::sync::Arc::make_mut(table).append_partitions(added_definitions, added_kind);
+    std::sync::Arc::make_mut(table).append_partitions(added_definitions, added_kind, ctx);
     Ok(())
 }
 

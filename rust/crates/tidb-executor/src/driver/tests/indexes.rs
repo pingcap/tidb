@@ -230,7 +230,7 @@ fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
     // it starts, so no `UnionScan` merge sits over the lookup and the answer
     // is the unordered read's handle order. The raw catalog has no statement
     // boundary, so drop the fixture inserts' staged-write marks here.
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
 
     let physical = |sql: &str, context: &crate::StmtContext| {
         let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {

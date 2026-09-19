@@ -336,12 +336,13 @@ fn direct_transaction_control_does_not_inherit_committed_dirty_marks() {
     session.run("INSERT INTO us VALUES (5, 10, 500)").unwrap();
     session.control_transaction("COMMIT").unwrap();
     session.control_transaction("BEGIN").unwrap();
+    let staged_writes = std::sync::Arc::clone(&session.staged_writes);
     let clean = session
         .with_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "us") else {
                 panic!("fixture table exists");
             };
-            Ok(!table.has_dirty_content())
+            Ok(!table.has_dirty_content(&staged_writes))
         })
         .unwrap();
     assert!(
@@ -366,6 +367,7 @@ fn direct_transaction_control_does_not_inherit_committed_dirty_marks() {
     session.control_transaction("BEGIN").unwrap();
     session.run("INSERT INTO us VALUES (6, 5, 600)").unwrap();
     peer.control_transaction("BEGIN").unwrap();
+    let staged_writes = std::sync::Arc::clone(&session.staged_writes);
     assert!(
         session
             .with_catalog_mut(|catalog| {
@@ -373,7 +375,7 @@ fn direct_transaction_control_does_not_inherit_committed_dirty_marks() {
                 else {
                     panic!("fixture table exists");
                 };
-                Ok(table.has_dirty_content())
+                Ok(table.has_dirty_content(&staged_writes))
             })
             .unwrap(),
         "a peer's BEGIN cleared another transaction's staged-write mark"

@@ -1897,7 +1897,10 @@ impl IndexRangeSourceExec {
     /// `buildUnionScanFromReader`'s fallback), and emits the smaller -- on a
     /// tie the ADDED row, Go's `isSnapshotRow = isSnapshotRowInt < 0`.
     pub(crate) fn enable_dirty_union_scan_merge(&mut self) {
-        if self.covering || !self.can_reorder_handles || !self.table.has_dirty_content() {
+        if self.covering
+            || !self.can_reorder_handles
+            || !self.table.has_dirty_content(&self.statement.staged_writes)
+        {
             return;
         }
         // Go `buildUnionScanFromReader`'s IndexLookUp arm: `usedIndex` is
@@ -2178,9 +2181,13 @@ impl IndexRangeSourceExec {
             let physical_ids = self.table.record_physical_ids();
             let mut added = Vec::new();
             self.batch.retain(|handle| {
-                let staged = physical_ids
-                    .iter()
-                    .any(|physical_id| self.table.record_key_is_staged(*physical_id, handle));
+                let staged = physical_ids.iter().any(|physical_id| {
+                    self.table.record_key_is_staged(
+                        &self.statement.staged_writes,
+                        *physical_id,
+                        handle,
+                    )
+                });
                 if staged {
                     added.push(handle.clone());
                 }
@@ -2673,7 +2680,7 @@ impl IndexRangeSourceExec {
             let direct_batch_get = self.filter.is_none()
                 && self.pushed.is_empty()
                 && self.top_n.is_none()
-                && !self.table.has_dirty_content()
+                && !self.table.has_dirty_content(&self.statement.staged_writes)
                 && self.table.partition().is_none()
                 && handles
                     .iter()
@@ -4194,7 +4201,10 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     fn accept_index_top_n(&mut self, order_by: &[(usize, bool)], limit: u64) -> bool {
         // A covering declaration can use the same coprocessor TopN tier: Go's
         // `PhysicalIndexReader` consumes the ordered index rows directly.
-        if self.top_n.is_some() || self.table.has_dirty_content() || order_by.is_empty() {
+        if self.top_n.is_some()
+            || self.table.has_dirty_content(&self.statement.staged_writes)
+            || order_by.is_empty()
+        {
             return false;
         }
         // A coprocessor TopN requires every predicate to travel in the TiKV

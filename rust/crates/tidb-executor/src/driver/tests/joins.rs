@@ -406,7 +406,7 @@ fn a_join_filter_is_charged_only_to_the_filtered_side() {
     .unwrap();
     scale_analyzed_tpcc_table(&mut catalog, "a", 100, &[("x", 100), ("y", 100)], &ctx);
     scale_analyzed_tpcc_table(&mut catalog, "b", 100, &[("x", 100)], &ctx);
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
     let sql = "SELECT * FROM a, b WHERE a.x = b.x AND a.y > 50";
     let stmt = tidb_parser::parse(sql).unwrap();
     let Stmt::Query(query) = &stmt else {
@@ -472,7 +472,7 @@ fn a_join_equality_propagates_its_constant_to_the_other_side() {
     .unwrap();
     scale_analyzed_tpcc_table(&mut catalog, "a", 100, &[("x", 100), ("y", 100)], &ctx);
     scale_analyzed_tpcc_table(&mut catalog, "b", 100, &[("x", 100)], &ctx);
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
     let sql = "SELECT * FROM a, b WHERE a.x = b.x AND b.x = 7 AND a.y > 50";
     let stmt = tidb_parser::parse(sql).unwrap();
     let Stmt::Query(query) = &stmt else {
@@ -1299,7 +1299,7 @@ fn index_join_probe_rows_use_only_the_access_paths_join_keys() {
         &[("k1", 2), ("id", 1_000), ("k2", 1_000), ("pad", 1)],
         &ctx,
     );
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
 
     let sql = "SELECT * \
         FROM t1 o JOIN t2 i ON i.k1=o.k1 AND i.k2=o.k2";

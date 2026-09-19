@@ -107,11 +107,7 @@ impl Transaction {
         local_temporary_at_open: Vec<(String, String, tidb_executor::KvTable)>,
     ) -> Self {
         let start_ts = catalog.allocate_tso();
-        let mut working = catalog.clone();
-        // Dirty-table marks describe this transaction's membuffer, not the
-        // committed rows. Direct protocol BEGIN and implicit activation both
-        // reach this constructor without necessarily running SQL dispatch.
-        working.clear_dirty_content();
+        let working = catalog.clone();
         Transaction {
             working,
             base_version: catalog.version(),
@@ -379,6 +375,12 @@ impl Session {
             read_committed,
             local_temporary_at_open,
         );
+        // A fresh transaction gets a fresh, empty staged-write tracker --
+        // Go's own membuffer is empty the moment a transaction activates.
+        // Direct protocol BEGIN and implicit activation both reach this
+        // constructor without necessarily running SQL dispatch, so this is
+        // the one door that must reset it, matching `Transaction::open`.
+        self.staged_writes = std::sync::Arc::default();
         // Go publishes `TxnCtx.StartTS` the moment the transaction
         // activates; `@@tidb_current_ts` reads exactly that.
         self.current_tso().publish(txn.start_ts);
@@ -449,7 +451,7 @@ impl Session {
     /// stale transaction (`StalenessTxnContextProvider`), whose `StartTS` IS
     /// the as-of timestamp and whose reads all see the store as of it.
     pub(crate) fn open_stale_transaction(&mut self, ts: u64) -> Result<(), DriverError> {
-        let mut snapshot = {
+        let snapshot = {
             let shared = self.lock_catalog()?;
             shared.state_as_of(ts).ok_or_else(|| {
                 // No retained commit is that old. Go's analogue is the GC
@@ -462,7 +464,7 @@ impl Session {
             })?
         };
         // A historical read also has an empty transaction membuffer.
-        snapshot.clear_dirty_content();
+        self.staged_writes = std::sync::Arc::default();
         let local_temporary_at_open = self.local_temporary_tables.clone();
         self.txn = Some(Transaction {
             base_version: snapshot.version(),

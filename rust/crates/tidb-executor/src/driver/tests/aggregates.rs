@@ -641,7 +641,7 @@ fn grouped_rows_follow_the_reordered_join_tree() {
         &[("r_id", 5), ("r_name", 5)],
         &ctx,
     );
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
 
     let sql = "SELECT d_name, SUM(f_value) AS revenue FROM fact, dim, region \
         WHERE f_dim_id = d_id AND d_region_id = r_id AND r_name = 'MIDDLE' \
@@ -1530,7 +1530,7 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         [(k_column_id, column_stats)].into_iter().collect(),
         [(index_id, index_stats)].into_iter().collect(),
     );
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
     catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
     let (_, analyzed) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();

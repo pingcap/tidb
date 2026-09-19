@@ -1051,6 +1051,7 @@ impl Session {
             breakpoint_notify_func: self.breakpoint_notify_func(),
             last_insert_id: Arc::clone(&self.published_last_insert_id),
             current_tso: self.current_tso(),
+            staged_writes: std::sync::Arc::clone(&self.staged_writes),
             retry_auto_ids: Arc::clone(&self.retry_auto_ids),
             row_id_shards: Arc::clone(&self.row_id_shards),
             planned_apply: Arc::clone(&self.planned_apply),

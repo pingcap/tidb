@@ -540,6 +540,9 @@ pub struct PushdownStatementContext {
     /// Go `SessionVars.DivPrecisionIncrement`, copied to every DAG request's
     /// `DivPrecisionIncrement` when it differs from the default.
     pub div_precision_increment: u32,
+    /// The current transaction's (or, in autocommit, current statement's)
+    /// staged-write tracker. See [`crate::kv_table::StagedWrites`].
+    pub staged_writes: std::sync::Arc<crate::kv_table::StagedWrites>,
 }
 
 impl Default for PushdownStatementContext {
@@ -559,6 +562,7 @@ impl Default for PushdownStatementContext {
             // Go `vardef.DefDivPrecisionIncrement`; a caller with no statement
             // behind it has no session value to send.
             div_precision_increment: 4,
+            staged_writes: Arc::default(),
         }
     }
 }
@@ -580,6 +584,7 @@ impl PushdownStatementContext {
             dist_sql_scan_concurrency: ctx.dist_sql_scan_concurrency(),
             query_cop_store_limiter: ctx.query_cop_store_limiter(),
             div_precision_increment: ctx.div_precision_increment(),
+            staged_writes: ctx.staged_writes_handle(),
         }
     }
 
@@ -997,6 +1002,17 @@ mod tests {
                     &crate::RowDecodeContext::for_test_query_utc(),
                 )
                 .unwrap();
+            // Whether every pushed predicate was actually evaluated, not just
+            // syntactically accepted: `admits` answers "did not filter" for a
+            // shape outside its domain regardless of the row, so that check
+            // is per-predicate rather than per-row.
+            let predicates_confidently_applied = self.lower_predicates.load(Ordering::Relaxed)
+                && !request.predicates.iter().any(|predicate| {
+                    matches!(
+                        predicate,
+                        ScanPredicate::Builtin(_) | ScanPredicate::ScalarIn { .. }
+                    )
+                });
             let mut rows = Vec::new();
             while let Some((handle, mut row)) = cursor.next_row().unwrap() {
                 self.scanned.fetch_add(1, Ordering::Relaxed);
@@ -1022,14 +1038,118 @@ mod tests {
             if !request.keep_order && self.reverse_unordered.load(Ordering::Relaxed) {
                 rows.reverse();
             }
-            self.returned
-                .fetch_add(rows.len() as u64, Ordering::Relaxed);
+            // The wire receipt counts what the scan actually matched, not the
+            // aggregate's own output rows -- Go's `CopRuntimeStats` counts the
+            // same way, since the aggregate runs ON TOP of the scanned rows
+            // rather than replacing what crossed the network.
+            let matched = rows.len() as u64;
+            self.returned.fetch_add(matched, Ordering::Relaxed);
             self.opened.fetch_add(1, Ordering::SeqCst);
+            let (rows, matched, predicates_applied) = match &request.aggregate {
+                Some(aggregate) => (
+                    compute_partial_aggregate(aggregate, rows),
+                    Some(matched),
+                    predicates_confidently_applied,
+                ),
+                None => (rows, None, false),
+            };
             Ok(Box::new(FakeStream {
                 rows: rows.into_iter(),
                 returned: 0,
+                matched,
+                predicates_applied,
                 opened: Arc::clone(&self.opened),
             }))
+        }
+    }
+
+    /// Reduces the matched, projected scan rows to the shape TiKV's partial
+    /// aggregation returns: functions first, then group keys (see
+    /// [`PushdownPartialAggregate::output_types`]), with exactly one row for
+    /// [`PushdownPartialAggregate::Global`] even over zero input rows.
+    fn compute_partial_aggregate(
+        aggregate: &PushdownPartialAggregate,
+        rows: Vec<Vec<Datum>>,
+    ) -> Vec<Vec<Datum>> {
+        match aggregate {
+            PushdownPartialAggregate::Global { functions, .. } => {
+                vec![aggregate_group(functions, &rows)]
+            }
+            PushdownPartialAggregate::Grouped {
+                group_offsets,
+                functions,
+                ..
+            } => {
+                let mut groups: Vec<(Vec<Datum>, Vec<Vec<Datum>>)> = Vec::new();
+                for row in rows {
+                    let key: Vec<Datum> = group_offsets
+                        .iter()
+                        .map(|offset| row[*offset].clone())
+                        .collect();
+                    match groups.iter_mut().find(|(existing, _)| *existing == key) {
+                        Some((_, members)) => members.push(row),
+                        None => groups.push((key, vec![row])),
+                    }
+                }
+                groups
+                    .into_iter()
+                    .map(|(key, members)| {
+                        let mut result = aggregate_group(functions, &members);
+                        result.extend(key);
+                        result
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    fn aggregate_group(functions: &[PushdownAggregateFunction], rows: &[Vec<Datum>]) -> Vec<Datum> {
+        functions
+            .iter()
+            .map(|function| aggregate_function(function, rows))
+            .collect()
+    }
+
+    /// The one function kinds this fake emulates: `COUNT` and integer `SUM`,
+    /// the only kinds any test here pushes down. A kind or an input shape
+    /// outside that panics rather than silently answering wrong, so a future
+    /// test that needs one grows this instead of trusting a guess.
+    fn aggregate_function(function: &PushdownAggregateFunction, rows: &[Vec<Datum>]) -> Datum {
+        let offset = function.input.as_ref().map(|expr| {
+            expression_column_offsets(expr)
+                .first()
+                .copied()
+                .unwrap_or_else(|| panic!("fake aggregate input is not a plain column: {expr:?}"))
+        });
+        match function.kind {
+            PushdownAggregateKind::Count => {
+                let count = match offset {
+                    Some(offset) => rows.iter().filter(|row| row[offset] != Datum::Null).count(),
+                    None => rows.len(),
+                };
+                Datum::Int(i64::try_from(count).expect("fixture row counts fit in i64"))
+            }
+            PushdownAggregateKind::Sum => {
+                let offset = offset.expect("SUM always reads a column");
+                let mut total: i128 = 0;
+                let mut seen = false;
+                for row in rows {
+                    match &row[offset] {
+                        Datum::Int(value) => {
+                            seen = true;
+                            total += i128::from(*value);
+                        }
+                        Datum::Null => {}
+                        other => panic!("fake SUM does not emulate {other:?}"),
+                    }
+                }
+                if seen {
+                    Datum::Decimal(tidb_datatype::Decimal::from_literal(&total.to_string()))
+                } else {
+                    Datum::Null
+                }
+            }
+            other => panic!("fake aggregate does not emulate {other:?}"),
         }
     }
 
@@ -1185,6 +1305,18 @@ mod tests {
     struct FakeStream {
         rows: std::vec::IntoIter<Vec<Datum>>,
         returned: u64,
+        /// The scan's own matched-row count, for a stream whose yielded rows
+        /// are an aggregate's OUTPUT rather than the scan rows themselves --
+        /// Go's `cop_task` rows stat counts what reached the coprocessor's
+        /// Selection, not what an aggregate above it reduced that to.
+        /// `None` keeps the ordinary per-row wire count below.
+        matched: Option<u64>,
+        /// Whether THIS request's predicates were genuinely applied before
+        /// `rows` was built. An ordinary row scan always re-verifies
+        /// locally regardless (its rows keep every column), so this stays
+        /// `false` there and only reflects reality for an aggregate, which
+        /// has no residual re-check once its rows are reduced.
+        predicates_applied: bool,
         opened: Arc<AtomicUsize>,
     }
 
@@ -1198,7 +1330,11 @@ mod tests {
         }
 
         fn rows_returned(&self) -> u64 {
-            self.returned
+            self.matched.unwrap_or(self.returned)
+        }
+
+        fn predicates_applied(&self) -> bool {
+            self.predicates_applied
         }
 
         fn close(&mut self) {}
@@ -1337,7 +1473,6 @@ mod tests {
             handles.push(handle);
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
         let mut catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
         let (rows, ops) = capture_storage_ops(|| {
@@ -1393,7 +1528,6 @@ mod tests {
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
-            fixture.table.clear_dirty_content();
             let mut catalog = catalog_of(fixture.table);
             let ctx = crate::StmtContext::for_query();
             let (changed, ops) = capture_storage_ops(|| {
@@ -1452,7 +1586,6 @@ mod tests {
             }
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
         let mut catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
         let (rows, reads) = capture_storage_ops(|| {
@@ -1547,7 +1680,6 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
         let mut catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
         assert_eq!(
@@ -1716,7 +1848,6 @@ mod tests {
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
-            fixture.table.clear_dirty_content();
             let ctx = crate::StmtContext::for_query();
             let lookup = fixture
                 .table
@@ -1855,7 +1986,6 @@ mod tests {
                 );
             }
             commit(&fixture.buffer, &fixture.snapshot);
-            fixture.table.clear_dirty_content();
             fixture
                 .table
                 .update_row_with_context(
@@ -1974,7 +2104,6 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
 
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
@@ -2006,7 +2135,6 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
 
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
@@ -2038,7 +2166,6 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
 
         let field_types = vec![
             FieldType::new(FieldTypeCode::LongLong),
@@ -2130,7 +2257,6 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
         let field = FieldType::new(FieldTypeCode::LongLong);
         let schema = |width: usize| {
             Schema::new(
@@ -2226,7 +2352,6 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
         let scanner = Arc::clone(&fixture.scanner);
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
@@ -2862,7 +2987,6 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
         let scanner = Arc::clone(&fixture.scanner);
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
@@ -2898,7 +3022,6 @@ mod tests {
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
-        fixture.table.clear_dirty_content();
         let scanner = Arc::clone(&fixture.scanner);
         let mut catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();

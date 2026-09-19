@@ -609,6 +609,20 @@ pub struct Session {
     /// lazily opened cluster snapshot becomes visible inside the statement
     /// that opened it.
     current_tso: tidb_executor::CurrentTso,
+    /// Go `txn.GetMemBuffer()`: the current transaction's (or, in autocommit,
+    /// the current statement's) staged-write tracker. See
+    /// [`tidb_executor::kv_table::StagedWrites`].
+    ///
+    /// Reset by replacing the whole handle with a fresh, empty one at every
+    /// transaction/statement boundary that starts clean (`Transaction::open`
+    /// for `BEGIN`/lazy activation; the `!in_transaction()` branch in
+    /// dispatch for a plain autocommit statement) -- never by walking and
+    /// clearing table-by-table, since nothing else ever holds a reference to
+    /// the handle being replaced. A statement that CONTINUES an open
+    /// transaction is the one case that must NOT reset it: read-your-own-
+    /// writes has to see every earlier statement's staged rows until COMMIT
+    /// or ROLLBACK ends the transaction.
+    staged_writes: std::sync::Arc<tidb_executor::kv_table::StagedWrites>,
     /// The node's server-info syncer, when the deployment has one.
     ///
     /// Go reads `information_schema.TIDB_SERVERS_INFO` through
@@ -851,6 +865,7 @@ impl Session {
             last_found_rows: 0,
             statement_kind: StatementKind::Other,
             current_tso: tidb_executor::CurrentTso::default(),
+            staged_writes: std::sync::Arc::default(),
             server_info_syncer: None,
             cluster_schema_version: None,
             workload_repository: None,

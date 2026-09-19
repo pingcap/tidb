@@ -17,12 +17,16 @@ fn long_col(name: &str, id: i64) -> KvColumn {
     let mut ft = FieldType::new(FieldTypeCode::LongLong);
     ft.set_flen(20);
     ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
-    KvColumn { name: name.to_owned(), id, field_type: ft, 
+    KvColumn {
+        name: name.to_owned(),
+        id,
+        field_type: ft,
         column_info_version: 1,
         default_value: None,
         origin_default: None,
         comment: String::new(),
-        generated: None, }
+        generated: None,
+    }
 }
 
 fn varchar_col(name: &str, id: i64) -> KvColumn {
@@ -30,12 +34,16 @@ fn varchar_col(name: &str, id: i64) -> KvColumn {
     ft.set_flen(63);
     ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
     ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
-    KvColumn { name: name.to_owned(), id, field_type: ft, 
+    KvColumn {
+        name: name.to_owned(),
+        id,
+        field_type: ft,
         column_info_version: 1,
         default_value: None,
         origin_default: None,
         comment: String::new(),
-        generated: None, }
+        generated: None,
+    }
 }
 
 fn edges_columns() -> Vec<KvColumn> {
@@ -47,30 +55,37 @@ fn edges_columns() -> Vec<KvColumn> {
         {
             let mut ft = FieldType::new(FieldTypeCode::Varchar);
             ft.set_flen(150);
-            KvColumn { name: "value".to_owned(), id: 5, field_type: ft, 
-        column_info_version: 1,
-        default_value: None,
-        origin_default: None,
-        comment: String::new(),
-        generated: None, }
+            KvColumn {
+                name: "value".to_owned(),
+                id: 5,
+                field_type: ft,
+                column_info_version: 1,
+                default_value: None,
+                origin_default: None,
+                comment: String::new(),
+                generated: None,
+            }
         },
     ]
 }
 
 fn edge_table() -> KvTable {
     let mut table = KvTable::new(459, edges_columns());
-    table.add_index(KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        column_offsets: vec![0, 1, 2],
-        prefix_lengths: vec![-1, -1, -1],
-        visible: true,
-        global: false,
-        global_index_version: 0,
-        clustered_primary: false,
-    }, false);
+    table.add_index(
+        KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            column_offsets: vec![0, 1, 2],
+            prefix_lengths: vec![-1, -1, -1],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        },
+        false,
+    );
     table
         .insert_row(
             &[
@@ -131,7 +146,12 @@ fn bare_count_star_with_limit_over_covering_primary_answers() {
     let mut catalog = Catalog::default();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
-    let rows = run_select_on("SELECT COUNT(*) FROM t USE INDEX (PRIMARY) LIMIT 1", &catalog, &ctx).unwrap();
+    let rows = run_select_on(
+        "SELECT COUNT(*) FROM t USE INDEX (PRIMARY) LIMIT 1",
+        &catalog,
+        &ctx,
+    )
+    .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Datum::Int(1), "one inserted row counted once");
 }
@@ -141,8 +161,14 @@ fn bare_count_star_matches_the_unlimited_answer() {
     let mut catalog = Catalog::default();
     catalog.register_kv("t", edge_table());
     let ctx = StmtContext::for_query();
-    let limited = run_select_on("SELECT COUNT(*) FROM t USE INDEX (PRIMARY) LIMIT 1", &catalog, &ctx).unwrap();
-    let unlimited = run_select_on("SELECT COUNT(*) FROM t USE INDEX (PRIMARY)", &catalog, &ctx).unwrap();
+    let limited = run_select_on(
+        "SELECT COUNT(*) FROM t USE INDEX (PRIMARY) LIMIT 1",
+        &catalog,
+        &ctx,
+    )
+    .unwrap();
+    let unlimited =
+        run_select_on("SELECT COUNT(*) FROM t USE INDEX (PRIMARY)", &catalog, &ctx).unwrap();
     assert_eq!(limited, unlimited);
 }
 
@@ -217,10 +243,12 @@ impl TableStorage for CapturingStore {
     }
 }
 
-fn edges_table_on_capturing_store(
-    captured: Arc<Mutex<Vec<PushdownScanRequest>>>,
-) -> KvTable {
-    let mut table = KvTable::with_storage(459, edges_columns(), Box::new(CapturingStore::new(captured)));
+fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<PushdownScanRequest>>>) -> KvTable {
+    let mut table = KvTable::with_storage(
+        459,
+        edges_columns(),
+        Box::new(CapturingStore::new(captured)),
+    );
     table.add_index(
         KvIndex {
             id: 1,
@@ -248,9 +276,6 @@ fn edges_table_on_capturing_store(
             &tidb_expr::NoColumns,
         )
         .unwrap();
-    // A raw insert stages as dirty content; the committed-table state the
-    // coprocessor path serves is the CLEAN read below.
-    table.clear_dirty_content();
     table
 }
 
@@ -260,9 +285,12 @@ fn bare_count_pushdown_request_carries_only_the_forced_key_column() {
     let mut catalog = Catalog::default();
     catalog.register_kv("t", edges_table_on_capturing_store(Arc::clone(&captured)));
     let ctx = StmtContext::for_query();
-    let rows =
-        run_select_on("SELECT COUNT(*) FROM t USE INDEX (PRIMARY) LIMIT 1", &catalog, &ctx)
-            .unwrap();
+    let rows = run_select_on(
+        "SELECT COUNT(*) FROM t USE INDEX (PRIMARY) LIMIT 1",
+        &catalog,
+        &ctx,
+    )
+    .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Datum::Int(1));
     let requests = captured.lock().unwrap();

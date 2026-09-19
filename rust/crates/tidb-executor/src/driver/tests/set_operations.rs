@@ -146,7 +146,7 @@ fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() 
         )
     };
     catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
 
     let Stmt::Query(query) =
         tidb_parser::parse("WITH w AS (SELECT w_id, w_name FROM warehouse) SELECT w_id FROM w")

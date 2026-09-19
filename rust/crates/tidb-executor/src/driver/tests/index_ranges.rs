@@ -142,7 +142,7 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
         &[("no_o_id", 3_000), ("no_d_id", 10), ("no_w_id", 10)],
         &ctx,
     );
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
 
     let stmt = tidb_parser::parse(
         "SELECT no_o_id FROM new_order \
@@ -203,7 +203,7 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
         ],
         &ctx,
     );
-    catalog.clear_dirty_content();
+    let ctx = ctx.with_fresh_staged_writes();
 
     let stmt = tidb_parser::parse(
         "SELECT o_id, o_carrier_id, o_entry_d FROM orders \

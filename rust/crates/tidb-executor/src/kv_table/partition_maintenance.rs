@@ -92,9 +92,7 @@ impl KvTable {
                 })
                 .collect()
         });
-        self.dirty_content
-            .0
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        ctx.staged_writes().mark_dirty(self.table_id);
         Ok(())
     }
 
@@ -188,9 +186,7 @@ impl KvTable {
         if let Some(ids) = &mut self.read_partitions {
             ids.retain(|id| !old_ids.contains(id));
         }
-        self.dirty_content
-            .0
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        ctx.staged_writes().mark_dirty(self.table_id);
         Ok(())
     }
 
@@ -198,6 +194,7 @@ impl KvTable {
         &mut self,
         definitions: Vec<PartitionDef>,
         added_kind: PartitionKind,
+        ctx: &crate::StmtContext,
     ) {
         let partition = self.partition.as_mut().expect("validated by DDL");
         let offset = partition.definitions.len();
@@ -287,9 +284,7 @@ impl KvTable {
             _ => unreachable!("DDL folds added definitions with the existing partition method"),
         }
         partition.definitions.extend(definitions);
-        self.dirty_content
-            .0
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        ctx.staged_writes().mark_dirty(self.table_id);
     }
 }
 
@@ -353,9 +348,7 @@ impl KvTable {
                 }
             }
         }
-        self.dirty_content
-            .0
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        ctx.staged_writes().mark_dirty(self.table_id);
         Ok(())
     }
 }

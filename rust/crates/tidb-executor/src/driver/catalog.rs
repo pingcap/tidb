@@ -231,14 +231,6 @@ pub struct Catalog {
     /// Go InfoSchema's table-ID index. Names resolve against this image's
     /// current entries without retaining a second copy of table storage.
     table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
-    /// Every table entry in this image, flattened once. [`Self::
-    /// clear_dirty_content`] runs at every non-continuing statement (every
-    /// autocommit statement, every `BEGIN`), so it cannot re-walk the nested
-    /// database/table maps each time without paying that cost on the
-    /// statement path Go does not have at all (a fresh membuffer starts with
-    /// nothing to clear). Unlike the name directory, this retains table
-    /// objects, so a write must invalidate it before detaching an entry.
-    kv_tables_flat: Arc<std::sync::OnceLock<Vec<Arc<TableEntry>>>>,
     /// The entries a session's LOCAL temporary tables are DISPLACING while
     /// they are attached: `(folded database, folded name, the entry that was
     /// there)`.
@@ -456,7 +448,6 @@ struct CatalogSnapshot {
     latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
     table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
-    kv_tables_flat: Arc<std::sync::OnceLock<Vec<Arc<TableEntry>>>>,
     shadowed_by_local_temporary: Vec<(String, String, Arc<TableEntry>)>,
     temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
 }
@@ -479,7 +470,6 @@ impl CatalogSnapshot {
             latest_index_schema: catalog.latest_index_schema.clone(),
             planner_view: catalog.planner_view.clone(),
             table_id_names: catalog.table_id_names.clone(),
-            kv_tables_flat: catalog.kv_tables_flat.clone(),
             shadowed_by_local_temporary: catalog.shadowed_by_local_temporary.clone(),
             temporary_sweep: catalog.temporary_sweep.clone(),
         }
@@ -501,7 +491,6 @@ impl CatalogSnapshot {
             latest_index_schema: self.latest_index_schema.clone(),
             planner_view: self.planner_view.clone(),
             table_id_names: self.table_id_names.clone(),
-            kv_tables_flat: self.kv_tables_flat.clone(),
             shadowed_by_local_temporary: self.shadowed_by_local_temporary.clone(),
             statistics: Arc::clone(&owner.statistics),
             statistics_view: owner.statistics_view.clone(),
@@ -605,7 +594,6 @@ impl Default for Catalog {
             latest_index_schema: std::sync::OnceLock::new(),
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
-            kv_tables_flat: Arc::default(),
             shadowed_by_local_temporary: Vec::new(),
             statistics: Arc::default(),
             statistics_view: None,
@@ -1616,9 +1604,6 @@ impl Catalog {
     /// allow, never the reverse.
     pub(crate) fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.bump_version();
-        // The flattened list owns the old entry: after copy-on-write it
-        // would clear committed dirty marks on that stale image instead.
-        self.invalidate_kv_tables_flat();
         let key = CatalogTableKey::new(database, name);
         let entry = self
             .database_mut(&key.database)?
@@ -1666,7 +1651,6 @@ impl Catalog {
         self.planner_view.take();
         self.statistics_schemas = Arc::default();
         self.invalidate_table_id_names();
-        self.invalidate_kv_tables_flat();
     }
 
     fn invalidate_table_id_names(&mut self) {
@@ -1674,14 +1658,6 @@ impl Catalog {
             names.take();
         } else {
             self.table_id_names = Arc::default();
-        }
-    }
-
-    fn invalidate_kv_tables_flat(&mut self) {
-        if let Some(tables) = Arc::get_mut(&mut self.kv_tables_flat) {
-            tables.take();
-        } else {
-            self.kv_tables_flat = Arc::default();
         }
     }
 
@@ -1744,45 +1720,6 @@ impl Catalog {
             }
         }
         snapshot
-    }
-
-    /// Empties every table's staged-write mark: the state Go's transaction
-    /// membuffer is in before a transaction has written anything, which is
-    /// what `session.HasDirtyContent` (`pkg/session/txn.go:730`) reads.
-    ///
-    /// A transaction stages its writes in a private COPY of this catalog
-    /// rather than a membuffer, so the copy has to be told where the
-    /// transaction begins. `tidb_session` clears newly opened transaction
-    /// snapshots here, including direct protocol BEGIN, and clears the shared
-    /// catalog before each autocommit statement. Neither boundary may clear
-    /// an already-open transaction's private staged-write marks.
-    ///
-    /// The mark itself never changes what a read RETURNS -- the staged rows
-    /// are in this catalog either way, which is why read-your-own-writes works
-    /// without it. It changes what a read is entitled to REORDER; see
-    /// [`crate::kv_table::KvTable::has_dirty_content`].
-    pub fn clear_dirty_content(&mut self) {
-        // Committed snapshots can retain true marks from their former owner.
-        // Resetting these shared cells does not clear another transaction's
-        // private writes: every writer detaches its entry before marking it.
-        for entry in self.kv_tables_flat() {
-            if let TableEntry::Kv(table) = entry.as_ref() {
-                table.clear_dirty_content();
-            }
-        }
-    }
-
-    /// Every table entry in this image, in the shape [`Self::
-    /// clear_dirty_content`] walks. Shared by catalog clones until a write
-    /// detaches an entry or a schema change replaces the table list.
-    fn kv_tables_flat(&self) -> &[Arc<TableEntry>] {
-        self.kv_tables_flat.get_or_init(|| {
-            self.databases
-                .values()
-                .flat_map(|database| database.tables.values())
-                .cloned()
-                .collect()
-        })
     }
 
     /// Publishes one table's loaded statistics, which the access-path choice
@@ -2711,7 +2648,6 @@ impl Catalog {
         // The row overlay keeps the schema epoch, but this public handle
         // can also change an ID. Never retain a directory across that borrow.
         self.invalidate_table_id_names();
-        self.invalidate_kv_tables_flat();
         match self
             .database_mut(database)?
             .tables
@@ -4144,7 +4080,12 @@ mod planner_view_tests {
         let TableEntry::Kv(od) = catalog.get_mut_in(DEFAULT_DATABASE, "od").unwrap() else {
             panic!("od is not a KV table")
         };
-        od.note_staged_record_key(b"dummy-record-key");
+        Arc::make_mut(od)
+            .insert_row(
+                &[tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(2)],
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
         assert!(
             Arc::ptr_eq(&directory, &catalog.table_id_names),
             "an ordinary write through get_mut_in must not invalidate the id directory"
@@ -4159,82 +4100,65 @@ mod planner_view_tests {
         assert!(!Arc::ptr_eq(&directory, &catalog.table_id_names));
     }
 
+    /// Two independent catalog images (an open transaction's private COW
+    /// copy, and the shared autocommit catalog) writing the SAME table id
+    /// must never mix up which write staged which record key. Go answers
+    /// this with two entirely separate membuffers; here it is two entirely
+    /// separate [`crate::kv_table::StagedWrites`] handles, one per
+    /// [`crate::StmtContext`] -- state that was never on the `KvTable` (or
+    /// any catalog-owned cache of it) to begin with, so a copy-on-write
+    /// detach of the table entry has nothing to invalidate.
     #[test]
-    fn clearing_dirty_content_reaches_cow_written_table() {
+    fn independent_statement_contexts_do_not_share_staged_writes() {
         let mut catalog = Catalog::default();
         crate::run_create_table_on("CREATE TABLE cd(a INT PRIMARY KEY, b INT)", &mut catalog)
             .unwrap();
-        catalog.clear_dirty_content();
         let mut active_transaction = catalog.clone();
-        let context = crate::StmtContext::for_query();
+        let transaction_ctx = crate::StmtContext::for_query();
         crate::run_insert_on(
             "INSERT INTO cd VALUES (1, 10)",
             &mut active_transaction,
-            &context,
+            &transaction_ctx,
         )
         .unwrap();
-        crate::run_insert_on("INSERT INTO cd VALUES (2, 20)", &mut catalog, &context).unwrap();
-        let dirty = |image: &Catalog| {
+        let autocommit_ctx = crate::StmtContext::for_query();
+        crate::run_insert_on(
+            "INSERT INTO cd VALUES (2, 20)",
+            &mut catalog,
+            &autocommit_ctx,
+        )
+        .unwrap();
+
+        // `has_dirty_content` is table-scoped WITHIN one tracker -- like Go's
+        // membuffer prefix seek, it answers for the logical table id, not for
+        // a specific catalog copy or record key -- so it is true under BOTH
+        // trackers here (each staged something under this table id). The
+        // record-level check is what must tell the two writes apart.
+        let staged = |image: &Catalog, ctx: &crate::StmtContext, handle: i64| {
             let TableEntry::Kv(table) = image.get_in(DEFAULT_DATABASE, "cd").unwrap() else {
                 panic!("expected KV table")
             };
-            (
-                table.has_dirty_content(),
-                table.record_key_is_staged(table.table_id, &crate::kv_table::TableHandle::Int(1)),
-                table.record_key_is_staged(table.table_id, &crate::kv_table::TableHandle::Int(2)),
+            table.record_key_is_staged(
+                ctx.staged_writes(),
+                table.table_id,
+                &crate::kv_table::TableHandle::Int(handle),
             )
         };
-        assert_eq!(dirty(&catalog), (true, false, true));
-        assert_eq!(dirty(&active_transaction), (true, true, false));
-        catalog.clear_dirty_content();
-        assert_eq!(
-            dirty(&catalog),
-            (false, false, false),
-            "a new transaction must not inherit committed dirty marks or keys"
+        assert!(
+            staged(&catalog, &autocommit_ctx, 2),
+            "the autocommit write is visible under its own statement's tracker"
         );
-        assert_eq!(
-            dirty(&active_transaction),
-            (true, true, false),
-            "another active transaction must retain its writes"
+        assert!(
+            !staged(&catalog, &transaction_ctx, 2),
+            "the OTHER transaction's tracker must not see that record key"
         );
-    }
-
-    /// `clear_dirty_content` runs at every non-continuing statement, so it
-    /// must not re-walk every database and table map each time either --
-    /// Read-only boundaries reuse the list. Writes and schema changes must
-    /// invalidate it so the next boundary clears the current table objects.
-    #[test]
-    fn clearing_dirty_content_reuses_flat_list_until_a_write() {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE cd(a INT PRIMARY KEY, b INT)", &mut catalog)
-            .unwrap();
-        catalog.clear_dirty_content();
-        let flat = Arc::clone(&catalog.kv_tables_flat);
-        assert!(flat.get().is_some(), "the clear above built it");
-
-        let TableEntry::Kv(cd) = catalog.get_mut_in(DEFAULT_DATABASE, "cd").unwrap() else {
-            panic!("cd is not a KV table")
-        };
-        cd.note_staged_record_key(b"dummy-record-key");
-        assert!(!Arc::ptr_eq(&flat, &catalog.kv_tables_flat));
-        catalog.clear_dirty_content();
-        let flat = Arc::clone(&catalog.kv_tables_flat);
-        catalog.clear_dirty_content();
-        assert!(Arc::ptr_eq(&flat, &catalog.kv_tables_flat));
-
-        // A real schema change (a second table joining the catalog) still
-        // invalidates the cache, and the new table is reachable through the
-        // rebuilt one -- this is a cache of what clear_dirty_content walks,
-        // not a permanently frozen snapshot of it.
-        let before_len = catalog.kv_tables_flat().len();
-        crate::run_create_table_on("CREATE TABLE cd2(a INT PRIMARY KEY)", &mut catalog).unwrap();
-        assert!(!Arc::ptr_eq(&flat, &catalog.kv_tables_flat));
-        catalog.clear_dirty_content();
-        assert!(catalog.get_in(DEFAULT_DATABASE, "cd2").is_some());
-        assert_eq!(
-            catalog.kv_tables_flat().len(),
-            before_len + 1,
-            "the rebuilt cache must include the newly created table too"
+        assert!(
+            staged(&active_transaction, &transaction_ctx, 1),
+            "the transaction's own write is visible under its own tracker"
+        );
+        assert!(
+            !staged(&active_transaction, &autocommit_ctx, 1),
+            "the autocommit tracker must not see the transaction's record key either"
         );
     }
 }
