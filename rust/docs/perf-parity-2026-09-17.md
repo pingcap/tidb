@@ -963,3 +963,43 @@ this cost, by construction) elimination of wasted work, at negligible risk
 (a cache with the same invalidation lifetime as one already in the file),
 which is the standard this campaign has applied throughout -- not because
 it was large enough to move today's pass/fail count on its own.
+
+## 2026-09-19: did the two catalog fixes reach TPC-C too?
+
+TPC-C shares the same DML entry points sysbench does (`get_mut_in`,
+`Catalog::clear_dirty_content` at each transaction's first statement), so
+re-measured it against `base` to see how much of that fix carried over.
+10 warehouses (already loaded), 16 threads, 30s per round, 2 rounds, same
+box, `tiup bench tpcc`:
+
+```
+transaction     base tpm   head tpm   tpm gain   base ms   head ms   lat gain
+NEW_ORDER (tpmC)   5271.8     6014.4     +14.1%      n/a       n/a      n/a    (was +13.6% under the prior head -- essentially unchanged)
+PAYMENT            5035.1     5895.2     +17.1%     57.30     48.60    +15.2%  (was +11.8%/+7.8% -- real gain, still short of 25%)
+STOCK_LEVEL         503.1      564.1     +12.1%     36.80     30.75    +16.4%  (was +10.4%/+7.4% -- real gain, still short)
+ORDER_STATUS        440.3      542.8     +23.3%     41.95     31.05    +26.0%  (was +15.5%/+23.8% -- latency now clears 25%, throughput just short)
+```
+
+`NEW_ORDER` (what `tpmC` measures) barely moved: it is TPC-C's biggest
+transaction, touching seven different tables per run, so the fixed
+per-transaction cost the catalog fixes removed is a much smaller fraction
+of its total work than it is for a two-or-three-statement transaction --
+the same reason `oltp_insert`/`write_only`/`read_write` (many statements,
+several different tables) improved less than `oltp_update_index` (one
+table, one statement) did in the sysbench sweep above. `PAYMENT` and
+`STOCK_LEVEL` are simpler and improved more, consistent with that
+explanation. `ORDER_STATUS` is the standout: its latency gain crossed the
++25% bar (23.8% to 26.0%) and its throughput gain nearly did (15.5% to
+23.3%) -- the closest any TPC-C transaction has come to clearing goal 9,
+though not both axes at once yet, and this is a single 2-round check, not
+the full ABBA matrix, so treat the exact figures the same way the caveat
+above treats the sysbench sweep: real direction, not a precise number.
+
+No code change from this entry -- it is a measurement of the two fixes
+already shipped (`eec010fe`, `1654f813`, `3b14b8b2`), extending their
+documented effect to TPC-C. Goal 9's TPC-C status is unchanged (no
+transaction type clears both axes yet), but `ORDER_STATUS` is now the
+nearest miss, worth returning to before `NEW_ORDER`/`PAYMENT`/`DELIVERY`/
+`STOCK_LEVEL`, which are further out and, per task 68, partly bound by the
+same thread-per-connection/futex cost as the sysbench round-trip-bound
+workloads.
