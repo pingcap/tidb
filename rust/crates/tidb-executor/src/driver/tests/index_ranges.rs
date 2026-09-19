@@ -119,6 +119,7 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
     let TableEntry::Kv(table) = catalog.get_mut_in("test", "new_order").unwrap() else {
         panic!("new_order is not a KV table");
     };
+    let table = std::sync::Arc::make_mut(table);
     table.add_index(
         crate::kv_table::KvIndex {
             id: 1,

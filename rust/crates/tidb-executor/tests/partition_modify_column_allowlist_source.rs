@@ -105,7 +105,7 @@ fn datum_text(value: &Datum) -> String {
 
 fn kv_table(catalog: &Catalog, name: &str) -> tidb_executor::KvTable {
     match catalog.table_in("test", name) {
-        Some(TableEntry::Kv(table)) => table.clone(),
+        Some(TableEntry::Kv(table)) => (**table).clone(),
         _ => panic!("expected a storage-backed table test.{name}"),
     }
 }

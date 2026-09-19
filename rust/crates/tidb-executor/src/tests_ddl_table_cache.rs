@@ -64,7 +64,7 @@ fn kv<'a>(catalog: &'a Catalog, name: &str) -> &'a KvTable {
 
 fn kv_mut<'a>(catalog: &'a mut Catalog, name: &str) -> &'a mut KvTable {
     match catalog.table_mut_in(DEFAULT_DATABASE, name) {
-        Some(TableEntry::Kv(table)) => table,
+        Some(TableEntry::Kv(table)) => std::sync::Arc::make_mut(table),
         _ => panic!("{name} is not a KV table"),
     }
 }

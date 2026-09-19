@@ -160,7 +160,13 @@ fn scale_analyzed_tpcc_table(
         // passes no count, so it must say "read all" explicitly or the
         // Bernoulli policy keeps no sample and every histogram is empty.
         options.sample_rate = Some(1.0);
-        let statistics = crate::analyze::kv::analyze_kv_table(table, &options, None, ctx).unwrap();
+        let statistics = crate::analyze::kv::analyze_kv_table(
+            std::sync::Arc::make_mut(table),
+            &options,
+            None,
+            ctx,
+        )
+        .unwrap();
         (table_id, column_ndvs, indexes, statistics)
     };
     for (column_id, column) in &mut statistics.columns {

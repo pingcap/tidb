@@ -1051,3 +1051,52 @@ receive and hold an owned `KvTable` and would need `Arc<KvTable>`
 instead. Large blast radius, and it sits exactly on the transaction-
 isolation-critical path reasoned about above, so it needs careful,
 dedicated design and review -- tracked as task 69, not attempted here.
+
+## Follow-up: task 69 implemented (`TableEntry::Kv(Arc<KvTable>)`)
+
+The safe direction above was implemented. `TableEntry::Kv` now holds
+`Arc<KvTable>` instead of `KvTable` by value. `physical_kv_table_by_id`
+hands out `Arc::clone(table)` in the common (nonpartitioned) case and only
+calls `Arc::make_mut(&mut physical).restrict_read_to_partitions(...)`
+when a partition restriction is actually needed -- so the per-lookup cost
+for the overwhelmingly common case is a refcount bump, not a deep clone
+of `staged_record_keys`.
+
+Isolation is unaffected: `Arc<T>` derefs transparently for read-only
+access, but `&mut T` requires `Arc::make_mut`, which clones only when the
+`Arc` is shared (refcount > 1). A transaction's first write to a table
+already COW-forks its `TableEntry` (via the existing `Arc::make_mut` on
+`self.databases`'s entry), so by the time any code reaches for `&mut
+KvTable`, the surrounding `Arc<KvTable>` is already private to that
+transaction -- `Arc::make_mut` on it is then a no-op clone (refcount 1).
+Concurrent transactions still holding the pre-fork `Arc<TableEntry>` see
+the pre-fork `Arc<KvTable>` untouched. This mirrors Go's own model
+exactly: `pkg/session/txn.go`'s `HasDirtyContent` shows Go keeps exactly
+one membuffer per transaction (`s.txn.GetMemBuffer()`), owned by the
+session and never shared across concurrent transactions -- the same
+"private once written" guarantee, just expressed as an owned buffer
+instead of a copy-on-write `Arc`.
+
+Blast radius: ~80 compile errors across 8 production files
+(`driver/catalog.rs`, `driver/physical_builder.rs`, `driver/dml.rs`,
+`foreign_key.rs`, `ddl/indexes.rs`, `ddl/alter_table.rs`,
+`driver/multi_dml.rs`, `ddl/table_cache.rs`/`table_lifecycle.rs`/
+`alter_metadata.rs`) plus test-only code in both `tidb-executor` and
+`tidb-session` (surfaced only by `cargo test --no-run`/`--tests`, since
+plain `cargo check` skips `#[cfg(test)]` code). Every read-only call site
+(field/method access through `&self`) needed no change at all, by
+`Deref` coercion. Fixed with two consistent patterns: `Arc::make_mut` at
+every mutation site, `Arc::new`/`Arc::unwrap_or_clone`/`(*x).clone()` at
+sites that construct a `TableEntry::Kv` or need an owned/independent
+`KvTable`.
+
+Validated: `cargo check --workspace` (0 errors), `cargo test -p
+tidb-executor --lib` (1334 passed), `cargo test -p tidb-session --lib`
+(1712 passed, 14 pre-existing failures confirmed via `git stash` to
+fail identically on baseline -- unrelated `tests_union_scan`/
+`tests_partition`/`tests_show` ordering issues, not caused by this
+change), `cargo test -p tidb-executor --test all` (329 passed), `cargo
+test -p tidb-session --test all` (335 passed, 1 pre-existing failure
+also confirmed on baseline), `cargo fmt --check` and `cargo clippy
+--tests` clean on both touched crates (only pre-existing warnings
+remain).

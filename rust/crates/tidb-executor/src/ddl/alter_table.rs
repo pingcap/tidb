@@ -417,7 +417,7 @@ fn run_alter_table_in_inner(
         )));
     }
     let original_table = match catalog.table_in(&database, &name) {
-        Some(crate::TableEntry::Kv(table)) => Some(table),
+        Some(crate::TableEntry::Kv(table)) => Some(&**table),
         _ => None,
     };
     reject_multi_schema_same_column_or_index(&alter.actions, original_table)?;
@@ -566,7 +566,7 @@ fn run_alter_table_in_inner(
             // table's TTL config; a table without one is a no-op.
             tidb_ast::AlterTableAction::RemoveTtl(_) => {
                 if let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(&database, &name) {
-                    table.set_ttl_info(None);
+                    std::sync::Arc::make_mut(table).set_ttl_info(None);
                 }
             }
             // `ALTER TABLE x RENAME TO y` is the same operation as
@@ -785,7 +785,7 @@ fn check_table_clone(
     table_name: &str,
 ) -> Result<crate::KvTable, DriverError> {
     match catalog.table_in(database, table_name) {
-        Some(crate::TableEntry::Kv(table)) => Ok(table.clone()),
+        Some(crate::TableEntry::Kv(table)) => Ok((**table).clone()),
         _ => Err(DriverError::unsupported(
             "CHECK constraints need a storage-backed table",
         )),
@@ -816,7 +816,7 @@ fn install_check_constraint_infos(
     }
     match catalog.table_mut_in(database, table_name) {
         Some(crate::TableEntry::Kv(stored)) => {
-            *stored = table;
+            *stored = std::sync::Arc::new(table);
             Ok(())
         }
         _ => Err(DriverError::unsupported(
@@ -1003,7 +1003,7 @@ fn truncate_partition_action(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved before allocating replacement IDs")
     };
-    table
+    std::sync::Arc::make_mut(table)
         .truncate_partitions(&ordinals, &replacement_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("truncate partition", error))
 }
@@ -1054,7 +1054,7 @@ fn add_hash_partitions_action(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };
-    table
+    std::sync::Arc::make_mut(table)
         .rehash_hash_partitions(&new_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("add partition", error))
 }
@@ -1095,7 +1095,7 @@ fn coalesce_partition_action(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };
-    table
+    std::sync::Arc::make_mut(table)
         .rehash_hash_partitions(&new_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("coalesce partition", error))
 }
@@ -1154,7 +1154,7 @@ fn drop_partition_action(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };
-    table
+    std::sync::Arc::make_mut(table)
         .drop_partitions(&ordinals, ctx)
         .map_err(|error| crate::driver::kv_read_error("drop partition", error))
 }
@@ -1512,7 +1512,7 @@ fn add_partition_action(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };
-    table.append_partitions(added_definitions, added_kind);
+    std::sync::Arc::make_mut(table).append_partitions(added_definitions, added_kind);
     Ok(())
 }
 
@@ -1670,6 +1670,7 @@ fn add_foreign_key_action(
             "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
         ));
     };
+    let table = std::sync::Arc::make_mut(table);
     // Consumed before the rows are read, and NOT given back when they reject
     // the constraint -- see [`crate::kv_table::KvTable::allocate_foreign_key_id`].
     table.allocate_foreign_key_id();
@@ -1692,6 +1693,7 @@ fn add_foreign_key_action(
             "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
         ));
     };
+    let table = std::sync::Arc::make_mut(table);
     // Go `CreateForeignKey`'s `createIndex` arm: an existing key whose columns
     // START with the referencing ones already serves the constraint, the
     // clustered handle included; otherwise TiDB adds one named after the
@@ -1902,7 +1904,7 @@ fn drop_foreign_key_action(
             "ALTER TABLE ... DROP FOREIGN KEY needs a storage-backed table",
         ));
     };
-    if !table.drop_foreign_key(fk_name) {
+    if !std::sync::Arc::make_mut(table).drop_foreign_key(fk_name) {
         return Err(DriverError::UnknownColumnInAlter(fk_name.to_owned()));
     }
     Ok(())
@@ -1968,6 +1970,7 @@ fn set_table_options_action(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
+    let table = std::sync::Arc::make_mut(table);
     for option in options {
         match option {
             tidb_ast::TableOption::AutoIncrement(value) => {
@@ -2097,7 +2100,7 @@ fn set_table_options_action(
         let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
             unreachable!("the table was resolved above")
         };
-        table.set_placement_policy(reference);
+        std::sync::Arc::make_mut(table).set_placement_policy(reference);
     }
     Ok(())
 }
@@ -2195,6 +2198,7 @@ fn convert_table_charset_action(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
+    let table = std::sync::Arc::make_mut(table);
     for column in table.columns() {
         if !column.field_type.is_character_string() {
             continue;
@@ -3593,6 +3597,7 @@ fn modify_column_action(
         let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
             unreachable!("the table was found above");
         };
+        let table = std::sync::Arc::make_mut(table);
         let scan_error = |error| DriverError::DdlCoded {
             errno: 1105,
             message: format!("column NULL precheck failed: {error:?}"),
@@ -3785,7 +3790,7 @@ fn modify_column_action(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was found above and nothing here removes it");
     };
-    table
+    std::sync::Arc::make_mut(table)
         .alter_auto_random_spec(new_auto_random, offset, &def.name)
         .map_err(super::auto_random::rebase_error)?;
     // Go `updateFKInfoWhenModifyColumn` +
@@ -3797,6 +3802,7 @@ fn modify_column_action(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was found above and nothing here removes it");
     };
+    let table = std::sync::Arc::make_mut(table);
     let column = KvColumn {
         name: def.name.clone(),
         id: table.columns[offset].id,
@@ -3935,6 +3941,7 @@ fn add_column_action(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
+    let table = std::sync::Arc::make_mut(table);
     if table
         .columns
         .iter()
@@ -4093,6 +4100,7 @@ fn drop_column_action(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
+    let table = std::sync::Arc::make_mut(table);
     let Some(offset) = table
         .columns
         .iter()
@@ -4230,6 +4238,7 @@ fn alter_ttl_info_or_enable(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
+    let table = std::sync::Arc::make_mut(table);
     let info = super::ttl_info_from_options(options)?;
     let mut explicit_enable: Option<bool> = None;
     let mut explicit_interval: Option<String> = None;

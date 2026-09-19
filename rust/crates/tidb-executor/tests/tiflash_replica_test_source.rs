@@ -233,7 +233,7 @@ fn create_table_like_copies_tiflash_replica_settings_clearing_availability() {
         .expect("source table exists")
     {
         tidb_executor::TableEntry::Kv(table) => {
-            table.set_tiflash_replica(Some(tidb_model::TiFlashReplicaInfo {
+            std::sync::Arc::make_mut(table).set_tiflash_replica(Some(tidb_model::TiFlashReplicaInfo {
                 count: 2,
                 location_labels: vec!["zone".to_owned()].into(),
                 available: true,

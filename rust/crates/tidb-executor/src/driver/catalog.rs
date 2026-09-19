@@ -677,7 +677,19 @@ pub enum TableEntry {
     /// A plain value matrix (the original mock backing).
     Mem(MemTable),
     /// Rows stored as real TiKV-format bytes (see [`crate::kv_table`]).
-    Kv(KvTable),
+    ///
+    /// `Arc`-wrapped so a transient, read-only view of an already-private
+    /// (already copy-on-write'd for this transaction, or never yet written
+    /// to) table can be handed out for free: see
+    /// [`Catalog::physical_kv_table_by_id`]. A caller that mutates goes
+    /// through [`std::sync::Arc::make_mut`] the same way [`Self::Kv`]'s own
+    /// enclosing `Arc<TableEntry>` already does, so a table already
+    /// EXCLUSIVELY owned by this transaction (the overwhelmingly common
+    /// case -- nobody else's snapshot points at the same instance) mutates
+    /// in place with no clone at all, and one still shared with another
+    /// transaction's snapshot forks away first, exactly as before this
+    /// change.
+    Kv(std::sync::Arc<KvTable>),
     /// A view: a stored `SELECT` rather than stored rows.
     View(ViewDef),
     /// A sequence: a counter rather than rows. It lives in the TABLE
@@ -879,7 +891,7 @@ impl Catalog {
     /// As [`Catalog::register`].
     pub fn register_kv(&mut self, name: &str, table: KvTable) {
         self.bump_metadata_version();
-        self.register_in(DEFAULT_DATABASE, name, TableEntry::Kv(table))
+        self.register_in(DEFAULT_DATABASE, name, TableEntry::Kv(Arc::new(table)))
             .expect("the default database exists in a freshly built catalog");
     }
 
@@ -909,7 +921,7 @@ impl Catalog {
         // shared planner) observes the name under which the table was
         // registered. Hand-built tables intentionally start unnamed.
         if let TableEntry::Kv(table) = &mut table {
-            table.set_name(name);
+            Arc::make_mut(table).set_name(name);
         }
         schema
             .tables
@@ -1207,7 +1219,7 @@ impl Catalog {
         // are DDL-rare, so cloning a still-shared entry here is fine.
         let mut source = Arc::unwrap_or_clone(source);
         if let TableEntry::Kv(table) = &mut source {
-            table.set_name(to_name);
+            Arc::make_mut(table).set_name(to_name);
         }
         let source = std::sync::Arc::new(source);
         // Infallible: the key was present at the top of this function and
@@ -2281,8 +2293,9 @@ impl Catalog {
                 if table.partition().is_some() {
                     continue;
                 }
-                if let Ok(count) = table.stats_row_count() {
-                    flushed.push((table.table_id, count));
+                let table_id = table.table_id;
+                if let Ok(count) = Arc::make_mut(table).stats_row_count() {
+                    flushed.push((table_id, count));
                 }
             }
         }
@@ -2334,6 +2347,7 @@ impl Catalog {
                 if table.table_id != table_id {
                     continue;
                 }
+                let table = Arc::make_mut(table);
                 table.set_storage_statistics(table_statistics);
                 for (physical_id, statistics) in partition_statistics {
                     table.set_partition_storage_statistics(*physical_id, *statistics);
@@ -2353,7 +2367,7 @@ impl Catalog {
                 let TableEntry::Kv(table) = Arc::make_mut(entry) else {
                     continue;
                 };
-                table.clear_storage_statistics();
+                Arc::make_mut(table).clear_storage_statistics();
             }
         }
     }
@@ -2405,7 +2419,14 @@ impl Catalog {
     /// Resolves Go's physical table ID to a reader handle. A partition ID
     /// names its logical table with the read restricted to that one physical
     /// keyspace, matching executorBuilder's partition-table lookup.
-    pub(crate) fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<crate::KvTable> {
+    ///
+    /// The common, unpartitioned case (`physical_id == table.table_id`,
+    /// every table in most schemas) returns a cheap `Arc::clone` of the
+    /// table already sitting in this transaction's own catalog view --
+    /// no `KvTable` clone at all, so no `staged_record_keys` deep copy
+    /// either. Only the partitioned branch pays `Arc::make_mut`'s clone,
+    /// since restricting reads to one partition needs an independent copy.
+    pub(crate) fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<Arc<crate::KvTable>> {
         let key = self.table_id_names().get(&physical_id)?;
         let TableEntry::Kv(table) = self
             .databases
@@ -2416,9 +2437,9 @@ impl Catalog {
         else {
             return None;
         };
-        let mut physical = table.clone();
+        let mut physical = Arc::clone(table);
         if table.table_id != physical_id {
-            physical.restrict_read_to_partitions(&[physical_id]);
+            Arc::make_mut(&mut physical).restrict_read_to_partitions(&[physical_id]);
         }
         Some(physical)
     }
@@ -2475,7 +2496,7 @@ impl Catalog {
         table: KvTable,
     ) -> Result<(), DriverError> {
         self.bump_metadata_version();
-        self.register_in(database, name, TableEntry::Kv(table))
+        self.register_in(database, name, TableEntry::Kv(Arc::new(table)))
     }
 
     /// Registers a LOCAL temporary table in `database`, remembering whatever
@@ -2508,7 +2529,7 @@ impl Catalog {
         })?;
         if let Some(displaced) = schema.tables.insert(
             folded_name.clone(),
-            std::sync::Arc::new(TableEntry::Kv(table)),
+            std::sync::Arc::new(TableEntry::Kv(Arc::new(table))),
         ) {
             self.shadowed_by_local_temporary
                 .push((folded_database, folded_name, displaced));
@@ -2542,10 +2563,10 @@ impl Catalog {
             let Some(schema) = self.database_mut(&database) else {
                 continue;
             };
-            if let Some(displaced) = schema
-                .tables
-                .insert(name.clone(), std::sync::Arc::new(TableEntry::Kv(table)))
-            {
+            if let Some(displaced) = schema.tables.insert(
+                name.clone(),
+                std::sync::Arc::new(TableEntry::Kv(Arc::new(table))),
+            ) {
                 self.shadowed_by_local_temporary
                     .push((database, name, displaced));
             }
@@ -2583,7 +2604,7 @@ impl Catalog {
             let TableEntry::Kv(table) = Arc::unwrap_or_clone(entry) else {
                 continue;
             };
-            taken.push((folded_database, folded_name, table));
+            taken.push((folded_database, folded_name, Arc::unwrap_or_clone(table)));
         }
         for (folded_database, folded_name, entry) in
             std::mem::take(&mut self.shadowed_by_local_temporary)
@@ -2696,7 +2717,7 @@ impl Catalog {
             .get_mut(name)
             .map(std::sync::Arc::make_mut)
         {
-            Some(TableEntry::Kv(table)) => Some(table),
+            Some(TableEntry::Kv(table)) => Some(std::sync::Arc::make_mut(table)),
             _ => None,
         }
     }
@@ -4010,7 +4031,7 @@ mod planner_view_tests {
         let TableEntry::Kv(table) = catalog.get_mut_in(DEFAULT_DATABASE, "pv").unwrap() else {
             panic!("pv is not a KV table");
         };
-        table.add_index(
+        Arc::make_mut(table).add_index(
             crate::kv_table::KvIndex {
                 id: 7,
                 name: "ib".to_owned(),
@@ -4087,7 +4108,7 @@ mod planner_view_tests {
         let TableEntry::Kv(table) = catalog.table_mut_in(DEFAULT_DATABASE, "pv").unwrap() else {
             panic!("pv")
         };
-        table.table_id = 9000;
+        Arc::make_mut(table).table_id = 9000;
         assert!(catalog.kv_table_by_id(table_id).is_none());
         assert_eq!(catalog.kv_table_by_id(9000).unwrap().name, "pv");
         let restored = snapshot.restore(&catalog);

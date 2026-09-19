@@ -121,6 +121,7 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
         let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
             panic!("t must be a KV table");
         };
+        let table = std::sync::Arc::make_mut(table);
         table
             .stored_keys()
             .unwrap()
@@ -168,6 +169,7 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
         let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
             panic!("t must be a KV table");
         };
+        let table = std::sync::Arc::make_mut(table);
         table
             .stored_keys()
             .unwrap()
@@ -215,6 +217,7 @@ fn tidb_decode_key_distinguishes_clustered_and_partition_handles() {
         let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
             panic!("t must be a KV table");
         };
+        let table = std::sync::Arc::make_mut(table);
         let keys = table.stored_keys().unwrap();
         (
             keys.iter()

@@ -314,6 +314,7 @@ fn a_corrupted_index_is_caught() {
             else {
                 panic!("t is not stored as bytes");
             };
+            let table = std::sync::Arc::make_mut(table);
             let index = table
                 .index_list_for_check()
                 .into_iter()
@@ -367,7 +368,7 @@ fn an_orphaned_index_entry_is_caught() {
             else {
                 panic!("t is not stored as bytes");
             };
-            table
+            std::sync::Arc::make_mut(table)
                 .delete_record_for_test(&tidb_executor::kv_table::TableHandle::Int(2))
                 .expect("delete the row");
             Ok(())
@@ -399,6 +400,7 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
             else {
                 panic!("t is not stored as bytes");
             };
+            let table = std::sync::Arc::make_mut(table);
             let index = table
                 .index_list_for_check()
                 .into_iter()
@@ -446,6 +448,7 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
             else {
                 panic!("t is not stored as bytes");
             };
+            let table = std::sync::Arc::make_mut(table);
             let index = table
                 .index_list_for_check()
                 .into_iter()

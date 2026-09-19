@@ -411,6 +411,7 @@ pub(crate) fn add_index_to_table(
             format!("{database}.{table_name}"),
         )));
     };
+    let table = std::sync::Arc::make_mut(table);
     if let Some(condition) = condition {
         validate_partial_index_condition(table.columns(), condition)?;
     }
@@ -686,6 +687,7 @@ pub(crate) fn drop_index_from_table(
             format!("{database}.{table_name}"),
         )));
     };
+    let table = std::sync::Arc::make_mut(table);
     // The hidden columns this index owns go with it. Captured from Go:
     // `alter table te drop index idxe` leaves `SHOW CREATE TABLE` printing
     // only the declared columns, and an `INSERT` then takes their arity.

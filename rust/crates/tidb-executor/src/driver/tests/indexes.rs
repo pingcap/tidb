@@ -172,7 +172,7 @@ fn a_unique_index_entry_points_at_its_row() {
     let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("k") else {
         panic!("expected a kv table");
     };
-    let mut table = table.clone();
+    let mut table = (**table).clone();
     let index_id = table
         .indexes()
         .iter()

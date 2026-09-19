@@ -161,7 +161,12 @@ fn modify_column_refusals_and_reorders_match_go() {
     let Some(TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
         panic!("expected a storage-backed table");
     };
-    admin_check::check_table(table, None, &RowDecodeContext::for_query(&ctx)).unwrap();
+    admin_check::check_table(
+        std::sync::Arc::make_mut(table),
+        None,
+        &RowDecodeContext::for_query(&ctx),
+    )
+    .unwrap();
 }
 
 // The pk-guard, narrowing-data and generated-column legs of Go's

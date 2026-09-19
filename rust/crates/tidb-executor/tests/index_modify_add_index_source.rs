@@ -37,7 +37,7 @@ use tidb_executor::{
 
 fn kv_table(catalog: &Catalog, database: &str, name: &str) -> KvTable {
     match catalog.table_in(database, name) {
-        Some(TableEntry::Kv(table)) => table.clone(),
+        Some(TableEntry::Kv(table)) => (**table).clone(),
         _ => panic!("expected a storage-backed table {database}.{name}"),
     }
 }

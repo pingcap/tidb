@@ -41,6 +41,7 @@ pub(super) fn alter_cache_action(
             format!("{database}.{name}"),
         )));
     };
+    let table = std::sync::Arc::make_mut(table);
     match mode {
         tidb_ast::AlterTableCacheMode::Cache => {
             if table.is_cached() {

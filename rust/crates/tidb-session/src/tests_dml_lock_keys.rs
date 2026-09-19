@@ -70,7 +70,8 @@ fn key_shapes(session: &Session, table: &str) -> Vec<&'static str> {
     let TableEntry::Kv(kv) = entry else {
         panic!("table `{table}` is stored as KV bytes");
     };
-    kv.stored_keys()
+    std::sync::Arc::make_mut(kv)
+        .stored_keys()
         .unwrap()
         .into_iter()
         .map(|key| {

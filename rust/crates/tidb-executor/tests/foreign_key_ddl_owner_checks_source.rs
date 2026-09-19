@@ -52,7 +52,7 @@ fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
 /// The storage-backed table a test just built.
 fn kv_table(catalog: &Catalog, database: &str, name: &str) -> KvTable {
     match catalog.table_in(database, name) {
-        Some(TableEntry::Kv(table)) => table.clone(),
+        Some(TableEntry::Kv(table)) => (**table).clone(),
         _ => panic!("expected a storage-backed table {database}.{name}"),
     }
 }

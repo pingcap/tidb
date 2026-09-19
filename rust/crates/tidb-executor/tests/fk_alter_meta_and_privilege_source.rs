@@ -1241,6 +1241,11 @@ fn drop_index_needed_by_a_foreign_key_is_refused_regardless_of_checks() {
     let Some(TableEntry::Kv(table)) = catalog.table_mut_in("test", "t2") else {
         panic!("expected a storage-backed table");
     };
-    admin_check::check_table(table, None, &RowDecodeContext::for_query(&ctx)).unwrap();
+    admin_check::check_table(
+        std::sync::Arc::make_mut(table),
+        None,
+        &RowDecodeContext::for_query(&ctx),
+    )
+    .unwrap();
     run_delete_on("delete from t2", &mut catalog, &ctx).unwrap();
 }

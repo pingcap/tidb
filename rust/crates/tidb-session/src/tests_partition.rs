@@ -71,7 +71,9 @@ fn partition_counts(session: &mut Session, table: &str) -> Vec<(String, usize)> 
             else {
                 panic!("{table} is not stored as bytes");
             };
-            Ok(kv.partition_row_counts().expect("partition row counts"))
+            Ok(std::sync::Arc::make_mut(kv)
+                .partition_row_counts()
+                .expect("partition row counts"))
         })
         .expect("catalog")
 }

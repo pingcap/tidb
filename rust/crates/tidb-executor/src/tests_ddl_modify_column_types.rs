@@ -319,6 +319,7 @@ fn modify_column_null_to_not_null_rejects_rows_holding_nulls() {
     let Some(TableEntry::Kv(table)) = catalog.table_mut_in("test", "tt") else {
         panic!("stored table");
     };
+    let table = std::sync::Arc::make_mut(table);
     let mut column = table.columns[0].clone();
     column
         .field_type

@@ -137,7 +137,7 @@ fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() 
         (
             table.table_id,
             crate::analyze::kv::analyze_kv_table(
-                table,
+                std::sync::Arc::make_mut(table),
                 &crate::analyze::AnalyzeOptions::default(),
                 None,
                 &ctx,

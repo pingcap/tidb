@@ -164,7 +164,7 @@ fn admin_check_table_mut<'a>(
         tidb_executor::TableEntry::Kv(table) if table.is_temporary() => {
             Err(DriverError::OptOnTemporaryTable(statement))
         }
-        tidb_executor::TableEntry::Kv(table) => Ok(table),
+        tidb_executor::TableEntry::Kv(table) => Ok(std::sync::Arc::make_mut(table)),
         // A view has no rows of its own and a sequence has no index; a
         // `MemTable` has rows but stores no index entries, so "consistent"
         // would be a statement about nothing.

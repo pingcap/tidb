@@ -115,7 +115,7 @@ fn batch_point_delete_reads_records_with_one_batch_get() {
     let TableEntry::Kv(table) = catalog.get_mut_in("test", "batch_delete").unwrap() else {
         panic!("batch_delete is not a byte-backed table")
     };
-    let _ = table.replace_storage(Box::new(BatchReadCountingStorage {
+    let _ = std::sync::Arc::make_mut(table).replace_storage(Box::new(BatchReadCountingStorage {
         inner: MemTableStorage::new(),
         gets: Arc::clone(&gets),
         batch_gets: Arc::clone(&batch_gets),

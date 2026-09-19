@@ -1460,7 +1460,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "bd") else {
         panic!("expected a kv table");
     };
-    let _ = table.replace_storage(Box::new(BatchGetCountingStorage {
+    let _ = std::sync::Arc::make_mut(table).replace_storage(Box::new(BatchGetCountingStorage {
         inner: MemTableStorage::new(),
         batch_gets: Arc::clone(&batch_gets),
     }));
@@ -1558,7 +1558,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let schema = Schema::new(vec![Column::new(1, table.columns[0].field_type.clone())]);
     let mut source = crate::access_path::HandleSourceExec::new_projected_with_context(
         crate::ExecutorMeta::new(schema, 1, 8, 8),
-        table.clone(),
+        (**table).clone(),
         vec![
             crate::kv_table::TableHandle::Int(1),
             crate::kv_table::TableHandle::Int(99),
@@ -1602,7 +1602,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         .id;
     let mut unique = crate::access_path::UniqueIndexPointSourceExec::new(
         crate::ExecutorMeta::new(schema.clone(), 1, 8, 8),
-        table.clone(),
+        (**table).clone(),
         index_id,
         vec![
             vec![Datum::new_collation_string(
@@ -1637,7 +1637,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
 
     // Go decodes in Next: corruption beyond the requested chunk cannot fail
     // the first chunk or an early Close, but must fail when actually pulled.
-    let mut malformed = table.clone();
+    let mut malformed = (**table).clone();
     let (key, value) = malformed
         .stored_record(&crate::kv_table::TableHandle::Int(1))
         .unwrap()
@@ -1697,10 +1697,11 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "bp") else {
             panic!("expected a kv table");
         };
-        let _ = table.replace_storage(Box::new(BatchGetCountingStorage {
-            inner: MemTableStorage::new(),
-            batch_gets: Arc::clone(&batch_gets),
-        }));
+        let _ =
+            std::sync::Arc::make_mut(table).replace_storage(Box::new(BatchGetCountingStorage {
+                inner: MemTableStorage::new(),
+                batch_gets: Arc::clone(&batch_gets),
+            }));
         let ctx = crate::StmtContext::for_query();
         run_insert_on(
             "INSERT INTO bp VALUES (1,10),(2,20),(3,30),(4,40)",
@@ -1741,6 +1742,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "bp") else {
             panic!("expected a kv table");
         };
+        let table = std::sync::Arc::make_mut(table);
         let ids = [4i64, 1, 3, 2, 1, 99];
         let handles: Vec<_> = ids
             .iter()
@@ -2309,6 +2311,7 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
     let TableEntry::Kv(customer) = catalog.get_mut_in("test", "customer").unwrap() else {
         panic!("customer is not a KV table");
     };
+    let customer = std::sync::Arc::make_mut(customer);
     customer.set_common_handle_offsets(vec![2, 1, 0]);
     customer.add_index(
         crate::kv_table::KvIndex {

@@ -159,7 +159,7 @@ fn scan(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<Vec<Vec<Datum>>> {
     match catalog.get_mut_for_foreign_key(database, table)? {
-        TableEntry::Kv(kv) => kv.scan_rows(zone).ok(),
+        TableEntry::Kv(kv) => std::sync::Arc::make_mut(kv).scan_rows(zone).ok(),
         _ => None,
     }
 }
@@ -586,6 +586,7 @@ fn delete_rows(
     let Some(TableEntry::Kv(kv)) = catalog.get_mut_for_foreign_key(database, table) else {
         return Ok(());
     };
+    let kv = std::sync::Arc::make_mut(kv);
     let stored = kv
         .scan_rows_with_handles(&ctx.session_zone())
         .map_err(|e| crate::driver::kv_read_error("row decode failed", e))?;
@@ -611,6 +612,7 @@ fn rewrite_rows(
     let Some(TableEntry::Kv(kv)) = catalog.get_mut_for_foreign_key(database, table) else {
         return Ok(());
     };
+    let kv = std::sync::Arc::make_mut(kv);
     let stored = kv
         .scan_rows_with_handles(&ctx.session_zone())
         .map_err(|e| crate::driver::kv_read_error("row decode failed", e))?;
@@ -674,7 +676,7 @@ pub(crate) fn rewrite_table_references(
         let Some(TableEntry::Kv(table)) = catalog.table_mut_in(&database, &table) else {
             continue;
         };
-        for foreign_key in table.foreign_keys_mut() {
+        for foreign_key in std::sync::Arc::make_mut(table).foreign_keys_mut() {
             if foreign_key.ref_schema.eq_ignore_ascii_case(from_database)
                 && foreign_key.ref_table.eq_ignore_ascii_case(from_table)
             {
@@ -872,7 +874,7 @@ pub(crate) fn rewrite_column_name(
         return;
     }
     if let Some(TableEntry::Kv(kv)) = catalog.table_mut_in(database, table) {
-        for foreign_key in kv.foreign_keys_mut() {
+        for foreign_key in std::sync::Arc::make_mut(kv).foreign_keys_mut() {
             for col in &mut foreign_key.cols {
                 if col.eq_ignore_ascii_case(old_name) {
                     *col = new_name.to_owned();
@@ -888,7 +890,7 @@ pub(crate) fn rewrite_column_name(
         let Some(TableEntry::Kv(kv)) = catalog.table_mut_in(&child_db, &child_table) else {
             continue;
         };
-        for foreign_key in kv.foreign_keys_mut() {
+        for foreign_key in std::sync::Arc::make_mut(kv).foreign_keys_mut() {
             if !foreign_key.ref_schema.eq_ignore_ascii_case(database)
                 || !foreign_key.ref_table.eq_ignore_ascii_case(table)
             {

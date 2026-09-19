@@ -130,6 +130,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
         let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
             panic!("t must be a KV table");
         };
+        let table = std::sync::Arc::make_mut(table);
         let index_key = table
             .stored_keys()
             .unwrap()

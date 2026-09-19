@@ -1190,9 +1190,13 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                     // This fixture scales every sampled bucket into a fixed
                     // distribution; do not randomly omit its seed rows.
                     options.sample_rate = Some(1.0);
-                    let statistics =
-                        tidb_executor::analyze::kv::analyze_kv_table(table, &options, None, &ctx)
-                            .unwrap();
+                    let statistics = tidb_executor::analyze::kv::analyze_kv_table(
+                        std::sync::Arc::make_mut(table),
+                        &options,
+                        None,
+                        &ctx,
+                    )
+                    .unwrap();
                     (table_id, column_ndvs, indexes, statistics)
                 };
 

@@ -513,7 +513,7 @@ fn scan_base_table(
             .enumerate()
             .map(|(index, row)| (vec![Some(RowId::Mem(index))], row.clone()))
             .collect(),
-        TableEntry::Kv(kv) => kv
+        TableEntry::Kv(kv) => (**kv)
             .clone()
             .scan_rows_with_handles(&ctx.session_zone())
             .map_err(|e| super::dml::kv_read_error("row decode failed", e))?
@@ -1053,7 +1053,7 @@ fn write_row(
             mem.rows[*index] = row.to_vec();
             Ok(())
         }
-        (TableEntry::Kv(kv), RowId::Kv(handle)) => kv
+        (TableEntry::Kv(kv), RowId::Kv(handle)) => std::sync::Arc::make_mut(kv)
             .update_row_with_context(handle, row, ctx)
             .map_err(kv_write_error),
         // The identity was read off this very entry a moment ago.
@@ -1140,7 +1140,7 @@ pub(crate) fn run_multi_delete(
             (TableEntry::Mem(mem), RowId::Mem(index)) => {
                 mem.rows.remove(*index);
             }
-            (TableEntry::Kv(kv), RowId::Kv(handle)) => kv
+            (TableEntry::Kv(kv), RowId::Kv(handle)) => std::sync::Arc::make_mut(kv)
                 .delete_row_with_context(handle, ctx)
                 .map_err(|e| super::dml::kv_read_error("row delete failed", e))?,
             _ => {

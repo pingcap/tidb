@@ -56,7 +56,7 @@ fn table_of<'a>(
     name: &str,
 ) -> Result<&'a mut crate::kv_table::KvTable, DriverError> {
     match catalog.table_mut_in(database, name) {
-        Some(crate::TableEntry::Kv(table)) => Ok(table),
+        Some(crate::TableEntry::Kv(table)) => Ok(std::sync::Arc::make_mut(table)),
         Some(_) => Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
         )),

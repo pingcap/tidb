@@ -283,7 +283,7 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
         };
         assert_eq!(
             crate::admin_check::check_table(
-                table,
+                std::sync::Arc::make_mut(table),
                 None,
                 &crate::RowDecodeContext::for_test_query_utc(),
             )
@@ -334,7 +334,7 @@ fn a_multi_byte_column_is_cut_by_characters() {
     };
     assert_eq!(
         crate::admin_check::check_table(
-            table,
+            std::sync::Arc::make_mut(table),
             None,
             &crate::RowDecodeContext::for_test_query_utc(),
         )
@@ -368,7 +368,7 @@ fn create_index_backfills_cut_entries() {
     };
     assert_eq!(
         crate::admin_check::check_table(
-            table,
+            std::sync::Arc::make_mut(table),
             None,
             &crate::RowDecodeContext::for_test_query_utc(),
         )
@@ -417,7 +417,7 @@ fn modify_column_clears_a_prefix_the_new_type_cannot_carry() {
         // The entries were rebuilt under the new (absent) length, so the
         // index still agrees with the rows.
         crate::admin_check::check_table(
-            table,
+            std::sync::Arc::make_mut(table),
             None,
             &crate::RowDecodeContext::for_test_query_utc(),
         )
@@ -454,8 +454,12 @@ fn modify_column_keeps_a_prefix_the_new_type_can_carry() {
         panic!("the table is not storage-backed");
     };
     assert_eq!(table.indexes()[0].prefix_lengths, vec![2]);
-    crate::admin_check::check_table(table, None, &crate::RowDecodeContext::for_test_query_utc())
-        .expect("the cut entries match the rows");
+    crate::admin_check::check_table(
+        std::sync::Arc::make_mut(table),
+        None,
+        &crate::RowDecodeContext::for_test_query_utc(),
+    )
+    .expect("the cut entries match the rows");
 
     // The same column with NO surviving prefix is Go's 1170.
     let mut catalog = Catalog::default();

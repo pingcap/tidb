@@ -39,7 +39,7 @@ use crate::index_merge_reader::{
     PushedDownLimit as ExecutorPushedDownLimit,
 };
 use crate::join::{IndexLookupPlan, IndexLookupSource, IndexProbeKeyDomain, JoinExec, JoinKind};
-use crate::joiner::{JoinType as JoinerType, JoinerChunkSizes, new_joiner};
+use crate::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
 use crate::kv_table::{IndexRange, RowDecodeContext, TableHandle, TableScanExec};
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
@@ -268,7 +268,11 @@ fn sort_handles_for_keep_order(
         } else {
             left.cmp(right)
         };
-        if desc { ordering.reverse() } else { ordering }
+        if desc {
+            ordering.reverse()
+        } else {
+            ordering
+        }
     });
 }
 
@@ -560,7 +564,7 @@ fn build_table_scan(
         });
     let mut source = TableScanExec::new_with_context(
         meta(ctx, plan, schema.clone()),
-        table,
+        std::sync::Arc::unwrap_or_clone(table),
         RowDecodeContext::for_query(ctx),
         PushdownStatementContext::from_stmt(ctx).with_plan_id(i64::from(scan.base.base.id())),
     );
@@ -715,7 +719,7 @@ fn build_table_sample(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    match tables.first().map(crate::KvTable::temp_table_type) {
+    match tables.first().map(|table| table.temp_table_type()) {
         Some(kind) if kind == tidb_model::TempTableType::LOCAL => {
             return Err(DriverError::unsupported(
                 "TABLESAMPLE clause can not be applied to local temporary tables",
@@ -729,7 +733,7 @@ fn build_table_sample(
     if tables.is_empty() {
         return Ok(Box::new(TableSampleExec::new(
             meta(ctx, plan, plan_schema(plan)?),
-            tables,
+            Vec::new(),
             Vec::new(),
             sample.desc,
             RowDecodeContext::for_query(ctx),
@@ -762,6 +766,10 @@ fn build_table_sample(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let tables = tables
+        .into_iter()
+        .map(std::sync::Arc::unwrap_or_clone)
+        .collect();
     Ok(Box::new(TableSampleExec::new(
         meta(ctx, plan, schema),
         tables,
@@ -1543,7 +1551,7 @@ fn build_index_reader(
                     .map(|definition| definition.id)
                     .collect()
             });
-            table.restrict_read_to_partitions(&ids);
+            std::sync::Arc::make_mut(&mut table).restrict_read_to_partitions(&ids);
         }
     }
     if !table
@@ -1578,7 +1586,7 @@ fn build_index_reader(
     let physical_ids = table.record_physical_ids();
     let mut source = IndexRangeSourceExec::new_with_statement(
         meta(ctx, plan, source_schema),
-        table,
+        std::sync::Arc::unwrap_or_clone(table),
         scan.index_id,
         ranges,
         RowDecodeContext::for_query(ctx),
@@ -1972,15 +1980,13 @@ fn index_join_probe_key_domains(
             })
             .collect::<Result<Vec<_>, _>>()?
     } else {
-        vec![
-            table
-                .pk_handle_offset()
-                .and_then(|offset| table.logical_columns().get(offset))
-                .map_or_else(
-                    || FieldType::new(FieldTypeCode::LongLong),
-                    |column| column.field_type.clone(),
-                ),
-        ]
+        vec![table
+            .pk_handle_offset()
+            .and_then(|offset| table.logical_columns().get(offset))
+            .map_or_else(
+                || FieldType::new(FieldTypeCode::LongLong),
+                |column| column.field_type.clone(),
+            )]
     };
 
     let dynamic_count = probe_parts
@@ -2140,7 +2146,7 @@ fn build_index_inner_reader(
     collect_index_inner_filters(embedded, &filter_schema, &mut filters)?;
     let mut source = IndexJoinLookupExec::new_with_context(
         meta(ctx, plan, row_schema.clone()),
-        table.clone(),
+        std::sync::Arc::unwrap_or_clone(table),
         object,
         RowDecodeContext::for_query(ctx),
     );
@@ -3150,7 +3156,11 @@ fn unique_index_point_values(
     if keep_order {
         encoded_values.sort_by(|left, right| {
             let order = left.0.cmp(&right.0);
-            if desc { order.reverse() } else { order }
+            if desc {
+                order.reverse()
+            } else {
+                order
+            }
         });
     }
     Ok(encoded_values
@@ -3255,7 +3265,7 @@ fn build_point_get(
         }
         let child = Box::new(UniqueIndexPointSourceExec::new(
             executor_meta,
-            table.clone(),
+            (*table).clone(),
             index_id,
             index_values,
             output_columns,
@@ -3264,7 +3274,7 @@ fn build_point_get(
         ));
         return Ok(wrap_point_index_usage(
             child,
-            table,
+            std::sync::Arc::unwrap_or_clone(table),
             catalog,
             ctx,
             Some(index_id),
@@ -3279,14 +3289,14 @@ fn build_point_get(
     }
     let child = Box::new(HandleSourceExec::new_point_mapped_with_context(
         executor_meta,
-        table.clone(),
+        (*table).clone(),
         handles.into_iter().next().expect("checked one handle"),
         output_columns,
         RowDecodeContext::for_query(ctx),
     ));
     Ok(wrap_point_index_usage(
         child,
-        table,
+        std::sync::Arc::unwrap_or_clone(table),
         catalog,
         ctx,
         None,
@@ -3321,7 +3331,7 @@ fn build_batch_point_get(
         )?;
         let child = Box::new(UniqueIndexPointSourceExec::new(
             executor_meta,
-            table.clone(),
+            (*table).clone(),
             index_id,
             index_values,
             output_columns,
@@ -3330,7 +3340,7 @@ fn build_batch_point_get(
         ));
         return Ok(wrap_point_index_usage(
             child,
-            table,
+            std::sync::Arc::unwrap_or_clone(table),
             catalog,
             ctx,
             Some(index_id),
@@ -3367,7 +3377,7 @@ fn build_batch_point_get(
     let child = Box::new(
         HandleSourceExec::new_mapped_with_context(
             executor_meta,
-            table.clone(),
+            (*table).clone(),
             handles,
             output_columns,
             RowDecodeContext::for_query(ctx),
@@ -3376,7 +3386,7 @@ fn build_batch_point_get(
     );
     Ok(wrap_point_index_usage(
         child,
-        table,
+        std::sync::Arc::unwrap_or_clone(table),
         catalog,
         ctx,
         None,
@@ -3587,7 +3597,7 @@ fn build_index_merge_reader(
             if reader.by_items.is_empty() {
                 // Go buildIndexScanOutputOffsets returns only handles here.
                 // Do not turn a partial index scan into a table double read.
-                let mut partial_table = table.clone();
+                let mut partial_table = (*table).clone();
                 let ids: Vec<_> = selected.iter().map(|index| physical_ids[*index]).collect();
                 partial_table.restrict_read_to_partitions(&ids);
                 let ranges = if scan.ranges.is_empty() {
@@ -3634,7 +3644,7 @@ fn build_index_merge_reader(
             partitions.push(Box::new(
                 ExecutorPartialHandleSource::new(
                     executor,
-                    table.clone(),
+                    (*table).clone(),
                     RowDecodeContext::for_query(ctx),
                     partial_handle_columns(&partial_schema, &table)?,
                     partial_sort_key_columns(&partial_schema, &reader.by_items)?,
@@ -3671,7 +3681,7 @@ fn build_index_merge_reader(
         .collect();
     let mut executor = IndexMergeReaderExec::new(
         meta(ctx, plan, schema.clone()),
-        table.clone(),
+        (*table).clone(),
         RowDecodeContext::for_query(ctx),
         partials,
         reader.is_intersection_type,

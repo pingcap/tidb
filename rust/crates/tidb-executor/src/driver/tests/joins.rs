@@ -722,6 +722,7 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
+        let table = std::sync::Arc::make_mut(table);
         table.add_index(
             crate::kv_table::KvIndex {
                 id: 1,
@@ -1385,6 +1386,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
+        let table = std::sync::Arc::make_mut(table);
         table.add_index(
             crate::kv_table::KvIndex {
                 id: 1,

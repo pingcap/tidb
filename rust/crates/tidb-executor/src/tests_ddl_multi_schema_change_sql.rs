@@ -801,7 +801,7 @@ fn multi_schema_change_rename_table_then_alter_leaves_consistent_table() {
     };
     let session = ctx();
     let context = crate::kv_table::RowDecodeContext::for_query(&session);
-    crate::admin_check::check_table(table, None, &context)
+    crate::admin_check::check_table(std::sync::Arc::make_mut(table), None, &context)
         .expect("Go: admin check table t1 passes");
 }
 

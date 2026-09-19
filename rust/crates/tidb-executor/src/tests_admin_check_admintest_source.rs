@@ -46,7 +46,7 @@ fn kv_table_of(catalog: &Catalog, name: &str) -> crate::kv_table::KvTable {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
         panic!("table {name} is not stored as bytes");
     };
-    table.clone()
+    (**table).clone()
 }
 
 fn check_context() -> RowDecodeContext {
@@ -290,7 +290,7 @@ fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
                     else {
                         panic!("t_concurrent is not stored as bytes");
                     };
-                    table.clone()
+                    (**table).clone()
                 };
                 admin_check::check_table(&mut table, None, &check_context())
                     .map_err(|error| format!("{error:?}"))

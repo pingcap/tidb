@@ -6129,7 +6129,7 @@ mod tests {
             else {
                 panic!("test table must be byte-backed");
             };
-            let _ = table.replace_storage(Box::new(store));
+            let _ = Arc::make_mut(table).replace_storage(Box::new(store));
             crate::run_insert_on(insert, &mut catalog, &ctx).unwrap();
             gets.store(0, Ordering::Relaxed);
             entries.store(0, Ordering::Relaxed);
@@ -6555,7 +6555,9 @@ mod tests {
         else {
             panic!("test table must be byte-backed");
         };
-        table.delete_record_for_test(&TableHandle::Int(1)).unwrap();
+        Arc::make_mut(table)
+            .delete_record_for_test(&TableHandle::Int(1))
+            .unwrap();
         entries.store(0, Ordering::Relaxed);
         gets.store(0, Ordering::Relaxed);
 

@@ -725,6 +725,7 @@ fn grouped_partial_count_carries_the_group_key() {
     let TableEntry::Kv(table) = catalog.get_mut_in("test", "order_line").unwrap() else {
         panic!("order_line is not a KV table");
     };
+    let table = std::sync::Arc::make_mut(table);
     table.add_index(
         crate::kv_table::KvIndex {
             id: 1,

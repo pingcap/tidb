@@ -646,7 +646,7 @@ impl Session {
 
                 if index_tasks.run_full_sampling {
                     if partition_ids.is_empty() {
-                        let mut scan_table = table.clone();
+                        let mut scan_table = (*table).clone();
                         let options = &resolution.physical[0];
                         let mut effective = options.effective;
                         effective.memory_quota = statement.options.memory_quota;
@@ -682,7 +682,7 @@ impl Session {
                             let selected = selections
                                 .get(&physical_id)
                                 .expect("every requested partition has a selection");
-                            let mut partition = table.clone();
+                            let mut partition = (*table).clone();
                             partition.restrict_read_to_partitions(&[physical_id]);
                             let statistics = analyze_kv_table_columns(
                                 &mut partition,
@@ -708,7 +708,7 @@ impl Session {
                         let global_statistics = if ctx.static_partition_prune() {
                             None
                         } else {
-                            let mut global = table.clone();
+                            let mut global = (*table).clone();
                             let options = &resolution.physical[0];
                             let mut effective = options.effective;
                             effective.memory_quota = statement.options.memory_quota;
@@ -747,7 +747,7 @@ impl Session {
                 let mut effective = independent_options.effective;
                 effective.memory_quota = statement.options.memory_quota;
                 for index_id in &index_tasks.independent_index_ids {
-                    let mut index_table = table.clone();
+                    let mut index_table = (*table).clone();
                     let statistics =
                         analyze_kv_table_independent_index(&mut index_table, *index_id, &effective)
                             .map_err(|error| DriverError::unsupported(error.to_string()))?;

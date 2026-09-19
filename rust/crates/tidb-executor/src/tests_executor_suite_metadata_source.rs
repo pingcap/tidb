@@ -38,7 +38,7 @@ fn kv_table_of(catalog: &Catalog, name: &str) -> crate::kv_table::KvTable {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
         panic!("table {name} is not stored as bytes");
     };
-    table.clone()
+    (**table).clone()
 }
 
 /// Go `executor_test.go:146::TestCheckIndex`, ported at the

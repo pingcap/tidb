@@ -879,6 +879,7 @@ fn run_insert_with_physical(
         let TableEntry::Kv(kv) = table else {
             unreachable!("INSERT through a view is refused above")
         };
+        let kv = std::sync::Arc::make_mut(kv);
         if let Some(auto_offset) = auto_random_offset {
             for (index, supplied) in &auto_random_rows {
                 if *supplied
@@ -1026,7 +1027,7 @@ fn run_insert_with_physical(
         table_name: &str,
     ) -> &'a mut crate::kv_table::KvTable {
         match catalog.get_mut_in(database, table_name) {
-            Some(TableEntry::Kv(kv)) => kv,
+            Some(TableEntry::Kv(kv)) => std::sync::Arc::make_mut(kv),
             _ => unreachable!("INSERT through a view is refused above"),
         }
     }
@@ -1399,6 +1400,7 @@ fn apply_insert_undo(
                 "the INSERT target changed storage during rollback",
             ));
         };
+        let table = std::sync::Arc::make_mut(table);
         match entry {
             InsertUndo::Inserted { handle, row } => table
                 .delete_row_with_old_context(&handle, &row, ctx)
@@ -3254,6 +3256,7 @@ fn run_update_with_physical(
                     let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                         unreachable!("only a byte-backed table stages rewrites")
                     };
+                    let kv = std::sync::Arc::make_mut(kv);
                     match kv.conflicting_handles(&new_row, ctx) {
                         Ok(conflicts) => conflicts.iter().any(|conflict| conflict != &handle),
                         Err(error) => {
@@ -3270,6 +3273,7 @@ fn run_update_with_physical(
                     let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                         unreachable!("only a byte-backed table stages rewrites")
                     };
+                    let kv = std::sync::Arc::make_mut(kv);
                     let error = kv
                         .duplicate_entry_error(&new_row, ctx)
                         .map_err(kv_write_error)?;
@@ -3302,6 +3306,7 @@ fn run_update_with_physical(
                 let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                     unreachable!("only a byte-backed table stages rewrites")
                 };
+                let kv = std::sync::Arc::make_mut(kv);
                 match kv.update_row_with_old_context(&handle, Some(&old_row), &new_row, ctx) {
                     Ok(()) => changed += 1,
                     Err(crate::kv_table::KvTableError::DuplicateEntry { value, key }) => {
@@ -3339,6 +3344,7 @@ fn run_update_with_physical(
             let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                 unreachable!("only a byte-backed table stages rewrites")
             };
+            let kv = std::sync::Arc::make_mut(kv);
             // Go's UPDATE runs in one transaction: a failure on a LATER row
             // (a violated CHECK, a duplicate key) rolls back the EARLIER rows
             // this statement already rewrote, while the allocator state does
@@ -3839,6 +3845,7 @@ fn run_delete_with_physical(
         let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
             unreachable!("only a byte-backed table stages deletions")
         };
+        let kv = std::sync::Arc::make_mut(kv);
         for (handle, old_row) in &doomed {
             // One read per deleted row: the fetch above already produced the
             // old row its index entries are removed from (Go RemoveRecord).

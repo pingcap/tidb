@@ -423,7 +423,7 @@ fn analyzed_composite_index_dominates_single_equality_index() {
         (
             table.table_id,
             crate::analyze::kv::analyze_kv_table(
-                table,
+                std::sync::Arc::make_mut(table),
                 &crate::analyze::AnalyzeOptions::default(),
                 None,
                 &ctx,
@@ -519,7 +519,7 @@ fn a_covering_nonclustered_primary_key_beats_the_table_scan() {
         (
             table.table_id,
             crate::analyze::kv::analyze_kv_table(
-                table,
+                std::sync::Arc::make_mut(table),
                 &crate::analyze::AnalyzeOptions::default(),
                 None,
                 &ctx,
