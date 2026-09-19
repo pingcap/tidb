@@ -422,6 +422,10 @@ var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 		{aesModes: "aes-128-ecb", retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newRandLenStrGener(10, 20)}},
 		{aesModes: "aes-128-ecb", retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newDefaultGener(0.2, types.ETString)}},
 	},
+	ast.IsNotNull: {
+		{aesModes: "aes-128-ecb", retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newRandLenStrGener(10, 20)}},
+		{aesModes: "aes-128-ecb", retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newDefaultGener(0.2, types.ETString)}},
+	},
 	ast.Upper: {
 		{aesModes: "aes-128-ecb", retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 		{aesModes: "aes-128-ecb", retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newSelectStringGener([]string{"one week’s time TEST", "one week's time TEST", "abc测试DeF", "AbCテストAbC"})}},

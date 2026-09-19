@@ -94,6 +94,13 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDuration}},
 		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
+	ast.IsNotNull: {
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDuration}},
+		{retEvalType: types.ETInt, aesModes: "aes-128-ecb", childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 }
 
 // givenValsGener returns the items sequentially from the slice given at

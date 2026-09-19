@@ -34,6 +34,7 @@ var (
 	_ functionClass = &isTrueOrFalseFunctionClass{}
 	_ functionClass = &unaryMinusFunctionClass{}
 	_ functionClass = &isNullFunctionClass{}
+	_ functionClass = &isNotNullFunctionClass{}
 	_ functionClass = &unaryNotFunctionClass{}
 )
 
@@ -54,6 +55,12 @@ var (
 	_ builtinFunc = &builtinRealIsNullSig{}
 	_ builtinFunc = &builtinStringIsNullSig{}
 	_ builtinFunc = &builtinTimeIsNullSig{}
+	_ builtinFunc = &builtinDecimalIsNotNullSig{}
+	_ builtinFunc = &builtinDurationIsNotNullSig{}
+	_ builtinFunc = &builtinIntIsNotNullSig{}
+	_ builtinFunc = &builtinRealIsNotNullSig{}
+	_ builtinFunc = &builtinStringIsNotNullSig{}
+	_ builtinFunc = &builtinTimeIsNotNullSig{}
 	_ builtinFunc = &builtinUnaryNotRealSig{}
 	_ builtinFunc = &builtinUnaryNotDecimalSig{}
 	_ builtinFunc = &builtinUnaryNotIntSig{}
@@ -1170,12 +1177,7 @@ func (c *isNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
-	if argTp == types.ETTimestamp {
-		argTp = types.ETDatetime
-	} else if argTp == types.ETJson {
-		argTp = types.ETString
-	}
+	argTp := nullTestArgEvalType(ctx, args[0])
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp)
 	if err != nil {
 		return nil, err
@@ -1351,4 +1353,204 @@ func (b *builtinTimeIsNullSig) Clone() builtinFunc {
 func (b *builtinTimeIsNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalTime(ctx, row)
 	return evalIsNull(isNull, err)
+}
+
+// nullTestArgEvalType normalizes the evaluation type of the argument of
+// ISNULL()/ISNOTNULL(). Timestamp shares the datetime evaluation path and JSON is
+// evaluated as a string, so both collapse onto an existing signature.
+func nullTestArgEvalType(ctx BuildContext, arg Expression) types.EvalType {
+	argTp := arg.GetType(ctx.GetEvalCtx()).EvalType()
+	if argTp == types.ETTimestamp {
+		argTp = types.ETDatetime
+	} else if argTp == types.ETJson {
+		argTp = types.ETString
+	}
+	return argTp
+}
+
+// isNotNullFunctionClass builds the `isnotnull` ScalarFunction, the single-function
+// form of `IS NOT NULL`. It mirrors isNullFunctionClass and returns the negated
+// result, so that `IS NOT NULL` no longer has to be composed as `not(isnull(x))`.
+type isNotNullFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *isNotNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTp := nullTestArgEvalType(ctx, args[0])
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(1)
+	var sig builtinFunc
+	switch argTp {
+	case types.ETInt:
+		sig = &builtinIntIsNotNullSig{bf}
+	case types.ETDecimal:
+		sig = &builtinDecimalIsNotNullSig{bf}
+	case types.ETReal:
+		sig = &builtinRealIsNotNullSig{bf}
+	case types.ETDatetime:
+		sig = &builtinTimeIsNotNullSig{bf}
+	case types.ETDuration:
+		sig = &builtinDurationIsNotNullSig{bf}
+	case types.ETString:
+		sig = &builtinStringIsNotNullSig{bf}
+	case types.ETVectorFloat32:
+		sig = &builtinVectorFloat32IsNotNullSig{bf}
+	default:
+		return nil, errors.Errorf("%s is not supported for ISNOTNULL()", argTp)
+	}
+	// No pb code is set on purpose: TiKV/TiFlash have no native ISNOTNULL signature
+	// yet, so the expression is decomposed back into `not(isnull(x))` when it is
+	// serialized for push down. See scalarFuncToPBExpr.
+	return sig, nil
+}
+
+// evalIsNotNull is the counterpart of evalIsNull: ISNOTNULL() never returns NULL,
+// it reports 0 when the argument is NULL and 1 otherwise.
+func evalIsNotNull(isNull bool, err error) (int64, bool, error) {
+	if err != nil {
+		return 0, true, err
+	}
+	if isNull {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+type builtinDecimalIsNotNullSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinDecimalIsNotNullSig) Clone() builtinFunc {
+	newSig := &builtinDecimalIsNotNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinDecimalIsNotNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalDecimal(ctx, row)
+	return evalIsNotNull(isNull, err)
+}
+
+type builtinDurationIsNotNullSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinDurationIsNotNullSig) Clone() builtinFunc {
+	newSig := &builtinDurationIsNotNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinDurationIsNotNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalDuration(ctx, row)
+	return evalIsNotNull(isNull, err)
+}
+
+type builtinIntIsNotNullSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinIntIsNotNullSig) Clone() builtinFunc {
+	newSig := &builtinIntIsNotNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinIntIsNotNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalInt(ctx, row)
+	return evalIsNotNull(isNull, err)
+}
+
+type builtinRealIsNotNullSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinRealIsNotNullSig) Clone() builtinFunc {
+	newSig := &builtinRealIsNotNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinRealIsNotNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalReal(ctx, row)
+	return evalIsNotNull(isNull, err)
+}
+
+type builtinStringIsNotNullSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinStringIsNotNullSig) Clone() builtinFunc {
+	newSig := &builtinStringIsNotNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinStringIsNotNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalString(ctx, row)
+	return evalIsNotNull(isNull, err)
+}
+
+type builtinVectorFloat32IsNotNullSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinVectorFloat32IsNotNullSig) Clone() builtinFunc {
+	newSig := &builtinVectorFloat32IsNotNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinVectorFloat32IsNotNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
+	return evalIsNotNull(isNull, err)
+}
+
+type builtinTimeIsNotNullSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinTimeIsNotNullSig) Clone() builtinFunc {
+	newSig := &builtinTimeIsNotNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTimeIsNotNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalTime(ctx, row)
+	return evalIsNotNull(isNull, err)
 }
