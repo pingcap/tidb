@@ -1685,3 +1685,138 @@ match against Go with an identical plan shape and identical, correct
 answer. Fixed in commit `3e888e5b` ("executor: an uncovered
 grouped-aggregate index key falls back, not errors"), pushed to
 `hparser-integration`. Task 75 closed.
+
+## task 66 root-caused (not yet fixed): almost every `ALTER TABLE` forces a
+## full catalog reload in Rust, where Go reloads only the one changed table
+
+Picked up task 66 ("DDL schema-sync ack stalls for minutes under
+back-to-back DDL") with a concrete new tool this session added: PD's
+embedded etcd server answers its v3 API over a gRPC-gateway HTTP interface
+on the *same* client port PD itself uses, so `POST /v3/kv/range` with
+base64 keys (a small helper script,
+`/tmp/perfgoal-out/etcdkv.py` -- not checked in, scratch tooling only)
+gives live etcd inspection without `etcdctl`, which is not installable in
+this sandbox (`apt-cache search etcd` finds no `etcd-client` package, no
+outbound apt access). This unblocks the etcd-level root-causing the
+original task write-up said it needed and did not have.
+
+Spun up a fresh playground (Go TiDB as DDL owner on `:46000`, PD/TiKV) plus
+this tree's release Rust node on `:54000` (`--cluster-session`,
+`--lease-ms 2000`), and tried to reproduce the originally observed
+multi-minute ack stall directly: single-connection back-to-back
+`CREATE`/`ALTER ADD COLUMN`/`DROP TABLE` (60 rounds), then the same shape
+from 8-12 concurrent connections (720 statements total). Neither
+reproduced a stall -- every statement completed in well under a second, no
+`SLOW` marker over the 3s threshold the harness watched for, so a small
+schema plus back-to-back DDL alone is not sufficient.
+
+What the reload path does under DDL is the second thing this session
+found (from the Rust node's own JSON event log, not documented before):
+
+```
+{"event":"catalog_full_reload","schema_version":9293,"reason":"schema version 9293 was produced by `add column`, which this node cannot apply incrementally"}
+{"event":"catalog_reloaded","schema_version":9293,"how":"full","trigger":"watch"}
+```
+
+`crates/tidb-exec/src/catalog_reload.rs` documents its own contract
+correctly (a diff it cannot apply incrementally always falls back to a
+full load, "always correct, merely more expensive") but the incremental
+tier is much narrower than it looks at first glance. `apply_diff_range`
+(same file, ~line 283) only special-cases:
+`ACTION_CREATE_SCHEMA`, `ACTION_DROP_SCHEMA`, `ACTION_CREATE_TABLE` (+
+materialized-view variants), `ACTION_CREATE_TABLES`, `ACTION_DROP_TABLE`,
+`ACTION_TRUNCATE_TABLE`. Every other `ActionType` -- which in practice
+means `ADD COLUMN`, `DROP COLUMN`, `MODIFY COLUMN`, `ADD INDEX`, `DROP
+INDEX`, `RENAME TABLE`, and the rest of ordinary `ALTER TABLE` -- hits
+`UnsupportedAction` and forces a *whole-catalog* re-read from the meta
+snapshot (`load_cluster_catalog`, every database, every table).
+
+Go's `pkg/infoschema/builder.go` handles this same set of action types
+through `applyDefaultAction` -> `applyTableUpdate` (~line 590): for the
+default case, `getTableIDs` sets `oldTableID = newTableID = diff.TableID`
+(same table, "replace in place"), and the function re-reads *one* table
+(`m.GetTable(schemaID, newTableID)` inside `applyCreateTable`) and swaps it
+into the existing schema's table map, leaving every other database and
+table untouched. Cost is proportional to one table, not the catalog.
+
+To test whether this gap is large enough to matter, this session grew a
+throwaway database to 4839 tables (`t66grow`, via 16 concurrent Go
+connections, `/tmp/perfgoal-out/t66_grow_schema.py`) and re-measured `ALTER
+TABLE ... ADD COLUMN` latency end-to-end (client-observed, so it includes
+the full DDL-owner round trip: Go's job execution, its
+`waitVersionSyncedWithMDL`, and Rust's ack):
+
+| Scenario | Catalog size | Result |
+| --- | --- | --- |
+| Single `ADD COLUMN`, sequential, low table count | ~10 tables | ~0.21s |
+| Single `ADD COLUMN`, sequential | 4839 tables | ~0.77-0.98s (30 back-to-back, no growth) |
+| 20 `ADD COLUMN`, concurrent (20 connections) | 4839 tables | wall 3.21s, max 2.70s |
+| 150 `ADD COLUMN`, concurrent | 4839 tables | wall 20.56s, max 16.95s |
+| ~250 `ADD COLUMN`, concurrent (250 succeeded, rest hit missing-table errors from a script bug) | 4839 tables | wall 20.09s, max 12.40s |
+
+Two things fall out of this table. First, the full-reload cost really does
+scale with total catalog size (0.21s at ~10 tables vs. ~0.8s at 4839,
+roughly linear), confirming the mechanism is real, not noise. Second, and
+more importantly for task 66's "stalls for *minutes*" claim: a single
+back-to-back stream stays flat (no growth across 30 sequential alters), but
+concurrent DDL does not scale for free -- 150-way concurrency costs
+~6-7x the wall time of 20-way concurrency, consistent with every
+concurrently-committed schema version forcing its own full reload rather
+than several versions coalescing into one, i.e. Rust's reload throughput
+under contention is bounded well below the rate Go's DDL job queue can
+publish new versions at. This session's bursts were one-shot (finite) and
+plateaued around 12-20s rather than growing to minutes; the original
+report's back-to-back *cleanup+prepare recheck loop* is a sustained,
+repeating source of concurrent ALTER-shaped DDL (sysbench cleanup/prepare
+does `DROP`+`CREATE`, but real workloads mix in `ADD COLUMN`/`ADD
+INDEX`-shaped migrations too), so a steady arrival rate that only slightly
+exceeds Rust's full-reload throughput would produce unbounded, growing lag
+over the length of a real recheck loop rather than the bounded lag a single
+finite burst shows here -- which is the multi-minute shape task 66
+originally reported (job 7156: 7+ minutes; job 7155: ~9m40s).
+
+**This is not a full reproduction of the original stall** -- this session
+did not run the actual sysbench cleanup+prepare loop against this cluster,
+and the original stalls may have run against a larger and/or
+longer-lived catalog than the synthetic 4839-table one built here. What
+*is* confirmed, directly from Go and Rust source and a live A/B
+measurement, is a genuine, previously-undocumented Go/Rust parity gap:
+Rust pays a whole-catalog reload for DDL shapes Go applies as a single-table
+swap, and that gap's cost is large enough (single-digit to double-digit
+seconds under only 150-250-way contention on a ~5000-table catalog) to be
+a plausible primary contributor to the originally observed stalls, not
+just a rounding error.
+
+**Why this session did not implement the fix**: Go's `applyTableUpdate` is
+not a small function to port faithfully -- it also threads through
+auto-ID/auto-random allocator reuse (`getKeptAllocators`), placement-bundle
+invalidation (`updateBundleForTableUpdate`), partition-aware ID
+bookkeeping (`appendAffectedIDs`, `copySortedTables`), and masking-policy
+cache resets (`needRefreshMaskingPoliciesForTableDiff`) alongside the core
+single-table re-read. Per this repo's own transcreation rule (`AGENTS.md`
+non-negotiable 6) and the "no speculative behavior" rule, landing a
+partial port of this function that only handles the common case (plain
+`ADD`/`DROP`/`MODIFY COLUMN`) while silently mishandling partitioned
+tables, allocator reuse, or placement bundles would be a correctness risk
+in exactly the code path responsible for keeping every node's view of the
+schema consistent -- worse than the current always-correct-but-slow
+fallback. Task 66 stays open with this root cause documented; the next
+session should port `applyTableUpdate`'s single-table reload path
+completely (including its allocator/bundle/masking-policy side effects)
+before switching `catalog_reload.rs`'s default arm away from
+`UnsupportedAction`, and validate it does not regress correctness by
+running the existing DDL-diff test fixtures with the new tier enabled, not
+just re-measuring latency.
+
+Environment/tooling notes worth keeping for that follow-up:
+- The etcd-over-HTTP trick (`POST http://<pd-client-addr>/v3/kv/range`
+  with base64 `key`/`range_end`) works against this PD build (`etcdserver
+  3.5.15`) and needs no extra binary; useful for inspecting
+  `/tidb/ddl/all_schema_by_job_versions/<job>/<tidb-id>` live during a
+  reproduction.
+- `ALTER TABLE ... ADD INDEX` could not be exercised in this sandbox:
+  TiDB's ingest-based fast index build needs local scratch space under
+  `/tmp/tidb/tmp_ddl-<port>` and this container's disk allowance was
+  already exhausted (`Check ingest environment failed: no enough space`),
+  independent of anything in this codebase. A real reproduction attempt
+  should budget disk headroom for that.
