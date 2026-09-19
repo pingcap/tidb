@@ -453,8 +453,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Value != nil {
 			p.varsMutable[nameLower] = struct{}{}
 			delete(p.varsReadonly, nameLower)
-		} else if p.stmtTp == TypeSelect {
-			// Only check the variable in select statement.
+		} else if p.stmtTp == TypeSelect || p.stmtTp == TypeUpdate || p.stmtTp == TypeInsert || p.stmtTp == TypeDelete {
+			// Only check variables in SELECT, UPDATE, INSERT, and DELETE statements.
 			_, ok := p.varsMutable[nameLower]
 			if !ok {
 				p.varsReadonly[nameLower] = struct{}{}
