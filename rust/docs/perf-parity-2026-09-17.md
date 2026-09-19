@@ -1586,3 +1586,102 @@ lines. Task 71 closed on this coverage, not a code change -- if the crash
 Task 71 traced is real, it lives somewhere neither this document's repro
 attempts nor its Go comparison reached, and reopening it needs a fresh stack
 trace from an actual failure, not a re-guess from the original description.
+
+## task 75 fixed: an uncovered grouped-aggregate index key now falls back
+## instead of failing the statement
+
+go-tpc's TPC-C consistency check (condition 3.3.2.10, a correlated
+`sum(ol_amount)` over `orders`/`order_line` per customer) failed with
+`index aggregate request failed: a grouped aggregate key is not covered by
+the index`. Found the exact query in the `go-tpc` binary's strings (its
+source isn't vendored here): a scalar subquery correlated on `o_d_id` and
+`o_c_id`, joined `orders` against `order_line`, filtered on
+`OL_DELIVERY_D IS NOT NULL`.
+
+**Root cause**: `KvTable::pushdown_index_partial_aggregate_cursor`
+(`kv_table/table_scan.rs`) remaps a grouped aggregate's group-key offsets
+from the scan's pruned schema into the chosen index's own column order. Its
+`Grouped` branch was the ONE exception, among several sibling checks in the
+very same function, that turned "this index doesn't carry the group-key
+column at all" into a hard `KvTableError::Encode`, which `access_path.rs`
+wraps in `ExecError::unsupported` and propagates with `?` -- failing the
+whole statement. Every sibling check for the identical class of condition
+(the predicate remap loop, the `Global` variant's function-input remap)
+already answers with `Ok(None)`, a soft refusal the caller already has
+fallback machinery for: "if the aggregate shape is refused, retain the
+ordinary index stream for the local partial fallback" (comment already
+present at the call site). The grouped branch just never sent that signal.
+
+**Fix**: made the grouped branch consistent with its own siblings --
+`Ok(None)` instead of the hard error. No call-site or behavior change
+beyond that; the fallback path was already correct and already wired up.
+
+**Regression test**: built a table with an index covering only one column,
+requested a grouped aggregate whose key names a different column that index
+does not carry at all, and asserted the cursor returns `Ok(None)` with no
+coprocessor request built. Verified it fails against the pre-fix code
+(panics on the now-`Err` result) and passes against the fix.
+
+**Deep code-parity check, at the user's request**, across the two Go
+mechanisms most plausibly responsible for this class of bug:
+
+- Physical index-coverage: Go's `DataSource.IsSingleScan` /
+  `IsIndexCoveringColumns` (`logical_datasource.go:677`), gated on
+  `ColsRequiringFullLen` (populated by `PruneColumns`), decides PER
+  CANDIDATE INDEX, during access-path selection, whether that index alone
+  can answer every column the query needs -- an aggregate's group-by items
+  included. Rust's port, `index_path_is_single_scan`
+  (`find_best_task/dispatch.rs:1228`), driven by `DataSource::
+  cols_requiring_full_len` (doc-labeled "Go `ColsRequiringFullLen`"), is the
+  same mechanism, and `LogicalAggregation::prune_columns_local`
+  (`logical/aggregation.rs:320`) does correctly extend the used-columns set
+  with both aggregate-argument AND group-by columns, matching Go's
+  propagation. For the actual failing index (`idx_order(o_w_id, o_d_id,
+  o_c_id, o_id)`), this column IS present, so this mechanism is not the gap.
+- Logical aggregation-push-through-join: Go's `AggregationPushDownSolver`
+  (`rule_aggregation_push_down.go`), the rule most plausibly touching this
+  exact shape (a scalar-subquery decorrelation is exactly a join this rule
+  can push an aggregate through). `collectGbyCols` (line 146) and Rust's
+  `collect_gby_cols` (line 182) are line-for-line identical: same four
+  sources of group-by columns, same left/right schema partitioning, same
+  dedup. `checkValidJoin`/`check_valid_join` are identical too (`Inner |
+  LeftOuter | RightOuter`).
+
+Both checked mechanisms are faithfully, correctly ported -- meaningful
+negative evidence that the residual gap (if the crash is still reachable at
+all) is not a missing check in either, but a **cost-based candidate
+scoring** disagreement at real TPC-C scale (which access path wins on
+estimated cost under real `ANALYZE` statistics), which static code reading
+cannot settle.
+
+**Live sanity check**: built the exact schema from the go-tpc strings
+(`customer`, `orders` with `idx_order`, `order_line`) with matching data on
+both a real Go TiDB and the fixed Rust node, and ran the exact query.
+Go's own `EXPLAIN` at this data volume does not even attempt an
+index-pushed aggregate for `orders` -- it computes the whole thing via a
+plain `HashJoin` + root-level `HashAgg` (pseudo-stats table range scans,
+no index touched at all). The fixed Rust node's `EXPLAIN` for the
+IDENTICAL schema and data is **structurally identical** to Go's: same
+operator shapes (`StreamAgg` -> `Selection` -> `HashAgg` -> `HashJoin` ->
+`TableReader`/`MergeJoin`/`TableReader`), same estimated row counts, same
+pseudo-stats table scans on both sides of the join. Neither engine reaches
+the index-aggregate-pushdown decision at this scale, and both return the
+identical, correct answer (`count(*) = 0`, matching `100.00 + 50.00 =
+150.00 = sum(ol_amount)`) with no error on the fixed binary.
+
+This is a real, useful data point but not a full reproduction of the
+original at-scale failure: reaching the actual cost-based decision that
+picks an aggregate-pushed-onto-a-non-covering-index plan needs real TPC-C
+scale with real collected statistics (a 10-warehouse load), which this
+session did not attempt for time. The shipped fix does not depend on ever
+pinning that down -- it is the same defense-in-depth fallback pattern this
+function's own siblings already use, so it protects against this
+mis-selection whether or not a future session ever traces the exact
+cost-model divergence that produces the ineligible candidate at scale.
+
+Validated: full `tidb-executor` suite 1343/1343 passing (up from 1342);
+`cargo fmt`/`clippy` clean on the touched lines; live schema/data/query
+match against Go with an identical plan shape and identical, correct
+answer. Fixed in commit `3e888e5b` ("executor: an uncovered
+grouped-aggregate index key falls back, not errors"), pushed to
+`hparser-integration`. Task 75 closed.
