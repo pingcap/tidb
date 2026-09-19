@@ -1,0 +1,14 @@
+drop table if exists rollup_source, rollup_summary;
+create table rollup_source(v varchar(8) character set utf8mb4 collate utf8mb4_bin);
+insert into rollup_source values ('a'), ('A'), ('b');
+create table rollup_summary(g1 varchar(8) collate utf8mb4_bin, g2 varchar(8) collate utf8mb4_bin, n int, r1 int, r2 int);
+insert into rollup_summary select v collate utf8mb4_general_ci, v collate utf8mb4_bin, count(*), grouping(v collate utf8mb4_general_ci), grouping(v collate utf8mb4_bin) from rollup_source group by v collate utf8mb4_general_ci, v collate utf8mb4_bin with rollup;
+select lower(g1), g2, n, r1, r2 from rollup_summary order by r1, r2, g2, lower(g1);
+select count(*) from rollup_summary;
+admin check table rollup_summary;
+truncate table rollup_summary;
+insert into rollup_summary select v collate utf8mb4_bin, v collate utf8mb4_general_ci, count(*), grouping(v collate utf8mb4_bin), grouping(v collate utf8mb4_general_ci) from rollup_source group by v collate utf8mb4_bin, v collate utf8mb4_general_ci with rollup;
+select g1, lower(g2), n, r1, r2 from rollup_summary order by r1, r2, g1;
+select count(*) from rollup_summary;
+admin check table rollup_summary;
+drop table rollup_source, rollup_summary;
