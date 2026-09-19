@@ -95,6 +95,70 @@ pub use mpp::{
     ReportTaskStatusResponse as MppReportTaskStatusResponse, TaskMeta as MppTaskMeta,
 };
 
+/// Stub bodies for the `tikv_server::Tikv` RPCs that this crate's test
+/// doubles almost never need to implement for real (currently just the MPP
+/// group). Go's generated `tikvpb.pb.go` ships an `UnimplementedTikvServer`
+/// struct with the same bodies, letting `unistore`'s mock (and any other
+/// `TikvServer` implementer) embed it and pick up newly-added RPCs for free
+/// instead of failing to compile (see
+/// `pkg/store/mockstore/unistore/tikv/server.go`'s `Server`, which embeds it
+/// verbatim with the comment: "After updating the kvproto, some methods of
+/// TikvServer are not implemented. Construct `Server` based on
+/// `UnimplementedTikvServer`, in order to compile successfully").
+///
+/// Rust's trait system has no struct-embedding escape hatch for a required
+/// trait method, so a Rust `impl Tikv for X` can't inherit these for free the
+/// way Go's embedding does; each mock still has to declare the method and the
+/// `EstablishMPPConnectionStream` associated type, but the body it delegates
+/// to is defined once, here, with the exact `"method <Rpc> not implemented"`
+/// message Go's own generated stub uses.
+pub mod unimplemented_tikv {
+    use crate::mpp::{
+        CancelTaskRequest, CancelTaskResponse, DispatchTaskRequest, DispatchTaskResponse,
+        EstablishMppConnectionRequest, MppDataPacket, ReportTaskStatusRequest,
+        ReportTaskStatusResponse,
+    };
+
+    /// A concrete `EstablishMPPConnectionStream` for mocks that error out
+    /// before ever producing a stream instance; the channel is never
+    /// constructed, only the type is needed to satisfy the associated type.
+    pub type NeverStream = tonic::codegen::tokio_stream::wrappers::ReceiverStream<
+        Result<MppDataPacket, tonic::Status>,
+    >;
+
+    fn unimplemented(rpc: &str) -> tonic::Status {
+        tonic::Status::unimplemented(format!("method {rpc} not implemented"))
+    }
+
+    /// Go: `UnimplementedTikvServer.DispatchMPPTask`.
+    pub async fn dispatch_mpp_task(
+        _request: tonic::Request<DispatchTaskRequest>,
+    ) -> Result<tonic::Response<DispatchTaskResponse>, tonic::Status> {
+        Err(unimplemented("DispatchMPPTask"))
+    }
+
+    /// Go: `UnimplementedTikvServer.CancelMPPTask`.
+    pub async fn cancel_mpp_task(
+        _request: tonic::Request<CancelTaskRequest>,
+    ) -> Result<tonic::Response<CancelTaskResponse>, tonic::Status> {
+        Err(unimplemented("CancelMPPTask"))
+    }
+
+    /// Go: `UnimplementedTikvServer.EstablishMPPConnection`.
+    pub async fn establish_mpp_connection(
+        _request: tonic::Request<EstablishMppConnectionRequest>,
+    ) -> Result<tonic::Response<NeverStream>, tonic::Status> {
+        Err(unimplemented("EstablishMPPConnection"))
+    }
+
+    /// Go: `UnimplementedTikvServer.ReportMPPTaskStatus`.
+    pub async fn report_mpp_task_status(
+        _request: tonic::Request<ReportTaskStatusRequest>,
+    ) -> Result<tonic::Response<ReportTaskStatusResponse>, tonic::Status> {
+        Err(unimplemented("ReportMPPTaskStatus"))
+    }
+}
+
 pub use kvrpcpb::prewrite_request::ForUpdateTsConstraint as KvrpcForUpdateTsConstraint;
 pub use kvrpcpb::prewrite_request::PessimisticAction as KvrpcPessimisticAction;
 

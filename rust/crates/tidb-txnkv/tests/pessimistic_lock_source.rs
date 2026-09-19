@@ -390,6 +390,41 @@ impl Tikv for ScriptedTikv {
     type BatchCommandsStream =
         tokio_stream::wrappers::ReceiverStream<Result<BatchCommandsResponse, tonic::Status>>;
 
+    // Go parity: `pkg/store/mockstore/unistore/tikv/server.go`'s `Server`
+    // embeds `tikvpb.UnimplementedTikvServer` so a `tikvpb.proto` addition
+    // (like this MPP RPC group) never breaks compilation; Rust has no
+    // embedding equivalent for a required trait method, so each method
+    // delegates to the shared stub in `tidb_proto::unimplemented_tikv`.
+    type EstablishMPPConnectionStream = tidb_proto::unimplemented_tikv::NeverStream;
+
+    async fn dispatch_mpp_task(
+        &self,
+        request: tonic::Request<tidb_proto::mpp::DispatchTaskRequest>,
+    ) -> Result<tonic::Response<tidb_proto::mpp::DispatchTaskResponse>, tonic::Status> {
+        tidb_proto::unimplemented_tikv::dispatch_mpp_task(request).await
+    }
+
+    async fn cancel_mpp_task(
+        &self,
+        request: tonic::Request<tidb_proto::mpp::CancelTaskRequest>,
+    ) -> Result<tonic::Response<tidb_proto::mpp::CancelTaskResponse>, tonic::Status> {
+        tidb_proto::unimplemented_tikv::cancel_mpp_task(request).await
+    }
+
+    async fn establish_mpp_connection(
+        &self,
+        request: tonic::Request<tidb_proto::mpp::EstablishMppConnectionRequest>,
+    ) -> Result<tonic::Response<Self::EstablishMPPConnectionStream>, tonic::Status> {
+        tidb_proto::unimplemented_tikv::establish_mpp_connection(request).await
+    }
+
+    async fn report_mpp_task_status(
+        &self,
+        request: tonic::Request<tidb_proto::mpp::ReportTaskStatusRequest>,
+    ) -> Result<tonic::Response<tidb_proto::mpp::ReportTaskStatusResponse>, tonic::Status> {
+        tidb_proto::unimplemented_tikv::report_mpp_task_status(request).await
+    }
+
     async fn coprocessor(
         &self,
         _request: tonic::Request<CoprocessorRequest>,
