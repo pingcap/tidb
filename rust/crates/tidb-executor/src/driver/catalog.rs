@@ -236,9 +236,8 @@ pub struct Catalog {
     /// autocommit statement, every `BEGIN`), so it cannot re-walk the nested
     /// database/table maps each time without paying that cost on the
     /// statement path Go does not have at all (a fresh membuffer starts with
-    /// nothing to clear). Shares the same lifetime as [`Self::
-    /// table_id_names`]: only a schema-membership change can add or remove a
-    /// table entry, so the same two invalidation sites cover both.
+    /// nothing to clear). Unlike the name directory, this retains table
+    /// objects, so a write must invalidate it before detaching an entry.
     kv_tables_flat: Arc<std::sync::OnceLock<Vec<Arc<TableEntry>>>>,
     /// The entries a session's LOCAL temporary tables are DISPLACING while
     /// they are attached: `(folded database, folded name, the entry that was
@@ -1617,6 +1616,9 @@ impl Catalog {
     /// allow, never the reverse.
     pub(crate) fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.bump_version();
+        // The flattened list owns the old entry: after copy-on-write it
+        // would clear committed dirty marks on that stale image instead.
+        self.invalidate_kv_tables_flat();
         let key = CatalogTableKey::new(database, name);
         let entry = self
             .database_mut(&key.database)?
@@ -1771,9 +1773,8 @@ impl Catalog {
     }
 
     /// Every table entry in this image, in the shape [`Self::
-    /// clear_dirty_content`] walks. Built once per metadata version and
-    /// shared by every catalog clone at that version, the same way
-    /// [`Self::table_id_names`] is; see [`Self::kv_tables_flat`]'s own doc.
+    /// clear_dirty_content`] walks. Shared by catalog clones until a write
+    /// detaches an entry or a schema change replaces the table list.
     fn kv_tables_flat(&self) -> &[Arc<TableEntry>] {
         self.kv_tables_flat.get_or_init(|| {
             self.databases
@@ -4158,14 +4159,52 @@ mod planner_view_tests {
         assert!(!Arc::ptr_eq(&directory, &catalog.table_id_names));
     }
 
+    #[test]
+    fn clearing_dirty_content_reaches_cow_written_table() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE cd(a INT PRIMARY KEY, b INT)", &mut catalog)
+            .unwrap();
+        catalog.clear_dirty_content();
+        let mut active_transaction = catalog.clone();
+        let context = crate::StmtContext::for_query();
+        crate::run_insert_on(
+            "INSERT INTO cd VALUES (1, 10)",
+            &mut active_transaction,
+            &context,
+        )
+        .unwrap();
+        crate::run_insert_on("INSERT INTO cd VALUES (2, 20)", &mut catalog, &context).unwrap();
+        let dirty = |image: &Catalog| {
+            let TableEntry::Kv(table) = image.get_in(DEFAULT_DATABASE, "cd").unwrap() else {
+                panic!("expected KV table")
+            };
+            (
+                table.has_dirty_content(),
+                table.record_key_is_staged(table.table_id, &crate::kv_table::TableHandle::Int(1)),
+                table.record_key_is_staged(table.table_id, &crate::kv_table::TableHandle::Int(2)),
+            )
+        };
+        assert_eq!(dirty(&catalog), (true, false, true));
+        assert_eq!(dirty(&active_transaction), (true, true, false));
+        catalog.clear_dirty_content();
+        assert_eq!(
+            dirty(&catalog),
+            (false, false, false),
+            "a new transaction must not inherit committed dirty marks or keys"
+        );
+        assert_eq!(
+            dirty(&active_transaction),
+            (true, true, false),
+            "another active transaction must retain its writes"
+        );
+    }
+
     /// `clear_dirty_content` runs at every non-continuing statement, so it
     /// must not re-walk every database and table map each time either --
-    /// same reasoning as the id directory above, same cache lifetime. An
-    /// ordinary write leaves the flattened table list alone; a real schema
-    /// change still invalidates it, and a table created after that rebuild
-    /// is still reachable through it.
+    /// Read-only boundaries reuse the list. Writes and schema changes must
+    /// invalidate it so the next boundary clears the current table objects.
     #[test]
-    fn clearing_dirty_content_does_not_rebuild_the_flat_table_list() {
+    fn clearing_dirty_content_reuses_flat_list_until_a_write() {
         let mut catalog = Catalog::default();
         crate::run_create_table_on("CREATE TABLE cd(a INT PRIMARY KEY, b INT)", &mut catalog)
             .unwrap();
@@ -4177,10 +4216,9 @@ mod planner_view_tests {
             panic!("cd is not a KV table")
         };
         cd.note_staged_record_key(b"dummy-record-key");
-        assert!(
-            Arc::ptr_eq(&flat, &catalog.kv_tables_flat),
-            "an ordinary write through get_mut_in must not invalidate the flat table list"
-        );
+        assert!(!Arc::ptr_eq(&flat, &catalog.kv_tables_flat));
+        catalog.clear_dirty_content();
+        let flat = Arc::clone(&catalog.kv_tables_flat);
         catalog.clear_dirty_content();
         assert!(Arc::ptr_eq(&flat, &catalog.kv_tables_flat));
 
