@@ -184,7 +184,7 @@ impl ProcessEntry {
                     self.digest.clear();
                     self.digest.push_str(digest);
                 }
-                None => self.digest = tidb_parser::normalize_digest(sql).1.to_string(),
+                None => self.digest = crate::normalize_statement_digest(sql).1.to_string(),
             }
             self.since = Instant::now();
             self.started_at = Utc::now();

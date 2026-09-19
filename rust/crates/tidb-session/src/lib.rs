@@ -816,6 +816,17 @@ pub struct Session {
     prev_found_in_binding: bool,
 }
 
+#[cfg(test)]
+thread_local! {
+    static STATEMENT_DIGEST_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn normalize_statement_digest(sql: &str) -> (String, tidb_parser::Digest) {
+    #[cfg(test)]
+    STATEMENT_DIGEST_CALLS.with(|count| count.set(count.get() + 1));
+    tidb_parser::normalize_digest(sql)
+}
+
 impl Session {
     /// Builds the Go `createSessionWithOpt` state over an already selected
     /// infoschema. Cluster bootstrap is owned by the store/domain, not by each
@@ -1982,12 +1993,12 @@ impl Session {
         // long as it runs, which is why the process list is updated here --
         // the one door every statement of this session goes through -- rather
         // than in one front end's command loop.
-        // Go normalizes a statement and digests it once (`StmtCtx.SQLDigest`)
-        // for the process list and memory arbitration alike; this is the one
-        // door every statement passes, so the text is normalized here once.
+        // The process registry reuses the server-held PREPARE digest, and
+        // normalizes ordinary statements only when it publishes a new one.
+        // Materialize normalized SQL here only when memory arbitration needs
+        // the text as well; pass its digest through to avoid a second hash.
         let arbitrated = self.session_memory.arbitrator_enabled();
-        let normalized =
-            (self.process.is_some() || arbitrated).then(|| tidb_parser::normalize_digest(sql));
+        let normalized = arbitrated.then(|| normalize_statement_digest(sql));
         if let Some(guard) = &self.process {
             let registry = guard.registry();
             let digest = normalized.as_ref().map(|(_, digest)| digest.to_string());

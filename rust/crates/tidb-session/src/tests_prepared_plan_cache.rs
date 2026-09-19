@@ -1472,3 +1472,28 @@ fn logical_range_quota_reaches_join_and_cte_statistics() {
         }
     }
 }
+
+#[test]
+fn held_prepared_execution_reuses_published_digest() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE digest_reuse (id INT PRIMARY KEY, v INT)").unwrap();
+    session.run("INSERT INTO digest_reuse VALUES (1,10)").unwrap();
+    let sql = "SELECT v FROM digest_reuse WHERE id=?";
+    let prepared = session.prepare_ast(sql).unwrap();
+    let registry = crate::process::ProcessRegistry::default();
+    session.attach_process(91, registry.register(91, "root".into(), "local".into(), "test".into(), None));
+    let digest = tidb_parser::normalize_digest(sql).1.to_string();
+    let hold = session.retain_process_statement_with_digest(sql, &digest).unwrap();
+    crate::STATEMENT_DIGEST_CALLS.with(|count| count.set(0));
+    let output = session.run_prepared_with_result_authority(&prepared, &[Datum::new_int(1)]).unwrap();
+    assert!(matches!(output.0, crate::StmtOutput::Rows { .. }));
+    assert_eq!(crate::STATEMENT_DIGEST_CALLS.with(|count| count.get()), 0,
+        "Go EXECUTE reuses the PREPARE digest already published by the server");
+    assert_eq!(registry.snapshot()[0].info.as_deref(), Some(sql));
+    drop(hold);
+    assert_eq!(registry.snapshot()[0].info, None);
+    crate::STATEMENT_DIGEST_CALLS.with(|count| count.set(0));
+    session.run("SELECT 2").unwrap();
+    assert_eq!(crate::STATEMENT_DIGEST_CALLS.with(|count| count.get()), 1,
+        "an ordinary statement still derives its process digest exactly once");
+}
