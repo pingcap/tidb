@@ -533,7 +533,13 @@ impl QuerySession for PipelineServerSession {
 /// Go `ExecBinaryParam` builds one datum per parameter kind: a signed width
 /// becomes an Int, an unsigned one a UInt, FLOAT and DOUBLE their own real
 /// domains, DECIMAL is parsed from its digits, and a NULL parameter is a NULL
-/// datum.
+/// datum. A string-family parameter is `types.NewDatum(string)` -- a string
+/// datum in the default collation, the same datum a quoted literal in the
+/// text protocol produces -- and only the BLOB family is `NewBytesDatum`.
+/// Binding every string parameter as binary bytes made `c_last = ?` a
+/// binary-collation comparison against a `utf8mb4` column, which this tier
+/// evaluates locally after fetching the whole scanned range instead of
+/// pushing it to the coprocessor (TPC-C ORDER_STATUS by customer name).
 pub(crate) fn prepared_parameters(
     values: &[tidb_protocol::PreparedValue],
 ) -> Vec<tidb_datatype::Datum> {
@@ -547,7 +553,10 @@ pub(crate) fn prepared_parameters(
                 tidb_datatype::Datum::UInt(*value)
             }
             tidb_protocol::PreparedValue::String(bytes) => {
-                tidb_datatype::Datum::Bytes(bytes.clone())
+                tidb_datatype::Datum::new_string(bytes.clone())
+            }
+            tidb_protocol::PreparedValue::Bytes(bytes) => {
+                tidb_datatype::Datum::new_bytes(bytes.clone())
             }
             tidb_protocol::PreparedValue::Float(value) => {
                 tidb_datatype::Datum::Float32(f64::from(*value))
@@ -568,9 +577,10 @@ pub(crate) fn prepared_parameters(
             // Go parses the rendered text into a Time or Duration datum.
             // This tier keeps temporal values as their formatted text --
             // the same documented divergence the temporal casts and the
-            // date/time builtins carry -- so the text IS the value here.
+            // date/time builtins carry -- so the text IS the value here, and
+            // it is the string datum a quoted temporal literal would be.
             tidb_protocol::PreparedValue::Temporal(text) => {
-                tidb_datatype::Datum::Bytes(text.clone().into_bytes())
+                tidb_datatype::Datum::new_string(text.clone())
             }
         })
         .collect()
@@ -1199,5 +1209,34 @@ mod tests {
             0,
             "COMMIT ends the transaction; autocommit stays off until it is SET back"
         );
+    }
+
+    /// Go `ExecBinaryParam`'s string-family arm is `types.NewDatum(string)`:
+    /// a string datum in the default collation, exactly what a quoted SQL
+    /// literal produces. Binding it as `Datum::Bytes` (the binary collation)
+    /// instead made a prepared `WHERE string_col = ?` incomparable to the
+    /// coprocessor's own describable form, forcing the whole scanned range
+    /// back for a local filter (TPC-C ORDER_STATUS's `c_last = ?` lookup by
+    /// customer name). This must fail before the `prepared_parameters` fix
+    /// and pass after it.
+    #[test]
+    fn a_binary_protocol_string_parameter_binds_the_same_datum_kind_as_a_text_literal() {
+        let bound =
+            prepared_parameters(&[tidb_protocol::PreparedValue::String(b"BARBARBAR".to_vec())]);
+        assert_eq!(bound.len(), 1);
+        assert!(
+            matches!(bound[0], Datum::String(_)),
+            "a string-family binary parameter must bind a string datum, not {:?}",
+            bound[0]
+        );
+        assert_eq!(
+            bound[0],
+            Datum::new_string(b"BARBARBAR".to_vec()),
+            "the collation must be TiDB's default (utf8mb4_bin), matching a literal"
+        );
+
+        // The BLOB family stays a bytes datum, as Go's `NewBytesDatum` arm is.
+        let blob = prepared_parameters(&[tidb_protocol::PreparedValue::Bytes(b"raw".to_vec())]);
+        assert_eq!(blob[0], Datum::new_bytes(b"raw".to_vec()));
     }
 }

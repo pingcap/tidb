@@ -311,10 +311,30 @@ fn execute_ignores_fields_and_suffixes_that_go_does_not_observe() {
         vec![PreparedValue::String(b"geo".to_vec())]
     );
 
+    // The BLOB family is Go's `NewBytesDatum` arm, apart from the string
+    // family's `NewDatum(string)`: TYPE_BLOB (0xfc) and TYPE_TINY_BLOB
+    // (0xf9) decode to bytes, TYPE_STRING (0xfe) to a string.
+    for (type_code, expected) in [
+        (0xfc, PreparedValue::Bytes(b"raw".to_vec())),
+        (0xf9, PreparedValue::Bytes(b"raw".to_vec())),
+        (0xfe, PreparedValue::String(b"raw".to_vec())),
+    ] {
+        assert_eq!(
+            decode_prepared_statement_execute(
+                &execute_payload_typed(1, type_code, 0, &[3, b'r', b'a', b'w']),
+                1,
+                None,
+            )
+            .unwrap()
+            .values,
+            vec![expected]
+        );
+    }
+
     // A length-encoded NULL has family-specific Go datum semantics: blob nil
     // reads as empty bytes, while string and decimal nil are SQL NULL here.
     for (type_code, expected) in [
-        (0xfc, PreparedValue::String(Vec::new())),
+        (0xfc, PreparedValue::Bytes(Vec::new())),
         (0x0f, PreparedValue::Null),
         (0xf6, PreparedValue::Null),
     ] {
@@ -1220,7 +1240,7 @@ fn a_bound_parameter_consumes_no_bytes_from_the_execute_value_section() {
     assert_eq!(
         decoded.values,
         vec![
-            PreparedValue::String(b"long data".to_vec()),
+            PreparedValue::Bytes(b"long data".to_vec()),
             PreparedValue::SignedLongLong(77),
         ]
     );
@@ -1239,6 +1259,6 @@ fn a_bound_parameter_consumes_no_bytes_from_the_execute_value_section() {
     .unwrap();
     assert_eq!(
         decoded.values[0],
-        PreparedValue::String(b"long data".to_vec())
+        PreparedValue::Bytes(b"long data".to_vec())
     );
 }

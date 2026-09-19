@@ -82,12 +82,22 @@ impl PreparedParameterType {
 /// A signed integer width interprets to one `i64` (Go `ExecBinaryParam`
 /// sign-extends `int8`/`int16`/`int32`/`int64`); a string parameter carries its
 /// raw length-encoded bytes.
+///
+/// The string and BLOB families stay apart because Go binds them to
+/// different datums: `TypeVarchar`/`TypeString`/... become a string datum
+/// (`types.NewDatum(string)`, the default `utf8mb4_bin` collation) while
+/// `TypeBlob`/`TypeTinyBlob`/... become a bytes datum (`NewBytesDatum`, the
+/// binary collation). A string parameter that arrived as binary bytes
+/// compared with a `utf8mb4` column in the binary collation, which kept the
+/// predicate out of the coprocessor.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PreparedValue {
     /// A signed integer parameter, sign-extended to 64 bits from its wire width.
     SignedLongLong(i64),
-    /// A string parameter's raw bytes (utf8 for the configured node).
+    /// A string-family parameter's raw bytes (utf8 for the configured node).
     String(Vec<u8>),
+    /// A BLOB-family parameter's raw bytes, Go's `NewBytesDatum` arm.
+    Bytes(Vec<u8>),
     /// An unsigned integer parameter, widened to 64 bits.
     UnsignedLongLong(u64),
     /// A `FLOAT` parameter, widened to `f64` the way Go widens `float32`.
@@ -449,7 +459,7 @@ fn prepared_value_from_binary_param(
                 parameter.tp,
                 TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB
             ) {
-                PreparedValue::String(Vec::new())
+                PreparedValue::Bytes(Vec::new())
             } else {
                 PreparedValue::Null
             },
@@ -493,9 +503,11 @@ fn prepared_value_from_binary_param(
         }
         TYPE_DURATION => PreparedValue::Temporal(render_binary_duration(&parameter.val)?),
         TYPE_NEW_DECIMAL => PreparedValue::Decimal(parameter.val),
-        TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB | TYPE_UNSPECIFIED
-        | TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING | TYPE_ENUM | TYPE_SET | TYPE_GEOMETRY
-        | TYPE_BIT => PreparedValue::String(parameter.val),
+        TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB => {
+            PreparedValue::Bytes(parameter.val)
+        }
+        TYPE_UNSPECIFIED | TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING | TYPE_ENUM | TYPE_SET
+        | TYPE_GEOMETRY | TYPE_BIT => PreparedValue::String(parameter.val),
         type_code => {
             return Err(crate::BinaryParamError::UnknownFieldType { type_code }.into());
         }

@@ -179,9 +179,9 @@ fn write_bind_parameters(values: Vec<PreparedValue>) -> Vec<PreparedBindValue> {
         .into_iter()
         .map(|value| match value {
             PreparedValue::SignedLongLong(value) => PreparedBindValue::Int(value),
-            PreparedValue::String(bytes) | PreparedValue::Decimal(bytes) => {
-                PreparedBindValue::Bytes(bytes)
-            }
+            PreparedValue::String(bytes)
+            | PreparedValue::Bytes(bytes)
+            | PreparedValue::Decimal(bytes) => PreparedBindValue::Bytes(bytes),
             PreparedValue::UnsignedLongLong(value) => PreparedBindValue::UInt(value),
             PreparedValue::Float(value) => PreparedBindValue::Float(f64::from(value)),
             PreparedValue::Double(value) => PreparedBindValue::Float(value),
