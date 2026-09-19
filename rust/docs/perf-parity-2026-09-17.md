@@ -831,15 +831,45 @@ this sample size. A future full-matrix re-run (2 ABBA rounds, fresh tables,
 both 4t and 16t, all 17 rows) would give this the same confidence level as
 the rest of the document once task 66 no longer makes that unreliable.
 
-**Updated goal-9 status.** With this fix, three of seventeen rows now clear
+**Wider sweep, same fix vs base, other write-shaped workloads (2 rounds
+each, fresh tables before each workload's pair, same box):**
+
+```
+workload                thr   base tps   fix tps   tps gain   base ms   fix ms   lat gain
+oltp_update_non_index    4     1128.5    1510.3    +33.8%      3.56      2.65    +25.6%  ** both >=25% (was +18.7/+18.9, MISSED, under head alone)
+oltp_write_only         16      700.8     845.9    +20.7%     22.83     18.90    +17.2%  (was +11.7/+11.6 under head alone -- improved, still short)
+oltp_read_write         16      187.2     213.6    +14.1%     85.36     74.79    +12.4%  (was +10.0/+10.1 under head alone -- improved, still short)
+oltp_insert             16     3022.8    3368.3    +11.4%      5.29      4.75    +10.2%  (was +9.5/+9.5 under head alone -- improved, still short)
+```
+
+`oltp_update_non_index` at 4 threads is a second headline result: another
+row that MISSED goal 9 under head alone now clears it, for the same reason
+as `oltp_update_index` at 16t above. `oltp_write_only`, `oltp_read_write`,
+and `oltp_insert` all improved by several points from this one fix (each
+of these workloads' transaction includes at least one plain write that
+goes through `get_mut_in`), but none of them cross the +25% bar yet --
+their remaining gap is a different, not-yet-root-caused cost: these three
+are the ones whose transactions carry the heaviest network/TiKV
+round-trip share per statement (multiple statements per transaction,
+often mixing point lookups, range scans, and writes), consistent with the
+existing ceiling analysis for read-dominated workloads. Removing wasted
+node-side CPU narrows but does not close a gap that is partly outside the
+node's control.
+
+**Updated goal-9 status.** With this fix, four of seventeen rows now clear
 +25% throughput AND latency at their measured thread count(s):
 `oltp_delete` (both 4t and 16t, unaffected by this fix, already clearing),
-`oltp_update_non_index` (16t, already clearing, more comfortably now), and
-`oltp_update_index` (16t, newly clearing -- this fix's direct contribution).
-`oltp_update_index` at 4t and `bulk_insert` at 4t remain the closest
-near-misses. The goal ("every workload") is still not met, but this closes
-one of the previously-missing rows with a genuine, Go-verified root-cause
-fix rather than accepting the prior session's ceiling conclusion as final
-for the write path -- that ceiling argument was specific to read-dominated,
-TiKV-round-trip-bound workloads (point_select and friends) and was never
-evidence that the write path had no more root causes left; it didn't.
+`oltp_update_non_index` (both 4t and 16t, now clearing at both -- 4t is
+this fix's contribution, 16t already cleared and clears more comfortably
+now), and `oltp_update_index` (16t, newly clearing -- this fix's direct
+contribution; 4t was already clearing and is unchanged within noise).
+`bulk_insert` at 4t remains the closest other near-miss. The goal ("every
+workload") is still not met -- `oltp_point_select`, `oltp_read_only`,
+`oltp_write_only`, `oltp_read_write`, `oltp_insert`, `bulk_insert` at 16t,
+and every TPC-C transaction type still fall short at one or both thread
+counts -- but this closes two of the previously-missing rows with a
+genuine, Go-verified root-cause fix rather than accepting the prior
+session's ceiling conclusion as final for the write path -- that ceiling
+argument was specific to read-dominated, TiKV-round-trip-bound workloads
+(point_select and friends) and was never evidence that the write path had
+no more root causes left; it didn't.
