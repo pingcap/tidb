@@ -172,8 +172,17 @@ mod concurrent {
         metadata: KvRequestMetadata,
         token: Arc<AtomicBool>,
     ) -> QuerySelectResult<Response> {
+        select_with_concurrency(runtime, metadata, token, 2)
+    }
+
+    fn select_with_concurrency(
+        runtime: &mut Runtime,
+        metadata: KvRequestMetadata,
+        token: Arc<AtomicBool>,
+        concurrency: isize,
+    ) -> QuerySelectResult<Response> {
         let mut metadata = metadata;
-        metadata.concurrency = 2;
+        metadata.concurrency = concurrency;
         metadata.tikv_client_read_timeout_ms = 5000;
         runtime
             .select_with_runtime_stats(
@@ -218,6 +227,34 @@ mod concurrent {
         drop((first, second));
         assert_eq!(clones.load(Ordering::SeqCst) - baseline, 2,
             "closing must not initialize unsent tasks");
+    }
+
+    #[test]
+    fn one_cop_worker_reuses_its_client_across_regions() {
+        let clones = Arc::new(AtomicUsize::new(0));
+        let keys: Vec<_> = (0..=64).map(|i| format!("k{i:03}")).collect();
+        let (mut runtime, incoming, _) = runtime_with_clones((0..64).map(|i| {
+            location(i as u64 + 1, &keys[i], &keys[i + 1], "tikv-1:20160")
+        }), Arc::clone(&clones));
+        let baseline = clones.load(Ordering::SeqCst);
+        let mut request = metadata(&keys[0], &keys[64]);
+        request.keep_order = false;
+        let mut result = select_with_concurrency(&mut runtime, request, Arc::default(), 1);
+        let replies = std::thread::spawn(move || {
+            for _ in 0..64 {
+                let attempt = started(&incoming);
+                let id = attempt.0;
+                answer(attempt, response(&id.to_le_bytes()));
+            }
+        });
+        let mut actual = Vec::new();
+        while let Some(row) = result.next_raw().unwrap() {
+            actual.push(u64::from_le_bytes(row.try_into().unwrap()));
+        }
+        replies.join().unwrap();
+        assert_eq!(actual, (1..=64).collect::<Vec<_>>());
+        assert_eq!(clones.load(Ordering::SeqCst) - baseline, 1,
+            "Go's one cop worker owns one client policy state across region tasks");
     }
 
     /// Go TestQueryWithConcurrentSmallCop: opening a second single-task

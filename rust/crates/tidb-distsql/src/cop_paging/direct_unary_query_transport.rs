@@ -2293,6 +2293,15 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
     }
 
     fn into_tasks(mut self) -> Vec<Self> {
+        // A single normal worker can retain the original sequential runtime,
+        // like Go's worker receiving successive copTasks. Small-task lanes
+        // still need independent admission and retain the split path below.
+        if self.metadata.concurrency <= 1
+            && (self.metadata.request_source.internal
+                || !self.runtime.prepared_attempts().any(|attempt| attempt.task().is_small()))
+        {
+            return vec![self];
+        }
         let tasks = self.runtime.take_tasks();
         tasks
             .into_iter()
