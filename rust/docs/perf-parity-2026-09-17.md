@@ -1327,6 +1327,69 @@ site onto it. Filed as task 73 rather than rushed here, given task 70's own
 precedent that a structurally identical change touched ~80 call sites across
 8 production files last time.
 
-Not attempted this session, for lack of remaining time in this pass: TPC-C
-re-measurement against Go on the synced tree (task 56's other half) and the
-task 72/73 fixes themselves (task 57).
+## 2026-09-19: task 56's other half -- TPC-C re-measured against Go on the
+## synced tree
+
+Same fresh cluster as the sysbench sweep above (torn down and rebuilt for
+this pass). 10 warehouses, `tiup bench tpcc` (the plain tool, matching this
+document's own precedent for a quick Go-vs-head check -- the seeded
+`compare-tpcc.py` harness needs the patched `go-tpc` from
+`rust/benchmarks/*.patch`, not attempted here), one round each at 16 and 4
+threads, 30s.
+
+`prepare` on the Rust node hit a real, separate bug worth a note even though
+it didn't block this measurement: go-tpc's own post-load TPC-C consistency
+check (condition 3.3.2.10, a correlated aggregate over `orders`/`order_line`/
+`history` grouped by customer) failed with `index aggregate request failed:
+Encode("a grouped aggregate key is not covered by the index")`. All table row
+counts matched the expected 10-warehouse scale exactly (100000 items, 300000
+customers/orders, 3002770 order_line, 1000000 stock) -- the DATA is correct,
+this is an aggregate-pushdown execution bug in the *check* query itself, not
+a load defect. Not investigated further this session; worth its own look
+(likely the same family of issue as task 71's all-NULL DECIMAL aggregate
+crash -- an aggregate whose GROUP BY key isn't a prefix of the index the
+planner chose to push down).
+
+tpmC (what TPC-C's headline number measures, i.e. `NEW_ORDER` throughput)
+is essentially flat: +1.5% at 16 threads (6728.7 vs go's 6628.8), +2.9% at 4
+threads (5387.1 vs go's 5232.8) -- nowhere near the +25% goal, consistent
+with every prior TPC-C measurement in this document: `NEW_ORDER` touches
+seven tables per transaction, so any fixed per-statement win from this
+session's work is a much smaller fraction of its total cost than it is for
+a two-table sysbench statement.
+
+Per-transaction-type TPM, at 16 threads (`go` -> `head`, tpm gain): NEW_ORDER
+6628.9->6728.8 (+1.5%), PAYMENT 6391.4->6357.3 (-0.5%), ORDER_STATUS
+540.5->663.0 (+22.7%), DELIVERY 634.9->617.4 (-2.8%), STOCK_LEVEL
+637.7->579.3 (-9.2%); at 4 threads: NEW_ORDER 5232.8->5387.2 (+3.0%),
+PAYMENT 5039.0->5098.5 (+1.2%), ORDER_STATUS 463.1->422.2 (-8.8%), DELIVERY
+442.1->497.5 (+12.5%), STOCK_LEVEL 452.7->523.0 (+15.5%). No transaction type
+clears +25% on both throughput and latency at either thread count; single
+round each, so treat these as direction, not precise figures, per this
+document's own repeated caveat about round-to-round spread on quick checks.
+
+**`ORDER_STATUS` latency regressed sharply and consistently at both thread
+counts** -- the one finding here worth flagging on its own. Avg latency:
+go 27.2ms -> head 56.9ms at 16 threads (-52.2%, more than DOUBLE), go 10.3ms
+-> head 31.7ms at 4 threads (-67.5%, more than TRIPLE); p95 tells the same
+story (-56.1%/-66.0%). The ABSOLUTE delta is nearly constant across the two
+thread counts (+29.7ms at 16t, +21.4ms at 4t) despite the thread count
+differing 4x, which points at a fixed per-transaction cost rather than a
+contention/scaling effect -- exactly the shape a single extra blocking round
+trip (a PD timestamp fetch, a lock wait, a fixed backoff sleep) would
+produce, since `ORDER_STATUS` is TPC-C's only pure-read, multi-`SELECT`
+transaction type (customer-by-last-name or customer-by-id, latest order,
+its order lines -- no writes at all), so it has the least "real work" to
+dilute a fixed overhead into. `EXPLAIN` on both of its indexed lookups
+(`idx_customer(c_w_id, c_d_id, c_last, c_first)` for the by-name path, a
+`TableRangeScan ... desc` with pushed-down `Selection`+`Limit` for the
+latest-order path) shows sound plans, index access, and pushdown -- this is
+not a query-planning regression. Not root-caused this session: no working
+`perf` in this container (same gap as task 72) rules out a call-graph, and a
+fixed few-tens-of-milliseconds delta specific to read-only multi-statement
+transactions needs tracing at the transaction-start/PD-round-trip level to
+pin down, not a query plan. Filed as task 74.
+
+Not attempted this session, for lack of remaining time in this pass: the
+task 72/73/74 fixes themselves (task 57), and a multi-round ABBA TPC-C sweep
+(this pass is one round each, per the caveat above).
