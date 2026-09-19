@@ -487,18 +487,19 @@ impl CopReadTaskRuntime {
             flight.logical_task_index = 0;
             flights[index].insert(id, flight);
         }
+        // Go dispatches each copTask once. Index attempts once as well,
+        // rather than scanning every attempt for each region task.
+        let mut prepared_by_task: BTreeMap<u64, Vec<Arc<PreparedCopReadTask>>> = BTreeMap::new();
+        for attempt in std::mem::take(&mut self.prepared) {
+            prepared_by_task.entry(attempt.logical_task_id).or_default().push(attempt);
+        }
         tasks
             .into_iter()
             .zip(flights)
             .filter(|(task, _)| !task.paging.complete || task.paging.queued_responses != 0)
             .map(|(task, in_flight)| {
                 let id = task.task.task_id;
-                let prepared: Vec<_> = self
-                    .prepared
-                    .iter()
-                    .filter(|attempt| attempt.logical_task_id == id)
-                    .cloned()
-                    .collect();
+                let prepared = prepared_by_task.remove(&id).unwrap_or_default();
                 let completed_attempts = prepared
                     .iter()
                     .filter(|attempt| self.completed_attempts.contains(&attempt.attempt_id))
@@ -1095,6 +1096,44 @@ fn bucket_keys_are_current(region: &RegionTaskTopology) -> bool {
 #[cfg(test)]
 mod tests {
     use super::allocate_paging_task_index;
+
+    #[test]
+    #[ignore = "scaling regression; run explicitly without competing CPU load"]
+    fn transferring_read_tasks_scales_with_task_count() {
+        use super::*;
+        fn measure(count: u64) -> Duration {
+            let key = |i: u64| format!("{i:08}").into_bytes();
+            let topology: Vec<_> = (0..count).map(|i| RegionTaskTopology {
+                region_id: i + 1, start_key: key(i), end_key: key(i + 1),
+                ..Default::default()
+            }).collect();
+            let mut metadata = KvRequestMetadata::default();
+            metadata.request_type = RequestType::Dag;
+            metadata.store_type = StoreType::TiKv;
+            metadata.data = Some(b"dag".to_vec());
+            metadata.keep_order = true;
+            metadata.start_ts = 100;
+            metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
+                start_key: key(0).into(), end_key: key(count).into(),
+            }]).into());
+            let mut runtime = CopReadTaskRuntime::prepare(&metadata, &topology, None,
+                ReadEngineGeneration::Classic, 0).unwrap();
+            let start = std::time::Instant::now();
+            let tasks = runtime.take_tasks();
+            let elapsed = start.elapsed();
+            assert_eq!(tasks.len(), count as usize);
+            for (id, task) in tasks {
+                assert_eq!(task.prepared.len(), 1);
+                assert_eq!(task.prepared[0].logical_task_id, id);
+                assert_eq!(task.in_flight.len(), 1);
+            }
+            elapsed
+        }
+        let small = (0..3).map(|_| measure(2000)).min().unwrap();
+        let large = (0..3).map(|_| measure(8000)).min().unwrap();
+        eprintln!("task transfer: 2000={small:?}, 8000={large:?}");
+        assert!(large < small * 8, "task transfer must not rescan every attempt for every task");
+    }
 
     #[test]
     fn paging_task_index_is_one_based_iterator_wide_and_wrapping() {
