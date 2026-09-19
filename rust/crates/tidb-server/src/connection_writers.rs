@@ -303,6 +303,7 @@ pub(crate) fn write_error<O: ConnectionPacketOutput + ?Sized>(
 ) -> Result<(), MysqlConnectionError> {
     // Go defers the counter update before writing, so a socket write failure
     // still counts the ERR packet the server attempted to return.
+    crate::query_metrics::record_error();
     output.record_client_error(code);
     let message = message.as_ref();
     let extended = std::str::from_utf8(message).ok().map(|message| {

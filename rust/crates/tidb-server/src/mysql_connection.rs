@@ -270,6 +270,7 @@ struct ConnectionPreparedStatement {
     /// AST for every execute made YCSB's point reads pay a full tree copy.
     statement: Arc<PreparedStatement>,
     parameter_types: Option<Vec<PreparedParameterType>>,
+    metrics_label: &'static str,
     /// An open read-only cursor: the materialized result a cursor-mode
     /// execute stored for later `COM_STMT_FETCH` commands, with the columns
     /// it advertises and the next unread row. Go holds the same thing on the
@@ -336,6 +337,21 @@ impl PreparedStatementRegistry {
             .next_id
             .ok_or("prepared statement ID space exhausted")?;
         self.next_id = statement_id.checked_add(1);
+        let sql = match &statement {
+            PreparedStatement::PointRead(value) => value.sql(),
+            PreparedStatement::Write(value) => value.sql(),
+            PreparedStatement::General(value) => value.sql(),
+            PreparedStatement::TransactionControl(value) => value.as_str(),
+        };
+        // Compute once at PREPARE; EXECUTE uses this immutable label.
+        let metrics_label = match &statement {
+            PreparedStatement::General(general) if general.prepared_ast().is_some() => general
+                .prepared_ast()
+                .expect("checked above")
+                .statement()
+                .label(),
+            _ => tidb_parser::parse(sql).map_or("general", |stmt| stmt.label()),
+        };
         self.statements.insert(
             statement_id,
             ConnectionPreparedStatement {
@@ -345,6 +361,7 @@ impl PreparedStatementRegistry {
                 bound_params_too_large: false,
                 statement: Arc::new(statement),
                 parameter_types: None,
+                metrics_label,
                 cursor: None,
             },
         );
@@ -1351,6 +1368,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         protocol_41,
     };
     let mut queries = 0_u64;
+    let mut last_metrics_sql_type = "general";
     let mut prepared = PreparedStatementRegistry::default();
     // Go's `SetReadDeadline` before every packet is a netpoll bookkeeping
     // update, never a syscall. `set_read_timeout` is `setsockopt`, so the
@@ -1427,242 +1445,322 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         let result_charset = engine.result_charset();
         let result_encoder =
             ResultEncoder::new(result_charset.as_ref()).unwrap_or_else(|_| ResultEncoder::null());
-        let command = match decode_command(&payload) {
-            Ok(command) => command,
-            Err(error) => {
-                write_error(
-                    &mut output,
-                    1,
-                    ER_UNKNOWN_COM_ERROR,
-                    ER_UNKNOWN_COM_ERROR_STATE,
-                    error.to_string(),
-                    protocol_41,
-                )?;
-                continue;
-            }
-        };
-        let _query_cancellation = engine
-            .query_cancellation()
-            .map(|active| cancellation.install(active));
-        match command {
-            Command::Quit => {
-                return Ok(ConnectionReport {
-                    connection_id,
-                    queries,
-                    commands: *commands,
-                    exit: ConnectionExit::Quit,
-                });
-            }
-            // Go `clientConn.writeStats`: a RAW payload, not an OK packet --
-            // `mysqladmin status` prints the line verbatim. Every counter but
-            // uptime is the literal zero Go sends; it does not track them
-            // either, so inventing numbers here would report a fiction the
-            // server cannot back.
-            Command::Statistics => {
-                let uptime = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |since| since.as_secs() as i64)
-                    .saturating_sub(crate::real_tikv_node::server_start_unix_timestamp())
-                    .max(0);
-                let line = format!(
-                    "Uptime: {uptime}  Threads: 0  Questions: 0  Slow queries: 0  \
-                     Opens: 0  Flush tables: 0  Open tables: 0  \
-                     Queries per second avg: 0.000"
-                );
-                crate::connection_writers::write_payload(&mut output, 1, line.as_bytes())?;
-            }
-            Command::Refresh(data) => {
-                // Go `handleRefresh` (`pkg/server/conn.go:2875-2882`) treats
-                // refresh targets other than 0x01 as no-ops.  `0x01` first
-                // runs `FLUSH PRIVILEGES` through the ordinary SQL path,
-                // which writes one OK, and then writes the command's own OK
-                // as well.  Keep both packets: clients expect the second
-                // response and consume it before sending their next command.
-                let Some(subcommand) = data.first().copied() else {
+        let mut command_metrics = crate::query_metrics::CommandMetrics::start(
+            payload.first().copied().unwrap_or(0),
+            engine.metrics_resource_group(),
+        );
+        command_metrics.sql_type = last_metrics_sql_type;
+        let dispatch_result = (|| -> Result<Option<ConnectionReport>, MysqlConnectionError> {
+            let command = match decode_command(&payload) {
+                Ok(command) => command,
+                Err(error) => {
                     write_error(
                         &mut output,
                         1,
-                        ER_UNKNOWN_ERROR,
-                        *b"HY000",
-                        "malform packet error",
+                        ER_UNKNOWN_COM_ERROR,
+                        ER_UNKNOWN_COM_ERROR_STATE,
+                        error.to_string(),
                         protocol_41,
                     )?;
-                    continue;
-                };
-                let mut next_sequence = 1;
-                if subcommand == 0x01 {
-                    match engine.execute_write("FLUSH PRIVILEGES") {
-                        Ok(Some(outcome)) => {
-                            write_affected_rows_ok_with_info(
-                                &mut output,
-                                1,
-                                outcome.affected_rows,
-                                outcome.last_insert_id,
-                                engine.wire_status(),
-                                engine.warning_count(),
-                                protocol_41,
-                                &engine.statement_info(),
-                            )?;
-                            record_client_warnings(&output, &engine);
-                            queries += 1;
-                            next_sequence = 2;
-                        }
-                        // Query-only sessions have no privilege cache to
-                        // refresh; the command remains Go's successful
-                        // no-op and still gets its trailing command OK.
-                        Ok(None) => {}
-                        Err(error) => {
-                            write_query_error(&mut output, &error, protocol_41)?;
-                            record_client_warnings(&output, &engine);
-                            continue;
-                        }
-                    }
+                    return Ok(None);
                 }
-                write_ok(
-                    &mut output,
-                    next_sequence,
-                    engine.wire_status(),
-                    engine.warning_count(),
-                    protocol_41,
-                )?;
-                record_client_warnings(&output, &engine);
-            }
-            Command::Ping => write_ok(
-                &mut output,
-                1,
-                engine.wire_status(),
-                engine.warning_count(),
-                protocol_41,
-            )?,
-            Command::Query(bytes) => {
-                let query_started = std::time::Instant::now();
-                commands.text_query_commands += 1;
-                // `decode_command` has already trimmed exactly one terminal
-                // NUL for issue 1989. Embedded and repeated NUL bytes remain
-                // parser-visible here.
-                let input_charset = engine.input_charset();
-                let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
-                    Ok(sql) => sql,
-                    Err(()) => {
+            };
+            let _query_cancellation = engine
+                .query_cancellation()
+                .map(|active| cancellation.install(active));
+            match command {
+                Command::Quit => {
+                    return Ok(Some(ConnectionReport {
+                        connection_id,
+                        queries,
+                        commands: *commands,
+                        exit: ConnectionExit::Quit,
+                    }));
+                }
+                // Go `clientConn.writeStats`: a RAW payload, not an OK packet --
+                // `mysqladmin status` prints the line verbatim. Every counter but
+                // uptime is the literal zero Go sends; it does not track them
+                // either, so inventing numbers here would report a fiction the
+                // server cannot back.
+                Command::Statistics => {
+                    let uptime = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |since| since.as_secs() as i64)
+                        .saturating_sub(crate::real_tikv_node::server_start_unix_timestamp())
+                        .max(0);
+                    let line = format!(
+                        "Uptime: {uptime}  Threads: 0  Questions: 0  Slow queries: 0  \
+                     Opens: 0  Flush tables: 0  Open tables: 0  \
+                     Queries per second avg: 0.000"
+                    );
+                    crate::connection_writers::write_payload(&mut output, 1, line.as_bytes())?;
+                }
+                Command::Refresh(data) => {
+                    // Go `handleRefresh` (`pkg/server/conn.go:2875-2882`) treats
+                    // refresh targets other than 0x01 as no-ops.  `0x01` first
+                    // runs `FLUSH PRIVILEGES` through the ordinary SQL path,
+                    // which writes one OK, and then writes the command's own OK
+                    // as well.  Keep both packets: clients expect the second
+                    // response and consume it before sending their next command.
+                    let Some(subcommand) = data.first().copied() else {
                         write_error(
                             &mut output,
                             1,
-                            ER_PARSE_ERROR,
-                            *b"42000",
-                            "COM_QUERY is not valid UTF-8",
+                            ER_UNKNOWN_ERROR,
+                            *b"HY000",
+                            "malform packet error",
                             protocol_41,
                         )?;
-                        continue;
+                        return Ok(None);
+                    };
+                    let mut next_sequence = 1;
+                    if subcommand == 0x01 {
+                        match engine.execute_write("FLUSH PRIVILEGES") {
+                            Ok(Some(outcome)) => {
+                                write_affected_rows_ok_with_info(
+                                    &mut output,
+                                    1,
+                                    outcome.affected_rows,
+                                    outcome.last_insert_id,
+                                    engine.wire_status(),
+                                    engine.warning_count(),
+                                    protocol_41,
+                                    &engine.statement_info(),
+                                )?;
+                                record_client_warnings(&output, &engine);
+                                queries += 1;
+                                next_sequence = 2;
+                            }
+                            // Query-only sessions have no privilege cache to
+                            // refresh; the command remains Go's successful
+                            // no-op and still gets its trailing command OK.
+                            Ok(None) => {}
+                            Err(error) => {
+                                write_query_error(&mut output, &error, protocol_41)?;
+                                record_client_warnings(&output, &engine);
+                                return Ok(None);
+                            }
+                        }
                     }
-                };
-                let sql = sql.as_str();
-                // Go `handleQuery` (`conn.go:1861`): the text parses as a
-                // whole, and each admitted statement runs in order. Every
-                // response but the LAST carries SERVER_MORE_RESULTS_EXISTS
-                // (`conn.go:2269`); an execution error aborts the remainder,
-                // as Go's loop returns on error.
-                let statements = match engine
-                    .split_statements(sql, capabilities & CLIENT_MULTI_STATEMENTS != 0)
-                {
-                    Ok(statements) => statements,
-                    Err(error) => {
-                        write_query_error(&mut output, &error, protocol_41)?;
-                        continue;
-                    }
-                };
-                // Go `conn.go:1874`: a text that parsed to ZERO statements —
-                // comments, whitespace, bare semicolons — answers one plain
-                // OK packet.
-                if statements.is_empty() {
                     write_ok(
                         &mut output,
-                        1,
+                        next_sequence,
                         engine.wire_status(),
                         engine.warning_count(),
                         protocol_41,
                     )?;
-                    queries += 1;
-                    continue;
+                    record_client_warnings(&output, &engine);
                 }
-                let last_index = statements.len().saturating_sub(1);
-                // One COM_QUERY, one packet numbering: the chained results
-                // CONTINUE the sequence rather than restarting at 1.
-                let mut sequence: u8 = 1;
-                let mut aborted = false;
-                for (statement_index, sql) in statements.iter().enumerate() {
-                    let sql = sql.as_str();
-                    let more_results = statement_index < last_index;
-                    let stamp = |status: WireStatus| {
-                        if more_results {
-                            status.with(crate::wire_status::SERVER_STATUS_MORE_RESULTS_EXISTS)
-                        } else {
-                            status
-                        }
-                    };
-                    // Go `handleQuery` parses the command ONCE and hands each
-                    // node to `handleStmt`; every door below takes that node
-                    // and none parses the text again.
-                    let parsed = match engine.parse_statement(sql) {
-                        Ok(parsed) => parsed,
-                        Err(error) => {
-                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
-                            aborted = true;
-                            break;
-                        }
-                    };
-                    // Go executes LOAD STATS far enough to park its file
-                    // request, then the connection asks the CLIENT for that
-                    // path with a 0xfb local-infile packet and feeds the
-                    // returned packet stream back into the same statement.
-                    let local_infile_path = match &parsed {
-                        Some(stmt) => engine.local_infile_path_parsed(sql, stmt),
-                        None => engine.local_infile_path(sql),
-                    };
-                    let local_infile_path = match local_infile_path {
-                        Ok(path) => path,
-                        Err(error) => {
-                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
-                            aborted = true;
-                            break;
-                        }
-                    };
-                    if let Some(path) = local_infile_path {
-                        if capabilities & CLIENT_LOCAL_FILES == 0 {
-                            let error = SqlQueryError::new(
-                                1148,
+                Command::Ping => write_ok(
+                    &mut output,
+                    1,
+                    engine.wire_status(),
+                    engine.warning_count(),
+                    protocol_41,
+                )?,
+                Command::Query(bytes) => {
+                    let query_started = std::time::Instant::now();
+                    commands.text_query_commands += 1;
+                    // `decode_command` has already trimmed exactly one terminal
+                    // NUL for issue 1989. Embedded and repeated NUL bytes remain
+                    // parser-visible here.
+                    let input_charset = engine.input_charset();
+                    let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
+                        Ok(sql) => sql,
+                        Err(()) => {
+                            write_error(
+                                &mut output,
+                                1,
+                                ER_PARSE_ERROR,
                                 *b"42000",
-                                "The used command is not allowed with this MySQL version",
-                            );
-                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
-                            aborted = true;
-                            break;
+                                "COM_QUERY is not valid UTF-8",
+                                protocol_41,
+                            )?;
+                            return Ok(None);
                         }
-                        let mut request = Vec::with_capacity(path.len() + 1);
-                        request.push(0xfb);
-                        request.extend_from_slice(path.as_bytes());
-                        write_payload(&mut output, sequence, &request)?;
-                        if let Some(compressed_sequence) = output.compressed_sequence() {
-                            reader.set_compressed_sequence(compressed_sequence);
+                    };
+                    let sql = sql.as_str();
+                    // Go `handleQuery` (`conn.go:1861`): the text parses as a
+                    // whole, and each admitted statement runs in order. Every
+                    // response but the LAST carries SERVER_MORE_RESULTS_EXISTS
+                    // (`conn.go:2269`); an execution error aborts the remainder,
+                    // as Go's loop returns on error.
+                    let statements = match engine
+                        .split_statements(sql, capabilities & CLIENT_MULTI_STATEMENTS != 0)
+                    {
+                        Ok(statements) => statements,
+                        Err(error) => {
+                            write_query_error(&mut output, &error, protocol_41)?;
+                            return Ok(None);
                         }
-                        reader.set_sequence(sequence.wrapping_add(1));
-                        let mut data = Vec::new();
-                        loop {
-                            let packet = reader.read_packet()?;
-                            if packet.is_empty() {
+                    };
+                    // Go `conn.go:1874`: a text that parsed to ZERO statements —
+                    // comments, whitespace, bare semicolons — answers one plain
+                    // OK packet.
+                    if statements.is_empty() {
+                        write_ok(
+                            &mut output,
+                            1,
+                            engine.wire_status(),
+                            engine.warning_count(),
+                            protocol_41,
+                        )?;
+                        queries += 1;
+                        return Ok(None);
+                    }
+                    let last_index = statements.len().saturating_sub(1);
+                    // One COM_QUERY, one packet numbering: the chained results
+                    // CONTINUE the sequence rather than restarting at 1.
+                    let mut sequence: u8 = 1;
+                    let mut aborted = false;
+                    for (statement_index, sql) in statements.iter().enumerate() {
+                        let sql = sql.as_str();
+                        let more_results = statement_index < last_index;
+                        let stamp = |status: WireStatus| {
+                            if more_results {
+                                status.with(crate::wire_status::SERVER_STATUS_MORE_RESULTS_EXISTS)
+                            } else {
+                                status
+                            }
+                        };
+                        // Go `handleQuery` parses the command ONCE and hands each
+                        // node to `handleStmt`; every door below takes that node
+                        // and none parses the text again.
+                        let parsed = match engine.parse_statement(sql) {
+                            Ok(parsed) => parsed,
+                            Err(error) => {
+                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                aborted = true;
                                 break;
                             }
-                            data.extend_from_slice(&packet);
-                        }
-                        if let Some(compressed_sequence) = reader.compressed_sequence() {
-                            output.set_compressed_sequence(compressed_sequence);
-                        }
-                        sequence = reader.sequence();
-                        let outcome = match &parsed {
-                            Some(stmt) => engine.execute_local_infile_parsed(sql, stmt, &data),
-                            None => engine.execute_local_infile(sql, &data),
                         };
-                        match outcome {
-                            Ok(outcome) => {
+                        command_metrics.sql_type = parsed.as_ref().map_or("general", Stmt::label);
+                        // Go excludes text DDL from addQueryMetrics.
+                        command_metrics.skip = parsed
+                            .as_ref()
+                            .is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
+                        // Go executes LOAD STATS far enough to park its file
+                        // request, then the connection asks the CLIENT for that
+                        // path with a 0xfb local-infile packet and feeds the
+                        // returned packet stream back into the same statement.
+                        let local_infile_path = match &parsed {
+                            Some(stmt) => engine.local_infile_path_parsed(sql, stmt),
+                            None => engine.local_infile_path(sql),
+                        };
+                        let local_infile_path = match local_infile_path {
+                            Ok(path) => path,
+                            Err(error) => {
+                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                aborted = true;
+                                break;
+                            }
+                        };
+                        if let Some(path) = local_infile_path {
+                            if capabilities & CLIENT_LOCAL_FILES == 0 {
+                                let error = SqlQueryError::new(
+                                    1148,
+                                    *b"42000",
+                                    "The used command is not allowed with this MySQL version",
+                                );
+                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                aborted = true;
+                                break;
+                            }
+                            let mut request = Vec::with_capacity(path.len() + 1);
+                            request.push(0xfb);
+                            request.extend_from_slice(path.as_bytes());
+                            write_payload(&mut output, sequence, &request)?;
+                            if let Some(compressed_sequence) = output.compressed_sequence() {
+                                reader.set_compressed_sequence(compressed_sequence);
+                            }
+                            reader.set_sequence(sequence.wrapping_add(1));
+                            let mut data = Vec::new();
+                            loop {
+                                let packet = reader.read_packet()?;
+                                if packet.is_empty() {
+                                    break;
+                                }
+                                data.extend_from_slice(&packet);
+                            }
+                            if let Some(compressed_sequence) = reader.compressed_sequence() {
+                                output.set_compressed_sequence(compressed_sequence);
+                            }
+                            sequence = reader.sequence();
+                            let outcome = match &parsed {
+                                Some(stmt) => engine.execute_local_infile_parsed(sql, stmt, &data),
+                                None => engine.execute_local_infile(sql, &data),
+                            };
+                            match outcome {
+                                Ok(outcome) => {
+                                    write_affected_rows_ok_with_info(
+                                        &mut output,
+                                        sequence,
+                                        outcome.affected_rows,
+                                        outcome.last_insert_id,
+                                        stamp(engine.wire_status()),
+                                        engine.warning_count(),
+                                        protocol_41,
+                                        &engine.statement_info(),
+                                    )?;
+                                    record_client_warnings(&output, &engine);
+                                    sequence = sequence.wrapping_add(1);
+                                    queries += 1;
+                                    continue;
+                                }
+                                Err(error) => {
+                                    write_query_error_at(
+                                        &mut output,
+                                        sequence,
+                                        &error,
+                                        protocol_41,
+                                    )?;
+                                    record_client_warnings(&output, &engine);
+                                    aborted = true;
+                                    break;
+                                }
+                            }
+                        }
+                        // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
+                        // answer with an OK packet carrying the transaction status, not a
+                        // result set; every other statement runs as an ordinary query.
+                        let control = match &parsed {
+                            Some(stmt) => engine.control_transaction_parsed(sql, stmt),
+                            None => engine.control_transaction(sql),
+                        };
+                        match control {
+                            Ok(Some(_)) => {
+                                // The session has already applied the statement, so its
+                                // own status is the answer -- there is no separate
+                                // transaction flag for this packet to get wrong.
+                                write_ok(
+                                    &mut output,
+                                    sequence,
+                                    stamp(engine.wire_status()),
+                                    engine.warning_count(),
+                                    protocol_41,
+                                )?;
+                                record_client_warnings(&output, &engine);
+                                sequence = sequence.wrapping_add(1);
+                                queries += 1;
+                                continue;
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                aborted = true;
+                                break;
+                            }
+                        }
+                        // A DML write or DDL answers with an OK packet carrying its
+                        // affected-row count, as MySQL does on the text protocol;
+                        // everything else runs as an ordinary result-set query.
+                        let written = match &parsed {
+                            Some(stmt) => engine.execute_write_parsed(sql, stmt),
+                            None => engine.execute_write(sql),
+                        };
+                        match written {
+                            Ok(Some(outcome)) => {
+                                let info = engine.statement_info();
                                 write_affected_rows_ok_with_info(
                                     &mut output,
                                     sequence,
@@ -1671,13 +1769,14 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     stamp(engine.wire_status()),
                                     engine.warning_count(),
                                     protocol_41,
-                                    &engine.statement_info(),
+                                    &info,
                                 )?;
                                 record_client_warnings(&output, &engine);
                                 sequence = sequence.wrapping_add(1);
                                 queries += 1;
                                 continue;
                             }
+                            Ok(None) => {}
                             Err(error) => {
                                 write_query_error_at(&mut output, sequence, &error, protocol_41)?;
                                 record_client_warnings(&output, &engine);
@@ -1685,448 +1784,36 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 break;
                             }
                         }
-                    }
-                    // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
-                    // answer with an OK packet carrying the transaction status, not a
-                    // result set; every other statement runs as an ordinary query.
-                    let control = match &parsed {
-                        Some(stmt) => engine.control_transaction_parsed(sql, stmt),
-                        None => engine.control_transaction(sql),
-                    };
-                    match control {
-                        Ok(Some(_)) => {
-                            // The session has already applied the statement, so its
-                            // own status is the answer -- there is no separate
-                            // transaction flag for this packet to get wrong.
-                            write_ok(
-                                &mut output,
-                                sequence,
-                                stamp(engine.wire_status()),
-                                engine.warning_count(),
-                                protocol_41,
-                            )?;
-                            record_client_warnings(&output, &engine);
-                            sequence = sequence.wrapping_add(1);
-                            queries += 1;
-                            continue;
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
-                            aborted = true;
-                            break;
-                        }
-                    }
-                    // A DML write or DDL answers with an OK packet carrying its
-                    // affected-row count, as MySQL does on the text protocol;
-                    // everything else runs as an ordinary result-set query.
-                    let written = match &parsed {
-                        Some(stmt) => engine.execute_write_parsed(sql, stmt),
-                        None => engine.execute_write(sql),
-                    };
-                    match written {
-                        Ok(Some(outcome)) => {
-                            let info = engine.statement_info();
-                            write_affected_rows_ok_with_info(
-                                &mut output,
-                                sequence,
-                                outcome.affected_rows,
-                                outcome.last_insert_id,
-                                stamp(engine.wire_status()),
-                                engine.warning_count(),
-                                protocol_41,
-                                &info,
-                            )?;
-                            record_client_warnings(&output, &engine);
-                            sequence = sequence.wrapping_add(1);
-                            queries += 1;
-                            continue;
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
-                            record_client_warnings(&output, &engine);
-                            aborted = true;
-                            break;
-                        }
-                    }
-                    let mut result = match execute_statement(&mut engine, sql, parsed.as_ref()) {
-                        Ok(result) => result,
-                        Err(error) => {
-                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
-                            aborted = true;
-                            break;
-                        }
-                    };
-                    let (write_result, next_sequence) = {
-                        let statement_options = framing.result_set_with_output(
-                            stamp(result.wire_status()),
-                            result.warning_count(),
-                            result.affected_rows(),
-                            result.last_insert_id(),
-                            result.info().to_vec(),
-                            result_encoder,
-                        );
-                        let mut sink = TcpResultSetSink::new(&mut output, sequence);
-                        let written = write_connection_result_set_to_sink(
-                            result.source(),
-                            &mut sink,
-                            statement_options,
-                            RESULT_BATCH_SIZE,
-                        );
-                        (written, sink.next_sequence())
-                    };
-                    sequence = next_sequence;
-                    match write_result {
-                        Ok(_) => queries += 1,
-                        Err(error) if !error.bytes_escaped => {
-                            write_error(
-                                &mut output,
-                                1,
-                                error.cause.code,
-                                error.cause.state,
-                                error.cause.message,
-                                protocol_41,
-                            )?;
-                            drop(result);
-                            record_client_warnings(&output, &engine);
-                            aborted = true;
-                            break;
-                        }
-                        Err(error) => {
-                            drop(result);
-                            engine.finish_execute_stmt(query_started.elapsed());
-                            return Err(MysqlConnectionError::PartialResult(error.cause.message));
-                        }
-                    }
-                    drop(result);
-                    record_client_warnings(&output, &engine);
-                }
-                if !aborted {
-                    engine.flush_multi_statement_warning();
-                }
-                engine.finish_execute_stmt(query_started.elapsed());
-            }
-            Command::StmtPrepare(bytes) => {
-                commands.stmt_prepare_commands += 1;
-                let input_charset = engine.input_charset();
-                let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
-                    Ok(sql) => sql,
-                    Err(()) => {
-                        write_error(
-                            &mut output,
-                            1,
-                            ER_PARSE_ERROR,
-                            *b"42000",
-                            "COM_STMT_PREPARE is not valid UTF-8",
-                            protocol_41,
-                        )?;
-                        continue;
-                    }
-                };
-                let sql = sql.as_str();
-                // Transaction control is claimed before any planner sees the
-                // statement, because a prepared `BEGIN` is a `BEGIN`: its
-                // meaning is the connection's transaction, not a plan. Left to
-                // the general path it would be *executed* by the prepare-time
-                // column probe and then executed again at EXECUTE, and neither
-                // run would reach `control_transaction` -- so the connection's
-                // transaction never opens and every statement of the
-                // transaction reads as an autocommit statement -- a point get
-                // among them at `MaxUint64`, seeing whatever is committed at
-                // the instant it runs rather than the transaction's snapshot.
-                // The predicate
-                // is the same one the text arm routes on, so a statement takes
-                // the same route whichever protocol carried it.
-                let statement = if classify_transaction_control(sql).is_some() {
-                    PreparedStatement::TransactionControl(sql.to_owned())
-                }
-                // A read is admitted first so an existing prepared SELECT
-                // keeps its exact error text; only a statement the read path
-                // rejects is offered to the write planner.
-                else {
-                    match engine.prepare_point_read(sql) {
-                        Ok(point_read) => PreparedStatement::PointRead(point_read),
-                        Err(read_error) => match engine.prepare_write(sql) {
-                            Ok(write) => PreparedStatement::Write(write),
-                            // Any other statement takes the general path, which
-                            // binds its markers and runs it through the session.
-                            Err(_) => match engine.prepare_general(sql) {
-                                Ok(general) => PreparedStatement::General(general),
-                                Err(general_error) => {
-                                    // The configured read's own message is the
-                                    // more specific one when the general path
-                                    // simply has no session behind it.
-                                    let reported = if general_error
-                                        .message
-                                        .contains("does not support general prepared statements")
-                                    {
-                                        read_error
-                                    } else {
-                                        general_error
-                                    };
-                                    write_query_error(&mut output, &reported, protocol_41)?;
-                                    continue;
-                                }
-                            },
-                        },
-                    }
-                };
-                let result_columns = statement.result_columns().to_vec();
-                let parameter_count = statement.parameter_count();
-                let statement_id = match prepared.insert(statement) {
-                    Ok(statement_id) => statement_id,
-                    Err(message) => {
-                        write_error(
-                            &mut output,
-                            1,
-                            ER_UNKNOWN_ERROR,
-                            *b"HY000",
-                            message,
-                            protocol_41,
-                        )?;
-                        continue;
-                    }
-                };
-                let parameter_columns = vec![prepared_parameter_column(); parameter_count];
-                // Go `conn_stmt.go:111`/`:129` frames the prepare metadata
-                // with `cc.writeEOF(ctx, cc.ctx.Status())` -- the live word,
-                // like every other EOF.
-                let packets = match encode_prepared_statement_prepare_response(
-                    statement_id,
-                    &parameter_columns,
-                    &result_columns,
-                    framing.result_set(engine.wire_status(), 0, result_encoder),
-                ) {
-                    Ok(packets) => packets,
-                    Err(error) => {
-                        drop(prepared.remove(statement_id, &mut engine));
-                        write_error(
-                            &mut output,
-                            1,
-                            ER_UNKNOWN_ERROR,
-                            *b"HY000",
-                            error.to_string(),
-                            protocol_41,
-                        )?;
-                        continue;
-                    }
-                };
-                let mut sink = TcpResultSetSink::new(&mut output, 1);
-                for packet in packets {
-                    sink.write_payload(&packet)
-                        .map_err(|error| MysqlConnectionError::PartialResult(error.message))?;
-                }
-                sink.flush()
-                    .map_err(|error| MysqlConnectionError::PartialResult(error.message))?;
-                commands.stmt_prepare_successes += 1;
-            }
-            Command::StmtExecute(bytes) => {
-                let execute_started = std::time::Instant::now();
-                commands.stmt_execute_commands += 1;
-                let statement_id = match prepared_statement_id(&bytes) {
-                    Ok(statement_id) => statement_id,
-                    Err(message) => {
-                        write_error(
-                            &mut output,
-                            1,
-                            ER_UNKNOWN_ERROR,
-                            *b"HY000",
-                            message,
-                            protocol_41,
-                        )?;
-                        continue;
-                    }
-                };
-                let Some(statement) = prepared.get(statement_id) else {
-                    write_unknown_statement(
-                        &mut output,
-                        statement_id,
-                        "stmt_execute",
-                        protocol_41,
-                    )?;
-                    continue;
-                };
-                // The statement is immutable after PREPARE.  Cloning the
-                // `Arc` keeps the registry borrow short without cloning the
-                // parser-owned AST on every execute.
-                let prepared_statement = Arc::clone(&statement.statement);
-                let previous_types = statement.parameter_types.clone();
-                // The marker count is per statement: a point read owns one, a
-                // write owns one per bound column plus its handle.
-                let parameter_count = prepared_statement.parameter_count();
-                // Go reads `stmt.BoundParams()` into `parseBinaryParams` and
-                // then calls `stmt.Reset()` unconditionally -- on the decode
-                // error path too (`pkg/server/conn_stmt.go:212-217`), so a
-                // rejected execute still consumes the long data.
-                let long_data_error =
-                    prepared.long_data_error(statement_id, engine.connection_id());
-                let bound_params = prepared.bound_params(statement_id).to_vec();
-                prepared.clear_bound_params(statement_id, &mut engine);
-                // Go calls `stmt.Reset()` after parsing every execute packet,
-                // successful or not. The retained cursor therefore closes
-                // before a replacement execution starts, and a malformed
-                // replacement cannot leave the old cursor fetchable.
-                drop(prepared.take_cursor(statement_id));
-                if let Some(error) = long_data_error {
-                    write_query_error(&mut output, &error, protocol_41)?;
-                    continue;
-                }
-                let execute_packet = match split_prepared_statement_execute(
-                    &bytes,
-                    parameter_count,
-                    previous_types.as_deref(),
-                ) {
-                    Ok(packet) => packet,
-                    Err(error) => {
-                        write_error(
-                            &mut output,
-                            1,
-                            error.mysql_error_code().unwrap_or(ER_UNKNOWN_ERROR),
-                            *b"HY000",
-                            error.to_string(),
-                            protocol_41,
-                        )?;
-                        continue;
-                    }
-                };
-                if execute_packet.statement_id() != statement_id {
-                    write_error(
-                        &mut output,
-                        1,
-                        ER_UNKNOWN_ERROR,
-                        *b"HY000",
-                        "prepared statement ID changed during decode",
-                        protocol_41,
-                    )?;
-                    continue;
-                }
-                if let PreparedParameterTypes::New(types) = execute_packet.parameter_types() {
-                    prepared.remember_parameter_types(statement_id, types);
-                }
-                let input_charset = engine.input_charset();
-                let execute = match execute_packet.decode(&bound_params, input_charset.as_ref()) {
-                    Ok(execute) => execute,
-                    Err(error) => {
-                        write_error(
-                            &mut output,
-                            1,
-                            error.mysql_error_code().unwrap_or(ER_UNKNOWN_ERROR),
-                            *b"HY000",
-                            error.to_string(),
-                            protocol_41,
-                        )?;
-                        continue;
-                    }
-                };
-                let values = execute.values;
-                match prepared_statement.as_ref() {
-                    // The same two lines the text arm runs, so the transaction
-                    // a prepared BEGIN opens, and the status flag the client
-                    // reads back, are the text protocol's own.
-                    PreparedStatement::TransactionControl(sql) => {
-                        match engine.control_transaction(&sql) {
-                            Ok(Some(_)) => {
-                                write_ok(
-                                    &mut output,
-                                    1,
-                                    engine.wire_status(),
-                                    engine.warning_count(),
-                                    protocol_41,
-                                )?;
-                                queries += 1;
-                                commands.stmt_execute_successes += 1;
-                            }
-                            // A statement PREPARE classified as transaction
-                            // control that the session then declines is a
-                            // disagreement between the two, not a client
-                            // error: report it rather than answering OK.
-                            Ok(None) => write_error(
-                                &mut output,
-                                1,
-                                ER_UNKNOWN_ERROR,
-                                *b"HY000",
-                                "prepared transaction control was not applied",
-                                protocol_41,
-                            )?,
-                            Err(error) => write_query_error(&mut output, &error, protocol_41)?,
-                        }
-                        record_client_warnings(&output, &engine);
-                    }
-                    PreparedStatement::PointRead(point_read) => {
-                        // A point read binds a signed-integer clustered handle; a
-                        // string parameter has no place there.
-                        let parameters = match point_read_integer_parameters(values) {
-                            Ok(parameters) => parameters,
-                            Err(message) => {
-                                write_error(
-                                    &mut output,
-                                    1,
-                                    ER_UNKNOWN_ERROR,
-                                    *b"HY000",
-                                    message,
-                                    protocol_41,
-                                )?;
-                                continue;
+                        let mut result = match execute_statement(&mut engine, sql, parsed.as_ref())
+                        {
+                            Ok(result) => result,
+                            Err(error) => {
+                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                aborted = true;
+                                break;
                             }
                         };
-                        let execution = engine.execute_prepared_point_read(point_read, &parameters);
-                        if execution.is_err() {
-                            let error = execution
-                                .err()
-                                .expect("the prepared point read error was just observed");
-                            write_query_error(&mut output, &error, protocol_41)?;
-                            record_client_warnings(&output, &engine);
-                            continue;
-                        }
-                        let mut result =
-                            execution.expect("the prepared point read success was just observed");
-                        if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
-                            match open_prepared_cursor(
-                                &mut result,
-                                &mut output,
-                                framing,
-                                result_encoder,
-                            ) {
-                                Ok(cursor) => {
-                                    drop(result);
-                                    drop(prepared.open_cursor(statement_id, cursor));
-                                    queries += 1;
-                                    commands.stmt_execute_successes += 1;
-                                }
-                                Err(PreparedCursorOpenError::Query(error)) => {
-                                    drop(result);
-                                    write_query_error(&mut output, &error, protocol_41)?;
-                                }
-                                Err(PreparedCursorOpenError::Transport(error)) => {
-                                    return Err(error);
-                                }
-                            }
-                            record_client_warnings(&output, &engine);
-                            continue;
-                        }
-                        let write_result = {
+                        let (write_result, next_sequence) = {
                             let statement_options = framing.result_set_with_output(
-                                result.wire_status(),
+                                stamp(result.wire_status()),
                                 result.warning_count(),
                                 result.affected_rows(),
                                 result.last_insert_id(),
                                 result.info().to_vec(),
                                 result_encoder,
                             );
-                            let mut sink = TcpResultSetSink::new(&mut output, 1);
-                            write_connection_binary_result_set_to_sink(
+                            let mut sink = TcpResultSetSink::new(&mut output, sequence);
+                            let written = write_connection_result_set_to_sink(
                                 result.source(),
                                 &mut sink,
                                 statement_options,
                                 RESULT_BATCH_SIZE,
-                            )
+                            );
+                            (written, sink.next_sequence())
                         };
+                        sequence = next_sequence;
                         match write_result {
-                            Ok(_) => {
-                                queries += 1;
-                                commands.stmt_execute_successes += 1;
-                            }
+                            Ok(_) => queries += 1,
                             Err(error) if !error.bytes_escaped => {
                                 write_error(
                                     &mut output,
@@ -2136,53 +1823,479 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     error.cause.message,
                                     protocol_41,
                                 )?;
+                                drop(result);
+                                record_client_warnings(&output, &engine);
+                                aborted = true;
+                                break;
                             }
                             Err(error) => {
+                                drop(result);
+                                engine.finish_execute_stmt(query_started.elapsed());
                                 return Err(MysqlConnectionError::PartialResult(
                                     error.cause.message,
-                                ))
+                                ));
                             }
                         }
                         drop(result);
                         record_client_warnings(&output, &engine);
                     }
-                    PreparedStatement::General(general) => {
-                        // Go's read-only cursor: the execute materializes the
-                        // rows, holds them on the statement, and answers with
-                        // only the column definitions plus an EOF whose
-                        // status advertises the open cursor; the rows travel
-                        // later through COM_STMT_FETCH.
-                        if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
+                    if !aborted {
+                        engine.flush_multi_statement_warning();
+                    }
+                    engine.finish_execute_stmt(query_started.elapsed());
+                }
+                Command::StmtPrepare(bytes) => {
+                    commands.stmt_prepare_commands += 1;
+                    let input_charset = engine.input_charset();
+                    let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
+                        Ok(sql) => sql,
+                        Err(()) => {
+                            write_error(
+                                &mut output,
+                                1,
+                                ER_PARSE_ERROR,
+                                *b"42000",
+                                "COM_STMT_PREPARE is not valid UTF-8",
+                                protocol_41,
+                            )?;
+                            return Ok(None);
+                        }
+                    };
+                    let sql = sql.as_str();
+                    // Transaction control is claimed before any planner sees the
+                    // statement, because a prepared `BEGIN` is a `BEGIN`: its
+                    // meaning is the connection's transaction, not a plan. Left to
+                    // the general path it would be *executed* by the prepare-time
+                    // column probe and then executed again at EXECUTE, and neither
+                    // run would reach `control_transaction` -- so the connection's
+                    // transaction never opens and every statement of the
+                    // transaction reads as an autocommit statement -- a point get
+                    // among them at `MaxUint64`, seeing whatever is committed at
+                    // the instant it runs rather than the transaction's snapshot.
+                    // The predicate
+                    // is the same one the text arm routes on, so a statement takes
+                    // the same route whichever protocol carried it.
+                    let statement = if classify_transaction_control(sql).is_some() {
+                        PreparedStatement::TransactionControl(sql.to_owned())
+                    }
+                    // A read is admitted first so an existing prepared SELECT
+                    // keeps its exact error text; only a statement the read path
+                    // rejects is offered to the write planner.
+                    else {
+                        match engine.prepare_point_read(sql) {
+                            Ok(point_read) => PreparedStatement::PointRead(point_read),
+                            Err(read_error) => match engine.prepare_write(sql) {
+                                Ok(write) => PreparedStatement::Write(write),
+                                // Any other statement takes the general path, which
+                                // binds its markers and runs it through the session.
+                                Err(_) => match engine.prepare_general(sql) {
+                                    Ok(general) => PreparedStatement::General(general),
+                                    Err(general_error) => {
+                                        // The configured read's own message is the
+                                        // more specific one when the general path
+                                        // simply has no session behind it.
+                                        let reported = if general_error.message.contains(
+                                            "does not support general prepared statements",
+                                        ) {
+                                            read_error
+                                        } else {
+                                            general_error
+                                        };
+                                        write_query_error(&mut output, &reported, protocol_41)?;
+                                        return Ok(None);
+                                    }
+                                },
+                            },
+                        }
+                    };
+                    let result_columns = statement.result_columns().to_vec();
+                    let parameter_count = statement.parameter_count();
+                    let statement_id = match prepared.insert(statement) {
+                        Ok(statement_id) => statement_id,
+                        Err(message) => {
+                            write_error(
+                                &mut output,
+                                1,
+                                ER_UNKNOWN_ERROR,
+                                *b"HY000",
+                                message,
+                                protocol_41,
+                            )?;
+                            return Ok(None);
+                        }
+                    };
+                    let parameter_columns = vec![prepared_parameter_column(); parameter_count];
+                    // Go `conn_stmt.go:111`/`:129` frames the prepare metadata
+                    // with `cc.writeEOF(ctx, cc.ctx.Status())` -- the live word,
+                    // like every other EOF.
+                    let packets = match encode_prepared_statement_prepare_response(
+                        statement_id,
+                        &parameter_columns,
+                        &result_columns,
+                        framing.result_set(engine.wire_status(), 0, result_encoder),
+                    ) {
+                        Ok(packets) => packets,
+                        Err(error) => {
+                            drop(prepared.remove(statement_id, &mut engine));
+                            write_error(
+                                &mut output,
+                                1,
+                                ER_UNKNOWN_ERROR,
+                                *b"HY000",
+                                error.to_string(),
+                                protocol_41,
+                            )?;
+                            return Ok(None);
+                        }
+                    };
+                    let mut sink = TcpResultSetSink::new(&mut output, 1);
+                    for packet in packets {
+                        sink.write_payload(&packet)
+                            .map_err(|error| MysqlConnectionError::PartialResult(error.message))?;
+                    }
+                    sink.flush()
+                        .map_err(|error| MysqlConnectionError::PartialResult(error.message))?;
+                    commands.stmt_prepare_successes += 1;
+                }
+                Command::StmtExecute(bytes) => {
+                    let execute_started = std::time::Instant::now();
+                    commands.stmt_execute_commands += 1;
+                    let statement_id = match prepared_statement_id(&bytes) {
+                        Ok(statement_id) => statement_id,
+                        Err(message) => {
+                            write_error(
+                                &mut output,
+                                1,
+                                ER_UNKNOWN_ERROR,
+                                *b"HY000",
+                                message,
+                                protocol_41,
+                            )?;
+                            return Ok(None);
+                        }
+                    };
+                    let Some(statement) = prepared.get(statement_id) else {
+                        write_unknown_statement(
+                            &mut output,
+                            statement_id,
+                            "stmt_execute",
+                            protocol_41,
+                        )?;
+                        return Ok(None);
+                    };
+                    // The statement is immutable after PREPARE.  Cloning the
+                    // `Arc` keeps the registry borrow short without cloning the
+                    // parser-owned AST on every execute.
+                    command_metrics.sql_type = statement.metrics_label;
+                    let prepared_statement = Arc::clone(&statement.statement);
+                    let previous_types = statement.parameter_types.clone();
+                    // The marker count is per statement: a point read owns one, a
+                    // write owns one per bound column plus its handle.
+                    let parameter_count = prepared_statement.parameter_count();
+                    // Go reads `stmt.BoundParams()` into `parseBinaryParams` and
+                    // then calls `stmt.Reset()` unconditionally -- on the decode
+                    // error path too (`pkg/server/conn_stmt.go:212-217`), so a
+                    // rejected execute still consumes the long data.
+                    let long_data_error =
+                        prepared.long_data_error(statement_id, engine.connection_id());
+                    let bound_params = prepared.bound_params(statement_id).to_vec();
+                    prepared.clear_bound_params(statement_id, &mut engine);
+                    // Go calls `stmt.Reset()` after parsing every execute packet,
+                    // successful or not. The retained cursor therefore closes
+                    // before a replacement execution starts, and a malformed
+                    // replacement cannot leave the old cursor fetchable.
+                    drop(prepared.take_cursor(statement_id));
+                    if let Some(error) = long_data_error {
+                        write_query_error(&mut output, &error, protocol_41)?;
+                        return Ok(None);
+                    }
+                    let execute_packet = match split_prepared_statement_execute(
+                        &bytes,
+                        parameter_count,
+                        previous_types.as_deref(),
+                    ) {
+                        Ok(packet) => packet,
+                        Err(error) => {
+                            write_error(
+                                &mut output,
+                                1,
+                                error.mysql_error_code().unwrap_or(ER_UNKNOWN_ERROR),
+                                *b"HY000",
+                                error.to_string(),
+                                protocol_41,
+                            )?;
+                            return Ok(None);
+                        }
+                    };
+                    if execute_packet.statement_id() != statement_id {
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_UNKNOWN_ERROR,
+                            *b"HY000",
+                            "prepared statement ID changed during decode",
+                            protocol_41,
+                        )?;
+                        return Ok(None);
+                    }
+                    if let PreparedParameterTypes::New(types) = execute_packet.parameter_types() {
+                        prepared.remember_parameter_types(statement_id, types);
+                    }
+                    let input_charset = engine.input_charset();
+                    let execute = match execute_packet.decode(&bound_params, input_charset.as_ref())
+                    {
+                        Ok(execute) => execute,
+                        Err(error) => {
+                            write_error(
+                                &mut output,
+                                1,
+                                error.mysql_error_code().unwrap_or(ER_UNKNOWN_ERROR),
+                                *b"HY000",
+                                error.to_string(),
+                                protocol_41,
+                            )?;
+                            return Ok(None);
+                        }
+                    };
+                    let values = execute.values;
+                    match prepared_statement.as_ref() {
+                        // The same two lines the text arm runs, so the transaction
+                        // a prepared BEGIN opens, and the status flag the client
+                        // reads back, are the text protocol's own.
+                        PreparedStatement::TransactionControl(sql) => {
+                            match engine.control_transaction(&sql) {
+                                Ok(Some(_)) => {
+                                    write_ok(
+                                        &mut output,
+                                        1,
+                                        engine.wire_status(),
+                                        engine.warning_count(),
+                                        protocol_41,
+                                    )?;
+                                    queries += 1;
+                                    commands.stmt_execute_successes += 1;
+                                }
+                                // A statement PREPARE classified as transaction
+                                // control that the session then declines is a
+                                // disagreement between the two, not a client
+                                // error: report it rather than answering OK.
+                                Ok(None) => write_error(
+                                    &mut output,
+                                    1,
+                                    ER_UNKNOWN_ERROR,
+                                    *b"HY000",
+                                    "prepared transaction control was not applied",
+                                    protocol_41,
+                                )?,
+                                Err(error) => write_query_error(&mut output, &error, protocol_41)?,
+                            }
+                            record_client_warnings(&output, &engine);
+                        }
+                        PreparedStatement::PointRead(point_read) => {
+                            // A point read binds a signed-integer clustered handle; a
+                            // string parameter has no place there.
+                            let parameters = match point_read_integer_parameters(values) {
+                                Ok(parameters) => parameters,
+                                Err(message) => {
+                                    write_error(
+                                        &mut output,
+                                        1,
+                                        ER_UNKNOWN_ERROR,
+                                        *b"HY000",
+                                        message,
+                                        protocol_41,
+                                    )?;
+                                    return Ok(None);
+                                }
+                            };
+                            let execution =
+                                engine.execute_prepared_point_read(point_read, &parameters);
+                            if execution.is_err() {
+                                let error = execution
+                                    .err()
+                                    .expect("the prepared point read error was just observed");
+                                write_query_error(&mut output, &error, protocol_41)?;
+                                record_client_warnings(&output, &engine);
+                                return Ok(None);
+                            }
+                            let mut result = execution
+                                .expect("the prepared point read success was just observed");
+                            if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
+                                match open_prepared_cursor(
+                                    &mut result,
+                                    &mut output,
+                                    framing,
+                                    result_encoder,
+                                ) {
+                                    Ok(cursor) => {
+                                        drop(result);
+                                        drop(prepared.open_cursor(statement_id, cursor));
+                                        queries += 1;
+                                        commands.stmt_execute_successes += 1;
+                                    }
+                                    Err(PreparedCursorOpenError::Query(error)) => {
+                                        drop(result);
+                                        write_query_error(&mut output, &error, protocol_41)?;
+                                    }
+                                    Err(PreparedCursorOpenError::Transport(error)) => {
+                                        return Err(error);
+                                    }
+                                }
+                                record_client_warnings(&output, &engine);
+                                return Ok(None);
+                            }
+                            let write_result = {
+                                let statement_options = framing.result_set_with_output(
+                                    result.wire_status(),
+                                    result.warning_count(),
+                                    result.affected_rows(),
+                                    result.last_insert_id(),
+                                    result.info().to_vec(),
+                                    result_encoder,
+                                );
+                                let mut sink = TcpResultSetSink::new(&mut output, 1);
+                                write_connection_binary_result_set_to_sink(
+                                    result.source(),
+                                    &mut sink,
+                                    statement_options,
+                                    RESULT_BATCH_SIZE,
+                                )
+                            };
+                            match write_result {
+                                Ok(_) => {
+                                    queries += 1;
+                                    commands.stmt_execute_successes += 1;
+                                }
+                                Err(error) if !error.bytes_escaped => {
+                                    write_error(
+                                        &mut output,
+                                        1,
+                                        error.cause.code,
+                                        error.cause.state,
+                                        error.cause.message,
+                                        protocol_41,
+                                    )?;
+                                }
+                                Err(error) => {
+                                    return Err(MysqlConnectionError::PartialResult(
+                                        error.cause.message,
+                                    ))
+                                }
+                            }
+                            drop(result);
+                            record_client_warnings(&output, &engine);
+                        }
+                        PreparedStatement::General(general) => {
+                            // Go's read-only cursor: the execute materializes the
+                            // rows, holds them on the statement, and answers with
+                            // only the column definitions plus an EOF whose
+                            // status advertises the open cursor; the rows travel
+                            // later through COM_STMT_FETCH.
+                            if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
+                                let mut write_outcome = None;
+                                match engine.execute_general(general, &values) {
+                                    Ok(GeneralExecuteOutcome::Rows(mut result)) => {
+                                        match open_prepared_cursor(
+                                            &mut result,
+                                            &mut output,
+                                            framing,
+                                            result_encoder,
+                                        ) {
+                                            Ok(cursor) => {
+                                                drop(result);
+                                                drop(prepared.open_cursor(statement_id, cursor));
+                                                queries += 1;
+                                                commands.stmt_execute_successes += 1;
+                                            }
+                                            Err(PreparedCursorOpenError::Query(error)) => {
+                                                drop(result);
+                                                write_query_error(
+                                                    &mut output,
+                                                    &error,
+                                                    protocol_41,
+                                                )?;
+                                            }
+                                            Err(PreparedCursorOpenError::Transport(error)) => {
+                                                return Err(error);
+                                            }
+                                        }
+                                    }
+                                    // Go clears the cursor bit when the statement
+                                    // produced no result set and answers a plain
+                                    // OK. The answer is written after the match
+                                    // because its warning count is read off the
+                                    // session, whose borrow the result arm holds
+                                    // for as long as the match scrutinee lives.
+                                    Ok(GeneralExecuteOutcome::Write(outcome)) => {
+                                        write_outcome = Some(outcome);
+                                    }
+                                    Err(error) => {
+                                        write_query_error(&mut output, &error, protocol_41)?;
+                                    }
+                                }
+                                if let Some(outcome) = write_outcome {
+                                    let info = engine.statement_info();
+                                    write_affected_rows_ok_with_info(
+                                        &mut output,
+                                        1,
+                                        outcome.affected_rows,
+                                        outcome.last_insert_id,
+                                        engine.wire_status(),
+                                        engine.warning_count(),
+                                        protocol_41,
+                                        &info,
+                                    )?;
+                                    queries += 1;
+                                    commands.stmt_execute_successes += 1;
+                                }
+                                record_client_warnings(&output, &engine);
+                                return Ok(None);
+                            }
                             let mut write_outcome = None;
                             match engine.execute_general(general, &values) {
                                 Ok(GeneralExecuteOutcome::Rows(mut result)) => {
-                                    match open_prepared_cursor(
-                                        &mut result,
-                                        &mut output,
-                                        framing,
-                                        result_encoder,
-                                    ) {
-                                        Ok(cursor) => {
-                                            drop(result);
-                                            drop(prepared.open_cursor(statement_id, cursor));
+                                    let write_result = {
+                                        let statement_options = framing.result_set_with_output(
+                                            result.wire_status(),
+                                            result.warning_count(),
+                                            result.affected_rows(),
+                                            result.last_insert_id(),
+                                            result.info().to_vec(),
+                                            result_encoder,
+                                        );
+                                        let mut sink = TcpResultSetSink::new(&mut output, 1);
+                                        write_connection_binary_result_set_to_sink(
+                                            result.source(),
+                                            &mut sink,
+                                            statement_options,
+                                            RESULT_BATCH_SIZE,
+                                        )
+                                    };
+                                    match write_result {
+                                        Ok(_) => {
                                             queries += 1;
                                             commands.stmt_execute_successes += 1;
                                         }
-                                        Err(PreparedCursorOpenError::Query(error)) => {
-                                            drop(result);
-                                            write_query_error(&mut output, &error, protocol_41)?;
+                                        Err(error) if !error.bytes_escaped => {
+                                            write_error(
+                                                &mut output,
+                                                1,
+                                                error.cause.code,
+                                                error.cause.state,
+                                                error.cause.message,
+                                                protocol_41,
+                                            )?;
                                         }
-                                        Err(PreparedCursorOpenError::Transport(error)) => {
-                                            return Err(error);
+                                        Err(error) => {
+                                            return Err(MysqlConnectionError::PartialResult(
+                                                error.cause.message,
+                                            ))
                                         }
                                     }
                                 }
-                                // Go clears the cursor bit when the statement
-                                // produced no result set and answers a plain
-                                // OK. The answer is written after the match
-                                // because its warning count is read off the
-                                // session, whose borrow the result arm holds
-                                // for as long as the match scrutinee lives.
+                                // Answered after the match: see the cursor arm
+                                // above for why the session cannot be read while
+                                // the scrutinee is alive.
                                 Ok(GeneralExecuteOutcome::Write(outcome)) => {
                                     write_outcome = Some(outcome);
                                 }
@@ -2206,344 +2319,294 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 commands.stmt_execute_successes += 1;
                             }
                             record_client_warnings(&output, &engine);
-                            continue;
                         }
-                        let mut write_outcome = None;
-                        match engine.execute_general(general, &values) {
-                            Ok(GeneralExecuteOutcome::Rows(mut result)) => {
-                                let write_result = {
-                                    let statement_options = framing.result_set_with_output(
-                                        result.wire_status(),
-                                        result.warning_count(),
-                                        result.affected_rows(),
-                                        result.last_insert_id(),
-                                        result.info().to_vec(),
-                                        result_encoder,
-                                    );
-                                    let mut sink = TcpResultSetSink::new(&mut output, 1);
-                                    write_connection_binary_result_set_to_sink(
-                                        result.source(),
-                                        &mut sink,
-                                        statement_options,
-                                        RESULT_BATCH_SIZE,
-                                    )
-                                };
-                                match write_result {
-                                    Ok(_) => {
-                                        queries += 1;
-                                        commands.stmt_execute_successes += 1;
-                                    }
-                                    Err(error) if !error.bytes_escaped => {
-                                        write_error(
-                                            &mut output,
-                                            1,
-                                            error.cause.code,
-                                            error.cause.state,
-                                            error.cause.message,
-                                            protocol_41,
-                                        )?;
-                                    }
-                                    Err(error) => {
-                                        return Err(MysqlConnectionError::PartialResult(
-                                            error.cause.message,
-                                        ))
-                                    }
+                        PreparedStatement::Write(write) => {
+                            // A write answers with one OK packet and never a result
+                            // set. Affected rows reach the client only after the
+                            // transaction committed determinately; every other
+                            // terminal state arrived here as an error.
+                            match engine
+                                .execute_prepared_write(write, &write_bind_parameters(values))
+                            {
+                                Ok(outcome) => {
+                                    let info = engine.statement_info();
+                                    write_affected_rows_ok_with_info(
+                                        &mut output,
+                                        1,
+                                        outcome.affected_rows,
+                                        outcome.last_insert_id,
+                                        engine.wire_status(),
+                                        engine.warning_count(),
+                                        protocol_41,
+                                        &info,
+                                    )?;
+                                    queries += 1;
+                                    commands.stmt_execute_successes += 1;
+                                }
+                                Err(error) => {
+                                    write_query_error(&mut output, &error, protocol_41)?;
                                 }
                             }
-                            // Answered after the match: see the cursor arm
-                            // above for why the session cannot be read while
-                            // the scrutinee is alive.
-                            Ok(GeneralExecuteOutcome::Write(outcome)) => {
-                                write_outcome = Some(outcome);
-                            }
-                            Err(error) => {
-                                write_query_error(&mut output, &error, protocol_41)?;
-                            }
+                            record_client_warnings(&output, &engine);
                         }
-                        if let Some(outcome) = write_outcome {
-                            let info = engine.statement_info();
-                            write_affected_rows_ok_with_info(
-                                &mut output,
-                                1,
-                                outcome.affected_rows,
-                                outcome.last_insert_id,
-                                engine.wire_status(),
-                                engine.warning_count(),
-                                protocol_41,
-                                &info,
-                            )?;
-                            queries += 1;
-                            commands.stmt_execute_successes += 1;
-                        }
-                        record_client_warnings(&output, &engine);
                     }
-                    PreparedStatement::Write(write) => {
-                        // A write answers with one OK packet and never a result
-                        // set. Affected rows reach the client only after the
-                        // transaction committed determinately; every other
-                        // terminal state arrived here as an error.
-                        match engine.execute_prepared_write(write, &write_bind_parameters(values)) {
-                            Ok(outcome) => {
-                                let info = engine.statement_info();
-                                write_affected_rows_ok_with_info(
+                    engine.finish_execute_stmt(execute_started.elapsed());
+                }
+                Command::StmtSendLongData(bytes) => {
+                    commands.stmt_send_long_data_commands += 1;
+                    // Go's `handleStmtSendLongData` returns nil on success, and a
+                    // nil return from `clientConn.dispatch` writes NO packet at
+                    // all (`pkg/server/conn.go:1578-1579`): the client is not
+                    // reading, so any reply here would be consumed as the answer
+                    // to the NEXT command. Its error returns, by contrast, DO
+                    // reach the wire -- `dispatch`'s caller ends the failed
+                    // command with `cc.writeError(ctx, err)`
+                    // (`pkg/server/conn.go:1338`) -- so the two error shapes below
+                    // are packets exactly as they are in Go.
+                    match decode_prepared_statement_send_long_data(&bytes) {
+                        Ok(long_data) => {
+                            let statement_id = long_data.statement_id;
+                            match prepared.append_param(
+                                statement_id,
+                                usize::from(long_data.parameter_id),
+                                &long_data.chunk,
+                                &mut engine,
+                            ) {
+                                Ok(()) => {}
+                                Err(AppendParamError::UnknownStatement) => {
+                                    write_unknown_statement(
+                                        &mut output,
+                                        statement_id,
+                                        "stmt_send_longdata",
+                                        protocol_41,
+                                    )?;
+                                }
+                                // Go `AppendParam`'s own
+                                // `ErrWrongArguments("stmt_send_longdata")`.
+                                Err(AppendParamError::ParameterOutOfRange) => write_error(
                                     &mut output,
                                     1,
-                                    outcome.affected_rows,
-                                    outcome.last_insert_id,
-                                    engine.wire_status(),
-                                    engine.warning_count(),
+                                    ER_WRONG_ARGUMENTS,
+                                    *b"HY000",
+                                    "Incorrect arguments to stmt_send_longdata",
                                     protocol_41,
-                                    &info,
-                                )?;
-                                queries += 1;
-                                commands.stmt_execute_successes += 1;
-                            }
-                            Err(error) => {
-                                write_query_error(&mut output, &error, protocol_41)?;
+                                )?,
                             }
                         }
-                        record_client_warnings(&output, &engine);
-                    }
-                }
-                engine.finish_execute_stmt(execute_started.elapsed());
-            }
-            Command::StmtSendLongData(bytes) => {
-                commands.stmt_send_long_data_commands += 1;
-                // Go's `handleStmtSendLongData` returns nil on success, and a
-                // nil return from `clientConn.dispatch` writes NO packet at
-                // all (`pkg/server/conn.go:1578-1579`): the client is not
-                // reading, so any reply here would be consumed as the answer
-                // to the NEXT command. Its error returns, by contrast, DO
-                // reach the wire -- `dispatch`'s caller ends the failed
-                // command with `cc.writeError(ctx, err)`
-                // (`pkg/server/conn.go:1338`) -- so the two error shapes below
-                // are packets exactly as they are in Go.
-                match decode_prepared_statement_send_long_data(&bytes) {
-                    Ok(long_data) => {
-                        let statement_id = long_data.statement_id;
-                        match prepared.append_param(
-                            statement_id,
-                            usize::from(long_data.parameter_id),
-                            &long_data.chunk,
-                            &mut engine,
-                        ) {
-                            Ok(()) => {}
-                            Err(AppendParamError::UnknownStatement) => {
-                                write_unknown_statement(
-                                    &mut output,
-                                    statement_id,
-                                    "stmt_send_longdata",
-                                    protocol_41,
-                                )?;
-                            }
-                            // Go `AppendParam`'s own
-                            // `ErrWrongArguments("stmt_send_longdata")`.
-                            Err(AppendParamError::ParameterOutOfRange) => write_error(
-                                &mut output,
-                                1,
-                                ER_WRONG_ARGUMENTS,
-                                *b"HY000",
-                                "Incorrect arguments to stmt_send_longdata",
-                                protocol_41,
-                            )?,
-                        }
-                    }
-                    Err(error) => write_error(
-                        &mut output,
-                        1,
-                        ER_WRONG_ARGUMENTS,
-                        *b"HY000",
-                        error.to_string(),
-                        protocol_41,
-                    )?,
-                }
-            }
-            Command::StmtClose(bytes) => {
-                commands.stmt_close_commands += 1;
-                if let Ok(statement_id) = decode_prepared_statement_close(&bytes) {
-                    drop(prepared.remove(statement_id, &mut engine));
-                }
-            }
-            Command::StmtReset(bytes) => {
-                commands.stmt_reset_commands += 1;
-                match decode_prepared_statement_close(&bytes) {
-                    // The payload is the same four-byte statement id the
-                    // close command carries.
-                    Ok(statement_id) => match prepared.reset(statement_id, &mut engine) {
-                        Ok(cursor) => {
-                            drop(cursor);
-                            // COM_STMT_RESET runs no statement, so like Go's
-                            // `writeOK` here it reports the buffer as it stands.
-                            write_affected_rows_ok(
-                                &mut output,
-                                1,
-                                0,
-                                0,
-                                engine.wire_status(),
-                                engine.warning_count(),
-                                protocol_41,
-                                &[],
-                            )?;
-                        }
-                        Err(()) => write_unknown_statement(
-                            &mut output,
-                            statement_id,
-                            "stmt_reset",
-                            protocol_41,
-                        )?,
-                    },
-                    Err(error) => {
-                        write_error(
+                        Err(error) => write_error(
                             &mut output,
                             1,
                             ER_WRONG_ARGUMENTS,
                             *b"HY000",
                             error.to_string(),
                             protocol_41,
-                        )?;
+                        )?,
                     }
                 }
-            }
-            Command::StmtFetch(bytes) => {
-                commands.stmt_fetch_commands += 1;
-                let (statement_id, fetch_size) = match decode_prepared_statement_fetch(&bytes) {
-                    Ok(decoded) => decoded,
-                    Err(_error) => {
+                Command::StmtClose(bytes) => {
+                    commands.stmt_close_commands += 1;
+                    if let Ok(statement_id) = decode_prepared_statement_close(&bytes) {
+                        drop(prepared.remove(statement_id, &mut engine));
+                    }
+                }
+                Command::StmtReset(bytes) => {
+                    commands.stmt_reset_commands += 1;
+                    match decode_prepared_statement_close(&bytes) {
+                        // The payload is the same four-byte statement id the
+                        // close command carries.
+                        Ok(statement_id) => match prepared.reset(statement_id, &mut engine) {
+                            Ok(cursor) => {
+                                drop(cursor);
+                                // COM_STMT_RESET runs no statement, so like Go's
+                                // `writeOK` here it reports the buffer as it stands.
+                                write_affected_rows_ok(
+                                    &mut output,
+                                    1,
+                                    0,
+                                    0,
+                                    engine.wire_status(),
+                                    engine.warning_count(),
+                                    protocol_41,
+                                    &[],
+                                )?;
+                            }
+                            Err(()) => write_unknown_statement(
+                                &mut output,
+                                statement_id,
+                                "stmt_reset",
+                                protocol_41,
+                            )?,
+                        },
+                        Err(error) => {
+                            write_error(
+                                &mut output,
+                                1,
+                                ER_WRONG_ARGUMENTS,
+                                *b"HY000",
+                                error.to_string(),
+                                protocol_41,
+                            )?;
+                        }
+                    }
+                }
+                Command::StmtFetch(bytes) => {
+                    commands.stmt_fetch_commands += 1;
+                    let (statement_id, fetch_size) = match decode_prepared_statement_fetch(&bytes) {
+                        Ok(decoded) => decoded,
+                        Err(_error) => {
+                            write_error(
+                                &mut output,
+                                1,
+                                ER_UNKNOWN_ERROR,
+                                *b"HY000",
+                                tidb_error::mysql::ERR_MALFORM_PACKET,
+                                protocol_41,
+                            )?;
+                            return Ok(None);
+                        }
+                    };
+                    if prepared.get(statement_id).is_none() {
+                        write_unknown_statement(
+                            &mut output,
+                            statement_id,
+                            "stmt_fetch",
+                            protocol_41,
+                        )?;
+                        return Ok(None);
+                    }
+                    let Some(mut cursor) = prepared.take_cursor(statement_id) else {
+                        // Go `ErrSpCursorNotOpen` (1326).
                         write_error(
                             &mut output,
                             1,
-                            ER_UNKNOWN_ERROR,
-                            *b"HY000",
-                            tidb_error::mysql::ERR_MALFORM_PACKET,
+                            1326,
+                            *b"24000",
+                            "Cursor is not open",
                             protocol_41,
                         )?;
-                        continue;
-                    }
-                };
-                if prepared.get(statement_id).is_none() {
-                    write_unknown_statement(&mut output, statement_id, "stmt_fetch", protocol_41)?;
-                    continue;
-                }
-                let Some(mut cursor) = prepared.take_cursor(statement_id) else {
-                    // Go `ErrSpCursorNotOpen` (1326).
-                    write_error(
+                        return Ok(None);
+                    };
+                    // Go sends up to fetch_size binary rows and an EOF; when the
+                    // iterator is exhausted the EOF drops the cursor bit, sets
+                    // ServerStatusLastRowSend, and the statement resets.
+                    let (row_count, exhausted) = cursor.fetch_plan(fetch_size);
+                    let status = if exhausted {
+                        engine
+                            .wire_status()
+                            .with(SERVER_STATUS_LAST_ROW_SEND)
+                            .without(SERVER_STATUS_CURSOR_EXISTS)
+                    } else {
+                        engine.wire_status().with(SERVER_STATUS_CURSOR_EXISTS)
+                    };
+                    match cursor.write_fetch(
                         &mut output,
-                        1,
-                        1326,
-                        *b"24000",
-                        "Cursor is not open",
-                        protocol_41,
-                    )?;
-                    continue;
-                };
-                // Go sends up to fetch_size binary rows and an EOF; when the
-                // iterator is exhausted the EOF drops the cursor bit, sets
-                // ServerStatusLastRowSend, and the statement resets.
-                let (row_count, exhausted) = cursor.fetch_plan(fetch_size);
-                let status = if exhausted {
-                    engine
-                        .wire_status()
-                        .with(SERVER_STATUS_LAST_ROW_SEND)
-                        .without(SERVER_STATUS_CURSOR_EXISTS)
-                } else {
-                    engine.wire_status().with(SERVER_STATUS_CURSOR_EXISTS)
-                };
-                match cursor.write_fetch(
-                    &mut output,
-                    row_count,
-                    // Go clears the statement warning buffer before FETCH,
-                    // then writes the live transaction status.
-                    framing.result_set(status, 0, result_encoder),
-                ) {
-                    Ok(()) => {
-                        if !exhausted {
-                            drop(prepared.open_cursor(statement_id, cursor));
+                        row_count,
+                        // Go clears the statement warning buffer before FETCH,
+                        // then writes the live transaction status.
+                        framing.result_set(status, 0, result_encoder),
+                    ) {
+                        Ok(()) => {
+                            if !exhausted {
+                                drop(prepared.open_cursor(statement_id, cursor));
+                            }
+                            commands.stmt_fetch_successes += 1;
                         }
-                        commands.stmt_fetch_successes += 1;
+                        Err(CursorFetchError::Protocol { message, sequence }) => {
+                            write_error(
+                                &mut output,
+                                sequence,
+                                ER_UNKNOWN_ERROR,
+                                *b"HY000",
+                                message,
+                                protocol_41,
+                            )?;
+                        }
+                        Err(CursorFetchError::Transport(error)) => return Err(error),
                     }
-                    Err(CursorFetchError::Protocol { message, sequence }) => {
-                        write_error(
+                }
+                // The `mysql` client implements `USE db` as COM_INIT_DB, not as a
+                // query, so this is the command an interactive `USE` arrives on.
+                Command::InitDb(name) => {
+                    let name = String::from_utf8_lossy(&name).into_owned();
+                    match engine.select_database(&name) {
+                        Ok(()) => write_ok(
                             &mut output,
-                            sequence,
-                            ER_UNKNOWN_ERROR,
-                            *b"HY000",
-                            message,
+                            1,
+                            engine.wire_status(),
+                            engine.warning_count(),
                             protocol_41,
-                        )?;
+                        )?,
+                        Err(error) => write_query_error(&mut output, &error, protocol_41)?,
                     }
-                    Err(CursorFetchError::Transport(error)) => return Err(error),
                 }
-            }
-            // The `mysql` client implements `USE db` as COM_INIT_DB, not as a
-            // query, so this is the command an interactive `USE` arrives on.
-            Command::InitDb(name) => {
-                let name = String::from_utf8_lossy(&name).into_owned();
-                match engine.select_database(&name) {
-                    Ok(()) => write_ok(
-                        &mut output,
-                        1,
-                        engine.wire_status(),
-                        engine.warning_count(),
-                        protocol_41,
-                    )?,
-                    Err(error) => write_query_error(&mut output, &error, protocol_41)?,
-                }
-            }
-            Command::SetOption(data) => {
-                // Go `handleSetOption` (conn_stmt.go:651-672): the two-byte
-                // option word toggles CLIENT_MULTI_STATEMENTS (0 = on, 1 =
-                // off) and the reply is an EOF packet carrying the live
-                // status -- never an ERR. JDBC sends this during connection
-                // setup with `allowMultiQueries=true`; answering ERR there
-                // fails the whole connection.
-                if data.len() < 2 {
-                    return Err(MysqlConnectionError::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "malform packet error",
-                    )));
-                }
-                match u16::from_le_bytes([data[0], data[1]]) {
-                    0 => capabilities |= CLIENT_MULTI_STATEMENTS,
-                    1 => capabilities &= !CLIENT_MULTI_STATEMENTS,
-                    _ => {
+                Command::SetOption(data) => {
+                    // Go `handleSetOption` (conn_stmt.go:651-672): the two-byte
+                    // option word toggles CLIENT_MULTI_STATEMENTS (0 = on, 1 =
+                    // off) and the reply is an EOF packet carrying the live
+                    // status -- never an ERR. JDBC sends this during connection
+                    // setup with `allowMultiQueries=true`; answering ERR there
+                    // fails the whole connection.
+                    if data.len() < 2 {
                         return Err(MysqlConnectionError::Io(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             "malform packet error",
                         )));
                     }
+                    match u16::from_le_bytes([data[0], data[1]]) {
+                        0 => capabilities |= CLIENT_MULTI_STATEMENTS,
+                        1 => capabilities &= !CLIENT_MULTI_STATEMENTS,
+                        _ => {
+                            return Err(MysqlConnectionError::Io(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "malform packet error",
+                            )));
+                        }
+                    }
+                    write_eof_or_ok(
+                        &mut output,
+                        1,
+                        framing.result_set(
+                            engine.wire_status(),
+                            engine.warning_count(),
+                            result_encoder,
+                        ),
+                    )?;
                 }
-                write_eof_or_ok(
+                // Go answers COM_SHUTDOWN with handleQuery("SHUTDOWN") and
+                // COM_CHANGE_USER with handleChangeUser; both need the full
+                // server, which this read-only node does not implement yet.
+                Command::FieldList(_)
+                | Command::ResetConnection
+                | Command::Shutdown
+                | Command::ChangeUser(_) => write_error(
                     &mut output,
                     1,
-                    framing.result_set(
-                        engine.wire_status(),
-                        engine.warning_count(),
-                        result_encoder,
-                    ),
-                )?;
+                    ER_UNKNOWN_COM_ERROR,
+                    ER_UNKNOWN_COM_ERROR_STATE,
+                    "command is not supported by the read-only Rust SQL node",
+                    protocol_41,
+                )?,
+                Command::Unknown { code, .. } => {
+                    // Go's default dispatch arm answers a genuinely unknown
+                    // command with generic 1105/HY000 and the command byte in the
+                    // message.  1047/08S01 belongs only to a known command that
+                    // this node refuses, not to an unowned command byte.
+                    let error = unknown_command_error(code);
+                    write_query_error(&mut output, &error, protocol_41)?;
+                }
             }
-            // Go answers COM_SHUTDOWN with handleQuery("SHUTDOWN") and
-            // COM_CHANGE_USER with handleChangeUser; both need the full
-            // server, which this read-only node does not implement yet.
-            Command::FieldList(_)
-            | Command::ResetConnection
-            | Command::Shutdown
-            | Command::ChangeUser(_) => write_error(
-                &mut output,
-                1,
-                ER_UNKNOWN_COM_ERROR,
-                ER_UNKNOWN_COM_ERROR_STATE,
-                "command is not supported by the read-only Rust SQL node",
-                protocol_41,
-            )?,
-            Command::Unknown { code, .. } => {
-                // Go's default dispatch arm answers a genuinely unknown
-                // command with generic 1105/HY000 and the command byte in the
-                // message.  1047/08S01 belongs only to a known command that
-                // this node refuses, not to an unowned command byte.
-                let error = unknown_command_error(code);
-                write_query_error(&mut output, &error, protocol_41)?;
-            }
+            Ok(None)
+        })();
+        last_metrics_sql_type = command_metrics.sql_type;
+        command_metrics.set_resource_groups(
+            engine.metrics_resource_group(),
+            engine.metrics_statement_resource_group(),
+        );
+        if dispatch_result.is_err() {
+            crate::query_metrics::record_error();
+        }
+        if let Some(report) = dispatch_result? {
+            return Ok(report);
         }
     }
 }

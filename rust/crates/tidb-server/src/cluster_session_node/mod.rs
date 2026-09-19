@@ -6378,6 +6378,13 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    fn metrics_resource_group(&self) -> &str {
+        self.session.current_resource_group()
+    }
+    fn metrics_statement_resource_group(&self) -> &str {
+        self.session.active_resource_group()
+    }
+
     /// Go `handleQuery`'s one `ParseSQL`: the connection parses each
     /// statement of the command here and every door below reads that node.
     fn parse_statement(&mut self, sql: &str) -> Result<Option<Stmt>, SqlQueryError> {

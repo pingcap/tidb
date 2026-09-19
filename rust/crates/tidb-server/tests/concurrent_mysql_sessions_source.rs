@@ -418,3 +418,204 @@ fn forced_shutdown_cancels_an_inflight_com_query_before_joining_worker() {
     assert_eq!(tracker.completed(), 1);
     assert_eq!(tracker.failed(), 0);
 }
+
+#[test]
+fn command_dispatch_exports_success_and_error_counters() {
+    let factory = Arc::new(BarrierFactory {
+        barrier: Arc::new(Barrier::new(1)),
+        contexts: Mutex::new(Vec::new()),
+        opening: AtomicUsize::new(0),
+        max_opening: AtomicUsize::new(0),
+    });
+    let node = ConcurrentSqlNode::bind(&config(), factory, Arc::new(users())).unwrap();
+    let address = node.local_addr().unwrap();
+    let tracker = node.tracker();
+    let shutdown = node.shutdown_handle();
+    let server = std::thread::spawn(move || node.run().unwrap());
+    let (mut client, mut reader) = authenticate(address);
+    write_packet(&mut client, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    write_packet(&mut client, 0, &[127]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0xff);
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while tracker.completed() == 0 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    shutdown.shutdown();
+    server.join().unwrap();
+    let text = prometheus::TextEncoder::new()
+        .encode_to_string(&prometheus::gather())
+        .unwrap();
+    assert!(
+        text.contains("tidb_server_handle_query_duration_seconds_count{"),
+        "completed commands must observe duration: {text}"
+    );
+    for (command, result) in [("Ping", "OK"), ("127", "Error")] {
+        assert!(
+            text.lines()
+                .any(|line| line.starts_with("tidb_server_query_total{")
+                    && line.contains(&format!("type=\"{command}\""))
+                    && line.contains(&format!("result=\"{result}\""))
+                    && line.contains("resource_group=\"default\"")
+                    && line.rsplit_once(' ').unwrap().1.parse::<f64>().unwrap() >= 1.0),
+            "missing completed {command}/{result} command metric: {text}"
+        );
+    }
+}
+
+struct MetricsSession {
+    group: &'static str,
+}
+struct MetricsFactory;
+impl QuerySessionFactory for MetricsFactory {
+    type Session = MetricsSession;
+    fn open_session(&self, _: SessionContext) -> Result<MetricsSession, SqlQueryError> {
+        Ok(MetricsSession {
+            group: "metrics-before",
+        })
+    }
+}
+impl QuerySession for MetricsSession {
+    fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
+        Ok((sql == "BEGIN").then_some(true))
+    }
+    fn metrics_resource_group(&self) -> &str {
+        self.group
+    }
+    fn metrics_statement_resource_group(&self) -> &str {
+        "metrics-statement-hint"
+    }
+    fn parse_statement(&mut self, sql: &str) -> Result<Option<tidb_ast::Stmt>, SqlQueryError> {
+        tidb_parser::parse(sql)
+            .map(Some)
+            .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))
+    }
+    fn execute_write(
+        &mut self,
+        sql: &str,
+    ) -> Result<Option<tidb_server::WriteOutcome>, SqlQueryError> {
+        if sql.starts_with("SET") {
+            self.group = "metrics-after";
+        } else if !sql.starts_with("CREATE") {
+            return Ok(None);
+        }
+        Ok(Some(tidb_server::WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        }))
+    }
+    fn execute<'a>(&'a mut self, _: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown("metrics fixture execution error"))
+    }
+}
+
+#[test]
+fn query_metrics_use_post_dispatch_group_and_exclude_text_ddl() {
+    let node =
+        ConcurrentSqlNode::bind(&config(), Arc::new(MetricsFactory), Arc::new(users())).unwrap();
+    let address = node.local_addr().unwrap();
+    let tracker = node.tracker();
+    let shutdown = node.shutdown_handle();
+    let server = std::thread::spawn(move || node.run().unwrap());
+    let (mut client, mut reader) = authenticate(address);
+    for (sql, expected) in [
+        ("SET @x=1", 0),
+        ("CREATE TABLE t(id INT)", 0),
+        ("SELECT 1", 0xff),
+    ] {
+        let mut payload = vec![COM_QUERY];
+        payload.extend_from_slice(sql.as_bytes());
+        write_packet(&mut client, 0, &payload);
+        reader.set_sequence(1);
+        assert_eq!(reader.read_packet().unwrap()[0], expected);
+    }
+    write_packet(&mut client, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while tracker.completed() == 0 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    shutdown.shutdown();
+    server.join().unwrap();
+    let text = prometheus::TextEncoder::new()
+        .encode_to_string(&prometheus::gather())
+        .unwrap();
+    for result in ["OK", "Error"] {
+        let line = text
+            .lines()
+            .find(|line| {
+                line.starts_with("tidb_server_query_total{")
+                    && line.contains("type=\"Query\"")
+                    && line.contains("resource_group=\"metrics-after\"")
+                    && line.contains(&format!("result=\"{result}\""))
+            })
+            .expect("post-dispatch group counter");
+        assert!(line.ends_with(" 1"), "DDL must not contribute: {line}");
+    }
+    assert!(
+        text.lines().any(|line| line
+            .starts_with("tidb_server_handle_query_duration_seconds_count{")
+            && line.contains("sql_type=\"Select\"")
+            && line.contains("resource_group=\"metrics-statement-hint\"")
+            && line.ends_with(" 3")),
+        "{text}"
+    );
+}
+
+#[test]
+fn prepared_execute_exports_cached_statement_label() {
+    let node =
+        ConcurrentSqlNode::bind(&config(), Arc::new(MetricsFactory), Arc::new(users())).unwrap();
+    let address = node.local_addr().unwrap();
+    let tracker = node.tracker();
+    let shutdown = node.shutdown_handle();
+    let server = std::thread::spawn(move || node.run().unwrap());
+    let (mut client, mut reader) = authenticate(address);
+    let mut prepare = vec![22];
+    prepare.extend_from_slice(b"BEGIN");
+    write_packet(&mut client, 0, &prepare);
+    reader.set_sequence(1);
+    let response = reader.read_packet().unwrap();
+    assert_eq!(response[0], 0);
+    let statement_id = &response[1..5];
+    let mut execute = vec![23];
+    execute.extend_from_slice(statement_id);
+    execute.push(0);
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while tracker.completed() == 0 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    shutdown.shutdown();
+    server.join().unwrap();
+    let text = prometheus::TextEncoder::new()
+        .encode_to_string(&prometheus::gather())
+        .unwrap();
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("tidb_server_query_total{")
+                && line.contains("type=\"StmtExecute\"")
+                && line.contains("result=\"OK\"")
+                && line.ends_with(" 1")),
+        "{text}"
+    );
+    assert!(
+        text.lines().any(|line| line
+            .starts_with("tidb_server_handle_query_duration_seconds_count{")
+            && line.contains("sql_type=\"Begin\"")
+            && line.ends_with(" 2")),
+        "{text}"
+    );
+}

@@ -102,6 +102,7 @@ pub mod http_status;
 mod listener;
 pub mod main_flags;
 mod mysql_connection;
+mod query_metrics;
 mod mysql_tls;
 mod native_password;
 mod node_config;
