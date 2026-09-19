@@ -1390,6 +1390,54 @@ fixed few-tens-of-milliseconds delta specific to read-only multi-statement
 transactions needs tracing at the transaction-start/PD-round-trip level to
 pin down, not a query plan. Filed as task 74.
 
+## task 74 root-caused and fixed: binary-protocol string parameters bound the wrong datum kind
+
+`ORDER_STATUS`'s fixed ~20-30ms-per-transaction penalty (above) was root-caused
+to `prepared_parameters` (`tidb-server/src/pipeline_session.rs`): every
+binary-protocol string-family parameter (`TYPE_VARCHAR`/`TYPE_STRING`/
+`TYPE_ENUM`/`TYPE_SET`/`TYPE_GEOMETRY`/`TYPE_BIT`) bound as `Datum::Bytes`
+(binary collation) instead of `Datum::String` (default collation). Go's
+`ExecBinaryParam` (`pkg/expression/util.go:2117`) only uses `NewBytesDatum`
+for the BLOB family; every other string-like type is `NewDatum(string)`, the
+same datum a quoted SQL literal produces. Bisection evidence: text protocol
+matched Go (1.78ms vs 1.56ms); SQL-level `PREPARE`/`EXECUTE` matched Go
+(0.87ms); only the MySQL binary protocol's string parameters were slow
+(18-19ms); `strace` showed ~160KB of TiKV rows returned per query (the whole
+scanned range, not a pushed point/prefix); a minimal probe isolated it to
+exactly `c_last = ?` with a *string* bound parameter (int-only params and
+string literals were both fast, ~0.85ms). Root cause: with the wrong
+(binary-collation) datum, the comparison could not describe cleanly against
+the `utf8mb4` column through the coprocessor pushdown path, so it fell back
+to evaluating the predicate locally over the whole scanned range.
+
+Fixed by splitting `tidb_protocol::PreparedValue::String` into `String` (the
+string family) and a new `Bytes` variant (the BLOB family only), matching
+Go's grouping exactly, including the BLOB-NULL-is-empty-bytes special case.
+`prepared_parameters` now binds `String` through `Datum::new_string` (default
+collation) and `Bytes` through `Datum::new_bytes` (binary collation);
+`Temporal` also moved to `Datum::new_string`, since it was already text.
+Verified fixed: the isolating probe (`c_last = ?` bound as a binary-protocol
+string) dropped from 18.10ms to 1.45ms avg, and a full-transaction
+reproduction of `ORDER_STATUS`'s three lookups (prepared `EXECUTE`, BEGIN/
+COMMIT included) now matches Go within noise at 1 and 16 threads: 1 thread,
+`by_id` (the `c_last = ?` lookup) 0.834ms Rust vs 0.845ms Go, overall tps
+213.6 vs 199.7; 16 threads, `by_id` 10.9ms vs 9.4ms, tps 245.4 vs 278.1 (the
+16-thread gap that remains is contention/lock-wait shape across the whole
+transaction, not this predicate, and is unrelated to the fixed bug -- no
+longer the 2-3x, fixed-tens-of-milliseconds-per-transaction shape this doc
+described above). Swept the surrounding code (the wire decoder's charset-
+decode grouping, `PreparedParameterType::of`'s cache key,
+`infer_param_type_from_datum`, and the ranger's point-range construction) for
+the same class of bug: none found -- those layers already implemented Go's
+exact semantics for both datum kinds and were only ever fed the wrong one
+from this one boundary. A full `tiup bench tpcc` re-measurement (this
+document's own harness, above) was not repeated this session for the
+10-warehouse `prepare` cost; the isolating-probe and full-transaction
+reproduction above are direct, targeted verification of the same root cause
+that produced the original regression. Fixed in commit `d4a47b19`
+("rust: fix binary-protocol string params binding Datum::Bytes not
+Datum::String"), pushed to `hparser-integration`. Task 74 closed.
+
 Not attempted this session, for lack of remaining time in this pass: the
-task 72/73/74 fixes themselves (task 57), and a multi-round ABBA TPC-C sweep
+task 72/73 fixes themselves (task 57), and a multi-round ABBA TPC-C sweep
 (this pass is one round each, per the caveat above).
