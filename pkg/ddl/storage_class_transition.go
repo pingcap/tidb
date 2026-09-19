@@ -957,8 +957,13 @@ func (m *storageClassTransitionManager) poll(
 			delete(active, key)
 			continue
 		}
-		eligible[key] = operation
-		if storageClassTransitionTargetsExist(tbl.Meta(), operation) || !storageClassTransitionTopologyIsStable(tbl.Meta()) {
+		if storageClassTransitionTargetsExist(tbl.Meta(), operation) {
+			eligible[key] = operation
+			continue
+		}
+		// Obsolete physical ranges cannot prove completion, even while the
+		// partition topology is changing or reconciliation needs to retry.
+		if !storageClassTransitionTopologyIsStable(tbl.Meta()) {
 			continue
 		}
 		if err := reconcileStorageClassTransitionTopology(ctx, se, tbl.Meta(), operation, latestSchemaVersion); err != nil {
@@ -967,7 +972,6 @@ func (m *storageClassTransitionManager) poll(
 			continue
 		}
 		delete(active, key)
-		delete(eligible, key)
 	}
 	m.setActive(active)
 	if len(eligible) == 0 {
