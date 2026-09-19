@@ -2753,8 +2753,118 @@ mod tests {
         );
     }
 
-    /// A relation with the shapes an aggregate can get wrong: a NULL in the
-    /// summed column, and a value no predicate below admits.
+    /// A DECIMAL-column counterpart of [`aggregate_fixture`]: task 71 traced a
+    /// panic (`index out of bounds` in `Column::is_null`, reached from
+    /// `hash_agg::input::prepare_decimal_cache`) to a NULL DECIMAL cell in a
+    /// coprocessor partial-aggregate SUM/COUNT, at the default
+    /// pipeline-eligible concurrency (`DEF_EXECUTOR_CONCURRENCY`, which is
+    /// `> 1`, so `HashAggContext::pipeline_eligibility` selects the parallel
+    /// worker path these tests exercise -- not the serial one). This fixture
+    /// carries a real `NewDecimal` column, unlike [`aggregate_fixture`]'s
+    /// `LongLong` one, so it actually reaches `prepare_decimal_cache`.
+    fn decimal_aggregate_fixture() -> Fixture {
+        let mut decimal_col = column("b", 2);
+        decimal_col.field_type = FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
+        let mut fixture = fixture_with_columns(None, vec![column("a", 1), decimal_col]);
+        for a in 1..=100 {
+            let b = if a > 96 {
+                Datum::Null
+            } else {
+                Datum::Decimal(tidb_datatype::Decimal::from_int(a * 10))
+            };
+            fixture
+                .table
+                .insert_row(&[Datum::Int(a), b], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.returned.store(0, Ordering::Relaxed);
+        fixture
+    }
+
+    /// Task 71's exact traced shape: every row a predicate admits has NULL in
+    /// the summed DECIMAL column.
+    #[test]
+    fn a_decimal_sum_over_null_rows_the_predicate_admits_does_not_crash() {
+        let fixture = decimal_aggregate_fixture();
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let (rows, wire) = run_counting(
+            "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 97",
+            &catalog,
+            &ctx,
+        );
+        assert_eq!(rows, vec![vec![Datum::Int(3), Datum::Int(0), Datum::Null]]);
+        assert_eq!(wire, 3);
+
+        let (rows, wire) = run_counting(
+            "SELECT a, COUNT(*), SUM(b) FROM t WHERE a > 97 GROUP BY a ORDER BY a",
+            &catalog,
+            &ctx,
+        );
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(98), Datum::Int(1), Datum::Null],
+                vec![Datum::Int(99), Datum::Int(1), Datum::Null],
+                vec![Datum::Int(100), Datum::Int(1), Datum::Null],
+            ]
+        );
+        assert_eq!(wire, 3);
+    }
+
+    /// Every row NULL, not merely the ones a predicate admits.
+    #[test]
+    fn a_decimal_sum_over_an_entirely_null_column_does_not_crash() {
+        let mut decimal_col = column("b", 2);
+        decimal_col.field_type = FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
+        let mut fixture = fixture_with_columns(None, vec![column("a", 1), decimal_col]);
+        for a in 1..=100 {
+            fixture
+                .table
+                .insert_row(&[Datum::Int(a), Datum::Null], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.returned.store(0, Ordering::Relaxed);
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+
+        let (rows, wire) = run_counting("SELECT COUNT(*), COUNT(b), SUM(b) FROM t", &catalog, &ctx);
+        assert_eq!(
+            rows,
+            vec![vec![Datum::Int(100), Datum::Int(0), Datum::Null]]
+        );
+        assert_eq!(wire, 100);
+
+        let (rows, _) = run_counting(
+            "SELECT a, COUNT(*), SUM(b) FROM t GROUP BY a ORDER BY a",
+            &catalog,
+            &ctx,
+        );
+        assert_eq!(rows.len(), 100);
+        assert!(rows
+            .iter()
+            .all(|row| row[2] == Datum::Null && row[1] == Datum::Int(1)));
+    }
+
+    /// A zero-row DECIMAL column: what task 71 flagged as a distinct
+    /// possibility from an all-NULL one ("or the chunk/row indexing feeding
+    /// it row 0 of what should be a zero-row column").
+    #[test]
+    fn a_decimal_sum_over_zero_matched_rows_does_not_crash() {
+        let fixture = decimal_aggregate_fixture();
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let (rows, wire) = run_counting(
+            "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 10000",
+            &catalog,
+            &ctx,
+        );
+        assert_eq!(rows, vec![vec![Datum::Int(0), Datum::Int(0), Datum::Null]]);
+        assert_eq!(wire, 0);
+    }
+
     fn aggregate_fixture() -> Fixture {
         let mut fixture = fixture();
         for a in 1..=100 {

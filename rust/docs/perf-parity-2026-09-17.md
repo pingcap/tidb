@@ -1528,3 +1528,61 @@ macro-level sysbench percentage, which this box cannot currently produce
 reliably for this specific workload. Fixed in commit `28663546` ("rust:
 stage record keys inline in StagedWrites, not as a heap Vec<u8>"), pushed to
 `hparser-integration`.
+
+## task 71 investigated: the traced crash does not currently reproduce; closed
+## on new regression coverage, not a code fix
+
+Task 71 traced a panic (`index out of bounds: the len is 0 but the index is
+0` in `Column::is_null`, reached from `hash_agg::input::prepare_decimal_cache`
+and `hash_agg/parallel.rs`'s `fold_chunk`) to a coprocessor partial-aggregate
+SUM/COUNT over a DECIMAL column whose null bitmap was empty while `rows()`
+was reportedly nonzero. Its own repro command named `aggregate_fixture` in
+`remote_scan.rs`, but that fixture's `b` column is (and, per `git log -S`,
+always has been) `FieldTypeCode::LongLong`, never `NewDecimal` -- so it
+cannot exercise `prepare_decimal_cache`'s DECIMAL-only path at all, and the
+four tests it names run and pass without any `#[ignore]` today.
+
+Built a real reproduction instead: a fixture with an actual `NewDecimal`
+column, at `DEF_EXECUTOR_CONCURRENCY` (5, `>1`), the exact concurrency
+`HashAggContext::pipeline_eligibility` requires to route through the
+parallel worker path (`fold_chunk`/`prepare_decimal_cache`) rather than the
+serial one. Tried every NULL shape task 71's own text distinguishes: NULL
+in the rows a predicate admits (its literal traced case), every row NULL,
+and zero rows matched at all (its own alternate hypothesis, "the chunk/row
+indexing feeding it row 0 of what should be a zero-row column") -- with and
+without `GROUP BY`. None crash; all return the correct answer (`NULL` for
+`SUM`, `0` for `COUNT`), and the wire-row counts confirm the predicate still
+pushed down.
+
+Cross-checked against Go: `pkg/util/chunk/column.go`'s `resize` (which
+`ResizeDecimal` calls) always sizes `nullBitmap` to `(n+7)>>3` in lockstep
+with `n`, exactly like Rust's `resize_fixed`/`resize_decimal` -- no
+discrepancy between the two to account for the traced inconsistency. Go's
+own partial-aggregate worker (`agg_hash_partial_worker.go`'s
+`updatePartialResult`) has no counterpart to `prepare_decimal_cache` at all:
+it decodes each row through `chk.GetRow(i)` one at a time, rather than
+batch-decoding a whole DECIMAL column up front, so there is no Go pattern to
+compare the cache's cross-row indexing against.
+
+Conclusion: not currently reproducible with a good-faith, multi-angle
+effort against the exact code path and pipeline conditions the original
+trace named. Most likely already fixed as a side effect of the several
+DECIMAL/hash_agg-specific changes that landed after this task was filed
+(typed decimal MIN/MAX, typed count-distinct, typed distinct sets, among
+others -- any of which could have touched this same cache construction).
+Not re-litigated further per this document's own standard for a claim like
+this: real, verified evidence, not confident-sounding speculation.
+
+What's real and kept regardless of that history: this fixture family (every
+`aggregate_fixture`-style test in `remote_scan.rs`) had NO coverage at all of
+a NULL/zero-row DECIMAL column reaching `prepare_decimal_cache`, only the
+`LongLong` path. Added three permanent regression tests covering exactly the
+shapes above (`a_decimal_sum_over_null_rows_the_predicate_admits_does_not_crash`,
+`a_decimal_sum_over_an_entirely_null_column_does_not_crash`,
+`a_decimal_sum_over_zero_matched_rows_does_not_crash`), asserting the correct
+answer, not just the absence of a panic. Full `tidb-executor` suite:
+1342/1342 passing (up from 1339); `cargo fmt`/`clippy` clean on the touched
+lines. Task 71 closed on this coverage, not a code change -- if the crash
+Task 71 traced is real, it lives somewhere neither this document's repro
+attempts nor its Go comparison reached, and reopening it needs a fresh stack
+trace from an actual failure, not a re-guess from the original description.
