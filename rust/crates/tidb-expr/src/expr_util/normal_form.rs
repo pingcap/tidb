@@ -87,22 +87,6 @@ pub fn split_dnf_items(on_expr: &Expression) -> Vec<Expression> {
     split_normal_form_items(on_expr, "or")
 }
 
-/// Go `extractBinaryOpItems` (`expression.go:851`): the leaves of a nested
-/// binary-operator tree.
-fn extract_binary_op_items(function: &ScalarFunction, func_name: &str) -> Vec<Expression> {
-    let mut result = Vec::new();
-    for arg in function.get_args() {
-        match arg {
-            Expression::ScalarFunction(inner) if inner.func_name.lowercase() == func_name => {
-                result.extend(extract_binary_op_items(inner, func_name));
-            }
-            other => result.push(other.clone()),
-        }
-    }
-    result
-}
-
-
 /// Borrowed leaves of a nested binary-operator tree: the walk pushes
 /// references instead of cloning each leaf subtree. The cached-plan rebuild
 /// reads the same trees once per EXECUTE, and Go's extractor shares expression
@@ -137,6 +121,22 @@ pub fn flatten_dnf_conditions_ref<'a>(
 pub fn flatten_cnf_conditions_ref<'a>(cnf_condition: &'a ScalarFunction) -> Vec<&'a Expression> {
     extract_binary_op_items_ref(cnf_condition, "and")
 }
+
+/// Go `extractBinaryOpItems` (`expression.go:851`): the leaves of a nested
+/// binary-operator tree.
+fn extract_binary_op_items(function: &ScalarFunction, func_name: &str) -> Vec<Expression> {
+    let mut result = Vec::new();
+    for arg in function.get_args() {
+        match arg {
+            Expression::ScalarFunction(inner) if inner.func_name.lowercase() == func_name => {
+                result.extend(extract_binary_op_items(inner, func_name));
+            }
+            other => result.push(other.clone()),
+        }
+    }
+    result
+}
+
 
 /// Go `FlattenDNFConditions` (`expression.go:865`): the leaves of a nested
 /// `OR` tree.
