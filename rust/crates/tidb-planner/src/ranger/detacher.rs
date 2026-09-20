@@ -1523,6 +1523,14 @@ impl RangeDetacher<'_> {
         let mut total_mem: i64 = 0;
         let mut column_values: Vec<Option<ValueInfo>> = vec![None; self.cols.len()];
         let mut has_residual = false;
+        // The first column's projected FieldType is arm-invariant: computing it
+        // once instead of once per arm removes a FieldType clone (or a binary
+        // collation conversion) from every DNF arm on the rebuild hot path.
+        let first_new_tp = if self.convert_to_sort_key {
+            super::ranger::convert_string_ft_to_binary_collate(&self.new_tp_slice[0])
+        } else {
+            self.new_tp_slice[0].clone()
+        };
         for (i, item) in dnf_items.iter().enumerate() {
             let is_and = matches!(item, Expression::ScalarFunction(sf)
                 if sf.func_name.lowercase() == "and");
@@ -1531,7 +1539,7 @@ impl RangeDetacher<'_> {
                     unreachable!("matched above");
                 };
                 let cnf_items = flatten_cnf_conditions(sf);
-                let res = self.detach_cnf(&cnf_items, true)?;
+                let mut res = self.detach_cnf(&cnf_items, true)?;
                 // An always-false DNF item is skipped.
                 if res.ranges.is_empty() {
                     continue;
@@ -1560,9 +1568,12 @@ impl RangeDetacher<'_> {
                         -1,
                     ));
                 }
-                if let Some(composed) =
-                    tidb_expr::simple_expr::compose_cnf_condition(res.access_conds.clone())
-                {
+                let access_len = res.access_conds.len() as i64;
+                // Move the arm's access conds into the compose: the clone this
+                // replaces ran once per DNF arm per EXECUTE on the rebuild path.
+                if let Some(composed) = tidb_expr::simple_expr::compose_cnf_condition(
+                    std::mem::take(&mut res.access_conds),
+                ) {
                     new_access_items.push(composed);
                 }
                 if i == 0 {
@@ -1578,7 +1589,6 @@ impl RangeDetacher<'_> {
                         }
                     }
                 }
-                let access_len = res.access_conds.len() as i64;
                 if min_access_conds == -1 || access_len < min_access_conds {
                     min_access_conds = access_len;
                 }
@@ -1602,14 +1612,9 @@ impl RangeDetacher<'_> {
                     self.lengths[0],
                     self.convert_to_sort_key,
                 );
-                let tmp_new_tp = if self.convert_to_sort_key {
-                    super::ranger::convert_string_ft_to_binary_collate(&self.new_tp_slice[0])
-                } else {
-                    self.new_tp_slice[0].clone()
-                };
                 let (ranges, fallback) = super::ranger::points_to_ranges(
                     points,
-                    &tmp_new_tp,
+                    &first_new_tp,
                     self.range_max_size,
                     &mut self.skip_plan_cache_reason,
                 )?;
