@@ -2269,3 +2269,38 @@ func TestGrantOptionWithSEMv2(t *testing.T) {
 	err = tk4.ExecToErr("GRANT FILE ON *.* TO grantee")
 	require.NoError(t, err)
 }
+
+func TestInsertValuesSubqueryChecksSelectPrivilege(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE insert_subq_secret`)
+	rootTk.MustExec(`CREATE TABLE insert_subq_secret.victim (id INT PRIMARY KEY, secret VARCHAR(32))`)
+	rootTk.MustExec(`INSERT INTO insert_subq_secret.victim VALUES (1, 'topsecret')`)
+	rootTk.MustExec(`CREATE DATABASE insert_subq_atk`)
+	rootTk.MustExec(`CREATE TABLE insert_subq_atk.exfil (id INT, v VARCHAR(64))`)
+	rootTk.MustExec(`CREATE USER 'insert_subq_low'@'%'`)
+	// Only the attacker's own schema is granted; the victim schema is off limits.
+	rootTk.MustExec(`GRANT SELECT, INSERT ON insert_subq_atk.* TO 'insert_subq_low'@'%'`)
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "insert_subq_low", Hostname: "%", AuthUsername: "insert_subq_low", AuthHostname: "%",
+	}, nil, nil, nil))
+
+	// A scalar subquery in the VALUES list must require SELECT on the source table,
+	// exactly like `INSERT ... SELECT` does.
+	err := tk.ExecToErr(`INSERT INTO insert_subq_atk.exfil VALUES (1, (SELECT secret FROM insert_subq_secret.victim WHERE id = 1))`)
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+	require.Contains(t, err.Error(), "SELECT command denied")
+	require.Contains(t, err.Error(), "'victim'")
+
+	// The same read through INSERT ... SELECT is already checked.
+	err = tk.ExecToErr(`INSERT INTO insert_subq_atk.exfil SELECT id, secret FROM insert_subq_secret.victim`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+
+	// Once SELECT is granted the statement is allowed and the value is written.
+	rootTk.MustExec(`GRANT SELECT ON insert_subq_secret.* TO 'insert_subq_low'@'%'`)
+	tk.MustExec(`INSERT INTO insert_subq_atk.exfil VALUES (2, (SELECT secret FROM insert_subq_secret.victim WHERE id = 1))`)
+	rootTk.MustQuery(`SELECT v FROM insert_subq_atk.exfil WHERE id = 2`).Check(testkit.Rows("topsecret"))
+}
