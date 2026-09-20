@@ -73,6 +73,8 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
 		})
+		// Include the query and both plans when CI reports a normalization mismatch.
+		t.Logf("SQL: %s\nactual: %q\nexpected: %q", tt, normalizedPlanRows, output[i].Plan)
 		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
 	}
 }
