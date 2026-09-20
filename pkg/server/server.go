@@ -197,7 +197,7 @@ func (s *Server) BitwiseOrAssignCapability(capability uint32) {
 
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
 func (s *Server) GetStatusServerAddr() (on bool, addr string) {
-	if !s.cfg.Status.ReportStatus {
+	if !s.fullStatusServerEnabled() {
 		return false, ""
 	}
 	if strings.Contains(s.statusAddr, config.DefStatusHost) {
@@ -472,7 +472,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
-	if s.cfg.Status.ReportStatus {
+	if s.statusHTTPEnabled() {
 		err := s.startStatusHTTP()
 		if err != nil {
 			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))

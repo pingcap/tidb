@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -37,18 +39,22 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -248,6 +254,64 @@ func (c *stmtSummarySysVarContext) GetRestrictedSQLExecutor() sqlexec.Restricted
 
 func (c *stmtSummarySysVarContext) ExecRestrictedSQL(context.Context, []sqlexec.OptionFuncAlias, string, ...any) ([]chunk.Row, []*resolve.ResultField, error) {
 	return c.rows, nil, nil
+}
+
+// Embedding the combined interface satisfies both startup storage checks. No
+// storage method is reached because the test stops at TLS configuration loading.
+type logBackupTestStorage struct {
+	logBackupStorage
+}
+
+type logBackupStorage interface {
+	kv.Storage
+	tikv.Storage
+}
+
+func TestStartRunawayLoops(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(false))
+	exit := make(chan struct{})
+	close(exit)
+	rm := runaway.NewRunawayManager(nil, "test", nil, exit, nil, nil)
+	t.Cleanup(rm.Stop)
+	dom := &Domain{
+		runawayManager: rm,
+		wg:             util.NewWaitGroupEnhancedWrapper("", nil, false),
+	}
+	dom.startRunawayLoops()
+	dom.wg.Wait()
+
+	t.Run("diagnostic mode", func(t *testing.T) {
+		t.Cleanup(diagnosticmode.SetForTest(true))
+		// No manager or wait group is needed: return before spawning goroutines.
+		dom := &Domain{}
+		require.NotPanics(t, dom.startRunawayLoops)
+	})
+}
+
+func TestShouldStartLogBackupAdvancer(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(false))
+	t.Cleanup(config.RestoreFunc())
+	missingCA := filepath.Join(t.TempDir(), "missing-ca.pem")
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.Security.ClusterSSLCA = missingCA
+	})
+	dom := NewMockDomain()
+	dom.store = &logBackupTestStorage{}
+	dom.etcdClient = &clientv3.Client{}
+	pdClient := &mockInfoPdClient{}
+	require.True(t, shouldStartLogBackupAdvancer())
+	// A normal startup must reach TiDBEnv instead of returning for missing
+	// dependencies. The invalid CA stops initialization before any network I/O.
+	require.ErrorContains(t, dom.initLogBackup(context.Background(), pdClient), missingCA)
+
+	t.Run("diagnostic mode", func(t *testing.T) {
+		t.Cleanup(diagnosticmode.SetForTest(true))
+		require.False(t, shouldStartLogBackupAdvancer())
+
+		require.NoError(t, dom.initLogBackup(context.Background(), pdClient))
+		require.Nil(t, dom.brOwnerMgr)
+		require.Nil(t, dom.logBackupAdvancer)
+	})
 }
 
 // Regression coverage for issue #69913's repeated sysvar-cache rebuild path.

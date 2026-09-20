@@ -25,6 +25,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -219,18 +220,22 @@ func (m *Manager) GetOrCreate(
 		svrInfoSyncer:   svrInfoSyncer,
 	}
 
-	mgr.wg.RunWithLog(func() {
-		svrInfoSyncer.ServerInfoSyncLoop(store, mgr.exitCh)
-	})
+	if !diagnosticmode.Enabled() {
+		mgr.wg.RunWithLog(func() {
+			svrInfoSyncer.ServerInfoSyncLoop(store, mgr.exitCh)
+		})
+	}
 	mgr.wg.RunWithLog(func() {
 		isSyncer.SyncLoop(ctx)
 	})
-	mgr.wg.RunWithLog(func() {
-		isSyncer.MDLCheckLoop(ctx)
-	})
-	mgr.wg.RunWithLog(func() {
-		minJobIDRefresher.Start(ctx)
-	})
+	if !diagnosticmode.Enabled() {
+		mgr.wg.RunWithLog(func() {
+			isSyncer.MDLCheckLoop(ctx)
+		})
+		mgr.wg.RunWithLog(func() {
+			minJobIDRefresher.Start(ctx)
+		})
+	}
 	m.sessMgrs[ks] = mgr
 
 	logutil.BgLogger().Info("create cross keyspace session manager",

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -34,6 +35,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
+	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -158,12 +160,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		apiCtx = pd.NewAPIContextV2(keyspaceName)
 	}
 
-	pdCli, err = pd.NewClientWithAPIContext(context.Background(), apiCtx, "tidb-tikv-driver", etcdAddrs,
-		pd.SecurityOption{
-			CAPath:   d.security.ClusterSSLCA,
-			CertPath: d.security.ClusterSSLCert,
-			KeyPath:  d.security.ClusterSSLKey,
-		},
+	pdClientOptions := []opt.ClientOption{
 		opt.WithGRPCDialOptions(
 			// keep the same with etcd, see
 			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
@@ -173,8 +170,19 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 			}),
 		),
-		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
-		opt.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
+		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout) * time.Second),
+		opt.WithForwardingOption(config.GetGlobalConfig().EnableForwarding),
+	}
+	if diagnosticmode.Enabled() {
+		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+	}
+	pdCli, err = pd.NewClientWithAPIContext(context.Background(), apiCtx, "tidb-tikv-driver", etcdAddrs,
+		pd.SecurityOption{
+			CAPath:   d.security.ClusterSSLCA,
+			CertPath: d.security.ClusterSSLCert,
+			KeyPath:  d.security.ClusterSSLKey,
+		},
+		pdClientOptions...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -216,10 +224,10 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 
 	codec := pdClient.GetCodec()
 
-	rpcClient := tikv.NewRPCClient(
+	rpcClient := diagnosticclient.WrapKV(tikv.NewRPCClient(
 		tikv.WithSecurity(d.security),
 		tikv.WithCodec(codec),
-	)
+	))
 
 	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient},
 		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)))

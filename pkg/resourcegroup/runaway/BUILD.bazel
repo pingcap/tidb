@@ -12,6 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/resourcegroup/runaway",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/diagnosticmode",
         "//pkg/ddl",
         "//pkg/infoschema",
         "//pkg/kv",
@@ -54,6 +55,7 @@ go_test(
     flaky = True,
     shard_count = 16,
     deps = [
+        "//pkg/config/diagnosticmode",
         "//pkg/ddl",
         "//pkg/infoschema",
         "//pkg/metrics",

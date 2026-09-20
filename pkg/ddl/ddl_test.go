@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -41,6 +42,13 @@ import (
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+func TestDiagnosticModeDisallowsSwitchMDL(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(true))
+
+	d := &ddl{}
+	require.ErrorIs(t, d.SwitchMDL(true), diagnosticmode.ErrDDLNotAllowed)
+}
 
 // DDLForTest exports for testing.
 type DDLForTest interface {

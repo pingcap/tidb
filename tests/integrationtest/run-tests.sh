@@ -28,9 +28,26 @@ record_case=""
 stats="s"
 collation_opt=2
 runs_on_port=0
+diagnostic_mode=0
+diagnostic_test_case="ddl/diagnostic_mode"
+run_diagnostic_after_regular=0
+diagnostic_store_path=""
+start_in_diagnostic_mode=0
+SERVER_PID=""
 
 set -eu
-trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
+function cleanup()
+{
+    set +e
+    PIDS=$(jobs -p)
+    for pid in $PIDS; do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+    if [[ -n "$diagnostic_store_path" && -d "$diagnostic_store_path" ]]; then
+        rm -rf -- "$diagnostic_store_path"
+    fi
+}
+trap cleanup EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -188,6 +205,30 @@ while getopts "t:s:r:b:d:c:i:P:h" opt; do
     esac
 done
 
+selected_case="$tests"
+if [[ $record = 1 ]]; then
+    selected_case="$record_case"
+fi
+
+if [[ -z "$selected_case" || "$selected_case" = "all" ]]; then
+    if [[ "${TIDB_TEST_STORE_NAME}" != "tikv" ]]; then
+        run_diagnostic_after_regular=1
+    fi
+elif [[ "$selected_case" = "$diagnostic_test_case" ]]; then
+    diagnostic_mode=1
+fi
+
+if [[ $run_diagnostic_after_regular = 1 && "$runs_on_port" -ne 0 ]]; then
+    echo "Error: running all integration tests with -P cannot start the additional diagnostic-mode TiDB." >&2
+    echo "Run without -P so the runner can start diagnostic TiDB and check its startup log." >&2
+    exit 1
+fi
+
+if [[ $diagnostic_mode = 1 && "$runs_on_port" -ne 0 ]]; then
+    echo "Error: $diagnostic_test_case does not support -P because its startup log must be checked." >&2
+    exit 1
+fi
+
 extract_stats
 
 if [ $build -eq 1 ]; then
@@ -196,7 +237,9 @@ if [ $build -eq 1 ]; then
     else
         echo "skip building tidb-server, using existing binary: $tidb_server"
     fi
-    build_mysql_tester
+    if [[ $diagnostic_mode = 0 ]]; then
+        build_mysql_tester
+    fi
 else
     if [ -z "$tidb_server" ] && [ "$runs_on_port" -eq 0 ]; then
         tidb_server="./integrationtest_tidb-server"
@@ -223,6 +266,13 @@ then
     ports=($(find_multiple_available_ports 4000 2))
     port=${ports[0]}
     status=${ports[1]}
+    if [[ $diagnostic_mode = 1 || $run_diagnostic_after_regular = 1 ]]; then
+        if [[ "${TIDB_TEST_STORE_NAME}" = "tikv" ]]; then
+            echo "Error: the diagnostic integrationtest runner requires a persistent UniStore." >&2
+            exit 1
+        fi
+        diagnostic_store_path=$(mktemp -d "${TMPDIR:-/tmp}/tidb-integrationtest-diagnostic.XXXXXX")
+    fi
 fi
 
 function start_tidb_server()
@@ -235,8 +285,14 @@ function start_tidb_server()
     start_options="-P $port -status $status -config $config_file"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         start_options="$start_options -store tikv -path ${TIKV_PATH}"
+    elif [[ $diagnostic_mode = 1 ]]; then
+        start_options="$start_options -store unistore -path $diagnostic_store_path"
     else
         start_options="$start_options -store unistore -path ''"
+    fi
+
+    if [[ $start_in_diagnostic_mode = 1 ]]; then
+        start_options="$start_options --diagnostic-mode"
     fi
 
     if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
@@ -250,6 +306,42 @@ function start_tidb_server()
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 
+function wait_for_tidb_server()
+{
+    local status_url="http://127.0.0.1:${status}/status"
+    for _ in $(seq 1 120); do
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "tidb-server exited before becoming ready. Log tail:" >&2
+            tail -n 100 "$mysql_tester_log" >&2 || true
+            return 1
+        fi
+        if curl -sf --max-time 2 "$status_url" >/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "timed out waiting for tidb-server. Log tail:" >&2
+    tail -n 100 "$mysql_tester_log" >&2 || true
+    return 1
+}
+
+function stop_tidb_server()
+{
+    kill -15 "$SERVER_PID"
+    wait "$SERVER_PID" || true
+    SERVER_PID=""
+}
+
+function bootstrap_diagnostic_store()
+{
+    echo "bootstrap storage before diagnostic-mode startup"
+    start_in_diagnostic_mode=0
+    start_tidb_server
+    wait_for_tidb_server
+    stop_tidb_server
+    start_in_diagnostic_mode=1
+}
+
 function run_mysql_tester()
 {
     coll_disabled="false"
@@ -261,10 +353,10 @@ function run_mysql_tester()
     if [ $record -eq 1 ]; then
       if [ "$record_case" = 'all' ]; then
           echo "record all cases"
-          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record
+          "$mysql_tester" -port "$port" --check-error=true --collation-disable="$coll_disabled" --record
       else
           echo "record result for case: \"$record_case\""
-          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record $record_case
+          "$mysql_tester" -port "$port" --check-error=true --collation-disable="$coll_disabled" --record "$record_case"
       fi
     else
       if [ -z "$tests" ]; then
@@ -272,7 +364,42 @@ function run_mysql_tester()
       else
           echo "run integration test cases($coll_msg): $tests"
       fi
-      $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled $tests
+      "$mysql_tester" -port "$port" --check-error=true --collation-disable="$coll_disabled" $tests
+    fi
+}
+
+function run_diagnostic_tester()
+{
+    go run ./diagnostictest \
+        -port "$port" \
+        -test "diagnostictest/testdata/diagnostic_mode.test" \
+        -result "diagnostictest/testdata/diagnostic_mode.result" \
+        -record="$record"
+
+    # Starting diagnostic TiDB truncates this file, excluding bootstrap logs.
+    if [[ ! -f "$mysql_tester_log" || ! -r "$mysql_tester_log" || ! -s "$mysql_tester_log" ]]; then
+        echo "Error: diagnostic TiDB log is missing, unreadable or empty: $mysql_tester_log" >&2
+        return 1
+    fi
+    local grep_status
+    if grep -nF 'start DDL' "$mysql_tester_log"; then
+        echo "Error: diagnostic TiDB must not start DDL, but its log contains 'start DDL': $mysql_tester_log" >&2
+        return 1
+    else
+        grep_status=$?
+        if [[ $grep_status -ne 1 ]]; then
+            echo "Error: failed to read diagnostic TiDB log: $mysql_tester_log" >&2
+            return 1
+        fi
+    fi
+}
+
+function run_tester()
+{
+    if [[ $diagnostic_mode = 1 ]]; then
+        run_diagnostic_tester
+    else
+        run_mysql_tester
     fi
 }
 
@@ -294,27 +421,15 @@ function check_case_name() {
         return
     fi
 
-    case=""
-
-    if [ $record -eq 0 ]; then
-        if [ -z "$tests" ]; then
-            return
-        fi
-        case=$tests
+    if [[ -z "$selected_case" || "$selected_case" = "all" ]]; then
+        return
     fi
 
-    if [ $record -eq 1 ]; then
-        if [ "$record_case" = 'all' ]; then
-            return
-        fi
-        case=$record_case
-    fi
-
-    IFS='/' read -ra parts <<< "$case"
+    IFS='/' read -ra parts <<< "$selected_case"
 
     last_part="${parts[${#parts[@]}-1]}"
 
-    if [[ $last_part == collation* || $tests == collation* ]]; then
+    if [[ $last_part == collation* || $selected_case == collation* ]]; then
         collation_opt=2
     else
         collation_opt=1
@@ -326,15 +441,18 @@ if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     if [ "$runs_on_port" -eq 0 ]
     then
+        if [[ $diagnostic_mode = 1 ]]; then
+            bootstrap_diagnostic_store
+        fi
         start_tidb_server
+        if [[ $diagnostic_mode = 1 ]]; then
+            wait_for_tidb_server
+        fi
     fi
-    run_mysql_tester
+    run_tester
     if [ "$runs_on_port" -eq 0 ]
     then
-        kill -15 $SERVER_PID
-        while ps -p $SERVER_PID > /dev/null; do
-            sleep 1
-        done
+        stop_tidb_server
     fi
     check_data_race
 fi
@@ -343,16 +461,29 @@ if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
     if [ "$runs_on_port" -eq 0 ]
     then
+        if [[ $diagnostic_mode = 1 ]]; then
+            bootstrap_diagnostic_store
+        fi
         start_tidb_server
+        if [[ $diagnostic_mode = 1 ]]; then
+            wait_for_tidb_server
+        fi
     fi
-    run_mysql_tester
+    run_tester
     if [ "$runs_on_port" -eq 0 ]
     then
-        kill -15 $SERVER_PID
-        while ps -p $SERVER_PID > /dev/null; do
-            sleep 1
-        done
+        stop_tidb_server
     fi
+    check_data_race
+fi
+
+if [[ $run_diagnostic_after_regular = 1 ]]; then
+    diagnostic_mode=1
+    bootstrap_diagnostic_store
+    start_tidb_server
+    wait_for_tidb_server
+    run_diagnostic_tester
+    stop_tidb_server
     check_data_race
 fi
 

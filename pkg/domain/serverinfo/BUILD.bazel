@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/diagnosticmode",
         "//pkg/ddl/util",
         "//pkg/kv",
         "//pkg/metrics",
@@ -32,18 +33,23 @@ go_library(
 go_test(
     name = "serverinfo_test",
     timeout = "short",
-    srcs = ["syncer_test.go"],
+    srcs = [
+        "diagnostic_test.go",
+        "syncer_test.go",
+    ],
     embed = [":serverinfo"],
     flaky = True,
     shard_count = 4,
     deps = [
         "//pkg/config",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/util",
         "//pkg/keyspace",
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "//pkg/util/etcd",
+        "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
