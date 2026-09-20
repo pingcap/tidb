@@ -83,9 +83,20 @@ func TestRegionCacheHandlerGetPost(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.Equal(t, uint64(7), got.StoreID)
-	require.Equal(t, 3, got.Matched)
+	require.Equal(t, 3, got.Remaining)
 	require.False(t, got.Ready)
+	require.Empty(t, got.Stores)
+	require.NotContains(t, w.Body.String(), `"store_id"`)
+	require.NotContains(t, w.Body.String(), `"scanned"`)
+	require.NotContains(t, w.Body.String(), `"matched"`)
+	require.NotContains(t, w.Body.String(), `"updated"`)
+	require.NotContains(t, w.Body.String(), `"observed_at"`)
+
+	req = httptest.NewRequest(http.MethodGet, "/regions/cache/status?store_id=7&detail=1", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.Len(t, got.Stores, 1)
 	require.Equal(t, "ks1", got.Stores[0].Keyspace)
 	require.Equal(t, uint64(99), got.Stores[0].ClusterID)
@@ -94,11 +105,11 @@ func TestRegionCacheHandlerGetPost(t *testing.T) {
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
+	got = regionCacheHTTPResult{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.Equal(t, 2, got.Updated)
 	require.Equal(t, 1, got.Remaining)
-	require.Len(t, got.Stores, 1)
-	require.Equal(t, 2, got.Stores[0].Updated)
+	require.False(t, got.Ready)
+	require.Empty(t, got.Stores)
 
 	req = httptest.NewRequest(http.MethodGet, "/regions/cache/status", nil)
 	w = httptest.NewRecorder()
@@ -126,9 +137,16 @@ func TestRegionCacheHandlerKeepsPerStoreIdentity(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.Equal(t, 2, got.Matched)
+	require.Equal(t, 2, got.Remaining)
 	require.Equal(t, 1, got.Failed)
 	require.False(t, got.Ready)
+	require.Empty(t, got.Stores)
+
+	req = httptest.NewRequest(http.MethodGet, "/regions/cache/status?store_id=7&detail=1", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.Len(t, got.Stores, 1)
 	require.Equal(t, "ks1", got.Stores[0].Keyspace)
 	require.Equal(t, uint64(11), got.Stores[0].ClusterID)
@@ -162,15 +180,16 @@ func TestRegionCacheHandlerRouteMethods(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.Equal(t, 1, got.Matched)
-	require.Equal(t, 0, got.Updated)
+	require.Equal(t, 1, got.Remaining)
+	require.False(t, got.Ready)
 
 	req = httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.Equal(t, 1, got.Updated)
+	require.True(t, got.Ready)
+	require.Equal(t, 0, got.Remaining)
 }
 
 func TestRegionCacheHandlerResetThenRefresh(t *testing.T) {
@@ -254,10 +273,16 @@ func TestRegionCacheHandlerSumsSystemAndBusinessStores(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.Equal(t, 5, got.Matched)
-	require.Equal(t, 1, got.Failed)
 	require.Equal(t, 5, got.Remaining)
+	require.Equal(t, 1, got.Failed)
 	require.False(t, got.Ready)
+	require.Empty(t, got.Stores)
+
+	req = httptest.NewRequest(http.MethodGet, "/regions/cache/status?store_id=7&detail=1", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.Len(t, got.Stores, 2)
 	require.Equal(t, "SYSTEM", got.Stores[0].Keyspace)
 	require.Equal(t, "keyspace1", got.Stores[1].Keyspace)
@@ -277,7 +302,7 @@ func TestRegionCacheHandlerPostContinuesAfterOneStoreFails(t *testing.T) {
 	h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: failing}})
 	h.listed = []regionCacheStore{failing, ok}
 
-	req := httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7", nil)
+	req := httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7&detail=1", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -286,10 +311,8 @@ func TestRegionCacheHandlerPostContinuesAfterOneStoreFails(t *testing.T) {
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.False(t, got.Ready)
-	require.Equal(t, 3, got.Scanned)
 	require.Equal(t, 2, got.Failed)
 	require.Equal(t, 2, got.Remaining)
-	require.Equal(t, 1, got.Updated)
 	require.Len(t, got.Stores, 2)
 	require.Equal(t, "SYSTEM", got.Stores[0].Keyspace)
 	require.False(t, got.Stores[0].Ready)
@@ -324,6 +347,7 @@ func TestRegionCacheHandlerPostStopsLaterStoresAfterCancel(t *testing.T) {
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.False(t, got.Ready)
-	require.Len(t, got.Stores, 1)
+	require.True(t, got.InProgress)
+	require.Empty(t, got.Stores)
 	require.Contains(t, got.Errors, context.Canceled.Error())
 }

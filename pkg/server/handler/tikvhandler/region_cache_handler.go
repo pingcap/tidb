@@ -54,30 +54,23 @@ func NewRegionCacheHandler(tool *handler.TikvHandlerTool) *RegionCacheHandler {
 	return &RegionCacheHandler{TikvHandlerTool: tool}
 }
 
-type regionCacheStoreResult struct {
+type regionCacheStoreDetail struct {
 	Keyspace   string   `json:"keyspace,omitempty"`
 	ClusterID  uint64   `json:"cluster_id,omitempty"`
-	Scanned    int      `json:"scanned"`
-	Matched    int      `json:"matched"`
-	Updated    int      `json:"updated"`
-	Failed     int      `json:"failed"`
-	Remaining  int      `json:"remaining"`
 	Ready      bool     `json:"ready"`
+	Remaining  int      `json:"remaining"`
+	Failed     int      `json:"failed"`
 	InProgress bool     `json:"in_progress,omitempty"`
 	Errors     []string `json:"errors,omitempty"`
 }
 
 type regionCacheHTTPResult struct {
-	StoreID    uint64                   `json:"store_id"`
-	Scanned    int                      `json:"scanned"`
-	Matched    int                      `json:"matched"`
-	Updated    int                      `json:"updated"`
-	Failed     int                      `json:"failed"`
-	Remaining  int                      `json:"remaining"`
 	Ready      bool                     `json:"ready"`
+	Remaining  int                      `json:"remaining"`
+	Failed     int                      `json:"failed"`
+	InProgress bool                     `json:"in_progress,omitempty"`
 	Errors     []string                 `json:"errors,omitempty"`
-	ObservedAt int64                    `json:"observed_at"`
-	Stores     []regionCacheStoreResult `json:"stores"`
+	Stores     []regionCacheStoreDetail `json:"stores,omitempty"`
 }
 
 func parseStoreID(req *http.Request) (uint64, error) {
@@ -95,6 +88,18 @@ func parseStoreID(req *http.Request) (uint64, error) {
 func parseReset(req *http.Request) bool {
 	raw := req.URL.Query().Get("reset")
 	return raw == "1" || raw == "true"
+}
+
+func parseDetail(req *http.Request) bool {
+	raw := req.URL.Query().Get("detail")
+	return raw == "1" || raw == "true"
+}
+
+func (out *regionCacheHTTPResult) finish() {
+	if len(out.Errors) > 8 {
+		out.Errors = out.Errors[:8]
+	}
+	out.Ready = out.Remaining == 0 && out.Failed == 0 && !out.InProgress
 }
 
 func collectRegionCacheStores(primary kv.Storage) []regionCacheStore {
@@ -131,27 +136,28 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	out := regionCacheHTTPResult{StoreID: storeID, Ready: true, Stores: make([]regionCacheStoreResult, 0, len(stores))}
+	detail := parseDetail(req)
+	out := regionCacheHTTPResult{}
 	switch req.Method {
 	case http.MethodGet:
 		for _, st := range stores {
 			status := st.GetStoreCacheStatus(storeID)
-			item := regionCacheStoreResult{
+			item := regionCacheStoreDetail{
 				Keyspace:   st.GetKeyspace(),
 				ClusterID:  st.GetClusterID(),
-				Matched:    status.Matched,
-				Failed:     status.Failed,
 				Remaining:  status.Matched,
-				Ready:      status.Ready,
+				Failed:     status.Failed,
 				InProgress: status.InProgress,
 			}
-			out.Stores = append(out.Stores, item)
-			out.Matched += item.Matched
-			out.Failed += item.Failed
+			item.Ready = item.Remaining == 0 && item.Failed == 0 && !item.InProgress
 			out.Remaining += item.Remaining
-			out.ObservedAt = status.ObservedAt
-			if !item.Ready {
-				out.Ready = false
+			out.Failed += item.Failed
+			if item.InProgress {
+				out.InProgress = true
+			}
+			out.Errors = append(out.Errors, item.Errors...)
+			if detail {
+				out.Stores = append(out.Stores, item)
 			}
 		}
 	case http.MethodPost:
@@ -160,58 +166,47 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		reset := parseReset(req)
 		for _, st := range stores {
 			if ctx.Err() != nil {
-				out.Ready = false
+				out.InProgress = true
 				out.Errors = append(out.Errors, ctx.Err().Error())
 				break
 			}
 			if reset {
 				if err := st.ResetStoreCacheRefresh(storeID); err != nil {
-					item := regionCacheStoreResult{
+					item := regionCacheStoreDetail{
 						Keyspace:  st.GetKeyspace(),
 						ClusterID: st.GetClusterID(),
 						Ready:     false,
 						Errors:    []string{err.Error()},
 					}
-					out.Stores = append(out.Stores, item)
+					out.Failed++
 					out.Errors = append(out.Errors, err.Error())
-					out.Ready = false
+					if detail {
+						out.Stores = append(out.Stores, item)
+					}
 					continue
 				}
 			}
 			res := st.RefreshStoreCache(ctx, storeID)
-			item := regionCacheStoreResult{
+			item := regionCacheStoreDetail{
 				Keyspace:  st.GetKeyspace(),
 				ClusterID: st.GetClusterID(),
-				Scanned:   res.Scanned,
-				Matched:   res.Matched,
-				Updated:   res.Updated,
-				Failed:    res.Failed,
 				Remaining: res.Remaining,
-				Ready:     res.Ready,
+				Failed:    res.Failed,
 				Errors:    res.Errors,
 			}
-			out.Stores = append(out.Stores, item)
-			out.Scanned += item.Scanned
-			out.Matched += item.Matched
-			out.Updated += item.Updated
-			out.Failed += item.Failed
+			item.Ready = item.Remaining == 0 && item.Failed == 0
 			out.Remaining += item.Remaining
+			out.Failed += item.Failed
 			out.Errors = append(out.Errors, item.Errors...)
-			out.ObservedAt = res.ObservedAt
-			if !item.Ready {
-				out.Ready = false
+			if detail {
+				out.Stores = append(out.Stores, item)
 			}
-		}
-		if len(out.Errors) > 8 {
-			out.Errors = out.Errors[:8]
-		}
-		if out.Remaining != 0 || out.Failed != 0 {
-			out.Ready = false
 		}
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	out.finish()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
 }
