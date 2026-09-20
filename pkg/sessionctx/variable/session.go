@@ -1139,6 +1139,8 @@ type SessionVars struct {
 
 	// EnableLocalMatchAgainst enables local no-score MATCH ... AGAINST evaluation.
 	EnableLocalMatchAgainst bool
+	// EnableFTSLikeFallback enables explicit substring-based MATCH predicate evaluation.
+	EnableFTSLikeFallback bool
 
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool

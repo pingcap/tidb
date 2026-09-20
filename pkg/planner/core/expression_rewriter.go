@@ -2268,6 +2268,15 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		return
 	}
 
+	// Select the semantic mode before building any alternative plan. Never let
+	// cost comparison or a local MATCH error silently select substring semantics.
+	if er.inDirectMatchBooleanContext() {
+		sv := er.planCtx.builder.ctx.GetSessionVars()
+		if !sv.EnableLocalMatchAgainst && sv.EnableFTSLikeFallback {
+			er.matchAgainstToLike(v, numCols, stackLen)
+			return
+		}
+	}
 	if !er.inDirectMatchBooleanContext() || !expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
 		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context")
 		return
@@ -2389,6 +2398,78 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		return
 	}
 	er.ctxStackAppend(fn, types.EmptyName)
+}
+
+func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, stackLen int) {
+	againstExpr := er.ctxStack[stackLen-1]
+
+	constExpr, ok := againstExpr.(*expression.Constant)
+	if !ok {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-constant search string")
+		return
+	}
+
+	// The LIKE fallback bakes the search value into the produced plan — either
+	// as ILIKE pattern constants (non-NULL case) or as a Constant(NULL)
+	// short-circuit. A cached plan would reuse the first execution's baked
+	// value for later executions, producing wrong results whenever the AGAINST
+	// argument is mutable: a `?` parameter marker, a user variable, or another
+	// deferred expression. In particular, a NULL first bind would bake a
+	// Constant(NULL) plan and reuse it for a later non-NULL bind. Mark the
+	// plan non-cacheable here, before the NULL fast-path and before Eval, so
+	// the skip applies uniformly across all branches below.
+	if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {
+		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
+	}
+
+	// Validate columns before the NULL fast path so unsupported types are
+	// rejected consistently for literal and prepared searches.
+	columns := make([]expression.Expression, numCols)
+	for i := range numCols {
+		col := er.ctxStack[stackLen-numCols-1+i]
+		if col.GetType(er.sctx.GetEvalCtx()).EvalType() != types.ETString {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
+			return
+		}
+		columns[i] = col
+	}
+
+	searchText, err := constExpr.Eval(er.sctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	if searchText.IsNull() {
+		// NULL search yields NULL in MySQL FTS semantics
+		// (builtin_fts.go evalReal returns isNull=true for NULL args), so we
+		// emit Constant(NULL) rather than Constant(0). This preserves
+		// three-valued logic under NOT — NOT NULL = NULL filters the row —
+		// and under IS NULL / IS NOT NULL. A literal Constant(0) would make
+		// NOT(MATCH...) admit every row when the search is NULL, diverging
+		// from native semantics.
+		er.ctxStackPop(numCols + 1)
+		er.ctxStackAppend(&expression.Constant{
+			Value:   types.Datum{},
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}, types.EmptyName)
+		return
+	}
+
+	if searchText.Kind() != types.KindString {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search expression")
+		return
+	}
+
+	er.ctxStackPop(numCols + 1)
+
+	result, err := expression.BuildFTSToILikeExpression(er.sctx, columns, searchText.GetString(), v.Modifier)
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	er.ctxStackAppend(result, types.EmptyName)
 }
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {

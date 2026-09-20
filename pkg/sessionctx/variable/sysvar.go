@@ -2378,6 +2378,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableAlternativeLogicalPlans = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFTSLikeFallback, Value: "OFF", Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableFTSLikeFallback = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLocalMatchAgainst, Value: BoolToOnOff(DefTiDBEnableLocalMatchAgainst), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableLocalMatchAgainst = TiDBOptOn(val)
 		return nil
