@@ -56,8 +56,7 @@ func (sw *Writer) produced() uint64 {
 }
 
 // statementSize returns the open statement's size, counting the ";\n" that will
-// close it. Counting it up front makes a size limit trip one row early, so the
-// split lands before the row that would overflow.
+// close it.
 func (sw *Writer) statementSize() uint64 {
 	return sw.produced() - sw.stmtStart + 2
 }
@@ -70,9 +69,7 @@ func NewWriter(w io.Writer, prefix []byte, kinds []dumpformat.FieldKind, cfg *Co
 
 // Write encodes one row's `(..)` tuple and writes it, with the statement prefix
 // or row separator, to the underlying writer. len(row) must equal the configured
-// column count; a nil field is treated as NULL. A row wider than
-// dumpformat.MaxBufferedValueSize reaches the underlying writer in several
-// Write calls.
+// column count; a nil field is treated as NULL.
 func (sw *Writer) Write(row []sql.RawBytes) error {
 	if len(row) != len(sw.kinds) {
 		return fmt.Errorf("sqlfile: row has %d fields, want %d", len(row), len(sw.kinds))
@@ -141,9 +138,8 @@ func (sw *Writer) flush() error {
 	return err
 }
 
-// EstimateFileSize returns the logical file size for rotation, counting the
-// ";\n" that will close the open statement. It excludes any preamble the caller
-// wrote directly (e.g. SQL special comments).
+// EstimateFileSize returns the logical file size for rotation. It excludes any
+// preamble the caller wrote directly (e.g. SQL special comments).
 func (sw *Writer) EstimateFileSize() uint64 {
 	if !sw.inStatement {
 		return sw.produced()

@@ -38,8 +38,7 @@ func NewWriter(w io.Writer, kinds []dumpformat.FieldKind, cfg *Config) *Writer {
 }
 
 // Write encodes one row and writes it, with the line terminator, to the
-// underlying writer. A row wider than dumpformat.MaxBufferedValueSize reaches
-// the underlying writer in several Write calls.
+// underlying writer.
 func (cw *Writer) Write(row []sql.RawBytes) error {
 	if len(row) != len(cw.kinds) {
 		return fmt.Errorf("csvfile: row has %d fields, want %d", len(row), len(cw.kinds))
