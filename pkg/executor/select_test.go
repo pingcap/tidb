@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,6 +34,26 @@ func BenchmarkResetContextOfStmt(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		executor.ResetContextOfStmt(ctx, stmt)
 	}
+}
+
+func TestResetContextOfStmtKeepsTrackerKiller(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
+	vars := ctx.GetSessionVars()
+	memKiller := new(sqlkiller.SQLKiller)
+	diskKiller := new(sqlkiller.SQLKiller)
+	vars.MemTracker.Killer = memKiller
+	vars.DiskTracker.Killer = diskKiller
+
+	require.NoError(t, executor.ResetContextOfStmt(ctx, &ast.SelectStmt{}))
+	require.Same(t, memKiller, vars.MemTracker.Killer)
+	require.Same(t, diskKiller, vars.DiskTracker.Killer)
+
+	vars.MemTracker.Killer = nil
+	vars.DiskTracker.Killer = nil
+	require.NoError(t, executor.ResetContextOfStmt(ctx, &ast.SelectStmt{}))
+	require.Same(t, &vars.SQLKiller, vars.MemTracker.Killer)
+	require.Same(t, &vars.SQLKiller, vars.DiskTracker.Killer)
 }
 
 func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {

@@ -990,8 +990,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Detach()
 	vars.DiskTracker.ResetMaxConsumed()
 	vars.MemTracker.SessionID.Store(vars.ConnectionID)
-	vars.MemTracker.Killer = &vars.SQLKiller
-	vars.DiskTracker.Killer = &vars.SQLKiller
+	// A session tracker is reused across statements, so bind its killer only when
+	// the tracker is initialized. Rewriting it here can race with the global
+	// memory controller reading the killer of a running statement.
+	if vars.MemTracker.Killer == nil {
+		vars.MemTracker.Killer = &vars.SQLKiller
+	}
+	if vars.DiskTracker.Killer == nil {
+		vars.DiskTracker.Killer = &vars.SQLKiller
+	}
 	if vars.InRestrictedSQL && vars.InternalSQLScanUserTable {
 		failpoint.InjectCall("beforeResetSQLKillerForTTLScan", s)
 	}
