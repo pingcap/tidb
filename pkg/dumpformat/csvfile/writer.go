@@ -23,13 +23,18 @@ import (
 )
 
 // Writer is a single-stream CSV encoder that writes framed/escaped rows to an
-// io.Writer. The caller owns buffering and file rotation.
+// io.Writer. The caller owns buffering and file rotation. A wide row reaches w
+// in several writes, so a write error can leave a value half-written; the
+// Writer then keeps that error and every later call returns it without emitting
+// more bytes.
 type Writer struct {
 	w       io.Writer
 	cfg     *Config
 	kinds   []dumpformat.FieldKind
 	buf     []byte
 	written int64
+	// err is the first error a write to w returned.
+	err error
 }
 
 // NewWriter creates a Writer over w.
@@ -40,6 +45,9 @@ func NewWriter(w io.Writer, kinds []dumpformat.FieldKind, cfg *Config) *Writer {
 // Write encodes one row and writes it, with the line terminator, to the
 // underlying writer.
 func (cw *Writer) Write(row []sql.RawBytes) error {
+	if cw.err != nil {
+		return cw.err
+	}
 	if len(row) != len(cw.kinds) {
 		return fmt.Errorf("csvfile: row has %d fields, want %d", len(row), len(cw.kinds))
 	}
@@ -84,15 +92,15 @@ func (cw *Writer) maybeFlush() error {
 	if len(cw.buf) < dumpformat.MaxBufferedValueSize {
 		return nil
 	}
-	n, err := cw.w.Write(cw.buf)
-	cw.written += int64(n)
-	cw.buf = cw.buf[:0]
-	return err
+	return cw.write()
 }
 
 // WriteHeader writes a header row: each name as a string field (enclosed when
 // FieldsEnclosedBy is set), separated and terminated like a data row.
 func (cw *Writer) WriteHeader(names [][]byte) error {
+	if cw.err != nil {
+		return cw.err
+	}
 	cw.buf = cw.buf[:0]
 	for i, name := range names {
 		if i > 0 {
@@ -106,8 +114,17 @@ func (cw *Writer) WriteHeader(names [][]byte) error {
 // flush appends the line terminator to the scratch and writes it to the file.
 func (cw *Writer) flush() error {
 	cw.buf = append(cw.buf, cw.cfg.LinesTerminatedBy...)
+	return cw.write()
+}
+
+// write writes buf out and empties it, keeping the first error it hits.
+func (cw *Writer) write() error {
 	n, err := cw.w.Write(cw.buf)
 	cw.written += int64(n)
+	cw.buf = cw.buf[:0]
+	if err != nil && cw.err == nil {
+		cw.err = err
+	}
 	return err
 }
 
@@ -116,7 +133,8 @@ func (cw *Writer) EstimateFileSize() uint64 {
 	return uint64(cw.written)
 }
 
-// Close finalizes the writer. Currently it's a no-op.
+// Close finalizes the writer. It writes nothing and only reports whether an
+// earlier write failed.
 func (cw *Writer) Close() error {
-	return nil
+	return cw.err
 }

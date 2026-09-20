@@ -17,6 +17,7 @@ package sqlfile
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/dumpformat"
@@ -185,4 +186,38 @@ func TestSQLWriterLargeValueBoundsBuffer(t *testing.T) {
 	require.Equal(t, uint64(rec.Len()), sw.EstimateFileSize())
 	require.LessOrEqual(t, rec.maxWrite, 3*limit)
 	require.LessOrEqual(t, cap(sw.buf), 4*limit)
+}
+
+// failAfterWriter fails every write once it has accepted okWrites of them.
+type failAfterWriter struct {
+	bytes.Buffer
+	okWrites int
+}
+
+func (f *failAfterWriter) Write(p []byte) (int, error) {
+	if f.okWrites == 0 {
+		return 0, errSink
+	}
+	f.okWrites--
+	return f.Buffer.Write(p)
+}
+
+var errSink = errors.New("sink failed")
+
+func TestSQLWriterKeepsFirstWriteError(t *testing.T) {
+	const limit = dumpformat.MaxBufferedValueSize
+	kinds := []dumpformat.FieldKind{dumpformat.KindString}
+	// The row is flushed in pieces, so the sink fails with the value half-written.
+	f := &failAfterWriter{okWrites: 1}
+	sw := NewWriter(f, []byte("INSERT INTO `t` VALUES\n"), kinds, &Config{})
+
+	require.ErrorIs(t, sw.Write([]sql.RawBytes{bytes.Repeat([]byte("a"), 3*limit)}), errSink)
+	written := f.Len()
+	require.NotZero(t, written)
+
+	// Once a write fails, nothing more reaches the sink: no further rows, and no
+	// ";\n" that would turn the truncated value into a statement that parses.
+	require.ErrorIs(t, sw.Write([]sql.RawBytes{raw("x")}), errSink)
+	require.ErrorIs(t, sw.Close(), errSink)
+	require.Equal(t, written, f.Len())
 }
