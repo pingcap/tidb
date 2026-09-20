@@ -2043,3 +2043,101 @@ too) and `cargo test -p tidb-session --lib` (1729/1730, the one failure
 likewise confirmed pre-existing and unrelated); every index-join-specific
 test module in both crates passes outright. `cargo fmt`/`cargo clippy`
 clean on every touched line.
+
+## task 65's secondary note fixed too: `IndexJoin`'s `inner:` field now
+## names its child the same way `left side:` already does
+
+Tried the live-TPC-H route first (see below), hit a real environment
+limit, and root-caused the rest from source instead -- which turned out to
+be enough to find and fix the actual bug without ever needing the live
+plan.
+
+**The TPC-H attempt and why it stopped**: found the exact Q2 SQL go-tpc
+uses (extracted from `/root/.tiup/components/bench/*/go-tpc`'s embedded
+strings -- the same technique task 75 used for TPC-C's consistency-check
+query) and started a real `tiup bench tpch prepare --sf 1` against a fresh
+Go cluster to get Go's genuine, cost-based Q2 plan. `go-tpc prepare` always
+generates all 8 TPC-H tables with no per-table option, even though Q2 only
+touches `part`/`supplier`/`partsupp`/`nation`/`region`; by the time it
+reached `orders`/`lineitem` (the two tables Q2 never reads, and by far the
+largest at SF1) this container's disk had gone from 4.8GB free to 1.2GB
+free. Killed the prepare and the cluster immediately, confirmed disk was
+back to 4.8GB free and nothing was left running. This environment's disk
+allowance cannot fit a full TPC-H SF1 load.
+
+**Root-caused from source instead.** Traced every function actually
+involved end to end, verifying with a debug print rather than assuming:
+- `crates/tidb-planner/src/find_best_task/dispatch.rs`'s `exhaust_physical_plans`
+  (`LogicalPlan::Join` arm, matching Go's own `exhaustPhysicalPlans`) builds
+  `PhysicalPlan::HashJoin`/`MergeJoin`/`IndexJoin` candidates from ONE shared
+  `BasePhysicalPlan` whose stored type string is `op.base.base.tp()` -- the
+  LOGICAL join's own type, always `"Join"` (`LogicalJoin::TYPE`). Confirmed
+  live with a temporary `eprintln!`: every candidate this function builds,
+  Hash or Index, stores `"Join"` as its base type, even for the already-passing
+  `two_derived_tables_join_without_a_base_table` test.
+- That test still prints `HashJoin_11` correctly because the EXPLAIN row's
+  OWN name never reads that stored string: `physical_explain_operator`
+  (`crates/tidb-executor/src/explain.rs`) builds every row's name from
+  `physical_operator_name(plan, ...)`, which re-derives the true name by
+  matching the `PhysicalPlan` enum variant -- its own comment already says
+  why: "Join physical operators share the logical `Join` base type, but
+  Go's plancodec names each executor family distinctly."
+- `IndexJoin`'s `ExplainInfoInternal` port (same file) builds two
+  cross-references to OTHER nodes: `left side:` (via `explainJoinLeftSide`)
+  correctly calls `plan_explain_id(child, ...)` (the same re-deriving
+  function `physical_operator_name` uses); `inner:`, right next to it in
+  the same match arm, called `inner.explain_id(ignore_explain_id_suffix)`
+  instead -- the method that DOES trust the stored, generic base string.
+  So the ROW naming its OWN name is always right, `left side:` is always
+  right, and `inner:` is wrong exactly when the inner child happens to be
+  one of these shared-base joins (`HashJoin`/`MergeJoin`/`IndexJoin`)
+  rather than a `TableReader`/`IndexScan` (which have their own correct
+  `resolved_explain_id` overrides regardless of the stored string). This
+  matches the original report precisely: Q2's plan names some inner join
+  by its `HashJoin`/`IndexHashJoin` identity everywhere else, and only the
+  `inner:` cross-reference showed the shared, generic `"Join"` name.
+- Checked the other `.explain_id()` call in the same file (`IndexReader`'s
+  `index:` field, referencing its `index_plan`): safe regardless, since
+  that child is always an `IndexScan`, which has its own unconditional
+  `resolved_explain_id` override and never falls through to the stored
+  string at all.
+
+**Fix**: one line, `inner.explain_id(...)` -> `plan_explain_id(inner, ...)`,
+making `inner:` consistent with `left side:` in the exact same function
+using a function that already exists for exactly this purpose. Left
+`dispatch.rs`'s shared, generic base construction alone -- it is an
+accepted, working simplification (per `physical_operator_name`'s own
+comment) for the row's own name and for `left side:`; only the one
+inconsistent cross-reference needed to change.
+
+Along the way, confirmed (but did not act on, as genuinely out of scope
+for a cosmetic EXPLAIN task) two pieces of dead code discovered while
+tracing this: `crates/tidb-planner/src/physical/hash_join.rs`'s
+`get_hash_joins` (a correctly `"HashJoin"`-named alternate candidate
+builder) and `crates/tidb-planner/src/find_best_task/index_join.rs`'s
+`admits_inner` (a fuller, Go-matching port of
+`admitIndexJoinInnerChildPattern`, including the `LogicalJoin` case Go
+gates on `EnableINLJoinInnerMultiPattern`) are both never called from
+anywhere in the live tree. Whatever admits a join as an index-join's own
+inner side today (if anything currently does) is not this function.
+
+**Regression test**: `crates/tidb-executor/src/explain.rs`'s
+`index_join_inner_field_names_its_child_like_go_regardless_of_the_childs_stored_base_type`,
+a pure unit test (no session, no cluster) constructing an `IndexJoin`
+whose inner child is a hand-built `HashJoin` with its base type string set
+to literally `"Join"` -- the exact shape `exhaust_physical_plans`
+produces -- and asserting the rendered `inner:` field says `HashJoin_7`,
+not `Join_7`. Verified fail-before/pass-after by reverting just the one
+line and confirming the test fails with the pre-fix name, then restoring
+the fix.
+
+Validated: `cargo test -p tidb-executor --lib` (1344/1344); re-ran
+`cargo test -p tidb-planner --lib` and `cargo test -p tidb-session --lib`
+(same 942/943 and 1729/1730 as above, same two pre-existing failures,
+nothing new). `cargo fmt`/`cargo clippy` clean on every touched line. Task
+65 fully closed: both the primary bug and this secondary note are fixed
+and regression-tested, though neither was confirmed against Go's actual
+Q2 plan live (the primary bug's minimal repro WAS verified against a live
+Go oracle; this secondary fix was verified by source-tracing and a unit
+test constructing the exact bug shape by hand, since the live TPC-H route
+was not available in this environment).

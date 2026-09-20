@@ -872,11 +872,21 @@ fn physical_operator_info(
             let mut parts = vec![join_type_text(join.join_type).to_owned()];
             // Go `PhysicalIndexJoin.ExplainInfoInternal`
             // (`physical_index_join.go:159-165`): the `inner:` field comes
-            // BEFORE `explainJoinLeftSide`'s `left side:` field.
+            // BEFORE `explainJoinLeftSide`'s `left side:` field. Go's
+            // `ExplainID()` always reflects the child's own concrete
+            // physical type because Go stores that type's own constant at
+            // construction (`plancodec.TypeHashJoin`, etc). This tier's
+            // `HashJoin`/`MergeJoin`/`IndexJoin` share one generic base type
+            // string ("Join", see `physical_operator_name`'s own comment on
+            // why it re-derives the name from the enum variant instead of
+            // trusting it), so naming this cross-reference the same way
+            // `plan_explain_id` (which DOES re-derive it) already names
+            // `left side:` below keeps the two fields consistent instead of
+            // one trusting the shared, generic stored name.
             if let Some(inner) = join.base.children().get(join.inner_child_idx) {
                 parts.push(format!(
                     "inner:{}",
-                    inner.explain_id(ignore_explain_id_suffix)
+                    plan_explain_id(inner, ignore_explain_id_suffix)
                 ));
             }
             if join.join_type != tidb_planner::find_best_task::LogicalJoinType::Inner {
@@ -2274,6 +2284,52 @@ mod tests {
                 expected
             );
         }
+    }
+
+    /// Task 65's secondary note: an `IndexJoin`'s `inner:` field named its
+    /// child `Join` where Go names it `HashJoin`. Root cause: every join
+    /// strategy `exhaust_physical_plans` considers for one `LogicalJoin`
+    /// (Hash/Merge/Index) is built from one shared `BasePhysicalPlan` whose
+    /// stored type string comes from the LOGICAL join's own type ("Join") --
+    /// exactly why `physical_operator_name` above exists, to re-derive each
+    /// variant's real name instead of trusting that shared, generic string.
+    /// `left side:` (`join_info`, above) already calls `plan_explain_id`,
+    /// which does that re-derivation; `inner:` called `.explain_id()`
+    /// directly instead, trusting the stored (generic) name.
+    #[test]
+    fn index_join_inner_field_names_its_child_like_go_regardless_of_the_childs_stored_base_type() {
+        use tidb_planner::physical::{BasePhysicalPlan, PhysicalIndexJoin};
+        use tidb_planner::plan_base::BasePlan;
+
+        let mut inner_base = BasePhysicalPlan::default();
+        inner_base.base = BasePlan::with_id(7, "Join", 0);
+        let inner = PhysicalPlan::HashJoin(tidb_planner::physical::PhysicalHashJoin {
+            base: inner_base,
+            ..Default::default()
+        });
+
+        let mut index_base = BasePhysicalPlan::default();
+        index_base.base = BasePlan::with_id(9, "IndexJoin", 0);
+        index_base.set_children(vec![PhysicalPlan::TableReader(Default::default()), inner]);
+        let index_join = PhysicalPlan::IndexJoin(PhysicalIndexJoin {
+            base: index_base,
+            inner_child_idx: 1,
+            join_type: tidb_planner::find_best_task::LogicalJoinType::Inner,
+            ..Default::default()
+        });
+
+        let info = physical_operator_info(&index_join, &Catalog::default(), false, None);
+        assert!(
+            info.contains("inner:HashJoin_7"),
+            "the inner: field must name the child by its real physical type, \
+             matching Go's ExplainID (always its own plancodec constant), not \
+             the shared generic base string this tier's Hash/Merge/Index \
+             candidates share:\n{info}"
+        );
+        assert!(
+            !info.contains("inner:Join_7"),
+            "must not regress to the mislabelled 'Join' name:\n{info}"
+        );
     }
 
     #[test]
