@@ -81,16 +81,9 @@ type storageClassTransitionKey struct {
 // storageClassTransitionTarget is serialized in the internal bookkeeping
 // column physical_targets and is not exposed through SHOW or InfoSchema.
 type storageClassTransitionTarget struct {
-	PhysicalID          int64  `json:"physical_id"`
-	PartitionID         int64  `json:"partition_id,omitempty"`
-	PartitionName       string `json:"partition_name,omitempty"`
-	ObservationEpoch    uint64 `json:"observation_epoch,omitempty"`
-	ObservationSequence uint64 `json:"observation_sequence,omitempty"`
-}
-
-type storageClassTransitionObservationVersion struct {
-	epoch    uint64
-	sequence uint64
+	PhysicalID    int64  `json:"physical_id"`
+	PartitionID   int64  `json:"partition_id,omitempty"`
+	PartitionName string `json:"partition_name,omitempty"`
 }
 
 type physicalStorageClass struct {
@@ -263,6 +256,7 @@ func setStorageClassTransitionTargets(operation *storageClassTransitionOperation
 func stageStorageClassTransitions(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 	tblInfo *model.TableInfo,
 	old map[int64]physicalStorageClass,
 	schemaVersion int64,
@@ -284,7 +278,7 @@ func stageStorageClassTransitions(
 		if !storageClassTransitionTouches(operation, changed) {
 			continue
 		}
-		superseded, err := supersedeStorageClassTransition(ctx, se, operation, finishTime)
+		superseded, err := supersedeStorageClassTransition(ctx, se, manager, operation, finishTime)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -336,19 +330,30 @@ func storageClassTransitionTouches(
 func supersedeStorageClassTransition(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 	operation *storageClassTransitionOperation,
 	finishTime time.Time,
 ) (bool, error) {
+	// Persist the owner's last successful observation with the terminal state.
+	// Unknown counts stay NULL, including after an owner change. Leave the cache
+	// intact because the surrounding DDL transaction can still roll back.
+	var totalReplicas, completedReplicas any
+	if observed, ok := manager.cachedObservation(operation); ok {
+		totalReplicas = observed.TotalReplicas
+		completedReplicas = observed.CompletedReplicas
+	}
 	duration := finishTime.Sub(operation.StartTime)
 	if duration < 0 {
 		duration = 0
 	}
 	_, err := se.Execute(ctx,
 		`UPDATE mysql.tidb_storage_class_transition_history
-		 SET state = %?, finish_time = %?, duration = %?
+		 SET state = %?, total_replicas = %?, completed_replicas = %?, finish_time = %?, duration = %?
 		 WHERE table_id = %? AND start_ts = %? AND direction = %? AND state = %?`,
 		"supersede-storage-class-transition",
 		storageClassTransitionStateSuperseded,
+		totalReplicas,
+		completedReplicas,
 		finishTime,
 		uint64(duration/time.Second),
 		operation.TableID,
@@ -550,6 +555,7 @@ func storageClassTransitionTopologyIsStable(tblInfo *model.TableInfo) bool {
 func reconcileStorageClassTransitionTopology(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 	tblInfo *model.TableInfo,
 	operation *storageClassTransitionOperation,
 	schemaVersion int64,
@@ -564,7 +570,7 @@ func reconcileStorageClassTransitionTopology(
 		}
 	}()
 
-	superseded, err := supersedeStorageClassTransition(ctx, se, operation, time.Now())
+	superseded, err := supersedeStorageClassTransition(ctx, se, manager, operation, time.Now())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -737,6 +743,21 @@ func sameStorageClassTransitionStatus(a, b StorageClassTransitionStatus) bool {
 		slices.Equal(a.PhysicalTableIDs, b.PhysicalTableIDs)
 }
 
+func (m *storageClassTransitionManager) cachedObservation(
+	operation *storageClassTransitionOperation,
+) (StorageClassTransitionStatus, bool) {
+	if m == nil {
+		return StorageClassTransitionStatus{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	observed, ok := m.mu.observed[operation.key()]
+	if !ok || !observed.StatusValid || !sameStorageClassTransitionStatus(observed, operation.StorageClassTransitionStatus) {
+		return StorageClassTransitionStatus{}, false
+	}
+	return observed, true
+}
+
 func (m *storageClassTransitionManager) setActive(
 	activeOperations map[storageClassTransitionKey]*storageClassTransitionOperation,
 ) {
@@ -824,50 +845,6 @@ func (operation *storageClassTransitionOperation) key() storageClassTransitionKe
 		direction: operation.Direction,
 		startTS:   operation.startTS,
 	}
-}
-
-func persistStorageClassTransitionProgress(
-	ctx context.Context,
-	se *sess.Session,
-	operation *storageClassTransitionOperation,
-	observationVersion storageClassTransitionObservationVersion,
-) error {
-	targets := slices.Clone(operation.targets)
-	if len(targets) == 0 {
-		return errors.New("storage class transition has no physical targets")
-	}
-	// The first target carries operation-wide progress metadata. Keeping it on
-	// one target avoids growing this internal blob with the partition count.
-	targets[0].ObservationEpoch = observationVersion.epoch
-	targets[0].ObservationSequence = observationVersion.sequence
-	encodedTargets, err := json.Marshal(targets)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Preserve the last successful observation if a later DDL or a new owner
-	// supersedes the operation. The embedded observation version also prevents
-	// an old owner from overwriting a newer owner's counters after handoff.
-	_, err = se.Execute(ctx,
-		`UPDATE mysql.tidb_storage_class_transition_history
-		 SET total_replicas = %?, completed_replicas = %?, physical_targets = %?
-		 WHERE table_id = %? AND start_ts = %? AND direction = %? AND state = %?
-		   AND (JSON_EXTRACT(CAST(CAST(physical_targets AS CHAR) AS JSON), '$[0].observation_epoch') IS NULL
-		     OR CAST(JSON_UNQUOTE(JSON_EXTRACT(CAST(CAST(physical_targets AS CHAR) AS JSON), '$[0].observation_epoch')) AS UNSIGNED) < %?
-		     OR (CAST(JSON_UNQUOTE(JSON_EXTRACT(CAST(CAST(physical_targets AS CHAR) AS JSON), '$[0].observation_epoch')) AS UNSIGNED) = %?
-		       AND CAST(JSON_UNQUOTE(JSON_EXTRACT(CAST(CAST(physical_targets AS CHAR) AS JSON), '$[0].observation_sequence')) AS UNSIGNED) < %?))`,
-		"persist-storage-class-transition-progress",
-		operation.TotalReplicas,
-		operation.CompletedReplicas,
-		encodedTargets,
-		operation.TableID,
-		operation.startTS,
-		operation.Direction,
-		storageClassTransitionStateRunning,
-		observationVersion.epoch,
-		observationVersion.epoch,
-		observationVersion.sequence,
-	)
-	return errors.Trace(err)
 }
 
 func completeStorageClassTransition(
@@ -967,7 +944,6 @@ func (m *storageClassTransitionManager) poll(
 	ctx context.Context,
 	se *sess.Session,
 	pruneHistory bool,
-	observationVersion storageClassTransitionObservationVersion,
 ) (bool, error) {
 	active, err := discoverStorageClassTransitions(ctx, se)
 	if err != nil {
@@ -1001,7 +977,7 @@ func (m *storageClassTransitionManager) poll(
 		}
 		tbl, exists := is.TableByID(ctx, operation.TableID)
 		if !exists {
-			if _, err := supersedeStorageClassTransition(ctx, se, operation, time.Now()); err != nil {
+			if _, err := supersedeStorageClassTransition(ctx, se, m, operation, time.Now()); err != nil {
 				logutil.DDLLogger().Warn("supersede orphaned storage class transition failed",
 					zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
 				continue
@@ -1013,7 +989,7 @@ func (m *storageClassTransitionManager) poll(
 		if storageClassTransitionTargetsExist(tbl.Meta(), operation) || !storageClassTransitionTopologyIsStable(tbl.Meta()) {
 			continue
 		}
-		if err := reconcileStorageClassTransitionTopology(ctx, se, tbl.Meta(), operation, latestSchemaVersion); err != nil {
+		if err := reconcileStorageClassTransitionTopology(ctx, se, m, tbl.Meta(), operation, latestSchemaVersion); err != nil {
 			logutil.DDLLogger().Warn("reconcile storage class transition topology failed",
 				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
 			continue
@@ -1043,10 +1019,6 @@ func (m *storageClassTransitionManager) poll(
 			continue
 		}
 		if !complete {
-			if err := persistStorageClassTransitionProgress(ctx, se, operation, observationVersion); err != nil {
-				logutil.DDLLogger().Warn("persist storage class transition progress failed",
-					zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
-			}
 			continue
 		}
 		if _, err := completeStorageClassTransition(ctx, se, operation); err != nil {
@@ -1064,28 +1036,14 @@ func (m *storageClassTransitionManager) poll(
 
 func (m *storageClassTransitionManager) run(ctx context.Context, sessPool *sess.Pool) {
 	defer m.clear()
-	// Capture this owner's epoch before its first poll. A successor can only
-	// start later and therefore receives a larger global version.
-	timer := time.NewTimer(0)
+	timer := time.NewTimer(storageClassTransitionPollInterval)
 	defer timer.Stop()
 	nextHistoryPrune := time.Now().Add(storageClassTransitionPruneInterval)
-	var ownerEpoch, observationSequence uint64
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-		}
-		if ownerEpoch == 0 {
-			version, err := m.ddl.store.CurrentVersion(kv.GlobalTxnScope)
-			if err != nil {
-				logutil.DDLLogger().Warn("get storage class transition owner epoch failed", zap.Error(err))
-				timer.Reset(storageClassTransitionPollInterval)
-				continue
-			}
-			ownerEpoch = version.Ver
-			timer.Reset(storageClassTransitionPollInterval)
-			continue
 		}
 		if sessPool == nil {
 			logutil.DDLLogger().Warn("session pool is unavailable for storage class transition poll")
@@ -1100,9 +1058,7 @@ func (m *storageClassTransitionManager) run(ctx context.Context, sessPool *sess.
 		}
 		pollCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 		pruneHistory := !time.Now().Before(nextHistoryPrune)
-		observationSequence++
-		historyPruneAttempted, err := m.poll(pollCtx, sess.NewSession(sctx), pruneHistory,
-			storageClassTransitionObservationVersion{epoch: ownerEpoch, sequence: observationSequence})
+		historyPruneAttempted, err := m.poll(pollCtx, sess.NewSession(sctx), pruneHistory)
 		sessPool.Put(sctx)
 		if historyPruneAttempted {
 			nextHistoryPrune = time.Now().Add(storageClassTransitionPruneInterval)
