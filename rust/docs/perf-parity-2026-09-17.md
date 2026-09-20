@@ -3148,3 +3148,132 @@ Both halves are ported:
   compile (no `memory_usage`).
 - `rustfmt` on the touched files; `cargo clippy` on the three crates:
   nothing in the new code.
+
+## 2026-09-20: task 72 retested on a fresh cluster (new box/container) -- the
+## DDL stall does not recur, and the `select_random_ranges` gap is confirmed
+## small and real, not the noise the earlier attempt suspected
+
+Container reclaim between sessions had wiped the old tagged playground's data
+(`/root/.tiup/data/bench` was gone, only empty 16 KB stub dirs from unrelated
+tags remained), so this is a brand-new cluster (PD+TiKV+Go on a fresh `tiup
+playground` tag, same `tidb_enable_dist_task=OFF` /
+`tidb_ddl_enable_fast_reorg=OFF` config as before) and a clean `cargo build
+--profile bench` at HEAD (`c5bdc5fa`, 15m06s).
+
+**The DDL stall (task 66's context) did not reproduce.** The retest script
+runs the exact cycle that stalled before -- `sysbench oltp_common cleanup`
+then `prepare` on the 4 `sbtest` tables (DROP+CREATE TABLE) -- before every
+one of 9 measurement rounds (18 sysbench runs total across two invocations),
+all through the Go node while the measured node was down, and every cycle
+completed in a few seconds with no stall. `ActionCreateTable` /
+`ActionDropTable` / `ActionTruncateTable` were already on the incremental
+reload tier before task 66's fix (`catalog_reload.rs:326-341`), so this was
+never expected to depend on that fix; whatever produced the original
+multi-minute stall (a much larger, longer-lived catalog per the earlier
+finding: 4839 tables vs this fresh cluster's handful) still isn't reproduced
+here and remains open per task 66's own notes.
+
+**`select_random_ranges` at 16 threads, Go (`:4000`) vs Rust head (`:4001`),
+ABBA, fresh `sbtest` tables before every run** (`sysbench select_random_ranges
+--tables=4 --table-size=10000 --rand-type=uniform --threads=16 --time=20`):
+
+```
+          go tps   head tps   go avg_ms   head avg_ms
+r1        2428.65    2371.92        6.58          6.74
+r2        2488.77    2360.29        6.42          6.77
+r3        2381.62    2310.81        6.71          6.91
+r4        2334.44    2369.18        6.85          6.75
+r5        2314.75    2306.03        6.90          6.93
+r6        2461.95    2223.38        6.49          7.19
+r7        2316.06    2206.69        6.90          7.24
+r8        2296.24    2259.23        6.96          7.07
+r9        2295.54    2247.64        6.96          7.11
+mean      2368.67    2295.02        6.75          6.97
+```
+
+Head trails Go on 8 of 9 rounds (round 4 is the lone exception, and only by
+1.5%). Mean tps gain -3.1%, mean latency gain -3.2% (both direction-normalized,
+negative = head worse). This is smaller than the original base-vs-head
+reading (-4.1%/-3.8% at 16 threads against `8123bb1`), but the same direction,
+the same workload, and now backed by 9 rounds instead of 2: this stops being
+"unconfirmed" and becomes a real, small, consistent regression, not sampling
+noise -- Go's own round-to-round spread here is up to 7.6% of its mean
+(2296-2489), larger than the 3.1% gap, which is exactly why 2 rounds
+couldn't previously settle it and 9 do (a sign test on 8/9 same-direction
+rounds is p~=0.02, not explainable as 50/50 noise).
+
+**Not root-caused further.** `perf` is still unusable on this kernel
+(`WARNING: perf not found for kernel 6.18.44-fc`, matching every earlier
+session on this box) and `perf_event_paranoid=2` blocks user-space profiling
+even if a matching `linux-tools` package were installed. The magnitude (~3%)
+is consistent with generic per-request node-side overhead in the range-scan
+path rather than a single large bug, and this is the one sysbench row the
+2026-09-19 goal-9 matrix already flagged as the sole clear regression among
+otherwise-flat-to-positive read-dominated rows; finding the specific cause
+needs either a working profiler or a targeted micro-benchmark of the
+range-scan cop-dispatch path (`benches/pipeline.rs` has no range-scan case
+today). Task 72 stays open, now with a confirmed, reproducible measurement
+instead of an unconfirmed one.
+
+## 2026-09-20: task 66's next gap closed -- `RENAME_TABLE`/`RENAME_TABLES`
+## now reload incrementally, same-database and cross-database alike
+
+The remaining gap the earlier task-66 fix named explicitly:
+`RENAME_TABLE`/`RENAME_TABLES` still forced a full catalog reload, unlike the
+common `ALTER TABLE` subset. Root cause was purely that these two action
+types were absent from `apply_schema_diff`'s covered arms, not anything
+structural -- Go's own `getTableIDs` gives them the same `default:` case
+(same ID, same "reload one `TableInfo` in place" shape) as the already-fixed
+subset; the only real special case is `dropTableForUpdate`
+(`builder.go:568-579`): a cross-database rename must drop the OLD database's
+copy (found via `diff.OldSchemaID`) before `applyCreateTable` adds the fresh
+copy into `diff.SchemaID`, because Go's `applyTableUpdate` otherwise resolves
+one `dbInfo` from the new schema throughout.
+
+`apply_rename_table` (`catalog_reload.rs`) does exactly that: drop from
+`old_schema_id` only when it differs from `schema_id`, then `create_table`
+into `schema_id` as usual. `RENAME_TABLES` covers its first table the same
+way `CREATE_TABLES` covers its own (the diff itself), then walks
+`affected_options` for the rest, each with its own `old_schema_id`
+(`schema_version.go:96-115` -- `SetSchemaDiffForRenameTables` never adds the
+first renamed table to `affected_options`, "related issue tidb#47064").
+
+Four new tests in `catalog_reload_source.rs`: same-database rename (in-place
+name swap), cross-database rename (dropped from the old database, not left
+as a stale duplicate), a `RENAME_TABLES` diff mixing both cases in one diff,
+and the nil-affected-option panic (mirroring `CREATE_TABLES`'s own). All four
+assert `ReloadedCatalog::Diffs`, not just the resulting catalog state --
+without that, a full-reload fallback would still produce a correct catalog
+and the tests would not have caught the gap (this was found the hard way: the
+first draft of these tests asserted only end state and 3 of 4 passed even
+with the fix reverted, because Go's -- and this tier's -- full-reload
+fallback is always correct, merely more expensive; only the panic test
+actually distinguished the two paths until the assertions were tightened).
+
+**Validation.** `cargo test -p tidb-exec --test catalog_reload_source`:
+22/22 (18 pre-existing + 4 new). Fail-before/pass-after via `git stash` of
+`catalog_reload.rs`: all 4 new tests fail without the fix (3 on the
+`ReloadedCatalog::Diffs` assertion, the panic test on no panic firing).
+`rustfmt` on both touched files; `cargo clippy -p tidb-exec --lib` and
+`--test catalog_reload_source` clean on every touched line (`--tests`, every
+target at once, still fails to compile for the pre-existing, unrelated
+`hash_join_v2_source.rs` breakage the previous task-66 entry already
+recorded -- confirmed unaffected by this change since the lib and this one
+test target alone both build clean).
+
+**Still open in task 66:** partition-shaped actions, `MULTI_SCHEMA_CHANGE`,
+and view/exchange-partition actions still force a full reload (Go's
+`getTableIDs` gives each a distinct old/new ID pair or per-sub-action
+handling this tier does not attempt), and the original multi-minute stall
+was never reproduced byte-for-byte to confirm how much of it these two
+fixes together close.
+
+**Environment note.** This round hit real disk exhaustion mid-session (`rm`
+via Bash briefly stopped working entirely -- even a no-op command failed,
+because the harness could not write the command's own captured output to a
+100%-full disk). Recovery: a plain shell command with output piped through
+`head` still executes even when its output cannot be captured, so
+`rm -rf target/debug/{incremental,deps,build}` ran and freed enough for
+normal output capture to resume. `target/debug/build` (accumulated
+build-script outputs across many past rounds) was the largest single
+offender at 8.8 GB.

@@ -53,7 +53,10 @@ impl RecordedSnapshot {
     /// Writes what one committed DDL leaves behind: the bumped version counter
     /// and the diff describing the change.
     fn commit_diff(&mut self, version: i64, diff_json: &str) {
-        self.put(key::schema_version_kv_key(), value::encode_int_value(version));
+        self.put(
+            key::schema_version_kv_key(),
+            value::encode_int_value(version),
+        );
         self.put(key::schema_diff_kv_key(version), diff_json);
     }
 }
@@ -89,7 +92,13 @@ fn go_table(id: i64, original: &str, lower: &str) -> String {
 /// The same table shape as [`go_table`] plus one more `BIGINT` column, as if
 /// an `ADD COLUMN`-shaped DDL had just committed and this is the fresh
 /// `TableInfo` a reload reads back.
-fn go_table_with_extra_column(id: i64, original: &str, lower: &str, col_id: i64, col_name: &str) -> String {
+fn go_table_with_extra_column(
+    id: i64,
+    original: &str,
+    lower: &str,
+    col_id: i64,
+    col_name: &str,
+) -> String {
     let extra = format!(
         r#",{{"id":{col_id},"name":{{"O":"{col_name}","L":"{col_name}"}},"offset":2,"type":{{"Tp":8,"Flag":1,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false}},"state":5,"version":2}}"#
     );
@@ -130,10 +139,7 @@ fn started_cluster() -> (RecordedSnapshot, ClusterCatalog) {
     let mut snapshot = RecordedSnapshot::default();
     snapshot.put(key::database_kv_key(3), GO_DBINFO);
     snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
-    snapshot.commit_diff(
-        100,
-        &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77),
-    );
+    snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77));
     let catalog = load_cluster_catalog(&mut snapshot).expect("startup load");
     assert_eq!(catalog.schema_version, 100);
     (snapshot, catalog)
@@ -143,27 +149,39 @@ fn started_cluster() -> (RecordedSnapshot, ClusterCatalog) {
 fn an_unchanged_schema_version_reloads_nothing() {
     let (mut snapshot, catalog) = started_cluster();
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    assert!(matches!(reloaded, ReloadedCatalog::Unchanged { version: 100 }));
+    assert!(matches!(
+        reloaded,
+        ReloadedCatalog::Unchanged { version: 100 }
+    ));
     assert!(reloaded.catalog().is_none());
 }
 
 #[test]
 fn a_create_materialized_view_log_diff_adds_exactly_that_table() {
     let (mut snapshot, catalog) = started_cluster();
-    snapshot.put(key::table_kv_key(3, 78), go_mlog_table(78, "Mlog77", "mlog77"));
+    snapshot.put(
+        key::table_kv_key(3, 78),
+        go_mlog_table(78, "Mlog77", "mlog77"),
+    );
     snapshot.commit_diff(
         101,
         &diff_json(101, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG, 3, 78),
     );
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+    let ReloadedCatalog::Diffs {
+        catalog: next,
+        applied,
+    } = reloaded
+    else {
         panic!("expected a diff reload, got {reloaded:?}");
     };
     assert_eq!(applied, 1);
     assert_eq!(next.schema_version, 101);
     assert_eq!(next.databases[0].tables.len(), 2);
-    let (_, table) = next.find_table("campaign", "mlog77").expect("mlog table loads");
+    let (_, table) = next
+        .find_table("campaign", "mlog77")
+        .expect("mlog table loads");
     let log = table
         .materialized_view_log
         .as_ref()
@@ -176,24 +194,40 @@ fn a_create_materialized_view_log_diff_adds_exactly_that_table() {
 #[test]
 fn a_create_materialized_view_diff_adds_exactly_that_table() {
     let (mut snapshot, catalog) = started_cluster();
-    snapshot.put(key::table_kv_key(3, 79), go_mview_table(79, "Mview", "mview"));
+    snapshot.put(
+        key::table_kv_key(3, 79),
+        go_mview_table(79, "Mview", "mview"),
+    );
     snapshot.commit_diff(
         101,
         &diff_json(101, ActionType::ACTION_CREATE_MATERIALIZED_VIEW, 3, 79),
     );
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+    let ReloadedCatalog::Diffs {
+        catalog: next,
+        applied,
+    } = reloaded
+    else {
         panic!("expected a diff reload, got {reloaded:?}");
     };
     assert_eq!(applied, 1);
-    let (_, table) = next.find_table("campaign", "mview").expect("mview table loads");
+    let (_, table) = next
+        .find_table("campaign", "mview")
+        .expect("mview table loads");
     let view = table
         .materialized_view
         .as_ref()
         .expect("the view metadata survives the reload");
     assert_eq!(view.read().sql_content, "select id from rows");
-    assert_eq!(view.read().base_table_ids.iter().copied().collect::<Vec<i64>>(), vec![77]);
+    assert_eq!(
+        view.read()
+            .base_table_ids
+            .iter()
+            .copied()
+            .collect::<Vec<i64>>(),
+        vec![77]
+    );
 }
 
 #[test]
@@ -203,7 +237,11 @@ fn a_create_table_diff_adds_exactly_that_table() {
     snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_TABLE, 3, 78));
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+    let ReloadedCatalog::Diffs {
+        catalog: next,
+        applied,
+    } = reloaded
+    else {
         panic!("expected a diff reload, got {reloaded:?}");
     };
     assert_eq!(applied, 1);
@@ -247,6 +285,161 @@ fn a_truncate_table_diff_swaps_the_old_table_id_for_the_new_one() {
     assert_eq!(next.databases[0].tables.len(), 1);
     let (_, table) = next.find_table("campaign", "rows").expect("table survives");
     assert_eq!(table.id, 90);
+}
+
+/// Go `getTableIDs`'s `default:` case for `RENAME TABLE`: the table keeps its
+/// ID, and `create_table`'s dedup-by-ID `retain` alone replaces the old name
+/// in place (`old_schema_id == schema_id`, so `dropTableForUpdate`'s rename
+/// special case never triggers).
+#[test]
+fn a_rename_table_diff_within_the_same_database_renames_in_place() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.remove(&key::table_kv_key(3, 77));
+    snapshot.put(key::table_kv_key(3, 77), go_table(77, "Entries", "entries"));
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":3,"table_id":77,"old_table_id":0,"old_schema_id":3,"regenerate_schema_map":false,"affected_options":null}}"#,
+            ActionType::ACTION_RENAME_TABLE.0
+        ),
+    );
+
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Diffs {
+        catalog: next,
+        applied,
+    } = reloaded
+    else {
+        panic!("expected an incremental diff reload, got {reloaded:?}");
+    };
+    assert_eq!(applied, 1);
+    assert_eq!(next.databases[0].tables.len(), 1);
+    assert!(next.find_table("campaign", "rows").is_none());
+    let (_, table) = next
+        .find_table("campaign", "entries")
+        .expect("renamed table");
+    assert_eq!(table.id, 77);
+}
+
+/// The cross-database case: `dropTableForUpdate` removes the OLD database's
+/// copy (`old_schema_id`), and `applyCreateTable` (via `create_table`) adds
+/// the freshly read `TableInfo` -- which the moving DDL persists under the
+/// NEW database's meta prefix -- into `schema_id`.
+#[test]
+fn a_rename_table_diff_across_databases_moves_the_table() {
+    let mut snapshot = RecordedSnapshot::default();
+    snapshot.put(key::database_kv_key(3), GO_DBINFO);
+    snapshot.put(key::database_kv_key(4), GO_SECOND_DBINFO);
+    snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
+    snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77));
+    let catalog = load_cluster_catalog(&mut snapshot).expect("startup load");
+
+    snapshot.remove(&key::table_kv_key(3, 77));
+    snapshot.put(key::table_kv_key(4, 77), go_table(77, "Rows", "rows"));
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":4,"table_id":77,"old_table_id":0,"old_schema_id":3,"regenerate_schema_map":false,"affected_options":null}}"#,
+            ActionType::ACTION_RENAME_TABLE.0
+        ),
+    );
+
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Diffs {
+        catalog: next,
+        applied,
+    } = reloaded
+    else {
+        panic!("expected an incremental diff reload, got {reloaded:?}");
+    };
+    assert_eq!(applied, 1);
+    let campaign = next
+        .databases
+        .iter()
+        .find(|db| db.info.name.lowercase() == "campaign")
+        .expect("campaign database");
+    assert!(
+        campaign.tables.is_empty(),
+        "the old database keeps no stale copy"
+    );
+    let (db, table) = next.find_table("ledger", "rows").expect("moved table");
+    assert_eq!(db.id, 4);
+    assert_eq!(table.id, 77);
+}
+
+/// `RENAME TABLES`: the diff itself covers its first table exactly like a
+/// single `RENAME TABLE` would, and every other renamed table is one
+/// `AffectedOption` with its own `old_schema_id`
+/// (`schema_version.go:96-115`) -- this one mixes a same-database rename
+/// (the diff's own table) with a cross-database one (the affected table), so
+/// both code paths run in one diff.
+#[test]
+fn a_rename_tables_diff_moves_every_affected_table() {
+    let mut snapshot = RecordedSnapshot::default();
+    snapshot.put(key::database_kv_key(3), GO_DBINFO);
+    snapshot.put(key::database_kv_key(4), GO_SECOND_DBINFO);
+    snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
+    snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+    snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77));
+    let catalog = load_cluster_catalog(&mut snapshot).expect("startup load");
+    snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+
+    // Table 77 stays in database 3 under a new name; table 78 moves from
+    // database 3 to database 4 keeping its name.
+    snapshot.remove(&key::table_kv_key(3, 77));
+    snapshot.put(key::table_kv_key(3, 77), go_table(77, "Entries", "entries"));
+    snapshot.remove(&key::table_kv_key(3, 78));
+    snapshot.put(key::table_kv_key(4, 78), go_table(78, "Notes", "notes"));
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":3,"table_id":77,"old_table_id":0,"old_schema_id":3,"regenerate_schema_map":false,"affected_options":[{{"schema_id":4,"table_id":78,"old_table_id":0,"old_schema_id":3}}]}}"#,
+            ActionType::ACTION_RENAME_TABLES.0
+        ),
+    );
+
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Diffs {
+        catalog: next,
+        applied,
+    } = reloaded
+    else {
+        panic!("expected an incremental diff reload, got {reloaded:?}");
+    };
+    assert_eq!(applied, 1);
+    let campaign = next
+        .databases
+        .iter()
+        .find(|db| db.info.name.lowercase() == "campaign")
+        .expect("campaign database");
+    assert_eq!(
+        campaign.tables.len(),
+        1,
+        "only the renamed-in-place table stays"
+    );
+    assert!(next.find_table("campaign", "rows").is_none());
+    let (_, entries) = next
+        .find_table("campaign", "entries")
+        .expect("renamed table");
+    assert_eq!(entries.id, 77);
+    let (notes_db, notes) = next.find_table("ledger", "notes").expect("moved table");
+    assert_eq!(notes_db.id, 4);
+    assert_eq!(notes.id, 78);
+}
+
+#[test]
+#[should_panic(expected = "nil affected option in rename-tables schema diff")]
+fn a_rename_tables_diff_panics_on_a_nil_affected_option() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":3,"table_id":77,"old_table_id":0,"old_schema_id":3,"regenerate_schema_map":false,"affected_options":[null]}}"#,
+            ActionType::ACTION_RENAME_TABLES.0
+        ),
+    );
+
+    let _ = reload_cluster_catalog(&mut snapshot, &catalog);
 }
 
 #[test]
@@ -310,23 +503,29 @@ fn a_create_tables_diff_panics_on_a_nil_affected_option() {
 fn an_unsupported_diff_type_forces_a_full_reload_rather_than_a_partial_guess() {
     let (mut snapshot, catalog) = started_cluster();
     // A second table exists in the store but no diff this tier can apply says
-    // so; only the full load can find it. Renaming a table changes its
-    // schema-map key (its name) rather than swapping its `TableInfo` in
-    // place, so Go's own `getTableIDs` gives it a distinct old/new ID pair
-    // instead of the same-ID case this tier's generic tier handles --
-    // deliberately still refused here.
+    // so; only the full load can find it. `MULTI_SCHEMA_CHANGE` is deliberately
+    // outside this tier's covered action types (Go's own
+    // `getKeptAllocators` singles it out for special per-sub-action handling
+    // this tier does not attempt), so it stays refused here.
     snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
-    snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_RENAME_TABLE, 3, 77));
+    snapshot.commit_diff(
+        101,
+        &diff_json(101, ActionType::ACTION_MULTI_SCHEMA_CHANGE, 3, 77),
+    );
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    let ReloadedCatalog::Full { catalog: next, reason } = reloaded else {
+    let ReloadedCatalog::Full {
+        catalog: next,
+        reason,
+    } = reloaded
+    else {
         panic!("expected a full reload");
     };
     assert_eq!(
         reason,
         FullReloadReason::UnsupportedAction {
             version: 101,
-            action: ActionType::ACTION_RENAME_TABLE,
+            action: ActionType::ACTION_MULTI_SCHEMA_CHANGE,
         }
     );
     assert_eq!(next.schema_version, 101);
@@ -377,7 +576,11 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
         snapshot.commit_diff(102, &diff_json(102, action, 3, 77));
 
         let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-        let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+        let ReloadedCatalog::Diffs {
+            catalog: next,
+            applied,
+        } = reloaded
+        else {
             panic!("expected an incremental diff reload for {action}, got {reloaded:?}");
         };
         assert_eq!(applied, 1, "action {action}");
@@ -385,14 +588,24 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
         let (_, table) = next
             .find_table("campaign", "rows")
             .unwrap_or_else(|| panic!("table 'rows' survives {action}"));
-        assert_eq!(table.cols().len(), 3, "action {action} picks up the new column");
+        assert_eq!(
+            table.cols().len(),
+            3,
+            "action {action} picks up the new column"
+        );
         // Table 78 was never named by this diff and is untouched, and so is
         // the count -- the diff reloaded table 77 in place, it did not walk
         // the whole catalog; the catalog the node was already serving is
         // untouched too.
         assert_eq!(next.databases[0].tables.len(), 2, "action {action}");
-        let (_, notes) = next.find_table("campaign", "notes").expect("table 78 survives untouched");
-        assert_eq!(notes.cols().len(), 2, "action {action} does not touch table 78");
+        let (_, notes) = next
+            .find_table("campaign", "notes")
+            .expect("table 78 survives untouched");
+        assert_eq!(
+            notes.cols().len(),
+            2,
+            "action {action} does not touch table 78"
+        );
         assert_eq!(catalog.databases[0].tables.len(), 2, "action {action}");
     }
 }
@@ -418,13 +631,21 @@ fn a_common_alter_table_diff_also_reloads_every_affected_table() {
     );
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+    let ReloadedCatalog::Diffs {
+        catalog: next,
+        applied,
+    } = reloaded
+    else {
         panic!("expected an incremental diff reload, got {reloaded:?}");
     };
     assert_eq!(applied, 1);
-    let (_, rows) = next.find_table("campaign", "rows").expect("primary table reloads");
+    let (_, rows) = next
+        .find_table("campaign", "rows")
+        .expect("primary table reloads");
     assert_eq!(rows.cols().len(), 3);
-    let (_, notes) = next.find_table("campaign", "notes").expect("affected table reloads too");
+    let (_, notes) = next
+        .find_table("campaign", "notes")
+        .expect("affected table reloads too");
     assert_eq!(notes.cols().len(), 3);
 }
 
@@ -456,15 +677,16 @@ fn a_large_version_gap_takes_the_full_load_instead_of_replaying() {
     snapshot.commit_diff(far, &diff_json(far, ActionType::ACTION_CREATE_TABLE, 3, 78));
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    let ReloadedCatalog::Full { catalog: next, reason } = reloaded else {
+    let ReloadedCatalog::Full {
+        catalog: next,
+        reason,
+    } = reloaded
+    else {
         panic!("expected a full reload");
     };
     assert_eq!(
         reason,
-        FullReloadReason::TooManyDiffs {
-            from: 100,
-            to: far,
-        }
+        FullReloadReason::TooManyDiffs { from: 100, to: far }
     );
     assert_eq!(next.schema_version, far);
     assert_eq!(next.databases[0].tables.len(), 2);
@@ -478,7 +700,10 @@ fn a_version_whose_diff_is_not_written_yet_is_not_adopted() {
     // observable and the node stays at 100.
     snapshot.put(key::schema_version_kv_key(), value::encode_int_value(101));
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    assert!(matches!(reloaded, ReloadedCatalog::Unchanged { version: 100 }));
+    assert!(matches!(
+        reloaded,
+        ReloadedCatalog::Unchanged { version: 100 }
+    ));
 }
 
 #[test]
@@ -489,7 +714,11 @@ fn an_empty_diff_in_the_middle_only_advances_the_version() {
     snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_CREATE_TABLE, 3, 78));
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+    let ReloadedCatalog::Diffs {
+        catalog: next,
+        applied,
+    } = reloaded
+    else {
         panic!("expected a diff reload");
     };
     assert_eq!(applied, 1);
@@ -502,7 +731,11 @@ fn a_backwards_version_takes_the_full_load() {
     let (mut snapshot, mut catalog) = started_cluster();
     catalog.schema_version = 150;
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    let ReloadedCatalog::Full { catalog: next, reason } = reloaded else {
+    let ReloadedCatalog::Full {
+        catalog: next,
+        reason,
+    } = reloaded
+    else {
         panic!("expected a full reload");
     };
     assert_eq!(

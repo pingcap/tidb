@@ -345,6 +345,53 @@ fn apply_schema_diff<S: MetaSnapshot>(
                 return Ok(Err(reason));
             }
         }
+        // Go `getTableIDs`'s `default:` case again (RENAME_TABLE(S) is not
+        // one of the special-cased action types in `getTableIDs`, so it
+        // keeps its ID too), but `dropTableForUpdate`
+        // (`builder.go:546-576`) special-cases these two: when the rename
+        // crosses databases (`diff.OldSchemaID != diff.SchemaID`) the old
+        // copy must be dropped from the OLD database, not the new one,
+        // because `applyTableUpdate`'s single `dbInfo` is resolved from
+        // `diff.SchemaID` (the new database) throughout. A same-database
+        // rename needs no extra step: `create_table`'s dedup-by-ID `retain`
+        // already replaces the old name with the freshly read one in place.
+        // `ACTION_RENAME_TABLES`' own diff covers its first renamed table
+        // the same way `ACTION_CREATE_TABLES` covers its own; the rest are
+        // each one `AffectedOption`, with their own `old_schema_id`
+        // (`schema_version.go:96-115`, one entry per table after the first).
+        ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
+            if let Err(reason) = apply_rename_table(
+                snapshot,
+                catalog,
+                version,
+                diff.schema_id,
+                diff.old_schema_id,
+                diff.table_id,
+            )? {
+                return Ok(Err(reason));
+            }
+            for affected in diff.affected_options.iter_handles() {
+                let affected = affected.expect("nil affected option in rename-tables schema diff");
+                let (schema_id, table_id, old_schema_id) = {
+                    let affected = affected.read();
+                    (
+                        affected.schema_id,
+                        affected.table_id,
+                        affected.old_schema_id,
+                    )
+                };
+                if let Err(reason) = apply_rename_table(
+                    snapshot,
+                    catalog,
+                    version,
+                    schema_id,
+                    old_schema_id,
+                    table_id,
+                )? {
+                    return Ok(Err(reason));
+                }
+            }
+        }
         // Go `getTableIDs`'s `default:` case (`oldTableID = newTableID =
         // diff.TableID`), reached through `ApplyDiff`'s own `default:` arm
         // (`applyDefaultAction` -> `applyTableUpdate`) for every action type
@@ -355,11 +402,10 @@ fn apply_schema_diff<S: MetaSnapshot>(
         // placement bundles, masking-policy cache, `sortedTablesBuckets`)
         // this simpler catalog does not keep at all -- there is nothing here
         // for those Go side effects to go stale, so there is nothing to
-        // replicate for them. Excluded on purpose: anything that moves a
-        // table across schemas or changes its ID (`RENAME_TABLE(S)`,
-        // `CREATE_VIEW`, partition/placement/multi-schema-change actions,
-        // ...), which Go's `getTableIDs` and `dropTableForUpdate` special-case
-        // and this tier does not attempt to.
+        // replicate for them. Excluded on purpose: anything that changes a
+        // table's ID (`CREATE_VIEW`, partition/multi-schema-change actions,
+        // ...), which Go's `getTableIDs` special-cases and this tier does not
+        // attempt to.
         ActionType::ACTION_ADD_COLUMN
         | ActionType::ACTION_DROP_COLUMN
         | ActionType::ACTION_ADD_COLUMNS
@@ -487,4 +533,25 @@ fn drop_table(
     };
     database.tables.retain(|existing| existing.id != table_id);
     Ok(Ok(()))
+}
+
+/// One renamed table: Go `dropTableForUpdate`'s rename special case
+/// (`builder.go:568-579`) plus the `applyCreateTable` every `getTableIDs`
+/// case ends in. `old_schema_id` is `0` only for a stored diff predating
+/// this field; treated the same as "same database" since there is no other
+/// database to remove the stale copy from.
+fn apply_rename_table<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &mut ClusterCatalog,
+    version: i64,
+    schema_id: i64,
+    old_schema_id: i64,
+    table_id: i64,
+) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+    if old_schema_id != 0 && old_schema_id != schema_id {
+        if let Err(reason) = drop_table(catalog, version, old_schema_id, table_id)? {
+            return Ok(Err(reason));
+        }
+    }
+    create_table(snapshot, catalog, version, schema_id, table_id)
 }
