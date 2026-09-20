@@ -136,3 +136,4 @@ pub use warning::{Warning, WarningClass, WarningCollector, WarningLevel};
 
 #[cfg(test)]
 mod tests;
+pub mod metrics;

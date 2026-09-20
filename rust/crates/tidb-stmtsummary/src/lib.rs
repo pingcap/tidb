@@ -125,3 +125,4 @@ pub mod evicted;
 pub mod reader;
 pub mod statement_summary;
 pub mod v2;
+pub mod metrics;

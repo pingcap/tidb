@@ -159,9 +159,14 @@ pub fn start_status_listener_with_routes(
                             // a synthesized line: it carries the
                             // `resource_group` label and gains series exactly
                             // when Go's does, on the first connection.
-                            let body = prometheus::TextEncoder::new()
+                            // Go serves one registry; the Rust node renders
+                            // the workspace's 0.14 registry plus the
+                            // client-go `tidb_tikvclient_*` block (0.13
+                            // registry inside tikv-client) as one stream.
+                            let mut body = prometheus::TextEncoder::new()
                                 .encode_to_string(&prometheus::gather())
                                 .expect("registered metrics encode as Prometheus text");
+                            body.push_str(&tidb_txnkv::client_go_metrics::gather_text());
                             format!(
                                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\
                                  Content-Length: {}\r\nConnection: close\r\n\r\n{body}",

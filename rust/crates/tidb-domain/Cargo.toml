@@ -11,6 +11,7 @@ description = "Go pkg/domain (seed): sysvar cache, schema checker, domain contex
 workspace = true
 
 [dependencies]
+prometheus = { version = "0.14", default-features = false }
 toml.workspace = true
 tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }

@@ -1699,6 +1699,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             }
                         };
                         command_metrics.sql_type = parsed.as_ref().map_or("general", Stmt::label);
+                        // Go `executor.go`: StmtNodeCounter counts every
+                        // executed statement by its executor label.
+                        if let Some(stmt) = parsed.as_ref() {
+                            tidb_executor::metrics::STATEMENT_TOTAL
+                                .with_label_values(&[
+                                    "",
+                                    engine.metrics_resource_group(),
+                                    stmt.label(),
+                                ])
+                                .inc();
+                        }
                         // Go excludes text DDL from addQueryMetrics.
                         command_metrics.skip = parsed
                             .as_ref()

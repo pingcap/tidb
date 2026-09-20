@@ -363,3 +363,114 @@ mod tests {
         assert_eq!(registered.get(), 7.0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard-surface statistics families from Go `pkg/metrics/stats.go` that
+// the node's bootstrap materializes (sync-load counters, manual analyze,
+// pseudo estimation) plus the series touch for the families this crate
+// already owns.
+
+/// Go `SyncLoadCounter` (`pkg/metrics/stats.go`).
+pub static SYNC_LOAD_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
+    let metric = Counter::new(
+        "tidb_statistics_sync_load_total",
+        "Counter of sync load",
+    )
+    .expect("valid sync load counter");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("sync load counter is registered once");
+    metric
+});
+
+/// Go `SyncLoadTimeoutCounter` (`pkg/metrics/stats.go`).
+pub static SYNC_LOAD_TIMEOUT_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
+    let metric = Counter::new(
+        "tidb_statistics_sync_load_timeout_total",
+        "Counter of sync load timeout",
+    )
+    .expect("valid sync load timeout counter");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("sync load timeout counter is registered once");
+    metric
+});
+
+/// Go `SyncLoadDedupCounter` (`pkg/metrics/stats.go`).
+pub static SYNC_LOAD_DEDUP_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
+    let metric = Counter::new(
+        "tidb_statistics_sync_load_dedup_total",
+        "Counter of sync load deduplication",
+    )
+    .expect("valid sync load dedup counter");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("sync load dedup counter is registered once");
+    metric
+});
+
+static MANUAL_ANALYZE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
+    let metric = CounterVec::new(
+        Opts::new("manual_analyze_total", "counter of manual analyze")
+            .namespace("tidb")
+            .subsystem("statistics"),
+        &["type"],
+    )
+    .expect("valid manual analyze metric");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("manual analyze metric is registered once");
+    metric
+});
+
+static PSEUDO_ESTIMATION_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
+    let metric = CounterVec::new(
+        Opts::new(
+            "pseudo_estimation_total",
+            "counter of pseudo estimation from stats",
+        )
+        .namespace("tidb")
+        .subsystem("statistics"),
+        &["type"],
+    )
+    .expect("valid pseudo estimation metric");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("pseudo estimation metric is registered once");
+    metric
+});
+
+/// Go `ManualAnalyzeCounter`.
+#[must_use]
+pub fn manual_analyze_total_succ() -> Counter {
+    MANUAL_ANALYZE_COUNTER.with_label_values(&["succ"])
+}
+
+/// Go `PseudoEstimation` nodata arm.
+#[must_use]
+pub fn pseudo_estimation_nodata() -> Counter {
+    PSEUDO_ESTIMATION_COUNTER.with_label_values(&["nodata"])
+}
+
+/// Go `PseudoEstimation` outdate arm.
+#[must_use]
+pub fn pseudo_estimation_outdate() -> Counter {
+    PSEUDO_ESTIMATION_COUNTER.with_label_values(&["outdate"])
+}
+
+/// Materializes the statistics series Go's bootstrap writes: the health
+/// buckets, the historical-stats and plan-replayer handles (both inits), and
+/// the sync-load / manual-analyze / pseudo-estimation families above.
+pub fn init_dashboard_series() {
+    let _ = init_metrics_vars();
+    for gauge in stats_healthy_gauges() {
+        let _ = gauge;
+    }
+    let _ = domain_metrics::init_metrics_vars();
+    LazyLock::force(&SYNC_LOAD_TOTAL);
+    LazyLock::force(&SYNC_LOAD_TIMEOUT_TOTAL);
+    LazyLock::force(&SYNC_LOAD_DEDUP_TOTAL);
+    let _ = MANUAL_ANALYZE_COUNTER.with_label_values(&["succ"]);
+    let _ = PSEUDO_ESTIMATION_COUNTER.with_label_values(&["nodata"]);
+    let _ = PSEUDO_ESTIMATION_COUNTER.with_label_values(&["outdate"]);
+}

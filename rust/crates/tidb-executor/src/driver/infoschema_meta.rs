@@ -1469,7 +1469,7 @@ const TIFLASH_REPLICA_COLUMNS: &[InfoColumn] = &[
     },
     InfoColumn {
         name: "TABLE_ID",
-        tp: FieldTypeCode::Long,
+        tp: FieldTypeCode::LongLong,
         size: 21,
         flag: 0,
         deflt: None,
@@ -1477,7 +1477,7 @@ const TIFLASH_REPLICA_COLUMNS: &[InfoColumn] = &[
     },
     InfoColumn {
         name: "REPLICA_COUNT",
-        tp: FieldTypeCode::Long,
+        tp: FieldTypeCode::LongLong,
         size: 21,
         flag: 0,
         deflt: None,
@@ -1811,6 +1811,182 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
 ];
+
+/// Go's cluster-table render of PROCESSLIST: `INSTANCE` varchar(64) first
+/// (`pkg/infoschema/tables.go` cluster column prefix), then the instance
+/// processlist columns.
+const CLUSTER_PROCESSLIST_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "INSTANCE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+
+    InfoColumn {
+        name: "ID",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG | UNSIGNED_FLAG,
+        deflt: Some("0"),
+        comment: None,
+    },
+    InfoColumn {
+        name: "USER",
+        tp: FieldTypeCode::Varchar,
+        size: 16,
+        flag: NOT_NULL_FLAG,
+        deflt: Some(""),
+        comment: None,
+    },
+    InfoColumn {
+        name: "HOST",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: Some(""),
+        comment: None,
+    },
+    InfoColumn {
+        name: "DB",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "COMMAND",
+        tp: FieldTypeCode::Varchar,
+        size: 16,
+        flag: NOT_NULL_FLAG,
+        deflt: Some(""),
+        comment: None,
+    },
+    InfoColumn {
+        name: "TIME",
+        tp: FieldTypeCode::Long,
+        size: 7,
+        flag: NOT_NULL_FLAG,
+        deflt: Some("0"),
+        comment: None,
+    },
+    InfoColumn {
+        name: "STATE",
+        tp: FieldTypeCode::Varchar,
+        size: 7,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "INFO",
+        tp: FieldTypeCode::LongBlob,
+        size: UNSPECIFIED_LENGTH,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DIGEST",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: Some(""),
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEM",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEM_ARBITRATION",
+        tp: FieldTypeCode::Double,
+        size: 22,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEM_WAIT_ARBITRATE_START",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEM_WAIT_ARBITRATE_BYTES",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DISK",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "TxnStart",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: Some(""),
+        comment: None,
+    },
+    InfoColumn {
+        name: "RESOURCE_GROUP",
+        tp: FieldTypeCode::Varchar,
+        size: RESOURCE_GROUP_NAME_LENGTH,
+        flag: NOT_NULL_FLAG,
+        deflt: Some(""),
+        comment: None,
+    },
+    InfoColumn {
+        name: "SESSION_ALIAS",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: Some(""),
+        comment: None,
+    },
+    InfoColumn {
+        name: "ROWS_AFFECTED",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "TIDB_CPU",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG,
+        deflt: Some("0"),
+        comment: None,
+    },
+    InfoColumn {
+        name: "TIKV_CPU",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG,
+        deflt: Some("0"),
+        comment: None,
+    },
+];
+
 
 /// Go `infoschema.tableMemoryUsageOpsHistoryCols`.
 const MEMORY_USAGE_OPS_HISTORY_COLUMNS: &[InfoColumn] = &[
@@ -2281,8 +2457,12 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("PROCESSLIST", PROCESSLIST_COLUMNS),
     // CLUSTER_PROCESSLIST is backed by the same process registry in the
     // single-node Rust server.  Keep it visible so dashboard queries and
-    // cluster diagnostics get a real result instead of 1146.
-    ("CLUSTER_PROCESSLIST", PROCESSLIST_COLUMNS),
+    // cluster diagnostics get a real result instead of 1146.  Go's cluster
+    // machinery prepends the INSTANCE column to the instance table's columns
+    // (`pkg/infoschema/cluster.go` maps the cluster name onto PROCESSLIST,
+    // whose render adds `INSTANCE` varchar(64) first), so the served columns
+    // are INSTANCE plus PROCESSLIST_COLUMNS.
+    ("CLUSTER_PROCESSLIST", CLUSTER_PROCESSLIST_COLUMNS),
     ("REFERENTIAL_CONSTRAINTS", REFERENTIAL_CONSTRAINTS_COLUMNS),
     ("SCHEMATA", SCHEMATA_COLUMNS),
     ("SCHEMA_PRIVILEGES", SCHEMA_PRIVILEGES_COLUMNS),

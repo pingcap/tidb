@@ -11,6 +11,7 @@ description = "Go pkg/util/stmtsummary: the v1 statement-summary LRU, its evicte
 workspace = true
 
 [dependencies]
+prometheus = { version = "0.14", default-features = false }
 chrono.workspace = true
 chrono-tz.workspace = true
 serde.workspace = true

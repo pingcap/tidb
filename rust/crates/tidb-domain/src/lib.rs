@@ -158,3 +158,4 @@ pub mod serverinfo_syncer;
 pub mod status_endpoint_claim;
 pub mod sysvar_cache;
 pub mod topn_slow_query;
+pub mod metrics;

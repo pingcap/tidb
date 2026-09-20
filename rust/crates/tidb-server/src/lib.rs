@@ -104,6 +104,7 @@ pub mod main_flags;
 mod mysql_connection;
 mod query_metrics;
 pub mod server_metrics;
+mod topsql_metrics;
 mod mysql_tls;
 mod native_password;
 mod node_config;
@@ -255,6 +256,22 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     let _resource_manager_cleanup = ResourceManagerCleanup;
     server_metrics::init();
     install_server_boot_gauges();
+    // Go's per-package metric inits run from pkg/metrics' RegisterMetrics and
+    // each subsystem's startup; the dashboard surface they produce is one
+    // boot-time call per Rust crate that owns the families.
+    tidb_executor::metrics::init_dashboard_series();
+    tidb_session::metrics::init_dashboard_series();
+    tidb_distsql::metrics::init_dashboard_series();
+    tidb_ddl_session::metrics::init_dashboard_series();
+    tidb_domain::metrics::init_dashboard_series();
+    tidb_owner::metrics::init_dashboard_series();
+    tidb_meta::metrics::init_dashboard_series();
+    tidb_util::memory_metrics::init_dashboard_series();
+    tidb_stats_handle_metrics::init_dashboard_series();
+    tidb_dxf::metrics::init_dashboard_series();
+    tidb_stmtsummary::metrics::init_dashboard_series();
+    topsql_metrics::init_dashboard_series();
+    tidb_txnkv::client_go_metrics::init_dashboard_series();
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`
         // -- the same node code over the embedded store, no PD dialed.

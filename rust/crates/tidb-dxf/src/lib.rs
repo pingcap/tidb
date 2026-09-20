@@ -61,6 +61,7 @@ mod step;
 mod subtask;
 mod task;
 mod task_type;
+pub mod metrics;
 
 pub use modify::{
     Modification, ModificationType, ModifyParam, MODIFY_BATCH_SIZE, MODIFY_MAX_NODE_COUNT,

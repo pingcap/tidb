@@ -1419,6 +1419,22 @@ impl Session {
     ///
     /// The rows are ordered by id so the table reads deterministically;
     /// Go's map iteration leaves the order unspecified.
+    /// Go's cluster tables fill `INSTANCE` with `ip:port` of each server
+    /// (`pkg/executor/pkg/cluster` instance formatting). Empty when the
+    /// server-info syncer has not published this node's identity yet.
+    pub(crate) fn cluster_instance_address(&self) -> String {
+        let Some(syncer) = self.server_info_syncer.as_ref() else {
+            return String::new();
+        };
+        let Ok(all) = syncer.all_server_info() else {
+            return String::new();
+        };
+        all.values()
+            .next()
+            .map(|info| format!("{}:{}", info.static_info.ip, info.static_info.port))
+            .unwrap_or_default()
+    }
+
     pub(crate) fn tidb_servers_info_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
         use tidb_datatype::Datum;
         let Some(syncer) = self.server_info_syncer.as_ref() else {
@@ -2445,6 +2461,7 @@ mod tests_window;
 mod tests_write_conversion;
 #[cfg(test)]
 mod tests_zero_date;
+pub mod metrics;
 
 /// Go `time.Duration.String()` for a whole number of seconds, which is what
 /// `UPTIME` carries: `time.Since(startTime).String()` with the sub-second

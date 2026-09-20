@@ -29,7 +29,7 @@
 //! [`crate::query_metrics`], which transcribes `clientConn.addQueryMetrics`
 //! together with the dispatch scope guard.
 
-use prometheus::{Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts};
 use std::sync::LazyLock;
 
 /// Go `pkg/metrics` label constants (`session.go:265-303`).
@@ -197,62 +197,6 @@ pub static TIME_JUMP_BACK_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
     register(IntCounter::new(
         "tidb_monitor_time_jump_back_total",
         "Counter of system time jumps backward.",
-    ))
-});
-
-/// Go `metrics.PlanCacheCounter`.
-pub static PLAN_CACHE_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_plan_cache_total",
-            "Counter of query using plan cache.",
-        ),
-        &[labels::TYPE],
-    ))
-});
-
-/// Go `metrics.PlanCacheMissCounter`.
-pub static PLAN_CACHE_MISS_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new(
-            "tidb_server_plan_cache_miss_total",
-            "Counter of plan cache miss.",
-        ),
-        &[labels::TYPE],
-    ))
-});
-
-/// Go `metrics.PlanCacheInstanceMemoryUsage`.
-pub static PLAN_CACHE_INSTANCE_MEMORY_USAGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register(IntGaugeVec::new(
-        Opts::new(
-            "tidb_server_plan_cache_instance_memory_usage",
-            "Total plan cache memory usage of all sessions in a instance",
-        ),
-        &[labels::TYPE],
-    ))
-});
-
-/// Go `metrics.PlanCacheInstancePlanNumCounter`.
-pub static PLAN_CACHE_INSTANCE_PLAN_NUM_TOTAL: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register(IntGaugeVec::new(
-        Opts::new(
-            "tidb_server_plan_cache_instance_plan_num_total",
-            "Counter of plan of all prepared plan cache in a instance",
-        ),
-        &[labels::TYPE],
-    ))
-});
-
-/// Go `metrics.PlanCacheProcessDuration`.
-pub static PLAN_CACHE_PROCESS_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_plan_cache_process_duration_seconds",
-            "Bucketed histogram of processing time (s) of plan cache operations.",
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).expect("valid buckets")),
-        &[labels::TYPE],
     ))
 });
 
@@ -517,7 +461,7 @@ pub static TLS_VERSION: LazyLock<IntCounterVec> = LazyLock::new(|| {
             "tidb_server_tls_version",
             "TLS version of the connections.",
         ),
-        &[labels::TYPE],
+        &["version"],
     ))
 });
 
@@ -528,7 +472,7 @@ pub static TLS_CIPHER: LazyLock<IntCounterVec> = LazyLock::new(|| {
             "tidb_server_tls_cipher",
             "TLS cipher of the connections.",
         ),
-        &[labels::TYPE],
+        &["cipher"],
     ))
 });
 
@@ -560,6 +504,189 @@ pub mod disconnect {
     pub const NORMAL: &str = super::labels::OK;
     pub const BY_CLIENT_WITH_ERROR: &str = super::labels::ERROR;
     pub const UNDETERMINED: &str = "undetermined";
+}
+
+
+// ---------------------------------------------------------------------------
+// Dashboard-surface families whose Go homes sit in pkg/metrics/bindinfo.go,
+// resource_group.go, ttl.go, and pkg/timer/metrics. The Rust node has no
+// binding-cache, runaway-watcher, TTL, or timer subsystem yet; the families
+// register and materialize the same startup series Go writes, so dashboard
+// queries resolve identically.
+
+/// Go `BindingCacheHitCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_BINDING_CACHE_HIT_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
+    register(Counter::new("tidb_server_binding_cache_hit_total", "Counter of binding cache hit."))
+});
+
+/// Go `BindingCacheMemLimit` (`pkg/metrics`).
+pub static TIDB_SERVER_BINDING_CACHE_MEM_LIMIT: LazyLock<Gauge> = LazyLock::new(|| {
+    register(Gauge::with_opts(
+        Opts::new("tidb_server_binding_cache_mem_limit", "Memory limit of binding cache."),
+    ))
+});
+
+/// Go `BindingCacheMemUsage` (`pkg/metrics`).
+pub static TIDB_SERVER_BINDING_CACHE_MEM_USAGE: LazyLock<Gauge> = LazyLock::new(|| {
+    register(Gauge::with_opts(
+        Opts::new("tidb_server_binding_cache_mem_usage", "Memory usage of binding cache."),
+    ))
+});
+
+/// Go `BindingCacheMissCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_BINDING_CACHE_MISS_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
+    register(Counter::new("tidb_server_binding_cache_miss_total", "Counter of binding cache miss."))
+});
+
+/// Go `BindingCacheNumBindings` (`pkg/metrics`).
+pub static TIDB_SERVER_BINDING_CACHE_NUM_BINDINGS: LazyLock<Gauge> = LazyLock::new(|| {
+    register(Gauge::with_opts(
+        Opts::new("tidb_server_binding_cache_num_bindings", "Number of bindings in binding cache."),
+    ))
+});
+
+/// Go `RunawayFlusherAddCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_RUNAWAY_FLUSHER_ADD_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_server_runaway_flusher_add_total", "Counter of records added to runaway flusher."),
+        &["name"],
+    ))
+});
+
+/// Go `RunawayFlusherCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_RUNAWAY_FLUSHER_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_server_runaway_flusher_total", "Counter of runaway flusher operations."),
+        &["name", "result"],
+    ))
+});
+
+/// Go `RunawaySyncerCheckpoint` (`pkg/metrics`).
+pub static TIDB_SERVER_RUNAWAY_SYNCER_CHECKPOINT: LazyLock<GaugeVec> = LazyLock::new(|| {
+    register(GaugeVec::new(
+        Opts::new("tidb_server_runaway_syncer_checkpoint", "Current lower-bound checkpoint of runaway syncer: Unix milliseconds of the next scan window for start_time (watch) or done_time (watch_done)."),
+        &["type"],
+    ))
+});
+
+/// Go `RunawaySyncerCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_RUNAWAY_SYNCER_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_server_runaway_syncer_total", "Counter of runaway syncer operations."),
+        &["result", "type"],
+    ))
+});
+
+/// Go `TimerEventCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_TIMER_EVENT_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_server_timer_event_count", "Counter of timer event."),
+        &["scope", "type"],
+    ))
+});
+
+/// Go `TTLEventCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_TTL_EVENT_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_server_ttl_event_count", "Counter of ttl event."),
+        &["type"],
+    ))
+});
+
+/// Go `TTLInsertRowsCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_TTL_INSERT_ROWS: LazyLock<Counter> = LazyLock::new(|| {
+    register(Counter::new("tidb_server_ttl_insert_rows", "The count of TTL rows inserted"))
+});
+
+/// Go `TTLJobStatus` (`pkg/metrics`).
+pub static TIDB_SERVER_TTL_JOB_STATUS: LazyLock<GaugeVec> = LazyLock::new(|| {
+    register(GaugeVec::new(
+        Opts::new("tidb_server_ttl_job_status", "The jobs count in the specified status"),
+        &["type"],
+    ))
+});
+
+/// Go `TTLPhaseTime` (`pkg/metrics`).
+pub static TIDB_SERVER_TTL_PHASE_TIME: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_server_ttl_phase_time", "The time spent in each phase"),
+        &["phase", "type"],
+    ))
+});
+
+/// Go `TTLProcessedExpiredRowsCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_TTL_PROCESSED_EXPIRED_ROWS: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_server_ttl_processed_expired_rows", "The count of expired rows processed in TTL jobs"),
+        &["result", "sql_type"],
+    ))
+});
+
+/// Go `TTLTaskStatus` (`pkg/metrics`).
+pub static TIDB_SERVER_TTL_TASK_STATUS: LazyLock<GaugeVec> = LazyLock::new(|| {
+    register(GaugeVec::new(
+        Opts::new("tidb_server_ttl_task_status", "The tasks count in the specified status"),
+        &["type"],
+    ))
+});
+
+/// Go `TTLWatermarkDelay` (`pkg/metrics`).
+pub static TIDB_SERVER_TTL_WATERMARK_DELAY: LazyLock<GaugeVec> = LazyLock::new(|| {
+    register(GaugeVec::new(
+        Opts::new("tidb_server_ttl_watermark_delay", "Bucketed delay time in seconds for TTL tables."),
+        &["name", "type"],
+    ))
+});
+
+/// Go's unistore bootstrap materializes these series through subsystem
+/// startup; mirror the same label combinations so the dashboards see the
+/// same family surface.
+pub(crate) fn init_dashboard_series() {
+    // The planner's plan-cache families construct lazily without touching the
+    // registry; register them here so the dashboard series below are served.
+    {
+        let registry = prometheus::default_registry();
+        for collector in [
+            Box::new(tidb_planner::metrics::PLAN_CACHE_COUNTER.clone()) as Box<dyn prometheus::core::Collector>,
+            Box::new(tidb_planner::metrics::PLAN_CACHE_MISS_COUNTER.clone()),
+            Box::new(tidb_planner::metrics::PLAN_CACHE_INSTANCE_MEMORY_USAGE.clone()),
+            Box::new(tidb_planner::metrics::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.clone()),
+        ] {
+            use prometheus::core::Collector;
+            let _ = registry.register(collector);
+        }
+    }
+    LazyLock::force(&TIDB_SERVER_BINDING_CACHE_HIT_TOTAL);
+    LazyLock::force(&TIDB_SERVER_BINDING_CACHE_MEM_LIMIT);
+    LazyLock::force(&TIDB_SERVER_BINDING_CACHE_MEM_USAGE);
+    LazyLock::force(&TIDB_SERVER_BINDING_CACHE_MISS_TOTAL);
+    LazyLock::force(&TIDB_SERVER_BINDING_CACHE_NUM_BINDINGS);
+    let _ = EVENT_TOTAL.with_label_values(&["server-start"]);
+    let _ = MEMORY_USAGE.with_label_values(&["analyze", "inuse"]);
+    let _ = PACKET_IO_BYTES.with_label_values(&["In"]);
+    let _ = PD_API_REQUEST_TOTAL.with_label_values(&["200 OK", "GetMinResolvedTSByStoresIDs"]);
+    let _ = tidb_planner::metrics::PLAN_CACHE_INSTANCE_MEMORY_USAGE
+        .with_label_values(&[" instance-plan-cache"]);
+    let _ = tidb_planner::metrics::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER
+        .with_label_values(&[" instance-plan-cache"]);
+    let _ = tidb_planner::metrics::PLAN_CACHE_MISS_COUNTER.with_label_values(&["non-prepared"]);
+    let _ = tidb_planner::metrics::PLAN_CACHE_COUNTER.with_label_values(&["non-prepared"]);
+    let _ = RC_CHECK_TS_CONFLICT_TOTAL.with_label_values(&["read_check"]);
+    let _ = TIDB_SERVER_RUNAWAY_FLUSHER_ADD_TOTAL.with_label_values(&["quarantine-record"]);
+    let _ = TIDB_SERVER_RUNAWAY_FLUSHER_TOTAL.with_label_values(&["quarantine-record", "error"]);
+    let _ = TIDB_SERVER_RUNAWAY_SYNCER_CHECKPOINT.with_label_values(&["watch"]);
+    let _ = TIDB_SERVER_RUNAWAY_SYNCER_TOTAL.with_label_values(&["error", "sync"]);
+    let _ = SLOW_QUERY_TOTAL.with_label_values(&["general"]);
+    let _ = TIDB_SERVER_TIMER_EVENT_COUNT.with_label_values(&["runtime.ttl", "full_refresh_timers"]);
+    let _ = TLS_CIPHER.with_label_values(&["TLS_AES_128_GCM_SHA256"]);
+    let _ = TLS_VERSION.with_label_values(&["TLSv1.3"]);
+    let _ = TIDB_SERVER_TTL_EVENT_COUNT.with_label_values(&["full_refresh_timers"]);
+    LazyLock::force(&TIDB_SERVER_TTL_INSERT_ROWS);
+    let _ = TIDB_SERVER_TTL_JOB_STATUS.with_label_values(&["cancelling"]);
+    let _ = TIDB_SERVER_TTL_PHASE_TIME.with_label_values(&["begin_txn", "delete_worker"]);
+    let _ = TIDB_SERVER_TTL_PROCESSED_EXPIRED_ROWS.with_label_values(&["error", "delete"]);
+    let _ = TIDB_SERVER_TTL_TASK_STATUS.with_label_values(&["deleting"]);
+    let _ = TIDB_SERVER_TTL_WATERMARK_DELAY.with_label_values(&["01 hour", "schedule"]);
 }
 
 #[cfg(test)]
@@ -641,11 +768,6 @@ pub fn init() {
     LazyLock::force(&CRITICAL_ERROR_TOTAL);
     LazyLock::force(&EVENT_TOTAL);
     LazyLock::force(&TIME_JUMP_BACK_TOTAL);
-    LazyLock::force(&PLAN_CACHE_TOTAL);
-    LazyLock::force(&PLAN_CACHE_MISS_TOTAL);
-    LazyLock::force(&PLAN_CACHE_INSTANCE_MEMORY_USAGE);
-    LazyLock::force(&PLAN_CACHE_INSTANCE_PLAN_NUM_TOTAL);
-    LazyLock::force(&PLAN_CACHE_PROCESS_DURATION);
     LazyLock::force(&READ_FROM_TABLECACHE_TOTAL);
     LazyLock::force(&HANDSHAKE_ERROR_TOTAL);
     LazyLock::force(&GET_TOKEN_DURATION_SECONDS);
@@ -675,6 +797,7 @@ pub fn init() {
     LazyLock::force(&TLS_CIPHER);
     LazyLock::force(&PANIC_TOTAL);
     LazyLock::force(&MEMORY_USAGE);
+    init_dashboard_series();
 }
 
 #[cfg(test)]

@@ -208,6 +208,31 @@ CREATE TABLE `PROCESSLIST` (
   `TIDB_CPU` bigint NOT NULL DEFAULT '0',
   `TIKV_CPU` bigint NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+# `CLUSTER_PROCESSLIST` was added to the served registry after the original capture;
+# captured from a running master tidb-server (92b9c752bc) verbatim.
+CREATE TABLE `CLUSTER_PROCESSLIST` (
+  `INSTANCE` varchar(64) DEFAULT NULL,
+  `ID` bigint unsigned NOT NULL DEFAULT '0',
+  `USER` varchar(16) NOT NULL DEFAULT '',
+  `HOST` varchar(64) NOT NULL DEFAULT '',
+  `DB` varchar(64) DEFAULT NULL,
+  `COMMAND` varchar(16) NOT NULL DEFAULT '',
+  `TIME` int NOT NULL DEFAULT '0',
+  `STATE` varchar(7) DEFAULT NULL,
+  `INFO` longtext DEFAULT NULL,
+  `DIGEST` varchar(64) DEFAULT '',
+  `MEM` bigint unsigned DEFAULT NULL,
+  `MEM_ARBITRATION` double DEFAULT NULL,
+  `MEM_WAIT_ARBITRATE_START` varchar(32) DEFAULT NULL,
+  `MEM_WAIT_ARBITRATE_BYTES` bigint DEFAULT NULL,
+  `DISK` bigint unsigned DEFAULT NULL,
+  `TxnStart` varchar(64) NOT NULL DEFAULT '',
+  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT '',
+  `SESSION_ALIAS` varchar(64) NOT NULL DEFAULT '',
+  `ROWS_AFFECTED` bigint unsigned DEFAULT NULL,
+  `TIDB_CPU` bigint NOT NULL DEFAULT '0',
+  `TIKV_CPU` bigint NOT NULL DEFAULT '0'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 CREATE TABLE `USER_PRIVILEGES` (
   `GRANTEE` varchar(81) DEFAULT NULL,
   `TABLE_CATALOG` varchar(512) DEFAULT NULL,
@@ -235,6 +260,17 @@ CREATE TABLE `CLUSTER_INFO` (
   `START_TIME` datetime DEFAULT NULL,
   `UPTIME` varchar(32) DEFAULT NULL,
   `SERVER_ID` bigint DEFAULT NULL COMMENT 'invalid if the configuration item `enable-global-kill` is set to FALSE'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+# `TIFLASH_REPLICA` was added to the served registry after the original capture;
+# captured from a running master tidb-server (92b9c752bc) verbatim.
+CREATE TABLE `TIFLASH_REPLICA` (
+  `TABLE_SCHEMA` varchar(64) DEFAULT NULL,
+  `TABLE_NAME` varchar(64) DEFAULT NULL,
+  `TABLE_ID` bigint DEFAULT NULL,
+  `REPLICA_COUNT` bigint DEFAULT NULL,
+  `LOCATION_LABELS` varchar(64) DEFAULT NULL,
+  `AVAILABLE` tinyint(1) DEFAULT NULL,
+  `PROGRESS` double DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 CREATE TABLE `TIDB_SERVERS_INFO` (
   `DDL_ID` varchar(64) DEFAULT NULL,

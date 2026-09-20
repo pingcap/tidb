@@ -13,6 +13,7 @@ build = "../../scripts/aggregate-tests.rs"
 # and RPC remain separate capabilities with their own future crates.
 
 [dependencies]
+prometheus = { version = "0.14", default-features = false }
 prost.workspace = true
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }

@@ -15,6 +15,7 @@
 //! Go `pkg/owner`: etcd-backed owner election and its local-store stand-in.
 
 mod mock;
+pub mod metrics;
 
 pub use mock::{MockGlobalState, MockGlobalStateSelector, MockManager, MOCK_GLOBAL_STATE_ENTRY};
 

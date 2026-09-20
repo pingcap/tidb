@@ -58,6 +58,7 @@ mod cache_db;
 mod checker;
 mod client;
 mod counter;
+pub mod client_go_metrics;
 pub mod driver;
 mod driver_error;
 mod error;

@@ -3533,6 +3533,7 @@ version = "0.0.0"
 name = "tidb-distsql"
 version = "0.0.0"
 dependencies = [
+ "prometheus 0.14.0",
  "prost 0.14.4",
  "tidb-chunk",
  "tidb-codec",
@@ -3552,6 +3553,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "getrandom 0.3.4",
+ "prometheus 0.14.0",
  "serde",
  "serde_json",
  "tidb-ast",
@@ -3572,6 +3574,7 @@ name = "tidb-dxf"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "prometheus 0.14.0",
  "rand 0.8.7",
  "serde",
  "serde_json",
@@ -3661,6 +3664,7 @@ dependencies = [
  "crossbeam-channel",
  "flate2",
  "hashbrown 0.15.5",
+ "prometheus 0.14.0",
  "prost 0.14.4",
  "serde",
  "serde_json",
@@ -3802,6 +3806,7 @@ name = "tidb-meta"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "prometheus 0.14.0",
  "regex",
  "serde",
  "serde_json",
@@ -3859,6 +3864,7 @@ version = "0.0.0"
 name = "tidb-owner"
 version = "0.0.0"
 dependencies = [
+ "prometheus 0.14.0",
  "tidb-pd-client",
 ]
 
@@ -4035,14 +4041,17 @@ dependencies = [
  "tidb-datatype",
  "tidb-ddl-notifier",
  "tidb-ddl-serverstate",
+ "tidb-ddl-session",
  "tidb-distsql",
  "tidb-domain",
+ "tidb-dxf",
  "tidb-errmsg",
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
  "tidb-hack",
  "tidb-log",
+ "tidb-meta",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
@@ -4067,6 +4076,7 @@ dependencies = [
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-util",
+ "tidb-stmtsummary",
  "tidb-syssession",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -4086,6 +4096,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "prometheus 0.14.0",
  "serde",
  "serde_json",
  "tidb-ast",
@@ -4352,6 +4363,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "prometheus 0.14.0",
  "serde",
  "serde_json",
  "tempfile",
@@ -4441,6 +4453,7 @@ dependencies = [
  "futures",
  "futures-timer",
  "hyper 1.10.1",
+ "prometheus 0.13.4",
  "prost 0.14.4",
  "serde_json",
  "tidb-codec",

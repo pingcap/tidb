@@ -129,3 +129,4 @@ pub mod vitess;
 /// Polling file watcher.
 pub mod watcher;
 pub mod zeropool;
+pub mod memory_metrics;

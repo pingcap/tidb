@@ -27,6 +27,7 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-vardef = { path = "../tidb-vardef" }
 tikv-client.workspace = true
+prometheus = { version = "0.13", default-features = false }
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true

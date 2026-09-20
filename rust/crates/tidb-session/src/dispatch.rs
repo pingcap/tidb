@@ -611,10 +611,23 @@ impl Session {
                     table_name
                 ))));
             };
-            let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST")
-                || table_name.eq_ignore_ascii_case("CLUSTER_PROCESSLIST")
-            {
+            let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
                 self.process_list_table_rows()
+            } else if table_name.eq_ignore_ascii_case("CLUSTER_PROCESSLIST") {
+                // Go's cluster machinery fills the INSTANCE column with each
+                // server's `ip:port` (pkg/executor/cluster_table_test.go's
+                // instance format).
+                let instance = self.cluster_instance_address();
+                self.process_list_table_rows()
+                    .into_iter()
+                    .map(|mut row| {
+                        row.insert(
+                            0,
+                            tidb_datatype::Datum::Bytes(instance.clone().into_bytes()),
+                        );
+                        row
+                    })
+                    .collect()
             } else if table_name.eq_ignore_ascii_case("TIDB_INDEX_USAGE") {
                 let visibility = self.schema_visibility();
                 let collector = std::sync::Arc::clone(&self.index_usage_collector);
