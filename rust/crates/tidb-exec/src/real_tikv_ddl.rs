@@ -53,6 +53,7 @@ use crate::cluster_ddl::{
 };
 use crate::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
+use crate::ddl_job_table::DdlJobTable;
 use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
@@ -1250,6 +1251,32 @@ pub fn load_active_persisted_ddl_jobs<
     timeout: Duration,
     min_job_id: i64,
 ) -> Result<Vec<Job>, ClusterDdlError> {
+    let mut cached = None;
+    load_active_persisted_ddl_jobs_cached(opener, timeout, min_job_id, &mut cached)
+}
+
+/// Scheduler-tick variant of [`load_active_persisted_ddl_jobs`] that keeps
+/// the located `mysql.tidb_ddl_job` table metadata across ticks.
+///
+/// Go's owner polls `mysql.tidb_ddl_job` through a session whose
+/// InfoSchema caches the system table, so a poll costs one indexed read of
+/// the job table and never a catalog walk. Re-deriving the table from a
+/// full [`load_cluster_catalog`] on every one-second tick re-parses every
+/// schema's `TableInfo` JSON each time and showed up as a double-digit
+/// percentage of node CPU under load. The bootstrap system table's layout
+/// does not change between ticks, so only its row scan is per-tick work;
+/// on any read error the cache is dropped so the next tick re-locates the
+/// table exactly like the uncached path.
+pub fn load_active_persisted_ddl_jobs_cached<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    min_job_id: i64,
+    cached_job_table: &mut Option<DdlJobTable>,
+) -> Result<Vec<Job>, ClusterDdlError> {
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
@@ -1261,15 +1288,29 @@ pub fn load_active_persisted_ddl_jobs<
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
-        let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
-        let table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        table
-            .load_from(&mut snapshot, min_job_id)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-            .into_iter()
-            .map(|active| active.job)
-            .collect()
+        if cached_job_table.is_none() {
+            let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
+            *cached_job_table = Some(
+                DdlJobTable::locate(&catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            );
+        }
+        // Requiring `&mut snapshot` means the cache can only hold table
+        // metadata; the row scan below is always against this tick's
+        // fresh snapshot.
+        let load = cached_job_table
+            .as_ref()
+            .expect("job table cache is populated above")
+            .load_from(&mut snapshot, min_job_id);
+        match load {
+            Ok(active) => active.into_iter().map(|active| active.job).collect(),
+            Err(error) => {
+                // A locate-time layout change (or a transient snapshot
+                // error) invalidates the cached table; the next tick
+                // re-derives it from the catalog like the uncached path.
+                *cached_job_table = None;
+                return Err(DdlPlanError::Encode(error.to_string()).into());
+            }
+        }
     };
     transaction
         .rollback()
@@ -1288,6 +1329,23 @@ pub fn load_min_persisted_ddl_job_id<
     timeout: Duration,
     previous_min_job_id: i64,
 ) -> Result<i64, ClusterDdlError> {
+    let mut cached = None;
+    load_min_persisted_ddl_job_id_cached(opener, timeout, previous_min_job_id, &mut cached)
+}
+
+/// Refresher variant of [`load_min_persisted_ddl_job_id`] that caches the
+/// located job table across refresh ticks for the same reason as
+/// [`load_active_persisted_ddl_jobs_cached`].
+pub fn load_min_persisted_ddl_job_id_cached<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    previous_min_job_id: i64,
+    cached_job_table: &mut Option<DdlJobTable>,
+) -> Result<i64, ClusterDdlError> {
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
@@ -1299,10 +1357,23 @@ pub fn load_min_persisted_ddl_job_id<
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
-        let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
-        crate::ddl_systable::SystemTableManager::new(&catalog)
-            .get_min_job_id(&mut snapshot, previous_min_job_id)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        if cached_job_table.is_none() {
+            let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
+            *cached_job_table = Some(
+                DdlJobTable::locate(&catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            );
+        }
+        let read = cached_job_table
+            .as_ref()
+            .expect("job table cache is populated above")
+            .min_job_id(&mut snapshot, previous_min_job_id);
+        match read {
+            Ok(minimum) => minimum.unwrap_or_default(),
+            Err(error) => {
+                *cached_job_table = None;
+                return Err(DdlPlanError::Encode(error.to_string()).into());
+            }
+        }
     };
     transaction
         .rollback()
