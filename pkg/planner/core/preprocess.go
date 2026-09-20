@@ -283,10 +283,95 @@ func getAllDBNames(node *ast.TableRefsClause) []pmodel.CIStr {
 	return dbNames
 }
 
-// extractTableName extracts the db name from the ast.Node for checking database read only.
+// resolveUpdatableTables collects updatable table names and registers synthesized
+// alias table names in resolveCtx.
+func (p *preprocessor) resolveUpdatableTables(node *ast.TableRefsClause) []*ast.TableName {
+	if node == nil {
+		return nil
+	}
+	resolver := &updatableTableListResolver{resolveCtx: p.resolveCtx}
+	node.Accept(resolver)
+	return resolver.updatableTableList
+}
+
+func (p *preprocessor) schemasForMatchingTables(
+	tables []*ast.TableName,
+	match func(*ast.TableName, *resolve.TableNameW) bool,
+) []pmodel.CIStr {
+	dbNames := make([]pmodel.CIStr, 0, 1)
+	for _, tbl := range tables {
+		tblW := p.resolveCtx.GetTableName(tbl)
+		if tblW == nil || tblW.DBInfo == nil || !match(tbl, tblW) {
+			continue
+		}
+		dbNames = append(dbNames, tblW.DBInfo.Name)
+	}
+	return dbNames
+}
+
+func updateAssignmentTargetsTable(tableInfo *model.TableInfo, columnName string) bool {
+	if columnName == model.ExtraHandleName.L {
+		// _tidb_rowid is a synthesized handle rather than a public column and is
+		// only assignable when the table uses an implicit row ID.
+		return !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle
+	}
+	for _, column := range tableInfo.Columns {
+		if column.State == model.StatePublic && column.Name.L == columnName {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *preprocessor) extractUpdateSchemas(node *ast.UpdateStmt) []pmodel.CIStr {
+	dbNames := make([]pmodel.CIStr, 0, len(node.List))
+	tables := p.resolveUpdatableTables(node.TableRefs)
+	for _, assignment := range node.List {
+		column := assignment.Column
+		if column.Schema.L != "" {
+			dbNames = append(dbNames, column.Schema)
+			continue
+		}
+
+		// Check every matching schema so name-resolution ambiguity cannot bypass
+		// the read-only guard. The planner reports invalid ambiguous assignments later.
+		dbNames = append(dbNames, p.schemasForMatchingTables(tables, func(tbl *ast.TableName, tblW *resolve.TableNameW) bool {
+			if tblW.TableInfo == nil || !updateAssignmentTargetsTable(tblW.TableInfo, column.Name.L) {
+				return false
+			}
+			return column.Table.L == "" || column.Table.L == tbl.Name.L
+		})...)
+	}
+	return dbNames
+}
+
+func (p *preprocessor) extractMultiDeleteSchemas(node *ast.DeleteStmt) []pmodel.CIStr {
+	dbNames := make([]pmodel.CIStr, 0, len(node.Tables.Tables))
+	updatableList := make(map[string]bool)
+	tableNameByKey := make(map[string]*ast.TableName)
+	collectTableName(node.TableRefs.TableRefs, &updatableList, &tableNameByKey)
+	for _, target := range node.Tables.Tables {
+		tbl, canUpdate, foundMatch := resolveMultiDeleteTarget(
+			target,
+			p.sctx.GetSessionVars().CurrentDB,
+			updatableList,
+			tableNameByKey,
+		)
+		if !foundMatch || !canUpdate {
+			// The planner reports the corresponding unknown or non-updatable table error.
+			continue
+		}
+		tblW := p.resolveCtx.GetTableName(tbl)
+		if tblW != nil && tblW.DBInfo != nil {
+			dbNames = append(dbNames, tblW.DBInfo.Name)
+		}
+	}
+	return dbNames
+}
+
+// extractSchema extracts the schemas modified by the statement for database read-only checks.
 func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	dbNames := make([]pmodel.CIStr, 0, 1)
-	currentDBName := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
@@ -322,30 +407,25 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.LoadDataStmt:
 		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.CreateSequenceStmt:
+		dbNames = append(dbNames, node.Name.Schema)
+	case *ast.AlterSequenceStmt:
+		dbNames = append(dbNames, node.Name.Schema)
+	case *ast.DropSequenceStmt:
+		for _, sequence := range node.Sequences {
+			dbNames = append(dbNames, sequence.Schema)
+		}
 	case *ast.InsertStmt:
 		dbNames = append(dbNames, getAllDBNames(node.Table)...)
 	case *ast.DeleteStmt:
 		if node.Tables != nil {
-			// multiple table delete statement
-			for _, tbl := range node.Tables.Tables {
-				dbName := tbl.Schema
-				if dbName.L == "" {
-					dbName = currentDBName
-				}
-				dbNames = append(dbNames, dbName)
-			}
+			dbNames = append(dbNames, p.extractMultiDeleteSchemas(node)...)
 		} else {
 			// single table delete statement
 			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
 		}
 	case *ast.UpdateStmt:
-		for _, set := range node.List {
-			dbName := set.Column.Schema
-			if dbName.L == "" {
-				dbName = currentDBName
-			}
-			dbNames = append(dbNames, dbName)
-		}
+		dbNames = append(dbNames, p.extractUpdateSchemas(node)...)
 	case *ast.SelectStmt:
 		if node.LockInfo != nil {
 			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||

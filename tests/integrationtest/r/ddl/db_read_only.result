@@ -304,11 +304,11 @@ table t1;
 id	a
 delete from db2.parent_0;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
-update db2.parent_1 set id_0 = 10;
+update db2.parent_1 set id = 10;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete from db2.parent_2;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
-update db2.parent_3 set id_3 = 10;
+update db2.parent_3 set id = 10;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
 alter schema db1 read only 0;
 drop database if exists read_only;
