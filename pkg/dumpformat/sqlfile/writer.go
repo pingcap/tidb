@@ -35,16 +35,16 @@ type Config struct {
 // Writer encodes rows into `INSERT INTO ... VALUES (..),(..);` statements and
 // writes them to an io.Writer, splitting at Config.StatementSize. The caller owns
 // buffering and file rotation and must call Close to end the last statement.
+// A failed Write may have written part of a row, so abandon the Writer and
+// discard its output instead of calling Close.
 type Writer struct {
 	w      io.Writer
 	cfg    *Config
 	kinds  []dumpformat.FieldKind
 	prefix []byte
 	buf    []byte
-	// written counts the bytes handed to w; produced adds what buf still holds.
-	// stmtStart is produced at the moment the open statement began, so the
-	// statement and file sizes are differences of produced rather than separate
-	// counters.
+	// written counts the bytes handed to w; stmtStart is produced() when the
+	// open statement began.
 	written     uint64
 	stmtStart   uint64
 	inStatement bool
@@ -99,9 +99,9 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 	return sw.flush()
 }
 
-// appendValue appends one field's encoding to buf like AppendValue, but encodes
-// a quoted value in pieces of at most dumpformat.MaxBufferedValueSize input
-// bytes and writes buf out whenever it reaches that size.
+// appendValue appends one field's encoding to buf like AppendValue, but in
+// pieces of at most dumpformat.MaxBufferedValueSize input bytes, flushing
+// between them.
 func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) error {
 	// NULL (a nil val) and numbers are written unquoted and are never large.
 	isNull := val == nil

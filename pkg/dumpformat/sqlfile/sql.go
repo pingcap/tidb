@@ -53,8 +53,7 @@ func appendOpenQuote(dst []byte, kind dumpformat.FieldKind) []byte {
 // appendQuotedBody appends the part of a quoted value between its quotes (hex
 // digits for binary values, the escaped text for strings) for the first
 // min(len(val), limit) bytes of val, and returns how many bytes it encoded.
-// Every input byte is encoded on its own, so encoding val piece by piece yields
-// the same bytes as encoding it at once.
+// Every input byte is encoded on its own, so any split yields the same bytes.
 func appendQuotedBody(dst, val []byte, limit int, kind dumpformat.FieldKind, escapeBackslash bool) ([]byte, int) {
 	n := min(len(val), limit)
 	if kind == dumpformat.KindBytes {

@@ -139,8 +139,10 @@ func TestCSVWriterRowWidthMismatch(t *testing.T) {
 	require.ErrorContains(t, err, "row has 1 fields, want 2")
 }
 
-// refField encodes one field at once with the standard library, as the
-// reference that Write must reproduce however it splits the value.
+// refField encodes one field at once, as the reference that Write must
+// reproduce however it splits the value. Its escape-backslash branch reuses the
+// package's own helper, so it only checks that both encodings agree there;
+// TestCSVWriterBackslashEscape checks the escaping itself.
 func refField(val []byte, kind dumpformat.FieldKind, cfg *Config) string {
 	if val == nil {
 		return string(cfg.NullValue)

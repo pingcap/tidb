@@ -23,7 +23,8 @@ import (
 )
 
 // Writer is a single-stream CSV encoder that writes framed/escaped rows to an
-// io.Writer. The caller owns buffering and file rotation.
+// io.Writer. The caller owns buffering and file rotation. A failed Write may
+// have written part of a row, so abandon the Writer and discard its output.
 type Writer struct {
 	w       io.Writer
 	cfg     *Config
