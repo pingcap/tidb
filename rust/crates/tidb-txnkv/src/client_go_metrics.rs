@@ -260,3 +260,33 @@ fn materialize_dashboard_series() {
     let _ = collector_gauge_vec("TiKVStoreLivenessGauge");
     let _ = collector_gauge_vec("TiKVMinSafeTSGapSeconds");
 }
+
+/// Materializes the per-store series for an embedded (in-process) store.
+/// Go's unistore deployment observes its single mock store through
+/// client-go, so the store-scoped gauges exist for it; the embedded store's
+/// own id (`tidb-unistore`'s `IN_PROCESS_STORE_ID`) is the faithful label.
+pub fn init_embedded_store_series(store_id: u64) {
+    init_dashboard_series();
+    let store = store_id.to_string();
+    // client-go initializes the client-side slow score at 1
+    // (`newAtomicSlowScore(1)`); every other per-store series starts at zero
+    // until the corresponding client activity occurs.
+    if let Some(gauge_vec) = collector_gauge_vec("TiKVStoreSlowScoreGauge") {
+        gauge_vec.with_label_values(&[&store]).set(1.0);
+    }
+    if let Some(gauge_vec) = collector_gauge_vec("TiKVFeedbackSlowScoreGauge") {
+        gauge_vec.with_label_values(&[&store]).set(0.0);
+    }
+    if let Some(gauge_vec) = collector_gauge_vec("TiKVStoreLivenessGauge") {
+        gauge_vec.with_label_values(&[&store]).set(0.0);
+    }
+    if let Some(gauge_vec) = collector_gauge_vec("TiKVMinSafeTSGapSeconds") {
+        gauge_vec.with_label_values(&[&store]).set(0.0);
+    }
+    if let Some(counter_vec) = collector_counter_vec("TiKVSafeTSUpdateCounter") {
+        let _ = counter_vec.with_label_values(&["success", &store]);
+    }
+    if let Some(counter_vec) = collector_counter_vec("TiKVRegionErrorCounter") {
+        let _ = counter_vec.with_label_values(&["epoch_not_match", &store]);
+    }
+}

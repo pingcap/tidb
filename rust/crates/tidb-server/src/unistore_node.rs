@@ -40,7 +40,7 @@ use tidb_txnkv::{SharedReadAuthority, SharedReadOpener};
 use tidb_unistore::client::InProcessClient;
 use tidb_unistore::kv_handler::KvHandler;
 use tidb_unistore::mvcc_store::MvccStore;
-use tidb_unistore::region_loader::{InProcessRegionLoader, IN_PROCESS_CLUSTER_ID};
+use tidb_unistore::region_loader::{InProcessRegionLoader, IN_PROCESS_CLUSTER_ID, IN_PROCESS_STORE_ID};
 use tidb_unistore::tso::InProcessPd;
 
 use crate::node_config::NodeConfig;
@@ -313,6 +313,9 @@ pub(crate) fn run_unistore_cluster_session(
 ) -> Result<(), crate::real_tikv_node::RunConfiguredNodeError> {
     use crate::real_tikv_node::RunConfiguredNodeError;
 
+    // Go's unistore client-go observes the single in-process store (id 1);
+    // materialize the store-scoped dashboard series for it.
+    tidb_txnkv::client_go_metrics::init_embedded_store_series(IN_PROCESS_STORE_ID);
     let users = configured_account_store(&config)?;
     let users = Arc::new(users);
     let stack =
