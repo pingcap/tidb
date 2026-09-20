@@ -107,6 +107,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
+	InitExternalWorkloadMetrics()
 	InitStmtSummaryMetrics()
 	dxfmetric.InitDistTaskMetrics()
 	ingestmetric.InitIngestMetrics()
@@ -196,6 +197,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryRPCHistogram)
 	prometheus.MustRegister(QueryProcessedKeyHistogram)
+	prometheus.MustRegister(IARemoteReadSegmentCount)
+	prometheus.MustRegister(IARemoteReadSegmentSize)
+	prometheus.MustRegister(IARemoteReadSegmentWaitDuration)
 	prometheus.MustRegister(QueryTotalCounter)
 	prometheus.MustRegister(AffectedRowsCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
@@ -268,6 +272,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TxnStatusEnteringCounter)
 	prometheus.MustRegister(TxnDurationHistogram)
 	prometheus.MustRegister(LastCheckpoint)
+	prometheus.MustRegister(ExternalStorageCheckpoint)
 	prometheus.MustRegister(AdvancerOwner)
 	prometheus.MustRegister(AdvancerTickDuration)
 	prometheus.MustRegister(GetCheckpointBatchSize)
@@ -290,6 +295,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLInsertRowsCount)
 	prometheus.MustRegister(TTLWatermarkDelay)
 	prometheus.MustRegister(TTLEventCounter)
+
+	prometheus.MustRegister(ExternalWorkloadTaskCounter)
 
 	prometheus.MustRegister(timermetrics.TimerEventCounter)
 
@@ -337,24 +344,12 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindingCacheNumBindings)
 	prometheus.MustRegister(InternalSessions)
 	prometheus.MustRegister(ActiveUser)
-	prometheus.MustRegister(RUV2ResultChunkCells)
-	prometheus.MustRegister(RUV2ExecutorL1)
-	prometheus.MustRegister(RUV2ExecutorL2)
-	prometheus.MustRegister(RUV2ExecutorL3)
-	prometheus.MustRegister(RUV2ExecutorL5InsertRows)
-	prometheus.MustRegister(RUV2PlanCnt)
-	prometheus.MustRegister(RUV2PlanDeriveStatsPaths)
-	prometheus.MustRegister(RUV2ResourceManagerReadCnt)
-	prometheus.MustRegister(RUV2ResourceManagerWriteCnt)
-	prometheus.MustRegister(RUV2SessionParserTotal)
-	prometheus.MustRegister(RUV2TxnCnt)
-	prometheus.MustRegister(RUV2TiKVKVEngineCacheMiss)
-	prometheus.MustRegister(RUV2TiKVCoprocessorExecutorIterations)
-	prometheus.MustRegister(RUV2TiKVCoprocessorResponseBytes)
-	prometheus.MustRegister(RUV2TiKVRaftstoreStoreWriteTriggerWB)
-	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysBatchGet)
-	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysGet)
-	prometheus.MustRegister(RUV2TiKVCoprocessorWorkTotal)
+	prometheus.MustRegister(RUV2Total)
+	prometheus.MustRegister(RUV2TTLTotal)
+	prometheus.MustRegister(RUV2BySQLType)
+	prometheus.MustRegister(RUV2ByEngine)
+	prometheus.MustRegister(RUV2Unit)
+	prometheus.MustRegister(RUV2Statements)
 
 	prometheus.MustRegister(NetworkTransmissionStats)
 
@@ -403,6 +398,7 @@ func RegisterMetrics() {
 	// StmtSummary
 	prometheus.MustRegister(StmtSummaryWindowRecordCount)
 	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+	prometheus.MustRegister(StmtSummaryEvictedLogCounter)
 
 	// Channelz
 	setupChannelzCollector()

@@ -254,6 +254,54 @@ func timestamp(t *testing.T, s string) int64 {
 	return tt.UnixMilli()
 }
 
+func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.Local
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+
+	minTime, err := types.MinDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	maxTime, err := types.MaxDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	startTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.Local)
+	endTime := time.Date(2020, 1, 2, 0, 0, 0, 0, time.Local)
+	cases := []struct {
+		sql   string
+		start time.Time
+		end   time.Time
+	}{
+		{
+			sql:   "select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'",
+			start: startTime,
+			end:   maxTime,
+		},
+		{
+			sql:   "select * from information_schema.statements_summary where summary_begin_time <= '2020-01-02 00:00:00'",
+			start: minTime,
+			end:   endTime,
+		},
+	}
+
+	p := parser.New()
+	for _, ca := range cases {
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, p, ca.sql)
+		require.True(t, ok, ca.sql)
+		extractor, ok := logicalMemTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+		require.True(t, ok, ca.sql)
+		require.NotNil(t, extractor.CoarseTimeRange, ca.sql)
+		require.Equal(t, ca.start, extractor.CoarseTimeRange.StartTime, ca.sql)
+		require.Equal(t, ca.end, extractor.CoarseTimeRange.EndTime, ca.sql)
+	}
+
+	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery("explain select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'").MultiCheckContain([]string{
+		"end_time: 9999-12-31 23:59:59.999999",
+	})
+}
+
 func TestClusterLogTableExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -443,6 +491,13 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			endTime:   timestamp(t, "2019-10-11 10:10:10") - 1,
 		},
 		{
+			sql:       "select * from information_schema.cluster_log where '2019-10-10 10:10:10' < time and '2019-10-11 10:10:10' > time",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			startTime: timestamp(t, "2019-10-10 10:10:10") + 1,
+			endTime:   timestamp(t, "2019-10-11 10:10:10") - 1,
+		},
+		{
 			sql:         "select * from information_schema.cluster_log where time>='2019-10-12 10:10:10' and time<'2019-10-11 10:10:10'",
 			nodeTypes:   set.NewStringSet(),
 			instances:   set.NewStringSet(),
@@ -532,6 +587,41 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			level:     set.NewStringSet("debug", "error"),
+		},
+		{
+			// ILIKE is case-insensitive while the pattern is matched
+			// case-sensitively by the remote log search, so it is pushed down as a
+			// case-insensitive group -- an "ERROR" line still matches '%error%'.
+			// The predicate stays for a scalar recheck (see the executor test in
+			// TestClusterLogTableIlike), and a pattern is still produced so the
+			// retriever does not reject the scan as a full-log scan.
+			sql:       "select * from information_schema.cluster_log where message ilike '%error%'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*error.*$)"},
+		},
+		{
+			// Same for an ILIKE carrying a non-default ESCAPE ('#%' is a literal '%').
+			sql:       "select * from information_schema.cluster_log where message ilike '%error#%%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*error%.*$)"},
+		},
+		{
+			// In a DNF the scoped (?i:...) keeps the case-insensitive branch from
+			// leaking case folding onto the case-sensitive one across the '|'.
+			sql:       "select * from information_schema.cluster_log where (message ilike '%pd%' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*pd.*$)|^.*tikv.*$"},
+		},
+		{
+			// A case-sensitive LIKE still pushes down, honouring a custom ESCAPE
+			// so the pattern matches the predicate ('#%' is a literal '%').
+			sql:       "select * from information_schema.cluster_log where message like '%a#%b%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"^.*a%b.*$"},
 		},
 	}
 	for _, ca := range cases {
@@ -631,6 +721,12 @@ func TestMetricTableExtractor(t *testing.T) {
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
 			startTime: parseTime(t, "2019-10-10 10:10:10"),
 			endTime:   parseTime(t, "2019-10-10 10:20:10"),
+		},
+		{
+			sql:       "select * from metrics_schema.tidb_query_duration where '2019-10-10 10:10:10' < time and '2019-10-11 10:10:10' > time",
+			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
+			startTime: parseTime(t, "2019-10-10 10:10:10.001"),
+			endTime:   parseTime(t, "2019-10-11 10:10:09.999"),
 		},
 		{
 			sql:         "select * from metrics_schema.tidb_query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
@@ -1138,6 +1234,14 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
 			startTime:      timestamp(t, "2019-10-10 10:10:10"),
+			endTime:        timestamp(t, "2019-10-11 10:10:10") - 1,
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
+		},
+		{
+			sql:            "select * from information_schema.tidb_hot_regions_history where '2019-10-10 10:10:10' < update_time and '2019-10-11 10:10:10' > update_time",
+			startTime:      timestamp(t, "2019-10-10 10:10:10") + 1,
 			endTime:        timestamp(t, "2019-10-11 10:10:10") - 1,
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},

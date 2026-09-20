@@ -31,6 +31,8 @@ type Config interface {
 	// GetSubscriberErrorStartPollThreshold returns the threshold of begin polling the checkpoint
 	// when the subscriber meets error.
 	GetSubscriberErrorStartPollThreshold() time.Duration
+	// GetResolveLockInterval returns how long an unchanged checkpoint waits before resolving locks.
+	GetResolveLockInterval() time.Duration
 	// The maximum lag could be tolerated for the checkpoint lag.
 	GetCheckPointLagLimit() time.Duration
 }

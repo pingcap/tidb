@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
@@ -31,9 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -103,10 +106,151 @@ func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 	require.NoError(t, err)
 }
 
+func execDDL(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	switch stmt := stmt.(type) {
+	case *ast.CreateTableStmt:
+		execCreate(t, tracker, sql)
+		return
+	case *ast.AlterTableStmt:
+		execAlter(t, tracker, sql)
+		return
+	case *ast.CreateIndexStmt:
+		sctx := mock.NewContext()
+		err = tracker.CreateIndex(sctx, stmt)
+	default:
+		require.Failf(t, "unsupported DDL", "%T", stmt)
+	}
+	require.NoError(t, err)
+}
+
 func mustTableByName(t *testing.T, tracker schematracker.SchemaTracker, schema, table string) *model.TableInfo {
 	tblInfo, err := tracker.TableByName(context.Background(), ast.NewCIStr(schema), ast.NewCIStr(table))
 	require.NoError(t, err)
 	return tblInfo
+}
+
+func TestSchemaTrackerAddPartitionRebuildsStorageClass(t *testing.T) {
+	tests := []struct {
+		name         string
+		create       string
+		alter        string
+		expectedTier string
+	}{
+		{
+			name: "range expression",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"300"}}'
+partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`,
+			alter:        `alter table test.t add partition (partition p2 values less than (100 + 200))`,
+			expectedTier: model.StorageClassTierIA,
+		},
+		{
+			name: "range expression out of scope",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"200"}}'
+partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`,
+			alter:        `alter table test.t add partition (partition p2 values less than (100 + 200))`,
+			expectedTier: model.StorageClassTierStandard,
+		},
+		{
+			name: "list expression",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["4"]}}'
+partition by list (id) (partition p0 values in (1, 2))`,
+			alter:        `alter table test.t add partition (partition p1 values in (2 + 2))`,
+			expectedTier: model.StorageClassTierIA,
+		},
+		{
+			name: "list expression out of scope",
+			create: `create table test.t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["5"]}}'
+partition by list (id) (partition p0 values in (1, 2))`,
+			alter:        `alter table test.t add partition (partition p1 values in (2 + 2))`,
+			expectedTier: model.StorageClassTierStandard,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tracker := schematracker.NewSchemaTracker(2)
+			tracker.CreateTestDB(nil)
+			execCreate(t, tracker, tt.create)
+			execAlter(t, tracker, tt.alter)
+
+			tblInfo := mustTableByName(t, tracker, "test", "t")
+			require.Equal(t, tt.expectedTier, tblInfo.Partition.Definitions[len(tblInfo.Partition.Definitions)-1].StorageClassTier)
+		})
+	}
+
+	t.Run("show create propagates invalid storage class engine attribute", func(t *testing.T) {
+		tracker := schematracker.NewSchemaTracker(2)
+		tracker.CreateTestDB(nil)
+		execCreate(t, tracker, "create table test.t (id int)")
+
+		tblInfo := mustTableByName(t, tracker, "test", "t")
+		tblInfo.EngineAttribute = `{"storage_class":`
+		checkShowCreateTableError(t, tblInfo, "unexpected end of JSON input")
+	})
+}
+
+func requireExpressionIndexHiddenColumnsPublic(t *testing.T, tblInfo *model.TableInfo) {
+	t.Helper()
+
+	found := false
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		for _, idxCol := range idx.Columns {
+			col := tblInfo.Columns[idxCol.Offset]
+			if !col.Hidden || !col.IsGenerated() {
+				continue
+			}
+			found = true
+			require.Equal(t, model.StatePublic, col.State)
+		}
+	}
+	require.True(t, found, "table %s should contain at least one public expression index hidden column", tblInfo.Name.O)
+}
+
+func TestExpressionIndexHiddenColumnState(t *testing.T) {
+	cases := []struct {
+		name string
+		ddls []string
+	}{
+		{
+			name: "create table",
+			ddls: []string{
+				"create table test.t (id int primary key, name varchar(64), unique key uk_lower_name ((lower(name))))",
+			},
+		},
+		{
+			name: "create index",
+			ddls: []string{
+				"create table test.t (id int primary key, name varchar(64))",
+				"create unique index uk_lower_name on test.t ((lower(name)))",
+			},
+		},
+		{
+			name: "alter table add index",
+			ddls: []string{
+				"create table test.t (id int primary key, name varchar(64))",
+				"alter table test.t add unique key uk_lower_name ((lower(name)))",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := schematracker.NewSchemaTracker(2)
+			tracker.CreateTestDB(nil)
+			for _, ddl := range tc.ddls {
+				execDDL(t, tracker, ddl)
+			}
+
+			tblInfo := mustTableByName(t, tracker, "test", "t")
+			requireExpressionIndexHiddenColumnsPublic(t, tblInfo)
+		})
+	}
 }
 
 func TestAlterPK(t *testing.T) {
@@ -173,6 +317,14 @@ func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected strin
 	require.Equal(t, expected, result.String())
 }
 
+func checkShowCreateTableError(t *testing.T, tblInfo *model.TableInfo, expectedErr string) {
+	sctx := mock.NewContext()
+
+	result := bytes.NewBuffer(make([]byte, 0, 512))
+	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	require.ErrorContains(t, err, expectedErr)
+}
+
 func TestIndexLength(t *testing.T) {
 	// copy TestIndexLength in db_integration_test.go
 	sql := "create table test.t(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));"
@@ -219,11 +371,14 @@ func TestCreateTableWithIndex(t *testing.T) {
 
 	sql = "alter table test.t rename index idx_1 to idx_1_1"
 	execAlter(t, tracker, sql)
+	sql = "alter table test.t add index idx_1 ((cast(col_1 as char(64) array)))"
+	execAlter(t, tracker, sql)
 
 	tblInfo := mustTableByName(t, tracker, "test", "t")
 	expected := "CREATE TABLE `t` (\n" +
 		"  `col_1` json DEFAULT NULL,\n" +
-		"  KEY `idx_1_1` ((cast(`col_1` as char(64) array)))\n" +
+		"  KEY `idx_1_1` ((cast(`col_1` as char(64) array))),\n" +
+		"  KEY `idx_1` ((cast(`col_1` as char(64) array)))\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	checkShowCreateTable(t, tblInfo, expected)
 }
@@ -546,4 +701,116 @@ PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
 
 	sql = "ALTER TABLE test.employees11 DROP PARTITION pEast;"
 	execAlter(t, tracker, sql)
+}
+
+func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next date_add(now(), interval 1 hour)"))
+	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))
+	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+
+	stmt := parseStmt("create materialized view log on test.t (a) purge start with now() next now()")
+	stmt.Purge.Next = nil
+	err = tracker.CreateMaterializedViewLog(sctx, stmt)
+	require.Truef(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "err %v", err)
+	require.ErrorContains(t, err, "PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+}
+
+func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+	execCreate(t, tracker, "create table test.mv (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a)")))
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.`$mlog$t` (a)"))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "$mlog$t", "BASE TABLE").Error(), err.Error())
+
+	mvInfo := mustTableByName(t, tracker, "test", "mv")
+	mvInfo.MaterializedView = &model.MaterializedViewInfo{}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), mvInfo))
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.mv (a)"))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
+}
+
+func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	baseName := strings.Repeat("t", mysql.MaxTableNameLength)
+	execCreate(t, tracker, fmt.Sprintf("create table test.`%s` (a int)", baseName))
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(fmt.Sprintf("create materialized view log on test.`%s` (a)", baseName), "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, stmt.(*ast.CreateMaterializedViewLogStmt)))
+
+	mlogName := model.MaterializedViewLogTableName(ast.NewCIStr(baseName))
+	require.Equal(t, mysql.MaxTableNameLength, len([]rune(mlogName.O)))
+	mlogInfo := mustTableByName(t, tracker, "test", mlogName.O)
+	require.NotNil(t, mlogInfo.MaterializedViewLog)
+}
+
+func TestDropMaterializedViewLog(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	createStmt, err := p.ParseOneStmt("create materialized view log on test.t (a)", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, createStmt.(*ast.CreateMaterializedViewLogStmt)))
+
+	dropStmt, err := p.ParseOneStmt("drop materialized view log on test.t", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.DropMaterializedViewLog(sctx, dropStmt.(*ast.DropMaterializedViewLogStmt)))
+
+	_, err = tracker.TableByName(context.Background(), ast.NewCIStr("test"), model.MaterializedViewLogTableName(ast.NewCIStr("t")))
+	require.ErrorIs(t, err, infoschema.ErrTableNotExists)
+	baseTable := mustTableByName(t, tracker, "test", "t")
+	require.Nil(t, baseTable.MaterializedViewBase)
+}
+
+func TestDropMaterializedViewLogWithDependentMaterializedView(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	createStmt, err := p.ParseOneStmt("create materialized view log on test.t (a)", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, createStmt.(*ast.CreateMaterializedViewLogStmt)))
+
+	mlogName := model.MaterializedViewLogTableName(ast.NewCIStr("t"))
+	mlogTable := mustTableByName(t, tracker, "test", mlogName.O).Clone()
+	mlogTable.MaterializedViewLog.DependentMViewIDs = []int64{123}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), mlogTable))
+
+	dropStmt, err := p.ParseOneStmt("drop materialized view log on test.t", "", "")
+	require.NoError(t, err)
+	err = tracker.DropMaterializedViewLog(sctx, dropStmt.(*ast.DropMaterializedViewLogStmt))
+	require.ErrorContains(t, err, "dependent materialized views exist")
+	require.NotNil(t, mustTableByName(t, tracker, "test", mlogName.O).MaterializedViewLog)
 }

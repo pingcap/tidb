@@ -15,18 +15,24 @@
 package main
 
 import (
+	"context"
 	"os"
 	"syscall"
 	"testing"
+	"time"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
@@ -71,6 +77,29 @@ func TestExitCodeForSignal(t *testing.T) {
 			require.Equal(t, tt.want, exitCodeForSignal(tt.sig))
 		})
 	}
+}
+
+func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
+	originalArgs := os.Args
+	originalStarterAdditionalParams := starterAdditionalParams
+	os.Args = []string{"tidb-server"}
+	t.Cleanup(func() {
+		os.Args = originalArgs
+		starterAdditionalParams = originalStarterAdditionalParams
+	})
+
+	fset := initFlagSet()
+	require.NoError(t, fset.Parse([]string{
+		"--keyspace-activate=true",
+		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,enable-rg-fallback=true",
+	}))
+
+	cfg := config.NewConfig()
+	cfg.DeployMode = deploymode.Starter
+	overrideConfig(cfg, fset)
+	require.True(t, cfg.KeyspaceActivateMode)
+	require.True(t, cfg.StarterParams.EnableRGFallback)
+	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,enable-rg-fallback=true", *starterAdditionalParams)
 }
 
 func TestSetGlobalVars(t *testing.T) {
@@ -161,6 +190,97 @@ func TestInitDeployMode(t *testing.T) {
 	})
 }
 
+type gcv2InitManager struct {
+	extworkload.Manager
+	gcLifeTime time.Duration
+	initCnt    int
+}
+
+func (m *gcv2InitManager) Role() config.ExternalWorkloadRole {
+	return config.RoleMaster
+}
+
+func (*gcv2InitManager) Meta() *keyspacepb.KeyspaceMeta {
+	return &keyspacepb.KeyspaceMeta{
+		Config: map[string]string{
+			pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+		},
+	}
+}
+
+func (m *gcv2InitManager) InitializeGCV2(_ context.Context, gcLifeTime time.Duration) error {
+	m.initCnt++
+	m.gcLifeTime = gcLifeTime
+	return nil
+}
+
+func TestInitializeExternalWorkloadGCV2UsesEffectiveGCLifeTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_gc_life_time = '24h'")
+
+	mgr := &gcv2InitManager{}
+	initializeExternalWorkloadGCV2(context.Background(), store, mgr)
+
+	require.Equal(t, 1, mgr.initCnt)
+	require.Equal(t, 24*time.Hour, mgr.gcLifeTime)
+}
+
+func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	t.Cleanup(restoreConfig)
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.EnableManagerNotifier = true
+		conf.StarterParams.ManagerAddr = "manager.example.com:8000"
+	})
+
+	originalStarterAdditionalParams := starterAdditionalParams
+	t.Cleanup(func() {
+		starterAdditionalParams = originalStarterAdditionalParams
+	})
+
+	_, err := createMgrClientForStarter()
+	require.ErrorContains(t, err, "manager notifier requires --starter-additional-params")
+
+	duplicatedParam := "pod-name=pod-1,pod-name=pod-2,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &duplicatedParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `starter additional param "pod-name" is duplicated`)
+
+	unknownParam := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,unknown=value"
+	starterAdditionalParams = &unknownParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `unknown starter additional param "unknown"`)
+
+	invalidBoolParam := "enable-rg-fallback=definitely"
+	starterAdditionalParams = &invalidBoolParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `starter additional param "enable-rg-fallback" must be a bool`)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.ManagerAddr = ""
+	})
+	missingManagerNamespace := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &missingManagerNamespace
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, "manager notifier requires manager-addr config or manager-namespace in --starter-additional-params")
+
+	validParams := "manager-namespace=manager-ns,pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &validParams
+	cli, err := createMgrClientForStarter()
+	require.NoError(t, err)
+	require.NotNil(t, cli)
+}
+
 func TestSetVersionByConfigInNextGen(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("only for nextgen kernel")
@@ -201,4 +321,72 @@ func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
 	require.NoError(t, initVersions(config.GetGlobalConfig()))
 	require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
 	require.Equal(t, "8.0.11-TiDB-CLOUD.202603.0", mysql.ServerVersion)
+}
+
+func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	restore := config.RestoreFunc()
+	defer restore()
+
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeTiKV
+		conf.KeyspaceName = "ks"
+	})
+	err := prepareKeyspaceObservabilityForStarter(nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"keyspace_name": "ks"}, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				MetricLabel:  "keyspace_meta_label_a",
+				SlowLogField: "Keyspace_meta_slow_a",
+				StmtLogField: "stmt_meta_a",
+				Required:     true,
+			}},
+		}
+	})
+
+	err = prepareKeyspaceObservabilityForStarter(map[string]string{
+		"meta_a": "value_a",
+	})
+	require.NoError(t, err)
+
+	cfg := config.GetGlobalConfig()
+	require.Equal(t, map[string]string{"keyspace_name": "ks", "keyspace_meta_label_a": "value_a"}, cfg.GetKeyspaceObservabilityMetricLabels())
+	require.Equal(t, []config.KeyspaceObservabilityLogField{
+		{Name: "Keyspace_meta_slow_a", Value: "value_a"},
+	}, cfg.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, cfg.GetKeyspaceObservabilityStmtLogFields())
+}
+
+func TestSetupKeyspaceObservabilityForStarterSkipsNonTiKV(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	restore := config.RestoreFunc()
+	defer restore()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeUniStore
+		conf.Path = "invalid-pd-path"
+		conf.KeyspaceName = "test_keyspace"
+	})
+
+	require.NoError(t, prepareKeyspaceObservabilityForStarter(nil))
+	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 }

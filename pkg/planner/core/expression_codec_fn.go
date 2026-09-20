@@ -112,7 +112,7 @@ func (tidbCodecFuncHelper) extractTablePartition(str string) (table, partition s
 		return str, ""
 	}
 	end := strings.IndexByte(str, ')')
-	if end == -1 {
+	if end == -1 || end < start {
 		return str, ""
 	}
 	return str[:start], str[start+1 : end]

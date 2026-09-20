@@ -96,6 +96,7 @@ go_test(
         "//pkg/objstore/storeapi",
         "//pkg/parser",
         "//pkg/parser/mysql",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/filter",

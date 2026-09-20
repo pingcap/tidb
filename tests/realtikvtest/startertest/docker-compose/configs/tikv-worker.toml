@@ -1,0 +1,17 @@
+addr = "0.0.0.0:19000"
+cop-addr = ""
+data-dir = "/var/lib/tikv-worker"
+log-level = "info"
+register = false
+
+[dfs]
+backend = "s3"
+prefix = "cse"
+s3-endpoint = "http://minio:9000"
+s3-key-id = "minioadmin"
+s3-secret-key = "minioadmin"
+s3-bucket = "tidbcloud-local-dfs"
+s3-region = "us-west-2"
+
+[pd]
+endpoints = ["http://pd:2379"]

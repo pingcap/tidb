@@ -19,6 +19,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
@@ -155,8 +156,8 @@ func TestBuildIndexDupTaskEncodesKeyspaceRange(t *testing.T) {
 	require.NoError(t, err)
 
 	tikvCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
-		Id:   42,
-		Name: "test_keyspace",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+		Name:     "test_keyspace",
 	})
 	require.NoError(t, err)
 
@@ -251,6 +252,17 @@ func TestRetrieveKeyAndValueFromErrFoundDuplicateKeys(t *testing.T) {
 
 	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data1RowKey, data1RowValue)
 	rawKey, rawValue, err := ingestctrl.RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
+	require.NoError(t, err)
+	require.Equal(t, data1RowKey, rawKey)
+	require.Equal(t, data1RowValue, rawValue)
+
+	originalMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalMode) })
+	errors.RedactLogEnabled.Store(errors.RedactLogEnable)
+
+	// ErrFoundDuplicateKeys carries raw KV bytes for downstream duplicate decoding.
+	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data1RowKey, data1RowValue)
+	rawKey, rawValue, err = ingestctrl.RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
 	require.NoError(t, err)
 	require.Equal(t, data1RowKey, rawKey)
 	require.Equal(t, data1RowValue, rawValue)

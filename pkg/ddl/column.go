@@ -137,7 +137,7 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 	return nil
 }
 
-func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(jobCtx, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
@@ -213,6 +213,13 @@ func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 
+		// Clean up masking policies associated with the dropped column.
+		if !job.IsRollingback() {
+			if err := w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
+				return ver, errors.Wrapf(err, "failed to drop masking policies on column %d of table %d", colInfo.ID, tblInfo.ID)
+			}
+		}
+
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
@@ -252,6 +259,12 @@ func checkDropColumn(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *mod
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, ifExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
+	if colInfo.State == model.StatePublic {
+		if err = checkDropColumnWithMLogBaseConstraint(jobCtx.metaMut, job.SchemaID, tblInfo, colName); err != nil {
+			job.State = model.JobStateCancelled
+			return nil, nil, nil, false, errors.Trace(err)
+		}
+	}
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
@@ -264,6 +277,32 @@ func checkDropColumn(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *mod
 	}
 	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
 	return tblInfo, colInfo, idxInfos, false, nil
+}
+
+func checkDropColumnWithMLogBaseConstraint(
+	t *meta.Mutator,
+	schemaID int64,
+	tblInfo *model.TableInfo,
+	colName ast.CIStr,
+) error {
+	if tblInfo.MaterializedViewBase == nil || tblInfo.MaterializedViewBase.MLogID == 0 {
+		return nil
+	}
+
+	mlogTableInfo, err := t.GetTable(schemaID, tblInfo.MaterializedViewBase.MLogID)
+	if err != nil || mlogTableInfo == nil || mlogTableInfo.MaterializedViewLog == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"ALTER TABLE on base table with invalid materialized view log metadata",
+		)
+	}
+	for _, mlogCol := range mlogTableInfo.MaterializedViewLog.Columns {
+		if mlogCol.L == colName.L {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("ALTER TABLE on base table column %s referenced by materialized view log", colName.L),
+			)
+		}
+	}
+	return nil
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName ast.CIStr) error {

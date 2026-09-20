@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -38,6 +39,8 @@ import (
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
 	exec.BaseExecutor
+
+	writeStats *execdetails.WriteRuntimeStats
 
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
@@ -91,7 +94,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		vardef.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := exec.RetTypes(e.Children(0))
 	datumRow := make([]types.Datum, 0, len(fields))
-	chk := exec.TryNewCacheChunk(e.Children(0))
+	chk := newDMLChildChunk(e, fields, e.Children(0).InitCap())
 	columns := e.Children(0).Schema().Columns
 	rowCount := 0
 	if len(columns) != len(fields) {
@@ -113,6 +116,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		if chk.NumRows() == 0 {
 			break
 		}
+		recordWriteCPUWork(e.writeStats, tbl, chk.NumRows())
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
@@ -244,7 +248,9 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		var err error
+		var processedRows int
 		rowMap.Range(func(h kv.Handle, val handleInfoPair) bool {
+			processedRows++
 			if e.ignoreErr {
 				var ignored bool
 				ignored, err = checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks[id], val.handleVal)
@@ -261,6 +267,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
 			return err == nil
 		})
+		recordWriteCPUWork(e.writeStats, e.tblID2Table[id], processedRows)
 		if err != nil {
 			return err
 		}
@@ -308,12 +315,19 @@ func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FK
 
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
+	if e.writeStats != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.writeStats)
+	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	return exec.Close(e.Children(0))
 }
 
 // Open implements the Executor Open interface.
 func (e *DeleteExec) Open(ctx context.Context) error {
+	e.writeStats = nil
+	if e.RuntimeStats() != nil {
+		e.writeStats = &execdetails.WriteRuntimeStats{}
+	}
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

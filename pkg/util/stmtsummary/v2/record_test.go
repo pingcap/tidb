@@ -15,13 +15,17 @@
 package stmtsummary
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/stretchr/testify/require"
 )
 
 func TestStmtRecord(t *testing.T) {
 	info := GenerateStmtExecInfo4Test("digest1")
+	info.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 3
 	record1 := NewStmtRecord(info)
 	require.Equal(t, info.SchemaName, record1.SchemaName)
 	require.Equal(t, info.Digest, record1.Digest)
@@ -67,6 +71,9 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalRUV2, record1.SumRUV2)
 	require.Equal(t, info.CPUUsages.TidbCPUTime, record1.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime, record1.SumTikvCPU)
+	require.Equal(t, int64(1), record1.IAExecCount)
+	require.Equal(t, uint64(3), record1.SumIARemoteReadSegmentCount)
+	require.Equal(t, uint64(3), record1.MaxIARemoteReadSegmentCount)
 
 	record2 := NewStmtRecord(info)
 	record2.Add(info)
@@ -83,4 +90,67 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalRUV2*2, record2.SumRUV2)
 	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
+	require.Equal(t, int64(2), record2.IAExecCount)
+	require.Equal(t, uint64(6), record2.SumIARemoteReadSegmentCount)
+	require.Equal(t, uint64(3), record2.MaxIARemoteReadSegmentCount)
+
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				StmtLogField: "stmt_meta_a",
+			}},
+		}
+		require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_a": "value_a"}))
+	})
+	b, err := marshalStmtRecord(record2)
+	require.NoError(t, err)
+	items := make(map[string]any)
+	require.NoError(t, json.Unmarshal(b, &items))
+	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
+	require.Equal(t, record2.Digest, items["digest"])
+	require.Equal(t, float64(2), items["ia_remote_exec_count"])
+	require.Contains(t, items, "sum_ia_remote_read_segment_count")
+	require.Contains(t, items, "max_ia_remote_read_segment_count")
+	require.NotContains(t, items, "sum_ia_read_segment_count")
+	require.NotContains(t, items, "max_ia_read_segment_count")
+
+	b, err = marshalEvictedStmtRecord(record2)
+	require.NoError(t, err)
+	items = make(map[string]any)
+	require.NoError(t, json.Unmarshal(b, &items))
+	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
+	require.Equal(t, true, items["evicted"])
+	require.Equal(t, record2.Digest, items["digest"])
+	require.Equal(t, float64(2), items["ia_remote_exec_count"])
+}
+
+func TestStmtRecordTableNamesSkipEmptyTables(t *testing.T) {
+	info := GenerateStmtExecInfo4Test("digest1")
+	info.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2"},
+	}
+
+	record := NewStmtRecord(info)
+	require.Equal(t, "db1.table1", record.TableNames)
+}
+
+func TestStmtRecordFormatsDigestText(t *testing.T) {
+	oldSummary := GlobalStmtSummary
+	testSummary := NewStmtSummary4Test(10)
+	GlobalStmtSummary = testSummary
+	defer func() {
+		testSummary.Close()
+		GlobalStmtSummary = oldSummary
+	}()
+	require.NoError(t, testSummary.SetMaxSQLLength(4))
+
+	info := GenerateStmtExecInfo4Test("digest1")
+	info.NormalizedSQL = "select"
+	record := NewStmtRecord(info)
+	require.Equal(t, "sele(len:6)", record.NormalizedSQL)
 }

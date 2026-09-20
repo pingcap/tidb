@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/log"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -68,9 +69,11 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
+	"github.com/pingcap/tidb/pkg/server/internal/advertisedstatus"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
@@ -132,6 +135,8 @@ type Server struct {
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
+	// gracefulShutdownCond is used by Starter graceful shutdown to wait until all connections are closed.
+	gracefulShutdownCond *sync.Cond
 
 	normalClosedConnsMutex sync.Mutex
 	normalClosedConns      *kvcache.SimpleLRUCache
@@ -148,6 +153,7 @@ type Server struct {
 	grpcServer     *grpc.Server
 	inShutdownMode *uatomic.Bool
 	health         *uatomic.Bool
+	forceShutdown  *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
 	internalSessions    map[any]struct{}
@@ -155,15 +161,23 @@ type Server struct {
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
 	printMDLLogTime     time.Time
+	needRequestMgrFree  *uatomic.Bool
 
 	StandbyController
 }
 
 // NewTestServer creates a new Server for test.
 func NewTestServer(cfg *config.Config) *Server {
-	return &Server{
-		cfg: cfg,
+	s := &Server{
+		cfg:                cfg,
+		clients:            make(map[uint64]*clientConn),
+		health:             uatomic.NewBool(false),
+		inShutdownMode:     uatomic.NewBool(false),
+		forceShutdown:      uatomic.NewBool(false),
+		needRequestMgrFree: uatomic.NewBool(false),
 	}
+	s.gracefulShutdownCond = sync.NewCond(&s.rwlock)
+	return s
 }
 
 // Socket returns the server's socket file.
@@ -293,17 +307,20 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
-		cfg:               cfg,
-		driver:            driver,
-		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
-		clients:           make(map[uint64]*clientConn),
-		normalClosedConns: kvcache.NewSimpleLRUCache(normalClosedConnsCapacity, 0, 0),
-		userResource:      make(map[string]*userResourceLimits),
-		internalSessions:  make(map[any]struct{}, 100),
-		health:            uatomic.NewBool(false),
-		inShutdownMode:    uatomic.NewBool(false),
-		printMDLLogTime:   time.Now(),
+		cfg:                cfg,
+		driver:             driver,
+		concurrentLimiter:  util.NewTokenLimiter(cfg.TokenLimit),
+		clients:            make(map[uint64]*clientConn),
+		normalClosedConns:  kvcache.NewSimpleLRUCache(normalClosedConnsCapacity, 0, 0),
+		userResource:       make(map[string]*userResourceLimits),
+		internalSessions:   make(map[any]struct{}, 100),
+		health:             uatomic.NewBool(false),
+		inShutdownMode:     uatomic.NewBool(false),
+		forceShutdown:      uatomic.NewBool(false),
+		printMDLLogTime:    time.Now(),
+		needRequestMgrFree: uatomic.NewBool(false),
 	}
+	s.gracefulShutdownCond = sync.NewCond(&s.rwlock)
 	s.capability = defaultCapability
 	setSystemTimeZoneVariable()
 
@@ -349,8 +366,19 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
+// InitTiDBListener prepares the MySQL protocol listener before activation succeeds.
+func (s *Server) InitTiDBListener() error {
+	return s.initTiDBListener()
+}
+
 func (s *Server) initTiDBListener() (err error) {
-	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
+	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest)
+	needUnixSocket := s.cfg.Socket != ""
+	if (!needTCPListener || s.listener != nil) && (!needUnixSocket || s.socket != nil) &&
+		(s.listener != nil || s.socket != nil) {
+		return nil
+	}
+	if needTCPListener && s.listener == nil {
 		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
@@ -365,7 +393,7 @@ func (s *Server) initTiDBListener() (err error) {
 		}
 	}
 
-	if s.cfg.Socket != "" {
+	if needUnixSocket && s.socket == nil {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
 			return errors.Trace(err)
 		}
@@ -498,6 +526,16 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
+	if s.cfg.Status.ReportStatus {
+		endpointCheckCtx, cancelEndpointCheck := context.WithCancel(context.Background())
+		defer cancelEndpointCheck()
+		advertisedstatus.Start(endpointCheckCtx, advertisedstatus.Options{
+			ReportStatus:     s.cfg.Status.ReportStatus,
+			StatusListener:   s.statusListener,
+			AdvertiseAddress: s.cfg.AdvertiseAddress,
+			LocalID:          s.dom.DDL().GetID(),
+		})
+	}
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
@@ -632,6 +670,17 @@ func (s *Server) startShutdown() {
 		logutil.BgLogger().Info("waiting for stray connections before starting shutdown process", zap.Duration("waitTime", waitTime))
 		time.Sleep(waitTime)
 	}
+	if deploymode.IsStarter() && s.StandbyController != nil {
+		s.enterShutdownMode()
+		s.OnServerShutdown(s)
+	}
+}
+
+func (s *Server) enterShutdownMode() {
+	if s.inShutdownMode == nil {
+		s.inShutdownMode = uatomic.NewBool(false)
+	}
+	s.inShutdownMode.Store(true)
 }
 
 func (s *Server) closeListener() {
@@ -654,8 +703,8 @@ func (s *Server) closeListener() {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
 	}
-	if s.autoIDService != nil {
-		s.autoIDService.Close()
+	if !deploymode.IsStarter() || s.StandbyController == nil {
+		s.AutoIDServiceClose()
 	}
 	if s.authTokenCancelFunc != nil {
 		s.authTokenCancelFunc()
@@ -664,12 +713,32 @@ func (s *Server) closeListener() {
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStop).Inc()
 }
 
+// SetForceShutdown sets the force shutdown flag.
+func (s *Server) SetForceShutdown() {
+	s.forceShutdown.Store(true)
+}
+
+// GetForceShutdown gets the force shutdown flag.
+func (s *Server) GetForceShutdown() bool {
+	return s.forceShutdown.Load()
+}
+
+// SetNeedRequestMgrFree sets the need request manager free flag.
+func (s *Server) SetNeedRequestMgrFree() {
+	s.needRequestMgrFree.Store(true)
+}
+
+// GetNeedRequestMgrFree gets the need request manager free flag.
+func (s *Server) GetNeedRequestMgrFree() bool {
+	return s.needRequestMgrFree.Load()
+}
+
 // Close closes the server.
 func (s *Server) Close() {
 	s.startShutdown()
 	s.rwlock.Lock() // // prevent new connections
 	defer s.rwlock.Unlock()
-	s.inShutdownMode.Store(true)
+	s.enterShutdownMode()
 	s.closeListener()
 }
 
@@ -685,6 +754,12 @@ func (s *Server) registerConn(conn *clientConn) bool {
 	}
 	s.clients[conn.connectionID] = conn
 	return true
+}
+
+func (s *Server) notifyGracefulShutdownCondIfNeededLocked() {
+	if deploymode.IsStarter() && len(s.clients) == 0 && s.gracefulShutdownCond != nil && s.StandbyController != nil {
+		s.gracefulShutdownCond.Broadcast()
+	}
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
@@ -755,7 +830,7 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	conn.logConnectionEvent(ctx, "login_success")
 
 	defer func() {
 		terror.Log(conn.Close())
@@ -805,6 +880,16 @@ func (s *Server) onConn(conn *clientConn) {
 	if err != nil {
 		return
 	}
+}
+
+func (cc *clientConn) logConnectionEvent(ctx context.Context, event string) {
+	if !vardef.EnableConnectionEventLog.Load() {
+		return
+	}
+	logutil.Logger(ctx).Info("connection event",
+		zap.String("event", event),
+		zap.Stringer("user", cc.getCtx().GetSessionVars().User),
+		zap.String("remoteAddr", cc.bufReadConn.RemoteAddr().String()))
 }
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
@@ -1051,8 +1136,8 @@ func (s *Server) KillSysProcesses() {
 func (s *Server) KillAllConnections() {
 	logutil.BgLogger().Info("kill all connections.", zap.String("category", "server"))
 
-	s.rwlock.RLock()
-	defer s.rwlock.RUnlock()
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
 	for _, conn := range s.clients {
 		conn.setStatus(connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
@@ -1275,4 +1360,28 @@ func (s *Server) GetStatusVars() map[uint64]map[string]string {
 // Health returns if the server is healthy (begin to shut down)
 func (s *Server) Health() bool {
 	return s.health.Load()
+}
+
+// AutoIDServiceClose closes the auto ID service.
+func (s *Server) AutoIDServiceClose() {
+	if s.autoIDService != nil {
+		s.autoIDService.Close()
+	}
+}
+
+// IsAutoIDOwner checks if the auto ID service is the owner.
+func (s *Server) IsAutoIDOwner() bool {
+	return s.autoIDService != nil && s.autoIDService.IsOwner()
+}
+
+// WaitZeroConn waits until all client connections are closed.
+func (s *Server) WaitZeroConn() {
+	if s.gracefulShutdownCond == nil {
+		return
+	}
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+	for len(s.clients) > 0 {
+		s.gracefulShutdownCond.Wait()
+	}
 }

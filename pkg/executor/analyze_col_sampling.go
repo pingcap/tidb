@@ -51,6 +51,8 @@ import (
 )
 
 func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
+	intest.Assert(e.samplingStatsConcurrency > 0,
+		"samplingStatsConcurrency must be resolved by AnalyzeExec.Next before workers fan out")
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -83,14 +85,9 @@ func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.
 			specialIndexes = append(specialIndexes, idx)
 		}
 	}
-	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.ctx)
-	if err != nil {
-		e.memTracker.Release(e.memTracker.BytesConsumed())
-		return &statistics.AnalyzeResults{Err: err, Job: e.job}
-	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
-	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
-	count, hists, topNs, fmSketches, err := e.buildSamplingStats(ctx, gp, ranges, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
+	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, e.samplingStatsConcurrency)
+	count, hists, topNs, fmSketches, err := e.buildSamplingStats(ctx, gp, ranges, specialIndexesOffsets, idxNDVPushDownCh, e.samplingStatsConcurrency)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
@@ -540,6 +537,7 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(ctx context.Context
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,
+			planID:      e.planID,
 			tableID:     e.TableID,
 			concurrency: concurrency,
 			analyzePB: &tipb.AnalyzeReq{

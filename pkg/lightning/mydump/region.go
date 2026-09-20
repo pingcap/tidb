@@ -437,7 +437,7 @@ func makeParquetFileRegion(
 			RowIDMax:     numberRows,
 		},
 	}
-	return []*TableRegion{region}, []float64{float64(dataFile.FileMeta.FileSize)}, nil
+	return []*TableRegion{region}, []float64{float64(dataFile.FileMeta.RealSize)}, nil
 }
 
 func openCSVParser(

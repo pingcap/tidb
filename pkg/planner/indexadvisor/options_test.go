@@ -125,6 +125,10 @@ func TestOptionTimeout(t *testing.T) {
 	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='timeout'`).
 		Check(testkit.Rows("1m"))
 	tk.MustExecToErr(`recommend index set timeout='-1s'`)
+	// A non-string literal for timeout must return an error, not panic.
+	tk.MustExecToErr(`recommend index set timeout=30`)
+	tk.MustExecToErr(`recommend index set timeout=3.5`)
+	tk.MustExecToErr(`recommend index set timeout=null`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`recommend index set timeout='1m'`)

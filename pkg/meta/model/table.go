@@ -102,6 +102,10 @@ var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
 // so a distance column will be added to table_scan. this field is used in the action.
 const VirtualColVecSearchDistanceID int64 = -2000
 
+// VirtualColFTSScoreID is the ID of the column that holds the score of a
+// TiFlash full-text search scan.
+const VirtualColFTSScoreID int64 = -2050
+
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
@@ -180,6 +184,10 @@ type TableInfo struct {
 
 	View *ViewInfo `json:"view"`
 
+	MaterializedViewBase *MaterializedViewBaseInfo `json:"materialized_view_base,omitempty"`
+	MaterializedView     *MaterializedViewInfo     `json:"materialized_view,omitempty"`
+	MaterializedViewLog  *MaterializedViewLogInfo  `json:"materialized_view_log,omitempty"`
+
 	Sequence *SequenceInfo `json:"sequence"`
 
 	// Lock represent the table lock info.
@@ -222,6 +230,14 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	// EngineAttribute is the ENGINE_ATTRIBUTE for the table.
+	EngineAttribute string `json:"engine_attribute,omitempty"`
+
+	// StorageClassTier is the storage class tier of the table level.
+	StorageClassTier string `json:"storage_class_tier,omitempty"`
+	// StorageClassTransitions are the storage class transition rules of the table level.
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 
 	Mode TableMode `json:"mode,omitempty"`
 }
@@ -299,6 +315,16 @@ func (t *TableInfo) Clone() *TableInfo {
 
 	if t.Affinity != nil {
 		nt.Affinity = t.Affinity.Clone()
+	}
+	nt.StorageClassTransitions = slices.Clone(t.StorageClassTransitions)
+	if t.MaterializedViewBase != nil {
+		nt.MaterializedViewBase = t.MaterializedViewBase.Clone()
+	}
+	if t.MaterializedView != nil {
+		nt.MaterializedView = t.MaterializedView.Clone()
+	}
+	if t.MaterializedViewLog != nil {
+		nt.MaterializedViewLog = t.MaterializedViewLog.Clone()
 	}
 
 	return &nt
@@ -543,6 +569,11 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 	return false
 }
 
+// StorageClassString returns a string representation of the storage class tier and transitions.
+func (t *TableInfo) StorageClassString() string {
+	return buildStorageClassString(t.StorageClassTier, t.StorageClassTransitions)
+}
+
 // HasClusteredIndex checks whether the table has a clustered index.
 func (t *TableInfo) HasClusteredIndex() bool {
 	return t.PKIsHandle || t.IsCommonHandle
@@ -649,12 +680,6 @@ func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldT
 	return &col.FieldType
 }
 
-// ColumnNeedRestoredData checks whether a single index column needs restored data.
-func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
-	col := colInfos[idxCol.Offset]
-	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
-}
-
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
 	ID   int64     `json:"id"`
@@ -759,38 +784,6 @@ func (t TableLockState) String() string {
 	}
 }
 
-// TableMode is the state for table mode, it's a table level metadata for prevent
-// table read/write during importing(import into) or BR restoring.
-// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
-// return error.
-// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
-// Now allow switching between the same table modes, and not allow convert between
-// TableModeImport and TableModeRestore
-type TableMode byte
-
-const (
-	// TableModeNormal means the table is in normal mode.
-	TableModeNormal TableMode = iota
-	// TableModeImport means the table is in import mode.
-	TableModeImport
-	// TableModeRestore means the table is in restore mode.
-	TableModeRestore
-)
-
-// String implements fmt.Stringer interface.
-func (t TableMode) String() string {
-	switch t {
-	case TableModeNormal:
-		return "Normal"
-	case TableModeImport:
-		return "Import"
-	case TableModeRestore:
-		return "Restore"
-	default:
-		return ""
-	}
-}
-
 // TiFlashReplicaInfo means the flash replica info.
 type TiFlashReplicaInfo struct {
 	Count                 uint64
@@ -812,6 +805,170 @@ type ViewInfo struct {
 	SelectStmt  string              `json:"view_select"`
 	CheckOption ast.ViewCheckOption `json:"view_checkoption"`
 	Cols        []ast.CIStr         `json:"view_cols"`
+}
+
+// MaterializedViewBaseInfo is stored in TableInfo for a base table that has materialized view(s) and/or a materialized view log.
+type MaterializedViewBaseInfo struct {
+	MLogID   int64   `json:"mlog_id"`
+	MViewIDs []int64 `json:"mview_ids"`
+}
+
+// Clone returns a deep copy of the materialized view base metadata.
+func (i *MaterializedViewBaseInfo) Clone() *MaterializedViewBaseInfo {
+	if i == nil {
+		return nil
+	}
+	ni := *i
+	ni.MViewIDs = append([]int64(nil), i.MViewIDs...)
+	return &ni
+}
+
+// MViewInitBuildState records the initial-build state of a materialized view.
+type MViewInitBuildState byte
+
+const (
+	// MViewInitBuildReady indicates that the initial MV build has completed.
+	MViewInitBuildReady MViewInitBuildState = iota
+	// MViewInitBuildDeferred indicates that the initial MV build has not started.
+	MViewInitBuildDeferred
+	// MViewInitBuildBuilding indicates that the initial MV build is in progress.
+	MViewInitBuildBuilding
+)
+
+// IsReady reports whether the initial MV build has completed.
+func (s MViewInitBuildState) IsReady() bool { return s == MViewInitBuildReady }
+func (s MViewInitBuildState) String() string {
+	switch s {
+	case MViewInitBuildReady:
+		return "ready"
+	case MViewInitBuildDeferred:
+		return "deferred"
+	case MViewInitBuildBuilding:
+		return "building"
+	default:
+		return fmt.Sprintf("unknown(%d)", byte(s))
+	}
+}
+
+// AccessErrorMessage returns the error message for accessing an MV that is not ready.
+func (s MViewInitBuildState) AccessErrorMessage(objectName string) string {
+	switch s {
+	case MViewInitBuildDeferred:
+		return fmt.Sprintf("materialized view %s is not ready: initial build has not completed", objectName)
+	case MViewInitBuildBuilding:
+		return fmt.Sprintf("materialized view %s initial build is in progress", objectName)
+	default:
+		return ""
+	}
+}
+
+// MaterializedViewInfo is stored in TableInfo for a materialized view table.
+type MaterializedViewInfo struct {
+	BaseTableIDs                    []int64             `json:"base_table_ids"`
+	InitBuildState                  MViewInitBuildState `json:"init_build_state,omitempty"`
+	SQLContent                      string              `json:"sql_content"`
+	RefreshMethod                   string              `json:"refresh_method,omitempty"`
+	RefreshStartWith                string              `json:"refresh_start_with,omitempty"`
+	RefreshNext                     string              `json:"refresh_next,omitempty"`
+	AlertWarningSec                 int64               `json:"alert_warning_sec,omitempty"`
+	AlertOverdueSec                 int64               `json:"alert_overdue_sec,omitempty"`
+	AlertRefreshFailed              bool                `json:"alert_refresh_failed,omitempty"`
+	DefinitionSQLMode               mysql.SQLMode       `json:"definition_sql_mode"`
+	DefinitionDivPrecisionIncrement int                 `json:"definition_div_precision_increment"`
+	DefinitionTimeZone              TimeZoneLocation    `json:"definition_time_zone"`
+	RefreshScheduleTimeZone         TimeZoneLocation    `json:"refresh_schedule_time_zone"`
+}
+
+// Clone returns a deep copy of the materialized view metadata.
+func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
+	if i == nil {
+		return nil
+	}
+	return &MaterializedViewInfo{
+		BaseTableIDs:                    append([]int64(nil), i.BaseTableIDs...),
+		InitBuildState:                  i.InitBuildState,
+		SQLContent:                      i.SQLContent,
+		RefreshMethod:                   i.RefreshMethod,
+		RefreshStartWith:                i.RefreshStartWith,
+		RefreshNext:                     i.RefreshNext,
+		AlertWarningSec:                 i.AlertWarningSec,
+		AlertOverdueSec:                 i.AlertOverdueSec,
+		AlertRefreshFailed:              i.AlertRefreshFailed,
+		DefinitionSQLMode:               i.DefinitionSQLMode,
+		DefinitionDivPrecisionIncrement: i.DefinitionDivPrecisionIncrement,
+		DefinitionTimeZone:              i.DefinitionTimeZone.Clone(),
+		RefreshScheduleTimeZone:         i.RefreshScheduleTimeZone.Clone(),
+	}
+}
+
+// GetInitBuildState returns the initial-build state, treating nil metadata as ready.
+func (i *MaterializedViewInfo) GetInitBuildState() MViewInitBuildState {
+	if i == nil {
+		return MViewInitBuildReady
+	}
+	return i.InitBuildState
+}
+
+// MaterializedViewLogInfo is stored in TableInfo for a materialized view log table.
+type MaterializedViewLogInfo struct {
+	BaseTableID              int64            `json:"base_table_id"`
+	DependentMViewIDs        []int64          `json:"dependent_mview_ids,omitempty"`
+	Columns                  []ast.CIStr      `json:"columns"`
+	PurgeMethod              string           `json:"purge_method,omitempty"`
+	PurgeStartWith           string           `json:"purge_start_with,omitempty"`
+	PurgeNext                string           `json:"purge_next,omitempty"`
+	LogAccumulationAlertRows *uint64          `json:"log_accumulation_alert_rows,omitempty"`
+	DefinitionSQLMode        mysql.SQLMode    `json:"definition_sql_mode"`
+	PurgeScheduleTimeZone    TimeZoneLocation `json:"purge_schedule_time_zone"`
+}
+
+const (
+	// MaterializedViewLogTableNamePrefix prefixes the physical table name of an MV log.
+	MaterializedViewLogTableNamePrefix = "$mlog$"
+	// MaterializedViewLogDMLTypeColumnName is the physical MV log DML type column name.
+	MaterializedViewLogDMLTypeColumnName = "_MLOG$_DML_TYPE"
+	// MaterializedViewLogOldNewColumnName is the physical MV log old/new marker column name.
+	MaterializedViewLogOldNewColumnName = "_MLOG$_OLD_NEW"
+)
+
+// MaterializedViewLogTableName returns the physical table name derived from a base table name.
+func MaterializedViewLogTableName(baseTableName ast.CIStr) ast.CIStr {
+	runes := []rune(baseTableName.O)
+	maxLen := mysql.MaxTableNameLength - len([]rune(MaterializedViewLogTableNamePrefix))
+	if len(runes) > maxLen {
+		runes = runes[:maxLen]
+	}
+	return ast.NewCIStr(MaterializedViewLogTableNamePrefix + string(runes))
+}
+
+// Clone returns a deep copy of the materialized view log metadata.
+func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
+	if i == nil {
+		return nil
+	}
+	clone := &MaterializedViewLogInfo{
+		BaseTableID:           i.BaseTableID,
+		DependentMViewIDs:     append([]int64(nil), i.DependentMViewIDs...),
+		Columns:               append([]ast.CIStr(nil), i.Columns...),
+		PurgeMethod:           i.PurgeMethod,
+		PurgeStartWith:        i.PurgeStartWith,
+		PurgeNext:             i.PurgeNext,
+		DefinitionSQLMode:     i.DefinitionSQLMode,
+		PurgeScheduleTimeZone: i.PurgeScheduleTimeZone.Clone(),
+	}
+	if i.LogAccumulationAlertRows != nil {
+		rows := *i.LogAccumulationAlertRows
+		clone.LogAccumulationAlertRows = &rows
+	}
+	return clone
+}
+
+// EffectiveLogAccumulationAlertRows returns the configured alert threshold when enabled.
+func (i *MaterializedViewLogInfo) EffectiveLogAccumulationAlertRows() (uint64, bool) {
+	if i == nil || i.LogAccumulationAlertRows == nil || *i.LogAccumulationAlertRows == 0 {
+		return 0, false
+	}
+	return *i.LogAccumulationAlertRows, true
 }
 
 // Some constants for sequence.
@@ -1219,18 +1376,23 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                 int64          `json:"id"`
-	Name               ast.CIStr      `json:"name"`
-	LessThan           []string       `json:"less_than"`
-	InValues           [][]string     `json:"in_values"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
-	Comment            string         `json:"comment,omitempty"`
+	ID                      int64                     `json:"id"`
+	Name                    ast.CIStr                 `json:"name"`
+	LessThan                []string                  `json:"less_than"`
+	InValues                [][]string                `json:"in_values"`
+	PlacementPolicyRef      *PolicyRefInfo            `json:"policy_ref_info"`
+	Comment                 string                    `json:"comment,omitempty"`
+	StorageClassTier        string                    `json:"storage_class_tier,omitempty"`
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 }
 
-// Clone clones PartitionDefinition.
+// Clone clones PartitionDefinition. InValues remains shared to avoid copying
+// potentially large LIST partition metadata in general TableInfo clone paths.
+// Callers that may modify InValues must deep-clone it separately.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = slices.Clone(ci.LessThan)
+	nci.StorageClassTransitions = slices.Clone(ci.StorageClassTransitions)
 	return nci
 }
 
@@ -1256,6 +1418,11 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 		}
 	}
 	return
+}
+
+// StorageClassString returns a string representation of the storage class tier and transitions.
+func (ci *PartitionDefinition) StorageClassString() string {
+	return buildStorageClassString(ci.StorageClassTier, ci.StorageClassTransitions)
 }
 
 // ConstraintInfo provides meta data describing check-expression constraint.

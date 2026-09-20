@@ -61,8 +61,13 @@ const (
 
 	// when the job is finished, step will be set to none.
 	jobStepNone = ""
+	// JobStepPreparing is used by prepare-enabled jobs before generating
+	// first business-step subtasks.
+	JobStepPreparing = "preparing"
 	// JobStepGlobalSorting is the first step when using global sort,
 	// step goes from none -> global-sorting -> importing -> validating -> none.
+	// for prepare-enabled global sort, step goes from none -> preparing ->
+	// global-sorting -> importing -> validating -> none.
 	JobStepGlobalSorting = "global-sorting"
 	// JobStepImporting is the first step when using local sort,
 	// step goes from none -> importing -> validating -> none.
@@ -132,9 +137,29 @@ func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
 }
 
+// IsCancelled returns whether the job has been cancelled.
+func (j *JobInfo) IsCancelled() bool {
+	return j.Status == jogStatusCancelled
+}
+
 // IsSuccess returns whether the job is successful.
 func (j *JobInfo) IsSuccess() bool {
 	return j.Status == JobStatusFinished
+}
+
+// IsSourceFileSizeUnknown returns whether source_file_size has not been
+// determined yet for async-prepare jobs.
+func (j *JobInfo) IsSourceFileSizeUnknown() bool {
+	// if the job is not using async prepare, source_file_size is determined
+	// when creating the job, and it will never be 0 since we check total file
+	// size > 0 in precheck.
+	if j.SourceFileSize > 0 {
+		return false
+	}
+	if j.Status == jobStatusPending {
+		return true
+	}
+	return j.Status == JobStatusRunning && j.Step == JobStepPreparing
 }
 
 // GetJob returns the job with the given id if the user has privilege.
@@ -253,10 +278,58 @@ func StartJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step string) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), step = %?
-		WHERE id = %? AND status = %?;`,
+			SET update_time = CURRENT_TIMESTAMP(6), step = %?
+			WHERE id = %? AND status = %?;`,
 		step, jobID, JobStatusRunning)
 
+	return err
+}
+
+// UpdateJobPreparedInfo updates import job fields that are known only after
+// async prepare succeeds.
+func UpdateJobPreparedInfo(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+	sourceFileSize int64,
+	format string,
+) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+	rs, err := conn.ExecuteInternal(ctx, `SELECT parameters FROM mysql.tidb_import_jobs
+		WHERE id = %? AND status = %?;`,
+		jobID, JobStatusRunning)
+	if err != nil {
+		return err
+	}
+	defer terror.Call(rs.Close)
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return err
+	}
+	// no matched running job, keep historical behavior: no-op.
+	if len(rows) == 0 {
+		return nil
+	}
+
+	parameters := &ImportParameters{}
+	parametersStr := rows[0].GetString(0)
+	if len(parametersStr) > 0 {
+		if err = json.Unmarshal([]byte(parametersStr), parameters); err != nil {
+			return err
+		}
+	}
+	if format != "" {
+		parameters.Format = format
+	}
+
+	paramsBytes, err := json.Marshal(parameters)
+	if err != nil {
+		return err
+	}
+	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
+				SET update_time = CURRENT_TIMESTAMP(6), source_file_size = %?, parameters = %?
+				WHERE id = %? AND status = %?;`,
+		sourceFileSize, paramsBytes, jobID, JobStatusRunning)
 	return err
 }
 
@@ -419,11 +492,32 @@ func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user stri
 // CancelJob cancels import into job. Only a running/paused job can be canceled.
 // check privileges using get before calling this method.
 func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err error) {
+	return cancelJobInState(ctx, conn, jobID, jobStatusPending, JobStatusRunning)
+}
+
+// CancelPendingJob cancels a job in pending state.
+func CancelPendingJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err error) {
+	return cancelJobInState(ctx, conn, jobID, jobStatusPending)
+}
+
+func cancelJobInState(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, states ...string) (err error) {
+	var markerSB strings.Builder
+	for i := range states {
+		if i > 0 {
+			markerSB.WriteString(",")
+		}
+		markerSB.WriteString("%?")
+	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	sql := `UPDATE mysql.tidb_import_jobs
-			SET update_time = CURRENT_TIMESTAMP(6), status = %?, error_message = 'cancelled by user'
-			WHERE id = %? AND status IN (%?, %?);`
-	args := []any{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
+	sql := fmt.Sprintf(`UPDATE mysql.tidb_import_jobs
+			SET update_time = CURRENT_TIMESTAMP(6), status = %%?, error_message = 'cancelled by user'
+			WHERE id = %%? AND status IN (%s);`, markerSB.String())
+	args := make([]any, 0, len(states)+2)
+	args = append(args, jogStatusCancelled)
+	args = append(args, jobID)
+	for _, s := range states {
+		args = append(args, s)
+	}
 	_, err = conn.ExecuteInternal(ctx, sql, args...)
 	return err
 }

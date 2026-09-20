@@ -54,6 +54,7 @@ func TestTiDBOptOn(t *testing.T) {
 func TestNewSessionVars(t *testing.T) {
 	vars := NewSessionVars(nil)
 
+	require.Same(t, &vars.SQLKiller, vars.KVVars.KillSignalHandler)
 	require.Equal(t, vardef.DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, vardef.DefIndexLookupSize, vars.IndexLookupSize)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupConcurrency)
@@ -81,6 +82,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.ExecutorConcurrency)
 	require.Equal(t, vardef.DefMaxChunkSize, vars.MaxChunkSize)
 	require.Equal(t, vardef.DefDMLBatchSize, vars.DMLBatchSize)
+	require.Equal(t, vardef.DefTiDBMLogPurgeBatchSize, vars.MLogPurgeBatchSize)
 	require.Equal(t, int64(vardef.DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
 	require.Equal(t, vardef.DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, vardef.DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
@@ -93,6 +95,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(vardef.DefTiDBTmpTableMaxSize), vars.TMPTableSize)
 	require.Equal(t, vardef.DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
+	require.Equal(t, vardef.DefTiDBEnableSharedLockUpgrade, vars.EnableSharedLockUpgrade)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -548,6 +551,14 @@ func TestValidate(t *testing.T) {
 		{vardef.TiDBAllowFallbackToTiKV, "tikv", true},
 		{vardef.TiDBAllowFallbackToTiKV, "tidb", true},
 		{vardef.TiDBAllowFallbackToTiKV, "tiflash,tikv,tidb", true},
+		{vardef.TiDBMLogPurgeMinRate, "0", true},
+		{vardef.TiDBMLogPurgeMinRate, "1", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "1.1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "-1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "0", false},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "1", false},
 	}
 
 	for _, tc := range testCases {
@@ -571,6 +582,14 @@ func TestValidate(t *testing.T) {
 		{vardef.TiDBIsolationReadEngines, "tikv", false},
 		{vardef.TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{vardef.TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{vardef.TiDBMLogPurgeMinRate, "0", true},
+		{vardef.TiDBMLogPurgeMinRate, "1", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "1.1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "-1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "0", false},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "1", false},
 	}
 
 	for _, tc := range testCases {

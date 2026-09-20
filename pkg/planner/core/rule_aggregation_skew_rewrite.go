@@ -127,7 +127,18 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 					return nil
 				}
 				bottomAggFuncs = append(bottomAggFuncs, firstRow)
-				bottomAggSchema.Append(arg.(*expression.Column))
+				// The distinct argument is usually a column, but isQualifiedAgg
+				// also admits a constant (e.g. count(distinct 1)); in that case
+				// synthesize a schema column for the firstrow output rather than
+				// asserting *Column.
+				if argCol, ok := arg.(*expression.Column); ok {
+					bottomAggSchema.Append(argCol)
+				} else {
+					bottomAggSchema.Append(&expression.Column{
+						UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
+						RetType:  firstRow.RetTp,
+					})
+				}
 			}
 
 			// now the distinct is not needed anymore

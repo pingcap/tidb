@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -75,8 +76,13 @@ type reorgCtx struct {
 	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
+	// snapshotVer records the read timestamp produced by a reorg worker.
+	snapshotVer uint64
 	// maxProgress is the historical maximum progress to prevent progress regression.
 	maxProgress atomicutil.Float64
+	// ru is collected by a background reorg function and transferred to the
+	// foreground worker when it receives the result.
+	ru atomicutil.Float64
 
 	mu struct {
 		sync.Mutex
@@ -92,7 +98,22 @@ type reorgCtx struct {
 // receiver determine if the result is from reorg function of previous DDL owner in this instance.
 type reorgFnResult struct {
 	ownerTS int64
+	ru      float64
 	err     error
+}
+
+func stageReorgResultRU(jobCtx *jobContext, result reorgFnResult) {
+	if result.err == nil {
+		jobCtx.pendingReorgRU += result.ru
+	}
+}
+
+func accountPendingReorgRU(jobCtx *jobContext, job *model.Job, transitionErr error) {
+	ru := jobCtx.pendingReorgRU
+	jobCtx.pendingReorgRU = 0
+	if transitionErr == nil {
+		job.RU += ru
+	}
 }
 
 func newReorgExprCtx() *exprstatic.ExprContext {
@@ -126,7 +147,10 @@ func newReorgExprCtxWithReorgMeta(reorgMeta *model.DDLReorgMeta, warnHandler con
 		exprstatic.WithErrLevelMap(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode)),
 		exprstatic.WithWarnHandler(warnHandler),
 	)
-	return ctx.Apply(exprstatic.WithEvalCtx(evalCtx)), nil
+	return ctx.Apply(
+		exprstatic.WithEvalCtx(evalCtx),
+		exprstatic.WithNewCollationEnabled(reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled())),
+	), nil
 }
 
 // reorgTableMutateContext implements table.MutateContext for reorganization.
@@ -306,6 +330,22 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
+func (rc *reorgCtx) setSnapshotVer(snapshotVer uint64) {
+	atomic.StoreUint64(&rc.snapshotVer, snapshotVer)
+}
+
+func (rc *reorgCtx) getSnapshotVer() uint64 {
+	return atomic.LoadUint64(&rc.snapshotVer)
+}
+
+func (rc *reorgCtx) setRU(ru float64) {
+	rc.ru.Store(ru)
+}
+
+func (rc *reorgCtx) getRU() float64 {
+	return rc.ru.Load()
+}
+
 // setMaxProgress updates the maximum progress if the new progress is greater.
 // It returns the current maximum progress (which may be unchanged if newProgress <= oldMax).
 // This prevents progress regression when statistics change during backfill.
@@ -395,7 +435,7 @@ func (w *worker) runReorgJob(
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Run(func() {
 			err := reorgFn()
-			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
+			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, ru: rc.getRU(), err: err}
 		})
 	}
 
@@ -425,8 +465,12 @@ func (w *worker) runReorgJob(
 				d.removeReorgCtx(job.ID)
 				return err
 			}
+			stageReorgResultRU(jobCtx, res)
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
+			if snapshotVer := rc.getSnapshotVer(); snapshotVer != 0 {
+				job.SnapshotVer = snapshotVer
+			}
 			if err != nil {
 				logutil.DDLLogger().Warn("run reorg job done",
 					zap.Int64("jobID", reorgInfo.ID),
@@ -802,7 +846,7 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
-		maxHandle, err = buildCommonHandleFromChunkRow(time.UTC, tblInfo, pkIdx, handleCols, row)
+		maxHandle, err = buildCommonHandleFromChunkRow(tbl.UseNewCollate(), time.UTC, tblInfo, pkIdx, handleCols, row)
 		return maxHandle, false, err
 	}
 	return kv.IntHandle(row.GetInt64(0)), false, nil
@@ -847,7 +891,7 @@ func buildHandleCols(tbl table.PhysicalTable) []*model.ColumnInfo {
 	return handleCols
 }
 
-func buildCommonHandleFromChunkRow(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+func buildCommonHandleFromChunkRow(useNewCollate bool, loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	cols []*model.ColumnInfo, row chunk.Row) (kv.Handle, error) {
 	fieldTypes := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
@@ -857,7 +901,7 @@ func buildCommonHandleFromChunkRow(loc *time.Location, tblInfo *model.TableInfo,
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)
 
 	var handleBytes []byte
-	handleBytes, err := codec.EncodeKey(loc, nil, datumRow...)
+	handleBytes, err := codec.NewEncoder(useNewCollate).EncodeKey(loc, nil, datumRow...)
 	if err != nil {
 		return nil, err
 	}

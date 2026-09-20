@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"maps"
@@ -51,7 +52,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -773,9 +773,17 @@ type candidatePath struct {
 	// partialOrderMatch records the partial order match result for TopN optimization.
 	// When the matched is true, it means this path can provide partial order using prefix index.
 	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
-	indexJoinCols           int                              // how many index columns are used in access conditions in this IndexJoin.
-	isFullRange             bool                             // cached result of whether this path covers the full scan range.
-	eqOrInCount             int                              // cached result of equalPredicateCount().
+	// matchWithAdvisorySortItems indicates the property matching used SortItemsHints
+	// (i.e. noSortItem && len(prop.SortItemsHints) > 0). Only relevant for IndexMerge.
+	matchWithAdvisorySortItems bool
+	// partialPathMatchResults stores each partial path's matchProperty result.
+	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
+	partialPathMatchResults      []property.PhysicalPropMatchResult
+	indexJoinCols                int     // how many index columns are used in access conditions in this IndexJoin.
+	countAfterAccess4IndexJoin   float64 // adjusted CountAfterAccess used only by index join candidate comparison.
+	countAfterAccess4IndexJoinOK bool    // whether countAfterAccess4IndexJoin is stable enough for skyline pruning.
+	isFullRange                  bool    // cached result of whether this path covers the full scan range.
+	eqOrInCount                  int     // cached result of equalPredicateCount().
 }
 
 func compareBool(l, r bool) int {
@@ -840,6 +848,16 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 		}
 	}
 	return 0, 0
+}
+
+func (c *candidatePath) getCountAfterAccess4SkylinePruning() (float64, bool) {
+	if c.indexJoinCols > 0 {
+		if !c.countAfterAccess4IndexJoinOK {
+			return 0, false
+		}
+		return c.countAfterAccess4IndexJoin, true
+	}
+	return c.path.CountAfterAccess, true
 }
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
@@ -909,7 +927,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
-	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
+	lhsCountAfterAccess, lhsCountAfterAccessOK := lhs.getCountAfterAccess4SkylinePruning()
+	rhsCountAfterAccess, rhsCountAfterAccessOK := rhs.getCountAfterAccess4SkylinePruning()
+	// For IndexJoin inner candidates, CountAfterAccess is safe for this strong skyline pruning rule only
+	// when the unaccounted runtime join key has stable NDV. Otherwise skip this empirical row-count rule
+	// and let the later IndexJoin-specific NDV/cost comparison decide. Normal DataSource candidates still
+	// use the original AccessPath.CountAfterAccess, so their behavior here is unchanged.
+	if lhsCountAfterAccessOK && rhsCountAfterAccessOK &&
+		lhsCountAfterAccess > 100 && rhsCountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
@@ -917,10 +942,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		if threshold > 0 { // set it to 0 to disable this rule
 			// corrResult is included to ensure we don't preference to a higher risk plan given that
 			// this rule does not check the other criteria included below.
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && riskResult <= 0 {
+			if lhsCountAfterAccess/rhsCountAfterAccess > threshold && riskResult <= 0 {
 				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && riskResult >= 0 {
+			if rhsCountAfterAccess/lhsCountAfterAccess > threshold && riskResult >= 0 {
 				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}
@@ -1033,24 +1058,6 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
-// hasV0NewCollationStringHandle reports whether ds has CommonHandleVersion == 0
-// with new collation enabled and at least one non-binary string column in the
-// handle. In this combination the handle bytes stored in the index are collation
-// sortKey weights, not original values, so collation-aware comparison on those
-// bytes during merge-sort would be incorrect.
-func hasV0NewCollationStringHandle(ds *logicalop.DataSource) bool {
-	if ds.TableInfo.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
-		return false
-	}
-	for _, col := range ds.CommonHandleCols {
-		if col != nil && col.RetType.EvalType() == types.ETString &&
-			!mysql.HasBinaryFlag(col.RetType.GetFlag()) {
-			return true
-		}
-	}
-	return false
-}
-
 func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
 	// This function may set the two fields below for the PropMatchedNeedMergeSort case, so we reset them here to
 	// avoid leaving the AccessPath with an inconsistent state when there are multiple calls to matchProperty with
@@ -1107,8 +1114,9 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	idxColLens := path.IdxColLens
 	if path.Index != nil && !path.Index.Unique && !path.Index.Primary &&
 		ds.TableInfo.IsCommonHandle && len(ds.CommonHandleCols) > 0 &&
+		len(ds.CommonHandleLens) == len(ds.CommonHandleCols) &&
 		len(path.Index.Columns) == len(path.IdxCols) &&
-		!hasV0NewCollationStringHandle(ds) {
+		!ds.HasV0NewCollationStringHandle() {
 		extended := false
 		for i, handleCol := range ds.CommonHandleCols {
 			if handleCol == nil {
@@ -1410,49 +1418,97 @@ func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) ([][]*range
 //
 // at last, according to determinedIndexPartialPaths to rewrite their real countAfterAccess, this part is move from deriveStats to
 // here.
-func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) (*util.AccessPath, property.PhysicalPropMatchResult) {
+func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) (*util.AccessPath, []property.PhysicalPropMatchResult, bool, property.PhysicalPropMatchResult) {
 	// target:
 	//	1: index merge case, try to match the every alternative partial path to the order property as long as
 	//	possible, and generate that property-matched index merge path out if any.
-	//	2: If the prop is empty (means no sort requirement), we will generate a random index partial combination
-	//	path from all alternatives in case that no index merge path comes out.
+	//	2: If the prop is empty (means no sort requirement) but AdvisorySortItems is set, prefer alternatives
+	//	that can satisfy the SoftSortItems for potential Limit pushdown.
+	//	3: If neither, generate a random index partial combination path from all alternatives.
 
 	// Execution part doesn't support the merge operation for intersection case yet.
 	if path.IndexMergeIsIntersection {
-		return nil, property.PropNotMatched
+		return nil, nil, false, property.PropNotMatched
 	}
 
 	noSortItem := prop.IsSortItemEmpty()
 	allSame, _ := prop.AllSameOrder()
 	if !allSame {
-		return nil, property.PropNotMatched
+		return nil, nil, false, property.PropNotMatched
 	}
+
+	// When SortItems is empty and AdvisorySortItems is set, use hints as soft sort
+	// requirements. Alternatives that satisfy AdvisorySortItems can benefit from
+	// Limit pushdown.
+	useAdvisorySortItems := noSortItem && len(prop.AdvisorySortItems) > 0
+	var hintsProp *property.PhysicalProperty
+	if useAdvisorySortItems {
+		hintsProp = prop.CloneEssentialFields()
+		hintsProp.SortItems = hintsProp.AdvisorySortItems
+	}
+
 	// step1: match the property from all the index partial alternative paths.
 	determinedIndexPartialPaths := make([]*util.AccessPath, 0, len(path.PartialAlternativeIndexPaths))
+	partialPathMatchResults := make([]property.PhysicalPropMatchResult, 0, len(path.PartialAlternativeIndexPaths))
 	usedIndexMap := make(map[int64]struct{}, 1)
 	useMVIndex := false
 	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
 		matchIdxes := make([]int, 0, 1)
-		for i, oneAlternative := range oneORBranch {
-			// if there is some sort items and this path doesn't match this prop, continue.
-			match := true
-			for _, oneAccessPath := range oneAlternative {
-				if !noSortItem && !matchProperty(ds, oneAccessPath, prop).Matched() {
-					match = false
+		// altMatchResults[i] stores matchProperty results for each access path
+		// in oneORBranch[i]. Populated during hints or fallback matching.
+		var altMatchResults [][]property.PhysicalPropMatchResult
+
+		if useAdvisorySortItems {
+			// First pass: prefer alternatives that satisfy SortItemsHints.
+			altMatchResults = make([][]property.PhysicalPropMatchResult, len(oneORBranch))
+			for i, oneAlternative := range oneORBranch {
+				match := true
+				results := make([]property.PhysicalPropMatchResult, 0, len(oneAlternative))
+				for _, oneAccessPath := range oneAlternative {
+					result := matchProperty(ds, oneAccessPath, hintsProp)
+					results = append(results, result)
+					if !result.Matched() {
+						match = false
+					}
+				}
+				altMatchResults[i] = results
+				if match {
+					matchIdxes = append(matchIdxes, i)
 				}
 			}
-			if !match {
-				continue
+		}
+
+		// If no matches found with hints, fall back to default matching logic.
+		if len(matchIdxes) == 0 {
+			altMatchResults = make([][]property.PhysicalPropMatchResult, len(oneORBranch))
+			for i, oneAlternative := range oneORBranch {
+				// if there is some sort items and this path doesn't match this prop, continue.
+				match := true
+				results := make([]property.PhysicalPropMatchResult, 0, len(oneAlternative))
+				for _, oneAccessPath := range oneAlternative {
+					var result property.PhysicalPropMatchResult
+					if !noSortItem {
+						result = matchProperty(ds, oneAccessPath, prop)
+					}
+					results = append(results, result)
+					if !noSortItem && !result.Matched() {
+						match = false
+					}
+				}
+				altMatchResults[i] = results
+				if !match {
+					continue
+				}
+				// two possibility here:
+				// 1. no sort items requirement.
+				// 2. matched with sorted items.
+				matchIdxes = append(matchIdxes, i)
 			}
-			// two possibility here:
-			// 1. no sort items requirement.
-			// 2. matched with sorted items.
-			matchIdxes = append(matchIdxes, i)
 		}
 		if len(matchIdxes) == 0 {
 			// if all index alternative of one of the cnf item's couldn't match the sort property,
 			// the entire index merge union path can be ignored for this sort property, return false.
-			return nil, property.PropNotMatched
+			return nil, nil, false, property.PropNotMatched
 		}
 		if len(matchIdxes) > 1 {
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
@@ -1475,6 +1531,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 		lowestCountAfterAccessIdx := matchIdxes[0]
 		determinedIndexPartialPaths = append(determinedIndexPartialPaths, sliceutil.DeepClone(oneORBranch[lowestCountAfterAccessIdx])...)
+		partialPathMatchResults = append(partialPathMatchResults, altMatchResults[lowestCountAfterAccessIdx]...)
 		// record the index usage info to avoid choosing a single index for all partial paths
 		var indexID int64
 		if oneORBranch[lowestCountAfterAccessIdx][0].IsTablePath() {
@@ -1493,7 +1550,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	// since ds index merge hints will prune other path ahead, lift the all single index limitation here.
 	if len(usedIndexMap) == 1 && !useMVIndex && len(ds.IndexMergeHints) <= 0 {
 		// if all partial path are using a same index, meaningless and fail over.
-		return nil, property.PropNotMatched
+		return nil, nil, false, property.PropNotMatched
 	}
 
 	// check if any of the partial paths is not cacheable.
@@ -1505,13 +1562,19 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 	}
 
+	// Some top-level AND filters have already been used to build every chosen partial path.
+	// For example, `a = 1 AND (b = 2 OR c = 3)` for index (a,b) and (a,c) doesn't need any global Selection.
+	// Remove them after the alternatives are fixed, so the global Selection only keeps predicates that are not
+	// guaranteed by all partial paths.
+	tableFilters := removeCoveredIndexMergeTopLevelFilters(ds, path.TableFilters, determinedIndexPartialPaths)
+
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
 		IndexMergeAccessMVIndex:  useMVIndex,
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
 		// inherit those determined can't pushed-down table filters.
-		TableFilters:       path.TableFilters,
+		TableFilters:       tableFilters,
 		NoncacheableReason: notCachableReason,
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
@@ -1532,26 +1595,93 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	if noSortItem {
 		// since there is no sort property, index merge case is generated by random combination, each alternative with the lower/lowest
 		// countAfterAccess, here the returned matchProperty should be PropNotMatched.
-		return indexMergePath, property.PropNotMatched
+		return indexMergePath, partialPathMatchResults, useAdvisorySortItems, property.PropNotMatched
 	}
-	return indexMergePath, property.PropMatched
+	return indexMergePath, partialPathMatchResults, useAdvisorySortItems, property.PropMatched
 }
 
-func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
+func removeCoveredIndexMergeTopLevelFilters(
+	ds *logicalop.DataSource,
+	filters []expression.Expression,
+	partialPaths []*util.AccessPath,
+) []expression.Expression {
+	if len(filters) == 0 || len(partialPaths) == 0 {
+		return filters
+	}
+	remaining := make([]expression.Expression, 0, len(filters))
+	for _, filter := range filters {
+		if indexMergeTopLevelFilterCovered(ds, filter, partialPaths) {
+			continue
+		}
+		remaining = append(remaining, filter)
+	}
+	return remaining
+}
+
+func indexMergeTopLevelFilterCovered(
+	ds *logicalop.DataSource,
+	filter expression.Expression,
+	partialPaths []*util.AccessPath,
+) bool {
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), filter) {
+		return false
+	}
+	for _, path := range partialPaths {
+		if !indexMergePartialPathCoversFilter(ds, path, filter) {
+			return false
+		}
+	}
+	return true
+}
+
+func indexMergePartialPathCoversFilter(
+	ds *logicalop.DataSource,
+	partialPath *util.AccessPath,
+	filter expression.Expression,
+) bool {
+	filterHash := filter.HashCode()
+	// Be conservative: only remove a filter when a normal index partial path
+	// carries the exact predicate in AccessConds. Filters handled by table/MV
+	// paths or by residual TableFilters still need the global Selection.
+	if partialPath == nil || partialPath.IsTablePath() || isMVIndexPath(partialPath) {
+		return false
+	}
+	if !ds.IsIndexCoveringCondition(filter, partialPath.FullIdxCols, partialPath.FullIdxColLens) {
+		return false
+	}
+	if expressionContainsHash(partialPath.TableFilters, filterHash) {
+		return false
+	}
+	return expressionContainsHash(partialPath.AccessConds, filterHash)
+}
+
+func expressionContainsHash(exprs []expression.Expression, hash []byte) bool {
+	for _, expr := range exprs {
+		if bytes.Equal(expr.HashCode(), hash) {
+			return true
+		}
+	}
+	return false
+}
+
+func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) ([]property.PhysicalPropMatchResult, property.PhysicalPropMatchResult) {
 	// Execution part doesn't support the merge operation for intersection case yet.
 	if path.IndexMergeIsIntersection {
-		return property.PropNotMatched
+		return nil, property.PropNotMatched
 	}
 	allSame, _ := prop.AllSameOrder()
 	if !allSame {
-		return property.PropNotMatched
+		return nil, property.PropNotMatched
 	}
+	results := make([]property.PhysicalPropMatchResult, 0, len(path.PartialIndexPaths))
 	for _, partialPath := range path.PartialIndexPaths {
-		if !matchProperty(ds, partialPath, prop).Matched() {
-			return property.PropNotMatched
+		result := matchProperty(ds, partialPath, prop)
+		results = append(results, result)
+		if !result.Matched() {
+			return nil, property.PropNotMatched
 		}
 	}
-	return property.PropMatched
+	return results, property.PropMatched
 }
 
 func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
@@ -1580,8 +1710,13 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
-func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
-	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) *candidatePath {
+	candidate := &candidatePath{
+		path:                         path,
+		indexJoinCols:                indexJoinCols,
+		countAfterAccess4IndexJoin:   countAfterAccess4IndexJoin,
+		countAfterAccess4IndexJoinOK: countAfterAccess4IndexJoinOK,
+	}
 	candidate.matchPropResult = property.PropNotMatched
 	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
@@ -1598,12 +1733,16 @@ func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPa
 }
 
 func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
-	// since the all index path alternative paths is collected and undetermined, and we should determine a possible and concrete path for this prop.
-	possiblePath, match := matchPropForIndexMergeAlternatives(ds, path, prop)
+	possiblePath, partialMatchResults, matchWithAdvisory, match := matchPropForIndexMergeAlternatives(ds, path, prop)
 	if possiblePath == nil {
 		return nil
 	}
-	candidate := &candidatePath{path: possiblePath, matchPropResult: match}
+	candidate := &candidatePath{
+		path:                       possiblePath,
+		matchPropResult:            match,
+		matchWithAdvisorySortItems: matchWithAdvisory,
+		partialPathMatchResults:    partialMatchResults,
+	}
 	candidate.isFullRange = possiblePath.IsFullScanRange(ds.TableInfo)
 	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
@@ -1611,7 +1750,22 @@ func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath
 
 func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	candidate.matchPropResult = isMatchPropForIndexMerge(ds, path, prop)
+
+	allSameOrder, _ := prop.AllSameOrder()
+	// When SortItems is empty and SortItemsHints is set, check which partial
+	// paths satisfy the hints (for Limit pushdown).
+	if prop.IsSortItemEmpty() && len(prop.AdvisorySortItems) > 0 && !path.IndexMergeIsIntersection && allSameOrder {
+		hintsProp := prop.CloneEssentialFields()
+		hintsProp.SortItems = hintsProp.AdvisorySortItems
+		candidate.matchWithAdvisorySortItems = true
+		candidate.partialPathMatchResults, _ = isMatchPropForIndexMerge(ds, path, hintsProp)
+		// When using hints, there are no real sort items, so the overall match
+		// against the original prop is PropNotMatched.
+		candidate.matchPropResult = property.PropNotMatched
+	} else {
+		candidate.partialPathMatchResults, candidate.matchPropResult = isMatchPropForIndexMerge(ds, path, prop)
+	}
+
 	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
 	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
@@ -2214,6 +2368,13 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		TblColHists:       ds.TblColHists,
 	}
 	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
+
+	advisoryProp := prop
+	if candidate.matchWithAdvisorySortItems {
+		advisoryProp = prop.CloneEssentialFields()
+		advisoryProp.SortItems = advisoryProp.AdvisorySortItems
+	}
+
 	// Add sort items for index scan for merge-sort operation between partitions.
 	byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 	for _, si := range prop.SortItems {
@@ -2223,13 +2384,23 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		})
 	}
 	globalRemainingFilters := make([]expression.Expression, 0, 3)
-	for _, partPath := range path.PartialIndexPaths {
+	for i, partPath := range path.PartialIndexPaths {
 		var scan base.PhysicalPlan
+		partMatchPropResult := property.PropNotMatched
+		if len(candidate.partialPathMatchResults) > 0 {
+			partMatchPropResult = candidate.partialPathMatchResults[i]
+		}
+		effectiveProp := prop
+		// If matchWithAdvisorySortItems is true and this partial path can match the property,
+		// it means it actually matches the advisory property.
+		if candidate.matchWithAdvisorySortItems && partMatchPropResult.Matched() {
+			effectiveProp = advisoryProp
+		}
 		if partPath.IsTablePath() {
-			scan = convertToPartialTableScan(ds, prop, partPath, candidate.matchPropResult, byItems)
+			scan = convertToPartialTableScan(ds, effectiveProp, partPath, partMatchPropResult, byItems)
 		} else {
 			var remainingFilters []expression.Expression
-			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.PhysPlanPartInfo, prop, partPath, candidate.matchPropResult, byItems)
+			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.PhysPlanPartInfo, effectiveProp, partPath, partMatchPropResult, byItems)
 			if err != nil {
 				return base.InvalidTask, err
 			}
@@ -2271,6 +2442,8 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	cop.IdxMergePartPlans = scans
 	cop.IdxMergeIsIntersection = path.IndexMergeIsIntersection
 	cop.IdxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
+	cop.IdxMergePartPlansMatchResults = candidate.partialPathMatchResults
+	cop.IdxMergeMatchWithAdvisorySortItems = candidate.matchWithAdvisorySortItems
 	if len(globalRemainingFilters) != 0 {
 		cop.RootTaskConds = globalRemainingFilters
 	}

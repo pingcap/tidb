@@ -183,6 +183,7 @@ func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil {
 		defer func() {
 			sc := e.Ctx().GetSessionVars().StmtCtx
+			sc.MergeReadPoolTaskDetails(e.stats.SnapshotRuntimeStats.GetReadPoolTaskDetails())
 			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
 			if timeDetail != nil {

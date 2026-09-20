@@ -21,188 +21,135 @@ import (
 
 // RUv2 metrics.
 var (
-	RUV2ResultChunkCells        prometheus.Counter
-	RUV2ExecutorL1              *prometheus.CounterVec
-	RUV2ExecutorL2              *prometheus.CounterVec
-	RUV2ExecutorL3              *prometheus.CounterVec
-	RUV2ExecutorL5InsertRows    prometheus.Counter
-	RUV2PlanCnt                 prometheus.Counter
-	RUV2PlanDeriveStatsPaths    prometheus.Counter
-	RUV2ResourceManagerReadCnt  prometheus.Counter
-	RUV2ResourceManagerWriteCnt prometheus.Counter
-	RUV2SessionParserTotal      prometheus.Counter
-	RUV2TxnCnt                  prometheus.Counter
+	RUV2Total        prometheus.Counter
+	RUV2BySQLType    *prometheus.CounterVec
+	RUV2BySQLTypeDDL prometheus.Counter
+	RUV2ByEngine     *prometheus.CounterVec
+	RUV2ByEngineTiKV prometheus.Counter
+	RUV2Unit         *prometheus.CounterVec
+	RUV2Statements   *prometheus.CounterVec
+	ruv2TiDB         prometheus.Counter
+	ruv2TiFlash      prometheus.Counter
+	ruv2Select       prometheus.Counter
+	ruv2Insert       prometheus.Counter
+	ruv2Replace      prometheus.Counter
+	ruv2Update       prometheus.Counter
+	ruv2Delete       prometheus.Counter
+	ruv2Commit       prometheus.Counter
+	ruv2Analyze      prometheus.Counter
+	ruv2Other        prometheus.Counter
+	RUV2TTLTotal     prometheus.Counter
+)
 
-	RUV2TiKVKVEngineCacheMiss             prometheus.Counter
-	RUV2TiKVCoprocessorExecutorIterations prometheus.Counter
-	RUV2TiKVCoprocessorResponseBytes      prometheus.Counter
-	RUV2TiKVRaftstoreStoreWriteTriggerWB  prometheus.Counter
-	RUV2TiKVStorageProcessedKeysBatchGet  prometheus.Counter
-	RUV2TiKVStorageProcessedKeysGet       prometheus.Counter
-	RUV2TiKVCoprocessorWorkTotal          *prometheus.CounterVec
+// RUV2 unit label constants define the label name and values for RU v2 raw unit metrics.
+const (
+	LblRUV2Unit = "unit"
+
+	LblRUV2UnitCPUWork              = "cpu_work"
+	LblRUV2UnitScanBytes            = "scan_bytes"
+	LblRUV2UnitNetBytes             = "net_bytes"
+	LblRUV2UnitCrossAZNetBytes      = "cross_az_net_bytes"
+	LblRUV2UnitFrontendCompileBytes = "frontend_compile_bytes"
+	LblRUV2UnitHashStateRows        = "hash_state_rows"
+	LblRUV2UnitJoinOutputRows       = "join_output_rows"
+	LblRUV2UnitWriteStatement       = "write_statement"
+	LblRUV2UnitOperatorNum          = "operator_num"
+	LblRUV2UnitWriteKeys            = "write_keys"
+	LblRUV2UnitWriteBytes           = "write_bytes"
 )
 
 // InitRUV2Metrics initializes RUv2 metrics.
 func InitRUV2Metrics() {
-	RUV2ResultChunkCells = metricscommon.NewCounter(
+	RUV2TTLTotal = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ruv2",
-			Name:      "result_chunk_cells",
-			Help:      "Counter of result chunk cells for RU v2.",
+			Name:      "ttl_ru_total",
+			Help: "Counter of RU v2 consumption from TTL user-table scans and deletes, including their commits; " +
+				"included in ru_total.",
+		},
+	)
+	RUV2Total = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv2",
+			Name:      "ru_total",
+			Help:      "Counter of resource unit consumption for RU v2.",
 		},
 	)
 
-	RUV2ExecutorL1 = metricscommon.NewCounterVec(
+	RUV2BySQLType = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ruv2",
-			Name:      "executor_l1",
-			Help:      "Counter of executor L1 input/output for RU v2.",
-		}, []string{LblType},
+			Name:      "ru_by_sql_type_total",
+			Help:      "Counter of resource unit consumption by SQL type for RU v2.",
+		}, []string{LblSQLType},
 	)
+	RUV2BySQLTypeDDL = RUV2BySQLType.WithLabelValues(LblSQLTypeDDL)
 
-	RUV2ExecutorL2 = metricscommon.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "executor_l2",
-			Help:      "Counter of executor L2 input/output for RU v2.",
-		}, []string{LblType},
-	)
+	ruv2Select = RUV2BySQLType.WithLabelValues("select")
+	ruv2Insert = RUV2BySQLType.WithLabelValues("insert")
+	ruv2Replace = RUV2BySQLType.WithLabelValues("replace")
+	ruv2Update = RUV2BySQLType.WithLabelValues("update")
+	ruv2Delete = RUV2BySQLType.WithLabelValues("delete")
+	ruv2Commit = RUV2BySQLType.WithLabelValues("commit")
+	ruv2Analyze = RUV2BySQLType.WithLabelValues("analyze")
+	ruv2Other = RUV2BySQLType.WithLabelValues("other")
 
-	RUV2ExecutorL3 = metricscommon.NewCounterVec(
+	RUV2ByEngine = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ruv2",
-			Name:      "executor_l3",
-			Help:      "Counter of executor L3 input/output for RU v2.",
-		}, []string{LblType},
+			Name:      "ru_by_engine_total",
+			Help:      "Counter of resource unit consumption by engine for RU v2.",
+		}, []string{LblEngine},
 	)
+	ruv2TiDB = RUV2ByEngine.WithLabelValues("tidb")
+	ruv2TiFlash = RUV2ByEngine.WithLabelValues(LblEngineTiFlash)
+	RUV2ByEngineTiKV = RUV2ByEngine.WithLabelValues(LblEngineTiKV)
 
-	RUV2ExecutorL5InsertRows = metricscommon.NewCounter(
+	RUV2Unit = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ruv2",
-			Name:      "executor_l5_insert_rows",
-			Help:      "Counter of insert rows for RU v2.",
-		},
+			Name:      "unit_total",
+			Help:      "Counter of raw statement units for RU v2.",
+		}, []string{LblEngine, "opclass", LblRUV2Unit},
 	)
+	RUV2Statements = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv2",
+			Name:      "statements_total",
+			Help:      "Counter of RU v2 calculation outcomes in full report mode; success with incomplete evidence remains best effort.",
+		}, []string{"status", "reason"},
+	)
+}
 
-	RUV2PlanCnt = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "plan_cnt",
-			Help:      "Counter of plan builder executions for RU v2.",
-		},
-	)
-
-	RUV2PlanDeriveStatsPaths = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "plan_derive_stats_paths",
-			Help:      "Counter of derive stats paths for RU v2.",
-		},
-	)
-
-	RUV2ResourceManagerReadCnt = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "resource_manager_read_cnt",
-			Help:      "Counter of resource manager read requests for RU v2.",
-		},
-	)
-
-	RUV2ResourceManagerWriteCnt = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "resource_manager_write_cnt",
-			Help:      "Counter of resource manager write requests for RU v2.",
-		},
-	)
-
-	RUV2SessionParserTotal = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "session_parser_total",
-			Help:      "Counter of session parser executions for RU v2.",
-		},
-	)
-
-	RUV2TxnCnt = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "txn_cnt",
-			Help:      "Counter of transactions for RU v2.",
-		},
-	)
-
-	RUV2TiKVKVEngineCacheMiss = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "tikv_kv_engine_cache_miss",
-			Help:      "Counter of TiKV KV engine cache miss for RU v2.",
-		},
-	)
-
-	RUV2TiKVCoprocessorExecutorIterations = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "tikv_coprocessor_executor_iterations",
-			Help:      "Counter of TiKV coprocessor executor iterations for RU v2.",
-		},
-	)
-
-	RUV2TiKVCoprocessorResponseBytes = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "tikv_coprocessor_response_bytes",
-			Help:      "Counter of TiKV coprocessor response bytes for RU v2.",
-		},
-	)
-
-	RUV2TiKVRaftstoreStoreWriteTriggerWB = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "tikv_raftstore_store_write_trigger_wb_bytes",
-			Help:      "Counter of TiKV raftstore write trigger WB bytes for RU v2.",
-		},
-	)
-
-	RUV2TiKVStorageProcessedKeysBatchGet = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "tikv_storage_processed_keys_batch_get",
-			Help:      "Counter of TiKV storage processed keys (batch get) for RU v2.",
-		},
-	)
-
-	RUV2TiKVStorageProcessedKeysGet = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "tikv_storage_processed_keys_get",
-			Help:      "Counter of TiKV storage processed keys (get) for RU v2.",
-		},
-	)
-
-	RUV2TiKVCoprocessorWorkTotal = metricscommon.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ruv2",
-			Name:      "tikv_coprocessor_executor_work_total",
-			Help:      "Counter of TiKV coprocessor executor work for RU v2.",
-		}, []string{LblType},
-	)
+// AddRUV2Results records total, SQL-type and supported engine results without
+// a label lookup on the statement hot path.
+func AddRUV2Results(tikvRU, tidbRU, tiflashRU, totalRU float64, sqlType string) {
+	counter := ruv2Other
+	switch sqlType {
+	case "select":
+		counter = ruv2Select
+	case "insert":
+		counter = ruv2Insert
+	case "replace":
+		counter = ruv2Replace
+	case "update":
+		counter = ruv2Update
+	case "delete":
+		counter = ruv2Delete
+	case "commit":
+		counter = ruv2Commit
+	case "analyze":
+		counter = ruv2Analyze
+	}
+	RUV2Total.Add(totalRU)
+	counter.Add(totalRU)
+	RUV2ByEngineTiKV.Add(tikvRU)
+	ruv2TiDB.Add(tidbRU)
+	ruv2TiFlash.Add(tiflashRU)
 }

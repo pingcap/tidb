@@ -181,8 +181,13 @@ func TestGet(t *testing.T) {
 		require.Nil(t, value)
 	}
 
+	value, exists := lru.Peek(keys[2])
+	require.True(t, exists)
+	require.Equal(t, vals[2], value)
+	require.Equal(t, keys[4], lru.cache.Front().Value.(*cacheEntry).key)
+
 	for i := 2; i < 5; i++ {
-		value, exists := lru.Get(keys[i])
+		value, exists = lru.Get(keys[i])
 		require.True(t, exists)
 		require.NotNil(t, value)
 		require.Equal(t, vals[i], value)

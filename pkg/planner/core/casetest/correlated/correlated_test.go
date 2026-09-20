@@ -130,7 +130,7 @@ func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
 			require.False(t, planContainsText(offPlan, "Apply"), strings.Join(offPlan, "\n"))
 
 			tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered", fmt.Sprintf("return(%q)", sql)))
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered", fmt.Sprintf("return(%q)", "non-decorrelate:"+sql)))
 			err := tk.ExecToErr(sql)
 			stmtCtx := tk.Session().GetSessionVars().StmtCtx
 			require.True(t, stmtCtx.AlternativeLogicalPlanDecorrelatedApply)
@@ -154,7 +154,7 @@ func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
 			tk.MustExec("analyze table alt_skip_t1, alt_skip_t2")
 
 			sql := "select alt_skip_t1.a from alt_skip_t1 where exists (select 1 from alt_skip_t2 where alt_skip_t2.a = alt_skip_t1.a and alt_skip_t2.b > 0) order by alt_skip_t1.a"
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered", fmt.Sprintf("return(%q)", sql)))
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered", fmt.Sprintf("return(%q)", "non-decorrelate:"+sql)))
 			defer func() {
 				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered"))
 			}()

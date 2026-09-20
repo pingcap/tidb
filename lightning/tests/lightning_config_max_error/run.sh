@@ -87,9 +87,11 @@ check_contains "COUNT(*): ${remaining_row_count}"
 # import a fourth time
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records_v2'
 run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
-! run_lightning --backend local --config "${mydir}/ignore_config.toml"
+ignore_config_log="$TEST_DIR/${TEST_NAME}.ignore-config.log"
+rm -f "$ignore_config_log"
+! run_lightning --backend local --config "${mydir}/ignore_config.toml" --log-file "$ignore_config_log"
 [ $? -eq 0 ]
-tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Config:ErrInvalidConfig]conflict.strategy cannot be set to \\\"ignore\\\" when use tikv-importer.backend = \\\"local\\\""
+grep "ERROR" "$ignore_config_log" | grep -Fq "[Lightning:Config:ErrInvalidConfig]conflict.strategy cannot be set to \\\"ignore\\\" when use tikv-importer.backend = \\\"local\\\""
 
 # Check tidb backend record duplicate entry in conflict_records_v2 table
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records_v2'
