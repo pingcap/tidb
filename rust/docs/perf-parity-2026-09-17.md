@@ -2141,3 +2141,132 @@ Q2 plan live (the primary bug's minimal repro WAS verified against a live
 Go oracle; this secondary fix was verified by source-tracing and a unit
 test constructing the exact bug shape by hand, since the live TPC-H route
 was not available in this environment).
+
+## Follow-up: the index-join inner multi-pattern gate was missing entirely, not just dead code (2026-09-20)
+
+Instructed to clean up the two dead-code findings noted above
+(`get_hash_joins`, `admits_inner`) after first comparing against Go to
+confirm parity. That comparison changed the diagnosis: neither function was
+safely-deletable leftover code.
+
+**Root cause.** Go's `findBestTask` (`find_best_task.go:624-630`) calls
+`admitIndexJoinInnerChildPattern` on EVERY operator asked to serve as an
+index join's inner side, BEFORE `exhaustPhysicalPlans` even runs. That
+function admits `DataSource` (barring a TiFlash-preferred read),
+`Selection`/`Projection`/an inner-type `Join`/a group-key-matching
+`Aggregation` (all four gated on `tidb_enable_inl_join_inner_multi_pattern`,
+`vardef.DefTiDBEnableINLJoinMultiPattern = true` -- default ON, not an
+opt-in edge case), and `UnionScan`; everything else (Sort, Limit, TopN,
+Window, a non-inner Join) is refused outright -- Go's own comment: "index
+join inner side couldn't allow join, sort, limit, because they are
+Optimization Fence."
+
+Rust's `find_best_task` (`find_best_task/dispatch.rs`) had no equivalent of
+this admission gate at all. Its only enforcement was a POST-HOC structural
+check (`task_has_index_join_info`) that invalidates a task if the built tree
+never produced an `IndexJoinInfo`/`index_join_info` receipt. That check
+happens to produce the right answer for operators that never propagate
+`index_join_prop` to a child in the first place, but it does NOT stop a
+user from disabling the feature: `SET SESSION
+tidb_enable_inl_join_inner_multi_pattern = OFF` was silently ignored, since
+nothing ever read the session variable. Confirmed live (see regression test
+below): before the fix, the OFF setting had no effect whatsoever on a query
+that walks an index-join probe through a residual `Selection`.
+
+Also confirmed, this time by checking whether the two "dead" functions are
+even reachable at all: `crates/tidb-planner/src/find_best_task/index_join.rs`
+(and its whole `index_join/` subdirectory) and
+`crates/tidb-planner/src/physical/{apply,correlated,hash_join,index_join,merge_join,scan_ranges}.rs`
+are not declared by any `mod` statement anywhere in the crate -- they are
+orphaned files left on disk from an earlier architecture (`find_best_task.rs`'s
+own doc comment: "the former reduced candidate tree ... were removed once
+the shared planner became the production authority"), not part of the
+compiled tree at all. `hash_join.rs`'s `PhysicalHashJoin` construction even
+uses a different, superseded struct shape (`join: BasePhysicalJoin { .. }`)
+than the live one dispatch.rs builds today, so it could not have been wired
+back in unmodified. Deleted all seven files/directories; `cargo check
+--workspace --lib --tests` is unchanged before and after (they contributed
+nothing to the build).
+
+Separately verified `find_best_task.rs::hash_join_candidates`
+(the LIVE hash-join enumerator dispatch.rs actually calls) already carries
+the one capability `get_hash_joins` had that looked like it might be a real
+gap: pushing `index_join_prop` to EITHER child in turn (two candidates) when
+this join is itself walked through as an index-join's inner side. That
+mechanism was never missing -- only the up-front admission gate was.
+
+**Fix** (`crates/tidb-planner/src/find_best_task/dispatch.rs`): a fresh,
+from-scratch port of `admitIndexJoinInnerChildPattern` as
+`admits_index_join_inner_child_pattern` (the orphaned `admits_inner` body
+was not reused verbatim, since a module nobody compiles is not proven
+correct against current APIs), wired into `find_best_task_uncached`'s
+generic tail in the same position Go's gate occupies -- before the
+non-root-task-type check, after the per-operator-override early returns
+(`DataSource`/`MemTable`/etc., which already have their own admission
+handling and never reach this point). Added the session variable end to
+end: `DispatchContext::enable_inl_join_inner_multi_pattern` (default
+`true`, matching Go's default) with a `with_inl_join_inner_multi_pattern`
+setter; threaded through `tidb_executor::StmtContextData` (field, setter,
+getter, mirroring `allow_projection_push_down`'s existing wiring exactly)
+and `tidb_session::stmt_ctx.rs`'s two `StmtContext` construction sites
+(`not_off("tidb_enable_inl_join_inner_multi_pattern")`, since the sysvar
+already exists in the catalog defaulting to `"ON"` -- no session-variable
+plumbing was missing, only the planner's own consumption of it); and
+`tidb_executor::driver::planner_bridge.rs`'s `DispatchContext` construction
+site.
+
+**Regression tests**:
+- `dispatch.rs`'s new unit test
+  `admits_index_join_inner_child_pattern_matches_go` exercises every branch
+  of the ported gate directly (hand-built `LogicalPlan` variants, no
+  session/cluster): `DataSource` with and without a TiFlash preference,
+  `Selection`/inner `Join`/matching `Aggregation` under both `multi_pattern`
+  settings, a non-inner `Join` refused even with `multi_pattern` on,
+  `Aggregation` with a mismatched group key refused even with it on,
+  `UnionScan` unconditional, `Sort` (standing in for the whole Optimization
+  Fence set) always refused.
+- `tidb-session`'s `tests_index_join_inner_pattern.rs` gained
+  `a_selection_probe_walks_through_only_with_multi_pattern_on`: a real
+  in-process query (`t2.c REGEXP 'x'`, not TiKV-pushable, so it survives
+  logical predicate pushdown as a genuine `LogicalSelection` above `t2`)
+  hinted `INL_JOIN(t2)`. With the session default (`multi_pattern` ON) it
+  produces a real `IndexJoin` with `inner:Selection` and the inner
+  `TableRangeScan` correctly says `range: decided by [test.t1.a]`; after
+  `SET SESSION tidb_enable_inl_join_inner_multi_pattern = OFF` the same
+  query falls back to a plain `MergeJoin` with an ordinary `TableFullScan`
+  under the Selection, matching Go's refusal. Verified fail-before/pass-after
+  by `git stash`-ing the dispatch.rs/stmt_context.rs/planner_bridge.rs/
+  stmt_ctx.rs changes together and re-running: on the pre-fix tree, the OFF
+  setting had NO effect at all -- the query still produced the walked-through
+  `IndexJoin`, proving the session variable was previously wired nowhere in
+  the planner.
+
+**Validated**: `cargo test -p tidb-planner --lib` (943/944, the one
+pre-existing unrelated failure `union_unsigned_widening_uses_the_in_union_cast_signature`
+still the only failure); `cargo test -p tidb-session --lib` (1730/1731, the
+one pre-existing unrelated failure
+`show_create_table_matches_go_for_every_served_information_schema_table`
+still the only failure); `cargo test -p tidb-executor --lib` (1344/1344);
+`cargo check --workspace --lib --tests` clean; `cargo fmt`/`cargo clippy -p
+tidb-planner -p tidb-session -p tidb-executor --lib --tests` clean on every
+touched line (pre-existing drift elsewhere in these crates left untouched,
+as in every earlier round this session).
+
+**Not done, flagged separately**: while tracing `get_hash_joins`, noticed
+its hint-conflict warnings (`HASH_JOIN_BUILD`/`HASH_JOIN_PROBE` conflicts,
+`HASH_JOIN` vs `NO_HASH_JOIN` conflicts) and its `force_left`/`force_right`
+hint handling are NOT present in the live `hash_join_candidates`
+(`find_best_task.rs`) dispatch.rs actually calls -- `hash_join_shapes` is
+invoked there with `force_left`/`force_right` hardcoded `false`. This is a
+real, separate, pre-existing gap (HASH_JOIN_BUILD/HASH_JOIN_PROBE hints are
+not respected at all in the live path), unrelated to index-join admission
+and out of scope for this fix; queued as a follow-up task rather than
+folded into this change.
+
+**What was not verified**: no live TPC-H reproduction against Go's Q2 (or
+any other Go-side comparison) confirming this closes the ORIGINAL report's
+root cause end-to-end; this environment's disk allowance ruled that out for
+this session (see the aborted TPC-H attempt above). The fix and its tests
+are grounded in direct Go source comparison plus an in-process, no-cluster
+SQL repro proving the mechanism now works and the session variable now has
+teeth.

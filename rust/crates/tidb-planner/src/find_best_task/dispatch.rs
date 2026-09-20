@@ -112,6 +112,12 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.AllowProjectionPushDown`, used when Projection
     /// enumerates its TiKV coprocessor candidate.
     pub allow_projection_push_down: bool,
+    /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
+    /// (`tidb_enable_inl_join_inner_multi_pattern`, default ON): whether
+    /// Selection, Projection, an inner-type Join, or a matching Aggregation
+    /// may sit between an index join's inner `DataSource` and the join
+    /// itself. Read by [`admits_index_join_inner_child_pattern`].
+    pub enable_inl_join_inner_multi_pattern: bool,
     /// Go `SessionVars.LimitPushDownThreshold`, used by TopN's normal
     /// coprocessor preference. A physical Limit always prefers cop.
     pub limit_push_down_threshold: u64,
@@ -182,6 +188,8 @@ impl<'a> DispatchContext<'a> {
             expression_evaluator: &crate::ranger::points::evaluate_static,
             ordering_index_selectivity_ratio: 0.01,
             allow_projection_push_down: true,
+            // Go `vardef.DefTiDBEnableINLJoinMultiPattern` is true.
+            enable_inl_join_inner_multi_pattern: true,
             // Go `vardef.DefOptLimitPushDownThreshold`.
             limit_push_down_threshold: 5_000,
             enable_paging: true,
@@ -268,6 +276,14 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_projection_push_down(mut self, allow: bool) -> Self {
         self.allow_projection_push_down = allow;
+        self
+    }
+
+    /// The same context with the session's index-join inner multi-pattern
+    /// switch (`tidb_enable_inl_join_inner_multi_pattern`).
+    #[must_use]
+    pub const fn with_inl_join_inner_multi_pattern(mut self, enable: bool) -> Self {
+        self.enable_inl_join_inner_multi_pattern = enable;
         self
     }
 
@@ -935,6 +951,65 @@ fn task_has_index_join_info(task: &Task) -> bool {
     }
 }
 
+/// Go `admitIndexJoinInnerChildPattern` (`exhaust_physical_plans.go:645`):
+/// whether `plan` may appear on the inner side of an index join. `DataSource`
+/// is unconditionally admitted here (barring a TiFlash-preferred read, which
+/// this port's TiFlash-less DataSource never carries); Selection, Projection,
+/// an inner-type Join and a group-key-matching Aggregation are admitted only
+/// when `multi_pattern` (Go's `tidb_enable_inl_join_inner_multi_pattern`,
+/// default ON) holds; everything else, including Sort/Limit/TopN/Window and
+/// any non-inner Join, is refused -- Go's own comment: "index join inner side
+/// couldn't allow join, sort, limit, because they are Optimization Fence."
+fn admits_index_join_inner_child_pattern(
+    plan: &LogicalPlan,
+    property: &crate::physical_property::IndexJoinRuntimeProp,
+    multi_pattern: bool,
+) -> bool {
+    match plan {
+        LogicalPlan::DataSource(ds) => {
+            ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH == 0
+        }
+        LogicalPlan::Selection(_) | LogicalPlan::Projection(_) => multi_pattern,
+        LogicalPlan::Join(join) => {
+            multi_pattern && join.join_type == crate::find_best_task::LogicalJoinType::Inner
+        }
+        LogicalPlan::Aggregation(agg) => {
+            if !multi_pattern {
+                return false;
+            }
+            // Go `checkIndexJoinInnerTaskWithAgg`: an inner join key that
+            // reaches the DataSource must be a bare GROUP BY column, so
+            // grouping cannot split rows the probe expects to find intact.
+            let groups =
+                tidb_expr::simple_expr::extract_columns_from_expressions(&agg.group_by_items, None);
+            let mut child = plan;
+            let schema = loop {
+                if let LogicalPlan::DataSource(ds) = child {
+                    break ds.base.base.schema();
+                }
+                let [next] = child.children() else {
+                    return false;
+                };
+                child = next;
+            };
+            let Some(schema) = schema else {
+                return false;
+            };
+            property
+                .inner_join_keys()
+                .iter()
+                .filter(|key| schema.contains(key))
+                .all(|key| {
+                    groups
+                        .iter()
+                        .any(|column| column.unique_id == key.unique_id)
+                })
+        }
+        LogicalPlan::UnionScan(_) => true,
+        _ => false,
+    }
+}
+
 fn find_best_task_uncached(
     plan: &LogicalPlan,
     prop: &PhysicalProperty,
@@ -979,6 +1054,25 @@ fn find_best_task_uncached(
             return find_best_task_4_logical_mem_table(plan, op, prop, ctx);
         }
         _ => {}
+    }
+
+    // `findBestTask` (`find_best_task.go:624`): before anything else, an
+    // operator asked to serve as an index join's inner side must match one
+    // of Go's admitted walk-through patterns (Selection, Projection, an
+    // inner-type Join, a group-key-matching Aggregation, or UnionScan --
+    // `admitIndexJoinInnerChildPattern`). Everything else (Sort, Limit,
+    // TopN, Window, a non-inner Join, ...) is an "optimization fence" and is
+    // refused immediately, even before `exhaustPhysicalPlans` runs, exactly
+    // as Go's own comment states. `DataSource` has its own override above
+    // and never reaches this generic tail.
+    if let Some(index_join_prop) = prop.index_join_prop.as_ref() {
+        if !admits_index_join_inner_child_pattern(
+            plan,
+            index_join_prop,
+            ctx.enable_inl_join_inner_multi_pattern,
+        ) {
+            return Ok(Task::invalid_task());
+        }
     }
 
     // `prop.TaskTp != RootTaskType && !IsFlashProp()` — with no TiFlash
@@ -5383,6 +5477,156 @@ mod tests {
             second_task.plan(),
             Some(PhysicalPlan::TableDual(dual)) if dual.row_count == 3
         ));
+    }
+
+    /// Go `admitIndexJoinInnerChildPattern` (`exhaust_physical_plans.go:645`),
+    /// branch by branch: `DataSource` (barring a TiFlash-preferred read),
+    /// Selection/Projection/an inner Join/a matching Aggregation gated on
+    /// `multi_pattern`, `UnionScan` unconditionally, everything else (the
+    /// `Sort` used here stands in for the whole "Optimization Fence" set --
+    /// Sort, Limit, TopN, Window, a non-inner Join) always refused.
+    #[test]
+    fn admits_index_join_inner_child_pattern_matches_go() {
+        use crate::find_best_task::LogicalJoinType;
+        use crate::logical::{
+            data_source::PREFER_TIFLASH, DataSource, LogicalAggregation, LogicalJoin, LogicalSort,
+            LogicalUnionScan,
+        };
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::column::Column;
+        use tidb_expr::expression::Expression;
+        use tidb_expr::schema::Schema;
+
+        let allocator = PlanIdAllocator::new();
+        let col = |id: i64| Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+        let runtime_prop = |inner_keys: Vec<Column>| {
+            crate::physical_property::IndexJoinRuntimeProp::new(
+                Vec::new(),
+                Vec::new(),
+                inner_keys,
+                1.0,
+                false,
+            )
+        };
+
+        // DataSource: admitted regardless of `multi_pattern`, refused only
+        // when it prefers a TiFlash read.
+        let mut ds_base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+        ds_base.base.set_schema(Some(Schema::new(vec![col(1)])));
+        let plain_ds = LogicalPlan::DataSource(DataSource {
+            base: ds_base.clone(),
+            ..Default::default()
+        });
+        let prop = runtime_prop(vec![col(1)]);
+        assert!(admits_index_join_inner_child_pattern(
+            &plain_ds, &prop, false
+        ));
+        assert!(admits_index_join_inner_child_pattern(
+            &plain_ds, &prop, true
+        ));
+        let tiflash_ds = LogicalPlan::DataSource(DataSource {
+            base: ds_base,
+            prefer_store_type: PREFER_TIFLASH,
+            ..Default::default()
+        });
+        assert!(!admits_index_join_inner_child_pattern(
+            &tiflash_ds,
+            &prop,
+            false
+        ));
+
+        // Selection / Projection: gated on `multi_pattern` alone.
+        let mut sel_base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
+        sel_base.set_children(vec![plain_ds.clone()]);
+        let selection = LogicalPlan::Selection(LogicalSelection::new(sel_base, Vec::new()));
+        assert!(!admits_index_join_inner_child_pattern(
+            &selection, &prop, false
+        ));
+        assert!(admits_index_join_inner_child_pattern(
+            &selection, &prop, true
+        ));
+
+        // Join: gated on BOTH `multi_pattern` and `JoinType == Inner`.
+        let mut inner_join_base = BaseLogicalPlan::new(&allocator, LogicalJoin::TYPE, 0);
+        inner_join_base.set_children(vec![plain_ds.clone(), plain_ds.clone()]);
+        let inner_join =
+            LogicalPlan::Join(LogicalJoin::new(inner_join_base, LogicalJoinType::Inner));
+        assert!(!admits_index_join_inner_child_pattern(
+            &inner_join,
+            &prop,
+            false
+        ));
+        assert!(admits_index_join_inner_child_pattern(
+            &inner_join,
+            &prop,
+            true
+        ));
+
+        let mut outer_join_base = BaseLogicalPlan::new(&allocator, LogicalJoin::TYPE, 0);
+        outer_join_base.set_children(vec![plain_ds.clone(), plain_ds.clone()]);
+        let outer_join = LogicalPlan::Join(LogicalJoin::new(
+            outer_join_base,
+            LogicalJoinType::LeftOuter,
+        ));
+        assert!(
+            !admits_index_join_inner_child_pattern(&outer_join, &prop, true),
+            "a non-inner join is refused even with multi_pattern on -- Go's \
+             own comment names join as an Optimization Fence"
+        );
+
+        // Aggregation: gated on `multi_pattern`, AND every inner join key
+        // that reaches the DataSource must be a bare GROUP BY column.
+        let mut agg_base = BaseLogicalPlan::new(&allocator, LogicalAggregation::TYPE, 0);
+        agg_base.set_children(vec![plain_ds.clone()]);
+        let matching_agg = LogicalPlan::Aggregation(LogicalAggregation::new(
+            agg_base,
+            Vec::new(),
+            vec![Expression::Column(col(1))],
+        ));
+        assert!(!admits_index_join_inner_child_pattern(
+            &matching_agg,
+            &prop,
+            false
+        ));
+        assert!(admits_index_join_inner_child_pattern(
+            &matching_agg,
+            &prop,
+            true
+        ));
+
+        let mut mismatched_agg_base = BaseLogicalPlan::new(&allocator, LogicalAggregation::TYPE, 0);
+        mismatched_agg_base.set_children(vec![plain_ds.clone()]);
+        let mismatched_agg = LogicalPlan::Aggregation(LogicalAggregation::new(
+            mismatched_agg_base,
+            Vec::new(),
+            vec![Expression::Column(col(2))],
+        ));
+        assert!(
+            !admits_index_join_inner_child_pattern(&mismatched_agg, &prop, true),
+            "the inner join key is not a GROUP BY column, so grouping may \
+             split rows the probe expects intact -- Go `checkIndexJoinInnerTaskWithAgg`"
+        );
+
+        // UnionScan: unconditionally admitted.
+        let mut union_scan_base = BaseLogicalPlan::new(&allocator, LogicalUnionScan::TYPE, 0);
+        union_scan_base.set_children(vec![plain_ds.clone()]);
+        let union_scan = LogicalPlan::UnionScan(LogicalUnionScan::new(union_scan_base, Vec::new()));
+        assert!(admits_index_join_inner_child_pattern(
+            &union_scan,
+            &prop,
+            false
+        ));
+
+        // Everything else -- Sort stands in for the whole Optimization Fence
+        // set (Sort, Limit, TopN, Window, a non-inner Join) -- is refused
+        // even with multi_pattern on.
+        let mut sort_base = BaseLogicalPlan::new(&allocator, "Sort", 0);
+        sort_base.set_children(vec![plain_ds]);
+        let sort = LogicalPlan::Sort(LogicalSort {
+            base: sort_base,
+            by_items: Vec::new(),
+        });
+        assert!(!admits_index_join_inner_child_pattern(&sort, &prop, true));
     }
 }
 

@@ -669,6 +669,9 @@ pub struct StmtContextData {
     /// Go `SessionVars.AllowProjectionPushDown`
     /// (`@@tidb_opt_projection_push_down`, default `ON`).
     allow_projection_push_down: bool,
+    /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
+    /// (`@@tidb_enable_inl_join_inner_multi_pattern`, default `ON`).
+    enable_inl_join_inner_multi_pattern: bool,
     /// Go `SessionVars.LimitPushDownThreshold`
     /// (`@@tidb_opt_limit_push_down_threshold`, default `5000`).
     limit_push_down_threshold: u64,
@@ -1216,6 +1219,13 @@ context_configuration! {
     #[must_use]
     pub fn with_projection_push_down(mut self, allow: bool) -> Self {
         self.allow_projection_push_down = allow;
+        self
+    }
+
+    /// Sets `@@tidb_enable_inl_join_inner_multi_pattern` for this statement.
+    #[must_use]
+    pub fn with_inl_join_inner_multi_pattern(mut self, enable: bool) -> Self {
+        self.enable_inl_join_inner_multi_pattern = enable;
         self
     }
 
@@ -1772,6 +1782,7 @@ impl StmtContext {
             advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
             ordering_index_selectivity_ratio: 0.01,
             allow_projection_push_down: true,
+            enable_inl_join_inner_multi_pattern: true,
             limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
                 as u64,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
@@ -2504,6 +2515,12 @@ impl StmtContext {
     #[must_use]
     pub fn allow_projection_push_down(&self) -> bool {
         self.allow_projection_push_down
+    }
+
+    /// Go `SessionVars.EnableINLJoinInnerMultiPattern`.
+    #[must_use]
+    pub fn enable_inl_join_inner_multi_pattern(&self) -> bool {
+        self.enable_inl_join_inner_multi_pattern
     }
 
     /// Go `SessionVars.LimitPushDownThreshold`.

@@ -229,3 +229,49 @@ fn a_common_handle_probes_prefix_key_reader_labels_table_range_scan() {
         "the child TableRangeScan already correctly names its runtime range:\n{plan_text}"
     );
 }
+
+/// Go `admitIndexJoinInnerChildPattern` (`exhaust_physical_plans.go:643`)
+/// admits a `LogicalSelection` between an index join and the `DataSource` it
+/// re-seeds ONLY when `tidb_enable_inl_join_inner_multi_pattern` (default ON)
+/// holds. `t2.c REGEXP 'x'` is not TiKV-pushable, so it survives as a real
+/// `LogicalSelection` above `t2` rather than folding into the scan's own
+/// pushed-down conditions -- exactly the shape the gate has to see.
+///
+/// Before `admits_index_join_inner_child_pattern` was wired into
+/// `find_best_task`'s generic dispatch tail (`find_best_task/dispatch.rs`),
+/// Rust had no equivalent of this up-front gate at all: `SET SESSION
+/// tidb_enable_inl_join_inner_multi_pattern = OFF` was silently ignored and
+/// the walk-through-Selection IndexJoin below was built either way.
+#[test]
+fn a_selection_probe_walks_through_only_with_multi_pattern_on() {
+    let mut session = fixture();
+    let sql = "EXPLAIN SELECT /*+ INL_JOIN(t2) */ * FROM t1 JOIN t2 ON t1.a = t2.a \
+               WHERE t2.c REGEXP 'x'";
+
+    let on = plan(&mut session, sql);
+    assert!(
+        on.contains("IndexJoin") && on.contains("inner:Selection"),
+        "multi_pattern defaults ON: the probe must walk through the residual \
+         Selection above t2:\n{on}"
+    );
+    assert!(
+        on.contains("range: decided by"),
+        "the walked-through Selection's child scan must still be the \
+         runtime-ranged probe:\n{on}"
+    );
+
+    session
+        .run("SET SESSION tidb_enable_inl_join_inner_multi_pattern = OFF")
+        .unwrap();
+    let off = plan(&mut session, sql);
+    assert!(
+        !off.contains("IndexJoin"),
+        "multi_pattern OFF: Go refuses Selection as an index-join inner \
+         pattern, so no IndexJoin -- got:\n{off}"
+    );
+    assert!(
+        !off.contains("range: decided by"),
+        "with the walk-through refused, t2 must plan as an ordinary scan, \
+         not a runtime-ranged probe:\n{off}"
+    );
+}

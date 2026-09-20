@@ -1588,6 +1588,7 @@ pub(crate) fn physical_plan_for_logical(
         .with_selectivity_factor(ctx.selectivity_factor())
         .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())
         .with_projection_push_down(ctx.allow_projection_push_down())
+        .with_inl_join_inner_multi_pattern(ctx.enable_inl_join_inner_multi_pattern())
         .with_limit_push_down_threshold(ctx.limit_push_down_threshold())
         .with_paging(ctx.optimizer_cost_env().session.enable_paging)
         .with_index_merge_enabled(ctx.index_merge())

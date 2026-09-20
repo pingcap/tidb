@@ -78,6 +78,7 @@ pub(crate) struct StatementVarSnapshot {
     constraint_check_in_place: bool,
     ordering_index_selectivity_ratio: f64,
     allow_projection_push_down: bool,
+    enable_inl_join_inner_multi_pattern: bool,
     limit_push_down_threshold: u64,
     index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
     join_reorder_through_proj: bool,
@@ -784,6 +785,9 @@ impl Session {
                 .and_then(|value| value.parse::<f64>().ok())
                 .unwrap_or(0.01),
             allow_projection_push_down: on("tidb_opt_projection_push_down"),
+            enable_inl_join_inner_multi_pattern: not_off(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_INL_JOIN_INNER_MULTI_PATTERN,
+            ),
             limit_push_down_threshold: self
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_OPT_LIMIT_PUSH_DOWN_THRESHOLD)
@@ -986,6 +990,7 @@ impl Session {
         let constraint_check_in_place = snapshot.constraint_check_in_place;
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
         let allow_projection_push_down = snapshot.allow_projection_push_down;
+        let enable_inl_join_inner_multi_pattern = snapshot.enable_inl_join_inner_multi_pattern;
         let limit_push_down_threshold = snapshot.limit_push_down_threshold;
         let mut index_lookup_push_down_session = snapshot.index_lookup_push_down_session;
         // Transaction state is not part of the variable-table generation
@@ -1088,6 +1093,7 @@ impl Session {
                     .with_allow_agg_push_down(allow_agg_push_down)
                     .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
                     .with_projection_push_down(allow_projection_push_down)
+                    .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
                     .with_limit_push_down_threshold(limit_push_down_threshold)
                     .with_index_lookup_push_down_session(index_lookup_push_down_session)
                     .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
@@ -1290,6 +1296,7 @@ impl Session {
                 .with_allow_agg_push_down(allow_agg_push_down)
                 .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
                 .with_projection_push_down(allow_projection_push_down)
+                .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
                 .with_limit_push_down_threshold(limit_push_down_threshold)
                 .with_index_lookup_push_down_session(index_lookup_push_down_session)
                 .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
