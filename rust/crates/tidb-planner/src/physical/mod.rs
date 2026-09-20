@@ -355,6 +355,171 @@ pub struct PhysicalHashJoin {
     pub default_values: Vec<tidb_datatype::Datum>,
 }
 
+/// Go `BasePhysicalJoin.MemoryUsage` (`base_physical_join.go:146-186`) over
+/// the fields this port's join nodes carry. Go's `emptyBasePhysicalJoinSize`
+/// is `unsafe.Sizeof(BasePhysicalJoin{})`; the join nodes are separate
+/// structs here, so each passes its own `size_of`, as
+/// [`PhysicalSort::memory_usage`] does, and Go's slice capacities are the
+/// lengths (every list is built exact-sized).
+fn base_physical_join_memory_usage(
+    node_size: usize,
+    base: &BasePhysicalPlan,
+    key_lists: &[&[tidb_expr::column::Column]],
+    is_null_eq: &[bool],
+    condition_lists: &[&[tidb_expr::expression::Expression]],
+    default_values: &[tidb_datatype::Datum],
+) -> i64 {
+    use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_INTERFACE, SIZE_OF_POINTER};
+    let conditions = condition_lists.iter().map(|list| list.len()).sum::<usize>() as i64;
+    let keys = key_lists.iter().map(|list| list.len()).sum::<usize>() as i64;
+    let mut sum = node_size as i64
+        + base.base.memory_usage()
+        + is_null_eq.len() as i64 * SIZE_OF_BOOL
+        + conditions * SIZE_OF_INTERFACE
+        + keys * SIZE_OF_POINTER
+        + default_values.len() as i64 * tidb_expr::memory_usage::GO_EMPTY_DATUM_SIZE;
+    for list in condition_lists {
+        sum += list.iter().map(|c| c.memory_usage()).sum::<i64>();
+    }
+    for list in key_lists {
+        sum += list.iter().map(|k| k.memory_usage()).sum::<i64>();
+    }
+    for value in default_values {
+        sum += value.estimated_mem_usage() as i64;
+    }
+    sum
+}
+
+impl PhysicalHashJoin {
+    /// Go `PhysicalHashJoin.MemoryUsage` (`physical_hash_join.go:354-368`):
+    /// the join base, the node's own scalars, and every `EqualConditions` /
+    /// `NAEqualConditions` function.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_SLICE, SIZE_OF_UINT, SIZE_OF_UINT8};
+        base_physical_join_memory_usage(
+            std::mem::size_of::<Self>(),
+            &self.base,
+            &[
+                self.left_join_keys.as_slice(),
+                self.right_join_keys.as_slice(),
+            ],
+            &self.is_null_eq,
+            &[
+                self.left_conditions.as_slice(),
+                self.right_conditions.as_slice(),
+                self.other_conditions.as_slice(),
+            ],
+            &self.default_values,
+        ) + SIZE_OF_UINT
+            + SIZE_OF_SLICE
+            + SIZE_OF_BOOL * 2
+            + SIZE_OF_UINT8
+            + self
+                .equal_conditions
+                .iter()
+                .chain(&self.na_equal_conditions)
+                .map(|f| f.memory_usage())
+                .sum::<i64>()
+    }
+}
+
+impl PhysicalMergeJoin {
+    /// Go `PhysicalMergeJoin.MemoryUsage` (`physical_merge_join.go:340-347`):
+    /// the join base plus one `CompareFunc` per key pair.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_FUNC, SIZE_OF_SLICE};
+        base_physical_join_memory_usage(
+            std::mem::size_of::<Self>(),
+            &self.base,
+            &[
+                self.left_join_keys.as_slice(),
+                self.right_join_keys.as_slice(),
+            ],
+            &self.is_null_eq,
+            &[
+                self.left_conditions.as_slice(),
+                self.right_conditions.as_slice(),
+                self.other_conditions.as_slice(),
+            ],
+            &self.default_values,
+        ) + SIZE_OF_SLICE
+            + self.left_join_keys.len() as i64 * SIZE_OF_FUNC
+            + SIZE_OF_BOOL
+    }
+}
+
+impl PhysicalIndexJoin {
+    /// Go `PhysicalIndexJoin.MemoryUsage` (`physical_index_join.go:111-125`)
+    /// plus the `PhysicalIndexHashJoin` (`:86-92`) / `PhysicalIndexMergeJoin`
+    /// (`physical_index_merge_join.go:54-62`) terms the `kind` selects. Go's
+    /// `InnerPlan` is a child here, charged by the subtree walk.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        use tidb_util::size::{
+            SIZE_OF_BOOL, SIZE_OF_FUNC, SIZE_OF_INT, SIZE_OF_INTERFACE, SIZE_OF_POINTER,
+            SIZE_OF_SLICE,
+        };
+        let mut sum = base_physical_join_memory_usage(
+            std::mem::size_of::<Self>(),
+            &self.base,
+            &[
+                self.left_join_keys.as_slice(),
+                self.right_join_keys.as_slice(),
+                self.outer_join_keys.as_slice(),
+                self.inner_join_keys.as_slice(),
+            ],
+            &self.is_null_eq,
+            &[
+                self.left_conditions.as_slice(),
+                self.right_conditions.as_slice(),
+                self.other_conditions.as_slice(),
+            ],
+            &self.default_values,
+        ) + SIZE_OF_INTERFACE * 2
+            + SIZE_OF_SLICE * 4
+            + (self.key_off2_idx_off.len() + self.idx_col_lens.len()) as i64 * SIZE_OF_INT
+            + SIZE_OF_POINTER;
+        if let Some(filters) = &self.compare_filters {
+            // Go `ColWithCmpFuncManager.MemoryUsage`
+            // (`physical_index_join.go:335-350`).
+            sum += std::mem::size_of::<IndexJoinCompareFilters>() as i64
+                + filters.ops.len() as i64 * SIZE_OF_FUNC
+                + filters.target_col.memory_usage()
+                + filters.args.iter().map(|a| a.memory_usage()).sum::<i64>();
+        }
+        sum += match self.kind {
+            crate::plan_cost_ver2::IndexJoinKind::IndexJoin => 0,
+            crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin => SIZE_OF_BOOL,
+            crate::plan_cost_ver2::IndexJoinKind::IndexMergeJoin => {
+                SIZE_OF_SLICE * 3
+                    + self.left_join_keys.len() as i64 * 2 * SIZE_OF_FUNC
+                    + SIZE_OF_BOOL * 2
+            }
+        };
+        sum
+    }
+}
+
+impl PhysicalApply {
+    /// Go `PhysicalApply.MemoryUsage` (`physical_apply.go:111-122`): the
+    /// embedded hash join plus the outer schema's correlated columns.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_POINTER, SIZE_OF_SLICE};
+        self.hash_join.memory_usage()
+            + SIZE_OF_BOOL * 3
+            + SIZE_OF_SLICE
+            + self.outer_schema.len() as i64 * SIZE_OF_POINTER
+            + self
+                .outer_schema
+                .iter()
+                .map(|c| c.memory_usage())
+                .sum::<i64>()
+    }
+}
+
 /// Go `physicalop.PhysicalMergeJoin`.
 #[derive(Clone, Debug)]
 pub struct PhysicalMergeJoin {
@@ -3269,6 +3434,10 @@ impl PhysicalPlan {
             total += match node {
                 Self::Sort(sort) => sort.memory_usage(),
                 Self::TableSample(sample) => sample.memory_usage(),
+                Self::HashJoin(join) => join.memory_usage(),
+                Self::MergeJoin(join) => join.memory_usage(),
+                Self::IndexJoin(join) => join.memory_usage(),
+                Self::Apply(apply) => apply.memory_usage(),
                 _ => node.base().base.memory_usage(),
             };
             for child in node.children() {

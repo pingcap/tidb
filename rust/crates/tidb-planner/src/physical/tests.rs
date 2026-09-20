@@ -1715,3 +1715,28 @@ fn a_childless_projection_panics_when_post_eliminating_like_go() {
     }))
     .is_err());
 }
+
+/// Go `PhysicalHashJoin.MemoryUsage` (`physical_hash_join.go:354-368`)
+/// charges the join's own keys and conditions over the plan base, and the
+/// subtree walk still adds each child once.
+#[test]
+fn join_memory_usage_charges_its_own_keys_and_conditions() {
+    let tree = hash_join(3, scan(1, &[1]), scan(2, &[2]));
+    let PhysicalPlan::HashJoin(join) = &tree else {
+        panic!("hash_join builds a HashJoin");
+    };
+    let own = join.memory_usage();
+    assert!(own > join.base.base.memory_usage());
+    let mut heavier = join.clone();
+    heavier.is_null_eq.push(false);
+    assert_eq!(heavier.memory_usage(), own + tidb_util::size::SIZE_OF_BOOL);
+    assert_eq!(
+        tree.memory_usage(),
+        own + tree
+            .children()
+            .iter()
+            .map(|child| child.memory_usage())
+            .sum::<i64>()
+    );
+    tree.dismantle();
+}

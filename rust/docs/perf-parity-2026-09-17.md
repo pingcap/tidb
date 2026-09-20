@@ -3070,3 +3070,66 @@ merge join by cost -- the exact plan Bug 2 used to reroute.
 - The parallel workers' marker path is unreachable until
   `can_parallelize_exact_int_probe` admits residuals for non-`Inner`
   kinds; it is covered by reading, not by a test.
+
+## The two remaining join gaps: empty-build probe skip, and plan-cache memory accounting
+
+### Go skips the probe side when the build side ends empty
+
+`wait4BuildSide` (`hash_join_base.go:119-121`) sets `skipProbe` once the
+build finishes empty and unspilled, so `fetchProbeSideChunks` never reads
+the probe child; v1 passes `canSkipIfBuildEmpty = Inner || Semi`
+(`hash_join_v1.go:242`), v2's `canSkipProbeIfHashTableIsEmpty`
+(`hash_join_v2.go:763-775`) is `Inner`, `Semi` when the build is the
+inner side, and an outer join whose build side is the preserved one. The
+port always drove the probe child. `build_table` now latches
+`probe_done` from that rule (the v2 form, which subsumes v1's), so
+`next_hashed` / the parallel path return -- through
+`drain_preserved_build_rows` over the empty table for the outer-join
+case -- without a single probe `next()`. Test:
+`empty_build_side_skips_reading_the_probe_child_where_go_does` counts
+probe rows read per kind (`Inner`/`Semi` 0; `AntiSemi`/`Left` still read
+and emit); fails on the base tree with "Inner: probe rows read = 3".
+
+### Join nodes charged their expressions to the plan cache like Go
+
+Go's `PhysicalHashJoin.MemoryUsage` (`physical_hash_join.go:354-368`),
+`PhysicalMergeJoin` (`physical_merge_join.go:340-347`),
+`PhysicalIndexJoin` (+ IndexHash/IndexMerge, `physical_index_join.go:111-125`)
+and `PhysicalApply` (`physical_apply.go:111-122`) all sit on
+`BasePhysicalJoin.MemoryUsage` (`base_physical_join.go:146-186`), which
+charges every key column, condition, default value and equality
+function; the port's dispatcher fell through to the bare plan base for
+all of them, and nothing in `tidb-expr` could weigh an expression at all
+(`Column`/`Constant`/`ScalarFunction`/`CorrelatedColumn.MemoryUsage`
+were a deferred unit -- `TestExpressionMemeoryUsage` sat `#[ignore]`d).
+Both halves are ported:
+
+- `tidb_expr::memory_usage`: the four `MemoryUsage` bodies with Go's
+  `unsafe.Sizeof` constants computed exactly on 64-bit (`Column` 160,
+  `Constant` 192, `ScalarFunction` 104, `baseBuiltinFunc` 152,
+  `localColumnPool` 40, `sync.Once` 12, `Datum` 72 -- the same convention
+  `FieldType::memory_usage`'s 120 already used), including
+  `cap(hashcode)` (the port does cache one) and the builtin's own
+  accounting a `ScalarFunction` always adds (`builtin.go:1084-1102`:
+  pool, once, its `tp` copy, collation strings, every argument). One
+  departure, inherited: a datum payload goes through
+  `Datum::estimated_mem_usage`. `TestExpressionMemeoryUsage` is now
+  ported and un-ignored.
+- `physical/mod.rs`: `base_physical_join_memory_usage` plus the four
+  node overrides, wired into `PhysicalPlan::memory_usage`, which
+  `physical_plan_cache.rs:53` charges the LRU with. The node's own
+  `size_of` stands in for Go's `emptyBasePhysicalJoinSize` (the join
+  nodes are separate structs here), as `PhysicalSort` already does.
+
+### Validation
+
+- `cargo test -p tidb-expr --lib memory_usage`: 3/3 (two new, one
+  un-ignored Go port).
+- `cargo test -p tidb-planner --lib -- join_memory_usage memory_usage_sums
+  physical_plan_cache:: plan_cache_lru::`: 10/10.
+- `cargo test -p tidb-executor --lib join::` + the skip test: 83/83.
+- Fail-before/pass-after via `git stash` of `join.rs` + `physical/mod.rs`:
+  the skip test fails ("probe rows read = 3"), the planner test fails to
+  compile (no `memory_usage`).
+- `rustfmt` on the touched files; `cargo clippy` on the three crates:
+  nothing in the new code.

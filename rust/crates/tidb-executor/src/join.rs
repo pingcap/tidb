@@ -4762,6 +4762,20 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let parallel_exact_int_enabled = table.exact_int_is_unique();
         let build_buf = Chunk::new_with_capacity(&build_types, 1);
         let unmatched_build_scan = track_matches.then(|| table.first_ptr()).flatten();
+        // Go `wait4BuildSide` (`hash_join_base.go:119-121`) with the v2
+        // `canSkipProbeIfHashTableIsEmpty` rule (`hash_join_v2.go:763-775`;
+        // v1 passes `Inner || Semi`, `hash_join_v1.go:242`): an empty,
+        // unspilled build side has nothing an inner join, a semi join
+        // probing the build, or an outer join preserving the build could
+        // ever emit, so the probe child is never read at all.
+        let skip_probe = table.first_ptr().is_none()
+            && !self.build_spilled
+            && match self.kind {
+                JoinKind::Inner => true,
+                JoinKind::Semi => !build_is_left,
+                JoinKind::Left | JoinKind::Right => self.hash_builds_preserved_side(),
+                JoinKind::AntiSemi | JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => false,
+            };
         self.parallel_probe = None;
         self.hash = Some(HashState {
             table: Arc::new(table),
@@ -4774,7 +4788,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             probe_candidate_idx: 0,
             probe_matched: false,
             probe_batch_rows: Vec::new(),
-            probe_done: false,
+            probe_done: skip_probe,
             unmatched_build_scan,
             parallel_probe_pending: VecDeque::new(),
             parallel_probe_input_reuse: Vec::new(),

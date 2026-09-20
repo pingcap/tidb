@@ -64,6 +64,11 @@ pub struct Constant {
 }
 
 impl Constant {
+    /// Go `cap(c.hashcode)`, for `MemoryUsage`.
+    pub(crate) fn hashcode_capacity(&self) -> usize {
+        self.hashcode.capacity()
+    }
+
     /// Builds a plain literal constant with the given value and type.
     #[must_use]
     pub fn new(value: Datum, ret_type: FieldType) -> Self {

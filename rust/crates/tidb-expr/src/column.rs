@@ -16,10 +16,11 @@
 //!
 //! Ported: the struct and its structural, context-free methods (static type,
 //! column identity/equality, lazily-cached hash code, correlation/const-level).
-//! DEFERRED (need `EvalContext`/`chunk.Row`, or reproduce Go struct byte sizes):
-//! all `Eval*`, `StringWithCtx`/`ExplainInfo`, `ResolveIndices`, `RemapColumn`,
-//! `MemoryUsage`. Correlated columns share an execution-owned datum cell,
-//! matching Go's pointer-sharing Clone contract.
+//! `MemoryUsage` lives in `crate::memory_usage` with Go's struct sizes.
+//! DEFERRED (need `EvalContext`/`chunk.Row`): all `Eval*`,
+//! `StringWithCtx`/`ExplainInfo`, `ResolveIndices`, `RemapColumn`.
+//! Correlated columns share an execution-owned datum cell, matching Go's
+//! pointer-sharing Clone contract.
 
 use std::hash::{Hash, Hasher};
 
@@ -75,6 +76,11 @@ pub struct Column {
 }
 
 impl Column {
+    /// Go `cap(col.hashcode)`, for `MemoryUsage`.
+    pub(crate) fn hashcode_capacity(&self) -> usize {
+        self.hashcode.capacity()
+    }
+
     /// Builds a column with the given `UniqueID` and result type; all other
     /// fields take their defaults. (The `hashcode` cache is private, so columns
     /// outside this crate are built through constructors like this rather than

@@ -359,6 +359,7 @@ mod grouping;
 pub mod infer_pushdown;
 mod like;
 mod math_fn;
+pub mod memory_usage;
 pub mod metabuild;
 pub mod new_function;
 pub use new_function::{

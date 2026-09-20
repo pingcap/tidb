@@ -25,8 +25,9 @@
 //! `Decorrelate`, const-level rules, the common `ReHashCode` path (including
 //! `Grouping` metadata), structural `Hash64`/`Equals`, and evaluation for
 //! operators plus the builtin families owned by the shared dispatch modules.
-//! Unknown builtin names fail explicitly. Remaining structural gaps are
-//! per-signature collation and `MemoryUsage`.
+//! Unknown builtin names fail explicitly. `MemoryUsage` lives in
+//! `crate::memory_usage`; the remaining structural gap is per-signature
+//! collation.
 
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
@@ -497,6 +498,11 @@ fn math_overflow_error(
 }
 
 impl ScalarFunction {
+    /// Go `cap(sf.hashcode)`, for `MemoryUsage`.
+    pub(crate) fn hashcode_capacity(&self) -> usize {
+        self.hashcode.capacity()
+    }
+
     /// Builds a scalar-function node.
     #[must_use]
     pub fn new(func_name: CiString, ret_type: FieldType, args: Vec<Expression>) -> Self {

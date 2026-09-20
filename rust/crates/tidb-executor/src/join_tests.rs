@@ -1902,3 +1902,45 @@ fn index_join_marker_kinds_mark_null_for_an_unknown_in_equality() {
         }
     }
 }
+
+/// Go `wait4BuildSide` (`hash_join_base.go:119-121`) with the v2 rule
+/// `canSkipProbeIfHashTableIsEmpty` (`hash_join_v2.go:763-775`): once the
+/// build side finishes empty, an inner join and a semi join probing the
+/// build never read the probe child; the kinds that still emit probe rows
+/// read it as before.
+#[test]
+fn empty_build_side_skips_reading_the_probe_child_where_go_does() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for (kind, skips, rows_out) in [
+        (JoinKind::Inner, true, 0),
+        (JoinKind::Semi, true, 0),
+        (JoinKind::AntiSemi, false, 3),
+        (JoinKind::Left, false, 3),
+    ] {
+        let read = Arc::new(AtomicUsize::new(0));
+        let mut probe = RowSource::new(vec![vec![Datum::Int(1), Datum::Int(1)]; 3], 2);
+        probe.read_rows = Some(Arc::clone(&read));
+        let width = if matches!(kind, JoinKind::Semi | JoinKind::AntiSemi) {
+            2
+        } else {
+            4
+        };
+        let mut join = JoinExec::new(
+            ExecutorMeta::new(schema_of(width), 1, CHUNK, CHUNK),
+            kind,
+            vec![eq_on(0, 0, 2)],
+            Box::new(probe),
+            Box::new(RowSource::new(vec![], 2)),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        join.set_parallelism(5);
+        assert_eq!(run(&mut join).len(), rows_out, "{kind:?}");
+        assert_eq!(
+            read.load(Ordering::SeqCst) == 0,
+            skips,
+            "{kind:?}: probe rows read = {}",
+            read.load(Ordering::SeqCst)
+        );
+    }
+}

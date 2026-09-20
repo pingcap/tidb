@@ -280,13 +280,26 @@ fn test_eval_expr_column_projected_through_both_modes_agrees() {
     }
 }
 
-/// go-parity-gap: TestExpressionMemeoryUsage (`expression_test.go:328`)
-/// exercises `Column.MemoryUsage()` / `Constant.MemoryUsage()`; both are on
-/// column.rs/constant.rs's DEFERRED list ("reproduce Go struct byte sizes"),
-/// so no size contract exists to pin yet.
+/// Go `TestExpressionMemeoryUsage` (`expression_test.go:328-338`): a longer
+/// name weighs more, and a string constant weighs more than an int one. Go's
+/// nil-receiver case has no Rust counterpart.
 #[test]
-#[ignore = "go-parity-gap: MemoryUsage is a deferred unit in tidb-expr (Go struct byte-size accounting), so TestExpressionMemeoryUsage has no carrier"]
-fn test_expression_memory_usage() {}
+fn test_expression_memory_usage() {
+    let mut c1 = Column::default();
+    c1.orig_name = "Origin".to_owned();
+    let mut c2 = Column::default();
+    c2.orig_name = "OriginName".to_owned();
+    assert!(c2.memory_usage() > c1.memory_usage());
+
+    let mut c3 = Constant::default();
+    c3.value = Datum::Int(1);
+    let mut c4 = Constant::default();
+    c4.value = Datum::String(tidb_datatype::StringDatum::new(
+        "11",
+        tidb_datatype::Collation::Utf8Mb4Bin,
+    ));
+    assert!(c4.memory_usage() > c3.memory_usage());
+}
 
 /// Guards the port's honesty about `MySqlDuration::new`'s argument order:
 /// hours, minutes, seconds, micros, fsp — matching the sibling source-table
