@@ -2835,3 +2835,105 @@ conditions out of `self.conditions` changes nothing else.
   versa, for a narrow row-valued/leftover-conjunct case), not on the hot
   path this campaign's benchmarks measure, so no A/B re-run was done for
   them specifically.
+
+## Third NAAJ review: EXPLAIN dropped the promoted equality's `equal:[...]` clause
+
+An independent third pass (bidirectional -- checking for both missing
+Go behavior and Rust behavior Go doesn't have) re-read every Go file the
+NAAJ port touches end to end: `logicalop/logical_join.go`
+(`updateEQCond`), `exhaust_physical_plans.go`, `rule_decorrelate.go`,
+`physicalop/physical_hash_join.go`, `executor/join/joiner.go`,
+`executor/join/hash_join_v1.go` + `hash_table_v1.go`, `executor/builder.go`,
+plus five secondary NAAJ touch points flagged by grep
+(`constant_propagation.go`, `rule_join_elimination.go`,
+`rule_join_reorder.go` + `joinorder/conflict_detector.go`,
+`rule/rule_join_key_type_cast.go`, `rule_correlate.go`) against their
+Rust counterparts. Everything else confirmed exact parity; one real gap
+survived.
+
+**Bug**: Go `PhysicalHashJoin.explainInfo` (`physical_hash_join.go:257-271`)
+renders a `, equal:[...]` segment from `NAEqualConditions` whenever it is
+non-empty -- the SAME way it renders ordinary `EqualConditions`, just as
+its own clause, right after the `"Null-aware "` prefix and join type. The
+Rust port's `explain.rs` computed that prefix correctly from
+`join.na_equal_conditions` (`explain.rs:837`) but then called the shared
+`join_info` helper with only `left_join_keys`/`right_join_keys` -- which
+are always empty for a NAAJ (Go keeps `LeftNAJoinKeys`/`RightNAJoinKeys`
+as a genuinely separate pair of columns; Rust's `PhysicalHashJoin` has no
+such fields at all) -- so the `equal:[...]` clause silently never
+appeared. `EXPLAIN` on a bare `NOT IN` printed `"Null-aware anti semi
+join, left side:..."` with no equal clause at all, where Go prints
+`"Null-aware anti semi join, left side:..., equal:[eq(test.t.a,
+test.s.a)]"` (confirmed against a real golden file,
+`enforcempp/testdata/enforce_mpp_suite_out.json:1562`).
+
+Fixed without adding new key-column fields: `join_info` now takes
+`na_equal_conditions: &[ScalarFunction]` directly and, when non-empty,
+renders `equal:[...]` from each condition's own text -- matching Go's
+`NAEqualCondition.StringWithCtx(...)`, which prints the stored scalar
+function directly rather than reconstructing it from key columns. Wired
+through all three callers that can carry `na_equal_conditions`
+(`HashJoin`, `Apply`; `MergeJoin` has no such field, since merge join is
+excluded from NAAJ entirely in both languages). `na_equal_conditions`
+and the ordinary `left_join_keys`/`equal_conditions` path are mutually
+exclusive by construction (`updateEQCond` only produces `NAEQConditions`
+when `EqualConditions` is empty), so this never doubles up with the
+existing rendering.
+
+Regression test: extended
+`not_in_with_no_other_key_becomes_a_null_aware_anti_join`
+(`tidb-session/src/tests_subquery.rs`) to assert
+`equal:[eq(test.t1.a, test.t2.x)]` appears alongside the `"Null-aware
+anti semi join"` text it already checked. Verified fail-before/pass-after
+via `git stash` on `explain.rs` alone: fails (no equal clause at all) on
+the pre-fix code, passes with the fix.
+
+A second, lower-severity finding surfaced in the same pass but was
+**not** fixed here: Go's `adjustKeyForm` (the same closure `update_join_
+equal_conditions`/`adjust_key_form` in `rewrite.rs` already ports, for
+BOTH the ordinary step-1 equality and the step-2 NAAJ conversion) also
+calls `appendImplicitJoinKeyConversionWarning` when a join key needed an
+implicit CAST, emitting an informational SQL warning
+("Implicit type or collation conversion on join keys ... may make
+indexes unusable"). This mechanism does not exist anywhere in the Rust
+planner at all (`grep -rn "ImplicitJoinKeyConversion" crates/tidb-planner/src/`
+-- no matches) -- it is not NAAJ-specific (it applies identically to
+every ordinary equi-join that needed an implicit cast), and porting it
+precisely requires new plumbing (`RuleContext` has no warning-sink field
+at all; every existing `append_warning` call in the planner goes through
+`PlanBuilder`'s own context, not a logical-rewrite rule's `RuleContext`)
+plus exactly replicating Go's two-stage cast-detection (`extractCastSourceColumn`
+before projection materialization, `isCastWrappedJoinKey` after). No
+result-correctness impact -- only a missing `SHOW WARNINGS` line -- so
+left as a tracked follow-up rather than folded into this fix, consistent
+with keeping this pass's diff to the one confirmed bug.
+
+### Validation
+
+- `cargo test -p tidb-session --lib tests_subquery::`: 22/22 (same
+  count; one existing test extended, not added).
+- `cargo test -p tidb-session --lib tests_explain::`: 39/39.
+- `cargo test -p tidb-session --lib tests_column_prune::`: 12/12 (the
+  other `join_info` caller's own equal-clause path, to confirm the
+  ordinary-equijoin rendering is untouched by the signature change).
+- `cargo check -p tidb-executor -p tidb-session`: clean.
+- `cargo fmt --check` on the two touched files: clean (confirmed the
+  wider whole-crate fmt diff is pre-existing drift unrelated to this
+  change, by diffing fmt's output against a `git stash` of just these
+  two files).
+- `cargo clippy -p tidb-executor --lib`: `join_info`'s existing
+  `too_many_arguments` lint moved from 10/7 to 11/7 (already over
+  threshold before this change; no new lint class introduced), confirmed
+  via `git stash` diff against the pre-change tree.
+
+### Not verified
+
+- The second finding (implicit join-key-cast warning) above is
+  deliberately unfixed; no attempt was made to add the `RuleContext`
+  warning-sink plumbing it would need.
+- Did not trace whether a separate normalized/digest plan-text pipeline
+  exists elsewhere in the tree that would need the same fix -- `explain.rs`
+  has no `normalized` parameter on `join_info` at all (Go's normalized vs.
+  row-format split doesn't appear to have a counterpart in this file yet),
+  so this fix's scope is exactly the `EXPLAIN`/`EXPLAIN ANALYZE` text this
+  module renders.

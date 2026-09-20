@@ -213,6 +213,7 @@ fn join_info(
     left_keys: &[tidb_expr::column::Column],
     right_keys: &[tidb_expr::column::Column],
     is_null_eq: &[bool],
+    na_equal_conditions: &[tidb_expr::scalar_function::ScalarFunction],
     left_conditions: &[tidb_expr::expression::Expression],
     right_conditions: &[tidb_expr::expression::Expression],
     other_conditions: &[tidb_expr::expression::Expression],
@@ -233,6 +234,23 @@ fn join_info(
         if !right_keys.is_empty() {
             parts.push(format!("right key:{}", columns_text(right_keys)));
         }
+    } else if !na_equal_conditions.is_empty() {
+        // Go `PhysicalHashJoin.explainInfo` (`physical_hash_join.go:257-271`):
+        // a NAAJ's `NAEqualConditions` render like `EqualConditions` --
+        // `equal:[...]`, each condition printed as its own scalar function
+        // -- but the two are mutually exclusive (`updateEQCond` only
+        // produces `NAEQConditions` when `EqualConditions` is empty), so
+        // this never doubles up with the `left_keys`/`right_keys` branch
+        // below.
+        let equal = na_equal_conditions
+            .iter()
+            .map(|condition| {
+                expression_text(&tidb_expr::expression::Expression::ScalarFunction(
+                    condition.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        parts.push(format!("equal:[{}]", equal.join(" ")));
     } else {
         let equal = left_keys
             .iter()
@@ -850,6 +868,7 @@ fn physical_operator_info(
                 &join.left_join_keys,
                 &join.right_join_keys,
                 &join.is_null_eq,
+                &join.na_equal_conditions,
                 &join.left_conditions,
                 &join.right_conditions,
                 &join.other_conditions,
@@ -864,6 +883,7 @@ fn physical_operator_info(
             &join.left_join_keys,
             &join.right_join_keys,
             &join.is_null_eq,
+            &[],
             &join.left_conditions,
             &join.right_conditions,
             &join.other_conditions,
@@ -960,6 +980,7 @@ fn physical_operator_info(
             &apply.hash_join.left_join_keys,
             &apply.hash_join.right_join_keys,
             &apply.hash_join.is_null_eq,
+            &apply.hash_join.na_equal_conditions,
             &apply.hash_join.left_conditions,
             &apply.hash_join.right_conditions,
             &apply.hash_join.other_conditions,

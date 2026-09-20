@@ -1025,6 +1025,16 @@ fn not_in_with_no_other_key_becomes_a_null_aware_anti_join() {
             .any(|row| row[0].contains("HashJoin") && row[4].contains("Null-aware anti semi join")),
         "a bare NOT IN plans as a null-aware anti hash join: {plan:?}"
     );
+    // Go `PhysicalHashJoin.explainInfo` (`physical_hash_join.go:257-271`)
+    // renders `NAEqualConditions` as its own `equal:[...]` segment, exactly
+    // like `EqualConditions` -- the "Null-aware " prefix alone is not the
+    // whole story.
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("HashJoin")
+                && row[4].contains("equal:[eq(test.t1.a, test.t2.x)]")),
+        "a null-aware anti join still renders its promoted equality as equal:[...]: {plan:?}"
+    );
     assert!(
         !plan.iter().any(|row| row[0].contains("MergeJoin")),
         "Go's !IsNAAJ() gate refuses merge join for a NAAJ even with a forcing hint: {plan:?}"
