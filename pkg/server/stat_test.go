@@ -67,6 +67,10 @@ func TestUptime(t *testing.T) {
 }
 
 func TestInitStatsSessionBlockGC(t *testing.T) {
+	// This test observes stats initialization; preceding server tests disable it.
+	session.SetStatsLease(3 * time.Second)
+	defer session.DisableStats4Test()
+
 	origConfig := config.GetGlobalConfig()
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
