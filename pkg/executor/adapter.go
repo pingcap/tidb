@@ -2391,7 +2391,6 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
 	stmtExecInfo.RUDetail = a.ruDetailsForStatementLog(ruDetail, firstStatementRUTotal(statementRUTotal))
-	stmtExecInfo.TotalRUV2 = firstStatementRUTotal(statementRUTotal)
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
