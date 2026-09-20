@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -30,26 +31,33 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -279,8 +287,126 @@ func TestUpdateExternalWorkloadTTLJobEnableOnlyFromMaster(t *testing.T) {
 	require.Nil(t, ttlWorker.updatedValue)
 }
 
+// Embedding the combined interface satisfies both startup storage checks. No
+// storage method is reached because the test stops at TLS configuration loading.
+type logBackupTestStorage struct {
+	logBackupStorage
+}
+
+type logBackupStorage interface {
+	kv.Storage
+	tikv.Storage
+}
+
+func TestStartRunawayLoops(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(false))
+	exit := make(chan struct{})
+	close(exit)
+	rm := runaway.NewRunawayManager(nil, "test", nil, exit, nil, nil)
+	t.Cleanup(rm.Stop)
+	dom := &Domain{
+		runawayManager: rm,
+		wg:             util.NewWaitGroupEnhancedWrapper("", nil, false),
+	}
+	dom.startRunawayLoops()
+	dom.wg.Wait()
+
+	t.Run("diagnostic mode", func(t *testing.T) {
+		t.Cleanup(diagnosticmode.SetForTest(true))
+		// No manager or wait group is needed: return before spawning goroutines.
+		dom := &Domain{}
+		require.NotPanics(t, dom.startRunawayLoops)
+	})
+}
+
+func TestShouldStartLogBackupAdvancer(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(false))
+	t.Cleanup(config.RestoreFunc())
+	missingCA := filepath.Join(t.TempDir(), "missing-ca.pem")
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.Security.ClusterSSLCA = missingCA
+	})
+	dom := NewMockDomain()
+	dom.store = &logBackupTestStorage{}
+	dom.etcdClient = &clientv3.Client{}
+	pdClient := &mockInfoPdClient{}
+	require.True(t, shouldStartLogBackupAdvancer())
+	// A normal startup must reach TiDBEnv instead of returning for missing
+	// dependencies. The invalid CA stops initialization before any network I/O.
+	require.ErrorContains(t, dom.initLogBackup(context.Background(), pdClient), missingCA)
+
+	t.Run("diagnostic mode", func(t *testing.T) {
+		t.Cleanup(diagnosticmode.SetForTest(true))
+		require.False(t, shouldStartLogBackupAdvancer())
+
+		require.NoError(t, dom.initLogBackup(context.Background(), pdClient))
+		require.Nil(t, dom.brOwnerMgr)
+		require.Nil(t, dom.logBackupAdvancer)
+	})
+}
+
+type gcKeyspaceTestStorage struct {
+	kv.Storage
+	keyspaceName string
+}
+
+func (s *gcKeyspaceTestStorage) GetKeyspace() string { return s.keyspaceName }
+
+func TestStartSystemKSGCLoop(t *testing.T) {
+	for _, diagnostic := range []bool{false, true} {
+		for _, ks := range []string{keyspace.System, "user"} {
+			t.Run(fmt.Sprintf("diagnostic=%t/keyspace=%s", diagnostic, ks), func(t *testing.T) {
+				t.Cleanup(diagnosticmode.SetForTest(diagnostic))
+				started := make(chan struct{}, 1)
+				fp := "github.com/pingcap/tidb/pkg/domain/crossks/mockRuntimeGCLoopConfig"
+				require.NoError(t, failpoint.EnableCall(fp, func(_, _ *time.Duration) {
+					started <- struct{}{}
+				}))
+				t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
+				ctx, cancel := context.WithCancel(context.Background())
+				// The loop still hits its entry hook with a canceled context, but
+				// exits without waiting for the production GC interval.
+				cancel()
+				dom := &Domain{
+					ctx:            ctx,
+					store:          &gcKeyspaceTestStorage{keyspaceName: ks},
+					crossKSSessMgr: &crossks.Manager{},
+					wg:             util.NewWaitGroupEnhancedWrapper("", nil, false),
+				}
+				dom.startSystemKSGCLoop()
+				dom.wg.Wait()
+				expected := 0
+				if kv.IsSystemKS(dom.store) && !diagnostic {
+					expected = 1
+				}
+				require.Len(t, started, expected)
+			})
+		}
+	}
+}
+
+func TestShouldRunBackgroundGC(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(false))
+	require.True(t, shouldRunBackgroundGC())
+
+	t.Run("diagnostic mode", func(t *testing.T) {
+		t.Cleanup(diagnosticmode.SetForTest(true))
+		require.False(t, shouldRunBackgroundGC())
+	})
+}
+
 func TestShouldStartTTLJobManagerWithExternalWorkloadRole(t *testing.T) {
 	t.Cleanup(config.RestoreFunc())
+	t.Cleanup(diagnosticmode.SetForTest(false))
+
+	t.Run("diagnostic mode", func(t *testing.T) {
+		t.Cleanup(diagnosticmode.SetForTest(true))
+		diagnosticDom := NewMockDomain()
+		require.False(t, diagnosticDom.shouldStartTTLJobManager())
+		diagnosticDom.StartTTLJobManager()
+		require.Nil(t, diagnosticDom.TTLJobManager())
+	})
+
 	dom := NewMockDomain()
 	require.True(t, dom.shouldStartTTLJobManager())
 

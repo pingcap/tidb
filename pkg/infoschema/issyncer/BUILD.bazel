@@ -13,6 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/diagnosticmode",
         "//pkg/ddl/schemaver",
         "//pkg/ddl/systable",
         "//pkg/infoschema",
