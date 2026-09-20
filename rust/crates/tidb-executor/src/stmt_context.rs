@@ -672,6 +672,9 @@ pub struct StmtContextData {
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
     /// (`@@tidb_enable_inl_join_inner_multi_pattern`, default `ON`).
     enable_inl_join_inner_multi_pattern: bool,
+    /// Go `SessionVars.OptimizerEnableNAAJ`
+    /// (`@@tidb_enable_null_aware_anti_join`, default `ON`).
+    enable_null_aware_anti_join: bool,
     /// Go `SessionVars.LimitPushDownThreshold`
     /// (`@@tidb_opt_limit_push_down_threshold`, default `5000`).
     limit_push_down_threshold: u64,
@@ -1229,6 +1232,13 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_enable_null_aware_anti_join` for this statement.
+    #[must_use]
+    pub fn with_enable_null_aware_anti_join(mut self, enable: bool) -> Self {
+        self.enable_null_aware_anti_join = enable;
+        self
+    }
+
     /// Sets `@@tidb_opt_limit_push_down_threshold` for this statement.
     #[must_use]
     pub fn with_limit_push_down_threshold(mut self, threshold: u64) -> Self {
@@ -1783,6 +1793,7 @@ impl StmtContext {
             ordering_index_selectivity_ratio: 0.01,
             allow_projection_push_down: true,
             enable_inl_join_inner_multi_pattern: true,
+            enable_null_aware_anti_join: true,
             limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
                 as u64,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
@@ -2521,6 +2532,12 @@ impl StmtContext {
     #[must_use]
     pub fn enable_inl_join_inner_multi_pattern(&self) -> bool {
         self.enable_inl_join_inner_multi_pattern
+    }
+
+    /// Go `SessionVars.OptimizerEnableNAAJ`.
+    #[must_use]
+    pub fn enable_null_aware_anti_join(&self) -> bool {
+        self.enable_null_aware_anti_join
     }
 
     /// Go `SessionVars.LimitPushDownThreshold`.

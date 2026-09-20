@@ -2653,6 +2653,18 @@ fn build_join_over_children(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // Go's null-aware anti-join keeps its `NAEQConditions` beside
+    // `EqualConditions` on the very same `PhysicalHashJoin`
+    // (`buildHashJoinFromChildExecs`, `builder.go`); this port folds them in
+    // here, matching `build_apply`'s existing `.chain(na_equal_conditions)`.
+    if let PhysicalPlan::HashJoin(join) = plan {
+        for condition in &join.na_equal_conditions {
+            conditions.push(resolve_expression(
+                Expression::ScalarFunction(condition.clone()),
+                &condition_schema,
+            )?);
+        }
+    }
     conditions.extend(resolve_expressions(other_conditions, &condition_schema)?);
     if preserve_left {
         conditions.extend(resolve_expressions(left_conditions, &condition_schema)?);

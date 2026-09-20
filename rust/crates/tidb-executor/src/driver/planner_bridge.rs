@@ -2310,6 +2310,7 @@ fn optimize_built_logical(
         always_keep_join_key: ctx.always_keep_join_key(),
         enable_unsafe_substitute: ctx.enable_unsafe_substitute(),
         enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
+        enable_null_aware_anti_join: ctx.enable_null_aware_anti_join(),
         enable_no_decorrelate_in_select: ctx.enable_no_decorrelate_in_select(),
         join_reorder_threshold: ctx.join_reorder_threshold(),
         allow_agg_push_down: ctx.allow_agg_push_down(),

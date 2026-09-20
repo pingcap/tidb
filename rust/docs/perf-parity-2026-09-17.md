@@ -2363,3 +2363,130 @@ none of the existing sysbench/TPC-C/TPC-H query shapes appear to exercise
 (no A/B run was taken for this fix specifically); the value here is
 correctness-of-port (matching Go's unconditional behavior) rather than a
 measured throughput or latency gain.
+
+## Follow-up: ported null-aware anti-join (NAAJ) construction for NOT IN / != ALL (2026-09-20)
+
+Root-caused and fixed the significant, default-active gap flagged in the
+prior review round: `NOT IN (subquery)`/`!= ALL (subquery)` with no OTHER
+join key ran as a CARTESIAN hash join (full cross product, the equality
+evaluated as a residual per-pair filter) instead of Go's default null-aware
+anti-join (NAAJ), which restricts physical enumeration to hash join only
+and gives it a dedicated null-aware equality channel.
+
+**Construction** (`logical_join.go:1754-1897`, `updateEQCond`): ported the
+missing "Step 2" -- Go's own comment names it precisely: "when step1 is
+finished, then we can determine whether we need to extract NA-EQ from
+OtherCondition to NAEQConditions. when there are still no EqualConditions,
+let's try to be a NAAJ." Gated on `(JoinType == AntiSemi ||
+AntiLeftOuterSemi) && EqualConditions.is_empty()` AND the session variable
+`tidb_enable_null_aware_anti_join` (`OptimizerEnableNAAJ`, `DefTiDBEnableNAAJ
+= true` -- ON by default, confirmed by reading Go's actual default, not
+assumed). Refactored the Rust port's existing Step 1 (`update_join_equal_conditions`
+in `rust/crates/tidb-planner/src/logical/rewrite.rs`, which already promoted
+a bare `col op col` EQ condition out of `OtherConditions` into
+`EqualConditions`) so its tail -- materializing each key pair as a plain
+column via a child projection when it is not already one, then routing the
+rebuilt equality to a target list unless either side has mutable effects --
+is a shared `adjust_key_form(ctx, join, extracted, is_na)` helper, exactly
+mirroring Go's single `adjustKeyForm` closure being called twice (once per
+step) rather than duplicating the logic. Step 2 scans `OtherConditions` for
+conditions Go's `IsEQCondFromIn` marks (a bare column carrying `InOperand`,
+set during `[not] in (subq)` decorrelation whenever either side is not
+provably NOT NULL -- confirmed this marking mechanism was already ported and
+reachable, at `expression_rewriter.rs`'s `mark_in_operand`/
+`build_semi_apply_from_equal_subq`, so only the CONSUMING half was missing),
+and promotes them into `na_eq_conditions` the same way, including Go's
+one seemingly-odd quirk ported faithfully: an `IsEQCondFromIn` condition
+whose columns do NOT split cleanly between the two child schemas is still
+UNCONDITIONALLY removed from `OtherConditions` (not just when the schema
+split succeeds) -- verified against Go's literal code, not the surrounding
+prose comment, which describes the closure's motivating case ("for
+indexHashJoin...") in a way that reads narrower than the code actually is.
+
+**Physical enumeration** (`exhaust_physical_plans.go:2189`): Go's
+`if !p.IsNAAJ() && prop.IndexJoinProp == nil { ...generate merge join and
+index join... }` excludes BOTH families entirely for a NAAJ, leaving only
+hash join, even under a forcing hint (the force-hint short-circuit lives
+INSIDE this same gate in Go, so a NAAJ never even tries to honor
+`MERGE_JOIN`/`INL_JOIN`). Rust's `exhaust_join` (`find_best_task.rs`) had
+only the `prop.index_join_prop.is_some()` half of this gate; added
+`|| join.has_na_keys` (the reduced `LogicalJoin`'s existing boolean signal,
+already computed from `get_na_join_keys()`) to the same early-return,
+matching Go's combined condition exactly.
+
+**Executor wiring**: this is where the real risk was. `PhysicalHashJoin`
+already carried an `na_equal_conditions` field (populated correctly once
+the two fixes above ran), and `can_use_hash_join_v2` already correctly
+refused it (Go's v2 hash join does not support NAAJ either). But the
+GENERAL hash-join executor build path (`build_join_over_children` in
+`rust/crates/tidb-executor/src/driver/physical_builder.rs`) constructed its
+`conditions` list purely from `left_join_keys`/`right_join_keys` (derived
+from `EqualConditions`, which for a NAAJ is EMPTY by construction) plus
+`other_conditions` -- `na_equal_conditions` was read nowhere in this path,
+only in `explain.rs` (cosmetic) and `build_apply`'s separate Apply-only
+executor construction. Left as found, this would have been a CORRECTNESS
+regression, not merely a missed optimization: the promoted NA equality
+would vanish entirely, turning `NOT IN` into an unconditional match check.
+Fixed by folding `na_equal_conditions` into `conditions` in
+`build_join_over_children`, mirroring the exact pattern `build_apply`
+already used (`equal_conditions.iter().chain(&apply.hash_join.na_equal_conditions)`).
+
+**Scope deliberately NOT done**: a genuine null-aware HASH KEY (partitioning
+build/probe rows by the NA equality with proper per-side NULL tracking, so
+the lookup is O(1) amortized instead of a per-pair residual check) is not
+implemented -- `equi_key()`/`split_equi()` in `hash_join.rs` still refuse
+to key ANY `IsEQCondFromIn`-marked condition ("Go keeps IN equalities in
+OtherConditions unless the planner explicitly builds null-aware keys.
+Ordinary hashing would discard UNKNOWN pairs" -- a pre-existing, deliberate
+refusal this fix does not touch). So the promoted condition is folded in as
+an evaluated, CORRECT residual condition, same semantics as the old
+cartesian fallback, just now planned through the same `!IsNAAJer` path Go
+uses and no longer silently dropping the hint or the condition. This
+matches the explicit reduced-scope guidance from the prior review round
+("land construction + physical exclusion + correctness first, defer the
+keyed-probe optimization if the executor work proves large") -- the actual
+null-aware KEYED hash build/probe algorithm remains a follow-up, tracked
+separately, since it is a substantial, independently-risky piece of new
+executor logic (per-side NULL-count tracking, multi-column NA key
+handling) that deserves its own dedicated review rather than folding into
+this already-large change.
+
+**Regression tests** (`tests_subquery.rs`):
+- `not_in_with_no_other_key_becomes_a_null_aware_anti_join`: with the
+  default session (NAAJ on), a `NOT IN` with no other join key -- hinted
+  with BOTH `INL_JOIN` and `MERGE_JOIN` to prove the force-hint short-circuit
+  is also excluded -- plans as `HashJoin ... Null-aware anti semi join`,
+  never `MergeJoin`/`IndexJoin`.
+- `not_in_falls_back_to_a_plain_anti_join_with_naaj_disabled`: `SET SESSION
+  tidb_enable_null_aware_anti_join = OFF` reproduces this port's ENTIRE
+  prior behavior (an ordinary, non-null-aware anti semi join) and still
+  answers correctly -- proving the session variable now has teeth end to
+  end, the same proof pattern used for the index-join admission gate fix.
+- `not_in_null_aware_anti_join_respects_the_null_trap`: a subquery
+  containing one NULL row makes `NOT IN` unknown for EVERY outer row
+  (standard SQL three-valued logic) -- the exact case a null-aware
+  anti-join executor must get right without scanning per row; answer is
+  empty, verified against the null-aware plan shape.
+
+Verified fail-before/pass-after precisely: `git stash`-ed every production
+file (keeping the new tests) and reran -- the first and third test failed
+against the pre-fix tree with the OLD `CARTESIAN anti semi join` plan shown
+in the panic message, confirming the tests exercise exactly the fixed
+behavior; the fallback test passed on both trees, as expected (it pins the
+OLD default-equivalent OFF configuration, not the fix).
+
+**Validated**: `cargo test -p tidb-planner --lib` (944/945, same one
+pre-existing unrelated failure), `-p tidb-executor --lib` (1344/1344),
+`-p tidb-session --lib` (1733/1734, same one pre-existing unrelated
+failure, +3 for the new tests); `cargo fmt`/`cargo clippy -p tidb-planner
+-p tidb-executor -p tidb-session --lib --tests` clean on every touched
+line (pre-existing drift elsewhere in these crates left untouched, as in
+every earlier round this session).
+
+**Not verified**: the deferred null-aware KEYED probe's actual throughput
+gain over the residual-condition path this fix lands (no A/B benchmark was
+run for this specific optimization, since the keyed algorithm itself is
+not yet implemented -- this fix's value is closing a correctness risk
+(the dropped-condition bug the naive wiring would have introduced) and
+matching Go's plan SHAPE and session-variable behavior, not yet a measured
+performance improvement).

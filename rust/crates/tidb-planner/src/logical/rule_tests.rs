@@ -81,6 +81,8 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         always_keep_join_key: true,
         enable_unsafe_substitute: false,
         enable_semi_join_rewrite: false,
+        // Go's `OptimizerEnableNAAJ` defaults ON in `sessionVars`.
+        enable_null_aware_anti_join: true,
         enable_no_decorrelate_in_select: false,
         join_reorder_threshold: 0,
         allow_agg_push_down: false,

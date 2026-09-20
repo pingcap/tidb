@@ -337,11 +337,15 @@ pub fn exhaust_join(
     prop: &PhysicalProperty,
     use_hash_join_v2: bool,
 ) -> Vec<EnumeratedJoin> {
-    // Go `exhaustPhysicalPlans4LogicalJoin` enumerates only hash joins while
-    // this join is itself inside an index-join probe. Each hash candidate
-    // forwards `IndexJoinProp` through one child so the eventual data source
-    // can return `IndexJoinInfo`; merge and nested index joins are excluded.
-    if prop.index_join_prop.is_some() {
+    // Go `exhaustPhysicalPlans4LogicalJoin`: `if !p.IsNAAJ() && prop.IndexJoinProp
+    // == nil { ...generate merge join and index join... }` -- merge join and
+    // index join are enumerated ONLY when the join is neither a null-aware
+    // anti-join (`updateEQCond`'s NAAJ conversion moved its equality into
+    // `NAEQConditions`) nor itself inside an index-join probe. Each hash
+    // candidate forwards `IndexJoinProp` through one child so the eventual
+    // data source can return `IndexJoinInfo`; a NAAJ's null-aware hash build
+    // and probe reads `na_eq_conditions` directly off the original operator.
+    if prop.index_join_prop.is_some() || join.has_na_keys {
         return hash_join_candidates(join, prop, use_hash_join_v2);
     }
     let mut out = Vec::new();

@@ -625,6 +625,9 @@ pub struct RuleContext<'a> {
     pub enable_unsafe_substitute: bool,
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     pub enable_semi_join_rewrite: bool,
+    /// Go `SessionVars.OptimizerEnableNAAJ` (`@@tidb_enable_null_aware_anti_join`,
+    /// default ON): gates `LogicalJoin.updateEQCond`'s NAAJ conversion.
+    pub enable_null_aware_anti_join: bool,
     /// Go `SessionVars.EnableNoDecorrelateInSelect`.
     pub enable_no_decorrelate_in_select: bool,
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`.

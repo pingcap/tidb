@@ -626,6 +626,8 @@ fn update_join_equal_conditions(
         .try_into()
         .map_err(|_| PlanError::internal("LogicalJoin.updateEQCond needs two children"))?;
 
+    // Step 1: promote a plain `col op col` EQ condition sitting in
+    // `OtherConditions` into a real join key, on either side.
     let mut extracted = Vec::new();
     let mut remove = vec![false; join.other_conditions.len()];
     for index in (0..join.other_conditions.len()).rev() {
@@ -652,15 +654,76 @@ fn update_join_equal_conditions(
             extracted.push(pair);
         }
     }
+    if !extracted.is_empty() {
+        join.other_conditions = std::mem::take(&mut join.other_conditions)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, condition)| (!remove[index]).then_some(condition))
+            .collect();
+        adjust_key_form(ctx, join, extracted, false)?;
+    }
+
+    // Step 2: when step1 is finished, then we can determine whether we need
+    // to extract NA-EQ from OtherCondition to NAEQConditions. when there are
+    // still no EqualConditions, let's try to be a NAAJ.
+    // todo: by now, when there is already a normal EQ condition, just keep
+    // NA-EQ as other-condition filters above it. eg: select * from stu where
+    // stu.name not in (select name from exam where exam.stu_id = stu.id).
+    // combination of <stu.name NAEQ exam.name> and <exam.stu_id EQ stu.id>
+    // for join key is little complicated for now.
+    let can_be_naaj = matches!(
+        join.join_type,
+        LogicalJoinType::AntiSemi | LogicalJoinType::AntiLeftOuterSemi
+    ) && join.equal_conditions.is_empty();
+    if can_be_naaj && ctx.enable_null_aware_anti_join {
+        let mut na_extracted = Vec::new();
+        let mut other_cond = Vec::with_capacity(join.other_conditions.len());
+        for condition in std::mem::take(&mut join.other_conditions) {
+            let is_eq_from_in = matches!(&condition, Expression::ScalarFunction(function)
+                if function.func_name.lowercase() == "eq")
+                && super::join::is_eq_cond_from_in(&condition);
+            if is_eq_from_in {
+                // Here must be a EQCondFromIn.
+                let Expression::ScalarFunction(function) = &condition else {
+                    unreachable!("is_eq_from_in only matches a ScalarFunction");
+                };
+                if let [left, right] = function.args.as_slice() {
+                    if expr_from_schema(left, &left_schema)
+                        && expr_from_schema(right, &right_schema)
+                    {
+                        na_extracted.push((left.clone(), right.clone()));
+                    } else if expr_from_schema(left, &right_schema)
+                        && expr_from_schema(right, &left_schema)
+                    {
+                        na_extracted.push((right.clone(), left.clone()));
+                    }
+                }
+                continue;
+            }
+            other_cond.push(condition);
+        }
+        join.other_conditions = other_cond;
+        // Here is for cases like: select (a+1, b*3) not in (select a,b from t2) from t1.
+        adjust_key_form(ctx, join, na_extracted, true)?;
+    }
+    Ok(())
+}
+
+/// Go's `adjustKeyForm` closure inside `updateEQCond`
+/// (`logical_join.go:1788`): materialize each extracted key pair as a plain
+/// column on its own child (through a projection when it is not already
+/// one), then route the rebuilt equality to `EqualConditions` or
+/// `NAEQConditions` depending on `is_na` -- unless either side has mutable
+/// effects, in which case it goes back to `OtherConditions` regardless.
+fn adjust_key_form(
+    ctx: &RuleContext<'_>,
+    join: &mut super::LogicalJoin,
+    extracted: Vec<(Expression, Expression)>,
+    is_na: bool,
+) -> Result<(), PlanError> {
     if extracted.is_empty() {
         return Ok(());
     }
-    join.other_conditions = std::mem::take(&mut join.other_conditions)
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, condition)| (!remove[index]).then_some(condition))
-        .collect();
-
     let mut left_projection = extracted
         .iter()
         .any(|(left, _)| !matches!(left, Expression::Column(_)));
@@ -730,6 +793,8 @@ fn update_join_equal_conditions(
         if keep_as_other {
             join.other_conditions
                 .push(Expression::ScalarFunction(equality));
+        } else if is_na {
+            join.na_eq_conditions.push(equality);
         } else {
             join.equal_conditions.push(equality);
         }

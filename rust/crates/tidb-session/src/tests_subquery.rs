@@ -996,3 +996,117 @@ fn a_predicate_aggregate_pulls_above_the_join_when_the_outer_has_a_key() {
         "the group-below arm's index-join probe must not appear: {plan:?}"
     );
 }
+
+/// Go `LogicalJoin.updateEQCond`'s NAAJ conversion
+/// (`logical_join.go:1869-1896`), default ON via
+/// `tidb_enable_null_aware_anti_join`: a `NOT IN (subquery)` with no OTHER
+/// join key becomes a null-aware anti-join and is planned as hash join
+/// ONLY -- Go's `exhaustPhysicalPlans4LogicalJoin` excludes merge join and
+/// index join entirely for a NAAJ (`exhaust_physical_plans.go:2189`,
+/// `!p.IsNAAJ()`), so even a forcing hint for either family cannot apply.
+#[test]
+fn not_in_with_no_other_key_becomes_a_null_aware_anti_join() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a int, b int, PRIMARY KEY (a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (x int, y int, KEY(x))")
+        .unwrap();
+    session.run("INSERT INTO t1 VALUES (1,10),(2,20)").unwrap();
+    session.run("INSERT INTO t2 VALUES (1,100)").unwrap();
+
+    let plan = row_text(session.run(
+        "EXPLAIN SELECT /*+ INL_JOIN(t2) MERGE_JOIN(t2) */ * FROM t1 \
+         WHERE t1.a NOT IN (SELECT t2.x FROM t2)",
+    ));
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("HashJoin") && row[4].contains("Null-aware anti semi join")),
+        "a bare NOT IN plans as a null-aware anti hash join: {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|row| row[0].contains("MergeJoin")),
+        "Go's !IsNAAJ() gate refuses merge join for a NAAJ even with a forcing hint: {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|row| row[0].contains("IndexJoin")),
+        "Go's !IsNAAJ() gate refuses index join for a NAAJ even with a forcing hint: {plan:?}"
+    );
+}
+
+/// The same conversion turned back off: `tidb_enable_null_aware_anti_join =
+/// OFF` matches Go's `OptimizerEnableNAAJ` gate on `updateEQCond`, so the
+/// `[not] in (subq)` equality stays an ordinary residual condition on a
+/// plain (non null-aware) anti semi join -- the behavior this port had
+/// UNCONDITIONALLY before this fix.
+#[test]
+fn not_in_falls_back_to_a_plain_anti_join_with_naaj_disabled() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a int, b int, PRIMARY KEY (a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (x int, y int, KEY(x))")
+        .unwrap();
+    session.run("INSERT INTO t1 VALUES (1,10),(2,20)").unwrap();
+    session.run("INSERT INTO t2 VALUES (1,100)").unwrap();
+    session
+        .run("SET SESSION tidb_enable_null_aware_anti_join = OFF")
+        .unwrap();
+
+    let plan =
+        row_text(session.run("EXPLAIN SELECT * FROM t1 WHERE t1.a NOT IN (SELECT t2.x FROM t2)"));
+    assert!(
+        plan.iter().any(|row| row[0].contains("HashJoin")
+            && row[4].contains("anti semi join")
+            && !row[4].contains("Null-aware")),
+        "NAAJ disabled falls back to a plain anti semi join: {plan:?}"
+    );
+
+    assert_eq!(
+        row_text(
+            session.run("SELECT * FROM t1 WHERE t1.a NOT IN (SELECT t2.x FROM t2) ORDER BY t1.a")
+        ),
+        [["2", "20"]],
+        "the fallback plan still answers correctly"
+    );
+}
+
+/// The NULL-trap: Go's whole reason for a DEDICATED null-aware anti-join
+/// executor is to get this exactly right without a per-row NULL scan.
+/// `NOT IN` against a subquery that produced even one NULL is UNKNOWN for
+/// every outer row, per standard SQL three-valued logic -- so the answer
+/// is empty regardless of how many outer rows do not literally appear in
+/// the subquery's non-NULL values.
+#[test]
+fn not_in_null_aware_anti_join_respects_the_null_trap() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a int, b int, PRIMARY KEY (a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (x int, y int, KEY(x))")
+        .unwrap();
+    session
+        .run("INSERT INTO t1 VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    session
+        .run("INSERT INTO t2 VALUES (1,100),(NULL,200)")
+        .unwrap();
+
+    let plan =
+        row_text(session.run("EXPLAIN SELECT * FROM t1 WHERE t1.a NOT IN (SELECT t2.x FROM t2)"));
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("HashJoin") && row[4].contains("Null-aware anti semi join")),
+        "this is the null-aware anti-join path the NULL-trap answer must hold under: {plan:?}"
+    );
+    assert_eq!(
+        row_text(
+            session.run("SELECT * FROM t1 WHERE t1.a NOT IN (SELECT t2.x FROM t2) ORDER BY t1.a")
+        ),
+        Vec::<Vec<String>>::new(),
+        "a NULL anywhere in the subquery makes NOT IN unknown for every outer row"
+    );
+}
