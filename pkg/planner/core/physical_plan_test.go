@@ -904,3 +904,23 @@ func TestExchangeSenderResolveIndices(t *testing.T) {
 	// after resolving, the partition col in two different exchange sender should have different index
 	require.NotEqual(t, exchangeSender1.HashCols[0].Col.Index, exchangeSender2.HashCols[0].Col.Index)
 }
+
+func TestReadonlyUserVarsInDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_0900_ai_ci")
+	tk.MustExec("create table t (id char(1) primary key clustered, v int) charset utf8mb4 collate utf8mb4_0900_ai_ci")
+	tk.MustExec("create table t2 like t")
+	tk.MustExec("set @id = 'a'")
+
+	// Read-only variables allow point lookups.
+	tk.MustQuery("explain update t set v = 1 where id = @ID").CheckContain("Point_Get")
+	tk.MustQuery("explain delete from t where id = @ID").CheckContain("Point_Get")
+	tk.MustQuery("explain insert into t2 select * from t where id = @ID").CheckContain("Point_Get")
+
+	// Variables assigned in the same statement must not become point lookup keys.
+	tk.MustQuery("explain update t set id = (@ID := 'b') where id = @id").CheckContain("TableFullScan")
+	tk.MustQuery("explain delete from t where id = @id and (@ID := id) = id").CheckContain("TableFullScan")
+	tk.MustQuery("explain insert into t2 select id, v from t where id = @id and (@ID := id) = id").CheckContain("TableFullScan")
+}
