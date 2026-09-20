@@ -44,8 +44,8 @@ pub static WATCH_OWNER_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
     ))
 });
 
-/// Materializes the series Go's subsystem startup writes, mirroring the
-/// exported label combinations exactly.
+/// The owner watcher family registers here; its series materialize when a
+/// watcher campaign runs, matching Go's watcher-driven writes.
 pub fn init_dashboard_series() {
-    let _ = WATCH_OWNER_TOTAL.with_label_values(&["context_done", "ddl"]);
+    LazyLock::force(&WATCH_OWNER_TOTAL);
 }

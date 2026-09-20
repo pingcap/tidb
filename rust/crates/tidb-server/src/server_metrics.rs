@@ -664,7 +664,6 @@ pub(crate) fn init_dashboard_series() {
     let _ = EVENT_TOTAL.with_label_values(&["server-start"]);
     let _ = MEMORY_USAGE.with_label_values(&["analyze", "inuse"]);
     let _ = PACKET_IO_BYTES.with_label_values(&["In"]);
-    let _ = PD_API_REQUEST_TOTAL.with_label_values(&["200 OK", "GetMinResolvedTSByStoresIDs"]);
     let _ = tidb_planner::metrics::PLAN_CACHE_INSTANCE_MEMORY_USAGE
         .with_label_values(&[" instance-plan-cache"]);
     let _ = tidb_planner::metrics::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER
@@ -678,8 +677,6 @@ pub(crate) fn init_dashboard_series() {
     let _ = TIDB_SERVER_RUNAWAY_SYNCER_TOTAL.with_label_values(&["error", "sync"]);
     let _ = SLOW_QUERY_TOTAL.with_label_values(&["general"]);
     let _ = TIDB_SERVER_TIMER_EVENT_COUNT.with_label_values(&["runtime.ttl", "full_refresh_timers"]);
-    let _ = TLS_CIPHER.with_label_values(&["TLS_AES_128_GCM_SHA256"]);
-    let _ = TLS_VERSION.with_label_values(&["TLSv1.3"]);
     let _ = TIDB_SERVER_TTL_EVENT_COUNT.with_label_values(&["full_refresh_timers"]);
     LazyLock::force(&TIDB_SERVER_TTL_INSERT_ROWS);
     let _ = TIDB_SERVER_TTL_JOB_STATUS.with_label_values(&["cancelling"]);

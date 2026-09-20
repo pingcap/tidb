@@ -1355,7 +1355,19 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         cancellation: cancellation.clone(),
         close: close.clone(),
     }) {
-        Ok(session) => session,
+        Ok(session) => {
+            // Go `server.go:1329`-adjacent TLS accounting: every TLS
+            // handshake counts its negotiated version and cipher.
+            if let Some((cipher, version)) = socket.negotiated_tls() {
+                crate::server_metrics::TLS_CIPHER
+                    .with_label_values(&[&tidb_util::tls::cipher_suite_name(cipher)])
+                    .inc();
+                crate::server_metrics::TLS_VERSION
+                    .with_label_values(&[&tidb_util::tls::version_name(version)])
+                    .inc();
+            }
+            session
+        }
         Err(error) => {
             write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
             return Ok(ConnectionReport {

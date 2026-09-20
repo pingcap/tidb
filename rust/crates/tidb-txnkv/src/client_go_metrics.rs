@@ -26,7 +26,6 @@
 //! startup series Go's bootstrap writes. Store-scoped gauges (`store`
 //! label) gain series on first real client activity, exactly like Go's.
 
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use prometheus::TextEncoder;
@@ -45,7 +44,7 @@ pub static GC_CONFIG: LazyLock<GaugeVec> = LazyLock::new(|| {
         &["type"],
     )
     .expect("valid gc config metric");
-    REGISTRY
+    prometheus::default_registry()
         .register(Box::new(metric.clone()))
         .expect("gc config metric is registered once");
     metric
@@ -60,7 +59,7 @@ pub static GC_FAILURE: LazyLock<CounterVec> = LazyLock::new(|| {
         &["type"],
     )
     .expect("valid gc failure metric");
-    REGISTRY
+    prometheus::default_registry()
         .register(Box::new(metric.clone()))
         .expect("gc failure metric is registered once");
     metric
@@ -73,7 +72,7 @@ pub static GC_REGION_TOO_MANY_LOCKS: LazyLock<Counter> = LazyLock::new(|| {
         "Counter of skipping gc when there are too many locks in a region",
     )
     .expect("valid gc region too many locks metric");
-    REGISTRY
+    prometheus::default_registry()
         .register(Box::new(metric.clone()))
         .expect("gc region too many locks metric is registered once");
     metric
@@ -91,7 +90,7 @@ pub static GC_WORKER_ACTIONS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
         &["type"],
     )
     .expect("valid gc worker actions metric");
-    REGISTRY
+    prometheus::default_registry()
         .register(Box::new(metric.clone()))
         .expect("gc worker actions metric is registered once");
     metric
@@ -101,21 +100,24 @@ pub static GC_WORKER_ACTIONS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
 /// through the status server, so this module's families live on their own
 /// 0.13 registry and the block is rendered separately and appended (see
 /// [`gather_text`]).
-static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
+/// Initializes the process-wide client-go collectors under Go TiDB's
+/// `tidb`/`tikvclient` namespace and registers them on this crate's
+/// prometheus default registry, so the status server's appended block and
+/// the client's own runtime bumps (`global_metrics()`) address the same
+/// collectors.
+pub fn init_dashboard_series() {
+    if !INITIALIZED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        tikv_client::metrics::init_metrics("tidb", "tikvclient")
+            .expect("client-go metric initialization is valid");
+        tikv_client::metrics::register_metrics();
+    }
+    materialize_dashboard_series();
+}
 
-/// The client-go collectors under Go TiDB's `tidb`/`tikvclient` namespace.
-static CLIENT_GO: LazyLock<ClientGoMetrics> = LazyLock::new(|| {
-    let metrics = ClientGoMetrics::new("tidb", "tikvclient", HashMap::new())
-        .expect("client-go metric definitions are valid");
-    metrics
-        .register_metrics(&REGISTRY)
-        .expect("client-go metrics register on a fresh registry");
-    metrics
-});
+static INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn collector_counter_vec(source: &str) -> Option<prometheus::CounterVec> {
-    CLIENT_GO
-        
+    tikv_client::metrics::global_metrics()
         .collector(source)
         .and_then(|collector| match collector {
             tikv_client::metrics::ClientGoCollector::CounterVec(counter_vec) => {
@@ -126,8 +128,7 @@ fn collector_counter_vec(source: &str) -> Option<prometheus::CounterVec> {
 }
 
 fn collector_gauge_vec(source: &str) -> Option<prometheus::GaugeVec> {
-    CLIENT_GO
-        
+    tikv_client::metrics::global_metrics()
         .collector(source)
         .and_then(|collector| match collector {
             tikv_client::metrics::ClientGoCollector::GaugeVec(gauge_vec) => {
@@ -138,8 +139,7 @@ fn collector_gauge_vec(source: &str) -> Option<prometheus::GaugeVec> {
 }
 
 fn collector_counter(source: &str) -> Option<prometheus::Counter> {
-    CLIENT_GO
-        
+    tikv_client::metrics::global_metrics()
         .collector(source)
         .and_then(|collector| match collector {
             tikv_client::metrics::ClientGoCollector::Counter(counter) => Some(counter.clone()),
@@ -150,9 +150,8 @@ fn collector_counter(source: &str) -> Option<prometheus::Counter> {
 /// Renders the `tidb_tikvclient_*` exposition block for the status server.
 #[must_use]
 pub fn gather_text() -> String {
-    LazyLock::force(&CLIENT_GO);
     TextEncoder::new()
-        .encode_to_string(&REGISTRY.gather())
+        .encode_to_string(&prometheus::default_registry().gather())
         .unwrap_or_default()
 }
 
@@ -160,15 +159,13 @@ pub fn gather_text() -> String {
 /// families, using the exact label combinations the Go export carries.
 /// Store-scoped gauge series (`store` label) materialize on first real
 /// client activity, matching Go's per-store behavior.
-pub fn init_dashboard_series() {
-    LazyLock::force(&CLIENT_GO);
+fn materialize_dashboard_series() {
     // gc_worker.go families.
-    let _ = GC_CONFIG.with_label_values(&["tikv_gc_life_time"]);
-    let _ = GC_CONFIG.with_label_values(&["tikv_gc_run_interval"]);
-    let _ = GC_FAILURE.with_label_values(&["prepare"]);
+
     LazyLock::force(&GC_REGION_TOO_MANY_LOCKS);
-    let _ = GC_WORKER_ACTIONS_TOTAL.with_label_values(&["check_leader"]);
-    let _ = GC_WORKER_ACTIONS_TOTAL.with_label_values(&["register_leader"]);
+    if let Some(counter_vec) = collector_counter_vec("TiKVLoadTxnSafePointCounter") {
+        let _ = counter_vec.with_label_values(&["ok_compatible"]);
+    }
 
     // client-go families (non-store-scoped).
     if let Some(counter_vec) = collector_counter_vec("TiKVAggressiveLockedKeysCounter") {
@@ -262,8 +259,4 @@ pub fn init_dashboard_series() {
     let _ = collector_gauge_vec("TiKVFeedbackSlowScoreGauge");
     let _ = collector_gauge_vec("TiKVStoreLivenessGauge");
     let _ = collector_gauge_vec("TiKVMinSafeTSGapSeconds");
-    // LoadTxnSafePointCounter gains its per-type series on client activity.
-    if let Some(counter_vec) = collector_counter_vec("TiKVLoadTxnSafePointCounter") {
-        let _ = counter_vec.with_label_values(&["ok_compatible"]);
-    }
 }
