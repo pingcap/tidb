@@ -30,6 +30,7 @@
 //! with `ranger.go`'s multi-column append machinery, their shared
 //! consumer.
 
+use std::borrow::Cow;
 use tidb_expr::expr_util::normal_form::{flatten_cnf_conditions, flatten_dnf_conditions};
 use tidb_expr::expr_util::predicates::contains;
 use tidb_expr::expression::Expression;
@@ -73,6 +74,49 @@ pub fn detach_column_cnf_conditions(
         access_conditions.push(cond.clone());
         if should_reserve {
             filter_conditions.push(cond.clone());
+        }
+    }
+    (access_conditions, filter_conditions)
+}
+
+/// Cow twin of [`detach_column_cnf_conditions`] for the cached-plan rebuild:
+/// borrowed verbatim conditions are read through the checker without being
+/// cloned into the access/filter lists first (the OR path recomposes from the
+/// arms and only clones at that composition boundary, matching the sharing
+/// Go gets from expression pointers).
+pub fn detach_column_cnf_conditions_cow(
+    conditions: &[Cow<'_, Expression>],
+    checker: &ConditionChecker<'_>,
+) -> (Vec<Expression>, Vec<Expression>) {
+    let mut access_conditions = Vec::new();
+    let mut filter_conditions = Vec::new();
+    for cond in conditions {
+        let cond_ref = cond.as_ref();
+        if let Expression::ScalarFunction(sf) = cond_ref {
+            if sf.func_name.lowercase() == "or" {
+                let dnf_items = flatten_dnf_conditions(sf);
+                let (column_dnf_items, has_residual) =
+                    detach_column_dnf_conditions(&dnf_items, checker);
+                if has_residual {
+                    filter_conditions.push(cond_ref.clone());
+                }
+                if column_dnf_items.is_empty() {
+                    continue;
+                }
+                if let Some(rebuilt) = compose_dnf_condition(column_dnf_items) {
+                    access_conditions.push(rebuilt);
+                }
+                continue;
+            }
+        }
+        let (is_access_cond, should_reserve) = checker.check(cond_ref);
+        if !is_access_cond {
+            filter_conditions.push(cond_ref.clone());
+            continue;
+        }
+        access_conditions.push(cond_ref.clone());
+        if should_reserve {
+            filter_conditions.push(cond_ref.clone());
         }
     }
     (access_conditions, filter_conditions)
@@ -509,14 +553,20 @@ fn points_to_eq_or_in_cond(
 }
 
 /// Go `ExtractEqAndInCondition`'s product.
+///
+/// `new_conditions` carries borrowed conditions from the input slice wherever
+/// the extraction kept them verbatim (Go's `newConditions` shares the same
+/// expression pointers), and owns the ones it rebuilt. This runs once per
+/// cached-plan EXECUTE, so keeping the verbatim conditions borrowed avoids a
+/// full condition-tree deep clone on the hot path.
 #[derive(Debug, Default)]
-pub struct EqAndInExtraction {
+pub struct EqAndInExtraction<'a> {
     /// Go `accesses`: the leading equality chain, one per pinned column.
     pub accesses: Vec<Expression>,
     /// Go `filters`: prefix-index access conditions that must ALSO filter.
     pub filters: Vec<Expression>,
     /// Go `newConditions`: the simplified condition set.
-    pub new_conditions: Vec<Expression>,
+    pub new_conditions: Vec<Cow<'a, Expression>>,
     /// Go `columnValues`.
     pub column_values: Vec<Option<ValueInfo>>,
     /// Go's trailing bool: an EMPTY merged range was proven.
@@ -525,12 +575,12 @@ pub struct EqAndInExtraction {
 
 /// Go `ExtractEqAndInCondition` (`detacher.go:732`).
 #[must_use]
-pub fn extract_eq_and_in_condition(
-    conditions: &[Expression],
+pub fn extract_eq_and_in_condition<'a>(
+    conditions: &'a [Expression],
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     regard_null_as_point: bool,
-) -> EqAndInExtraction {
+) -> EqAndInExtraction<'a> {
     extract_eq_and_in_condition_in(
         conditions,
         cols,
@@ -541,13 +591,13 @@ pub fn extract_eq_and_in_condition(
 }
 
 /// Extract the equality prefix using the current statement's constant evaluator.
-pub fn extract_eq_and_in_condition_in(
-    conditions: &[Expression],
+pub fn extract_eq_and_in_condition_in<'a>(
+    conditions: &'a [Expression],
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     regard_null_as_point: bool,
     eval_expression: &ExpressionEvaluator<'_>,
-) -> EqAndInExtraction {
+) -> EqAndInExtraction<'a> {
     let mut builder = PointBuilder::new(eval_expression);
     let mut accesses: Vec<Option<Expression>> = vec![None; cols.len()];
     let mut points: Vec<Vec<Point>> = vec![Vec::new(); cols.len()];
@@ -613,7 +663,7 @@ pub fn extract_eq_and_in_condition_in(
                         .and_then(|info| info.value.as_ref())
                         .is_some_and(|value| matches!(value, Datum::Null))
                     {
-                        new_conditions.push(access.clone());
+                        new_conditions.push(Cow::Owned(access.clone()));
                         accesses[i] = Some(access);
                     }
                 }
@@ -642,7 +692,7 @@ pub fn extract_eq_and_in_condition_in(
                     accesses[i] = None;
                     continue;
                 };
-                new_conditions.push(rebuilt.clone());
+                new_conditions.push(Cow::Owned(rebuilt.clone()));
                 if let Expression::ScalarFunction(f) = &rebuilt {
                     if f.func_name.lowercase() == "eq" {
                         column_values[i] = Some(ValueInfo {
@@ -657,7 +707,9 @@ pub fn extract_eq_and_in_condition_in(
     }
     for (i, offset) in offsets.iter().enumerate() {
         if *offset == -1 || accesses[*offset as usize].is_none() {
-            new_conditions.push(conditions[i].clone());
+            // Borrowed: the caller's condition set outlives this extraction,
+            // and cloning a whole tree here ran once per cached-plan EXECUTE.
+            new_conditions.push(Cow::Borrowed(&conditions[i]));
         }
     }
     // The equality chain is the longest all-set PREFIX. `accesses` is dead
@@ -677,7 +729,10 @@ pub fn extract_eq_and_in_condition_in(
         }
         chain.push(access);
     }
-    let new_conditions = retain_conditions_not_in(new_conditions, &chain);
+    let new_conditions = new_conditions
+        .into_iter()
+        .filter(|cond| !contains(&chain, cond.as_ref()))
+        .collect();
     let _ = range_point_cmp;
     EqAndInExtraction {
         accesses: chain,
@@ -880,9 +935,9 @@ impl RangeDetacher<'_> {
 
     /// Go `detachCNFCondAndBuildRangeForIndex` (`detacher.go:397`), both
     /// branches of `considerDNF`.
-    fn detach_cnf(
+    fn detach_cnf<'a>(
         &mut self,
-        conditions: &[Expression],
+        conditions: &'a [Expression],
         consider_dnf: bool,
     ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
         let mut res = DetachRangeResult::default();
@@ -906,7 +961,7 @@ impl RangeDetacher<'_> {
         let mut access_conds = access_conds;
         if !remained_conds.is_empty() {
             filter_conds = remove_conditions(&filter_conds, &remained_conds);
-            new_conditions.extend(remained_conds);
+            new_conditions.extend(remained_conds.into_iter().map(Cow::Owned));
         }
         let mut eq_count = 0;
         for cond in &access_conds {
@@ -935,7 +990,8 @@ impl RangeDetacher<'_> {
             res.ranges = ranges;
             res.access_conds = access_conds;
             res.remained_conds = filter_conds;
-            res.remained_conds.extend(new_conditions);
+            res.remained_conds
+                .extend(new_conditions.into_iter().map(Cow::into_owned));
             return Ok(res);
         }
         if consider_dnf {
@@ -957,14 +1013,14 @@ impl RangeDetacher<'_> {
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
         };
         for cond in &new_conditions {
-            let (is_access_cond, should_reserve) = checker.check(cond);
+            let (is_access_cond, should_reserve) = checker.check(cond.as_ref());
             if !is_access_cond {
-                filter_conds.push(cond.clone());
+                filter_conds.push(cond.as_ref().clone());
                 continue;
             }
-            access_conds.push(cond.clone());
+            access_conds.push(cond.as_ref().clone());
             if should_reserve {
-                filter_conds.push(cond.clone());
+                filter_conds.push(cond.as_ref().clone());
             }
         }
         let (built_ranges, built_access, built_remained) =
@@ -1273,15 +1329,15 @@ impl RangeDetacher<'_> {
     /// The `considerDNF = true` continuation of
     /// `detachCNFCondAndBuildRangeForIndex`.
     #[allow(clippy::too_many_arguments)]
-    fn detach_cnf_consider_dnf(
+    fn detach_cnf_consider_dnf<'a>(
         &mut self,
-        conditions: &[Expression],
+        conditions: &'a [Expression],
         mut res: DetachRangeResult,
         ranges: super::types::Ranges,
         mut point_ranges: super::types::Ranges,
         access_conds: Vec<Expression>,
         filter_conds: Vec<Expression>,
-        mut new_conditions: Vec<Expression>,
+        mut new_conditions: Vec<Cow<'a, Expression>>,
         mut eq_or_in_count: usize,
     ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
         res.ranges = ranges;
@@ -1304,10 +1360,11 @@ impl RangeDetacher<'_> {
                 eq_or_in_count = taken.ranges[0].low_val.len();
                 res = taken;
                 new_conditions.clear();
-                new_conditions.extend_from_slice(&conditions[..offset]);
-                new_conditions.extend_from_slice(&conditions[offset + 1..]);
+                new_conditions.extend(conditions[..offset].iter().map(Cow::Borrowed));
+                new_conditions.extend(conditions[offset + 1..].iter().map(Cow::Borrowed));
                 if eq_or_in_count == self.cols.len() || new_conditions.is_empty() {
-                    res.remained_conds.extend(new_conditions);
+                    res.remained_conds
+                        .extend(new_conditions.into_iter().map(Cow::into_owned));
                     return Ok(res);
                 }
             } else if self.fix_44389
@@ -1322,9 +1379,10 @@ impl RangeDetacher<'_> {
                 taken.column_values = std::mem::take(&mut res.column_values);
                 res = taken;
                 new_conditions.clear();
-                new_conditions.extend_from_slice(&conditions[..offset]);
-                new_conditions.extend_from_slice(&conditions[offset + 1..]);
-                res.remained_conds.extend(new_conditions);
+                new_conditions.extend(conditions[..offset].iter().map(Cow::Borrowed));
+                new_conditions.extend(conditions[offset + 1..].iter().map(Cow::Borrowed));
+                res.remained_conds
+                    .extend(new_conditions.into_iter().map(Cow::into_owned));
                 return Ok(res);
             }
         }
@@ -1348,7 +1406,17 @@ impl RangeDetacher<'_> {
                 fix_44389: self.fix_44389,
                 fix_54337: self.fix_54337,
             };
-            let tail_res = tail_detacher.detach_cond_and_build_range_for_cols(&new_conditions)?;
+            let tail_res = {
+                // The tail detacher owns its simplified condition set; the
+                // Cow conditions are materialized at this boundary. This is
+                // the eq/in>0 tail path, not the single-column range scan
+                // shape, so the clone count stays Go-comparable.
+                let owned_conditions: Vec<Expression> = new_conditions
+                    .iter()
+                    .map(|condition| condition.as_ref().clone())
+                    .collect();
+                tail_detacher.detach_cond_and_build_range_for_cols(&owned_conditions)?
+            };
             if let Some(reason) = tail_detacher.skip_plan_cache_reason {
                 self.skip_plan_cache_reason.get_or_insert(reason);
             }
@@ -1397,7 +1465,7 @@ impl RangeDetacher<'_> {
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
         };
         let (column_access, column_filters) =
-            detach_column_cnf_conditions(&new_conditions, &checker);
+            detach_column_cnf_conditions_cow(&new_conditions, &checker);
         res.access_conds = column_access;
         res.remained_conds = column_filters;
         let column_access = std::mem::take(&mut res.access_conds);
