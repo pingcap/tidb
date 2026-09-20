@@ -1809,7 +1809,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.updateNetworkTrafficStatsAndMetrics()
 	statementRUTotal := a.finishStatementRU(err)
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.LogSlowQuery(txnTS, succ, hasMoreResults, statementRUTotal)
+	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ, statementRUTotal)
 	a.observeStmtFinishedForTopProfiling(statementRUTotal)
 	a.UpdatePlanCacheRuntimeInfo()
@@ -2021,7 +2021,7 @@ func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, statementRUTotal ...float64) {
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cfg := config.GetGlobalConfig()
@@ -2067,7 +2067,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 			}
 		}
 	})
-	slowLog := sessVars.SlowLogFormat(slowItems, statementRUTotal...)
+	slowLog := sessVars.SlowLogFormat(slowItems)
 	logutil.SlowQueryLogger.Warn(slowLog)
 
 	if trace.IsEnabled() {
