@@ -537,9 +537,15 @@ fn drop_table(
 
 /// One renamed table: Go `dropTableForUpdate`'s rename special case
 /// (`builder.go:568-579`) plus the `applyCreateTable` every `getTableIDs`
-/// case ends in. `old_schema_id` is `0` only for a stored diff predating
-/// this field; treated the same as "same database" since there is no other
-/// database to remove the stale copy from.
+/// case ends in. The comparison is literally Go's
+/// (`diff.OldSchemaID != diff.SchemaID`), with no exception for a zero
+/// `old_schema_id`: `SetSchemaDiffForRenameTable`/`SetSchemaDiffForRenameTables`
+/// always populate it from the job's real source schema for a genuine
+/// rename, so a zero here is a malformed diff, and Go's own code does not
+/// treat it as "same database" either -- it looks database `0` up and fails.
+/// This tier's equivalent of that failure is the same safe fallback any
+/// other missing object gets: `drop_table` reports
+/// `FullReloadReason::MissingObject` and the caller does a full load.
 fn apply_rename_table<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
@@ -548,7 +554,7 @@ fn apply_rename_table<S: MetaSnapshot>(
     old_schema_id: i64,
     table_id: i64,
 ) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
-    if old_schema_id != 0 && old_schema_id != schema_id {
+    if old_schema_id != schema_id {
         if let Err(reason) = drop_table(catalog, version, old_schema_id, table_id)? {
             return Ok(Err(reason));
         }

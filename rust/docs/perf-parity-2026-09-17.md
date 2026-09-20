@@ -3277,3 +3277,32 @@ because the harness could not write the command's own captured output to a
 normal output capture to resume. `target/debug/build` (accumulated
 build-script outputs across many past rounds) was the largest single
 offender at 8.8 GB.
+
+## 2026-09-20: `apply_rename_table` review finds one real divergence -- a
+## zero `old_schema_id` was silently treated as "same database" instead of
+## Go's literal comparison
+
+Re-reading `dropTableForUpdate` (`builder.go:568-579`) against the just
+-landed `apply_rename_table` line by line: Go's guard is
+`diff.OldSchemaID != diff.SchemaID`, with no exception for zero. The first
+cut added `old_schema_id != 0 &&` to that condition, reasoning (wrongly)
+that a zero meant "an old stored diff predating the field" and should be
+treated as same-database. Two problems with that: `SetSchemaDiffForRenameTable`
+and `SetSchemaDiffForRenameTables` always populate `OldSchemaID` from the
+job's real source schema for a genuine rename, so a zero here can only be a
+malformed diff -- and Go itself does not treat that case as "same database"
+either; it looks database `0` up and fails. Silently proceeding as
+same-database would leave a stale duplicate behind in whatever the table's
+true old database was, for a diff class this tier already has a safe answer
+for (`FullReloadReason::MissingObject`, the same fallback every other
+"diff names an object that is not there" case gets).
+
+Fixed by dropping the `!= 0` exception entirely, so the comparison is
+Go's literal one; `drop_table`'s existing "unknown database" path supplies
+the correct fallback for free. New test
+`a_rename_table_diff_with_a_zero_old_schema_id_takes_the_full_load` asserts
+the full-load fallback and its exact reason, and that the full load itself
+still reaches the right end state. Fail-before confirmed: reverting the fix
+makes the new test panic (the old code silently succeeded instead of falling
+back). 23/23 passing; `rustfmt`/`cargo clippy -p tidb-exec` clean on both
+touched files.

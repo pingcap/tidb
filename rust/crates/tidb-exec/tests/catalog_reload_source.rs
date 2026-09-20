@@ -442,6 +442,49 @@ fn a_rename_tables_diff_panics_on_a_nil_affected_option() {
     let _ = reload_cluster_catalog(&mut snapshot, &catalog);
 }
 
+/// A malformed rename diff (`old_schema_id: 0` while the current database is
+/// `3`, never legitimately produced by
+/// `SetSchemaDiffForRenameTable`/`SetSchemaDiffForRenameTables`) is not
+/// silently treated as a same-database rename: Go's own
+/// `dropTableForUpdate` would look database `0` up and fail, and this tier's
+/// equivalent of that failure is falling back to a full load, the same as
+/// any other diff naming an object that is not there.
+#[test]
+fn a_rename_table_diff_with_a_zero_old_schema_id_takes_the_full_load() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.remove(&key::table_kv_key(3, 77));
+    snapshot.put(key::table_kv_key(3, 77), go_table(77, "Entries", "entries"));
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":3,"table_id":77,"old_table_id":0,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":null}}"#,
+            ActionType::ACTION_RENAME_TABLE.0
+        ),
+    );
+
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Full {
+        catalog: next,
+        reason,
+    } = reloaded
+    else {
+        panic!("expected a full reload, got {reloaded:?}");
+    };
+    assert_eq!(
+        reason,
+        FullReloadReason::MissingObject {
+            version: 101,
+            detail: "unknown database 0".to_owned(),
+        }
+    );
+    // The full load still reaches the correct end state from the snapshot.
+    assert_eq!(next.schema_version, 101);
+    let (_, table) = next
+        .find_table("campaign", "entries")
+        .expect("renamed table");
+    assert_eq!(table.id, 77);
+}
+
 #[test]
 fn create_and_drop_schema_diffs_add_and_remove_a_database() {
     let (mut snapshot, catalog) = started_cluster();
