@@ -16,6 +16,7 @@ package storage_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestGCStats(t *testing.T) {
@@ -122,12 +124,23 @@ func TestGCExtendedStats(t *testing.T) {
 		"s2 2 [2,3] 1.000000 1",
 	))
 	ddlLease := time.Duration(0)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	gcStats := func() {
+		// GC uses a wall-clock upper bound with a zero logical part. A just
+		// committed version in the same millisecond must age past that bound.
+		rows := testKit.MustQuery("select max(version) from (select version from mysql.stats_meta union all select version from mysql.stats_extended) versions").Rows()
+		version, err := strconv.ParseUint(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			return time.Now().UnixMilli() > oracle.ExtractPhysical(version)
+		}, time.Second, time.Millisecond)
+		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	}
+	gcStats()
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s1 2 [1,2] 1.000000 2",
 		"s2 2 [2,3] 1.000000 1",
 	))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	gcStats()
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 1",
 	))
@@ -138,11 +151,11 @@ func TestGCExtendedStats(t *testing.T) {
 	))
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	gcStats()
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 2",
 	))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	gcStats()
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows())
 }
 
