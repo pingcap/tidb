@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -2412,6 +2413,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 }
 
 func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	// Reject user SQL before preparing a transaction or resetting statement
+	// state. Internal restricted SQL is used by diagnostic startup and metadata
+	// readers and must continue to run under the process-wide diagnostic mode.
+	if diagnosticmode.Enabled() && !s.sessionVars.InRestrictedSQL && !isDiagnosticSQLAllowed(stmtNode) {
+		return nil, plannererrors.ErrSQLInReadOnlyMode
+	}
+
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
 	defer r.End()
 	ctx = execdetails.ContextWithMissingExecDetailsInitialized(ctx)
@@ -3143,6 +3151,14 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 			s.sessionVars.StmtCtx.DetachMemDiskTracker()
 		}
 	}()
+	// Prepared statements are deliberately outside the diagnostic SQL
+	// allowlist. Reject them before preparing a transaction; otherwise
+	// COM_STMT_PREPARE could still allocate transaction state for a statement
+	// that will never be allowed to execute.
+	if diagnosticmode.Enabled() && !s.sessionVars.InRestrictedSQL {
+		err = plannererrors.ErrSQLInReadOnlyMode
+		return
+	}
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = s.infoCache.GetLatest()
@@ -4168,6 +4184,9 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // such as system time zone
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+	if diagnosticmode.Enabled() {
+		return bootstrapSessionImplDiagnostic(ctx, store)
+	}
 	ver := getStoreBootstrapVersionWithCache(store)
 	if kv.IsUserKS(store) {
 		targetVer := currentBootstrapVersion
@@ -4401,11 +4420,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
-	if raw, ok := store.(kv.EtcdBackend); ok {
-		err = raw.StartGCWorker()
-		if err != nil {
-			return nil, err
-		}
+	if err = startGCWorker(store); err != nil {
+		return nil, err
 	}
 
 	// This only happens in testing, since the failure of loading or parsing sql file
@@ -4419,6 +4435,17 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	return dom, err
+}
+
+func startGCWorker(store kv.Storage) error {
+	if diagnosticmode.Enabled() {
+		logutil.BgLogger().Info("don't run TiKV GC worker", zap.String("reason", "diagnostic mode"))
+		return nil
+	}
+	if raw, ok := store.(kv.EtcdBackend); ok {
+		return raw.StartGCWorker()
+	}
+	return nil
 }
 
 // GetDomain gets the associated domain for store.

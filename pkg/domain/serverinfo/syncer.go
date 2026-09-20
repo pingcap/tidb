@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -116,7 +117,7 @@ func newSyncer(
 		option(args)
 	}
 	info := getServerInfo(uuid, serverIDGetter, assumedKS)
-	claimEnabled := config.GetGlobalConfig().Status.ReportStatus && !args.skipStatusEndpointClaim
+	claimEnabled := config.GetGlobalConfig().Status.ReportStatus && !args.skipStatusEndpointClaim && !diagnosticmode.Enabled()
 	is := &Syncer{
 		etcdCli:        etcdCli,
 		reporter:       reporter,
@@ -129,6 +130,9 @@ func newSyncer(
 
 // NewSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
 func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -172,6 +176,9 @@ func (s *Syncer) cleanupFailedRegistration(session *concurrency.Session) {
 
 // StoreServerInfo stores self server static information to etcd.
 func (s *Syncer) StoreServerInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -193,7 +200,7 @@ func (s *Syncer) GetLocalServerInfo() *ServerInfo {
 // GetServerInfoByID gets server information by ID.
 func (s *Syncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	localInfo := s.info.Load()
-	if s.etcdCli == nil || id == localInfo.ID {
+	if id == localInfo.ID || (s.etcdCli == nil && !diagnosticmode.Enabled()) {
 		return localInfo, nil
 	}
 	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
@@ -210,6 +217,14 @@ func (s *Syncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo,
 
 // UpdateServerLabel updates the labels of the local server information in etcd.
 func (s *Syncer) UpdateServerLabel(ctx context.Context, labels map[string]string) error {
+	if diagnosticmode.Enabled() {
+		dynamicInfo := s.cloneDynamicServerInfo()
+		for k, v := range labels {
+			dynamicInfo.Labels[k] = v
+		}
+		s.setDynamicServerInfo(dynamicInfo)
+		return nil
+	}
 	// when etcdCli is nil, the server infos are generated from the latest config, no need to update.
 	if s.etcdCli == nil {
 		return nil
@@ -265,6 +280,9 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 	})
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
+		if diagnosticmode.Enabled() {
+			return allInfo, nil
+		}
 		info := s.info.Load()
 		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "")
 		return allInfo, nil
@@ -278,6 +296,9 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 
 // Done returns a channel that closes when the info syncer is no longer being refreshed.
 func (s *Syncer) Done() <-chan struct{} {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return make(chan struct{}, 1)
 	}
@@ -291,6 +312,9 @@ func (s *Syncer) Restart(ctx context.Context) error {
 
 // RemoveServerInfo remove self server static information from etcd.
 func (s *Syncer) RemoveServerInfo() {
+	if diagnosticmode.Enabled() {
+		return
+	}
 	if s.etcdCli == nil {
 		return
 	}
@@ -312,6 +336,9 @@ func (s *Syncer) RemoveServerInfo() {
 
 // ServerInfoSyncLoop syncs the server information periodically.
 func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) {
+	if diagnosticmode.Enabled() {
+		return
+	}
 	defer func() {
 		logutil.BgLogger().Info("server info sync loop exited.")
 	}()
@@ -352,6 +379,9 @@ func isExitRequested(exitCh <-chan struct{}) bool {
 
 // NewTopologySessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
 func (s *Syncer) NewTopologySessionAndStoreServerInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -368,6 +398,9 @@ func (s *Syncer) NewTopologySessionAndStoreServerInfo(ctx context.Context) error
 
 // StoreTopologyInfo stores the topology of tidb to etcd.
 func (s *Syncer) StoreTopologyInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -390,6 +423,9 @@ func (s *Syncer) StoreTopologyInfo(ctx context.Context) error {
 
 // refreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
 func (s *Syncer) updateTopologyAliveness(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -426,6 +462,9 @@ func (s *Syncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error
 
 // RemoveTopologyInfo remove self server topology information from etcd.
 func (s *Syncer) RemoveTopologyInfo() {
+	if diagnosticmode.Enabled() {
+		return
+	}
 	if s.etcdCli == nil {
 		return
 	}
@@ -443,6 +482,9 @@ func (s *Syncer) RemoveTopologyInfo() {
 
 // TopologyDone returns a channel that closes when the topology syncer is no longer being refreshed.
 func (s *Syncer) TopologyDone() <-chan struct{} {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return make(chan struct{}, 1)
 	}
@@ -456,6 +498,9 @@ func (s *Syncer) RestartTopology(ctx context.Context) error {
 
 // TopologySyncLoop syncs the topology information periodically.
 func (s *Syncer) TopologySyncLoop(exitCh chan struct{}) {
+	if diagnosticmode.Enabled() {
+		return
+	}
 	defer tidbutil.Recover(metrics.LabelDomain, "TopologySyncLoop", nil, false)
 	ticker := time.NewTicker(TopologyTimeToRefresh)
 	defer func() {

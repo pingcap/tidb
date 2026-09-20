@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/lightning/pkg/errormanager"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -62,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -844,7 +846,11 @@ func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, e
 	// we have to build a separate PD client for tikv, as KVStore will manage
 	// the lifecycle of input PD client, while the PD client inside this is
 	// managed outside.
-	pdCliForTiKV, err := newPDClient(ctx, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
+	pdClientOptions := PDClientOptions()
+	if diagnosticmode.Enabled() {
+		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+	}
+	pdCliForTiKV, err := newPDClient(ctx, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), pdClientOptions...)
 	if err != nil {
 		_ = spkv.Close()
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()

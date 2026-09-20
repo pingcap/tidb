@@ -9,6 +9,7 @@ go_library(
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
@@ -113,6 +114,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -64,6 +66,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
@@ -190,7 +193,11 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 	}
 	tlsOpt := tls.ToPDSecurityOption()
 	addrs := strings.Split(tidbCfg.Path, ",")
-	pdCli, err := NewClientWithContext(ctx, caller.Component("tidb-table-importer"), addrs, tlsOpt)
+	var pdClientOptions []opt.ClientOption
+	if diagnosticmode.Enabled() {
+		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+	}
+	pdCli, err := NewClientWithContext(ctx, caller.Component("tidb-table-importer"), addrs, tlsOpt, pdClientOptions...)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}

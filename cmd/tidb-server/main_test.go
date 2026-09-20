@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -49,6 +50,31 @@ func TestMain(m *testing.M) {
 func TestRunMain(t *testing.T) {
 	if isCoverageServer == "1" {
 		main()
+	}
+}
+
+func TestDiagnosticModeFlag(t *testing.T) {
+	originalArgs := os.Args
+	originalDiagnosticMode := diagnosticMode
+	os.Args = []string{"tidb-server"}
+	t.Cleanup(func() {
+		os.Args = originalArgs
+		diagnosticMode = originalDiagnosticMode
+	})
+
+	for _, testCase := range []struct {
+		name     string
+		argument string
+		expected bool
+	}{
+		{name: "enable", argument: "--diagnostic-mode", expected: true},
+		{name: "disable", argument: "--diagnostic-mode=false", expected: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fset := initFlagSet()
+			require.NoError(t, fset.Parse([]string{testCase.argument}))
+			require.Equal(t, testCase.expected, *diagnosticMode)
+		})
 	}
 }
 
