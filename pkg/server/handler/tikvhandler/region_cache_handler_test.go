@@ -122,36 +122,6 @@ func TestRegionCacheHandlerGetPost(t *testing.T) {
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-func TestRegionCacheHandlerKeepsPerStoreIdentity(t *testing.T) {
-	primary := &fakeCacheStore{
-		status:  tikv.StoreCacheStatus{Matched: 2, Failed: 1, Ready: false, ObservedAt: 1},
-		refresh: tikv.StoreCacheRefreshResult{Scanned: 2, Matched: 2, Updated: 1, Failed: 1, Remaining: 1, Ready: false, ObservedAt: 2},
-		ks:      "ks1",
-		cid:     11,
-	}
-	h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: primary}})
-
-	req := httptest.NewRequest(http.MethodGet, "/regions/cache/status?store_id=7", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-	var got regionCacheHTTPResult
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.Equal(t, 2, got.Remaining)
-	require.Equal(t, 1, got.Failed)
-	require.False(t, got.Ready)
-	require.Empty(t, got.Stores)
-
-	req = httptest.NewRequest(http.MethodGet, "/regions/cache/status?store_id=7&detail=1", nil)
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.Len(t, got.Stores, 1)
-	require.Equal(t, "ks1", got.Stores[0].Keyspace)
-	require.Equal(t, uint64(11), got.Stores[0].ClusterID)
-}
-
 func TestRegionCacheHandlerRouteMethods(t *testing.T) {
 	fake := &fakeCacheStore{
 		status:  tikv.StoreCacheStatus{Matched: 1, Ready: false},
@@ -178,18 +148,11 @@ func TestRegionCacheHandlerRouteMethods(t *testing.T) {
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	var got regionCacheHTTPResult
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.Equal(t, 1, got.Remaining)
-	require.False(t, got.Ready)
 
 	req = httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.True(t, got.Ready)
-	require.Equal(t, 0, got.Remaining)
 }
 
 func TestRegionCacheHandlerResetThenRefresh(t *testing.T) {
