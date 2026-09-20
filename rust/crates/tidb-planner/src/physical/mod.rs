@@ -355,14 +355,20 @@ pub struct PhysicalHashJoin {
     pub default_values: Vec<tidb_datatype::Datum>,
 }
 
+/// Go `emptyBasePhysicalJoinSize` (`base_physical_join.go:143`):
+/// `unsafe.Sizeof(BasePhysicalJoin{})` on 64-bit, the constant every join
+/// node's `MemoryUsage` starts from. It is Go's number, not this port's
+/// layout, because the sum is the plan cache's admission and eviction
+/// contract (the same convention as `tidb_expr::memory_usage`).
+pub const GO_EMPTY_BASE_PHYSICAL_JOIN_SIZE: i64 = 488;
+/// Go `emptyColWithCmpFuncManagerSize` (`physical_index_join.go:332`):
+/// `unsafe.Sizeof(ColWithCmpFuncManager{})`.
+pub const GO_EMPTY_COL_WITH_CMP_FUNC_MANAGER_SIZE: i64 = 120;
+
 /// Go `BasePhysicalJoin.MemoryUsage` (`base_physical_join.go:146-186`) over
-/// the fields this port's join nodes carry. Go's `emptyBasePhysicalJoinSize`
-/// is `unsafe.Sizeof(BasePhysicalJoin{})`; the join nodes are separate
-/// structs here, so each passes its own `size_of`, as
-/// [`PhysicalSort::memory_usage`] does, and Go's slice capacities are the
+/// the fields this port's join nodes carry. Go's slice capacities are the
 /// lengths (every list is built exact-sized).
 fn base_physical_join_memory_usage(
-    node_size: usize,
     base: &BasePhysicalPlan,
     key_lists: &[&[tidb_expr::column::Column]],
     is_null_eq: &[bool],
@@ -372,7 +378,7 @@ fn base_physical_join_memory_usage(
     use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_INTERFACE, SIZE_OF_POINTER};
     let conditions = condition_lists.iter().map(|list| list.len()).sum::<usize>() as i64;
     let keys = key_lists.iter().map(|list| list.len()).sum::<usize>() as i64;
-    let mut sum = node_size as i64
+    let mut sum = GO_EMPTY_BASE_PHYSICAL_JOIN_SIZE
         + base.base.memory_usage()
         + is_null_eq.len() as i64 * SIZE_OF_BOOL
         + conditions * SIZE_OF_INTERFACE
@@ -398,7 +404,6 @@ impl PhysicalHashJoin {
     pub fn memory_usage(&self) -> i64 {
         use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_SLICE, SIZE_OF_UINT, SIZE_OF_UINT8};
         base_physical_join_memory_usage(
-            std::mem::size_of::<Self>(),
             &self.base,
             &[
                 self.left_join_keys.as_slice(),
@@ -431,7 +436,6 @@ impl PhysicalMergeJoin {
     pub fn memory_usage(&self) -> i64 {
         use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_FUNC, SIZE_OF_SLICE};
         base_physical_join_memory_usage(
-            std::mem::size_of::<Self>(),
             &self.base,
             &[
                 self.left_join_keys.as_slice(),
@@ -462,7 +466,6 @@ impl PhysicalIndexJoin {
             SIZE_OF_SLICE,
         };
         let mut sum = base_physical_join_memory_usage(
-            std::mem::size_of::<Self>(),
             &self.base,
             &[
                 self.left_join_keys.as_slice(),
@@ -482,12 +485,7 @@ impl PhysicalIndexJoin {
             + (self.key_off2_idx_off.len() + self.idx_col_lens.len()) as i64 * SIZE_OF_INT
             + SIZE_OF_POINTER;
         if let Some(filters) = &self.compare_filters {
-            // Go `ColWithCmpFuncManager.MemoryUsage`
-            // (`physical_index_join.go:335-350`).
-            sum += std::mem::size_of::<IndexJoinCompareFilters>() as i64
-                + filters.ops.len() as i64 * SIZE_OF_FUNC
-                + filters.target_col.memory_usage()
-                + filters.args.iter().map(|a| a.memory_usage()).sum::<i64>();
+            sum += filters.memory_usage();
         }
         sum += match self.kind {
             crate::plan_cost_ver2::IndexJoinKind::IndexJoin => 0,
@@ -582,6 +580,21 @@ pub enum IndexJoinCompareOp {
     Le,
 }
 
+impl IndexJoinCompareOp {
+    /// The Go `OpType` entry: the comparison's function name after
+    /// `index_join_path.go:677-685` normalized it to `target_col op arg`
+    /// (`symmetricOp` when the target column was the right operand).
+    #[must_use]
+    pub const fn go_name(self) -> &'static str {
+        match self {
+            Self::Ge => "ge",
+            Self::Gt => "gt",
+            Self::Lt => "lt",
+            Self::Le => "le",
+        }
+    }
+}
+
 /// Go `ColWithCmpFuncManager`, retained on `PhysicalIndexJoin` after its
 /// inner access path is completed.
 #[derive(Clone, Debug)]
@@ -596,6 +609,41 @@ pub struct IndexJoinCompareFilters {
     pub ops: Vec<IndexJoinCompareOp>,
     /// Go `opArg`, evaluated against one outer row per probe.
     pub args: Vec<tidb_expr::expression::Expression>,
+}
+
+impl IndexJoinCompareFilters {
+    /// Go `ColWithCmpFuncManager.MemoryUsage` (`physical_index_join.go:335-358`).
+    ///
+    /// Go's manager also keeps what `AppendNewExpr` (`:261-272`) built for
+    /// each op: one `TmpConstant` (a `Constant` carrying only the target
+    /// column's type), the `AffectedColSchema` of the distinct columns the
+    /// args reference, and one `compareFuncs` entry per such column. This
+    /// port derives those at probe time instead of storing them, so they are
+    /// charged here as Go allocates them.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        use tidb_util::size::SIZE_OF_FUNC;
+        let affected = self
+            .args
+            .iter()
+            .flat_map(tidb_expr::simple_expr::extract_columns)
+            .map(|column| (column.unique_id, column))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let affected_schema = tidb_expr::schema::Schema::new(affected.into_values().collect());
+        let mut tmp_constant = tidb_expr::constant::Constant::default();
+        tmp_constant.ret_type = self.target_col.ret_type.clone();
+        GO_EMPTY_COL_WITH_CMP_FUNC_MANAGER_SIZE
+            + affected_schema.columns.len() as i64 * SIZE_OF_FUNC
+            + self.target_col.memory_usage()
+            + affected_schema.memory_usage()
+            + self
+                .ops
+                .iter()
+                .map(|op| op.go_name().len() as i64)
+                .sum::<i64>()
+            + self.args.iter().map(|arg| arg.memory_usage()).sum::<i64>()
+            + self.ops.len() as i64 * tmp_constant.memory_usage()
+    }
 }
 
 /// Go `PhysicalIndexJoin`, including the completed inner-path feedback used

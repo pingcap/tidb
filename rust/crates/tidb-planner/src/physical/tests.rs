@@ -1740,3 +1740,37 @@ fn join_memory_usage_charges_its_own_keys_and_conditions() {
     );
     tree.dismantle();
 }
+
+/// Go `ColWithCmpFuncManager.MemoryUsage` (`physical_index_join.go:335-358`)
+/// charges Go's empty manager, the target column, the op names, the args,
+/// and what `AppendNewExpr` allocates per op: a type-only `TmpConstant`, and
+/// one compare func plus one `AffectedColSchema` entry per DISTINCT column
+/// the args reference. Two ops over the same column share that column.
+#[test]
+fn index_join_compare_filters_weigh_what_gos_manager_allocates() {
+    use tidb_expr::memory_usage::GO_EMPTY_SCHEMA_SIZE;
+    use tidb_util::size::{SIZE_OF_FUNC, SIZE_OF_POINTER};
+    let long = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long);
+    let target_col = tidb_expr::column::Column::new(1, long());
+    let outer = tidb_expr::column::Column::new(2, long());
+    let filters = IndexJoinCompareFilters {
+        target_col: target_col.clone(),
+        target_index_offset: 0,
+        col_length: tidb_datatype::UNSPECIFIED_LENGTH,
+        ops: vec![IndexJoinCompareOp::Gt, IndexJoinCompareOp::Le],
+        args: vec![
+            tidb_expr::expression::Expression::Column(outer.clone()),
+            tidb_expr::expression::Expression::Column(outer.clone()),
+        ],
+    };
+    let mut tmp_constant = tidb_expr::constant::Constant::default();
+    tmp_constant.ret_type = Some(long());
+    let expected = GO_EMPTY_COL_WITH_CMP_FUNC_MANAGER_SIZE
+        + SIZE_OF_FUNC
+        + target_col.memory_usage()
+        + (GO_EMPTY_SCHEMA_SIZE + SIZE_OF_POINTER + outer.memory_usage())
+        + ("gt".len() + "le".len()) as i64
+        + 2 * outer.memory_usage()
+        + 2 * tmp_constant.memory_usage();
+    assert_eq!(filters.memory_usage(), expected);
+}

@@ -23,12 +23,13 @@
 //! through `Datum::estimated_mem_usage` (see its own note on Go's
 //! `MemUsage`).
 
-use tidb_util::size::SIZE_OF_POINTER;
+use tidb_util::size::{SIZE_OF_POINTER, SIZE_OF_SLICE};
 
 use crate::column::{Column, CorrelatedColumn};
 use crate::constant::Constant;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
+use crate::schema::Schema;
 
 /// Go `emptyColumnSize` (`column.go:866`): `unsafe.Sizeof(Column{})`.
 pub const GO_EMPTY_COLUMN_SIZE: i64 = 160;
@@ -47,6 +48,26 @@ pub const GO_EMPTY_LOCAL_COLUMN_POOL_SIZE: i64 = 40;
 pub const GO_ONCE_SIZE: i64 = 12;
 /// Go `types.EmptyDatumSize` (`datum.go:82`).
 pub const GO_EMPTY_DATUM_SIZE: i64 = 72;
+/// Go `emptySchemaSize` (`schema.go:280`): three slice headers.
+pub const GO_EMPTY_SCHEMA_SIZE: i64 = 72;
+
+impl Schema {
+    /// Go `Schema.MemoryUsage` (`schema.go:283-303`). Go charges slice
+    /// capacities; every list here is built exact-sized, so lengths are the
+    /// capacities.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        let mut sum = GO_EMPTY_SCHEMA_SIZE
+            + self.columns.len() as i64 * SIZE_OF_POINTER
+            + (self.pk_or_uk.len() + self.nullable_uk.len()) as i64 * SIZE_OF_SLICE
+            + self.columns.iter().map(Column::memory_usage).sum::<i64>();
+        for key in self.pk_or_uk.iter().chain(&self.nullable_uk) {
+            sum += key.len() as i64 * SIZE_OF_POINTER
+                + key.iter().map(Column::memory_usage).sum::<i64>();
+        }
+        sum
+    }
+}
 
 impl Expression {
     /// Go `Expression.MemoryUsage`.
@@ -179,6 +200,23 @@ mod tests {
         assert_eq!(
             Expression::ScalarFunction(function.clone()).memory_usage(),
             function.memory_usage()
+        );
+    }
+
+    /// A schema charges Go's empty size, one pointer per column, one slice
+    /// header per key, and every column it holds, keys included.
+    #[test]
+    fn a_schema_charges_its_columns_and_keys() {
+        let a = Column::new(1, long());
+        let b = Column::new(2, long());
+        let mut schema = Schema::new(vec![a.clone(), b.clone()]);
+        let columns_only =
+            GO_EMPTY_SCHEMA_SIZE + 2 * SIZE_OF_POINTER + a.memory_usage() + b.memory_usage();
+        assert_eq!(schema.memory_usage(), columns_only);
+        schema.pk_or_uk.push(vec![a.clone()]);
+        assert_eq!(
+            schema.memory_usage(),
+            columns_only + SIZE_OF_SLICE + SIZE_OF_POINTER + a.memory_usage()
         );
     }
 }

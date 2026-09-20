@@ -3117,9 +3117,24 @@ Both halves are ported:
   ported and un-ignored.
 - `physical/mod.rs`: `base_physical_join_memory_usage` plus the four
   node overrides, wired into `PhysicalPlan::memory_usage`, which
-  `physical_plan_cache.rs:53` charges the LRU with. The node's own
-  `size_of` stands in for Go's `emptyBasePhysicalJoinSize` (the join
-  nodes are separate structs here), as `PhysicalSort` already does.
+  `physical_plan_cache.rs:53` charges the LRU with. The constant terms
+  are Go's: `emptyBasePhysicalJoinSize` 488 and
+  `emptyColWithCmpFuncManagerSize` 120 (`unsafe.Sizeof` from the same
+  mirror program as the expression sizes; a first cut had used the Rust
+  structs' `size_of` there, which is not the contract the cache
+  thresholds are set against). `IndexJoinCompareFilters::memory_usage`
+  also charges what Go's `AppendNewExpr` allocates and this port
+  derives at probe time: the op names, one type-only `TmpConstant` per
+  op, and the `AffectedColSchema` plus one compare func per distinct
+  arg column (`Schema::memory_usage` is the new Go port,
+  `schema.go:283-303`). Still Rust-sized and out of this round's scope,
+  because they predate it and apply to every node: `PLAN_SIZE`
+  (`plan_base.rs:122`, Go `PlanSize`), and `BasePlan::memory_usage`
+  standing in for Go's `PhysicalSchemaProducer.MemoryUsage`
+  (`physical_schema_producer.go:63-70`, `base_physical_plan.go:268-283`:
+  `Plan.MemoryUsage` plus the base physical plan's slice, interface,
+  float, uint64 and bool fields, its required properties, and a schema
+  pointer); `PhysicalSort` and `Datum::estimated_mem_usage` likewise.
 
 ### Validation
 
