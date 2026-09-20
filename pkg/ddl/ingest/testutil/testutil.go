@@ -85,6 +85,10 @@ func newMockDiskRoot() *mockDiskRoot {
 func (d *mockDiskRoot) Add(id int64, tracker ingest.ResourceTracker) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if _, exists := d.items[id]; exists {
+		d.items[id] = tracker
+		return
+	}
 	d.items[id] = tracker
 	ingest.TrackerCountForTest.Add(1)
 }
@@ -92,6 +96,9 @@ func (d *mockDiskRoot) Add(id int64, tracker ingest.ResourceTracker) {
 func (d *mockDiskRoot) Remove(id int64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if _, exists := d.items[id]; !exists {
+		return
+	}
 	delete(d.items, id)
 	ingest.TrackerCountForTest.Add(-1)
 }
