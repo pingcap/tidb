@@ -854,6 +854,61 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
     )
 }
 
+/// Go `pkg/server/conn.go`'s connection-loop exit accounting, which
+/// `pkg/server/metrics` binds to the shared disconnection counter:
+/// `DisconnectNormal` (`conn.go:1286`, a client that ended cleanly via
+/// COM_QUIT), `DisconnectErrorUndetermined` (`conn.go:1288`), and
+/// `DisconnectByClientWithError` (`conn.go:1256`, every other read or
+/// dispatch failure, including a KILL-woken socket). An auth rejection
+/// never reaches that loop in Go: it is `HandShakeErrorCounter`
+/// (`server.go:824`) alone, and a per-connection panic is
+/// `PanicCounter{session}` (`conn.go:1168`).
+fn record_connection_exit_metrics(result: &Result<ConnectionReport, MysqlConnectionError>) {
+    let disconnection = &crate::server_metrics::DISCONNECTION_TOTAL;
+    match result {
+        Ok(report) => match report.exit {
+            ConnectionExit::Quit => {
+                disconnection
+                    .with_label_values(&[crate::server_metrics::disconnect::NORMAL])
+                    .inc();
+            }
+            ConnectionExit::PeerClosed | ConnectionExit::Killed => {
+                disconnection
+                    .with_label_values(&[
+                        crate::server_metrics::disconnect::BY_CLIENT_WITH_ERROR,
+                    ])
+                    .inc();
+            }
+            ConnectionExit::AuthenticationRejected => {
+                crate::server_metrics::HANDSHAKE_ERROR_TOTAL.inc();
+            }
+            ConnectionExit::SessionRejected => {}
+        },
+        Err(MysqlConnectionError::ResultUndetermined(_)) => {
+            disconnection
+                .with_label_values(&[crate::server_metrics::disconnect::UNDETERMINED])
+                .inc();
+        }
+        Err(MysqlConnectionError::Panicked(_)) => {
+            crate::server_metrics::PANIC_TOTAL
+                .with_label_values(&["session"])
+                .inc();
+            disconnection
+                .with_label_values(&[
+                    crate::server_metrics::disconnect::BY_CLIENT_WITH_ERROR,
+                ])
+                .inc();
+        }
+        Err(_) => {
+            disconnection
+                .with_label_values(&[
+                    crate::server_metrics::disconnect::BY_CLIENT_WITH_ERROR,
+                ])
+                .inc();
+        }
+    }
+}
+
 pub(crate) struct MysqlConnectionRuntime<'a> {
     pub(crate) max_allowed_packet: usize,
     pub(crate) tls: Option<&'a MysqlServerTls>,
@@ -869,6 +924,9 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     runtime: MysqlConnectionRuntime<'_>,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let mut lease = tracker.begin();
+    // Go `server.go:303` + `conn.go:435-439`: the connection gauge enters
+    // under the default label and leaves under the session's last group.
+    crate::query_metrics::note_connection_start();
     eprintln!(
         "{{\"event\":\"connection_begin\",\"connection_id\":{},\"active\":{},\"accepted\":{}}}",
         lease.id(),
@@ -913,6 +971,8 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     }
     let connection_id = lease.id();
     drop(lease);
+    record_connection_exit_metrics(&result);
+    crate::query_metrics::note_connection_end();
     eprintln!(
         "{{\"event\":\"connection_closed\",\"connection_id\":{connection_id},\"active\":{},\"accepted\":{},\"completed\":{},\"failed\":{},\"text_query_commands\":{},\"stmt_prepare_commands\":{},\"stmt_prepare_successes\":{},\"stmt_execute_commands\":{},\"stmt_execute_successes\":{},\"stmt_close_commands\":{}}}",
         tracker.active(),
@@ -1608,6 +1668,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         queries += 1;
                         return Ok(None);
                     }
+                    // Go `conn.go:1915`: `NumOfMultiQueryHistogram` observes
+                    // how many statements one multi-statement text carried.
+                    crate::server_metrics::MULTI_QUERY_NUM
+                        .observe(statements.len() as f64);
                     let last_index = statements.len().saturating_sub(1);
                     // One COM_QUERY, one packet numbering: the chained results
                     // CONTINUE the sequence rather than restarting at 1.

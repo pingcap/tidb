@@ -259,6 +259,20 @@ pub(crate) fn write_query_error_at<O: ConnectionPacketOutput + ?Sized>(
             error.message.clone(),
         ));
     }
+    // Go `conn.go:1302`: every dispatch error written to the client also
+    // counts under `execute_error_total`, labeled by the error's identity,
+    // the database, and the resource group. The wire error carries the
+    // MySQL code only, so the identity label narrows to that code until
+    // `SqlQueryError` carries its terror RFC identity like Go's
+    // `ExecuteErrorToLabel`; the db label matches Go's disabled
+    // `RecordDBLabel` default (empty).
+    crate::server_metrics::EXECUTE_ERROR_TOTAL
+        .with_label_values(&[
+            &error.code.to_string(),
+            "",
+            &crate::query_metrics::current_connection_resource_group(),
+        ])
+        .inc();
     write_error(
         output,
         sequence,

@@ -660,10 +660,17 @@ mod status_tests {
             )
             .unwrap();
             let mut response = String::new();
-            stream.read_to_string(&mut response).unwrap();
+            match stream.read_to_string(&mut response) {
+                Ok(_) => {}
+                Err(error) => panic!("read {path} failed: {error}"),
+            }
             assert!(response.starts_with("HTTP/1.1 200"), "{path}: {response}");
             if path == "/metrics" {
-                assert!(response.contains("tidb_server_connections"));
+                // Go's /metrics exports `tidb_server_panic_total 0` from
+                // registration alone; `tidb_server_connections` gains its
+                // series only once a connection has existed, exactly as
+                // Go's GaugeVec does.
+                                assert!(response.contains("tidb_monitor_time_jump_back_total"));
             }
         }
     }

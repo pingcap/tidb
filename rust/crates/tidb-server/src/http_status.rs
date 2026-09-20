@@ -92,6 +92,11 @@ pub fn start_status_listener_with_routes(
     git_hash: String,
     routes: StatusRoutes,
 ) -> std::io::Result<StatusServer> {
+    // Go registers every metric family in `main` before `Server.Run` starts
+    // the status listener; the Rust node does the same here so `/metrics`
+    // exports the full registered family set regardless of which node
+    // binary path bound it. Idempotent: repeat calls are no-ops.
+    crate::server_metrics::init();
     let StatusRoutes {
         schema,
         settings_json,
@@ -149,13 +154,14 @@ pub fn start_status_listener_with_routes(
                         } else if path == "/metrics" {
                             // Go's promhttp handler exports the shared registry,
                             // including metrics registered by statistics and SLI.
-                            let mut body = prometheus::TextEncoder::new()
+                            // `tidb_server_connections` is the real
+                            // `metrics.ConnGauge` now (Go `server.go:303`), not
+                            // a synthesized line: it carries the
+                            // `resource_group` label and gains series exactly
+                            // when Go's does, on the first connection.
+                            let body = prometheus::TextEncoder::new()
                                 .encode_to_string(&prometheus::gather())
                                 .expect("registered metrics encode as Prometheus text");
-                            body.push_str(&format!(
-                                "# TYPE tidb_server_connections gauge\ntidb_server_connections {}\n",
-                                tracker.active(),
-                            ));
                             format!(
                                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\
                                  Content-Length: {}\r\nConnection: close\r\n\r\n{body}",

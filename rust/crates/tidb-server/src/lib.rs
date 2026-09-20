@@ -103,6 +103,7 @@ mod listener;
 pub mod main_flags;
 mod mysql_connection;
 mod query_metrics;
+pub mod server_metrics;
 mod mysql_tls;
 mod native_password;
 mod node_config;
@@ -252,6 +253,8 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
     tidb_resourcemanager::instance_resource_manager().start();
     let _resource_manager_cleanup = ResourceManagerCleanup;
+    server_metrics::init();
+    install_server_boot_gauges();
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`
         // -- the same node code over the embedded store, no PD dialed.
@@ -372,8 +375,45 @@ fn start_system_time_monitor() {
     let _ = std::thread::spawn(|| {
         tidb_util::systimemon::start_monitor(SystemTime::now, || {
             SYSTEM_TIME_JUMP_BACKWARD_COUNT.fetch_add(1, Ordering::Relaxed);
+            server_metrics::TIME_JUMP_BACK_TOTAL.inc();
         });
     });
+}
+
+/// Go `pkg/server/server.go` startup metric writes: `ConnGauge`'s family
+/// starts exporting, `ConfigStatus` mirrors the two configuration values Go
+/// publishes (`server.go:494-495`), `MaxProcs` reports the worker
+/// parallelism standing in for `GOMAXPROCS` (`cgmon.go` keeps the same gauge
+/// current in Go), `GOGC` reports the `GOGC` environment value Go's GC runs
+/// with, `MemoryLimit` mirrors `cgmon.go:156`, and `ServerInfo` stamps the
+/// start timestamp under the running version/hash (`conn.go`'s
+/// `addConnMetrics` counterpart in `server.go:507`).
+fn install_server_boot_gauges() {
+    let parallelism = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1);
+    server_metrics::MAXPROCS.set(parallelism as i64);
+    let gogc = std::env::var("GOGC")
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(100);
+    server_metrics::GOGC.set(gogc);
+    let config = tidb_config::config_tree::config::get_global_config();
+    server_metrics::CONFIG_STATUS
+        .with_label_values(&["token-limit"])
+        .set(config.token_limit as i64);
+    server_metrics::CONFIG_STATUS
+        .with_label_values(&["max_connections"])
+        .set(i64::from(config.max_server_connections));
+    let start_seconds = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    server_metrics::SERVER_INFO
+        .with_label_values(&[
+            &tidb_mysql::runtime_versions().server_version,
+            tidb_util::versioninfo::TIDB_GIT_HASH,
+        ])
+        .set(start_seconds as i64);
 }
 
 fn open_spill_storage(
