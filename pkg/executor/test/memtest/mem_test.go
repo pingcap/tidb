@@ -16,7 +16,6 @@ package memtest
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -48,33 +47,12 @@ func TestInsertUpdateTrackerOnCleanUp(t *testing.T) {
 	require.Equal(t, afterConsume, originConsume)
 }
 
-func globalSysVar(t *testing.T, tk *testkit.TestKit, name string) string {
-	t.Helper()
-	return tk.MustQuery("select @@global." + name).Rows()[0][0].(string)
-}
-
-func restoreGlobalSysVar(t *testing.T, tk *testkit.TestKit, name, value string) {
-	t.Helper()
-	tk.MustExec(fmt.Sprintf("set global %s = '%s'", name, strings.ReplaceAll(value, "'", "''")))
-}
-
 func TestGlobalMemArbitrator(t *testing.T) {
 	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
-	t.Cleanup(memory.CleanupGlobalMemArbitratorForTest)
+	defer memory.CleanupGlobalMemArbitratorForTest()
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
-	originMemArbitratorMode := globalSysVar(t, tk, "tidb_mem_arbitrator_mode")
-	originServerMemoryLimit := globalSysVar(t, tk, "tidb_server_memory_limit")
-	originMemArbitratorSoftLimit := globalSysVar(t, tk, "tidb_mem_arbitrator_soft_limit")
-	originResourceControl := globalSysVar(t, tk, "tidb_enable_resource_control")
-	t.Cleanup(func() {
-		restoreGlobalSysVar(t, tk, "tidb_enable_resource_control", originResourceControl)
-		restoreGlobalSysVar(t, tk, "tidb_mem_arbitrator_soft_limit", originMemArbitratorSoftLimit)
-		restoreGlobalSysVar(t, tk, "tidb_server_memory_limit", originServerMemoryLimit)
-		restoreGlobalSysVar(t, tk, "tidb_mem_arbitrator_mode", originMemArbitratorMode)
-	})
 
 	tk.MustExecToErr("set @@tidb_mem_arbitrator_mode = standard") // only global
 	require.Equal(t, tk.ExecToErr("set global tidb_mem_arbitrator_mode = 1").Error(), "tidb_mem_arbitrator_mode: disable; standard; priority;")
@@ -165,9 +143,9 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	tk.MustExec("set tidb_mem_arbitrator_query_reserved = default")
 
 	tk.MustExec("set global tidb_enable_resource_control=on")
-	tk.MustExec("create resource group rg1 RU_PER_SEC=111 priority=LOW")
-	tk.MustExec("create resource group rg2 RU_PER_SEC=222 priority=HIGH")
-	tk.MustExec("create resource group rg3 RU_PER_SEC=333")
+	tk.MustExec("create resource group rg1 RU_PER_SEC=111 priority=LOW BURSTABLE")
+	tk.MustExec("create resource group rg2 RU_PER_SEC=222 priority=HIGH BURSTABLE")
+	tk.MustExec("create resource group rg3 RU_PER_SEC=333 BURSTABLE")
 	tk.MustQuery("select NAME,RU_PER_SEC,PRIORITY from information_schema.resource_groups where name='rg2'").Check(testkit.Rows("rg2 222 HIGH"))
 	tk.MustQuery("select NAME,RU_PER_SEC,PRIORITY from information_schema.resource_groups where name='rg3'").Check(testkit.Rows("rg3 333 MEDIUM"))
 	tk.MustQuery("select NAME,RU_PER_SEC,PRIORITY from information_schema.resource_groups where name='rg1'").Check(testkit.Rows("rg1 111 LOW"))
