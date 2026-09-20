@@ -41,11 +41,8 @@ func appendField(dst, val []byte, isNull bool, kind dumpformat.FieldKind, cfg *C
 // encoded. The prefix never ends where encoding the rest separately would change
 // the output: base64 pieces other than the last are a multiple of 3 bytes, and
 // a piece never ends inside an enclosure that is doubled. Encoding val piece by
-// piece therefore yields the same bytes as encoding it at once. A caller that
-// re-invokes this on the remainder must pass a limit of at least 3, or a
-// base64 piece could round down to nothing and never make progress; the
-// one-shot call in appendField is exempt because its limit covers the whole
-// value.
+// piece therefore yields the same bytes as encoding it at once. limit must be at
+// least 3 so that every piece makes progress.
 func appendFieldBody(dst, val []byte, limit int, kind dumpformat.FieldKind, cfg *Config) ([]byte, int) {
 	n := min(len(val), limit)
 	if kind == dumpformat.KindBytes {

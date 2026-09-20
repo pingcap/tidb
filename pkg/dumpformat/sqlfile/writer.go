@@ -35,10 +35,6 @@ type Config struct {
 // Writer encodes rows into `INSERT INTO ... VALUES (..),(..);` statements and
 // writes them to an io.Writer, splitting at Config.StatementSize. The caller owns
 // buffering and file rotation and must call Close to end the last statement.
-// A wide row reaches w in several writes, so a write error can leave a value
-// half-written; the Writer then keeps that error and every later Write and
-// Close returns it without emitting more bytes, so a truncated row is never
-// sealed into a statement that parses.
 type Writer struct {
 	w      io.Writer
 	cfg    *Config
@@ -52,8 +48,6 @@ type Writer struct {
 	written     uint64
 	stmtStart   uint64
 	inStatement bool
-	// err is the first error a write to w returned.
-	err error
 }
 
 // produced returns the bytes encoded so far, written out or still buffered.
@@ -77,9 +71,6 @@ func NewWriter(w io.Writer, prefix []byte, kinds []dumpformat.FieldKind, cfg *Co
 // or row separator, to the underlying writer. len(row) must equal the configured
 // column count; a nil field is treated as NULL.
 func (sw *Writer) Write(row []sql.RawBytes) error {
-	if sw.err != nil {
-		return sw.err
-	}
 	if len(row) != len(sw.kinds) {
 		return fmt.Errorf("sqlfile: row has %d fields, want %d", len(row), len(sw.kinds))
 	}
@@ -139,14 +130,11 @@ func (sw *Writer) maybeFlush() error {
 	return sw.flush()
 }
 
-// flush writes buf out and empties it, keeping the first error it hits.
+// flush writes buf out and empties it.
 func (sw *Writer) flush() error {
 	n, err := sw.w.Write(sw.buf)
 	sw.written += uint64(n)
 	sw.buf = sw.buf[:0]
-	if err != nil && sw.err == nil {
-		sw.err = err
-	}
 	return err
 }
 
@@ -160,11 +148,8 @@ func (sw *Writer) EstimateFileSize() uint64 {
 }
 
 // Close terminates the open statement with ";\n". It is a no-op if no statement
-// is open, and writes nothing if an earlier write failed.
+// is open.
 func (sw *Writer) Close() error {
-	if sw.err != nil {
-		return sw.err
-	}
 	if !sw.inStatement {
 		return nil
 	}

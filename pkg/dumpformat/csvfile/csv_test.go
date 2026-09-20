@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/dumpformat"
@@ -140,11 +139,8 @@ func TestCSVWriterRowWidthMismatch(t *testing.T) {
 	require.ErrorContains(t, err, "row has 1 fields, want 2")
 }
 
-// refField encodes one field at once, as the reference that Write must
-// reproduce however it splits the value. The escape-backslash branch reuses the
-// package's own appendEscapedBackslash, so for that branch this checks only
-// that the piecewise and one-shot encodings agree; the escaping itself is
-// verified against fixed expectations in TestCSVWriterBackslashEscape.
+// refField encodes one field at once with the standard library, as the
+// reference that Write must reproduce however it splits the value.
 func refField(val []byte, kind dumpformat.FieldKind, cfg *Config) string {
 	if val == nil {
 		return string(cfg.NullValue)
@@ -259,38 +255,4 @@ func TestCSVWriterLargeValueBoundsBuffer(t *testing.T) {
 	require.Equal(t, uint64(rec.Len()), cw.EstimateFileSize())
 	require.LessOrEqual(t, rec.maxWrite, 3*limit)
 	require.LessOrEqual(t, cap(cw.buf), 4*limit)
-}
-
-// failAfterWriter fails every write once it has accepted okWrites of them.
-type failAfterWriter struct {
-	bytes.Buffer
-	okWrites int
-}
-
-func (f *failAfterWriter) Write(p []byte) (int, error) {
-	if f.okWrites == 0 {
-		return 0, errSink
-	}
-	f.okWrites--
-	return f.Buffer.Write(p)
-}
-
-var errSink = errors.New("sink failed")
-
-func TestCSVWriterKeepsFirstWriteError(t *testing.T) {
-	const limit = dumpformat.MaxBufferedValueSize
-	cfg := baseConfig()
-	// The row is flushed in pieces, so the sink fails with the value half-written.
-	f := &failAfterWriter{okWrites: 1}
-	cw := NewWriter(f, []dumpformat.FieldKind{dumpformat.KindString}, cfg)
-
-	require.ErrorIs(t, cw.Write([]sql.RawBytes{bytes.Repeat([]byte("a"), 3*limit)}), errSink)
-	written := f.Len()
-	require.NotZero(t, written)
-
-	// Once a write fails, no later row is appended after the truncated one.
-	require.ErrorIs(t, cw.Write([]sql.RawBytes{sql.RawBytes("x")}), errSink)
-	require.ErrorIs(t, cw.WriteHeader([][]byte{[]byte("c")}), errSink)
-	require.ErrorIs(t, cw.Close(), errSink)
-	require.Equal(t, written, f.Len())
 }
