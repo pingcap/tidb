@@ -102,6 +102,42 @@ fn extract_binary_op_items(function: &ScalarFunction, func_name: &str) -> Vec<Ex
     result
 }
 
+
+/// Borrowed leaves of a nested binary-operator tree: the walk pushes
+/// references instead of cloning each leaf subtree. The cached-plan rebuild
+/// reads the same trees once per EXECUTE, and Go's extractor shares expression
+/// pointers, so the borrowed walk keeps the per-execute clone traffic at zero
+/// for this shape too.
+fn extract_binary_op_items_ref<'a>(
+    function: &'a ScalarFunction,
+    func_name: &str,
+) -> Vec<&'a Expression> {
+    let mut result = Vec::new();
+    for arg in function.get_args() {
+        match arg {
+            Expression::ScalarFunction(inner) if inner.func_name.lowercase() == func_name => {
+                result.extend(extract_binary_op_items_ref(inner, func_name));
+            }
+            other => result.push(other),
+        }
+    }
+    result
+}
+
+/// Borrowed twin: the disjunct leaves of a nested `OR` tree as references.
+#[must_use]
+pub fn flatten_dnf_conditions_ref<'a>(
+    dnf_condition: &'a ScalarFunction,
+) -> Vec<&'a Expression> {
+    extract_binary_op_items_ref(dnf_condition, "or")
+}
+
+/// Borrowed twin: the conjunct leaves of a nested `AND` tree as references.
+#[must_use]
+pub fn flatten_cnf_conditions_ref<'a>(cnf_condition: &'a ScalarFunction) -> Vec<&'a Expression> {
+    extract_binary_op_items_ref(cnf_condition, "and")
+}
+
 /// Go `FlattenDNFConditions` (`expression.go:865`): the leaves of a nested
 /// `OR` tree.
 ///
