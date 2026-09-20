@@ -1957,7 +1957,17 @@ fn complete_physical_index_join(
 
     let mut outer_hash_keys = new_outer_keys.clone();
     let mut inner_hash_keys = new_inner_keys.clone();
-    if join.kind == crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin {
+    // Go's `completePhysicalIndexJoin` runs this extraction with
+    // `extractOtherEQ` hardcoded `true` at BOTH of its call sites that reach
+    // it -- `indexJoinAttach2Task` and `indexHashJoinAttach2Task`
+    // (`task.go:158,178`) -- so a plain `IndexJoin` batches its outer rows
+    // into a hash map for lookup dedup exactly as `IndexHashJoin` does, and
+    // reads `OuterHashKeys`/`InnerHashKeys` too. `attach2Task4PhysicalIndexMergeJoin`
+    // (`task.go:141`) is the one index-join attach path that never calls
+    // `completePhysicalIndexJoin` at all -- its inner plan is already fixed
+    // before `Attach2Task` runs, and the merge executor has no hash table to
+    // key -- so `IndexMergeJoin` alone keeps skipping this extraction.
+    if join.kind != crate::plan_cost_ver2::IndexJoinKind::IndexMergeJoin {
         let outer_schema = outer_plan.schema().ok_or_else(|| {
             PlanError::internal("completePhysicalIndexJoin outer child has no schema")
         })?;
@@ -2682,8 +2692,12 @@ mod attach_tests {
                 equality(&outer_keys[0], &inner_keys[0]),
                 equality(&outer_keys[1], &inner_keys[1]),
             ],
+            // `PhysicalIndexJoin::default()`'s `kind` is the PLAIN
+            // `IndexJoin` variant, not `IndexHashJoin` -- proving Go's
+            // `extractOtherEQ=true` (`task.go:158,178`) applies to both.
             ..crate::physical::PhysicalIndexJoin::default()
         };
+        assert_eq!(join.kind, crate::plan_cost_ver2::IndexJoinKind::IndexJoin);
 
         complete_physical_index_join(
             &mut join,
@@ -2715,20 +2729,100 @@ mod attach_tests {
             vec![11]
         );
         assert_eq!(join.key_off2_idx_off, vec![0]);
-        assert_eq!(join.other_conditions.len(), 1);
         assert!(join.equal_conditions.is_empty());
-        let Expression::ScalarFunction(restored) = &join.other_conditions[0] else {
-            panic!("the unused equality is residual")
+        // The equality unusable as a lookup key (`outer_keys[1]` /
+        // `inner_keys[1]`) is restored to `other_conditions` first, but it
+        // is a bare `col <eq> col` with each side in its own child's
+        // schema, so Go's unconditional `extractOtherEQ` immediately
+        // promotes it back out into the hash keys instead of leaving it
+        // stuck as a residual filter -- for THIS plain `IndexJoin`, not
+        // only for `IndexHashJoin`.
+        assert!(
+            join.other_conditions.is_empty(),
+            "the residual equality is a plain IndexJoin's hash key too"
+        );
+        assert_eq!(
+            join.outer_hash_keys
+                .iter()
+                .map(|column| column.unique_id)
+                .collect::<Vec<_>>(),
+            vec![outer_keys[0].unique_id, outer_keys[1].unique_id]
+        );
+        assert_eq!(
+            join.inner_hash_keys
+                .iter()
+                .map(|column| column.unique_id)
+                .collect::<Vec<_>>(),
+            vec![inner_keys[0].unique_id, inner_keys[1].unique_id]
+        );
+    }
+
+    #[test]
+    fn index_join_completion_leaves_a_non_column_residual_condition_alone() {
+        // The extraction only promotes a BARE `col <eq> col`
+        // (`exhaust_physical_plans.go:410-437`, `expression.IsColOpCol`): a
+        // residual equality against a non-column operand (a cast, a
+        // constant, ...) stays a filter for every index-join kind,
+        // including the plain `IndexJoin` this fix now also extracts for.
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::column::Column;
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::Expression;
+        use tidb_expr::scalar_function::ScalarFunction;
+        use tidb_expr::schema::Schema;
+
+        let column = |id| Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+        let outer_keys = vec![column(1)];
+        let inner_keys = vec![column(11)];
+        let ty = FieldType::new(FieldTypeCode::LongLong);
+        let equality_against_constant = ScalarFunction::new(
+            tidb_ast::CiString::new("eq"),
+            FieldType::new(FieldTypeCode::Tiny),
+            vec![
+                Expression::Column(outer_keys[0].clone()),
+                Expression::Constant(Constant::new(Datum::Int(5), ty)),
+            ],
+        );
+        let child = |columns: Vec<Column>| {
+            let mut base = op_with_stats("TableDual", 1.0);
+            base.base.set_schema(Some(Schema::new(columns)));
+            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 1 })
         };
-        let [
-            Expression::Column(restored_outer),
-            Expression::Column(restored_inner),
-        ] = restored.args.as_slice()
-        else {
-            panic!("the restored equality keeps both columns")
+        let outer = child(outer_keys.clone());
+        let inner = child(inner_keys.clone());
+        let mut join = crate::physical::PhysicalIndexJoin {
+            inner_child_idx: 1,
+            left_join_keys: outer_keys.clone(),
+            right_join_keys: inner_keys.clone(),
+            outer_join_keys: outer_keys.clone(),
+            inner_join_keys: inner_keys.clone(),
+            is_null_eq: vec![false],
+            equal_conditions: vec![equality_against_constant],
+            ..crate::physical::PhysicalIndexJoin::default()
         };
-        assert_eq!(restored_outer.unique_id, outer_keys[1].unique_id);
-        assert_eq!(restored_inner.unique_id, inner_keys[1].unique_id);
+
+        complete_physical_index_join(
+            &mut join,
+            IndexJoinInfo {
+                table_id: 7,
+                index_id: Some(8),
+                ranges: crate::ranger::types::Ranges::new(),
+                idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
+                key_off2_idx_off: vec![-1],
+                compare_filters: None,
+            },
+            &inner,
+            &outer,
+        )
+        .expect("completes");
+
+        assert_eq!(
+            join.other_conditions.len(),
+            1,
+            "a non-column residual equality is never a hash key"
+        );
+        assert!(join.outer_hash_keys.is_empty());
+        assert!(join.inner_hash_keys.is_empty());
     }
 
     #[test]

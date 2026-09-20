@@ -2270,3 +2270,96 @@ this session (see the aborted TPC-H attempt above). The fix and its tests
 are grounded in direct Go source comparison plus an in-process, no-cluster
 SQL repro proving the mechanism now works and the session variable now has
 teeth.
+
+## Follow-up: plain IndexJoin skipped an EQ-in-other-conditions hash-key promotion Go always runs (2026-09-20)
+
+Found during a call-flow parity review of the index-join admission fix above,
+tracing forward from `admits_index_join_inner_child_pattern` into the
+completion path that consumes the inner task's `IndexJoinInfo`.
+
+**Root cause.** Go's `completePhysicalIndexJoin`
+(`pkg/planner/core/exhaust_physical_plans.go:374`) takes an `extractOtherEQ
+bool` parameter: when true, it promotes a bare `col <eq> col` residual
+condition (one where each side is a plain column, one per child schema --
+`expression.IsColOpCol`) out of `OtherConditions` and into
+`OuterHashKeys`/`InnerHashKeys`, removing it from `OtherConditions` in the
+same pass. It has exactly two callers, both in `pkg/planner/core/task.go`:
+`indexJoinAttach2Task` (line 178, the PLAIN `PhysicalIndexJoin`) and
+`indexHashJoinAttach2Task` (line 158, `PhysicalIndexHashJoin`) -- and BOTH
+pass `true` unconditionally. Go never gates this extraction on which
+index-join executor variant is being completed; a plain `IndexNestedLoopJoin`
+batches its outer rows into a hash map for lookup dedup exactly as the hash
+variant does (this is the same mechanism the "sortAndDedupLookUpContents"
+work elsewhere in this codebase already ports), so it reads
+`OuterHashKeys`/`InnerHashKeys` too, not only `PhysicalIndexHashJoin`.
+
+The Rust port (`rust/crates/tidb-planner/src/task.rs`,
+`complete_physical_index_join`, which unifies Go's three separate structs
+`PhysicalIndexJoin`/`PhysicalIndexHashJoin`/`PhysicalIndexMergeJoin` into one
+struct discriminated by a `kind: IndexJoinKind` field) instead gated the
+whole extraction block behind `join.kind ==
+IndexJoinKind::IndexHashJoin`. For the plain `IndexJoin` kind, the promotion
+never ran: a residual bare-column equality stayed in `other_conditions`
+(still evaluated correctly as a filter -- confirmed by reading
+`driver/physical_builder.rs`'s shared index-join executor construction,
+which appends `other_conditions` as extra conditions regardless of which
+key list feeds the equality conditions) and `outer_hash_keys`/`inner_hash_keys`
+stayed at just the plain join keys, missing the extra pair. Net effect:
+correct results, but a plain `INL_JOIN` whose key needed a residual
+comparison (for example a comparison Go's static enumeration could not
+attach as a proper join key) lost a batching/dedup key Go always has.
+
+**One real difference confirmed, not touched.** Go's third call site,
+`attach2Task4PhysicalIndexMergeJoin` (`task.go:141`), never calls
+`completePhysicalIndexJoin` at all -- `PhysicalIndexMergeJoin`'s inner plan
+is already fixed before `Attach2Task` runs (unlike the other two kinds,
+which only learn their access path from the bottom-up `IndexJoinInfo`
+receipt), and the merge executor has no hash table to key in the first
+place. The Rust port's shared `attach2_task` arm for `PhysicalPlan::IndexJoin`
+already calls the outer `complete_physical_index_join` function for all
+three kinds regardless (a pre-existing, deliberate architectural
+unification, not something this fix touches), so the fix narrows the new
+unconditional extraction to exclude `IndexJoinKind::IndexMergeJoin`
+specifically, matching Go's actual call-site set (`IndexJoin` and
+`IndexHashJoin`, never `IndexMergeJoin`) rather than removing the kind
+check outright.
+
+**Fix**: `task.rs`'s `complete_physical_index_join` now runs the extraction
+whenever `join.kind != IndexJoinKind::IndexMergeJoin`, instead of only when
+`join.kind == IndexJoinKind::IndexHashJoin`.
+
+**Regression tests** (`task.rs`'s `attach_tests` module):
+- `index_join_completion_moves_unusable_equalities_to_residual_conditions`
+  (existing test, updated): builds a plain `PhysicalIndexJoin`
+  (`kind == IndexJoinKind::IndexJoin`, asserted explicitly) whose second join
+  key is unusable as a lookup key and gets restored to `other_conditions` as
+  a bare `col <eq> col`. Previously asserted the restored equality stayed in
+  `other_conditions`; now asserts it is extracted into
+  `outer_hash_keys`/`inner_hash_keys` and `other_conditions` ends up empty --
+  proving the promotion now also runs for the plain (non-hash) kind.
+  Verified fail-before/pass-after by reverting just the `task.rs` production
+  change and confirming this test's new assertions fail against the
+  pre-fix behavior.
+- `index_join_completion_leaves_a_non_column_residual_condition_alone` (new):
+  the same restoration but against a `col <eq> constant`, proving
+  `is_col_op_col`'s bare-column requirement still refuses extraction
+  regardless of kind -- the fix widens WHICH kinds run the extraction, not
+  WHAT the extraction accepts.
+
+**Validated**: `cargo test -p tidb-planner --lib` (944/945, the one
+pre-existing unrelated failure `union_unsigned_widening_uses_the_in_union_cast_signature`
+still the only failure); `cargo test -p tidb-executor --lib` (1344/1344);
+`cargo test -p tidb-session --lib` (1730/1731, the one pre-existing
+unrelated failure `show_create_table_matches_go_for_every_served_information_schema_table`
+still the only failure), including every existing index-join-focused test
+(`tests_index_join_inner_pattern`, `tests_join_key_cast`,
+`tests_mixed_sign_index_join`, `tests_union_all_predicate_push_down`) still
+green; `cargo fmt`/`cargo clippy -p tidb-planner --lib --tests` clean on the
+touched lines.
+
+**Not verified**: whether this measurably moves any benchmark number --
+this is a batching/dedup optimization on a residual-equality path that
+none of the existing sysbench/TPC-C/TPC-H query shapes appear to exercise
+(no A/B run was taken for this fix specifically); the value here is
+correctness-of-port (matching Go's unconditional behavior) rather than a
+measured throughput or latency gain.
