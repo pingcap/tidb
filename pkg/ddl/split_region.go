@@ -241,7 +241,7 @@ func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, st
 	var regionIDs []uint64
 
 	sc := sctx.GetSessionVars().StmtCtx
-	scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
+	scatter, scatterGroupID := getScatterConfig(scatterScope, tbInfo.ID)
 
 	// apply table policy
 	if policy := tbInfo.TableSplitPolicy; policy != nil {
@@ -266,7 +266,7 @@ func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, st
 			goto index
 		}
 
-		ids, err := store.SplitRegions(ctx, keys, scatter, &tableID)
+		ids, err := store.SplitRegions(ctx, keys, scatter, &scatterGroupID)
 		if err != nil {
 			logutil.DDLLogger().Warn("split regions failed", zap.Error(err))
 			goto index
@@ -318,7 +318,7 @@ index:
 			continue
 		}
 
-		ids, err := store.SplitRegions(ctx, keys, scatter, &tableID)
+		ids, err := store.SplitRegions(ctx, keys, scatter, &scatterGroupID)
 		if err != nil {
 			logutil.DDLLogger().Warn("split regions failed", zap.Error(err))
 			continue
