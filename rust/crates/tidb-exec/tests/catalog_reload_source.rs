@@ -552,6 +552,143 @@ fn go_table_in_state(id: i64, original: &str, lower: &str, state: u8) -> String 
     )
 }
 
+/// A Go `TableInfo` JSON as an older TiDB stored it: the given table-info
+/// version and charset/collation, and the given column-info version and
+/// charset/collation on both columns.
+#[allow(clippy::too_many_arguments)]
+fn go_old_table(
+    id: i64,
+    original: &str,
+    lower: &str,
+    table_version: u16,
+    charset: &str,
+    collate: &str,
+    column_version: u64,
+    column_charset: &str,
+    column_collate: &str,
+) -> String {
+    go_table(id, original, lower)
+        .replacen(
+            r#""charset":"utf8mb4","collate":"utf8mb4_bin","cols""#,
+            &format!(r#""charset":"{charset}","collate":"{collate}","cols""#),
+            1,
+        )
+        .replace(
+            r#""Charset":"binary","Collate":"binary""#,
+            &format!(r#""Charset":"{column_charset}","Collate":"{column_collate}""#),
+        )
+        .replace(
+            r#""state":5,"version":2}"#,
+            &format!(r#""state":5,"version":{column_version}}}"#),
+        )
+        .replacen(
+            r#""max_col_id":2,"version":5}"#,
+            &format!(r#""max_col_id":2,"version":{table_version}}}"#),
+            1,
+        )
+}
+
+fn charsets(table: &tidb_model::table_info::TableInfo) -> (String, String, Vec<(String, String)>) {
+    let columns = table
+        .cols()
+        .iter_handles()
+        .map(|column| {
+            let handle = column.expect("column");
+            let column = handle.read();
+            (
+                column.get_charset().to_owned(),
+                column.get_collate().to_owned(),
+            )
+        })
+        .collect();
+    (table.charset.clone(), table.collate.clone(), columns)
+}
+
+/// Go's builder normalizes every loaded `TableInfo`
+/// (`ConvertCharsetCollateToLowerCaseIfNeed` below version 3,
+/// `ConvertOldVersionUTF8ToUTF8MB4IfNeed` below version 2 with the default
+/// `treat-old-version-utf8-as-utf8mb4`), on the full load and on a diff
+/// alike; a version-3 table is stored as is.
+#[test]
+fn old_table_infos_are_normalized_on_load_like_gos_builder() {
+    let mut snapshot = RecordedSnapshot::default();
+    snapshot.put(key::database_kv_key(3), GO_DBINFO);
+    snapshot.put(
+        key::table_kv_key(3, 71),
+        go_old_table(71, "V1", "v1", 1, "UTF8", "UTF8_BIN", 1, "UTF8", "UTF8_BIN"),
+    );
+    snapshot.put(
+        key::table_kv_key(3, 72),
+        go_old_table(72, "V2", "v2", 2, "UTF8", "UTF8_BIN", 2, "UTF8", "UTF8_BIN"),
+    );
+    snapshot.put(
+        key::table_kv_key(3, 73),
+        go_old_table(
+            73,
+            "V3",
+            "v3",
+            3,
+            "UTF8MB4",
+            "UTF8MB4_BIN",
+            2,
+            "UTF8",
+            "UTF8_BIN",
+        ),
+    );
+    snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 73));
+    let catalog = load_cluster_catalog(&mut snapshot).expect("startup load");
+
+    let (_, v1) = catalog.find_table("campaign", "v1").expect("v1");
+    assert_eq!(
+        charsets(v1),
+        (
+            "utf8mb4".to_owned(),
+            "utf8mb4_bin".to_owned(),
+            vec![("utf8mb4".to_owned(), "utf8mb4_bin".to_owned()); 2]
+        ),
+        "version 1: lower-cased, then utf8 becomes utf8mb4"
+    );
+    let (_, v2) = catalog.find_table("campaign", "v2").expect("v2");
+    assert_eq!(
+        charsets(v2),
+        (
+            "utf8".to_owned(),
+            "utf8_bin".to_owned(),
+            vec![("utf8".to_owned(), "utf8_bin".to_owned()); 2]
+        ),
+        "version 2: lower-cased only"
+    );
+    let (_, v3) = catalog.find_table("campaign", "v3").expect("v3");
+    assert_eq!(
+        charsets(v3),
+        (
+            "UTF8MB4".to_owned(),
+            "UTF8MB4_BIN".to_owned(),
+            vec![("UTF8".to_owned(), "UTF8_BIN".to_owned()); 2]
+        ),
+        "version 3: stored as is"
+    );
+
+    // The diff path normalizes the same way.
+    snapshot.put(
+        key::table_kv_key(3, 74),
+        go_old_table(
+            74, "V1b", "v1b", 1, "UTF8", "UTF8_BIN", 1, "UTF8", "UTF8_BIN",
+        ),
+    );
+    snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_TABLE, 3, 74));
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "old table by diff",
+    );
+    let (_, v1b) = next.find_table("campaign", "v1b").expect("v1b");
+    assert_eq!(charsets(v1b).0, "utf8mb4");
+    assert_eq!(
+        charsets(v1b).2[0],
+        ("utf8mb4".to_owned(), "utf8mb4_bin".to_owned())
+    );
+}
+
 fn diffs_reload(reloaded: ReloadedCatalog, what: &str) -> ClusterCatalog {
     let ReloadedCatalog::Diffs { catalog, applied } = reloaded else {
         panic!("expected an incremental diff reload for {what}, got {reloaded:?}");

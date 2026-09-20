@@ -3373,3 +3373,71 @@ no-op. Reverting the source makes the test target fail to compile
 was never reproduced byte-for-byte, so how much of it the three reload
 fixes together close remains unmeasured. What is closed is every
 "this action type forces a full reload" path.
+
+## 2026-09-20: next gap -- Go normalizes every loaded `TableInfo`'s charset
+## and collation; this port loaded them verbatim
+
+Reading the rest of Go's load path around `ApplyDiff`: `applyCreateTable`
+(`builder.go:868-869`) and the full load (`loader.go:530-535`) both run
+`ConvertCharsetCollateToLowerCaseIfNeed` (`builder.go:936-946`: a
+`TableInfo` below version 3 gets its own and every column's charset and
+collation lower-cased) and `ConvertOldVersionUTF8ToUTF8MB4IfNeed`
+(`:949-963`: below version 2, with `treat-old-version-utf8-as-utf8mb4`
+on -- Go's default -- a `utf8` table, and each pre-version-2 `utf8`
+column, becomes `utf8mb4`/`utf8mb4_bin`). Neither existed in this port:
+`load_database_tables` and `create_table` both stored `parse_table_info`'s
+result as is, so a table created by an old TiDB would be served with the
+stored spelling and, for the oldest ones, as `utf8` where Go serves
+`utf8mb4` (a different length limit and collation).
+
+`normalize_loaded_table_info` (`cluster_catalog.rs`) is both conversions
+in Go's order, called on both load paths, reading the flag from the global
+config as Go reads `config.GetGlobalConfig()` (`tidb-exec` gains a
+`tidb-config` dependency for it; `tidb-config` depends on nothing that
+depends back). Test `old_table_infos_are_normalized_on_load_like_gos_builder`:
+version 1 (`UTF8` -> `utf8mb4`), version 2 (lower-cased only), version 3
+(stored as is), on the full load and again on a `CREATE TABLE` diff.
+35/35 in `catalog_reload_source.rs`; `cargo test -p tidb-exec --lib --
+catalog` 10/10; `rustfmt`/`clippy` clean on every touched line.
+
+Also compared and found matching, no change: the loader's version logic
+(`LoadWithTS`, `loader.go:150-260` -- `GetSchemaVersionWithNonEmptyDiff`,
+the 100-diff gap threshold, empty diffs skipped, `RegenerateSchemaMap`
+refused per diff) against `reload_cluster_catalog`; and the MDL ack loop
+(`MDLCheckLoop` / `refreshMDLCheckTableInfo`, `issyncer/syncer.go:157-290`)
+against `schema_sync.rs` -- same 50 ms cadence, same `version <=
+domainSchemaVer` gate, same one-ack-per-(job, version) cache, same
+old-transaction hold-back. One shape difference, not a behavioral one:
+Go re-reads `mysql.tidb_mdl_info` once per reload and then only re-checks
+its cached jobs each tick; this loop re-reads the table each tick while an
+ack is owed. One Go gate this port does not have: `currentSchemaVersion !=
+0` (a catalog loaded at version 0 always full-loads in Go); here such a
+catalog would replay diffs from version 1, which is the same result when
+every diff is stored and is unreachable on a bootstrapped cluster (the
+bootstrap DDLs themselves move the version past 0 before any catalog is
+loaded).
+
+**Live check of the reload/ack path on the rebuilt binary** (this tree's
+`--profile bench`, fresh playground on the same data): 40 groups of `CREATE
+TABLE` / `ALTER TABLE ADD COLUMN` / `RENAME TABLE` / `DROP TABLE` through the
+Go node, each job held by the Go owner until this node acks it.
+`rust-up: N=40 wall=28.33s per_stmt_group_max=0.82s
+rust-up: full_reload=0 acked=401 diff_reloads=401` with the Rust node registered; `rust-down: N=40 wall=18.79s per_stmt_group_max=0.52s` with it stopped. Node events
+during the run: `full_reload=0 acked=401 diff_reloads=401` -- every schema version was applied as a diff, none
+took the full load, and every job was acknowledged. The per-group
+maximum with the node up (0.82 s) against without (see the line above) is
+the whole cost this node adds to a DDL round trip on this box; nothing
+resembling the original multi-minute stall. What still is not reproduced
+is that stall's own conditions (thousands of tables plus sysbench's
+DROP/CREATE cycle), so task 66 stays open on the measurement, closed on
+every code-level cause found so far.
+
+**Environment note.** The first attempt at this measurement was void: PD
+had exited at 18:17 (`pd.log`: its loops "exit", right in the window the
+disk hit 0 bytes free), so the Go node had been answering "PD server
+timeout" and the Rust node could not start ("cannot construct read
+authority: PD GetMembers ... tcp connect error"). Restarting the
+playground on its existing data (`tiup playground --tag perfgoal2`)
+brought everything back with the `sbtest` data intact. A `pkill -f "tiup
+playground"` also killed the driving shell (its own command line carries
+that text); `pkill -x` on the process names is what worked.

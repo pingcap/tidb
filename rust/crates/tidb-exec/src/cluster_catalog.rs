@@ -33,7 +33,7 @@ use tidb_meta::{key, value};
 use tidb_model::column::ColumnInfo;
 use tidb_model::db::DBInfo;
 use tidb_model::schema_state::SchemaState;
-use tidb_model::table_info::TableInfo;
+use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION2, TABLE_INFO_VERSION3};
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 
 /// Failure to read or interpret the stored catalog.
@@ -229,12 +229,56 @@ pub(crate) fn load_database_tables<S: MetaSnapshot>(
         if !key::has_prefix(key::TABLE_PREFIX, &field) {
             continue;
         }
-        tables.push(
-            value::parse_table_info(&stored, db_id)
-                .map_err(|error| ClusterCatalogError::Decode(format!("TableInfo: {error}")))?,
-        );
+        let mut table = value::parse_table_info(&stored, db_id)
+            .map_err(|error| ClusterCatalogError::Decode(format!("TableInfo: {error}")))?;
+        normalize_loaded_table_info(&mut table);
+        tables.push(table);
     }
     Ok(tables)
+}
+
+/// What Go's builder does to every `TableInfo` it loads, on the full load
+/// (`loader.go:530-535`) and on a diff (`applyCreateTable`,
+/// `builder.go:868-869`) alike: `ConvertCharsetCollateToLowerCaseIfNeed`
+/// (`builder.go:936-946`) lower-cases the table's and every column's charset
+/// and collation for a `TableInfo` older than version 3, then
+/// `ConvertOldVersionUTF8ToUTF8MB4IfNeed` (`:949-963`) turns a pre-version-2
+/// table's `utf8` -- and each pre-version-2 column's -- into
+/// `utf8mb4`/`utf8mb4_bin` when `treat-old-version-utf8-as-utf8mb4` is on
+/// (Go's default), read from the global config as Go reads
+/// `config.GetGlobalConfig()`.
+pub(crate) fn normalize_loaded_table_info(table: &mut TableInfo) {
+    if table.version < TABLE_INFO_VERSION3 {
+        table.charset = table.charset.to_lowercase();
+        table.collate = table.collate.to_lowercase();
+        for column in table.columns.iter_handles() {
+            // Go dereferences each `*ColumnInfo`: a stored null is corrupt.
+            let column = column.expect("nil column in stored TableInfo");
+            let mut column = column.write();
+            let charset = column.get_charset().to_lowercase();
+            let collate = column.get_collate().to_lowercase();
+            column.set_charset(charset);
+            column.set_collate(collate);
+        }
+    }
+    if table.version >= TABLE_INFO_VERSION2
+        || !tidb_config::config_tree::config::get_global_config().treat_old_version_utf8_as_utf8mb4
+    {
+        return;
+    }
+    if table.charset == "utf8" {
+        table.charset = "utf8mb4".to_owned();
+        table.collate = "utf8mb4_bin".to_owned();
+    }
+    for column in table.columns.iter_handles() {
+        let column = column.expect("nil column in stored TableInfo");
+        let mut column = column.write();
+        // Go `ColumnInfoVersion2`.
+        if column.version < 2 && column.get_charset() == "utf8" {
+            column.set_charset("utf8mb4");
+            column.set_collate("utf8mb4_bin");
+        }
+    }
 }
 
 /// Why one loaded table cannot be served by the bounded read path.

@@ -42,8 +42,8 @@ use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 
 use crate::cluster_catalog::{
-    load_cluster_catalog, load_database_tables, ClusterCatalog, ClusterCatalogError,
-    LoadedDatabase, MetaSnapshot,
+    load_cluster_catalog, load_database_tables, normalize_loaded_table_info, ClusterCatalog,
+    ClusterCatalogError, LoadedDatabase, MetaSnapshot,
 };
 
 /// Go `issyncer.LoadSchemaDiffVersionGapThreshold`: past this many versions a
@@ -797,8 +797,9 @@ fn create_table<S: MetaSnapshot>(
             format!("table {table_id} in database {db_id}, which the snapshot does not store"),
         )));
     };
-    let table = value::parse_table_info(&stored, db_id)
+    let mut table = value::parse_table_info(&stored, db_id)
         .map_err(|error| ClusterCatalogError::Decode(format!("TableInfo {table_id}: {error}")))?;
+    normalize_loaded_table_info(&mut table);
     database.tables.retain(|existing| existing.id != table.id);
     database.tables.push(table);
     Ok(Ok(()))

@@ -3621,6 +3621,7 @@ dependencies = [
  "tidb-ast",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-config",
  "tidb-datatype",
  "tidb-ddl-logutil",
  "tidb-ddl-notifier",
