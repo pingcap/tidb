@@ -22,6 +22,12 @@ use std::sync::LazyLock;
 thread_local! {
     static COMMAND_FAILED: Cell<bool> = const { Cell::new(false) };
     static GROUPS: RefCell<HashMap<String, Rc<GroupMetrics>>> = RefCell::default();
+    /// The resource group the CURRENT connection last ran a command in, on
+    /// the worker serving that connection. Go `clientConn` moves
+    /// `ConnGauge` between groups when a statement switches groups
+    /// (`conn.go:461-470`); the same worker-local value decides which label
+    /// the connection's end decrements.
+    static CONNECTION_RESOURCE_GROUP: RefCell<String> = RefCell::new(String::from("default"));
 }
 
 static QUERIES: LazyLock<IntCounterVec> = LazyLock::new(|| {
@@ -80,6 +86,44 @@ fn group_metrics(name: &str) -> Rc<GroupMetrics> {
 
 pub(crate) fn record_error() {
     COMMAND_FAILED.set(true);
+}
+
+/// Go `server.go:303`: every accepted connection enters `ConnGauge` under
+/// the default group label before any session exists.
+pub(crate) fn note_connection_start() {
+    CONNECTION_RESOURCE_GROUP.with(|group| *group.borrow_mut() = "default".to_owned());
+    crate::server_metrics::CONN_GAUGE
+        .with_label_values(&["default"])
+        .inc();
+}
+
+/// Go `conn.go:435-439`: the connection's end decrements the gauge under
+/// the group its session last belonged to (the default label when no
+/// session opened).
+pub(crate) fn note_connection_end() {
+    let group = CONNECTION_RESOURCE_GROUP.with(|group| group.borrow().clone());
+    crate::server_metrics::CONN_GAUGE.with_label_values(&[&group]).dec();
+}
+
+/// The resource group label Go reads from the session vars at the dispatch
+/// error site (`conn.go:1302`).
+pub(crate) fn current_connection_resource_group() -> String {
+    CONNECTION_RESOURCE_GROUP.with(|group| group.borrow().clone())
+}
+
+/// Go `conn.go:461-470` `moveResourceGroupCounter`: a group switch moves
+/// the connection gauge between labels exactly once.
+fn note_resource_group_move(previous: &str, current: &str) {
+    let previous = if previous.is_empty() { "default" } else { previous };
+    if previous != current {
+        crate::server_metrics::CONN_GAUGE
+            .with_label_values(&[previous])
+            .dec();
+        crate::server_metrics::CONN_GAUGE
+            .with_label_values(&[current])
+            .inc();
+    }
+    CONNECTION_RESOURCE_GROUP.with(|group| *group.borrow_mut() = current.to_owned());
 }
 
 /// Each connection dispatch runs synchronously on one worker. A scope guard
@@ -143,6 +187,7 @@ impl CommandMetrics {
 
 impl CommandMetrics {
     pub(crate) fn set_resource_groups(&mut self, current: &str, statement: &str) {
+        note_resource_group_move(&self.group.name, current);
         if self.group.name != current {
             // Rebind without changing the command's start or error state.
             let failed = COMMAND_FAILED.get();
