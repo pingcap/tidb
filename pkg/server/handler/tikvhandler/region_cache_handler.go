@@ -71,6 +71,7 @@ type regionCacheHTTPResult struct {
 	InProgress bool                     `json:"in_progress,omitempty"`
 	Errors     []string                 `json:"errors,omitempty"`
 	Stores     []regionCacheStoreDetail `json:"stores,omitempty"`
+	veto       bool
 }
 
 func parseStoreID(req *http.Request) (uint64, error) {
@@ -99,7 +100,7 @@ func (out *regionCacheHTTPResult) finish() {
 	if len(out.Errors) > 8 {
 		out.Errors = out.Errors[:8]
 	}
-	out.Ready = out.Remaining == 0 && out.Failed == 0 && !out.InProgress
+	out.Ready = out.Remaining == 0 && out.Failed == 0 && !out.InProgress && !out.veto && len(out.Errors) == 0
 }
 
 func collectRegionCacheStores(primary kv.Storage) []regionCacheStore {
@@ -150,6 +151,9 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 				InProgress: status.InProgress,
 			}
 			item.Ready = item.Remaining == 0 && item.Failed == 0 && !item.InProgress
+			if !item.Ready {
+				out.veto = true
+			}
 			out.Remaining += item.Remaining
 			out.Failed += item.Failed
 			if item.InProgress {
@@ -166,7 +170,7 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		reset := parseReset(req)
 		for _, st := range stores {
 			if ctx.Err() != nil {
-				out.InProgress = true
+				out.veto = true
 				out.Errors = append(out.Errors, ctx.Err().Error())
 				break
 			}
@@ -178,7 +182,7 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 						Ready:     false,
 						Errors:    []string{err.Error()},
 					}
-					out.Failed++
+					out.veto = true
 					out.Errors = append(out.Errors, err.Error())
 					if detail {
 						out.Stores = append(out.Stores, item)
@@ -194,7 +198,10 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 				Failed:    res.Failed,
 				Errors:    res.Errors,
 			}
-			item.Ready = item.Remaining == 0 && item.Failed == 0
+			item.Ready = res.Ready && item.Remaining == 0 && item.Failed == 0
+			if !item.Ready {
+				out.veto = true
+			}
 			out.Remaining += item.Remaining
 			out.Failed += item.Failed
 			out.Errors = append(out.Errors, item.Errors...)

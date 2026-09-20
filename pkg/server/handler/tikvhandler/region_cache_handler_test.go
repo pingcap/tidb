@@ -229,6 +229,8 @@ func TestRegionCacheHandlerResetBusySkipsRefresh(t *testing.T) {
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.False(t, got.Ready)
+	require.Equal(t, 0, got.Failed)
+	require.False(t, got.InProgress)
 	require.Contains(t, got.Errors, tikv.ErrStoreCacheRefreshBusy.Error())
 }
 
@@ -347,7 +349,27 @@ func TestRegionCacheHandlerPostStopsLaterStoresAfterCancel(t *testing.T) {
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.False(t, got.Ready)
-	require.True(t, got.InProgress)
+	require.False(t, got.InProgress)
 	require.Empty(t, got.Stores)
 	require.Contains(t, got.Errors, context.Canceled.Error())
+}
+
+func TestRegionCacheHandlerZeroCountsKeepNotReady(t *testing.T) {
+	fake := &fakeCacheStore{
+		refresh: tikv.StoreCacheRefreshResult{Remaining: 0, Failed: 0, Ready: false, Errors: []string{"context canceled"}},
+		ks:      "ks1",
+		cid:     1,
+	}
+	h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: fake}})
+	req := httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var got regionCacheHTTPResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Equal(t, 0, got.Remaining)
+	require.Equal(t, 0, got.Failed)
+	require.False(t, got.Ready)
+	require.False(t, got.InProgress)
+	require.Contains(t, got.Errors, "context canceled")
 }
