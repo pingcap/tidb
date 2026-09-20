@@ -87,6 +87,7 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		// Test harness, profile collection, and process-wide observability.
 		"testing.(*M).Run",
 		"TestTiDBServerGoroutinesInDiagnosticMode",
+		"os/signal.loop",
 		"go.opencensus.io/stats/view.(*worker).start",
 		"github.com/golang/glog.(*fileSink).flushDaemon",
 
