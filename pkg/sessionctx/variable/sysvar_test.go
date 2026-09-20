@@ -53,6 +53,34 @@ func TestSQLSelectLimit(t *testing.T) {
 	require.Equal(t, uint64(9999), vars.SelectLimit)
 }
 
+func TestPagingSizeBytesGlobal(t *testing.T) {
+	original := vardef.PagingSizeBytes.Load()
+	t.Cleanup(func() { vardef.PagingSizeBytes.Store(original) })
+
+	sv := GetSysVar(vardef.TiDBPagingSizeBytes)
+	require.Equal(t, vardef.ScopeGlobal, sv.Scope)
+	require.True(t, sv.SkipInit())
+	require.False(t, sv.IsHintUpdatableVerified)
+	vars := NewSessionVars(nil)
+	ctx := context.Background()
+	for _, value := range []string{"4194304", "0", strconv.FormatInt(math.MaxInt64, 10)} {
+		normalized, err := sv.Validate(vars, value, vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, value, normalized)
+		require.NoError(t, sv.SetGlobalFromHook(ctx, vars, normalized, false))
+		global, err := vars.GetGlobalSystemVar(ctx, sv.Name)
+		require.NoError(t, err)
+		require.Equal(t, value, global)
+		unqualified, err := vars.GetSessionOrGlobalSystemVar(ctx, sv.Name)
+		require.NoError(t, err)
+		require.Equal(t, value, unqualified)
+	}
+
+	require.Error(t, vars.SetSystemVar(sv.Name, "0"))
+	_, err := sv.Validate(vars, "invalid", vardef.ScopeGlobal)
+	require.Error(t, err)
+}
+
 func TestSQLModeVar(t *testing.T) {
 	sv := GetSysVar(vardef.SQLModeVar)
 	vars := NewSessionVars(nil)

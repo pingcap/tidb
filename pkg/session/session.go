@@ -3391,7 +3391,8 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 				ruConsumptionReporter = rgCtl
 			}
 		}
-		pagingSizeBytes := vars.PagingSizeBytes
+		// Capture the latest global budget for this context; existing requests keep their budget.
+		pagingSizeBytes := int(vardef.PagingSizeBytes.Load())
 		if pagingSizeBytes > 0 && (!vardef.EnableResourceControl.Load() || !resourceGroupAllowsPagingSizeBytes(dom, sc.ResourceGroupName)) {
 			pagingSizeBytes = 0
 		}
