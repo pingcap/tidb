@@ -36,7 +36,7 @@ func isDiagnosticSQLAllowed(stmt ast.StmtNode) bool {
 			return false
 		}
 		checker := diagnosticSQLChecker{}
-		ast.Walk(node, &checker)
+		_, _ = node.Accept(&checker)
 		return !checker.denied
 	case *ast.ExplainStmt:
 		if node.Analyze {
@@ -54,7 +54,7 @@ func isDiagnosticSQLAllowed(stmt ast.StmtNode) bool {
 			return false
 		}
 		checker := diagnosticSQLChecker{}
-		ast.Walk(node, &checker)
+		_, _ = node.Accept(&checker)
 		return !checker.denied
 	default:
 		return false
@@ -65,7 +65,7 @@ type diagnosticSQLChecker struct {
 	denied bool
 }
 
-func (c *diagnosticSQLChecker) Enter(node ast.Node) (skipChildren bool) {
+func (c *diagnosticSQLChecker) Enter(node ast.Node) (ast.Node, bool) {
 	switch n := node.(type) {
 	case *ast.CommonTableExpression:
 		// The SubqueryExpr stored on a CTE is the query definition itself,
@@ -73,9 +73,9 @@ func (c *diagnosticSQLChecker) Enter(node ast.Node) (skipChildren bool) {
 		// scalar/EXISTS subquery. Walk its query directly so side effects in
 		// the definition are still checked without rejecting read-only CTEs.
 		if n.Query != nil && n.Query.Query != nil {
-			ast.Walk(n.Query.Query, c)
+			_, _ = n.Query.Query.Accept(c)
 		}
-		return true
+		return node, true
 	case *ast.SubqueryExpr:
 		// Non-CTE subqueries may be evaluated by the optimizer while it is
 		// compiling EXPLAIN. Reject them before compilation can start.
@@ -100,7 +100,7 @@ func (c *diagnosticSQLChecker) Enter(node ast.Node) (skipChildren bool) {
 			c.denied = true
 		}
 	}
-	return c.denied
+	return node, c.denied
 }
 
 func hasDiagnosticSQLSetVarHint(stmt *ast.SelectStmt) bool {
@@ -120,8 +120,8 @@ func hasDiagnosticSQLSetVarHint(stmt *ast.SelectStmt) bool {
 	return false
 }
 
-func (c *diagnosticSQLChecker) Leave(ast.Node) (proceed bool) {
-	return !c.denied
+func (c *diagnosticSQLChecker) Leave(node ast.Node) (ast.Node, bool) {
+	return node, !c.denied
 }
 
 var diagnosticSQLSideEffectFunctions = map[string]bool{

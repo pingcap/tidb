@@ -928,6 +928,10 @@ func (do *Domain) startRunawayLoops() {
 	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
 }
 
+func shouldRunBackgroundGC() bool {
+	return !diagnosticmode.Enabled()
+}
+
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if !shouldStartLogBackupAdvancer() {
 		log.Info("don't run log backup advancer", zap.String("reason", "diagnostic mode"))
