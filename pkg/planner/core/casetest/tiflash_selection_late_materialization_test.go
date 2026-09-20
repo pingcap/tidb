@@ -35,6 +35,8 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	for i := 0; i < 14; i++ {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
+	// Resolve any pending secondary commits before mock ANALYZE reads the fixture.
+	tk.MustQuery("select count(*) from t1 ignore index(idx)").Check(testkit.Rows("49152"))
 	// Flush pending row-count deltas before ANALYZE takes its snapshot.
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
