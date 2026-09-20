@@ -661,6 +661,7 @@ pub(crate) fn init_dashboard_series() {
             Box::new(tidb_planner::metrics::PLAN_CACHE_MISS_COUNTER.clone()),
             Box::new(tidb_planner::metrics::PLAN_CACHE_INSTANCE_MEMORY_USAGE.clone()),
             Box::new(tidb_planner::metrics::PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER.clone()),
+            Box::new(tidb_planner::metrics::PSEUDO_ESTIMATION.clone()),
         ] {
             use prometheus::core::Collector;
             let _ = registry.register(collector);

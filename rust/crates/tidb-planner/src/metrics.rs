@@ -287,3 +287,10 @@ mod tests {
         plan_cache_clone_duration();
     }
 }
+
+/// Go `InitMetricsVars`: binds the child handles at startup so the
+/// dashboard families (pseudo estimation, plan cache) are materialized
+/// with their Go label combinations before any session runs.
+pub fn init_dashboard_series() {
+    LazyLock::force(&CHILDREN);
+}
