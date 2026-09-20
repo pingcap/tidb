@@ -333,8 +333,7 @@ func TestRandomPanicConsume(t *testing.T) {
 					require.NoError(t, res.Close())
 				}
 			}
-			errStr := err.Error()
-			require.True(t, errStr == "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]" || errStr == "context canceled")
+			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 		}
 	}
 }

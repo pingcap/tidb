@@ -71,11 +71,6 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
 	}()
-	// Other server tests disable the global stats lease. Enable the
-	// initialization whose internal transaction this test must observe.
-	session.SetStatsLease(3 * time.Second)
-	defer session.DisableStats4Test()
-
 	newConfig := *origConfig
 	for _, lite := range []bool{false, true} {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats", "pause"))
