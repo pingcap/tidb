@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -88,6 +89,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvtrace "github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
@@ -1809,7 +1811,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.updateNetworkTrafficStatsAndMetrics()
 	statementRUTotal := a.finishStatementRU(err)
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.LogSlowQuery(txnTS, succ, hasMoreResults)
+	a.LogSlowQuery(txnTS, succ, hasMoreResults, statementRUTotal)
 	a.SummaryStmt(succ, statementRUTotal)
 	a.observeStmtFinishedForTopProfiling(statementRUTotal)
 	a.UpdatePlanCacheRuntimeInfo()
@@ -1914,6 +1916,29 @@ func firstStatementRUTotal(statementRUTotal []float64) float64 {
 		return 0
 	}
 	return statementRUTotal[0]
+}
+
+// ruDetailsForStatementLog selects the RU values exposed by slow logs and
+// statement summaries without changing the shared execution accounting.
+func (a *ExecStmt) ruDetailsForStatementLog(ruDetails *util.RUDetails, statementRUTotal float64) *util.RUDetails {
+	do := domain.GetDomain(a.Ctx)
+	if do == nil || do.GetRUVersion() != rmclient.RUVersionV2 {
+		return ruDetails
+	}
+
+	consumption := rmpb.Consumption{RRU: statementRUTotal}
+	kind := classifyStatementRUPlan(a.Plan).kind
+	if kind == statementRUPlanWrite || kind == statementRUPlanCommit {
+		// Explicit transactions account for their committed write payload on COMMIT.
+		consumption.RRU, consumption.WRU = 0, statementRUTotal
+	}
+	var waitDuration time.Duration
+	if ruDetails != nil {
+		waitDuration = ruDetails.RUWaitDuration()
+	}
+	logRUDetails := util.NewRUDetails()
+	logRUDetails.Update(&consumption, waitDuration)
+	return logRUDetails
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error, statementRUTotal float64) {
@@ -2021,7 +2046,7 @@ func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cfg := config.GetGlobalConfig()
@@ -2060,6 +2085,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		slowItems = &variable.SlowQueryLogItems{}
 	}
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
+	slowItems.RUDetails = a.ruDetailsForStatementLog(slowItems.RUDetails, firstStatementRUTotal(statementRUTotal))
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			if !slowItems.IsSyncStatsFailed {
@@ -2364,7 +2390,7 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtExecInfo.Prepared = a.isPreparedStmt
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
-	stmtExecInfo.RUDetail = ruDetail
+	stmtExecInfo.RUDetail = a.ruDetailsForStatementLog(ruDetail, firstStatementRUTotal(statementRUTotal))
 	stmtExecInfo.TotalRUV2 = firstStatementRUTotal(statementRUTotal)
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
