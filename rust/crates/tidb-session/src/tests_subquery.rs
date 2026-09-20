@@ -1224,3 +1224,43 @@ fn row_valued_not_in_tracks_a_null_per_column() {
          3 matches and wildcards nothing"
     );
 }
+
+/// Go `GetAllMatchedRows`'s own filter: once the probe row's NA key holds a
+/// NULL and there is more than one NA column, only build rows that agree
+/// with the probe's NON-null columns are even candidates -- a build row
+/// whose non-null column definitely disagrees is not "maybe a match", it is
+/// definitely not a match, and must not make the answer NULL.
+#[test]
+fn row_valued_not_in_a_probe_null_does_not_make_every_row_ambiguous() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a int, b int, PRIMARY KEY (a))")
+        .unwrap();
+    session.run("CREATE TABLE t2 (x int, y int)").unwrap();
+    session.run("INSERT INTO t1 VALUES (5,NULL)").unwrap();
+
+    // No t2 row shares a=5 at all, so (5, NULL) definitely is not in the
+    // set: the NULL in b never gets a chance to make anything ambiguous.
+    session.run("INSERT INTO t2 VALUES (6,20)").unwrap();
+    assert_eq!(
+        row_text(
+            session
+                .run("SELECT t1.a, t1.b, (t1.a, t1.b) NOT IN (SELECT t2.x, t2.y FROM t2) FROM t1")
+        ),
+        [["5", "NULL", "1"]],
+        "a=5 never appears in t2, so NOT IN is definitely true regardless of the NULL in b"
+    );
+
+    // Now t2 also has a row that DOES share a=5: it disagrees with nothing
+    // checkable, so it is a genuine ambiguous candidate and the answer
+    // becomes NULL.
+    session.run("INSERT INTO t2 VALUES (5,10)").unwrap();
+    assert_eq!(
+        row_text(
+            session
+                .run("SELECT t1.a, t1.b, (t1.a, t1.b) NOT IN (SELECT t2.x, t2.y FROM t2) FROM t1")
+        ),
+        [["5", "NULL", "NULL"]],
+        "a=5 does appear in t2, and the NULL in b cannot rule that row out"
+    );
+}

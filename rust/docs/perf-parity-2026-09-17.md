@@ -2709,3 +2709,129 @@ needed for its NAAJ case, so both are implemented together.
   separately added (the existing `join::spill_tests` module's coverage of
   the shared `RowContainer`/chain machinery is presumed to carry over,
   not directly proven for the null bucket specifically).
+
+## Follow-up: Go-parity review of the keyed NAAJ probe finds and fixes two bugs (2026-09-20)
+
+Requested review of the keyed null-aware hash probe and
+`AntiLeftOuterSemiJoin` execution just landed above: compare every line
+against the actual Go source it claims to port, no more behavior than Go
+has and no less. Re-read `GetAllMatchedRows` (`hash_table_v1.go`),
+`nullAwareAntiSemiJoiner`/`nullAwareAntiLeftOuterSemiJoiner.TryToMatchInners`
+and `EvalBool` (`joiner.go`, `expression.go`) end to end against the
+pushed code. The same-key-bucket-vs-null-bucket priority ordering itself
+(the core of the prior change) checked out exactly as designed -- no
+bug there. Two other gaps did not.
+
+### Bug 1: `naaj_all_rows_match` skipped Go's probe-side null filter
+
+Go's `GetAllMatchedRows`, reached once the probe row's own NA key has a
+NULL, does not just hand back every non-null build-side bucket. When the
+NA key has more than one column (`len(probeHCtx.NaKeyColIdx) > 1`), it
+first filters using the probe row's own NON-null columns: a build row
+that definitely disagrees on a column the probe row can actually check is
+not an ambiguous candidate, it is a definite non-match, and must not
+later make the result NULL. Go's comment states the asymmetry directly:
+build-side rows are guaranteed non-null (they came out of the non-null
+hash table), so only the probe side can rule a candidate out. For a
+single-column NA key this filter is vacuous by construction (the probe's
+one column is exactly the NULL that routed it here), which is why Go
+special-cases `len == 1` as "fetch all buckets, nothing to do".
+
+The pushed `naaj_all_rows_match` had no equivalent: it treated every
+non-null hash-table row as a candidate regardless of the probe's own
+non-null columns, so a multi-column row-valued `NOT IN`/`!= ALL` could
+answer NULL for probe rows Go would answer definite-true for (any build
+row that disagreed with a checkable, non-null probe column was wrongly
+still counted as ambiguous). Fixed by computing which NA-key columns the
+probe row can check (`!probe_null_bits[index]`) and filtering hash-table
+rows against exactly those columns before considering a row a match
+candidate, mirroring Go's `probeKeyNullBits.UnsafeIsSet(i)` skip +
+`EqualChunkRow` on the rest.
+
+Regression test: `row_valued_not_in_a_probe_null_does_not_make_every_row_ambiguous`
+(`tidb-session/src/tests_subquery.rs`), a two-column row-valued `NOT IN`
+where the probe's key column has no match at all in the RHS (so the
+answer must stay definite-true despite the probe's other column being
+NULL), then a second case where a genuine same-key candidate exists (so
+the answer correctly becomes NULL). Verified fail-before via `git stash`
+against the pushed `0d0a6821` tree: both cases wrongly returned NULL;
+after the fix, only the genuine-candidate case does.
+
+### Bug 2: `naaj_residual_matches` reused `Self::matches`, applying forgiveness Go's own NAAJ joiners never apply
+
+`EvalBool` (`expression.go`) forgives a NULL result into `hasNull = true`
+only when the failing conjunct is itself marked `IsEQCondFromIn`, and by
+its own doc comment `hasNull` is only ever true when `valid` is false.
+The ordinary (non-null-aware) `antiSemiJoiner`'s `JoinKind::AntiSemi`
+handling turns that combination into an outright match
+(`matched || hasNull`). But `nullAwareAntiSemiJoiner.TryToMatchInners`
+and `nullAwareAntiLeftOuterSemiJoiner.TryToMatchInners` both call
+`EvalBool` and keep only its first return value
+(`valid, _, err := expression.EvalBool(...)`) -- the `hasNull` forgiveness
+is discarded unread. `nullAwareAntiLeftOuterSemiJoiner`'s own comment
+says as much: "in EvalBool, any filter null or false will contribute to
+false matched, in other words, the isNull is permanently false."
+
+The pushed `naaj_residual_matches` (evaluating the rare leftover
+conjunct the planner's `adjustKeyForm` could not promote into the NA key
+list) called the shared `Self::matches` helper, which does apply that
+`matched || has_null` forgiveness for `JoinKind::AntiSemi` -- behavior
+Go's own NA-specific joiners never exhibit. Fixed by evaluating the
+residual conjuncts directly as a plain truthy AND, with no has-null
+forgiveness path at all, matching what discarding `EvalBool`'s second
+return value means in Go.
+
+Regression test: `naaj_residual_condition_gets_no_has_null_forgiveness`
+(`tidb-executor/src/join_tests.rs`), built directly against `JoinExec`
+(bypassing the planner) with a residual conjunct marked
+`IsEQCondFromIn` so `eval_bool`'s forgiveness path is actually reachable
+-- a plain unmarked residual doesn't discriminate between old and new
+code, since the forgiveness never triggers for it regardless. Verified
+fail-before/pass-after by temporarily reverting `naaj_residual_matches`
+to call `Self::matches` again: the test fails (wrongly forgives, drops
+the probe row) on the reverted code and passes with the fix.
+
+### Design change alongside the fixes: `NAEQConditions` kept as its own field, not merged
+
+While tracing both bugs, the existing `set_na_condition_count(count:
+usize)` entry point turned out to reconstruct which resolved expressions
+were NA keys by position/count from a single merged `conditions` Vec --
+fragile, and not how Go actually keeps this state (`PhysicalHashJoin`
+keeps `NAEQConditions` as a field genuinely separate from
+`EqualConditions`/`OtherConditions`, never merged by the executor
+builder). Replaced it with `set_na_conditions(na_conditions:
+Vec<Expression>)`, taking the resolved NA-key expression list directly
+from `physical_builder.rs` (which now builds it as its own `Vec`
+alongside, not folded into, the ordinary `conditions` list). Checked
+every other use of `self.conditions` in `join.rs`
+(`matches_index_pair`, `index_hash_output`, `set_merge_plan`) to confirm
+none of them are reachable for NAAJ (`has_na_keys` gates NAAJ off of
+index join, merge join, and hash-join-v2 entirely), so leaving NA
+conditions out of `self.conditions` changes nothing else.
+
+### Validation
+
+- `cargo test -p tidb-session --lib tests_subquery`: 22/22 (was 21,
+  the one new test added).
+- `cargo test -p tidb-executor --lib join::`: 76/76 (was 75, the one new
+  test added).
+- `cargo check --workspace`: clean.
+- `cargo fmt --check` on the four touched files
+  (`physical_builder.rs`, `join.rs`, `join_tests.rs`,
+  `tests_subquery.rs`): clean. (An intermediate `cargo fmt` run was
+  accidentally scoped to whole crates rather than these files, reformatting
+  nine unrelated pre-existing files as a side effect; reverted with `git
+  checkout --` on exactly those nine before proceeding.)
+- `cargo clippy -p tidb-executor -p tidb-planner -p tidb-session` on the
+  four touched files: identical warning set (same warnings, same
+  relative locations) before and after this review's changes -- confirmed
+  by diffing clippy's output against the pre-review tree via `git
+  stash`. No new warnings introduced.
+
+### Not verified
+
+- No new throughput benchmark: both fixes are correctness-only (an
+  under-forgiving NULL turning into an over-forgiving NULL, and vice
+  versa, for a narrow row-valued/leftover-conjunct case), not on the hot
+  path this campaign's benchmarks measure, so no A/B re-run was done for
+  them specifically.

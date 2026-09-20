@@ -1635,48 +1635,24 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         self.concurrency = parallelism.max(1);
     }
 
-    /// Reclassifies the LAST `na_condition_count` entries of the `ON`
-    /// clause this join was built with as null-aware key conjuncts (Go
-    /// `PhysicalHashJoin.NAEQConditions`), moving them out of
-    /// `residual_conditions` and into `na_keys`.
-    /// `physical_builder::build_join_over_children` appends
-    /// `join.na_equal_conditions` at the TAIL of the `conditions` this join
-    /// is constructed with, after every ordinary equality and before any
-    /// other residual, so their position is unambiguous; each is always a
-    /// bare `eq(col, col)`, never an `AND`-compound condition, so it
-    /// contributes exactly one entry to the flattened conjunct list this
-    /// recomputes.
-    ///
-    /// This is deliberately a count, not a re-scan for
-    /// [`crate::joiner::is_eq_cond_from_in`]: that marker survives on the
-    /// expression whether or not the planner actually converted the join
-    /// (Go's own NAAJ conversion is gated on `OptimizerEnableNAAJ` and on
-    /// `EqualConditions` being empty), so re-deriving eligibility from it
-    /// here would treat an ordinary residual-evaluated anti-join the same
-    /// as a converted one. Only the physical plan's own count can tell them
-    /// apart.
-    pub(crate) fn set_na_condition_count(&mut self, na_condition_count: usize) {
-        if na_condition_count == 0 {
-            return;
-        }
+    /// Sets this join's null-aware key conjuncts (Go
+    /// `PhysicalHashJoin.NAEQConditions`), resolved by the caller against
+    /// this join's own condition schema exactly like an ordinary equality
+    /// would be. Go keeps `NAEQConditions` on its own field, never merged
+    /// into `EqualConditions` or `OtherConditions`; this mirrors that by
+    /// taking `na_conditions` as its own list rather than folding it into
+    /// the `conditions` this join was constructed with (which stays exactly
+    /// the ordinary `ON` clause) -- so, unlike a scheme that recovers these
+    /// from a shared list, nothing here depends on where in that list they
+    /// would have been, or on re-deriving eligibility from
+    /// [`crate::joiner::is_eq_cond_from_in`] (a marker that survives on an
+    /// expression whether or not the planner's NAAJ conversion actually
+    /// fired for it).
+    pub(crate) fn set_na_conditions(&mut self, na_conditions: Vec<Expression>) {
         let left_width = self.left_types.len();
-        let flattened: Vec<&Expression> = self
-            .conditions
-            .iter()
-            .flat_map(crate::hash_join::split_conjuncts)
-            .collect();
-        let na_start = flattened.len().saturating_sub(na_condition_count);
-        self.na_keys = flattened[na_start..]
+        self.na_keys = na_conditions
             .iter()
             .filter_map(|condition| crate::hash_join::na_equi_key(condition, left_width))
-            .collect();
-        let split = crate::hash_join::split_equi(&self.conditions, left_width);
-        self.residual_conditions = flattened
-            .iter()
-            .zip(split.equal_mask)
-            .enumerate()
-            .filter(|(index, (_, is_equal))| !is_equal && *index < na_start)
-            .map(|(_, (condition, _))| (*condition).clone())
             .collect();
         self.native_hash = self.native_hash || !self.na_keys.is_empty();
     }
@@ -5077,7 +5053,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             // be ruled out in advance -- a match anywhere settles it.
             let found =
                 self.naaj_null_bucket_matches(probe_row, probe_is_left, Some(&probe_null_bits))?
-                    || self.naaj_all_rows_match(probe_row, probe_is_left)?;
+                    || self.naaj_all_rows_match(probe_row, probe_is_left, &probe_null_bits)?;
             return match self.kind {
                 JoinKind::AntiSemi => {
                     if !found {
@@ -5240,24 +5216,57 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         Ok(false)
     }
 
-    /// Go `GetAllMatchedRows`: every remaining build row -- the whole
-    /// non-null hash table, since `self.na_keys.len() == 1` is the only
-    /// shape this join ever builds today, matching Go's own comment that a
-    /// single-column NA key gives nothing to filter by ("that means the
-    /// NA-Join probe key is directly a (null) <-> (fetch all buckets),
-    /// nothing to do"). Only reached once the probe row's own key already
-    /// holds a NULL, so no bucket can be ruled out.
+    /// Go `GetAllMatchedRows`: the whole non-null hash table, filtered by
+    /// the probe's own non-NULL columns first -- every hash-table row is
+    /// itself guaranteed non-NULL on every NA column (Go's comment: "since
+    /// all bucket is from hash table (Not Null), so the buildSideNullBits
+    /// check is eliminated"), so only the PROBE side can rule a row out.
+    /// For a single-column NA key this filter is vacuous (the probe's only
+    /// column is the NULL that put it in this branch, so nothing is left to
+    /// check -- Go's own comment: "that means the NA-Join probe key is
+    /// directly a (null) <-> (fetch all buckets), nothing to do"), which
+    /// falls out of the same code path here rather than a separate
+    /// branch. Only reached once the probe row's own key already holds a
+    /// NULL, so no bucket can be ruled out by hash alone.
     fn naaj_all_rows_match(
         &mut self,
         probe_row: &[Datum],
         probe_is_left: bool,
+        probe_null_bits: &[bool],
     ) -> Result<bool, ExecError> {
+        let checked_keys: Vec<EquiKey> = self
+            .na_keys
+            .iter()
+            .enumerate()
+            .filter(|&(index, _)| !probe_null_bits[index])
+            .map(|(_, key)| *key)
+            .collect();
         let ptrs: Vec<RowPtr> = {
             let hash = self.hash.as_ref().expect("hash state exists");
             hash.table.na_all_hash_bucket_ptrs()
         };
         for ptr in ptrs {
-            if self.naaj_residual_matches(probe_row, ptr, probe_is_left)? {
+            let key_matches = {
+                let HashState {
+                    table,
+                    build_buf,
+                    build_types,
+                    ..
+                } = self.hash.as_mut().expect("hash state exists");
+                table
+                    .with_row(ptr, build_buf, |build_row| {
+                        equi_keys_equal_row(
+                            &checked_keys,
+                            probe_row,
+                            probe_is_left,
+                            build_row,
+                            build_types,
+                        )
+                    })
+                    .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                    .map_err(key_error)?
+            };
+            if key_matches && self.naaj_residual_matches(probe_row, ptr, probe_is_left)? {
                 return Ok(true);
             }
         }
@@ -5267,7 +5276,23 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// Any join condition beyond the NA key equalities themselves -- Go's
     /// `Joiner.conditions`, evaluated inside `TryToMatchInners`. Empty for
     /// an ordinary `NOT IN (subquery)` / `!= ALL (subquery)`, so this is
-    /// `Ok(true)` immediately in the common case.
+    /// `Ok(true)` immediately in the common case; non-empty only for the
+    /// rare leftover conjunct the planner's `adjustKeyForm` could not
+    /// promote into `na_keys` (a mutable-effects expression, kept as an
+    /// ordinary `OtherCondition` while still carrying the `IsEQCondFromIn`
+    /// marker).
+    ///
+    /// Deliberately a plain truthy check, never [`Self::matches`]: Go's
+    /// `EvalBool` (ported as [`crate::joiner::eval_bool`]) forgives a NULL
+    /// into `has_null` only for a condition itself marked
+    /// [`crate::joiner::is_eq_cond_from_in`], and `Self::matches` turns that
+    /// into an outright match for `JoinKind::AntiSemi`
+    /// (`matched || has_null`) -- but Go's own `nullAwareAntiSemiJoiner` /
+    /// `nullAwareAntiLeftOuterSemiJoiner.TryToMatchInners` call `EvalBool`
+    /// and keep only its first return value (`valid, _, err := ...`), and
+    /// `EvalBool` only ever returns `has_null=true` alongside `valid=false`
+    /// -- so Go's own NAAJ joiners never observe the forgiveness either,
+    /// whether or not a leftover conjunct is marked.
     fn naaj_residual_matches(
         &mut self,
         probe_row: &[Datum],
@@ -5293,7 +5318,18 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         } else {
             self.join_rows(&build_row, probe_row)
         };
-        self.matches(&joined)
+        self.condition_evals.set(self.condition_evals.get() + 1);
+        let mut chunk = Chunk::new_with_capacity(&self.condition_types, 1);
+        for (index, value) in joined.iter().enumerate() {
+            chunk.append_datum(index, value);
+        }
+        let row = chunk.get_row(0);
+        for condition in &self.residual_conditions {
+            if !truthy(&condition.eval(&self.ctx, row)?)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Chunk-backed steady state for a pure equality hash join. When the

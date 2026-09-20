@@ -2651,18 +2651,25 @@ fn build_join_over_children(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    // Go's null-aware anti-join keeps its `NAEQConditions` beside
-    // `EqualConditions` on the very same `PhysicalHashJoin`
-    // (`buildHashJoinFromChildExecs`, `builder.go`); this port folds them in
-    // here, matching `build_apply`'s existing `.chain(na_equal_conditions)`.
-    if let PhysicalPlan::HashJoin(join) = plan {
-        for condition in &join.na_equal_conditions {
-            conditions.push(resolve_expression(
-                Expression::ScalarFunction(condition.clone()),
-                &condition_schema,
-            )?);
-        }
-    }
+    // Go's null-aware anti-join keeps its `NAEQConditions` on its own field,
+    // separate from `EqualConditions`/`OtherConditions`
+    // (`buildHashJoinFromChildExecs`, `builder.go`); kept separate here too
+    // (`JoinExec::set_na_conditions`, below) rather than folded into the
+    // shared `conditions` list, so the executor never has to re-derive
+    // which entries came from that field.
+    let na_conditions = if let PhysicalPlan::HashJoin(join) = plan {
+        join.na_equal_conditions
+            .iter()
+            .map(|condition| {
+                resolve_expression(
+                    Expression::ScalarFunction(condition.clone()),
+                    &condition_schema,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     conditions.extend(resolve_expressions(other_conditions, &condition_schema)?);
     if preserve_left {
         conditions.extend(resolve_expressions(left_conditions, &condition_schema)?);
@@ -2679,8 +2686,8 @@ fn build_join_over_children(
         ctx.clone(),
         ctx.statement_memory(),
     );
-    if let PhysicalPlan::HashJoin(join) = plan {
-        executor.set_na_condition_count(join.na_equal_conditions.len());
+    if !na_conditions.is_empty() {
+        executor.set_na_conditions(na_conditions);
     }
     let output_offsets =
         physical_join_output_offsets(plan, join_type, &left_schema, &right_schema)?;

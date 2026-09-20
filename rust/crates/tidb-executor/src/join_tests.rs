@@ -1442,6 +1442,60 @@ fn residual_hash_join_resumes_candidates_after_a_full_output_chunk() {
     assert_eq!(run(&mut join).len(), CHUNK + 1);
 }
 
+/// Go's `nullAwareAntiSemiJoiner.TryToMatchInners` calls the SAME
+/// `EvalBool` the ordinary `antiSemiJoiner` does, but keeps only its first
+/// return value (`valid, _, err := ...`) -- and `EvalBool` only ever
+/// returns `hasNull=true` alongside `valid=false`, so Go's own NAAJ joiner
+/// never observes the forgiveness the ordinary joiner's `matched ||
+/// hasNull` applies. This is only OBSERVABLE when a residual conjunct
+/// itself carries the `IsEQCondFromIn` marker (`EvalBool` forgives a NULL
+/// into `hasNull` only then) -- the rare leftover the planner's
+/// `adjustKeyForm` could not promote into `na_keys` (a mutable-effects
+/// expression, per its own `keepAsOtherCond` escape hatch) -- so this test
+/// marks the residual conjunct itself, not just the promoted NA key.
+#[test]
+fn naaj_residual_condition_gets_no_has_null_forgiveness() {
+    let mut na_key_left = Column::new(101, long());
+    na_key_left.index = 0;
+    na_key_left.in_operand = true;
+    let mut na_key_right = Column::new(102, long());
+    na_key_right.index = 2;
+    let na_key = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("eq"),
+        long(),
+        vec![
+            Expression::Column(na_key_left),
+            Expression::Column(na_key_right),
+        ],
+    ));
+    let mut leftover_left = Column::new(103, long());
+    leftover_left.index = 1;
+    leftover_left.in_operand = true;
+    let mut leftover_right = Column::new(104, long());
+    leftover_right.index = 3;
+    let leftover_residual = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("eq"),
+        long(),
+        vec![
+            Expression::Column(leftover_left),
+            Expression::Column(leftover_right),
+        ],
+    ));
+    // Same-key bucket match on column 0 (1 = 1); the leftover residual then
+    // compares the probe's NULL value column against the build row's,
+    // which Go's own NAAJ joiner treats as a plain non-match, never a
+    // forgiven one.
+    let left = vec![vec![Datum::Int(1), Datum::Null]];
+    let right = vec![vec![Datum::Int(1), Datum::Int(5)]];
+    let mut join = join_of(JoinKind::AntiSemi, vec![leftover_residual], left, right, 2);
+    join.set_na_conditions(vec![na_key]);
+    assert_eq!(
+        run(&mut join),
+        vec![vec![1, -1]],
+        "the leftover residual's NULL result must not be forgiven into a match: the probe row survives"
+    );
+}
+
 /// A join with no equal condition keeps the nested loop, as documented.
 #[test]
 fn cross_join_falls_back_to_the_nested_loop() {
