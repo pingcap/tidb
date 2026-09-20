@@ -22,12 +22,26 @@ use tokio::runtime::{Handle, Runtime};
 use tokio::task::{AbortHandle, JoinSet};
 
 /// Workers driving the transport runtime; see [`execution_runtime`].
-const TRANSPORT_WORKER_THREADS: usize = 1;
+///
+/// One worker mirrors Go's per-store-connection `batchSendLoop`/`batchRecvLoop`
+/// goroutine and kept up on a 4-core box, but the direct unary cop path spawns
+/// its full send/receive/decode body here: under a 100-thread load the single
+/// worker queues completions and adds delay per request. Size it like the
+/// query runtime (one worker per available core) so the h2 framing and
+/// response decode scale the way gRPC-go's per-connection goroutines spread
+/// across `GOMAXPROCS`.
 
 /// The transport runtime: tonic/h2 framing, the batch stream loops, PD and
 /// TTL keep-alive. Connection scopes and transport joins own their lifetime,
 /// not this runtime.
 ///
+/// Worker sizing: one worker mirrors Go's per-store-connection
+/// `batchSendLoop`/`batchRecvLoop` goroutine and kept up on a 4-core box, but
+/// the direct unary cop path spawns its full send/receive/decode body here:
+/// under a 100-thread load the single worker queues completions and adds
+/// delay per request. Size it like the query runtime (one worker per
+/// available core) so the h2 framing and response decode scale the way
+/// gRPC-go's per-connection goroutines spread across `GOMAXPROCS`.
 /// client-go serializes that work per store connection (`batchSendLoop` and
 /// `batchRecvLoop` are one goroutine each), and it costs a few microseconds
 /// per request, so one worker keeps up. Sizing this pool to the core count
@@ -45,7 +59,7 @@ pub fn execution_runtime() -> Result<&'static Runtime, String> {
     RUNTIME
         .get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(TRANSPORT_WORKER_THREADS)
+                .worker_threads(go_max_procs())
                 .thread_name("tikv-execution")
                 .enable_all()
                 .build()
