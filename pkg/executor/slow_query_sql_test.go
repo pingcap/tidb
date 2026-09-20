@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,7 +28,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -41,6 +44,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	clientutil "github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 func TestSlowQueryWithoutSlowLog(t *testing.T) {
@@ -253,6 +259,95 @@ func TestLogSlowLogRUV2(t *testing.T) {
 		return parsedRU
 	}
 	require.Equal(t, parseRU(ru), parseRU(ruLog))
+}
+
+func TestSlowLogRUVersion(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	defer config.RestoreFunc()()
+	originalSlowLogger := logutil.SlowQueryLogger
+	defer func() { logutil.SlowQueryLogger = originalSlowLogger }()
+	slowLogFile := filepath.Join(t.TempDir(), "slow.log")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFile
+	})
+	require.NoError(t, logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig()))
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table slow_log_ru_version (id int primary key, v int)")
+	tk.MustExec("insert into slow_log_ru_version values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec("set tidb_enable_slow_log=1")
+	tk.MustExec("set tidb_slow_log_threshold=0")
+	tk.MustExec(fmt.Sprintf("set tidb_slow_query_file='%s'", slowLogFile))
+
+	for _, version := range []rmclient.RUVersion{rmclient.RUVersionV1, rmclient.RUVersionV2} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			baseProvider, ok := infosync.NewMockResourceManagerClient(1).(rmclient.ResourceGroupProvider)
+			require.True(t, ok)
+			provider := &slowLogRUVersionProvider{ResourceGroupProvider: baseProvider, version: version}
+			controller, err := rmclient.NewResourceGroupController(context.Background(), 1, provider, nil, 1)
+			require.NoError(t, err)
+			originalController := dom.ResourceGroupsController()
+			dom.SetResourceGroupsController(controller)
+			t.Cleanup(func() { dom.SetResourceGroupsController(originalController) })
+			require.Equal(t, version, dom.GetRUVersion())
+
+			for _, tc := range []struct {
+				name  string
+				sql   string
+				write bool
+			}{
+				{"read", "select * from slow_log_ru_version order by id", false},
+				{"write", "update slow_log_ru_version set v = v + 1 where id = 1", true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					// Seed both v1 counters so selecting the wrong RU version cannot pass.
+					ruDetails := clientutil.NewRUDetailsWith(11, 7, 20*time.Millisecond)
+					ctx := context.WithValue(context.Background(), clientutil.RUDetailsCtxKey, ruDetails)
+					tag := fmt.Sprintf(" /* slow_log_ru_v%d_%s */ ", version, tc.name)
+					sql := strings.Replace(tc.sql, " ", tag, 1)
+					if tc.write {
+						tk.MustExecWithContext(ctx, sql)
+					} else {
+						tk.MustQueryWithContext(ctx, sql)
+					}
+					// Compare against the same execution's finalized total, independently of the log output.
+					totalRUV2 := tk.Session().GetSessionVars().LastQueryInfo.RUV2Consumption
+					require.Positive(t, totalRUV2)
+					wantRead, wantWrite := ruDetails.RRU(), ruDetails.WRU()
+					require.GreaterOrEqual(t, wantRead, float64(11))
+					require.GreaterOrEqual(t, wantWrite, float64(7))
+					require.NotEqual(t, wantRead, totalRUV2)
+					require.NotEqual(t, wantWrite, totalRUV2)
+					if version == rmclient.RUVersionV2 {
+						wantRead, wantWrite = totalRUV2, 0
+						if tc.write {
+							wantRead, wantWrite = 0, totalRUV2
+						}
+					}
+
+					rows := tk.MustQuery("select request_unit_read, request_unit_write, time_queued_by_rc "+
+						"from information_schema.slow_query where query = ?", sql+";").Rows()
+					require.Len(t, rows, 1)
+					for i, want := range []float64{wantRead, wantWrite, ruDetails.RUWaitDuration().Seconds()} {
+						got, err := strconv.ParseFloat(fmt.Sprint(rows[0][i]), 64)
+						require.NoError(t, err)
+						require.InDelta(t, want, got, 1e-9)
+					}
+				})
+			}
+		})
+	}
+}
+
+type slowLogRUVersionProvider struct {
+	rmclient.ResourceGroupProvider
+	version rmclient.RUVersion
+}
+
+func (p *slowLogRUVersionProvider) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
+	config := fmt.Sprintf(`{"ru-version-policy":{"default":%d}}`, p.version)
+	return &meta_storagepb.GetResponse{Kvs: []*meta_storagepb.KeyValue{{Value: []byte(config)}}}, nil
 }
 
 func TestSlowQuerySessionAlias(t *testing.T) {
