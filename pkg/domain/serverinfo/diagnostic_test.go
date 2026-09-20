@@ -16,12 +16,13 @@ package serverinfo
 
 import (
 	"context"
+	"testing"
+
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
-	"testing"
 )
 
 func TestDiagnosticServerInfoLifecycle(t *testing.T) {

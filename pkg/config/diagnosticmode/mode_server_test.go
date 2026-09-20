@@ -118,28 +118,6 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		"server.(*Server).startNetworkListener",
 		"server.(*Server).startDiagnosticHTTP.func1",
 	}
-	backgroundGoroutines := []struct {
-		taskName   string
-		goroutines []string
-	}{
-		{
-			taskName: "DDL and registration",
-			goroutines: []string{
-				"github.com/pingcap/tidb/pkg/ddl.(*JobSubmitter).submitLoop",
-				"github.com/pingcap/tidb/pkg/ddl/systable.(*MinJobIDRefresher).Start",
-				"github.com/pingcap/tidb/pkg/infoschema/issyncer.(*Syncer).MDLCheckLoop",
-				"github.com/pingcap/tidb/pkg/domain/serverinfo.(*Syncer).ServerInfoSyncLoop",
-				"github.com/pingcap/tidb/pkg/domain/serverinfo.(*Syncer).TopologySyncLoop",
-			},
-		},
-		{
-			taskName: "HTTPServer",
-			goroutines: []string{
-				"github.com/pingcap/tidb/pkg/server.(*Server).startHTTPServer",
-				"github.com/pingcap/tidb/pkg/server.(*Server).startStatusServerAndRPCServer",
-			},
-		},
-	}
 
 	header, stacks, ok := bytes.Cut(bytes.TrimSpace(dump), []byte("\n"))
 	require.True(t, ok, "missing goroutine profile header or stacks")

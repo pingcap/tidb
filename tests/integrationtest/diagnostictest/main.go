@@ -104,7 +104,7 @@ func main() {
 }
 
 func readStatements(path string) ([]statement, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path is the explicitly provided integration test file
 	if err != nil {
 		return nil, err
 	}
