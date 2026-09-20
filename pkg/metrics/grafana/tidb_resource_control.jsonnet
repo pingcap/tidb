@@ -244,25 +244,33 @@ local RUPanel = graphPanel.new(
   )
 );
 
+// Each sample represents one completed UTC minute. Keep the range equal to
+// the display step and require every minute, including quality samples.
+local RUPeakSelector = '{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}';
+local RUPeakSeries = 'resource_manager_resource_unit_peak_per_second' + RUPeakSelector;
+local RUPeakAvailable = 'resource_manager_resource_unit_peak_available' + RUPeakSelector;
 local RUMaxPanel = graphPanel.new(
-  title="RU Max(Max Cost During 20s Period)",
+  title="RU Max - 1s",
   datasource=myDS,
-  legend_rightSide=true,
-  legend_current=true,
-  legend_alignAsTable=true,
-  legend_values=true,
   format="short",
-  description="The max request unit cost for resource groups during in a period(20s).",
-  logBase1Y=10,
+  interval="1m",
+  nullPointMode="null",
+  min=0,
+  legend_values=true,
+  legend_max=true,
+  legend_current=true,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  description="Maximum combined read and write RU/s in one natural second across clients. Each point shows the busiest second in the preceding minute, timestamped at the minute end and published about 30 seconds later. Compare with RU, which shows average consumption rates. Longer display intervals keep the maximum. Incomplete intervals remain gaps. Requires enable-ru-minute-peak and complete source coverage; excludes SQL CPU RU, RUv2 and untimed TiFlash aggregates.",
 ).addTarget(
   prometheus.target(
-    'sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}) by (resource_group)',
-    legendFormat="{{resource_group}}-read",
-  )
-).addTarget(
-  prometheus.target(
-    'sum(resource_manager_resource_unit_write_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}) by (resource_group)',
-    legendFormat="{{resource_group}}-write",
+    'max_over_time(' + RUPeakSeries + '[$__interval])' +
+    ' and (min_over_time(' + RUPeakAvailable + '[$__interval]) == 1)' +
+    ' and (count_over_time(' + RUPeakAvailable + '[$__interval]) == $__interval_ms / 60000)' +
+    ' and (count_over_time(' + RUPeakSeries + '[$__interval]) == $__interval_ms / 60000)',
+    legendFormat="{{resource_group}}",
+    interval="1m",
+    intervalFactor=1,
   )
 );
 

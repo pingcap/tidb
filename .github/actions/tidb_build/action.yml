@@ -4,7 +4,7 @@ inputs:
   go-version:
     description: Go version to setup
     required: false
-    default: "1.25"
+    default: "1.26.8"
   bazelrc:
     description: Bazelrc content from secrets
     required: true
