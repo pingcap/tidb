@@ -237,16 +237,30 @@ func (s *mockStore) StartGCWorker() error          { panic("not implemented") }
 func (s *mockStore) Name() string                  { return "mockStore" }
 func (s *mockStore) Describe() string              { return "" }
 
-func TestSkipEmptyIPNodesForTiDBTypeCoprocessor(t *testing.T) {
-	originIP := config.GetGlobalConfig().AdvertiseAddress
-	config.GetGlobalConfig().AdvertiseAddress = config.UnavailableIP
-	defer func() { config.GetGlobalConfig().AdvertiseAddress = originIP }()
+func TestSkipNonServingTiDBRPCNodesForTiDBTypeCoprocessor(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	bytes, err := json.Marshal(map[string]any{
+		"br": map[string]any{
+			"ddl_id":            "br",
+			"ip":                "127.0.0.1",
+			"status_port":       10080,
+			"tidb_rpc_disabled": true,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo",
+		fmt.Sprintf("return(`%s`)", string(bytes)),
+	))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"))
+	})
+
 	rows := tk.MustQuery("select * from information_schema.cluster_slow_query").Rows()
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
-	// the TiDB node is skipped because it does not has IP
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	require.Equal(t, 0, len(rows))
 }
 

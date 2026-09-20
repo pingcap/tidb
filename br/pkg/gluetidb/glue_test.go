@@ -101,3 +101,21 @@ func TestTheSessionIsoation(t *testing.T) {
 		"test": infos,
 	}))
 }
+
+func TestBRDomainDoesNotServeTiDBRPC(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	dom.Close()
+	g := New()
+	_, err := g.CreateSession(store)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		existDom, _ := session.GetDomain(nil)
+		if existDom != nil {
+			existDom.Close()
+		}
+	})
+
+	brDom, err := g.GetDomain(store)
+	require.NoError(t, err)
+	require.False(t, brDom.InfoSyncer().ServerInfoSyncer().GetLocalServerInfo().CanServeTiDBRPC())
+}

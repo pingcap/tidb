@@ -76,11 +76,20 @@ type StaticInfo struct {
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
+	// TiDBRPCDisabled marks that this process should not be selected as a TiDB
+	// RPC target, such as standalone BR. Missing/false means the node can serve
+	// TiDB-type RPC requests, which keeps compatibility with older server info.
+	TiDBRPCDisabled bool `json:"tidb_rpc_disabled,omitempty"`
 }
 
 // IsAssumed checks if the StaticInfo is assumed to be in a keyspace other than its own.
 func (i *StaticInfo) IsAssumed() bool {
 	return i.AssumedKeyspace != ""
+}
+
+// CanServeTiDBRPC checks whether the server can receive TiDB RPC requests.
+func (i *StaticInfo) CanServeTiDBRPC() bool {
+	return !i.TiDBRPCDisabled
 }
 
 // DynamicInfo represents the dynamic information of the server.

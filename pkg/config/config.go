@@ -142,7 +142,6 @@ const (
 	maxOfMaxAllowedPacket = 1 << 30
 	// DefMaxAllowedPacket is the default value of max_allowed_packet.
 	DefMaxAllowedPacket = 64 << 20
-	UnavailableIP       = "<nil>"
 )
 
 // Valid config maps
@@ -277,6 +276,9 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
+	// TiDBRPCDisabled indicates this process should not be selected as a TiDB RPC
+	// target. Standalone BR sets it. It is process-local and not user-facing config.
+	TiDBRPCDisabled bool `toml:"-" json:"-"`
 	// EnableTelemetry enables the usage data print to log.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
