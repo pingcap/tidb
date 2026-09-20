@@ -751,10 +751,16 @@ impl RangeDetacher<'_> {
     /// Go `buildRangeOnColsByCNFCond` (`ranger.go:553`): the leading eq/in
     /// chain appends column by column; the tail's non-equal conditions
     /// intersect into ONE more column's points.
+    ///
+    /// Go returns `accessConds[:x]` / `accessConds[x:]` slices that SHARE
+    /// the caller's backing array, so the common path deep-copies nothing.
+    /// Taking the `Vec` by value and splitting with `split_off` gives the
+    /// same zero-expression-clone shape (this runs once per cached-plan
+    /// EXECUTE, so per-call tree clones showed up directly in profiles).
     fn build_range_on_cols_by_cnf_cond(
         &mut self,
         eq_and_in_count: usize,
-        access_conds: &[Expression],
+        mut access_conds: Vec<Expression>,
     ) -> Result<
         (super::types::Ranges, Vec<Expression>, Vec<Expression>),
         super::points::PointBuilderError,
@@ -796,11 +802,8 @@ impl RangeDetacher<'_> {
             ranges = new_ranges;
             if fallback {
                 self.record_range_fallback();
-                return Ok((
-                    ranges,
-                    access_conds[..i].to_vec(),
-                    access_conds[i..].to_vec(),
-                ));
+                let remained = access_conds.split_off(i);
+                return Ok((ranges, access_conds, remained));
             }
         }
         let mut range_points = super::points::get_full_range();
@@ -849,21 +852,19 @@ impl RangeDetacher<'_> {
             ranges = new_ranges;
             if fallback {
                 self.record_range_fallback();
-                return Ok((
-                    ranges,
-                    access_conds[..eq_and_in_count].to_vec(),
-                    access_conds[eq_and_in_count..].to_vec(),
-                ));
+                let remained = access_conds.split_off(eq_and_in_count);
+                return Ok((ranges, access_conds, remained));
             }
         }
-        Ok((ranges, access_conds.to_vec(), Vec::new()))
+        Ok((ranges, access_conds, Vec::new()))
     }
 
-    /// Go `buildCNFIndexRange` (`ranger.go:629`).
+    /// Go `buildCNFIndexRange` (`ranger.go:629`). Takes the conditions by
+    /// value like Go passes the slice header: no expression is cloned.
     fn build_cnf_index_range(
         &mut self,
         eq_and_in_count: usize,
-        access_conds: &[Expression],
+        access_conds: Vec<Expression>,
     ) -> Result<
         (super::types::Ranges, Vec<Expression>, Vec<Expression>),
         super::points::PointBuilderError,
@@ -885,7 +886,7 @@ impl RangeDetacher<'_> {
         consider_dnf: bool,
     ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
         let mut res = DetachRangeResult::default();
-        let extraction = extract_eq_and_in_condition_in(
+        let mut extraction = extract_eq_and_in_condition_in(
             conditions,
             self.cols,
             self.lengths,
@@ -897,8 +898,10 @@ impl RangeDetacher<'_> {
         }
         let mut filter_conds = extraction.filters;
         let mut new_conditions = extraction.new_conditions;
-        let (ranges, access_conds, remained_conds) =
-            self.build_range_on_cols_by_cnf_cond(extraction.accesses.len(), &extraction.accesses)?;
+        let (ranges, access_conds, remained_conds) = self.build_range_on_cols_by_cnf_cond(
+            extraction.accesses.len(),
+            std::mem::take(&mut extraction.accesses),
+        )?;
         let mut ranges = ranges;
         let mut access_conds = access_conds;
         if !remained_conds.is_empty() {
@@ -965,7 +968,7 @@ impl RangeDetacher<'_> {
             }
         }
         let (built_ranges, built_access, built_remained) =
-            self.build_cnf_index_range(eq_or_in_count, &access_conds)?;
+            self.build_cnf_index_range(eq_or_in_count, access_conds)?;
         filter_conds.extend(built_remained);
         res.ranges = built_ranges;
         res.access_conds = built_access;
@@ -1397,8 +1400,9 @@ impl RangeDetacher<'_> {
             detach_column_cnf_conditions(&new_conditions, &checker);
         res.access_conds = column_access;
         res.remained_conds = column_filters;
+        let column_access = std::mem::take(&mut res.access_conds);
         let (built_ranges, built_access, built_remained) =
-            self.build_cnf_index_range(0, &res.access_conds.clone())?;
+            self.build_cnf_index_range(0, column_access)?;
         res.remained_conds = append_conditions_if_not_exist(
             std::mem::take(&mut res.remained_conds),
             &built_remained,

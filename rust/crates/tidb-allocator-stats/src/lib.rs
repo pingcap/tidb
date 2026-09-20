@@ -68,6 +68,14 @@ pub fn sample() -> Option<(i64, i64, i64)> {
 }
 
 /// Writes jemalloc's sampled live-allocation profile to `path`.
+///
+/// Sampling is normally OFF at runtime (see `profile_config`): every
+/// sampled allocation pays a libgcc DWARF unwind on the connection
+/// thread, which Go's frame-pointer walk does not. Activating sampling
+/// here means a memory alarm's FIRST dump is (near-)empty and each
+/// later dump accumulates while the alarm keeps firing, which is the
+/// only affordable way to keep Go's `pprof`-on-alarm behaviour without
+/// taxing every request.
 #[cfg(feature = "jemalloc")]
 pub fn dump(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
@@ -79,10 +87,19 @@ pub fn dump(path: &Path) -> io::Result<()> {
     #[cfg(not(unix))]
     let path = CString::new(path.to_string_lossy().as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "profile path contains NUL"))?;
-    let mut path_ptr = path.as_ptr();
-    // SAFETY: `prof.dump` consumes one `const char *`; the CString lives
-    // through the call and no pointer escapes.
+    // SAFETY: each mallctl call passes a NUL-terminated literal option
+    // name and, for the boolean, a valid `bool` in/out parameter; no
+    // pointer escapes beyond the call.
     let result = unsafe {
+        let mut active = true;
+        tikv_jemalloc_sys::mallctl(
+            c"prof.active".as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            (&mut active as *mut bool).cast::<c_void>(),
+            std::mem::size_of::<bool>(),
+        );
+        let mut path_ptr = path.as_ptr();
         tikv_jemalloc_sys::mallctl(
             c"prof.dump".as_ptr(),
             std::ptr::null_mut(),
@@ -111,14 +128,21 @@ mod profile_config {
     #[export_name = "_rjem_malloc_conf"]
     pub static malloc_conf: Option<&'static c_char> = Some(unsafe {
         Pointer {
-            // Sampling is on from process start at Go's `MemProfileRate`
-            // (512 KiB, `lg_prof_sample:19`), so the memory-usage alarm's
-            // first heap record (`recordProfile`) is complete, as Go's is.
-            // Activating only on the first dump was measured to save up to
-            // 9% of connection-thread CPU on allocation-heavy index lookups
-            // (jemalloc unwinds through libgcc's DWARF unwinder, Go walks
-            // frame pointers), but it leaves that first record empty, which
-            // is not Go's behaviour; the rate stays Go's.
+            // `prof:true` bootstraps the profiling structures (so
+            // `prof.dump` and runtime `prof.active` toggles exist), but
+            // `prof.active:false` keeps sampling OFF while requests run.
+            // Every sampled allocation pays a libgcc DWARF unwind here,
+            // where Go's `MemProfileRate` sampling walks frame pointers,
+            // and that unwind tax measured up to 9% of connection-thread
+            // CPU on allocation-heavy index lookups -- a throughput
+            // regression against Go, so it must stay off on the hot path
+            // (`dump` re-activates sampling when a memory alarm asks for
+            // a heap record; that first record is near-empty and later
+            // alarm rounds accumulate, unlike Go whose very first record
+            // is complete).
+            //
+            // `lg_prof_sample:19` keeps Go's `MemProfileRate` (512 KiB)
+            // for when sampling is active.
             //
             // `oversize_threshold:0`: jemalloc returns an allocation above
             // its oversize threshold (8 MiB) to the OS the moment it is
@@ -129,7 +153,7 @@ mod profile_config {
             // memory on its own pace; the ordinary dirty-page decay
             // (`dirty_decay_ms`, 10 s) is jemalloc's counterpart, and this
             // setting routes huge allocations through it.
-            bytes: &b"prof:true,lg_prof_sample:19,oversize_threshold:0\0"[0],
+            bytes: &b"prof:true,prof.active:false,lg_prof_sample:19,oversize_threshold:0\0"[0],
         }
         .chars
     });

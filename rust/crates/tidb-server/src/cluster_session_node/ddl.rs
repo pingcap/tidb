@@ -38,9 +38,10 @@ use tidb_exec::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
 use tidb_exec::ddl_systable::MinJobIdRefresher;
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
+use tidb_exec::ddl_job_table::DdlJobTable;
 use tidb_exec::real_tikv_ddl::{
-    commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs,
-    load_history_persisted_ddl_job, load_min_persisted_ddl_job_id,
+    commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs_cached,
+    load_history_persisted_ddl_job, load_min_persisted_ddl_job_id_cached,
     run_persisted_check_constraint_job_to_completion,
     run_persisted_create_schema_job_to_completion, run_persisted_create_table_job_to_completion,
     run_persisted_create_tables_job_to_completion, run_persisted_drop_schema_job_to_completion,
@@ -207,11 +208,16 @@ where
             return;
         }
         Self::refresh_server_state(server_state.as_ref(), &server_state_context, owner.as_ref());
+        // The bootstrap `mysql.tidb_ddl_job` layout is located once and kept
+        // across ticks; each tick still reads its rows from a fresh
+        // snapshot. See `load_active_persisted_ddl_jobs_cached`.
+        let mut cached_job_table: Option<DdlJobTable> = None;
         while !stop.load(Ordering::Acquire) {
-            match load_active_persisted_ddl_jobs(
+            match load_active_persisted_ddl_jobs_cached(
                 Arc::clone(&opener),
                 timeout,
                 min_job_id_refresher.current_min_job_id(),
+                &mut cached_job_table,
             ) {
                 Ok(jobs) => {
                     for job in jobs {
@@ -560,9 +566,15 @@ where
                 let refresher = Arc::clone(&min_job_id_refresher);
                 let opener = Arc::clone(&opener);
                 move || {
+                    let mut cached_job_table: Option<DdlJobTable> = None;
                     refresher.start(&min_job_id_stopped, |previous| {
-                        load_min_persisted_ddl_job_id(Arc::clone(&opener), timeout, previous)
-                            .map_err(|error| error.to_string())
+                        load_min_persisted_ddl_job_id_cached(
+                            Arc::clone(&opener),
+                            timeout,
+                            previous,
+                            &mut cached_job_table,
+                        )
+                        .map_err(|error| error.to_string())
                     });
                 }
             })
