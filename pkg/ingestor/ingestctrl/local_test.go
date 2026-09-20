@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
-	"google.golang.org/grpc/credentials/insecure"
 	"math"
 	"math/rand"
 	"path"
@@ -79,6 +78,7 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/status"
 )
