@@ -2442,7 +2442,7 @@ func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
 	do.wg.Run(do.deltaUpdateTickerWorker, "deltaUpdateTickerWorker")
 	do.wg.Run(do.dumpColStatsUsageWorker, "dumpColStatsUsageWorker")
-	do.wg.Run(func() { waitStartTask(do, do.gcStatsWorker) }, "gcStatsWorker")
+	do.wg.Run(do.runGCStatsWorker, "gcStatsWorker")
 
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
@@ -2671,6 +2671,18 @@ func (*Domain) deltaUpdateTickerWorkerExitPreprocessing(statsHandle *handle.Hand
 	}
 }
 
+// runGCStatsWorker owns stats-owner cleanup even when domain shutdown wins
+// the race with initial statistics loading.
+func (do *Domain) runGCStatsWorker() {
+	defer do.gcStatsWorkerExitPreprocessing()
+	select {
+	case <-do.StatsHandle().InitStatsDone:
+	case <-do.exit:
+		return
+	}
+	do.gcStatsWorker()
+}
+
 func (do *Domain) gcStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)
 	logutil.BgLogger().Info("gcStatsWorker started.")
@@ -2691,7 +2703,6 @@ func (do *Domain) gcStatsWorker() {
 	for {
 		select {
 		case <-do.exit:
-			do.gcStatsWorkerExitPreprocessing()
 			return
 		case <-gcStatsTicker.C:
 			if !do.statsOwner.IsOwner() {

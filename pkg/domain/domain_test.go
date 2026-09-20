@@ -32,10 +32,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -513,4 +515,20 @@ func TestDeferFn(t *testing.T) {
 	require.False(t, c)
 	require.True(t, d)
 	require.Len(t, df.data, 1)
+}
+
+type statsOwnerCloseCounter struct {
+	owner.Manager
+	closes int
+}
+
+func (o *statsOwnerCloseCounter) Close() { o.closes++ }
+
+func TestGCStatsOwnerClosesBeforeInitialStatsReady(t *testing.T) {
+	owner := &statsOwnerCloseCounter{}
+	dom := &Domain{exit: make(chan struct{}), statsLease: time.Second, statsOwner: owner}
+	dom.statsHandle.Store(&handle.Handle{InitStatsDone: make(chan struct{})})
+	close(dom.exit)
+	dom.runGCStatsWorker()
+	require.Equal(t, 1, owner.closes, "stats owner must stop even if initialization never completed")
 }

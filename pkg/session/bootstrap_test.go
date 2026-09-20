@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1596,12 +1595,6 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer140(t *testing.T) {
-	// These metadata upgrade tests restart domains immediately; asynchronous stats
-	// initialization is unrelated to the schema assertions and can outlive teardown.
-	oldStatsLease := time.Duration(atomic.LoadInt64(&statsLease))
-	DisableStats4Test()
-	t.Cleanup(func() { SetStatsLease(oldStatsLease) })
-
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -2555,12 +2548,6 @@ func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer219(t *testing.T) {
-	// These metadata upgrade tests restart domains immediately; asynchronous stats
-	// initialization is unrelated to the schema assertions and can outlive teardown.
-	oldStatsLease := time.Duration(atomic.LoadInt64(&statsLease))
-	DisableStats4Test()
-	t.Cleanup(func() { SetStatsLease(oldStatsLease) })
-
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
