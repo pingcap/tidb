@@ -2848,7 +2848,7 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 				t.Skip("diagnosticmode.SetForTest requires the intest build tag")
 			}
 			t.Cleanup(diagnosticmode.SetForTest(diagnostic))
-			newPDClient = func(ctx context.Context, _ pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, opts ...opt.ClientOption) (pd.Client, error) {
+			newPDClient = func(ctx context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, opts ...opt.ClientOption) (pd.Client, error) {
 				options := opt.NewOption()
 				for _, apply := range opts {
 					apply(options)

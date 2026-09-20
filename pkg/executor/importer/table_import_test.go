@@ -245,7 +245,7 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 				t.Skip("diagnosticmode.SetForTest requires the intest build tag")
 			}
 			t.Cleanup(diagnosticmode.SetForTest(diagnostic))
-			NewClientWithAPIContext = func(ctx context.Context, _ pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, opts ...opt.ClientOption) (pd.Client, error) {
+			NewClientWithContext = func(ctx context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, opts ...opt.ClientOption) (pd.Client, error) {
 				options := opt.NewOption()
 				for _, apply := range opts {
 					apply(options)
