@@ -3441,3 +3441,31 @@ playground on its existing data (`tiup playground --tag perfgoal2`)
 brought everything back with the `sbtest` data intact. A `pkill -f "tiup
 playground"` also killed the driving shell (its own command line carries
 that text); `pkill -x` on the process names is what worked.
+
+## 2026-09-20: the charset normalization runs in Go's per-path order --
+## the full load and the diff path differ, observably
+
+Re-reading both Go call sites of the two conversions ported in the previous
+entry: the full load (`fetchSchemasWithTables`, `loader.go:528-535`) runs
+`ConvertOldVersionUTF8ToUTF8MB4IfNeed` first and
+`ConvertCharsetCollateToLowerCaseIfNeed` second; the diff path
+(`applyCreateTable`, `builder.go:868-869`) runs them the other way round.
+The previous entry's port used the diff order on both paths. The order is
+observable because the `utf8` comparison is case-sensitive: a pre-version-2
+table stored as `UTF8` (mixed case is exactly what the lower-casing exists
+for) stays `utf8` after a full load in Go and becomes `utf8mb4` after a
+diff. `normalize_loaded_table_info` is now two functions,
+`normalize_full_loaded_table_info` and `normalize_diff_loaded_table_info`,
+each in its path's order, and the test asserts the two outcomes on the
+same upper-case table (plus the lower-case one that converts on both).
+35/35; `cargo test -p tidb-exec --lib -- catalog` 10/10; clippy clean on
+every touched line.
+
+Also compared, matching: Go `ListTables` filters fields on the bare
+`Table` prefix where this port requires `Table:` -- no other stored field
+prefix starts with `Table` (`meta.go:84-99`), so the two select the same
+fields; `ListDatabases` reads every field of `DBs` and this port's `DB:`
+filter is a no-op on real data; `GetTable`'s `checkDBExists` failure and
+this port's absent-table-key `MissingObject` both end in the full load.
+Not mirrored, deliberately: repair-mode filtering on the full load
+(`RepairInfo`), a feature this node does not have.

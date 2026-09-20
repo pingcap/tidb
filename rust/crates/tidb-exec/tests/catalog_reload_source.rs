@@ -607,12 +607,22 @@ fn charsets(table: &tidb_model::table_info::TableInfo) -> (String, String, Vec<(
 /// Go's builder normalizes every loaded `TableInfo`
 /// (`ConvertCharsetCollateToLowerCaseIfNeed` below version 3,
 /// `ConvertOldVersionUTF8ToUTF8MB4IfNeed` below version 2 with the default
-/// `treat-old-version-utf8-as-utf8mb4`), on the full load and on a diff
-/// alike; a version-3 table is stored as is.
+/// `treat-old-version-utf8-as-utf8mb4`) -- in one order on the full load
+/// (`loader.go:528-535`: `utf8` conversion, then lower-casing) and the other
+/// on a diff (`builder.go:868-869`: lower-casing, then `utf8` conversion).
+/// The order shows on a pre-version-2 table stored in upper case: `UTF8`
+/// stays `utf8` on the full load and becomes `utf8mb4` on a diff. A
+/// version-3 table is stored as is on both.
 #[test]
 fn old_table_infos_are_normalized_on_load_like_gos_builder() {
     let mut snapshot = RecordedSnapshot::default();
     snapshot.put(key::database_kv_key(3), GO_DBINFO);
+    snapshot.put(
+        key::table_kv_key(3, 70),
+        go_old_table(
+            70, "V1l", "v1l", 1, "utf8", "utf8_bin", 1, "utf8", "utf8_bin",
+        ),
+    );
     snapshot.put(
         key::table_kv_key(3, 71),
         go_old_table(71, "V1", "v1", 1, "UTF8", "UTF8_BIN", 1, "UTF8", "UTF8_BIN"),
@@ -638,24 +648,29 @@ fn old_table_infos_are_normalized_on_load_like_gos_builder() {
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 73));
     let catalog = load_cluster_catalog(&mut snapshot).expect("startup load");
 
+    let expect = |charset: &str, collate: &str| {
+        (
+            charset.to_owned(),
+            collate.to_owned(),
+            vec![(charset.to_owned(), collate.to_owned()); 2],
+        )
+    };
+    let (_, v1l) = catalog.find_table("campaign", "v1l").expect("v1l");
+    assert_eq!(
+        charsets(v1l),
+        expect("utf8mb4", "utf8mb4_bin"),
+        "version 1, lower case: utf8 becomes utf8mb4"
+    );
     let (_, v1) = catalog.find_table("campaign", "v1").expect("v1");
     assert_eq!(
         charsets(v1),
-        (
-            "utf8mb4".to_owned(),
-            "utf8mb4_bin".to_owned(),
-            vec![("utf8mb4".to_owned(), "utf8mb4_bin".to_owned()); 2]
-        ),
-        "version 1: lower-cased, then utf8 becomes utf8mb4"
+        expect("utf8", "utf8_bin"),
+        "version 1, upper case, full load: the utf8 conversion runs before the lower-casing and misses UTF8"
     );
     let (_, v2) = catalog.find_table("campaign", "v2").expect("v2");
     assert_eq!(
         charsets(v2),
-        (
-            "utf8".to_owned(),
-            "utf8_bin".to_owned(),
-            vec![("utf8".to_owned(), "utf8_bin".to_owned()); 2]
-        ),
+        expect("utf8", "utf8_bin"),
         "version 2: lower-cased only"
     );
     let (_, v3) = catalog.find_table("campaign", "v3").expect("v3");
@@ -669,7 +684,7 @@ fn old_table_infos_are_normalized_on_load_like_gos_builder() {
         "version 3: stored as is"
     );
 
-    // The diff path normalizes the same way.
+    // The diff path lower-cases first, so the same upper-case table converts.
     snapshot.put(
         key::table_kv_key(3, 74),
         go_old_table(
@@ -682,10 +697,10 @@ fn old_table_infos_are_normalized_on_load_like_gos_builder() {
         "old table by diff",
     );
     let (_, v1b) = next.find_table("campaign", "v1b").expect("v1b");
-    assert_eq!(charsets(v1b).0, "utf8mb4");
     assert_eq!(
-        charsets(v1b).2[0],
-        ("utf8mb4".to_owned(), "utf8mb4_bin".to_owned())
+        charsets(v1b),
+        expect("utf8mb4", "utf8mb4_bin"),
+        "version 1, upper case, diff: lower-cased first, then utf8 becomes utf8mb4"
     );
 }
 

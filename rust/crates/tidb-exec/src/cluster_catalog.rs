@@ -231,36 +231,38 @@ pub(crate) fn load_database_tables<S: MetaSnapshot>(
         }
         let mut table = value::parse_table_info(&stored, db_id)
             .map_err(|error| ClusterCatalogError::Decode(format!("TableInfo: {error}")))?;
-        normalize_loaded_table_info(&mut table);
+        normalize_full_loaded_table_info(&mut table);
         tables.push(table);
     }
     Ok(tables)
 }
 
-/// What Go's builder does to every `TableInfo` it loads, on the full load
-/// (`loader.go:530-535`) and on a diff (`applyCreateTable`,
-/// `builder.go:868-869`) alike: `ConvertCharsetCollateToLowerCaseIfNeed`
-/// (`builder.go:936-946`) lower-cases the table's and every column's charset
-/// and collation for a `TableInfo` older than version 3, then
-/// `ConvertOldVersionUTF8ToUTF8MB4IfNeed` (`:949-963`) turns a pre-version-2
-/// table's `utf8` -- and each pre-version-2 column's -- into
+/// Go `ConvertCharsetCollateToLowerCaseIfNeed` (`builder.go:936-946`): a
+/// `TableInfo` older than version 3 gets its own and every column's charset
+/// and collation lower-cased.
+fn lower_case_charsets(table: &mut TableInfo) {
+    if table.version >= TABLE_INFO_VERSION3 {
+        return;
+    }
+    table.charset = table.charset.to_lowercase();
+    table.collate = table.collate.to_lowercase();
+    for column in table.columns.iter_handles() {
+        // Go dereferences each `*ColumnInfo`: a stored null is corrupt.
+        let column = column.expect("nil column in stored TableInfo");
+        let mut column = column.write();
+        let charset = column.get_charset().to_lowercase();
+        let collate = column.get_collate().to_lowercase();
+        column.set_charset(charset);
+        column.set_collate(collate);
+    }
+}
+
+/// Go `ConvertOldVersionUTF8ToUTF8MB4IfNeed` (`builder.go:949-963`): a
+/// pre-version-2 table's `utf8` -- and each pre-version-2 column's -- becomes
 /// `utf8mb4`/`utf8mb4_bin` when `treat-old-version-utf8-as-utf8mb4` is on
 /// (Go's default), read from the global config as Go reads
-/// `config.GetGlobalConfig()`.
-pub(crate) fn normalize_loaded_table_info(table: &mut TableInfo) {
-    if table.version < TABLE_INFO_VERSION3 {
-        table.charset = table.charset.to_lowercase();
-        table.collate = table.collate.to_lowercase();
-        for column in table.columns.iter_handles() {
-            // Go dereferences each `*ColumnInfo`: a stored null is corrupt.
-            let column = column.expect("nil column in stored TableInfo");
-            let mut column = column.write();
-            let charset = column.get_charset().to_lowercase();
-            let collate = column.get_collate().to_lowercase();
-            column.set_charset(charset);
-            column.set_collate(collate);
-        }
-    }
+/// `config.GetGlobalConfig()`. The comparison is Go's, case-sensitive.
+fn old_utf8_to_utf8mb4(table: &mut TableInfo) {
     if table.version >= TABLE_INFO_VERSION2
         || !tidb_config::config_tree::config::get_global_config().treat_old_version_utf8_as_utf8mb4
     {
@@ -279,6 +281,25 @@ pub(crate) fn normalize_loaded_table_info(table: &mut TableInfo) {
             column.set_collate("utf8mb4_bin");
         }
     }
+}
+
+/// What Go's full load does to every `TableInfo` it lists
+/// (`fetchSchemasWithTables`, `loader.go:528-535`): the `utf8` conversion
+/// first, then the lower-casing. The order is Go's and it is observable: a
+/// pre-version-2 table stored as `UTF8` stays `utf8` here (the conversion's
+/// case-sensitive comparison misses it), where the diff path below makes it
+/// `utf8mb4`.
+pub(crate) fn normalize_full_loaded_table_info(table: &mut TableInfo) {
+    old_utf8_to_utf8mb4(table);
+    lower_case_charsets(table);
+}
+
+/// What Go's `applyCreateTable` does to the `TableInfo` a diff reads
+/// (`builder.go:868-869`): the lower-casing first, then the `utf8`
+/// conversion.
+pub(crate) fn normalize_diff_loaded_table_info(table: &mut TableInfo) {
+    lower_case_charsets(table);
+    old_utf8_to_utf8mb4(table);
 }
 
 /// Why one loaded table cannot be served by the bounded read path.

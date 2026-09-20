@@ -42,7 +42,7 @@ use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 
 use crate::cluster_catalog::{
-    load_cluster_catalog, load_database_tables, normalize_loaded_table_info, ClusterCatalog,
+    load_cluster_catalog, load_database_tables, normalize_diff_loaded_table_info, ClusterCatalog,
     ClusterCatalogError, LoadedDatabase, MetaSnapshot,
 };
 
@@ -799,7 +799,7 @@ fn create_table<S: MetaSnapshot>(
     };
     let mut table = value::parse_table_info(&stored, db_id)
         .map_err(|error| ClusterCatalogError::Decode(format!("TableInfo {table_id}: {error}")))?;
-    normalize_loaded_table_info(&mut table);
+    normalize_diff_loaded_table_info(&mut table);
     database.tables.retain(|existing| existing.id != table.id);
     database.tables.push(table);
     Ok(Ok(()))
