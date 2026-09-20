@@ -44,7 +44,7 @@ func TestTiDBServerGoroutinesInDiagnosticMode(t *testing.T) {
 		t.Skip("diagnosticmode.SetForTest requires the intest build tag")
 	}
 	testsetup.SetupForCommonTest()
-	restoreMode := diagnosticmode.SetForTest(false)
+	restoreMode := diagnosticmode.SetForTest(true)
 	t.Cleanup(restoreMode)
 	enableServerRunInGoTest(t)
 
