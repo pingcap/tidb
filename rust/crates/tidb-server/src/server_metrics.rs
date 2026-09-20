@@ -57,9 +57,19 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
     collector: prometheus::Result<C>,
 ) -> C {
     let collector = collector.expect("valid server metric definition");
-    prometheus::default_registry()
-        .register(Box::new(collector.clone()))
-        .expect("server metric registered once");
+    if let Err(error) = prometheus::default_registry().register(Box::new(collector.clone())) {
+        // A duplicate metric family must not take the node down: the first
+        // registration keeps serving the family, so the data Go would
+        // export is still exported. Warn once at startup instead.
+        let names: Vec<String> = collector
+            .desc()
+            .iter()
+            .map(|desc| desc.fq_name.to_owned())
+            .collect();
+        eprintln!(
+            "[[server metric skipped as already registered: {error:?} for {names:?}]]"
+        );
+    }
     collector
 }
 
@@ -821,5 +831,32 @@ mod init_tests {
         ] {
             assert!(body.contains(family), "{family} missing");
         }
+    }
+}
+
+#[cfg(test)]
+mod register_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_family_registration_warns_instead_of_panicking() {
+        // Two collectors declaring the SAME family name: the first register
+        // wins the registry slot, the second must be skipped with a warning
+        // (never panic) while remaining usable for child-materialization.
+        let first = register(CounterVec::new(
+            Opts::new("tidb_server_register_probe", "register probe."),
+            &["kind"],
+        ));
+        let second = register(CounterVec::new(
+            Opts::new("tidb_server_register_probe", "register probe."),
+            &["kind"],
+        ));
+        first.with_label_values(&["a"]).inc();
+        // The skipped collector still materializes children for its own
+        // gather snapshot, without corrupting the registered family.
+        second.with_label_values(&["a"]).inc();
+        first.with_label_values(&["a"]).inc();
+        assert_eq!(first.with_label_values(&["a"]).get(), 2.0);
+        assert_eq!(second.with_label_values(&["a"]).get(), 1.0);
     }
 }

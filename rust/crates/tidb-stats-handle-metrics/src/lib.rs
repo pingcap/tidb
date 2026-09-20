@@ -423,39 +423,10 @@ static MANUAL_ANALYZE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
     metric
 });
 
-static PSEUDO_ESTIMATION_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
-    let metric = CounterVec::new(
-        Opts::new(
-            "pseudo_estimation_total",
-            "counter of pseudo estimation from stats",
-        )
-        .namespace("tidb")
-        .subsystem("statistics"),
-        &["type"],
-    )
-    .expect("valid pseudo estimation metric");
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .expect("pseudo estimation metric is registered once");
-    metric
-});
-
 /// Go `ManualAnalyzeCounter`.
 #[must_use]
 pub fn manual_analyze_total_succ() -> Counter {
     MANUAL_ANALYZE_COUNTER.with_label_values(&["succ"])
-}
-
-/// Go `PseudoEstimation` nodata arm.
-#[must_use]
-pub fn pseudo_estimation_nodata() -> Counter {
-    PSEUDO_ESTIMATION_COUNTER.with_label_values(&["nodata"])
-}
-
-/// Go `PseudoEstimation` outdate arm.
-#[must_use]
-pub fn pseudo_estimation_outdate() -> Counter {
-    PSEUDO_ESTIMATION_COUNTER.with_label_values(&["outdate"])
 }
 
 /// Materializes the statistics series Go's bootstrap writes: the health
@@ -471,6 +442,4 @@ pub fn init_dashboard_series() {
     LazyLock::force(&SYNC_LOAD_TIMEOUT_TOTAL);
     LazyLock::force(&SYNC_LOAD_DEDUP_TOTAL);
     let _ = MANUAL_ANALYZE_COUNTER.with_label_values(&["succ"]);
-    let _ = PSEUDO_ESTIMATION_COUNTER.with_label_values(&["nodata"]);
-    let _ = PSEUDO_ESTIMATION_COUNTER.with_label_values(&["outdate"]);
 }
