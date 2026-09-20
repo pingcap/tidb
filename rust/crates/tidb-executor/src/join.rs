@@ -197,6 +197,11 @@ pub enum JoinKind {
     LeftOuterSemi,
     /// `NOT EXISTS`: emit the left row once when no right row matches.
     AntiSemi,
+    /// Go `AntiLeftOuterSemiJoin`: emit every left row with a 0/1/NULL match
+    /// marker, inverted from [`Self::LeftOuterSemi`] -- a same-key match is
+    /// `0`, no match at all is `1`, and a match that could only be confirmed
+    /// or refused through a NULL comparison is `NULL`.
+    AntiLeftOuterSemi,
 }
 
 /// The hash path's live state; absent until the first `next()`, and never
@@ -1373,6 +1378,16 @@ pub struct JoinExec<C: Columns> {
     ctx: C,
     /// The indexable `col = col` conjuncts; empty means the nested loop.
     keys: Vec<EquiKey>,
+    /// Go `HashContext.NaKeyColIdx`: the null-aware key conjuncts a `NOT IN`
+    /// / `!= ALL` rewrite marked `IsEQCondFromIn` (see
+    /// [`crate::joiner::is_eq_cond_from_in`]). Disjoint from `keys` in
+    /// practice -- Go's own NAAJ conversion only fires when
+    /// `EqualConditions` is empty -- and, unlike an ordinary equality, a
+    /// build row whose key holds a NULL is not dropped: it is indexed into
+    /// [`hash_join::BuildTable`]'s null bucket instead, which is what lets
+    /// the probe answer `NULL` rather than silently treating the row as a
+    /// non-match.
+    na_keys: Vec<EquiKey>,
     /// Nested loop only: whether its single all-at-once batch was emitted.
     emitted: bool,
     hash: Option<HashState>,
@@ -1491,13 +1506,21 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let output = JoinOutput::all(kind, left_width, right_types.len());
-        let native_hash =
-            kind == JoinKind::AntiSemi && conditions.iter().any(crate::joiner::is_eq_cond_from_in);
+        let native_hash = matches!(kind, JoinKind::AntiSemi | JoinKind::AntiLeftOuterSemi)
+            && conditions.iter().any(crate::joiner::is_eq_cond_from_in);
         JoinExec {
             meta,
             output,
             kind,
             native_hash,
+            // Populated later, if at all, by [`Self::set_na_condition_count`]:
+            // unlike `native_hash` above, `is_eq_cond_from_in` alone cannot
+            // tell a genuinely NAAJ-converted equality apart from one that
+            // carries the same marker but stayed an ordinary residual
+            // condition because NAAJ was not applied (disabled by session
+            // variable, or not `canBeNAAJ`-eligible) -- only the physical
+            // plan's own `na_equal_conditions` count can.
+            na_keys: Vec::new(),
             concurrency: 1,
             outer_filter: Vec::new(),
             filter_is_left: true,
@@ -1612,6 +1635,52 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         self.concurrency = parallelism.max(1);
     }
 
+    /// Reclassifies the LAST `na_condition_count` entries of the `ON`
+    /// clause this join was built with as null-aware key conjuncts (Go
+    /// `PhysicalHashJoin.NAEQConditions`), moving them out of
+    /// `residual_conditions` and into `na_keys`.
+    /// `physical_builder::build_join_over_children` appends
+    /// `join.na_equal_conditions` at the TAIL of the `conditions` this join
+    /// is constructed with, after every ordinary equality and before any
+    /// other residual, so their position is unambiguous; each is always a
+    /// bare `eq(col, col)`, never an `AND`-compound condition, so it
+    /// contributes exactly one entry to the flattened conjunct list this
+    /// recomputes.
+    ///
+    /// This is deliberately a count, not a re-scan for
+    /// [`crate::joiner::is_eq_cond_from_in`]: that marker survives on the
+    /// expression whether or not the planner actually converted the join
+    /// (Go's own NAAJ conversion is gated on `OptimizerEnableNAAJ` and on
+    /// `EqualConditions` being empty), so re-deriving eligibility from it
+    /// here would treat an ordinary residual-evaluated anti-join the same
+    /// as a converted one. Only the physical plan's own count can tell them
+    /// apart.
+    pub(crate) fn set_na_condition_count(&mut self, na_condition_count: usize) {
+        if na_condition_count == 0 {
+            return;
+        }
+        let left_width = self.left_types.len();
+        let flattened: Vec<&Expression> = self
+            .conditions
+            .iter()
+            .flat_map(crate::hash_join::split_conjuncts)
+            .collect();
+        let na_start = flattened.len().saturating_sub(na_condition_count);
+        self.na_keys = flattened[na_start..]
+            .iter()
+            .filter_map(|condition| crate::hash_join::na_equi_key(condition, left_width))
+            .collect();
+        let split = crate::hash_join::split_equi(&self.conditions, left_width);
+        self.residual_conditions = flattened
+            .iter()
+            .zip(split.equal_mask)
+            .enumerate()
+            .filter(|(index, (_, is_equal))| !is_equal && *index < na_start)
+            .map(|(_, (condition, _))| (*condition).clone())
+            .collect();
+        self.native_hash = self.native_hash || !self.na_keys.is_empty();
+    }
+
     /// Whether the build side has moved to a spill file (Go
     /// `hashRowContainer.AlreadySpilledSafeForTest`). For tests and
     /// diagnostics.
@@ -1715,7 +1784,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             JoinKind::Right => return false,
             // Semi joins always preserve and return the logical left rows,
             // including when HashJoin v2 builds that side and probes right.
-            JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => return true,
+            JoinKind::Semi
+            | JoinKind::LeftOuterSemi
+            | JoinKind::AntiSemi
+            | JoinKind::AntiLeftOuterSemi => return true,
             JoinKind::Inner => {}
         }
         match &self.index_lookup {
@@ -1740,7 +1812,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         matches!(
             (self.kind, self.hash_build_is_left()),
             (
-                JoinKind::Left | JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi,
+                JoinKind::Left
+                    | JoinKind::Semi
+                    | JoinKind::LeftOuterSemi
+                    | JoinKind::AntiSemi
+                    | JoinKind::AntiLeftOuterSemi,
                 true,
             ) | (JoinKind::Right, false)
         )
@@ -1900,6 +1976,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     req.append_datum(self.output.width(), &Datum::Int(1));
                     break;
                 }
+                JoinKind::AntiLeftOuterSemi => {
+                    self.output.preserved(req, outer_row);
+                    req.append_datum(self.output.width(), &Datum::Int(0));
+                    break;
+                }
                 JoinKind::AntiSemi => break,
             }
         }
@@ -1912,6 +1993,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 JoinKind::LeftOuterSemi => {
                     self.output.preserved(req, outer_row);
                     req.append_datum(self.output.width(), &Datum::Int(0));
+                }
+                JoinKind::AntiLeftOuterSemi => {
+                    self.output.preserved(req, outer_row);
+                    req.append_datum(self.output.width(), &Datum::Int(1));
                 }
                 JoinKind::Inner | JoinKind::Semi => {}
             }
@@ -1995,6 +2080,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     req.append_datum(self.output.width(), &Datum::Int(1));
                     break;
                 }
+                JoinKind::AntiLeftOuterSemi => {
+                    self.append(req, outer_row);
+                    req.append_datum(self.output.width(), &Datum::Int(0));
+                    break;
+                }
                 JoinKind::AntiSemi => break,
             }
         }
@@ -2007,6 +2097,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 JoinKind::LeftOuterSemi => {
                     self.append(req, outer_row);
                     req.append_datum(self.output.width(), &Datum::Int(0));
+                }
+                JoinKind::AntiLeftOuterSemi => {
+                    self.append(req, outer_row);
+                    req.append_datum(self.output.width(), &Datum::Int(1));
                 }
                 JoinKind::Inner | JoinKind::Semi => {}
             }
@@ -4159,7 +4253,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                     output_layout.preserved(&mut output, probe_row);
                                     output.append_datum(output_layout.width(), &Datum::Int(1));
                                 }
-                                JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
+                                JoinKind::Semi
+                                | JoinKind::LeftOuterSemi
+                                | JoinKind::AntiSemi
+                                | JoinKind::AntiLeftOuterSemi => {}
                             }
                             Ok(true)
                         })()?;
@@ -4201,6 +4298,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     JoinKind::LeftOuterSemi => {
                         output_layout.preserved(&mut output, probe_row);
                         output.append_datum(output_layout.width(), &Datum::Int(0));
+                    }
+                    JoinKind::AntiLeftOuterSemi => {
+                        output_layout.preserved(&mut output, probe_row);
+                        output.append_datum(output_layout.width(), &Datum::Int(1));
                     }
                     JoinKind::Inner | JoinKind::Semi => {}
                 }
@@ -4551,7 +4652,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         | JoinKind::Semi
                         | JoinKind::LeftOuterSemi
                         | JoinKind::AntiSemi
-                ) && self.residual_conditions.is_empty()),
+                ) && self.residual_conditions.is_empty()
+                    && self.na_keys.is_empty()),
         );
         table.mem_tracker().attach_to(&self.tracker);
         table.disk_tracker().attach_to(&self.disk_tracker);
@@ -4573,6 +4675,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             self.right.as_deref_mut()
         }
         .ok_or_else(|| ExecError::internal("hash join has no build child"))?;
+        // Go's `updateEQCond` never lets both lists hold real entries at
+        // once: NA keys only ever get built when `EqualConditions` is empty.
+        let na_mode = !self.na_keys.is_empty();
+        let indexing_keys: &[EquiKey] = if na_mode { &self.na_keys } else { &self.keys };
         loop {
             let mut chunk = build.new_chunk();
             build.next(&mut chunk)?;
@@ -4596,11 +4702,25 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 table
-                    .index_chunk_selected(chunk, &self.keys, &build_types, build_is_left, &selected)
+                    .index_chunk_selected(
+                        chunk,
+                        indexing_keys,
+                        &build_types,
+                        build_is_left,
+                        &selected,
+                        na_mode,
+                    )
                     .map_err(build_error)?;
             } else {
                 table
-                    .index_chunk(chunk, &self.keys, &build_types, build_is_left)
+                    .index_chunk_selected(
+                        chunk,
+                        indexing_keys,
+                        &build_types,
+                        build_is_left,
+                        &[],
+                        na_mode,
+                    )
                     .map_err(build_error)?;
             }
             self.memory.check()?;
@@ -4704,6 +4824,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 | JoinKind::LeftOuterSemi
                 | JoinKind::AntiSemi
         ) && self.residual_conditions.is_empty()
+            && self.na_keys.is_empty()
         {
             return self.drain_chunk_backed_probe(req, probe_is_left, &probe_types);
         }
@@ -4719,7 +4840,18 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 return Ok(());
             }
             let probe_row = datum_row(&hash.probe_chunk, hash.probe_row, &probe_types);
-            let key = if hash.probe_selected.is_empty() || hash.probe_selected[hash.probe_row] {
+            let selected = hash.probe_selected.is_empty() || hash.probe_selected[hash.probe_row];
+            if !self.na_keys.is_empty() {
+                if selected {
+                    self.probe_naaj_row(req, &probe_row, probe_is_left)?;
+                }
+                self.hash
+                    .as_mut()
+                    .expect("hash state exists in this arm")
+                    .probe_row += 1;
+                continue;
+            }
+            let key = if selected {
                 row_hash(&self.keys, &probe_row, offset).map_err(key_error)?
             } else {
                 None
@@ -4819,6 +4951,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 req.append_datum(self.output.width(), &Datum::Int(1));
                                 break;
                             }
+                            JoinKind::AntiLeftOuterSemi => {
+                                self.append(req, &probe_row);
+                                req.append_datum(self.output.width(), &Datum::Int(0));
+                                break;
+                            }
                             JoinKind::AntiSemi => break,
                         }
                     }
@@ -4831,6 +4968,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             JoinKind::LeftOuterSemi => {
                                 self.append(req, &probe_row);
                                 req.append_datum(self.output.width(), &Datum::Int(0));
+                            }
+                            JoinKind::AntiLeftOuterSemi => {
+                                self.append(req, &probe_row);
+                                req.append_datum(self.output.width(), &Datum::Int(1));
                             }
                             JoinKind::Inner | JoinKind::Semi => {}
                         }
@@ -4866,13 +5007,20 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                         self.output.datums(req, &probe_row);
                                         req.append_datum(self.output.width(), &Datum::Int(1));
                                     }
+                                    JoinKind::AntiLeftOuterSemi => {
+                                        self.output.datums(req, &probe_row);
+                                        req.append_datum(self.output.width(), &Datum::Int(0));
+                                    }
                                     JoinKind::AntiSemi => {}
                                 }
                             })
                             .map_err(|error| ExecError::SpillFailed(error.to_string()))
                     };
                     result?;
-                    if matches!(self.kind, JoinKind::Semi) && matched {
+                    // A second matching candidate must not append a second
+                    // `<probe, 0>` row, so this stops at the first one.
+                    if matches!(self.kind, JoinKind::Semi | JoinKind::AntiLeftOuterSemi) && matched
+                    {
                         break;
                     }
                 }
@@ -4886,6 +5034,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             self.append(req, &probe_row);
                             req.append_datum(self.output.width(), &Datum::Int(0));
                         }
+                        JoinKind::AntiLeftOuterSemi => {
+                            self.append(req, &probe_row);
+                            req.append_datum(self.output.width(), &Datum::Int(1));
+                        }
                         JoinKind::Inner | JoinKind::Semi => {}
                     }
                 }
@@ -4895,6 +5047,253 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 .expect("hash state exists in this arm")
                 .probe_row += 1;
         }
+    }
+
+    /// Go `joinNAAJMatchProbeSideRow2Chunk`, split into
+    /// [`Self::naaj_same_key_matches`] (Go `GetMatchedRowsAndPtrs` /
+    /// `matchJoinKey`) and [`Self::naaj_null_bucket_matches`] (Go
+    /// `GetNullBucketRows`) / [`Self::naaj_all_rows_match`] (Go
+    /// `GetAllMatchedRows`). `self.na_keys` is non-empty exactly when a
+    /// `NOT IN` / `!= ALL` rewrite left this join with no ordinary equality
+    /// key (`self.keys` stays empty then -- Go's own NAAJ conversion only
+    /// fires when `EqualConditions` is empty), so [`Self::drain_probe_chunk`]
+    /// routes every probe row here instead of its ordinary candidate loop.
+    fn probe_naaj_row(
+        &mut self,
+        req: &mut Chunk,
+        probe_row: &[Datum],
+        probe_is_left: bool,
+    ) -> Result<(), ExecError> {
+        let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
+        let probe_null_bits: Vec<bool> = self
+            .na_keys
+            .iter()
+            .map(|key| matches!(probe_row[offset(key)], Datum::Null))
+            .collect();
+
+        if probe_null_bits.iter().any(|&is_null| is_null) {
+            // The probe key itself holds a NULL: it could still equal any
+            // build row on the columns it IS non-null in, so no bucket can
+            // be ruled out in advance -- a match anywhere settles it.
+            let found =
+                self.naaj_null_bucket_matches(probe_row, probe_is_left, Some(&probe_null_bits))?
+                    || self.naaj_all_rows_match(probe_row, probe_is_left)?;
+            return match self.kind {
+                JoinKind::AntiSemi => {
+                    if !found {
+                        self.append(req, probe_row);
+                    }
+                    Ok(())
+                }
+                JoinKind::AntiLeftOuterSemi => {
+                    self.append(req, probe_row);
+                    req.append_datum(
+                        self.output.width(),
+                        &if found { Datum::Null } else { Datum::Int(1) },
+                    );
+                    Ok(())
+                }
+                _ => Err(ExecError::internal(
+                    "a null-aware anti join probe ran for a non-anti join kind",
+                )),
+            };
+        }
+
+        if self.kind == JoinKind::AntiLeftOuterSemi {
+            // Same-key bucket FIRST: a real match must win over an
+            // unrelated NULL sitting in the null bucket, because it fixes
+            // the scalar at `0` (Go: "we should return the result as
+            // <rhs-row, 0> from same-key bucket rather than <rhs-row, null>
+            // from null bucket").
+            if self.naaj_same_key_matches(probe_row, probe_is_left)? {
+                self.append(req, probe_row);
+                req.append_datum(self.output.width(), &Datum::Int(0));
+                return Ok(());
+            }
+            if self.naaj_null_bucket_matches(probe_row, probe_is_left, None)? {
+                self.append(req, probe_row);
+                req.append_datum(self.output.width(), &Datum::Null);
+                return Ok(());
+            }
+            self.append(req, probe_row);
+            req.append_datum(self.output.width(), &Datum::Int(1));
+            return Ok(());
+        }
+
+        // AntiSemiJoin does not care about a scalar value, so the cheaper
+        // null-bucket check runs first: either bucket having a match
+        // rejects the probe row identically, and the null bucket is
+        // expected to stay small relative to the whole build side.
+        let found = self.naaj_null_bucket_matches(probe_row, probe_is_left, None)?
+            || self.naaj_same_key_matches(probe_row, probe_is_left)?;
+        if !found {
+            self.append(req, probe_row);
+        }
+        Ok(())
+    }
+
+    /// Go `GetMatchedRowsAndPtrs` restricted to `self.na_keys`: the build
+    /// rows hashed under the SAME NA-key columns as `probe_row`, with no
+    /// NA-key NULL of their own (those are never in this bucket), confirmed
+    /// by an exact value comparison -- the hash alone cannot rule out a
+    /// collision -- and by any remaining residual condition. Every caller
+    /// already established that `probe_row`'s NA key holds no NULL.
+    fn naaj_same_key_matches(
+        &mut self,
+        probe_row: &[Datum],
+        probe_is_left: bool,
+    ) -> Result<bool, ExecError> {
+        let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
+        let Some(probe_key) = row_hash(&self.na_keys, probe_row, offset).map_err(key_error)? else {
+            // A NaN key: Go's own hash never buckets one either, so there is
+            // nothing here to find -- the same fallback an ordinary equi-key
+            // NaN already gets.
+            return Ok(false);
+        };
+        let ptrs: Vec<RowPtr> = {
+            let hash = self.hash.as_ref().expect("hash state exists");
+            hash.table.probe(probe_key).collect()
+        };
+        for ptr in ptrs {
+            let key_matches = {
+                let HashState {
+                    table,
+                    build_buf,
+                    build_types,
+                    ..
+                } = self.hash.as_mut().expect("hash state exists");
+                table
+                    .with_row(ptr, build_buf, |build_row| {
+                        equi_keys_equal_row(
+                            &self.na_keys,
+                            probe_row,
+                            probe_is_left,
+                            build_row,
+                            build_types,
+                        )
+                    })
+                    .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                    .map_err(key_error)?
+            };
+            if key_matches && self.naaj_residual_matches(probe_row, ptr, probe_is_left)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Go `GetNullBucketRows`: the build rows in [`hash_join::BuildTable`]'s
+    /// null bucket whose NA columns agree with `probe_row` everywhere
+    /// neither side is NULL there -- a NULL at either side is a wildcard
+    /// that cannot rule the row out, matching Go's own comment ("we can
+    /// take the null as a wildcard symbol"). `probe_null_bits` is `Some`
+    /// when the PROBE row itself has a NULL (its own bits then also act as
+    /// wildcards), `None` when it does not.
+    fn naaj_null_bucket_matches(
+        &mut self,
+        probe_row: &[Datum],
+        probe_is_left: bool,
+        probe_null_bits: Option<&[bool]>,
+    ) -> Result<bool, ExecError> {
+        let entries: Vec<(RowPtr, Vec<bool>)> = {
+            let hash = self.hash.as_ref().expect("hash state exists");
+            hash.table
+                .na_null_entries()
+                .iter()
+                .map(|entry| (entry.ptr, entry.null_bits.clone()))
+                .collect()
+        };
+        for (ptr, null_bits) in entries {
+            let checked_keys: Vec<EquiKey> = self
+                .na_keys
+                .iter()
+                .enumerate()
+                .filter(|&(index, _)| {
+                    !null_bits[index] && !probe_null_bits.is_some_and(|bits| bits[index])
+                })
+                .map(|(_, key)| *key)
+                .collect();
+            let key_matches = {
+                let HashState {
+                    table,
+                    build_buf,
+                    build_types,
+                    ..
+                } = self.hash.as_mut().expect("hash state exists");
+                table
+                    .with_row(ptr, build_buf, |build_row| {
+                        equi_keys_equal_row(
+                            &checked_keys,
+                            probe_row,
+                            probe_is_left,
+                            build_row,
+                            build_types,
+                        )
+                    })
+                    .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                    .map_err(key_error)?
+            };
+            if key_matches && self.naaj_residual_matches(probe_row, ptr, probe_is_left)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Go `GetAllMatchedRows`: every remaining build row -- the whole
+    /// non-null hash table, since `self.na_keys.len() == 1` is the only
+    /// shape this join ever builds today, matching Go's own comment that a
+    /// single-column NA key gives nothing to filter by ("that means the
+    /// NA-Join probe key is directly a (null) <-> (fetch all buckets),
+    /// nothing to do"). Only reached once the probe row's own key already
+    /// holds a NULL, so no bucket can be ruled out.
+    fn naaj_all_rows_match(
+        &mut self,
+        probe_row: &[Datum],
+        probe_is_left: bool,
+    ) -> Result<bool, ExecError> {
+        let ptrs: Vec<RowPtr> = {
+            let hash = self.hash.as_ref().expect("hash state exists");
+            hash.table.na_all_hash_bucket_ptrs()
+        };
+        for ptr in ptrs {
+            if self.naaj_residual_matches(probe_row, ptr, probe_is_left)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Any join condition beyond the NA key equalities themselves -- Go's
+    /// `Joiner.conditions`, evaluated inside `TryToMatchInners`. Empty for
+    /// an ordinary `NOT IN (subquery)` / `!= ALL (subquery)`, so this is
+    /// `Ok(true)` immediately in the common case.
+    fn naaj_residual_matches(
+        &mut self,
+        probe_row: &[Datum],
+        build_ptr: RowPtr,
+        probe_is_left: bool,
+    ) -> Result<bool, ExecError> {
+        if self.residual_conditions.is_empty() {
+            return Ok(true);
+        }
+        let build_row = {
+            let HashState {
+                table,
+                build_buf,
+                build_types,
+                ..
+            } = self.hash.as_mut().expect("hash state exists");
+            table
+                .row(build_ptr, build_buf, build_types)
+                .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+        };
+        let joined = if probe_is_left {
+            self.join_rows(probe_row, &build_row)
+        } else {
+            self.join_rows(&build_row, probe_row)
+        };
+        self.matches(&joined)
     }
 
     /// Chunk-backed steady state for a pure equality hash join. When the
@@ -5068,7 +5467,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                     self.output.preserved(req, probe_row);
                                     req.append_datum(self.output.width(), &Datum::Int(1));
                                 }
-                                JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
+                                JoinKind::Semi
+                                | JoinKind::LeftOuterSemi
+                                | JoinKind::AntiSemi
+                                | JoinKind::AntiLeftOuterSemi => {}
                             }
                             Ok(true)
                         })
@@ -5103,6 +5505,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         JoinKind::LeftOuterSemi => {
                             self.output.preserved(req, probe_row);
                             req.append_datum(self.output.width(), &Datum::Int(0));
+                        }
+                        JoinKind::AntiLeftOuterSemi => {
+                            self.output.preserved(req, probe_row);
+                            req.append_datum(self.output.width(), &Datum::Int(1));
                         }
                         JoinKind::Inner | JoinKind::Semi => {}
                     }
@@ -5250,7 +5656,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let emit = match kind {
                 JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi => !matched,
                 JoinKind::Semi => matched,
-                JoinKind::LeftOuterSemi => true,
+                JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => true,
                 JoinKind::Inner => false,
             };
             if !emit {
@@ -5267,6 +5673,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     JoinKind::LeftOuterSemi => {
                         output.preserved(req, row);
                         req.append_datum(output.width(), &Datum::Int(i64::from(matched)));
+                    }
+                    JoinKind::AntiLeftOuterSemi => {
+                        output.preserved(req, row);
+                        req.append_datum(output.width(), &Datum::Int(i64::from(!matched)));
                     }
                     _ => output.preserved(req, row),
                 })

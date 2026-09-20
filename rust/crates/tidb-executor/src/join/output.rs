@@ -54,7 +54,7 @@ impl JoinOutput {
         let mut output = Self::all(kind, left_width, right_width);
         output.left.clear();
         output.right.clear();
-        let columns = if kind == JoinKind::LeftOuterSemi {
+        let columns = if matches!(kind, JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi) {
             &offsets[..offsets.len().saturating_sub(1)]
         } else {
             offsets

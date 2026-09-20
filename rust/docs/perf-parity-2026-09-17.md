@@ -2490,3 +2490,222 @@ not yet implemented -- this fix's value is closing a correctness risk
 (the dropped-condition bug the naive wiring would have introduced) and
 matching Go's plan SHAPE and session-variable behavior, not yet a measured
 performance improvement).
+
+## Follow-up: the deferred keyed null-aware hash probe, and AntiLeftOuterSemiJoin execution
+
+The previous section's NAAJ fix deliberately kept the O(build side)
+residual-condition scan as the matching mechanism, noting the real
+optimization -- a keyed, null-bucket-aware probe matching Go
+`hash_table_v1.go` / `hash_join_v1.go` -- as future work. This section
+implements that follow-up, and, per an explicit user scope decision made
+during a `AskUserQuestion` call ("Full engine integration... match Go
+strictly everywhere a NAAJ can run"), a second, separate gap discovered
+during the review: `AntiLeftOuterSemiJoin` (the tri-state 0/1/NULL marker
+form of `!= ALL` / `NOT IN` used as a scalar expression, e.g. inside `OR`)
+had NO hash-join execution in Rust at all -- `physical_builder::join_kind`
+returned `DriverError::unsupported` for it -- so any query the planner
+chose to decorrelate to a hash join for this join type would fail. This
+was independent of NAAJ (a plain, non-null-aware `AntiLeftOuterSemiJoin`
+would fail identically), but the SAME null-aware bucket algorithm was
+needed for its NAAJ case, so both are implemented together.
+
+### Root cause and design, confirmed against Go source before writing code
+
+- Go's `CanUseHashJoinV2` explicitly excludes null-aware joins ("null
+  aware join is not supported yet"), and Rust's `can_use_hash_join_v2`
+  already mirrors this. NAAJ therefore only ever reaches the v1-equivalent
+  engine (`join.rs`'s `JoinExec`), never `hash_join_v2.rs` -- confirmed by
+  reading both, so no v2 changes were needed.
+- Go's `getHashJoin`/`exhaust_physical_plans.go` UNCONDITIONALLY builds the
+  right/inner child for `LeftOuterSemiJoin`/`AntiLeftOuterSemiJoin` (never
+  the cost-based "build the outer side" shape used for plain
+  `Semi`/`AntiSemiJoin` under hash-join v2), and Rust's
+  `find_best_task::hash_join_shapes` already mirrors this exactly. This
+  means the "build side is the preserved side" branch of `JoinExec`'s
+  probe loop is structurally unreachable for this join type in both
+  engines, so the new matching logic only needed to handle the ordinary
+  probe-driven branch.
+- Go's parallel/exact-int fast paths never apply to NAAJ either: Rust's
+  own `can_parallelize_exact_int_probe` already requires a non-empty
+  `self.keys`, and NAAJ's real join condition lives in a NEW, disjoint
+  `na_keys` field instead (`self.keys` stays empty, matching Go's
+  `EqualConditions` staying empty) -- so "parallel exact-int workers" from
+  the user's scope decision turned out to be N/A by construction, not
+  something to force. Spill needed no new handling either: the new null
+  bucket stores `RowPtr`s exactly like the existing hash buckets/chains,
+  which already survive a build-side spill (only the row DATA moves to
+  disk; the index structures stay in memory), so it inherits that for
+  free.
+- Read `hash_table_v1.go`'s `PutChunkSelected` (build-side: a null-aware
+  key column collects a per-row bitmap of which columns are NULL,
+  `hashNANullBucket` for any-NULL rows, the ordinary hash table
+  otherwise) and `hash_join_v1.go`'s `joinNAASJMatchProbeSideRow2Chunk` /
+  `joinNAALOSJMatchProbeSideRow2Chunk` (probe-side: the exact
+  bucket-priority order, which differs between `AntiSemiJoin` -- null
+  bucket first, since it doesn't care about the scalar and a NULL
+  anywhere in CNF already settles the outcome -- and
+  `AntiLeftOuterSemiJoin` -- same-key bucket first when the probe key has
+  no NULL, since a real match must fix the scalar at `0` rather than let
+  an unrelated NULL win) in full before writing any Rust code.
+
+### What changed
+
+- `hash_join::BuildTable`: a new `na_null_bucket: Vec<NaNullEntry>` (ptr +
+  per-column null bitmap), populated by `index_chunk_selected`'s new
+  `na_mode` parameter -- a null-aware key's NULL row goes to the null
+  bucket instead of being silently left unindexed, and the exact-int fast
+  path is forced off in this mode (it has no null bucket of its own).
+- `hash_join::na_equi_key` (beside the existing `equi_key`): extracts an
+  `IsEQCondFromIn`-marked conjunct into the same `EquiKey` shape ordinary
+  keys use, so the null-aware key reuses 100% of the existing hash/compare
+  machinery for its non-NULL rows.
+- `join::JoinExec`: a new `na_keys: Vec<EquiKey>` field and
+  `set_na_condition_count`, called ONLY from
+  `physical_builder::build_join_over_children` with
+  `join.na_equal_conditions.len()`. This is a COUNT, not a re-scan for the
+  `IsEQCondFromIn` marker: that marker survives on an expression whether
+  or not the planner actually converted the join to NAAJ (disabled by
+  session variable, or not `canBeNAAJ`-eligible), so re-deriving
+  eligibility from it at the executor would treat an ordinary
+  residual-evaluated anti-join the same as a converted one -- exactly the
+  bug the first attempt at this hit (see Errors below). Only the physical
+  plan's own count can tell them apart, and `na_equal_conditions` is
+  always appended at the tail of the `ON` clause the join is constructed
+  with, so the count unambiguously identifies which flattened conjuncts
+  they are.
+- `join::JoinExec::probe_naaj_row` and its four helpers
+  (`naaj_same_key_matches`, `naaj_null_bucket_matches`,
+  `naaj_all_rows_match`, `naaj_residual_matches`): the exact Go
+  priority algorithm, dispatched from `drain_probe_chunk` whenever
+  `na_keys` is non-empty (before the ordinary candidate-gathering code,
+  which stays completely untouched for every non-NAAJ join).
+- `join::JoinKind::AntiLeftOuterSemi`: a new variant, mirroring
+  `LeftOuterSemi`'s existing 0/1 marker handling everywhere it appears
+  (hash join, index join, index-hash join), inverted (`0` on match, `1`
+  on no match, `NULL` where a NULL made the answer unknown) -- at the
+  SAME fidelity `LeftOuterSemi` already has today (a plain truthy
+  residual check, not itself NULL-aware; only the NAAJ path above gets
+  real 3-valued semantics, matching scope -- fixing `LeftOuterSemi`'s own
+  pre-existing, unrelated gap was out of scope).
+- `physical_builder::join_kind`: no longer refuses
+  `LogicalJoinType::AntiLeftOuterSemi`.
+- `rule_decorrelate.rs`: removed the explicit
+  `apply.join.join_type != LogicalJoinType::AntiLeftOuterSemi` exclusion
+  (a deliberate workaround, per its own comment, for `JoinExec` lacking
+  this join kind) and narrowed the null-aware-marker exclusion from
+  `{LeftOuterSemi, AntiLeftOuterSemi}` to `LeftOuterSemi` alone (Go's
+  `canBeNAAJ` never makes `LeftOuterSemiJoin` NAAJ-eligible in the first
+  place, so its own conversion is left exactly as before).
+
+### Errors and fixes, in the order found
+
+1. First cut derived `na_keys` by re-scanning conditions for
+   `IsEQCondFromIn` directly in `JoinExec::new_with_children`, and
+   subtracted them from `residual_conditions` in the same pass. This
+   silently stopped checking the NA equality altogether for one turn (no
+   consumer existed yet) -- caught before running anything, by re-reading
+   the diff, and fixed by keeping the extraction write-only until the real
+   consumer landed.
+2. Once `probe_naaj_row` exists and the na conjuncts are finally
+   subtracted from `residual_conditions`, two REAL regressions surfaced in
+   the existing NAAJ test suite: `not_in_falls_back_to_a_plain_anti_join_with_naaj_disabled`
+   (2 rows instead of 1) and `not_in_null_aware_anti_join_respects_the_null_trap`
+   (3 rows instead of 0, i.e. the NULL trap not firing at all). Root
+   causes:
+   - The disabled-NAAJ case: `IsEQCondFromIn` marks a condition
+     regardless of whether the planner's NAAJ conversion actually fired
+     (gated on `OptimizerEnableNAAJ` and on `EqualConditions` being
+     empty), so a marker re-scan at the executor could not tell a
+     genuinely converted join from an ordinary residual-evaluated one.
+     Fixed by switching to the count-based `set_na_condition_count`
+     described above.
+   - The NULL-trap case: `drain_probe_chunk`'s existing top dispatch
+     (`if ... && self.residual_conditions.is_empty() { return
+     self.drain_chunk_backed_probe(...) }`) did not know about
+     `na_keys`; once the na conjunct left `residual_conditions`, this
+     condition became true and routed NAAJ into the ordinary
+     chunk-backed fast path (which computes candidates from the still-
+     empty `self.keys`, finding nothing). Fixed by adding
+     `&& self.na_keys.is_empty()` to that guard, and to the analogous
+     `use_exact_int` computation in `build_table` (a cleanliness fix,
+     not a correctness one -- `index_chunk_selected` already forces
+     `exact_int` off in `na_mode` regardless).
+3. `JoinKind::AntiLeftOuterSemi` panicked with an out-of-bounds append
+   the first time a real query reached it end to end
+   (`join/output.rs:123`). `JoinOutput::resolved`'s existing `if kind ==
+   JoinKind::LeftOuterSemi` -- which drops the synthetic marker's offset
+   before mapping the rest to real child columns -- is an equality check,
+   not an exhaustive match, so the compiler's exhaustiveness checking
+   (relied on throughout this change to enumerate every other
+   `JoinKind` match site) could not catch it. Found by testing an actual
+   end-to-end query, not by review; fixed by widening the check to
+   `matches!(kind, LeftOuterSemi | AntiLeftOuterSemi)`. A full grep of
+   every remaining `LeftOuterSemi` occurrence in the join module
+   confirmed no other such non-exhaustive check exists.
+4. `AntiLeftOuterSemi` also could not be reached from ordinary SQL at all
+   before the `rule_decorrelate.rs` change: ANY use of `NOT IN` as a
+   scalar expression (not a plain `WHERE` filter) planned as
+   `LogicalApply`, and its own `apply.cor_cols.is_empty()` "simplify to
+   join" rule had an explicit, commented-as-deliberate exclusion for this
+   exact join type, dating from when `JoinExec` could not execute it.
+   Found by trying to write an end-to-end regression test and observing
+   the plan stayed `Apply` (which already answers correctly via
+   `joiner.rs`'s pre-existing, unrelated `NestedLoopApplyExec` path) --
+   not a bug in previously-shipped behavior, just the reason this
+   specific engine gap had never been visible to any query before.
+
+### Validation
+
+- New unit-level correctness proofs, added directly against the real
+  session/executor (not the isolated `joiner.rs` unit tests, which are
+  unreachable from `JoinExec`): a same-key bucket hit with a duplicate-key
+  chain and an unrelated NULL row present (`not_in_null_aware_anti_semi_join_uses_the_same_key_bucket`);
+  the exact priority-inversion case Go's own comment calls out --
+  `AntiLeftOuterSemiJoin`'s same-key match must win the scalar `0` over an
+  unrelated NULL elsewhere in the build side, verified via
+  `EXPLAIN` showing the keyed `HashJoin` plan (not `Apply`) and the
+  precise `0`/`NULL`/`NULL` result row for three probe values chosen to
+  hit every branch (`not_in_as_a_scalar_expression_prefers_a_real_match_over_an_unrelated_null`);
+  and a ROW-valued, two-column `NOT IN`, exercising the per-column null
+  bitmap's "one column is a wildcard, the other is checked" semantics
+  (`row_valued_not_in_tracks_a_null_per_column`).
+- Fail-before/pass-after: `git stash`-ed every production file (keeping
+  the new tests); the scalar-expression/priority test failed on the
+  pre-fix tree exactly as expected (plan stayed `Apply`, never reaching
+  the new code at all); the other new tests passed on both trees, since
+  the OLD residual-scan fallback was already correct for `AntiSemiJoin`
+  (just slower) -- expected, since their purpose is regression coverage
+  for the new mechanism's correctness, not a proof the mechanism is used.
+- `cargo test -p tidb-session --lib tests_subquery` (21/21, including all
+  3 pre-existing NAAJ tests from the earlier round), `-p tidb-executor
+  --lib join::` (75/75: every ordinary hash/index/spill/parallel-exact-int
+  join test, unaffected), `-p tidb-planner --lib apply`/`decorrelate`
+  (39/39). A broader `-p tidb-session --lib` sweep over
+  `join`/`subquery`/`apply`/`semi` hit one unrelated, non-reproducing
+  flake (`hash_join_versions_accept_only_legacy_or_optimized`, an
+  ordinary `LEFT JOIN` test with no NAAJ involvement) once; confirmed not
+  caused by this change by re-running it in isolation and repeatedly on
+  both the pre- and post-fix tree (passed every time on both).
+- `cargo fmt`/`cargo clippy -p tidb-executor -p tidb-planner -p
+  tidb-session --tests` clean on every touched line (pre-existing drift
+  elsewhere in these crates, and in `tidb-exec`'s already-broken
+  `hash_join_v2_source.rs` test file -- 4 stale-API compile errors
+  confirmed present on the unmodified tree too -- left untouched).
+
+### Not verified
+
+- Throughput: no A/B benchmark of the keyed probe against the previous
+  residual-scan fallback was run. The correctness proofs above are direct
+  (unit/integration tests against real query results and plan shapes),
+  but the performance CLAIM this whole effort exists for is not yet
+  measured on this box.
+- The parallel exact-int and spill paths were reasoned about and
+  confirmed structurally unreachable/inherited-for-free respectively (see
+  Design above) rather than exercised by a dedicated test that forces a
+  NAAJ build side to spill or to route through a parallel worker -- Rust's
+  own gates (`can_parallelize_exact_int_probe`'s `!keys.is_empty()`,
+  `na_mode` forcing `exact_int` off) make constructing such a test
+  meaningless for the parallel case, but a spill-forced NAAJ test was not
+  separately added (the existing `join::spill_tests` module's coverage of
+  the shared `RowContainer`/chain machinery is presumed to carry over,
+  not directly proven for the null bucket specifically).

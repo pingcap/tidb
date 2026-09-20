@@ -223,6 +223,10 @@ impl IndexHashOutput {
                 self.output.preserved(req, outer);
                 req.append_datum(self.output.width(), &Datum::Int(1));
             }
+            JoinKind::AntiLeftOuterSemi => {
+                self.output.preserved(req, outer);
+                req.append_datum(self.output.width(), &Datum::Int(0));
+            }
             JoinKind::AntiSemi => {}
         }
     }
@@ -237,6 +241,10 @@ impl IndexHashOutput {
                 self.output.preserved(req, outer);
                 req.append_datum(self.output.width(), &Datum::Int(0));
             }
+            JoinKind::AntiLeftOuterSemi => {
+                self.output.preserved(req, outer);
+                req.append_datum(self.output.width(), &Datum::Int(1));
+            }
             JoinKind::Inner | JoinKind::Semi => {}
         }
     }
@@ -244,7 +252,10 @@ impl IndexHashOutput {
     fn semi(&self) -> bool {
         matches!(
             self.kind,
-            JoinKind::Semi | JoinKind::AntiSemi | JoinKind::LeftOuterSemi
+            JoinKind::Semi
+                | JoinKind::AntiSemi
+                | JoinKind::LeftOuterSemi
+                | JoinKind::AntiLeftOuterSemi
         )
     }
 }

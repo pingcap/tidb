@@ -1677,9 +1677,7 @@ fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {
         LogicalJoinType::Semi => Ok(JoinKind::Semi),
         LogicalJoinType::AntiSemi => Ok(JoinKind::AntiSemi),
         LogicalJoinType::LeftOuterSemi => Ok(JoinKind::LeftOuterSemi),
-        LogicalJoinType::AntiLeftOuterSemi => Err(DriverError::unsupported(
-            "physical anti-left-outer-semi join execution is not implemented",
-        )),
+        LogicalJoinType::AntiLeftOuterSemi => Ok(JoinKind::AntiLeftOuterSemi),
     }
 }
 
@@ -2681,6 +2679,9 @@ fn build_join_over_children(
         ctx.clone(),
         ctx.statement_memory(),
     );
+    if let PhysicalPlan::HashJoin(join) = plan {
+        executor.set_na_condition_count(join.na_equal_conditions.len());
+    }
     let output_offsets =
         physical_join_output_offsets(plan, join_type, &left_schema, &right_schema)?;
     executor

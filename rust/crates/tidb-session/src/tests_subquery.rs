@@ -1110,3 +1110,117 @@ fn not_in_null_aware_anti_join_respects_the_null_trap() {
         "a NULL anywhere in the subquery makes NOT IN unknown for every outer row"
     );
 }
+
+/// The keyed null-aware hash probe: a build side with both a same-key match
+/// AND a NULL row. `matchJoinKey`'s hash bucket, not the O(build side)
+/// residual scan this port originally fell back to, must find the same-key
+/// row -- Go's own `hashRowContainer.PutChunkSelected` indexes it there.
+#[test]
+fn not_in_null_aware_anti_semi_join_uses_the_same_key_bucket() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a int, b int, PRIMARY KEY (a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (x int, y int, KEY(x))")
+        .unwrap();
+    session
+        .run("INSERT INTO t1 VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    // Duplicate build-side keys exercise the hash bucket's chain, not just
+    // a single-entry lookup.
+    session
+        .run("INSERT INTO t2 VALUES (1,100),(1,101),(2,200)")
+        .unwrap();
+
+    assert_eq!(
+        row_text(
+            session.run("SELECT * FROM t1 WHERE t1.a NOT IN (SELECT t2.x FROM t2) ORDER BY t1.a")
+        ),
+        [["3", "30"]],
+        "1 and 2 both have a same-key build match and are suppressed; 3 has none and survives"
+    );
+}
+
+/// Go's `joinNAALOSJMatchProbeSideRow2Chunk`: for `AntiLeftOuterSemiJoin`
+/// specifically (unlike `AntiSemiJoin`, which does not care), a probe row
+/// with no NULL in its key checks the SAME-KEY bucket before the null
+/// bucket, because a real match must win the scalar `0` over an unrelated
+/// NULL elsewhere in the build side ("we should return the result as
+/// <rhs-row, 0> from same-key bucket rather than <rhs-row, null> from null
+/// bucket"). This is the one scenario a same-key-then-null priority
+/// inversion would get wrong that the plain NULL-trap test above cannot
+/// distinguish, since `AntiSemiJoin` folds every non-match into one
+/// outcome regardless of order.
+#[test]
+fn not_in_as_a_scalar_expression_prefers_a_real_match_over_an_unrelated_null() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a int, b int, PRIMARY KEY (a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (x int, y int, KEY(x))")
+        .unwrap();
+    session
+        .run("INSERT INTO t1 VALUES (1,10),(2,20),(99,990)")
+        .unwrap();
+    session
+        .run("INSERT INTO t2 VALUES (1,100),(NULL,200)")
+        .unwrap();
+
+    let plan = row_text(
+        session
+            .run("EXPLAIN SELECT t1.a, t1.a NOT IN (SELECT t2.x FROM t2) OR t1.b > 100000 FROM t1"),
+    );
+    assert!(
+        plan.iter().any(|row| row[0].contains("HashJoin")
+            && row[4].contains("Null-aware anti left outer semi join")),
+        "a NOT IN embedded in OR needs the tri-state marker, decorrelated to a keyed hash join: {plan:?}"
+    );
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT t1.a, t1.a NOT IN (SELECT t2.x FROM t2) OR t1.b > 100000 FROM t1 \
+             ORDER BY t1.a"
+        )),
+        [["1", "0"], ["2", "NULL"], ["99", "NULL"]],
+        "a=1 matches t2.x=1 in the same-key bucket first: scalar 0, so `0 OR FALSE` is 0. \
+         a=2 and a=99 match nothing, but the null bucket makes NOT IN unknown: `NULL OR FALSE` is NULL"
+    );
+}
+
+/// Go's per-column `naColNullBitMap`: a ROW-valued `(a, b) NOT IN (subquery)`
+/// gives every NA key column its own null bit, so a NULL in only ONE column
+/// of a multi-column subquery row still makes it a wildcard on that column
+/// alone, not on the whole row.
+#[test]
+fn row_valued_not_in_tracks_a_null_per_column() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a int, b int, PRIMARY KEY (a))")
+        .unwrap();
+    session.run("CREATE TABLE t2 (x int, y int)").unwrap();
+    session
+        .run("INSERT INTO t1 VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    // (1,10): an exact same-key-pair match -> suppressed.
+    // (2,20): t2 has (2,999) -- first column matches, second does not, so
+    //   NOT a same-key-pair match -- and (NULL,20) -- first column null (a
+    //   wildcard), second column matches. Since the only checkable column
+    //   agrees and the other is a wildcard, this cannot be ruled out ->
+    //   NULL trap -> suppressed, the same outcome an exact match gets for
+    //   AntiSemiJoin.
+    // (3,30): nothing in t2 matches or wildcards it -> survives.
+    session
+        .run("INSERT INTO t2 VALUES (1,10),(2,999),(NULL,20)")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT * FROM t1 WHERE (t1.a, t1.b) NOT IN (SELECT t2.x, t2.y FROM t2) ORDER BY t1.a"
+        )),
+        [["3", "30"]],
+        "1 is an exact row match; 2 is unknown because of the NULL bucket's per-column wildcard; \
+         3 matches and wildcards nothing"
+    );
+}

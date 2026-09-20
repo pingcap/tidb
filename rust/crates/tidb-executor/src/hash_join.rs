@@ -630,6 +630,34 @@ pub(crate) fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiK
     } else {
         return None;
     };
+    column_pair_key(f, left_width, null_safe)
+}
+
+/// Go `updateEQCond` step 2: a bare `col op col` equality the planner
+/// marked `IsEQCondFromIn` (see [`crate::joiner::is_eq_cond_from_in`]),
+/// promoted into an [`EquiKey`] the same way an ordinary `eq` conjunct
+/// would be -- except the row it describes is never simply "not indexed"
+/// when the key holds a NULL. A `NOT IN` / `!= ALL` rewrite only ever
+/// marks a plain `eq`, never `nulleq` (`<=>` cannot appear in that
+/// rewrite), so `null_safe` is always `false` here.
+pub(crate) fn na_equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
+    if !crate::joiner::is_eq_cond_from_in(conjunct) {
+        return None;
+    }
+    let Expression::ScalarFunction(f) = conjunct else {
+        return None;
+    };
+    if f.func_name.lowercase() != "eq" {
+        return None;
+    }
+    column_pair_key(f, left_width, false)
+}
+
+fn column_pair_key(
+    f: &tidb_expr::scalar_function::ScalarFunction,
+    left_width: usize,
+    null_safe: bool,
+) -> Option<EquiKey> {
     if f.args.len() != 2 {
         return None;
     }
@@ -1441,6 +1469,24 @@ pub(crate) struct BuildTable {
     bucket_bytes: i64,
     /// Sum of the capacities of the per-chunk matched bitmaps.
     matched_bitmap_capacity: usize,
+    /// Go `hashNANullBucket.entries`: a null-aware build row goes here
+    /// instead of `buckets` when ANY of its NA key columns is NULL, carrying
+    /// a bitmap of exactly which ones are (Go `naColNullBitMap`, needed for
+    /// multi-column `(a, b) NOT IN (subquery)`). Unlike an ordinary equality
+    /// key, whose NULL row is simply left out of every bucket, a null-aware
+    /// probe still needs to find this row -- it may be the reason the
+    /// answer is `NULL` rather than a definite match or non-match -- so it
+    /// cannot be dropped the same way. Flat and unindexed like Go's, since
+    /// this bucket is expected to stay small relative to the build side.
+    na_null_bucket: Vec<NaNullEntry>,
+}
+
+/// One build row [`BuildTable::na_null_bucket`] holds: where its data lives,
+/// and which of the NA key columns (by position in the join's NA key list)
+/// are NULL for this specific row.
+pub(crate) struct NaNullEntry {
+    pub(crate) ptr: RowPtr,
+    pub(crate) null_bits: Vec<bool>,
 }
 
 // Go v1 allocates 320 concurrent-map shards before the first build row. On
@@ -1476,6 +1522,7 @@ impl BuildTable {
             matched: track_matches.then(|| Mutex::new(Vec::<Vec<u8>>::new())),
             bucket_bytes: 0,
             matched_bitmap_capacity: 0,
+            na_null_bucket: Vec::new(),
         }
     }
 
@@ -1498,11 +1545,19 @@ impl BuildTable {
         types: &[FieldType],
         build_is_left: bool,
     ) -> Result<(), BuildError> {
-        self.index_chunk_selected(chunk, keys, types, build_is_left, &[])
+        self.index_chunk_selected(chunk, keys, types, build_is_left, &[], false)
     }
 
     /// Go `PutChunkSelected` keeps every build row for the preserved-side
     /// scan but indexes only rows accepted by the outer-side filter.
+    ///
+    /// `na_mode` is Go's `isNAAJ`: `keys` are then null-aware key columns
+    /// (see [`crate::hash_join::na_equi_key`]), and a row with a NULL key is
+    /// no longer left unindexed -- it goes to [`Self::na_null_bucket`]
+    /// instead, still reachable by a later probe. The exact-int fast path
+    /// stays off in this mode: it has no null bucket of its own, so routing
+    /// a null-aware row through it would silently drop it exactly the way
+    /// an ordinary null key already is.
     pub(crate) fn index_chunk_selected(
         &mut self,
         chunk: Chunk,
@@ -1510,12 +1565,16 @@ impl BuildTable {
         types: &[FieldType],
         build_is_left: bool,
         selected: &[bool],
+        na_mode: bool,
     ) -> Result<(), BuildError> {
         let offset = |key: &EquiKey| if build_is_left { key.left } else { key.right };
-        let exact_int = self.exact_int_buckets.as_ref().and_then(|_| {
-            keys.first()
-                .filter(|key| keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe)
-        });
+        let exact_int = (!na_mode)
+            .then(|| self.exact_int_buckets.as_ref())
+            .flatten()
+            .and_then(|_| {
+                keys.first()
+                    .filter(|key| keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe)
+            });
         let chk_idx = u32::try_from(self.rows.num_chunks()).map_err(|_| BuildError::Key)?;
         if let Some(matched) = &self.matched {
             let bitmap = vec![0; chunk.num_rows().div_ceil(8)];
@@ -1577,17 +1636,29 @@ impl BuildTable {
                 None => row_hash_chunk(keys, chunk.get_row(row_idx), types, |key| offset(key))
                     .map_err(|_| BuildError::Key)?,
             };
-            if let Some(key) = key {
-                let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
-                let pointer = RowPtr { chk_idx, row_idx };
-                match buckets.entry(key) {
+            let row_idx_u32 = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
+            let pointer = RowPtr {
+                chk_idx,
+                row_idx: row_idx_u32,
+            };
+            match key {
+                Some(key) => match buckets.entry(key) {
                     Entry::Occupied(mut entry) => {
                         *entry.get_mut() = chains.push(Some(*entry.get()), pointer)?;
                     }
                     Entry::Vacant(entry) => {
                         entry.insert(chains.push(None, pointer)?);
                     }
+                },
+                None if na_mode => {
+                    let row = chunk.get_row(row_idx);
+                    let null_bits = keys.iter().map(|key| row.is_null(offset(key))).collect();
+                    self.na_null_bucket.push(NaNullEntry {
+                        ptr: pointer,
+                        null_bits,
+                    });
                 }
+                None => {}
             }
         }
         self.rows.add(chunk).map_err(BuildError::disk)?;
@@ -1601,6 +1672,27 @@ impl BuildTable {
     /// The build rows that could match `key`, in build order.
     pub(crate) fn probe(&self, key: u64) -> Chain<'_> {
         self.chains.chain(self.buckets.get(&key))
+    }
+
+    /// Go `hashNANullBucket.entries`: every null-aware build row whose NA
+    /// key holds at least one NULL, each with the bitmap of which of its NA
+    /// columns are NULL. Flat because Go's own null bucket is a plain
+    /// slice, not hash-indexed -- a NULL cannot narrow which bucket to look
+    /// in, so nothing is gained by indexing it.
+    pub(crate) fn na_null_entries(&self) -> &[NaNullEntry] {
+        &self.na_null_bucket
+    }
+
+    /// Go `GetAllMatchedRows` iterating `c.hashTable`: every build row that
+    /// was NOT null-aware NULL, across every bucket -- Go's own comment
+    /// notes "all built bucket rows come from hash table, their bitmap are
+    /// all nil", i.e. the null bucket's rows are never included here and
+    /// are read separately through [`Self::na_null_entries`]. Only correct
+    /// to call in null-aware mode, where [`Self::index_chunk_selected`]'s
+    /// `na_mode` guarantees the exact-int fast path never shares this same
+    /// chain slab.
+    pub(crate) fn na_all_hash_bucket_ptrs(&self) -> Vec<RowPtr> {
+        self.chains.entries.iter().map(|entry| entry.ptr).collect()
     }
 
     pub(crate) fn probe_exact_int(&self, key: i128) -> Chain<'_> {
