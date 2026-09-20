@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::collections::{BTreeMap, HashMap};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tidb_codec::{decode_bytes, encode_bytes};
 use tidb_pd_client::{PdClient, PdClientError, PdKeyRange, PdMemberSet, PdRegion, PdStore};
@@ -171,6 +171,43 @@ impl PdRegionLoader {
             limit -= loaded;
         }
         Ok(result)
+    }
+
+    /// Retries a PD region lookup while PD transiently omits the region.
+    ///
+    /// Go `client-go` never fails an operation on the first region miss:
+    /// `locateKey` loops `bo.BackOff(boRegionMiss, err)` with
+    /// `newBackoffFn(2, 10, 20)` -- 2ms base sleep, 10ms cap, 20s total
+    /// budget -- because a missing region is a topology race (merge/split
+    /// or a PD view in transition), not a transaction-level fault. This
+    /// loader previously surfaced the first omission as an invalid-topology
+    /// error, which a Prewrite regroup turned into a definitive rollback
+    /// under sustained write load.
+    fn retry_on_region_miss<T>(
+        &mut self,
+        mut attempt: impl FnMut(&mut Self) -> Result<T, PdClientError>,
+    ) -> Result<T, RegionLoadError> {
+        const TOTAL_BUDGET: Duration = Duration::from_secs(20);
+        const BASE_DELAY: Duration = Duration::from_millis(2);
+        const DELAY_CAP: Duration = Duration::from_millis(10);
+        let started = Instant::now();
+        let mut delay = BASE_DELAY;
+        loop {
+            match attempt(self) {
+                Ok(value) => return Ok(value),
+                Err(error) => {
+                    let region_miss = matches!(
+                        &error,
+                        PdClientError::InvalidTopology { kind, .. } if *kind == "missing_region"
+                    );
+                    if !region_miss || started.elapsed() + delay > TOTAL_BUDGET {
+                        return Err(region_load_error(error));
+                    }
+                    std::thread::sleep(delay);
+                    delay = delay.mul_f64(2.0).min(DELAY_CAP);
+                }
+            }
+        }
     }
 
     fn project_region(&mut self, region: PdRegion) -> Result<RegionLocation, RegionLoadError> {
@@ -349,20 +386,22 @@ impl RegionQueryLoader for PdRegionLoader {
             RegionQuery::Key(key) => {
                 let mut encoded_key = Vec::new();
                 encode_bytes(&mut encoded_key, key);
-                let region = self
-                    .client
-                    .get_region_routed(&encoded_key, options.need_buckets, leader_only)
-                    .map_err(region_load_error)?;
+                let region = self.retry_on_region_miss(|loader| {
+                    loader
+                        .client
+                        .get_region_routed(&encoded_key, options.need_buckets, leader_only)
+                })?;
                 self.project_region(region)
             }
             RegionQuery::EndKey(key) => {
                 self.load_region_by_end_key_routed(key, options.need_buckets, leader_only)
             }
             RegionQuery::Id(region_id) => {
-                let region = self
-                    .client
-                    .get_region_by_id_routed(region_id, options.need_buckets, leader_only)
-                    .map_err(region_load_error)?;
+                let region = self.retry_on_region_miss(|loader| {
+                    loader
+                        .client
+                        .get_region_by_id_routed(region_id, options.need_buckets, leader_only)
+                })?;
                 self.project_region(region)
             }
         }
