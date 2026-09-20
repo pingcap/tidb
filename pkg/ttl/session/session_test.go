@@ -55,18 +55,6 @@ func TestSessionRunInTxn(t *testing.T) {
 	tk2.MustQuery("select * from t order by id asc").Check(testkit.Rows("1 10", "3 30"))
 }
 
-func TestSessionResetTimeZone(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.time_zone='UTC'")
-	tk.MustExec("set @@time_zone='Asia/Shanghai'")
-
-	se := session.NewSession(tk.Session(), func() {})
-	tk.MustQuery("select @@time_zone").Check(testkit.Rows("Asia/Shanghai"))
-	require.NoError(t, se.ResetWithGlobalTimeZone(context.TODO()))
-	tk.MustQuery("select @@time_zone").Check(testkit.Rows("UTC"))
-}
-
 func TestSessionKill(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

@@ -178,6 +178,17 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		wg.Wait()
 	}()
 
+	// TTL data SQL is executed in UTC so that every TIMESTAMP literal denotes
+	// one unambiguous instant, including during a DST fold. Expiration itself is
+	// still defined by the global time zone. Keep that location on expireTime so
+	// DATE/DATETIME predicates retain their wall-clock semantics, and pass the
+	// same value to both scan and delete workers.
+	globalTimeZone, err := rawSess.GlobalTimeZone(scanCtx)
+	if err != nil {
+		return errors.Wrap(err, "get global time zone for TTL expiration condition")
+	}
+	expireTime := t.ExpireTime.In(globalTimeZone)
+
 	now := rawSess.Now()
 	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, now)
 	if err != nil {
@@ -203,13 +214,13 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		)
 	}
 
-	sess, restoreSession, err := NewScanSession(scanCtx, rawSess, t.tbl, t.ExpireTime)
+	sess, restoreSession, err := NewScanSession(scanCtx, rawSess, t.tbl, expireTime)
 	if err != nil {
 		return err
 	}
 	defer terror.Call(restoreSession)
 
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
+	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, expireTime, t.ScanRangeStart, t.ScanRangeEnd)
 	if err != nil {
 		return err
 	}
@@ -284,7 +295,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 			jobID:      t.JobID,
 			scanID:     t.ScanID,
 			tbl:        t.tbl,
-			expire:     t.ExpireTime,
+			expire:     expireTime,
 			rows:       lastResult,
 			statistics: t.statistics,
 		}
