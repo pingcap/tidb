@@ -35,6 +35,11 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	for i := 0; i < 14; i++ {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
+	// Resolve any pending secondary commits before mock ANALYZE reads the fixture.
+	tk.MustQuery("select count(*) from t1 ignore index(idx)").Check(testkit.Rows("49152"))
+	// Flush pending row-count deltas before ANALYZE takes its snapshot.
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t1;")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
@@ -73,6 +78,8 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
 		})
+		// Include the query and both plans when CI reports a normalization mismatch.
+		t.Logf("SQL: %s\nactual: %q\nexpected: %q", tt, normalizedPlanRows, output[i].Plan)
 		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
 	}
 }
