@@ -204,6 +204,9 @@ func (s *Syncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo,
 		return localInfo, nil
 	}
 	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
+	if s.etcdCli == nil {
+		return nil, errors.Errorf("[info-syncer] get %s failed", key)
+	}
 	infoMap, err := getInfo(ctx, s.etcdCli, key, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
 	if err != nil {
 		return nil, err
