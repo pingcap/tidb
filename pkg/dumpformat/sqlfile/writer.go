@@ -41,14 +41,25 @@ type Writer struct {
 	kinds  []dumpformat.FieldKind
 	prefix []byte
 	buf    []byte
-	// statementSize and fileSize count each row's tuple plus the 2-byte separator
-	// (",\n" or ";\n") that follows it, so a size limit trips one row early and the
-	// split lands before the overflowing row. statementSize resets per statement;
-	// fileSize never resets and equals the bytes written once Close adds the final
-	// separator.
-	statementSize uint64
-	fileSize      uint64
-	inStatement   bool
+	// written counts the bytes handed to w; produced adds what buf still holds.
+	// stmtStart is produced at the moment the open statement began, so the
+	// statement and file sizes are differences of produced rather than separate
+	// counters.
+	written     uint64
+	stmtStart   uint64
+	inStatement bool
+}
+
+// produced returns the bytes encoded so far, written out or still buffered.
+func (sw *Writer) produced() uint64 {
+	return sw.written + uint64(len(sw.buf))
+}
+
+// statementSize returns the open statement's size, counting the ";\n" that will
+// close it. Counting it up front makes a size limit trip one row early, so the
+// split lands before the row that would overflow.
+func (sw *Writer) statementSize() uint64 {
+	return sw.produced() - sw.stmtStart + 2
 }
 
 // NewWriter creates a Writer over w. prefix is the INSERT statement prefix
@@ -67,49 +78,34 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 		return fmt.Errorf("sqlfile: row has %d fields, want %d", len(row), len(sw.kinds))
 	}
 	sw.buf = sw.buf[:0]
-	// At the statement limit, close it; the ";\n" was counted as the last row's separator.
-	if sw.inStatement && sw.cfg.StatementSize > 0 && sw.statementSize >= sw.cfg.StatementSize {
+	if sw.inStatement && sw.cfg.StatementSize > 0 && sw.statementSize() >= sw.cfg.StatementSize {
 		sw.buf = append(sw.buf, ';', '\n')
 		sw.inStatement = false
 	}
 	if !sw.inStatement {
+		sw.stmtStart = sw.produced()
 		sw.buf = append(sw.buf, sw.prefix...)
-		sw.statementSize = uint64(len(sw.prefix))
-		sw.fileSize += uint64(len(sw.prefix))
 		sw.inStatement = true
 	} else {
-		// This row's leading ",\n" was counted as the previous row's separator.
 		sw.buf = append(sw.buf, ',', '\n')
 	}
-	start := len(sw.buf)
-	// flushed counts the bytes of this row, from the prefix or separator on,
-	// that were already written out to keep buf bounded.
-	var flushed uint64
 	sw.buf = append(sw.buf, '(')
 	for i, val := range row {
 		if i > 0 {
 			sw.buf = append(sw.buf, ',')
 		}
-		n, err := sw.appendValue(val, sw.kinds[i])
-		if err != nil {
+		if err := sw.appendValue(val, sw.kinds[i]); err != nil {
 			return err
 		}
-		flushed += n
 	}
 	sw.buf = append(sw.buf, ')')
-	// Count the tuple plus the 2-byte separator that will follow it.
-	tupleSize := flushed + uint64(len(sw.buf)) - uint64(start) + 2
-	sw.statementSize += tupleSize
-	sw.fileSize += tupleSize
-	_, err := sw.w.Write(sw.buf)
-	return err
+	return sw.flush()
 }
 
 // appendValue appends one field's encoding to buf like AppendValue, but encodes
 // a quoted value in pieces of at most dumpformat.MaxBufferedValueSize input
-// bytes and writes buf out whenever it reaches that size. It returns the number
-// of bytes written out.
-func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) (uint64, error) {
+// bytes and writes buf out whenever it reaches that size.
+func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) error {
 	// NULL (a nil val) and numbers are written unquoted and are never large.
 	isNull := val == nil
 	if isNull || kind == dumpformat.KindNumber {
@@ -117,38 +113,42 @@ func (sw *Writer) appendValue(val []byte, kind dumpformat.FieldKind) (uint64, er
 		return sw.maybeFlush()
 	}
 	sw.buf = appendOpenQuote(sw.buf, kind)
-	var flushed uint64
 	for len(val) > 0 {
 		var n int
 		sw.buf, n = appendQuotedBody(sw.buf, val, dumpformat.MaxBufferedValueSize, kind, sw.cfg.EscapeBackslash)
 		val = val[n:]
-		written, err := sw.maybeFlush()
-		if err != nil {
-			return 0, err
+		if err := sw.maybeFlush(); err != nil {
+			return err
 		}
-		flushed += written
 	}
 	sw.buf = append(sw.buf, '\'')
-	return flushed, nil
+	return nil
 }
 
-// maybeFlush writes out and empties buf once it reaches
-// dumpformat.MaxBufferedValueSize, returning the number of bytes written (0 if
-// buf is not full yet).
-func (sw *Writer) maybeFlush() (uint64, error) {
+// maybeFlush writes buf out once it reaches dumpformat.MaxBufferedValueSize.
+func (sw *Writer) maybeFlush() error {
 	if len(sw.buf) < dumpformat.MaxBufferedValueSize {
-		return 0, nil
+		return nil
 	}
-	n := len(sw.buf)
-	_, err := sw.w.Write(sw.buf)
-	sw.buf = sw.buf[:0]
-	return uint64(n), err
+	return sw.flush()
 }
 
-// EstimateFileSize returns the logical file size for rotation. It excludes any
-// preamble the caller wrote directly (e.g. SQL special comments).
+// flush writes buf out and empties it.
+func (sw *Writer) flush() error {
+	n, err := sw.w.Write(sw.buf)
+	sw.written += uint64(n)
+	sw.buf = sw.buf[:0]
+	return err
+}
+
+// EstimateFileSize returns the logical file size for rotation, counting the
+// ";\n" that will close the open statement. It excludes any preamble the caller
+// wrote directly (e.g. SQL special comments).
 func (sw *Writer) EstimateFileSize() uint64 {
-	return sw.fileSize
+	if !sw.inStatement {
+		return sw.produced()
+	}
+	return sw.produced() + 2
 }
 
 // Close terminates the open statement with ";\n". It is a no-op if no statement
@@ -158,7 +158,6 @@ func (sw *Writer) Close() error {
 		return nil
 	}
 	sw.inStatement = false
-	// The final ";\n" was already counted as the last row's separator.
-	_, err := sw.w.Write([]byte{';', '\n'})
-	return err
+	sw.buf = append(sw.buf[:0], ';', '\n')
+	return sw.flush()
 }
