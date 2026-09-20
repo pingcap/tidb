@@ -1274,3 +1274,76 @@ fn row_valued_not_in_a_probe_null_does_not_make_every_row_ambiguous() {
         "a=5 does appear in t2, and the NULL in b cannot rule that row out"
     );
 }
+
+/// `IN (subquery)` as a scalar with a correlated equality: Go's
+/// `updateEQCond` promotes `t2.a = t1.a` to the join key and keeps the `IN`
+/// equality `t1.b = t2.b` as an `IsEQCondFromIn` residual -- the exact case
+/// `expression.EvalBool`'s own comment describes. A NULL there is UNKNOWN,
+/// an empty group is a definite miss, on every join algorithm the planner
+/// may pick.
+#[test]
+fn scalar_in_with_a_correlated_key_answers_null_for_an_unknown_in_equality() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a int, b int, PRIMARY KEY (a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (a int, b int, PRIMARY KEY (a))")
+        .unwrap();
+    session
+        .run("INSERT INTO t1 VALUES (1,NULL),(2,3),(3,9),(4,4)")
+        .unwrap();
+    session
+        .run("INSERT INTO t2 VALUES (1,5),(2,3),(3,8)")
+        .unwrap();
+
+    let in_sql = "SELECT t1.a, t1.b IN (SELECT t2.b FROM t2 WHERE t2.a = t1.a) FROM t1 ORDER BY t1.a";
+    let not_in_sql =
+        "SELECT t1.a, t1.b NOT IN (SELECT t2.b FROM t2 WHERE t2.a = t1.a) FROM t1 ORDER BY t1.a";
+    // Both sides are PK-ordered on `a`, so the cheapest plan is a MERGE
+    // join -- the shape this port used to reroute through the hash path at
+    // runtime under a plan that still read "MergeJoin".
+    let plan = row_text(session.run(&format!("EXPLAIN {in_sql}")));
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("MergeJoin") && row[4].contains("left outer semi join")),
+        "the correlated equality decorrelates into a merge join: {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|row| row[0].contains("Apply")),
+        "Go decorrelates this (tidb_opt_enable_no_decorrelate_in_select defaults OFF): {plan:?}"
+    );
+    assert_eq!(
+        row_text(session.run(in_sql)),
+        [["1", "NULL"], ["2", "1"], ["3", "0"], ["4", "0"]]
+    );
+    assert_eq!(
+        row_text(session.run(not_in_sql)),
+        [["1", "NULL"], ["2", "0"], ["3", "1"], ["4", "1"]]
+    );
+
+    // The same statements over unordered tables, where the hash path wins.
+    session.run("CREATE TABLE u1 (a int, b int)").unwrap();
+    session.run("CREATE TABLE u2 (a int, b int)").unwrap();
+    session
+        .run("INSERT INTO u1 VALUES (1,NULL),(2,3),(3,9),(4,4)")
+        .unwrap();
+    session
+        .run("INSERT INTO u2 VALUES (1,5),(2,3),(3,8)")
+        .unwrap();
+    let hashed = |sql: &str| sql.replace("t1", "u1").replace("t2", "u2");
+    let plan = row_text(session.run(&format!("EXPLAIN {}", hashed(in_sql))));
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("HashJoin") && row[4].contains("left outer semi join")),
+        "without an order to merge on, the marker kind is a hash join: {plan:?}"
+    );
+    assert_eq!(
+        row_text(session.run(&hashed(in_sql))),
+        [["1", "NULL"], ["2", "1"], ["3", "0"], ["4", "0"]]
+    );
+    assert_eq!(
+        row_text(session.run(&hashed(not_in_sql))),
+        [["1", "NULL"], ["2", "0"], ["3", "1"], ["4", "1"]]
+    );
+}

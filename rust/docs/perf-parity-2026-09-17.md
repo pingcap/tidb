@@ -2937,3 +2937,136 @@ with keeping this pass's diff to the one confirmed bug.
   row-format split doesn't appear to have a counterpart in this file yet),
   so this fix's scope is exactly the `EXPLAIN`/`EXPLAIN ANALYZE` text this
   module renders.
+
+## Ordinary hash/merge join review: the marker kinds never carried `hasNull`, and merge join never ran them
+
+A bidirectional pass over the ORDINARY (non-null-aware) hash join and
+merge join -- `physical_hash_join.go`, `physical_merge_join.go`,
+`hash_join_base.go`, `hash_join_v1.go`, `hash_table_v1.go`,
+`merge_join.go`, `joiner.go`, `builder.go` against `join.rs`,
+`hash_join.rs`, `join/index_hash.rs`, `merge_join_plan.rs`,
+`physical_builder.rs`. Two correctness gaps, both fixed here; two
+resource-only gaps left as documented follow-ups.
+
+### Bug 1: `LeftOuterSemi` / `AntiLeftOuterSemi` always answered a hard 0/1, never NULL
+
+Go's `leftOuterSemiJoiner` / `antiLeftOuterSemiJoiner.TryToMatchInners`
+(`joiner.go:596-609`) keep `EvalBool`'s two results APART: a definite
+match ends the group with the marker fixed, otherwise `hasNull` is
+OR-accumulated across every candidate and `OnMissMatch(hasNull, ...)`
+(`joiner.go:652-659`) writes NULL when it is set, 0 / 1 when it is not.
+`EvalBool` itself (`expression.go:348-380`) only ever sets `hasNull` for
+a condition marked `IsEQCondFromIn` -- the `IN` clause's own equality,
+which `updateEQCond` never promotes to a join key, so it survives as a
+residual exactly when ANOTHER equality became the key: Go's own comment
+on `EvalBool` gives `select a in (select a from s where t.b = s.b) from
+t`. An ordinary predicate's NULL is a definite non-match there.
+
+The port had `crate::joiner::eval_bool` as a faithful `EvalBool`
+(including that gate), and `JoinExec::matches` used it -- but only for
+`AntiSemi`, folded into one bool (`matched || has_null`, which is exactly
+`antiSemiJoiner.OnMissMatch` never emitting a `hasNull` row). Every other
+kind went through a truthy loop that threw the second result away, and
+every miss site for the two marker kinds appended a literal `Int(0)` /
+`Int(1)`. Six independent copies of that per-candidate loop had the same
+gap: the serial hash probe (`drain_probe_chunk`), the parallel probe
+workers (`probe_hashed_chunk`), the nested-loop / cartesian path
+(`emit_outer_row`), the row-at-a-time index lookup
+(`emit_outer_chunk_rows` + `IndexRowProbe`), and both index-hash-join
+drive loops (`index_hash.rs`). So `t1.b IN (SELECT t2.b FROM t2 WHERE
+t2.a = t1.a)` with `t1.b` NULL and a matching `t2.a` answered 0 where Go
+answers NULL, and the `NOT IN` form answered 1.
+
+Fixed with one shape everywhere: `fold_verdict(kind, eval_bool(..))`
+returns `(accepted, has_null)` -- `accepted` carries the `AntiSemi` fold,
+`has_null` is accumulated per outer row alongside `matched` -- and one
+`miss_marker(kind, has_null)` writes `OnMissMatch`'s value.
+`matches` / `matches_index_pair` / the chunk-rows matcher now all go
+through `eval_bool` (their truthy loops computed the same `accepted` bit
+for every kind, so nothing else changes), which also gives the parallel
+workers the `AntiSemi` fold the serial path had; that path only runs
+residual conditions for `Inner` today (`can_parallelize_exact_int_probe`),
+so it is a faithful mirror rather than a live fix.
+
+### Bug 2: a `PhysicalMergeJoin` chosen for a marker kind silently ran as a hash join
+
+Go's `MergeJoinExec` runs every join type through the shared `Joiner`
+(`merge_join.go:381,396`) and `GetMergeJoin` has no kind gate; neither
+does this port's `merge_join_candidates`. But `set_merge_plan` only
+installed the merge algorithm for five kinds, so for `LeftOuterSemi` /
+`AntiLeftOuterSemi` the executor fell through to the hash path under a
+plan that still read `MergeJoin` -- and the planner's `Sort`s paid for
+the required order were wasted. `drain_merge_pending` also had no marker
+output at all for these kinds. Ported Go's per-outer-row `hasMatch` /
+`hasNull` (`merge_join.go:381-396`): `MergePendingOutput::Matched` now
+carries `has_null_current_outer`, the accepted arm emits the fixed marker
+on the first accepted pair and ends the group (`inners.ReachEnd()`), the
+miss tail and the no-inner-group arm go through `emit_merge_miss` (Go
+`OnMissMatch`), and the marker kinds are admitted to the group gates.
+
+### The planner gate this unblocked
+
+`rule_decorrelate.rs` carried a deliberate Apply-only gate
+(`marker_needs_null_aware_join`) for a `LeftOuterSemi` Apply whose
+residual holds an `IsEQCondFromIn` equality -- kept there because
+`JoinExec` could not produce the NULL marker, so the correct
+`joiner.rs`-based Apply was the only executor that answered right. Go has
+no such gate (`tidb_opt_enable_no_decorrelate_in_select` defaults OFF,
+`tidb_vars.go:1530`), so the same statement planned an `Apply` here and
+a hash join in Go. Removed; with the executor fixed, the SELECT-list `IN`
+above now decorrelates, and on PK-ordered tables the planner picks the
+merge join by cost -- the exact plan Bug 2 used to reroute.
+
+### Not fixed, documented
+
+- `PhysicalHashJoin` / `PhysicalMergeJoin` never charge their equality /
+  compare-function expressions to `memory_usage()` (Go
+  `physical_hash_join.go:354-368`, `physical_merge_join.go:340-347`),
+  which feeds the plan-cache LRU (`physical_plan_cache.rs:53`). The gap
+  is wider than the join: no `Expression` / `Column` / `Datum` in
+  `tidb-expr` has a `memory_usage()` at all, so the honest fix is that
+  whole accounting subsystem, not a join-local addition.
+- Go skips reading the probe side entirely when the build side ends
+  empty for `Inner` / `Semi` (`hash_join_base.go:119-121`,
+  `hash_join_v1.go:242`); `build_table` / `drain_probe_chunk` always
+  drive it. Correct output, extra I/O.
+- Hash bucket chain order (build order here, newest-first in Go v1) is
+  the documented, measured tradeoff on `BuildTable`; not a finding.
+
+### Validation
+
+- New tests, all verified fail-before / pass-after via `git stash` of
+  the three source files: `marker_kinds_mark_null_when_the_in_equality_
+  is_unknown_for_every_candidate`, `marker_kinds_treat_an_ordinary_
+  predicates_null_as_a_definite_miss` (the `EvalBool` gate itself),
+  `marker_kinds_prefer_a_definite_match_and_keep_a_clean_miss_definite`,
+  `cartesian_marker_kinds_...`, `index_join_marker_kinds_...` (all three
+  index strategies), `merge_join_executes_the_marker_kinds`
+  (`join_merge_path_tests.rs`), and the SQL-level `scalar_in_with_a_
+  correlated_key_answers_null_for_an_unknown_in_equality` (merge join by
+  cost, hash join on unordered tables, `IN` and `NOT IN`).
+- `cargo test -p tidb-executor --lib join::`: 82/82.
+- `cargo test -p tidb-planner --lib`: 944 passed, the one pre-existing
+  union-cast baseline failure.
+- `cargo test -p tidb-session --lib`: 3 consecutive full runs, 1738
+  passed each, only the documented `show_create_table_matches_go_...`
+  baseline failure. The full suite intermittently fails one join-bearing
+  test with `build workers stopped without an error`
+  (`hash_join_v2/build_worker.rs:425,646`, the documented "disconnected
+  input queue wins selection" race); it reproduced on the BASE tree too
+  (1 of 3 runs) and correlates with the box's disk running to ~30 MB
+  free during the runs, so it is pre-existing and not this change's.
+- `rustfmt --check` on the touched files: clean after formatting.
+  `cargo clippy -p tidb-executor`: the three hits inside the touched
+  regions are pre-existing shapes at shifted lines (`build_types: _` in
+  the untouched branch, the pre-existing `match` on a bool, `SendError`
+  size); no new warning class.
+
+### Not verified
+
+- No benchmark: the change adds one `bool` OR per candidate on the marker
+  kinds only; `Inner` / `Left` / `Right` / `Semi` accept bits are
+  unchanged.
+- The parallel workers' marker path is unreachable until
+  `can_parallelize_exact_int_probe` admits residuals for non-`Inner`
+  kinds; it is covered by reading, not by a test.

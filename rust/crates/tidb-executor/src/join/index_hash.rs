@@ -126,6 +126,9 @@ pub(super) struct IndexHashState {
     buckets: OuterHash,
     ordered: Option<Vec<Vec<RowPtr>>>,
     matched: Vec<bool>,
+    /// Go `hasNull` per outer row, accumulated like `matched`; see
+    /// `join::miss_marker`.
+    has_null: Vec<bool>,
     keys: Vec<EquiKey>,
     inner_chunk: usize,
     inner_row: usize,
@@ -194,9 +197,9 @@ impl IndexHashOutput {
         outer: Row<'_>,
         inner: Row<'_>,
         state: &mut IndexHashState,
-    ) -> Result<bool, ExecError> {
+    ) -> Result<(bool, bool), ExecError> {
         if self.conditions.is_empty() {
-            return Ok(true);
+            return Ok((true, false));
         }
         state.evaluations += 1;
         state.scratch.reset();
@@ -207,10 +210,10 @@ impl IndexHashOutput {
         };
         state.scratch.append_partial_row(0, left);
         state.scratch.append_partial_row(left.len(), right);
-        let (matched, has_null) =
-            crate::joiner::eval_bool(ctx, &self.conditions, state.scratch.get_row(0))?;
-        // Preserve the existing anti-semi NOT-IN/NULL residual contract.
-        Ok(matched || self.kind == JoinKind::AntiSemi && has_null)
+        Ok(super::fold_verdict(
+            self.kind,
+            crate::joiner::eval_bool(ctx, &self.conditions, state.scratch.get_row(0))?,
+        ))
     }
 
     fn matched(&self, req: &mut Chunk, outer: Row<'_>, inner: Row<'_>) {
@@ -231,19 +234,18 @@ impl IndexHashOutput {
         }
     }
 
-    fn unmatched(&self, req: &mut Chunk, outer: Row<'_>) {
+    fn unmatched(&self, req: &mut Chunk, outer: Row<'_>, has_null: bool) {
         match self.kind {
             JoinKind::Left | JoinKind::Right => {
                 self.output.unmatched(req, self.outer_is_left, outer, 0)
             }
             JoinKind::AntiSemi => self.output.preserved(req, outer),
-            JoinKind::LeftOuterSemi => {
+            JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => {
                 self.output.preserved(req, outer);
-                req.append_datum(self.output.width(), &Datum::Int(0));
-            }
-            JoinKind::AntiLeftOuterSemi => {
-                self.output.preserved(req, outer);
-                req.append_datum(self.output.width(), &Datum::Int(1));
+                req.append_datum(
+                    self.output.width(),
+                    &super::miss_marker(self.kind, has_null),
+                );
             }
             JoinKind::Inner | JoinKind::Semi => {}
         }
@@ -300,6 +302,7 @@ impl IndexHashState {
             buckets,
             ordered: output.ordered.then(|| vec![Vec::new(); outer.len()]),
             matched: vec![false; outer.len()],
+            has_null: vec![false; outer.len()],
             keys: keys.to_vec(),
             inner_chunk: 0,
             inner_row: 0,
@@ -484,7 +487,9 @@ impl IndexHashState {
                         continue;
                     }
                     let inner_row = inner.get_row(ptr);
-                    if output.matches(ctx, row, inner_row, self)? {
+                    let (accepted, has_null) = output.matches(ctx, row, inner_row, self)?;
+                    self.has_null[at] |= has_null;
+                    if accepted {
                         self.matched[at] = true;
                         output.matched(req, row, inner_row);
                         if output.semi() {
@@ -496,7 +501,7 @@ impl IndexHashState {
                     self.candidate += 1;
                 } else {
                     if !self.matched[at] {
-                        output.unmatched(req, row);
+                        output.unmatched(req, row, self.has_null[at]);
                     }
                     self.outer_row += 1;
                     self.candidate = 0;
@@ -555,10 +560,13 @@ impl IndexHashState {
                 }
                 if !(output.semi() && self.matched[at])
                     && output.equal(&self.keys, outer.row(at), row)?
-                    && output.matches(ctx, outer.row(at), row, self)?
                 {
-                    self.matched[at] = true;
-                    output.matched(req, outer.row(at), row);
+                    let (accepted, has_null) = output.matches(ctx, outer.row(at), row, self)?;
+                    self.has_null[at] |= has_null;
+                    if accepted {
+                        self.matched[at] = true;
+                        output.matched(req, outer.row(at), row);
+                    }
                 }
             } else {
                 self.inner_row += 1;
@@ -570,7 +578,11 @@ impl IndexHashState {
         if self.inner_done && self.inner_chunk == inner.num_chunks() {
             while self.outer_row < outer.len() && !req.is_full() {
                 if !self.matched[self.outer_row] {
-                    output.unmatched(req, outer.row(self.outer_row));
+                    output.unmatched(
+                        req,
+                        outer.row(self.outer_row),
+                        self.has_null[self.outer_row],
+                    );
                 }
                 self.outer_row += 1;
             }

@@ -398,3 +398,51 @@ fn merge_close_unbinds_its_spill_action() {
         current = candidate.get_fallback();
     }
 }
+
+/// Go `MergeJoinExec` runs `LeftOuterSemiJoin`/`AntiLeftOuterSemiJoin`
+/// through the same `Joiner` as every other kind (`merge_join.go:381,396`):
+/// a `PhysicalMergeJoin` the planner chose for them must execute as a merge
+/// join, with `hasNull` carried across the inner group per outer row and
+/// `OnMissMatch(false, ...)` for an outer group with no inner group.
+#[test]
+fn merge_join_executes_the_marker_kinds() {
+    use super::tests::{in_eq_residual, join_of_marker};
+    for (kind, expected) in [
+        (
+            JoinKind::LeftOuterSemi,
+            vec![vec![1, -1, -1], vec![2, 3, 1], vec![3, 9, 0], vec![4, 4, 0]],
+        ),
+        (
+            JoinKind::AntiLeftOuterSemi,
+            vec![vec![1, -1, -1], vec![2, 3, 0], vec![3, 9, 1], vec![4, 4, 1]],
+        ),
+    ] {
+        // Sorted on the key. Key 1: the IN equality is UNKNOWN -> NULL.
+        // Key 2: a definite match. Key 3: an inner group whose IN equality
+        // is definitely false -> hard miss. Key 4: no inner group at all.
+        let left = vec![
+            vec![Datum::Int(1), Datum::Null],
+            vec![Datum::Int(2), Datum::Int(3)],
+            vec![Datum::Int(3), Datum::Int(9)],
+            vec![Datum::Int(4), Datum::Int(4)],
+        ];
+        let right = vec![
+            vec![Datum::Int(1), Datum::Int(5)],
+            vec![Datum::Int(2), Datum::Int(3)],
+            vec![Datum::Int(3), Datum::Int(8)],
+        ];
+        let mut join = join_of_marker(
+            kind,
+            vec![eq_on(0, 0, 2), in_eq_residual(1, 1, 2)],
+            left,
+            right,
+            2,
+        );
+        join.set_merge_plan(MergeJoinPlan {
+            keys: vec![MergeJoinKey { left: 0, right: 0 }],
+            desc: false,
+        });
+        assert!(join.is_merge_join(), "{kind:?} must run as a merge join");
+        assert_eq!(run(&mut join), expected, "{kind:?}");
+    }
+}

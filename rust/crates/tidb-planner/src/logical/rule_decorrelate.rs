@@ -146,21 +146,7 @@ impl DecorrelateSolver {
                 apply.base_mut().set_children(restored);
             }
         }
-        // `JoinExec` now has both `JoinKind::AntiLeftOuterSemi` (the 0/1/NULL
-        // marker, mirroring `LeftOuterSemi` inverted) and the null-aware
-        // bucket probe an `IsEQCondFromIn` marker on `AntiLeftOuterSemi`
-        // needs, so unlike `LeftOuterSemi` -- whose own such marker is never
-        // NAAJ-eligible in the first place (Go's `canBeNAAJ` excludes it,
-        // so it can only ever stay an ordinary residual condition either
-        // way) and whose conversion this leaves untouched -- there is no
-        // longer a reason to keep it Apply-only.
-        let marker_needs_null_aware_join = apply.join.join_type == LogicalJoinType::LeftOuterSemi
-            && apply
-                .join
-                .other_conditions
-                .iter()
-                .any(super::join::is_eq_cond_from_in);
-        if apply.cor_cols.is_empty() && !marker_needs_null_aware_join {
+        if apply.cor_cols.is_empty() {
             // Go: "If the inner plan is non-correlated, the apply will be
             // simplified to join."
             return Self::optimize_children(ctx, LogicalPlan::Join(apply.join), group_by_column);

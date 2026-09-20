@@ -814,6 +814,9 @@ struct IndexRowProbe {
     key: Option<Vec<u8>>,
     next_inner: usize,
     matched: bool,
+    /// Go `hasNull`, accumulated across this outer row's candidates like
+    /// `matched`; see [`miss_marker`].
+    has_null: bool,
 }
 
 struct PendingIndexLookupTask {
@@ -1315,6 +1318,8 @@ enum MergePendingOutput {
         outer_index: usize,
         inner_ptr: Option<MergeInnerPtr>,
         matched_current_outer: bool,
+        /// Go `MergeJoinExec.hasNull`, reset with `hasMatch` per outer row.
+        has_null_current_outer: bool,
     },
     Unmatched {
         outer: MergeOuterRange,
@@ -1831,15 +1836,23 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         Ok(rows)
     }
 
-    /// Whether the `ON` conditions all hold for one joined row.
+    /// Whether the `ON` conditions all hold for one joined row -- the
+    /// accepted half of [`Self::residual_verdict`].
     fn matches(&self, joined: &[Datum]) -> Result<bool, ExecError> {
+        Ok(self.residual_verdict(joined)?.0)
+    }
+
+    /// Go `expression.EvalBool` over the residual conditions for one joined
+    /// row, folded the way this kind's joiner consumes it; see
+    /// [`fold_verdict`].
+    fn residual_verdict(&self, joined: &[Datum]) -> Result<(bool, bool), ExecError> {
         let conditions = if !self.is_hash_join() && !self.is_merge_join() {
             &self.conditions
         } else {
             &self.residual_conditions
         };
         if conditions.is_empty() {
-            return Ok(true);
+            return Ok((true, false));
         }
         self.condition_evals.set(self.condition_evals.get() + 1);
         let mut chunk = Chunk::new_with_capacity(&self.condition_types, 1);
@@ -1847,23 +1860,18 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             chunk.append_datum(i, value);
         }
         let row = chunk.get_row(0);
-        if self.kind == JoinKind::AntiSemi {
-            let (matched, has_null) = crate::joiner::eval_bool(&self.ctx, conditions, row)?;
-            // Anti-semi emits neither TRUE nor UNKNOWN pairs. The build-side
-            // matched bitmap therefore also records UNKNOWN as non-emittable.
-            return Ok(matched || has_null);
-        }
-        for condition in conditions {
-            let value = condition.eval(&self.ctx, row)?;
-            if !truthy(&value)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(fold_verdict(
+            self.kind,
+            crate::joiner::eval_bool(&self.ctx, conditions, row)?,
+        ))
     }
 
-    fn matches_chunk_rows(
+    /// [`Self::residual_verdict`] for the chunk-backed probe paths, which
+    /// lay the pair out in a caller-owned scratch chunk and carry no `self`.
+    #[allow(clippy::too_many_arguments)]
+    fn chunk_rows_verdict(
         ctx: &C,
+        kind: JoinKind,
         conditions: &[Expression],
         condition_evals: &Cell<u64>,
         scratch: &mut Chunk,
@@ -1871,21 +1879,19 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         right: Row<'_>,
         left_width: usize,
         right_width: usize,
-    ) -> Result<bool, ExecError> {
+    ) -> Result<(bool, bool), ExecError> {
         if conditions.is_empty() {
-            return Ok(true);
+            return Ok((true, false));
         }
         condition_evals.set(condition_evals.get() + 1);
         scratch.reset();
         scratch.append_partial_row_limited(0, left, left_width);
         scratch.append_partial_row_limited(left_width, right, right_width);
         let row = scratch.get_row(0);
-        for condition in conditions {
-            if !truthy(&condition.eval(ctx, row)?)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(fold_verdict(
+            kind,
+            crate::joiner::eval_bool(ctx, conditions, row)?,
+        ))
     }
 
     /// Concatenates an outer and an inner row back into left-then-right
@@ -1932,7 +1938,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 return Ok(false);
             }
             if let Some(scratch) = scratch.as_mut() {
-                if !self.matches_index_pair(scratch, outer_row, inner_row)? {
+                let (accepted, has_null) =
+                    self.matches_index_pair(scratch, outer_row, inner_row)?;
+                probe.has_null |= has_null;
+                if !accepted {
                     probe.next_inner += 1;
                     continue;
                 }
@@ -1966,13 +1975,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     self.output.unmatched(req, outer_is_left, outer_row, 0);
                 }
                 JoinKind::AntiSemi => self.output.preserved(req, outer_row),
-                JoinKind::LeftOuterSemi => {
+                JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => {
                     self.output.preserved(req, outer_row);
-                    req.append_datum(self.output.width(), &Datum::Int(0));
-                }
-                JoinKind::AntiLeftOuterSemi => {
-                    self.output.preserved(req, outer_row);
-                    req.append_datum(self.output.width(), &Datum::Int(1));
+                    req.append_datum(self.output.width(), &miss_marker(self.kind, probe.has_null));
                 }
                 JoinKind::Inner | JoinKind::Semi => {}
             }
@@ -1989,9 +1994,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         scratch: &mut Chunk,
         outer_row: Row<'_>,
         inner_row: Row<'_>,
-    ) -> Result<bool, ExecError> {
+    ) -> Result<(bool, bool), ExecError> {
         if self.conditions.is_empty() {
-            return Ok(true);
+            return Ok((true, false));
         }
         self.condition_evals.set(self.condition_evals.get() + 1);
         scratch.reset();
@@ -2003,17 +2008,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         scratch.append_partial_row(0, left);
         scratch.append_partial_row(left.len(), right);
         let row = scratch.get_row(0);
-        if self.kind == JoinKind::AntiSemi {
-            let (matched, has_null) = crate::joiner::eval_bool(&self.ctx, &self.conditions, row)?;
-            return Ok(matched || has_null);
-        }
-        for condition in &self.conditions {
-            let value = condition.eval(&self.ctx, row)?;
-            if !truthy(&value)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(fold_verdict(
+            self.kind,
+            crate::joiner::eval_bool(&self.ctx, &self.conditions, row)?,
+        ))
     }
 
     /// Emits every output row one outer row produces, given the inner rows
@@ -2029,13 +2027,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         I: Iterator<Item = &'a [Datum]>,
     {
         let mut matched = false;
+        let mut has_null = false;
         for inner_row in candidates {
             // Equal-key lookup/hash buckets have already established the key
             // match. Only build a joined row when a residual condition still
             // needs evaluation.
             let matches = if self.keys.is_empty() || !self.residual_conditions.is_empty() {
                 let joined = self.join_rows(outer_row, inner_row);
-                self.matches(&joined)?
+                let (accepted, row_has_null) = self.residual_verdict(&joined)?;
+                has_null |= row_has_null;
+                accepted
             } else {
                 true
             };
@@ -2070,13 +2071,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     self.append(req, &self.padded_row(outer_row));
                 }
                 JoinKind::AntiSemi => self.append(req, outer_row),
-                JoinKind::LeftOuterSemi => {
+                JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => {
                     self.append(req, outer_row);
-                    req.append_datum(self.output.width(), &Datum::Int(0));
-                }
-                JoinKind::AntiLeftOuterSemi => {
-                    self.append(req, outer_row);
-                    req.append_datum(self.output.width(), &Datum::Int(1));
+                    req.append_datum(self.output.width(), &miss_marker(self.kind, has_null));
                 }
                 JoinKind::Inner | JoinKind::Semi => {}
             }
@@ -2767,6 +2764,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     key,
                     next_inner: 0,
                     matched: false,
+                    has_null: false,
                 });
             }
             let probe = state
@@ -2800,6 +2798,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// Install the order selected by physical planning. Both children must
     /// deliver it; their sort/index choice belongs to the planner.
     pub(crate) fn set_merge_plan(&mut self, plan: crate::merge_join_plan::MergeJoinPlan) {
+        // Go `MergeJoinExec` runs every join type through the shared `Joiner`
+        // (`merge_join.go:381,396`), so a `PhysicalMergeJoin` the planner
+        // chose for a marker kind is executed as one, not silently rerouted
+        // through the hash path under a plan that still reads "MergeJoin".
         if matches!(
             self.kind,
             JoinKind::Inner
@@ -2807,6 +2809,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 | JoinKind::Right
                 | JoinKind::Semi
                 | JoinKind::AntiSemi
+                | JoinKind::LeftOuterSemi
+                | JoinKind::AntiLeftOuterSemi
         ) {
             // The legacy AST caller also follows moveEqualToOtherConditions:
             // only equalities represented by the chosen merge keys disappear.
@@ -2981,6 +2985,27 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// requested chunk can hold. The cursor is restored to `MergeState` even
     /// when expression evaluation or a spill read fails, so `close` can still
     /// release the container and action.
+    /// Go `Joiner.OnMissMatch(hasNull, outer, chk)` on the merge path: what
+    /// an outer row no inner row was accepted for emits, by kind.
+    fn emit_merge_miss(
+        &self,
+        req: &mut Chunk,
+        outer_left: bool,
+        outer_row: Row<'_>,
+        has_null: bool,
+    ) {
+        match self.kind {
+            JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi => {
+                self.output.unmatched(req, outer_left, outer_row, 0);
+            }
+            JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => {
+                self.output.preserved(req, outer_row);
+                req.append_datum(self.output.width(), &miss_marker(self.kind, has_null));
+            }
+            JoinKind::Inner | JoinKind::Semi => {}
+        }
+    }
+
     fn drain_merge_pending(&mut self, req: &mut Chunk) -> Result<bool, ExecError> {
         let (mut pending, mut inner) = {
             let state = self.merge_state.as_mut().expect("merge state exists");
@@ -2997,6 +3022,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 outer_index,
                 inner_ptr,
                 matched_current_outer,
+                has_null_current_outer,
             } => {
                 let outer_types = if outer.side_left {
                     self.left_types.clone()
@@ -3037,11 +3063,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 let outer_values = outer_row.get_datum_row(&outer_types);
                                 let inner_values = inner_row.get_datum_row(inner_types);
                                 let joined = self.join_rows(&outer_values, &inner_values);
-                                if !self.matches(&joined)? {
+                                let (accepted, row_has_null) = self.residual_verdict(&joined)?;
+                                *has_null_current_outer |= row_has_null;
+                                if !accepted {
                                     return Ok(false);
                                 }
                             }
-                            if !matches!(self.kind, JoinKind::Semi | JoinKind::AntiSemi) {
+                            if matches!(
+                                self.kind,
+                                JoinKind::Inner | JoinKind::Left | JoinKind::Right
+                            ) {
                                 self.output
                                     .chunks(req, outer.side_left, outer_row, inner_row);
                             }
@@ -3057,11 +3088,26 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         match accepted {
                             true => {
                                 *matched_current_outer = true;
-                                if matches!(self.kind, JoinKind::Semi | JoinKind::AntiSemi) {
-                                    if self.kind == JoinKind::Semi {
+                                // Go `TryToMatchInners`: the semi family
+                                // emits (or suppresses) on its FIRST accepted
+                                // pair and `inners.ReachEnd()`s the group.
+                                match self.kind {
+                                    JoinKind::Semi => {
                                         self.output.preserved(req, outer_row);
+                                        *inner_ptr = None;
                                     }
-                                    *inner_ptr = None;
+                                    JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => {
+                                        self.output.preserved(req, outer_row);
+                                        req.append_datum(
+                                            self.output.width(),
+                                            &Datum::Int(i64::from(
+                                                self.kind == JoinKind::LeftOuterSemi,
+                                            )),
+                                        );
+                                        *inner_ptr = None;
+                                    }
+                                    JoinKind::AntiSemi => *inner_ptr = None,
+                                    JoinKind::Inner | JoinKind::Left | JoinKind::Right => {}
                                 }
                             }
                             false => {}
@@ -3069,31 +3115,23 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         continue;
                     }
 
-                    if !*matched_current_outer
-                        && matches!(
-                            self.kind,
-                            JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi
-                        )
-                    {
+                    if !*matched_current_outer {
                         let state = self.merge_state.as_ref().expect("merge state exists");
                         let outer_row = if outer.side_left {
                             state.left.chunk.get_row(*outer_index)
                         } else {
                             state.right.chunk.get_row(*outer_index)
                         };
-                        self.output.unmatched(
+                        self.emit_merge_miss(
                             req,
                             outer.side_left,
                             outer_row,
-                            if outer.side_left {
-                                self.right_types.len()
-                            } else {
-                                self.left_types.len()
-                            },
+                            *has_null_current_outer,
                         );
                     }
                     *outer_index += 1;
                     *matched_current_outer = false;
+                    *has_null_current_outer = false;
                     if *outer_index < outer.end {
                         *inner_ptr = inner.first_ptr();
                     }
@@ -3111,16 +3149,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     } else {
                         state.right.chunk.get_row(*outer_index)
                     };
-                    self.output.unmatched(
-                        req,
-                        outer.side_left,
-                        outer_row,
-                        if outer.side_left {
-                            self.right_types.len()
-                        } else {
-                            self.left_types.len()
-                        },
-                    );
+                    // Go `merge_join.go:368`: a whole outer group with no
+                    // inner group is `OnMissMatch(false, ...)` per row.
+                    self.emit_merge_miss(req, outer.side_left, outer_row, false);
                     *outer_index += 1;
                 }
             }
@@ -3353,6 +3384,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             outer_index: outer.start,
                             inner_ptr: first,
                             matched_current_outer: false,
+                            has_null_current_outer: false,
                         });
                     }
                     self.drain_merge_pending(req)?;
@@ -3374,7 +3406,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     if is_outer
                         && matches!(
                             self.kind,
-                            JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi
+                            JoinKind::Left
+                                | JoinKind::Right
+                                | JoinKind::AntiSemi
+                                | JoinKind::LeftOuterSemi
+                                | JoinKind::AntiLeftOuterSemi
                         )
                     {
                         self.merge_state.as_mut().expect("state exists").pending =
@@ -3402,7 +3438,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     if is_outer
                         && matches!(
                             self.kind,
-                            JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi
+                            JoinKind::Left
+                                | JoinKind::Right
+                                | JoinKind::AntiSemi
+                                | JoinKind::LeftOuterSemi
+                                | JoinKind::AntiLeftOuterSemi
                         )
                     {
                         self.merge_state.as_mut().expect("state exists").pending =
@@ -4074,6 +4114,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 build_buf_rows = 1;
             }
             let mut matched = false;
+            let mut has_null = false;
             let mut stop_after_match = false;
             let mut candidate_index = 0;
             // The worker follows the same Go batch boundary as the serial
@@ -4199,9 +4240,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             {
                                 return Ok::<bool, ExecError>(false);
                             }
-                            if !residual_conditions.is_empty()
-                                && !Self::matches_chunk_rows(
+                            if !residual_conditions.is_empty() {
+                                let (accepted, row_has_null) = Self::chunk_rows_verdict(
                                     &shared.ctx,
+                                    kind,
                                     residual_conditions,
                                     &condition_evals,
                                     condition_chunk,
@@ -4209,9 +4251,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                     right,
                                     left_types.len(),
                                     right_types.len(),
-                                )?
-                            {
-                                return Ok(false);
+                                )?;
+                                has_null |= row_has_null;
+                                if !accepted {
+                                    return Ok(false);
+                                }
                             }
                             match kind {
                                 JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
@@ -4271,13 +4315,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         build_types.len(),
                     ),
                     JoinKind::AntiSemi => output_layout.preserved(&mut output, probe_row),
-                    JoinKind::LeftOuterSemi => {
+                    JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => {
                         output_layout.preserved(&mut output, probe_row);
-                        output.append_datum(output_layout.width(), &Datum::Int(0));
-                    }
-                    JoinKind::AntiLeftOuterSemi => {
-                        output_layout.preserved(&mut output, probe_row);
-                        output.append_datum(output_layout.width(), &Datum::Int(1));
+                        output.append_datum(output_layout.width(), &miss_marker(kind, has_null));
                     }
                     JoinKind::Inner | JoinKind::Semi => {}
                 }
@@ -4411,8 +4451,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             } else {
                                 (build_row, probe_row, build_types.len(), probe_types.len())
                             };
-                            if Self::matches_chunk_rows(
+                            if Self::chunk_rows_verdict(
                                 ctx,
+                                kind,
                                 residual_conditions,
                                 &condition_evals,
                                 condition_chunk,
@@ -4420,7 +4461,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 right,
                                 left_width,
                                 right_width,
-                            )? {
+                            )?
+                            .0
+                            {
                                 output_layout.chunks(
                                     &mut output,
                                     probe_is_left,
@@ -4545,8 +4588,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 } else {
                                     (build_row, probe_row, build_types.len(), probe_types.len())
                                 };
-                                if !Self::matches_chunk_rows(
+                                if !Self::chunk_rows_verdict(
                                     ctx,
+                                    kind,
                                     residual_conditions,
                                     &condition_evals,
                                     condition_chunk,
@@ -4554,7 +4598,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                     right,
                                     left_width,
                                     right_width,
-                                )? {
+                                )?
+                                .0
+                                {
                                     return Ok::<bool, ExecError>(false);
                                 }
                             }
@@ -4897,6 +4943,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     }
                 } else {
                     let mut matched = false;
+                    let mut has_null = false;
                     for ptr in candidates {
                         let build_row = {
                             let HashState {
@@ -4910,7 +4957,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 .map_err(|error| ExecError::SpillFailed(error.to_string()))?
                         };
                         let joined = self.join_rows(&probe_row, &build_row);
-                        if !self.matches(&joined)? {
+                        let (accepted, row_has_null) = self.residual_verdict(&joined)?;
+                        has_null |= row_has_null;
+                        if !accepted {
                             continue;
                         }
                         matched = true;
@@ -4941,13 +4990,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 self.append(req, &self.padded_row(&probe_row));
                             }
                             JoinKind::AntiSemi => self.append(req, &probe_row),
-                            JoinKind::LeftOuterSemi => {
+                            JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => {
                                 self.append(req, &probe_row);
-                                req.append_datum(self.output.width(), &Datum::Int(0));
-                            }
-                            JoinKind::AntiLeftOuterSemi => {
-                                self.append(req, &probe_row);
-                                req.append_datum(self.output.width(), &Datum::Int(1));
+                                req.append_datum(
+                                    self.output.width(),
+                                    &miss_marker(self.kind, has_null),
+                                );
                             }
                             JoinKind::Inner | JoinKind::Semi => {}
                         }
@@ -5640,8 +5688,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     if exact_int.is_none()
                         && !equi_keys_equal_chunk_rows(&keys, left, left_types, right, right_types)
                             .map_err(key_error)?
-                        || !Self::matches_chunk_rows(
+                        || !Self::chunk_rows_verdict(
                             ctx,
+                            self.kind,
                             conditions,
                             condition_evals,
                             condition_chunk,
@@ -5650,6 +5699,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             left_types.len(),
                             right_types.len(),
                         )?
+                        .0
                     {
                         return Ok::<(), ExecError>(());
                     }
@@ -5914,6 +5964,35 @@ fn merge_row_key_cmp(
 /// NULL and zero are false, and a string takes its numeric prefix.
 fn truthy(value: &Datum) -> Result<bool, ExecError> {
     Ok(tidb_expr::truthy_of(value)? == Some(true))
+}
+
+/// The fold each Go joiner's `TryToMatchInners` applies to `EvalBool`'s
+/// `(matched, hasNull)` for one candidate pair. `.0` is whether the pair is
+/// accepted: `antiSemiJoiner` accepts an UNKNOWN pair too, because its
+/// `OnMissMatch(hasNull, ...)` never emits an outer row that saw one
+/// (`joiner.go:571`), and `semiJoiner` discards nullness outright
+/// (`joiner.go:379`). `.1` is `hasNull`, kept apart for `leftOuterSemiJoiner`
+/// and `antiLeftOuterSemiJoiner`, whose `OnMissMatch` turns it into a NULL
+/// marker once the whole candidate group produced no accepted pair
+/// (`joiner.go:596-609,652-659`). Note `EvalBool` itself only ever reports
+/// `hasNull` for a condition marked `IsEQCondFromIn` -- the `IN`-clause's
+/// own equality, kept as a residual when another equality became the join
+/// key; an ordinary predicate's NULL is a definite non-match.
+fn fold_verdict(kind: JoinKind, (matched, has_null): (bool, bool)) -> (bool, bool) {
+    (
+        matched || (kind == JoinKind::AntiSemi && has_null),
+        has_null,
+    )
+}
+
+/// Go `leftOuterSemiJoiner.OnMissMatch` / `antiLeftOuterSemiJoiner.OnMissMatch`:
+/// the marker for an outer row no candidate was accepted for.
+fn miss_marker(kind: JoinKind, has_null: bool) -> Datum {
+    if has_null {
+        Datum::Null
+    } else {
+        Datum::Int(i64::from(kind == JoinKind::AntiLeftOuterSemi))
+    }
 }
 
 impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {

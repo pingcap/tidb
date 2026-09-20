@@ -1686,3 +1686,219 @@ fn parallel_exact_integer_probe_marks_preserved_build_rows() {
     expected.sort();
     assert_eq!(actual, expected);
 }
+
+/// A join whose output is the left row plus one marker column, the shape
+/// of `LeftOuterSemi`/`AntiLeftOuterSemi` (`JoinOutput::all` keeps only the
+/// left columns for them and the executor appends the marker at
+/// `output.width()`).
+pub(super) fn join_of_marker(
+    kind: JoinKind,
+    conditions: Vec<Expression>,
+    left: Vec<Vec<Datum>>,
+    right: Vec<Vec<Datum>>,
+    width: usize,
+) -> JoinExec<NoColumns> {
+    let mut executor = JoinExec::new(
+        ExecutorMeta::new(schema_of(width + 1), 1, CHUNK, CHUNK),
+        kind,
+        conditions,
+        Box::new(RowSource::new(left, width)),
+        Box::new(RowSource::new(right, width)),
+        NoColumns,
+        StatementMemory::default(),
+    );
+    executor.set_parallelism(5);
+    executor
+}
+
+/// The `IN`-clause's own equality kept as a residual condition -- Go
+/// `IsEQCondFromIn`, the one condition whose NULL `expression.EvalBool`
+/// reports as `hasNull` instead of a definite non-match. `updateEQCond` never
+/// promotes it to a join key, so it survives as a residual whenever ANOTHER
+/// equality became the key (`select a in (select a from s where t.b = s.b)
+/// from t`, the example on `EvalBool` itself).
+pub(super) fn in_eq_residual(lhs: usize, rhs: usize, left_width: usize) -> Expression {
+    let mut left = Column::new(lhs as i64 + 1, long());
+    left.index = lhs as i64;
+    left.in_operand = true;
+    let mut right = Column::new((left_width + rhs) as i64 + 1, long());
+    right.index = (left_width + rhs) as i64;
+    Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("eq"),
+        long(),
+        vec![Expression::Column(left), Expression::Column(right)],
+    ))
+}
+
+/// An ordinary predicate on the same columns, for the control cases.
+fn gt_residual(lhs: usize, rhs: usize, left_width: usize) -> Expression {
+    let mut left = Column::new(lhs as i64 + 1, long());
+    left.index = lhs as i64;
+    let mut right = Column::new((left_width + rhs) as i64 + 1, long());
+    right.index = (left_width + rhs) as i64;
+    Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("gt"),
+        long(),
+        vec![Expression::Column(right), Expression::Column(left)],
+    ))
+}
+
+/// Go `leftOuterSemiJoiner.TryToMatchInners` accumulates `hasNull` across
+/// the candidate group and `OnMissMatch(hasNull, ...)` marks NULL when no
+/// candidate was accepted (`joiner.go:596-609,652-659`); the anti variant
+/// mirrors it. The key matches; the `IN` equality itself is UNKNOWN.
+#[test]
+fn marker_kinds_mark_null_when_the_in_equality_is_unknown_for_every_candidate() {
+    for (kind, expected) in [
+        (JoinKind::LeftOuterSemi, vec![vec![1, -1, -1]]),
+        (JoinKind::AntiLeftOuterSemi, vec![vec![1, -1, -1]]),
+    ] {
+        let left = vec![vec![Datum::Int(1), Datum::Null]];
+        let right = vec![vec![Datum::Int(1), Datum::Int(5)]];
+        let mut join = join_of_marker(
+            kind,
+            vec![eq_on(0, 0, 2), in_eq_residual(1, 1, 2)],
+            left,
+            right,
+            2,
+        );
+        assert!(join.is_hash_join());
+        assert_eq!(
+            run(&mut join),
+            expected,
+            "{kind:?}: NULL = 5 is UNKNOWN, so the marker is NULL"
+        );
+    }
+}
+
+/// `EvalBool` only reports `hasNull` for the `IsEQCondFromIn` condition;
+/// an ORDINARY predicate's NULL is a definite non-match
+/// (`expression.go:356-366`), so the same data through `t2.b > t1.b`
+/// answers a hard 0 / 1, never NULL.
+#[test]
+fn marker_kinds_treat_an_ordinary_predicates_null_as_a_definite_miss() {
+    for (kind, expected) in [
+        (JoinKind::LeftOuterSemi, vec![vec![1, -1, 0]]),
+        (JoinKind::AntiLeftOuterSemi, vec![vec![1, -1, 1]]),
+    ] {
+        let left = vec![vec![Datum::Int(1), Datum::Null]];
+        let right = vec![vec![Datum::Int(1), Datum::Int(5)]];
+        let mut join = join_of_marker(
+            kind,
+            vec![eq_on(0, 0, 2), gt_residual(1, 1, 2)],
+            left,
+            right,
+            2,
+        );
+        assert_eq!(
+            run(&mut join),
+            expected,
+            "{kind:?}: an ordinary NULL predicate is FALSE"
+        );
+    }
+}
+
+/// A definite match anywhere in the group wins over an UNKNOWN candidate
+/// seen before it (`TryToMatchInners` returns `matched=true, hasNull=false`
+/// the moment a pair is accepted), and a group with no NULL at all is a
+/// hard miss.
+#[test]
+fn marker_kinds_prefer_a_definite_match_and_keep_a_clean_miss_definite() {
+    let left = vec![
+        vec![Datum::Int(1), Datum::Int(7)],
+        vec![Datum::Int(2), Datum::Int(7)],
+    ];
+    let right = vec![
+        vec![Datum::Int(1), Datum::Null],
+        vec![Datum::Int(1), Datum::Int(7)],
+        vec![Datum::Int(2), Datum::Int(8)],
+    ];
+    let mut join = join_of_marker(
+        JoinKind::LeftOuterSemi,
+        vec![eq_on(0, 0, 2), in_eq_residual(1, 1, 2)],
+        left,
+        right,
+        2,
+    );
+    assert_eq!(run(&mut join), vec![vec![1, 7, 1], vec![2, 7, 0]]);
+}
+
+/// An `IN` equality is never a hash key (`equi_key` refuses
+/// `IsEQCondFromIn`, as Go's `updateEQCond` never promotes one), so with
+/// nothing else to key on this is Go's cartesian hash join with the `IN`
+/// equality as the whole residual -- `select t1.b in (select t2.b from t2)`.
+#[test]
+fn cartesian_marker_kinds_mark_null_for_an_unknown_in_equality() {
+    for (kind, expected) in [
+        (JoinKind::LeftOuterSemi, vec![vec![-1, -1]]),
+        (JoinKind::AntiLeftOuterSemi, vec![vec![-1, -1]]),
+    ] {
+        let mut join = join_of_marker(
+            kind,
+            vec![in_eq_residual(0, 0, 1)],
+            vec![vec![Datum::Null]],
+            vec![vec![Datum::Int(5)]],
+            1,
+        );
+        assert!(join.keys.is_empty(), "the IN equality must stay a residual");
+        assert_eq!(run(&mut join), expected, "{kind:?}");
+    }
+}
+
+/// The index-lookup strategies: the row-at-a-time probe (`IndexRowProbe`)
+/// and both index-hash variants keep `hasNull` per outer row across the
+/// inner rows a batch fetched.
+#[test]
+fn index_join_marker_kinds_mark_null_for_an_unknown_in_equality() {
+    for hash_order in [None, Some(false), Some(true)] {
+        for (kind, expected) in [
+            (
+                JoinKind::LeftOuterSemi,
+                vec![vec![1, -1, -1], vec![2, 7, 1], vec![3, 9, 0]],
+            ),
+            (
+                JoinKind::AntiLeftOuterSemi,
+                vec![vec![1, -1, -1], vec![2, 7, 0], vec![3, 9, 1]],
+            ),
+        ] {
+            let outer = vec![
+                vec![Datum::Int(1), Datum::Null],
+                vec![Datum::Int(2), Datum::Int(7)],
+                vec![Datum::Int(3), Datum::Int(9)],
+            ];
+            let mut join = join_of_marker(
+                kind,
+                vec![eq_on(0, 0, 2), in_eq_residual(1, 1, 2)],
+                outer,
+                vec![],
+                2,
+            );
+            join.index_hash = hash_order;
+            let inner = RowSource::new(
+                vec![
+                    vec![Datum::Int(1), Datum::Int(5)],
+                    vec![Datum::Int(2), Datum::Int(7)],
+                ],
+                2,
+            );
+            join.index_lookup = Some(IndexLookupPlan {
+                lookup_is_left: false,
+                probe_keys: vec![0],
+                probe_key_domains: vec![IndexProbeKeyDomain {
+                    field_type: long(),
+                    prefix_length: -1,
+                }],
+                source: IndexLookupSource::Composite {
+                    exec: Box::new(inner),
+                    probes: Arc::new(std::sync::Mutex::new(Default::default())),
+                },
+                outer_not_null: vec![],
+                inner_not_null: vec![],
+                probe_bounds: vec![],
+            });
+            let mut rows = run(&mut join);
+            rows.sort_unstable();
+            assert_eq!(rows, expected, "{kind:?} index_hash={hash_order:?}");
+        }
+    }
+}
