@@ -216,7 +216,8 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
     })
 }
 
-fn load_database_tables<S: MetaSnapshot>(
+/// Every stored `TableInfo` under one database, in stored key order.
+pub(crate) fn load_database_tables<S: MetaSnapshot>(
     snapshot: &mut S,
     db_id: i64,
 ) -> Result<Vec<TableInfo>, ClusterCatalogError> {

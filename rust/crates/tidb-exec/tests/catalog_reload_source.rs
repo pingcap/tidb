@@ -428,7 +428,7 @@ fn a_rename_tables_diff_moves_every_affected_table() {
 }
 
 #[test]
-#[should_panic(expected = "nil affected option in rename-tables schema diff")]
+#[should_panic(expected = "nil affected option in schema diff")]
 fn a_rename_tables_diff_panics_on_a_nil_affected_option() {
     let (mut snapshot, catalog) = started_cluster();
     snapshot.commit_diff(
@@ -542,43 +542,341 @@ fn a_create_tables_diff_panics_on_a_nil_affected_option() {
     let _ = reload_cluster_catalog(&mut snapshot, &catalog);
 }
 
+/// The same table shape as [`go_table`] in another schema state, as a
+/// multi-step DDL leaves it between its steps.
+fn go_table_in_state(id: i64, original: &str, lower: &str, state: u8) -> String {
+    go_table(id, original, lower).replacen(
+        "\"state\":5,\"pk_is_handle\"",
+        &format!("\"state\":{state},\"pk_is_handle\""),
+        1,
+    )
+}
+
+fn diffs_reload(reloaded: ReloadedCatalog, what: &str) -> ClusterCatalog {
+    let ReloadedCatalog::Diffs { catalog, applied } = reloaded else {
+        panic!("expected an incremental diff reload for {what}, got {reloaded:?}");
+    };
+    assert_eq!(applied, 1, "{what}");
+    catalog
+}
+
+/// Go's `ApplyDiff` has no case for `MULTI_SCHEMA_CHANGE`: it is the
+/// `default:` (`applyDefaultAction`), the table reloaded in place, and so is
+/// it here now -- no action type forces a full load any more, only a missing
+/// or conflicting object does.
 #[test]
-fn an_unsupported_diff_type_forces_a_full_reload_rather_than_a_partial_guess() {
+fn a_multi_schema_change_diff_reloads_the_table_in_place_like_gos_default() {
     let (mut snapshot, catalog) = started_cluster();
-    // A second table exists in the store but no diff this tier can apply says
-    // so; only the full load can find it. `MULTI_SCHEMA_CHANGE` is deliberately
-    // outside this tier's covered action types (Go's own
-    // `getKeptAllocators` singles it out for special per-sub-action handling
-    // this tier does not attempt), so it stays refused here.
-    snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+    snapshot.put(
+        key::table_kv_key(3, 77),
+        go_table_with_extra_column(77, "Rows", "rows", 3, "note"),
+    );
     snapshot.commit_diff(
         101,
         &diff_json(101, ActionType::ACTION_MULTI_SCHEMA_CHANGE, 3, 77),
     );
 
-    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
-    let ReloadedCatalog::Full {
-        catalog: next,
-        reason,
-    } = reloaded
-    else {
-        panic!("expected a full reload");
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "multi schema change",
+    );
+    let (_, table) = next.find_table("campaign", "rows").expect("table survives");
+    assert_eq!(table.cols().len(), 3);
+}
+
+/// A schema-level action with no dedicated Go case (`MODIFY_SCHEMA_READ_ONLY`)
+/// carries `TableID` 0: Go's default path finds no valid table ID to drop or
+/// create and touches nothing.
+#[test]
+fn a_schema_level_diff_in_the_default_tier_touches_no_table() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.commit_diff(
+        101,
+        &diff_json(101, ActionType::ACTION_MODIFY_SCHEMA_READ_ONLY, 3, 0),
+    );
+
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "modify schema read only",
+    );
+    assert_eq!(next.schema_version, 101);
+    assert_eq!(next.databases[0].tables.len(), 1);
+}
+
+/// Go `getTableIDs`'s drop case: a table whose stored copy is still in a
+/// non-none state (a multi-step drop, kept for `ON DELETE CASCADE`) is
+/// re-added after the drop; once its key is gone, so is the table.
+#[test]
+fn a_drop_table_diff_keeps_a_table_the_store_still_holds_in_a_non_none_state() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.put(
+        key::table_kv_key(3, 77),
+        go_table_in_state(77, "Rows", "rows", 2),
+    );
+    snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_DROP_TABLE, 3, 77));
+    let kept = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "write-only drop step",
+    );
+    let (_, table) = kept.find_table("campaign", "rows").expect("table kept");
+    assert_eq!(
+        table.state,
+        tidb_model::schema_state::SchemaState::WRITE_ONLY
+    );
+
+    snapshot.remove(&key::table_kv_key(3, 77));
+    snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_DROP_TABLE, 3, 77));
+    let gone = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &kept).expect("reload runs"),
+        "final drop step",
+    );
+    assert!(gone.databases[0].tables.is_empty());
+}
+
+/// `DROP VIEW` and `DROP SEQUENCE` share `getTableIDs`'s drop case.
+#[test]
+fn drop_view_and_drop_sequence_diffs_drop_like_drop_table() {
+    for action in [
+        ActionType::ACTION_DROP_VIEW,
+        ActionType::ACTION_DROP_SEQUENCE,
+    ] {
+        let (mut snapshot, catalog) = started_cluster();
+        snapshot.remove(&key::table_kv_key(3, 77));
+        snapshot.commit_diff(101, &diff_json(101, action, 3, 77));
+        let next = diffs_reload(
+            reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+            "drop view/sequence",
+        );
+        assert!(next.databases[0].tables.is_empty(), "{action}");
+    }
+}
+
+/// `CREATE OR REPLACE VIEW` carries the replaced view's ID as `OldTableID`
+/// (`schema_version.go:74-80`); `getTableIDs` drops it and adds the new one.
+#[test]
+fn a_create_or_replace_view_diff_drops_the_old_view_id() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.remove(&key::table_kv_key(3, 77));
+    snapshot.put(key::table_kv_key(3, 90), go_table(90, "Rows", "rows"));
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":3,"table_id":90,"old_table_id":77,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":null}}"#,
+            ActionType::ACTION_CREATE_VIEW.0
+        ),
+    );
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "create or replace view",
+    );
+    assert_eq!(next.databases[0].tables.len(), 1);
+    assert_eq!(next.databases[0].tables[0].id, 90);
+}
+
+/// `RECOVER TABLE` and `CREATE SEQUENCE` only add (`getTableIDs`'s first case).
+#[test]
+fn recover_table_and_create_sequence_diffs_add_the_table() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+    snapshot.commit_diff(
+        101,
+        &diff_json(101, ActionType::ACTION_RECOVER_TABLE, 3, 78),
+    );
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "recover table",
+    );
+    assert_eq!(next.databases[0].tables.len(), 2);
+
+    snapshot.put(key::table_kv_key(3, 79), go_table(79, "Seq", "seq"));
+    snapshot.commit_diff(
+        102,
+        &diff_json(102, ActionType::ACTION_CREATE_SEQUENCE, 3, 79),
+    );
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
+        "create sequence",
+    );
+    assert_eq!(next.databases[0].tables.len(), 3);
+}
+
+/// Go `applyRecoverSchema`: the database comes back with the tables the
+/// store lists under it (`ReadTableFromMeta`, which `RECOVER SCHEMA` always
+/// sets), and recovering a database that is already loaded is Go's
+/// `ErrDatabaseExists` -- here the conflicting-object full load.
+#[test]
+fn a_recover_schema_diff_reads_the_databases_tables_from_the_store() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.put(key::database_kv_key(4), GO_SECOND_DBINFO);
+    snapshot.put(key::table_kv_key(4, 80), go_table(80, "A", "a"));
+    snapshot.put(key::table_kv_key(4, 81), go_table(81, "B", "b"));
+    let recover = |version: i64| {
+        format!(
+            r#"{{"version":{version},"type":{},"schema_id":4,"table_id":0,"old_table_id":0,"old_schema_id":0,"regenerate_schema_map":false,"read_table_from_meta":true,"affected_options":null}}"#,
+            ActionType::ACTION_RECOVER_SCHEMA.0
+        )
+    };
+    snapshot.commit_diff(101, &recover(101));
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "recover schema",
+    );
+    assert_eq!(next.databases.len(), 2);
+    assert!(next.find_table("ledger", "a").is_some());
+    assert!(next.find_table("ledger", "b").is_some());
+
+    snapshot.commit_diff(102, &recover(102));
+    let reloaded = reload_cluster_catalog(&mut snapshot, &next).expect("reload runs");
+    let ReloadedCatalog::Full { reason, .. } = reloaded else {
+        panic!("expected a full reload, got {reloaded:?}");
     };
     assert_eq!(
         reason,
-        FullReloadReason::UnsupportedAction {
-            version: 101,
-            action: ActionType::ACTION_MULTI_SCHEMA_CHANGE,
+        FullReloadReason::ConflictingObject {
+            version: 102,
+            detail: "database 4 which is already loaded".to_owned(),
         }
     );
-    assert_eq!(next.schema_version, 101);
-    assert_eq!(next.databases[0].tables.len(), 2);
 }
 
-/// Go `applyDefaultAction` -> `applyTableUpdate` -> `getTableIDs`'s `default:`
-/// case (`oldTableID = newTableID = diff.TableID`): the dominant shape of an
-/// ordinary `ALTER TABLE`. Exercises a handful of the action types this tier
-/// now covers, each rebuilding only the one table the diff names.
+/// Go `applyModifySchemaCharsetAndCollate`: the fresh `DBInfo`'s charset and
+/// collation are copied onto the loaded database; its tables stay.
+#[test]
+fn a_modify_schema_charset_diff_copies_the_fresh_fields_onto_the_loaded_database() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.put(
+        key::database_kv_key(3),
+        GO_DBINFO.replace(
+            r#""charset":"utf8mb4","collate":"utf8mb4_bin""#,
+            r#""charset":"latin1","collate":"latin1_bin""#,
+        ),
+    );
+    snapshot.commit_diff(
+        101,
+        &diff_json(
+            101,
+            ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE,
+            3,
+            0,
+        ),
+    );
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "modify schema charset",
+    );
+    assert_eq!(next.databases[0].info.charset, "latin1");
+    assert_eq!(next.databases[0].info.collate, "latin1_bin");
+    assert_eq!(next.databases[0].tables.len(), 1);
+}
+
+/// Placement-policy, resource-group and masking-policy diffs touch maps this
+/// catalog does not keep; they advance the version without a full load.
+#[test]
+fn policy_and_resource_group_diffs_change_nothing_and_stay_incremental() {
+    for action in [
+        ActionType::ACTION_CREATE_PLACEMENT_POLICY,
+        ActionType::ACTION_DROP_RESOURCE_GROUP,
+        ActionType::ACTION_ALTER_MASKING_POLICY,
+    ] {
+        let (mut snapshot, catalog) = started_cluster();
+        snapshot.commit_diff(101, &diff_json(101, action, 99, 0));
+        let next = diffs_reload(
+            reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+            "policy diff",
+        );
+        assert_eq!(next.schema_version, 101, "{action}");
+        assert_eq!(next.databases.len(), 1, "{action}");
+        assert_eq!(next.databases[0].tables.len(), 1, "{action}");
+    }
+}
+
+/// Go `applyExchangeTablePartition`'s public case: the normal table (its ID
+/// carried as `OldTableID`) is replaced by the partition's ID, and the
+/// partitioned table named by the first option is re-read whole.
+#[test]
+fn an_exchange_partition_diff_reloads_the_normal_and_the_partitioned_table() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.remove(&key::table_kv_key(3, 77));
+    snapshot.put(key::table_kv_key(3, 90), go_table(90, "Rows", "rows"));
+    snapshot.put(key::table_kv_key(3, 95), go_table(95, "Parted", "parted"));
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":3,"table_id":90,"old_table_id":77,"old_schema_id":3,"regenerate_schema_map":false,"affected_options":[{{"schema_id":3,"table_id":95,"old_table_id":0,"old_schema_id":0}}]}}"#,
+            ActionType::ACTION_EXCHANGE_TABLE_PARTITION.0
+        ),
+    );
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "exchange partition",
+    );
+    let mut ids: Vec<i64> = next.databases[0].tables.iter().map(|t| t.id).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![90, 95]);
+}
+
+/// Go `applyRefreshMeta`: the store decides. A table gone from the store is
+/// dropped, one present is (re)loaded, a database present but not loaded is
+/// added, and a table under an unloaded database is ignored.
+#[test]
+fn refresh_meta_diffs_follow_the_store() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.remove(&key::table_kv_key(3, 77));
+    snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+    snapshot.put(key::database_kv_key(4), GO_SECOND_DBINFO);
+    let refresh = |version: i64, schema_id: i64, table_id: i64| {
+        diff_json(
+            version,
+            ActionType::ACTION_REFRESH_META,
+            schema_id,
+            table_id,
+        )
+    };
+    snapshot.commit_diff(101, &refresh(101, 3, 77));
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "refresh meta drop",
+    );
+    assert!(next.databases[0].tables.is_empty());
+
+    snapshot.commit_diff(102, &refresh(102, 3, 78));
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
+        "refresh meta add table",
+    );
+    assert!(next.find_table("campaign", "notes").is_some());
+
+    snapshot.commit_diff(103, &refresh(103, 5, 9));
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
+        "refresh meta table under unloaded database",
+    );
+    assert_eq!(next.databases.len(), 1);
+
+    snapshot.commit_diff(104, &refresh(104, 4, 0));
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
+        "refresh meta add database",
+    );
+    assert_eq!(next.databases.len(), 2);
+}
+
+/// A flashback diff that does not demand a rebuilt map is a no-op in Go
+/// (`ApplyDiff` returns `[]int64{-1}`).
+#[test]
+fn a_flashback_cluster_diff_without_regenerate_changes_nothing() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.commit_diff(
+        101,
+        &diff_json(101, ActionType::ACTION_FLASHBACK_CLUSTER, 0, -1),
+    );
+    let next = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "flashback",
+    );
+    assert_eq!(next.databases[0].tables.len(), 1);
+}
+
 #[test]
 fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
     for action in [

@@ -25,9 +25,11 @@
 //!
 //! * The version and every diff and every object are read from ONE snapshot,
 //!   so the result is a single schema version and never a blend of two.
-//! * A diff this module does not know how to apply never produces a partial
-//!   guess. It falls back to a full load at the same snapshot, which is always
-//!   correct, merely more expensive.
+//! * A diff that names an object the loaded catalog or the snapshot does not
+//!   have (or already has) never produces a partial guess. It falls back to a
+//!   full load at the same snapshot, which is always correct, merely more
+//!   expensive -- where Go's applier would return the error its loader turns
+//!   into a full load.
 //! * The version to reach is the newest one whose diff is actually stored
 //!   (Go `GetSchemaVersionWithNonEmptyDiff`): a version whose diff has not
 //!   been written yet is not observable as a schema, so it is not adopted.
@@ -37,9 +39,11 @@ use std::fmt;
 use tidb_meta::{key, value};
 use tidb_model::action_type::ActionType;
 use tidb_model::schema_diff::SchemaDiff;
+use tidb_model::schema_state::SchemaState;
 
 use crate::cluster_catalog::{
-    load_cluster_catalog, ClusterCatalog, ClusterCatalogError, LoadedDatabase, MetaSnapshot,
+    load_cluster_catalog, load_database_tables, ClusterCatalog, ClusterCatalogError,
+    LoadedDatabase, MetaSnapshot,
 };
 
 /// Go `issyncer.LoadSchemaDiffVersionGapThreshold`: past this many versions a
@@ -72,12 +76,14 @@ pub enum FullReloadReason {
         /// The version whose diff demanded it.
         version: i64,
     },
-    /// The diff's action is one this tier does not apply incrementally.
-    UnsupportedAction {
+    /// The diff would create an object the loaded catalog already has
+    /// (Go `ErrDatabaseExists` from `applyRecoverSchema`), so replaying it
+    /// would duplicate state.
+    ConflictingObject {
         /// The version whose diff could not be applied.
         version: i64,
-        /// The action the diff carried.
-        action: ActionType,
+        /// Exact description of what already existed.
+        detail: String,
     },
     /// The diff referenced an object the loaded catalog or the snapshot does
     /// not have, so replaying it would invent or lose state.
@@ -105,14 +111,12 @@ impl fmt::Display for FullReloadReason {
                 formatter,
                 "schema version {version} carries a regenerate-schema-map diff"
             ),
-            Self::UnsupportedAction { version, action } => write!(
-                formatter,
-                "schema version {version} was produced by `{action}`, which this node cannot apply incrementally"
-            ),
-            Self::MissingObject { version, detail } => write!(
-                formatter,
-                "schema version {version} references {detail}"
-            ),
+            Self::ConflictingObject { version, detail } => {
+                write!(formatter, "schema version {version} recreates {detail}")
+            }
+            Self::MissingObject { version, detail } => {
+                write!(formatter, "schema version {version} references {detail}")
+            }
         }
     }
 }
@@ -270,10 +274,20 @@ fn apply_diff_range<S: MetaSnapshot>(
 
 /// Applies one diff, or names why it cannot be applied incrementally.
 ///
-/// Go's `Builder.ApplyDiff` covers every action kind; this tier covers the
-/// object-lifecycle subset its read path can actually serve, and refuses the
-/// rest outright. A refusal is not a failure — it is the caller's signal to
-/// take the full load, which is always correct.
+/// Go `Builder.ApplyDiff` (`builder.go:70-115`), case for case. Its
+/// `default:` is a real default here too (`applyDefaultAction`), so every
+/// action kind Go applies through the one-table-in-place path is applied the
+/// same way. A refusal is not a failure -- it is the caller's signal to take
+/// the full load, which is always correct -- and it happens exactly where
+/// Go's own applier returns an error the loader would then turn into a full
+/// load: a database, table or policy the diff names that is not there.
+///
+/// What this catalog does not keep, Go's appliers for it touch nothing else:
+/// placement policies, resource groups and masking policies (their own maps),
+/// placement bundles, auto-ID allocators, `sortedTablesBuckets` and the
+/// temporary-table set (in-memory caches). A full load reads none of those
+/// either, so applying their diffs as no-ops is the same catalog a full load
+/// would produce, not a guess.
 fn apply_schema_diff<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
@@ -281,6 +295,8 @@ fn apply_schema_diff<S: MetaSnapshot>(
 ) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
     let version = diff.version;
     match diff.action_type {
+        // Go `applyCreateSchema` (`builder.go:698-712`): the database read
+        // from the store, with no tables yet.
         ActionType::ACTION_CREATE_SCHEMA => {
             let Some(info) = read_database(snapshot, diff.schema_id)? else {
                 return Ok(Err(missing(
@@ -293,166 +309,458 @@ fn apply_schema_diff<S: MetaSnapshot>(
                 info,
                 tables: Vec::new(),
             });
+            Ok(Ok(()))
         }
+        // Go `applyDropSchema` (`builder.go:747-771`): absent is a no-op.
         ActionType::ACTION_DROP_SCHEMA => {
             catalog.databases.retain(|db| db.info.id != diff.schema_id);
+            Ok(Ok(()))
         }
-        // Go `getTableIDs` classifies a materialized view or view log create
-        // exactly like `ActionCreateTable`: the diff's own table ID names the
-        // new physical table (Go master `94a9cbedab`).
-        ActionType::ACTION_CREATE_TABLE
-        | ActionType::ACTION_CREATE_MATERIALIZED_VIEW
-        | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
-            if let Err(reason) =
-                create_table(snapshot, catalog, version, diff.schema_id, diff.table_id)?
-            {
+        ActionType::ACTION_RECOVER_SCHEMA => recover_schema(snapshot, catalog, diff),
+        ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE => modify_schema(
+            snapshot,
+            catalog,
+            version,
+            diff.schema_id,
+            |loaded, fresh| {
+                loaded.charset = fresh.charset;
+                loaded.collate = fresh.collate;
+            },
+        ),
+        ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => modify_schema(
+            snapshot,
+            catalog,
+            version,
+            diff.schema_id,
+            |loaded, fresh| {
+                loaded.placement_policy_ref = fresh.placement_policy_ref;
+            },
+        ),
+        // Go `applyCreatePolicy` / `applyAlterPolicy` / `applyDropPolicy`
+        // (`builder_misc.go:25-72`), `applyCreateOrAlterResourceGroup` /
+        // `applyDropResourceGroup` (`:74-95`) and `applyMaskingPolicyChange`
+        // (`builder.go:412-415`) touch only the policy, resource-group and
+        // masking-policy maps, none of which this catalog holds.
+        ActionType::ACTION_CREATE_PLACEMENT_POLICY
+        | ActionType::ACTION_ALTER_PLACEMENT_POLICY
+        | ActionType::ACTION_DROP_PLACEMENT_POLICY
+        | ActionType::ACTION_CREATE_RESOURCE_GROUP
+        | ActionType::ACTION_ALTER_RESOURCE_GROUP
+        | ActionType::ACTION_DROP_RESOURCE_GROUP
+        | ActionType::ACTION_CREATE_MASKING_POLICY
+        | ActionType::ACTION_ALTER_MASKING_POLICY
+        | ActionType::ACTION_DROP_MASKING_POLICY => Ok(Ok(())),
+        // Go `applyTruncateTableOrPartition`, `applyDropTableOrPartition`,
+        // `applyRecoverTable` and `applyReorganizePartition`
+        // (`builder.go:260-320`, `:397-410`): one `applyTableUpdate`, then
+        // bundle bookkeeping only. `AffectedOpts` name partitions there, for
+        // the bundles -- they are not tables to reload.
+        ActionType::ACTION_TRUNCATE_TABLE_PARTITION
+        | ActionType::ACTION_TRUNCATE_TABLE
+        | ActionType::ACTION_DROP_TABLE
+        | ActionType::ACTION_DROP_TABLE_PARTITION
+        | ActionType::ACTION_RECOVER_TABLE
+        | ActionType::ACTION_REORGANIZE_PARTITION
+        | ActionType::ACTION_REMOVE_PARTITIONING
+        | ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
+            apply_table_update(snapshot, catalog, diff)
+        }
+        // Go `applyCreateTables` (`builder.go:117-119`): every created table
+        // is an `AffectedOption`, each replayed as its own `CreateTable`.
+        ActionType::ACTION_CREATE_TABLES => apply_affected_opts(
+            snapshot,
+            catalog,
+            diff,
+            ActionType::ACTION_CREATE_TABLE,
+            "nil affected option in create-tables schema diff",
+        ),
+        ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
+            exchange_table_partition(snapshot, catalog, diff)
+        }
+        // Go returns `[]int64{-1}` and changes nothing: a flashback whose
+        // diff demands the whole map be rebuilt carries `RegenerateSchemaMap`
+        // and never reaches here.
+        ActionType::ACTION_FLASHBACK_CLUSTER => Ok(Ok(())),
+        ActionType::ACTION_REFRESH_META => refresh_meta(snapshot, catalog, diff),
+        // Go `applyDefaultAction` (`builder.go:471-478`): the diff's own
+        // table, then every `AffectedOption` replayed with the same action.
+        _ => {
+            if let Err(reason) = apply_table_update(snapshot, catalog, diff)? {
                 return Ok(Err(reason));
             }
-        }
-        ActionType::ACTION_CREATE_TABLES => {
-            // Go `applyCreateTables`: the diff's own table ID is unset and
-            // every created table is listed as an affected option.
-            for affected in diff.affected_options.iter_handles() {
-                // Go dereferences each `*AffectedOption`; a stored null
-                // element is corrupt metadata and panics rather than
-                // being silently skipped.
-                let affected = affected.expect("nil affected option in create-tables schema diff");
-                let (schema_id, table_id) = {
-                    let affected = affected.read();
-                    (affected.schema_id, affected.table_id)
-                };
-                if let Err(reason) = create_table(snapshot, catalog, version, schema_id, table_id)?
-                {
-                    return Ok(Err(reason));
-                }
-            }
-        }
-        ActionType::ACTION_DROP_TABLE => {
-            if let Err(reason) = drop_table(catalog, version, diff.schema_id, diff.table_id)? {
-                return Ok(Err(reason));
-            }
-        }
-        ActionType::ACTION_TRUNCATE_TABLE => {
-            // The table keeps its name and gains a new ID; the old ID's data
-            // is dropped. Order matters only for the degenerate equal-ID case,
-            // which cannot happen, but dropping first keeps names unique.
-            if let Err(reason) = drop_table(catalog, version, diff.schema_id, diff.old_table_id)? {
-                return Ok(Err(reason));
-            }
-            if let Err(reason) =
-                create_table(snapshot, catalog, version, diff.schema_id, diff.table_id)?
-            {
-                return Ok(Err(reason));
-            }
-        }
-        // Go `getTableIDs`'s `default:` case again (RENAME_TABLE(S) is not
-        // one of the special-cased action types in `getTableIDs`, so it
-        // keeps its ID too), but `dropTableForUpdate`
-        // (`builder.go:546-576`) special-cases these two: when the rename
-        // crosses databases (`diff.OldSchemaID != diff.SchemaID`) the old
-        // copy must be dropped from the OLD database, not the new one,
-        // because `applyTableUpdate`'s single `dbInfo` is resolved from
-        // `diff.SchemaID` (the new database) throughout. A same-database
-        // rename needs no extra step: `create_table`'s dedup-by-ID `retain`
-        // already replaces the old name with the freshly read one in place.
-        // `ACTION_RENAME_TABLES`' own diff covers its first renamed table
-        // the same way `ACTION_CREATE_TABLES` covers its own; the rest are
-        // each one `AffectedOption`, with their own `old_schema_id`
-        // (`schema_version.go:96-115`, one entry per table after the first).
-        ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
-            if let Err(reason) = apply_rename_table(
+            apply_affected_opts(
                 snapshot,
                 catalog,
-                version,
-                diff.schema_id,
-                diff.old_schema_id,
-                diff.table_id,
-            )? {
-                return Ok(Err(reason));
+                diff,
+                diff.action_type,
+                "nil affected option in schema diff",
+            )
+        }
+    }
+}
+
+/// Go `Builder.applyAffectedOpts` (`builder.go:450-469`): each option is
+/// replayed as its own diff of type `action` through the whole dispatch. Go
+/// dereferences each `*AffectedOption`, so a stored null element is corrupt
+/// metadata and panics rather than being silently skipped.
+fn apply_affected_opts<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &mut ClusterCatalog,
+    diff: &SchemaDiff,
+    action: ActionType,
+    nil_message: &'static str,
+) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+    for affected in diff.affected_options.iter_handles() {
+        let affected = affected.expect(nil_message);
+        let affected_diff = {
+            let affected = affected.read();
+            SchemaDiff {
+                version: diff.version,
+                action_type: action,
+                schema_id: affected.schema_id,
+                table_id: affected.table_id,
+                old_schema_id: affected.old_schema_id,
+                old_table_id: affected.old_table_id,
+                ..SchemaDiff::default()
             }
-            for affected in diff.affected_options.iter_handles() {
-                let affected = affected.expect("nil affected option in rename-tables schema diff");
-                let (schema_id, table_id, old_schema_id) = {
-                    let affected = affected.read();
-                    (
-                        affected.schema_id,
-                        affected.table_id,
-                        affected.old_schema_id,
-                    )
-                };
-                if let Err(reason) = apply_rename_table(
-                    snapshot,
-                    catalog,
-                    version,
-                    schema_id,
-                    old_schema_id,
-                    table_id,
-                )? {
-                    return Ok(Err(reason));
+        };
+        if let Err(reason) = apply_schema_diff(snapshot, catalog, &affected_diff)? {
+            return Ok(Err(reason));
+        }
+    }
+    Ok(Ok(()))
+}
+
+/// Go `tableIDIsValid`.
+const fn table_id_is_valid(table_id: i64) -> bool {
+    table_id > 0
+}
+
+/// Go `Builder.getTableIDs` (`builder.go:480-528`): which table ID a diff
+/// drops and which it (re)creates. `0` on either side means "none".
+fn table_ids<S: MetaSnapshot>(
+    snapshot: &mut S,
+    diff: &SchemaDiff,
+) -> Result<(i64, i64), ClusterCatalogError> {
+    Ok(match diff.action_type {
+        ActionType::ACTION_CREATE_SEQUENCE | ActionType::ACTION_RECOVER_TABLE => (0, diff.table_id),
+        // A `CREATE TABLE` with foreign keys reaches public in two steps and
+        // its second diff sets `OldTableID` (`schema_version.go:257-259`), so
+        // the write-only copy is dropped before the public one is added.
+        ActionType::ACTION_CREATE_TABLE => (diff.old_table_id, diff.table_id),
+        ActionType::ACTION_DROP_TABLE
+        | ActionType::ACTION_DROP_VIEW
+        | ActionType::ACTION_DROP_SEQUENCE => {
+            let old = diff.table_id;
+            // BR's refreshMeta drops outright: no `ON DELETE CASCADE` to serve.
+            if diff.is_refresh_meta {
+                return Ok((old, 0));
+            }
+            // The table stays until its state reaches none, so a foreign
+            // key's `ON DELETE/UPDATE CASCADE` can still find it (Go keeps
+            // this for every table, not just those with foreign keys).
+            let stored = snapshot.get(&key::table_kv_key(diff.schema_id, old))?;
+            let still_there = match stored {
+                Some(stored) => {
+                    let table =
+                        value::parse_table_info(&stored, diff.schema_id).map_err(|error| {
+                            ClusterCatalogError::Decode(format!("TableInfo {old}: {error}"))
+                        })?;
+                    table.state != SchemaState::NONE
+                }
+                None => false,
+            };
+            (old, if still_there { diff.table_id } else { 0 })
+        }
+        ActionType::ACTION_TRUNCATE_TABLE
+        | ActionType::ACTION_CREATE_VIEW
+        | ActionType::ACTION_EXCHANGE_TABLE_PARTITION
+        | ActionType::ACTION_ALTER_TABLE_PARTITIONING
+        | ActionType::ACTION_REMOVE_PARTITIONING => (diff.old_table_id, diff.table_id),
+        _ => (diff.table_id, diff.table_id),
+    })
+}
+
+/// Go `Builder.applyTableUpdate` (`builder.go:590-620`) with
+/// `dropTableForUpdate` (`:546-579`) inlined: the diff's database must be
+/// loaded; the old table, if any, is dropped -- from the OLD database when a
+/// rename crossed databases, since Go's one `dbInfo` is resolved from the new
+/// `SchemaID` throughout -- and the new one, if any, is read from the store
+/// and added. Everything else Go does there (`updateBundleForTableUpdate`,
+/// `copySortedTables`, kept auto-ID allocators, the masking-policy cache
+/// reset) maintains caches this catalog does not have.
+fn apply_table_update<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &mut ClusterCatalog,
+    diff: &SchemaDiff,
+) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+    let version = diff.version;
+    if !catalog
+        .databases
+        .iter()
+        .any(|db| db.info.id == diff.schema_id)
+    {
+        return Ok(Err(missing(
+            version,
+            format!("unknown database {}", diff.schema_id),
+        )));
+    }
+    let (old_table_id, new_table_id) = table_ids(snapshot, diff)?;
+    if table_id_is_valid(old_table_id) {
+        let is_rename = matches!(
+            diff.action_type,
+            ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES
+        );
+        let drop_from = if is_rename && diff.old_schema_id != diff.schema_id {
+            diff.old_schema_id
+        } else {
+            diff.schema_id
+        };
+        if let Err(reason) = drop_table(catalog, version, drop_from, old_table_id)? {
+            return Ok(Err(reason));
+        }
+    }
+    if table_id_is_valid(new_table_id) {
+        if let Err(reason) = create_table(snapshot, catalog, version, diff.schema_id, new_table_id)?
+        {
+            return Ok(Err(reason));
+        }
+    }
+    Ok(Ok(()))
+}
+
+/// Go `Builder.applyRecoverSchema` (`builder.go:774-788`): the database must
+/// not be loaded yet, and comes back with its tables. `RECOVER SCHEMA`'s own
+/// diff always sets `ReadTableFromMeta` (`schema_version.go:280`), which has
+/// Go list the database's tables from the store instead of trusting the
+/// diff's `AffectedOpts`; the listing here is the same one the full load
+/// uses, at this snapshot.
+fn recover_schema<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &mut ClusterCatalog,
+    diff: &SchemaDiff,
+) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+    let version = diff.version;
+    if catalog
+        .databases
+        .iter()
+        .any(|db| db.info.id == diff.schema_id)
+    {
+        return Ok(Err(FullReloadReason::ConflictingObject {
+            version,
+            detail: format!("database {} which is already loaded", diff.schema_id),
+        }));
+    }
+    let Some(info) = read_database(snapshot, diff.schema_id)? else {
+        return Ok(Err(missing(
+            version,
+            format!("database {}", diff.schema_id),
+        )));
+    };
+    let tables = if diff.read_table_from_meta {
+        load_database_tables(snapshot, info.id)?
+    } else {
+        Vec::new()
+    };
+    catalog.databases.push(LoadedDatabase { info, tables });
+    if diff.read_table_from_meta {
+        return Ok(Ok(()));
+    }
+    apply_affected_opts(
+        snapshot,
+        catalog,
+        diff,
+        ActionType::ACTION_CREATE_TABLE,
+        "nil affected option in recover-schema schema diff",
+    )
+}
+
+/// Go `applyModifySchemaCharsetAndCollate` / `applyModifySchemaDefaultPlacement`
+/// (`builder.go:714-745`): re-read the `DBInfo` and copy the changed fields
+/// onto the loaded one.
+fn modify_schema<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &mut ClusterCatalog,
+    version: i64,
+    db_id: i64,
+    apply: impl FnOnce(&mut tidb_model::db::DBInfo, tidb_model::db::DBInfo),
+) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+    let Some(fresh) = read_database(snapshot, db_id)? else {
+        return Ok(Err(missing(version, format!("database {db_id}"))));
+    };
+    let Some(database) = catalog.databases.iter_mut().find(|db| db.info.id == db_id) else {
+        return Ok(Err(missing(version, format!("unknown database {db_id}"))));
+    };
+    apply(&mut database.info, fresh);
+    Ok(Ok(()))
+}
+
+/// Go `applyExchangeTablePartition` (`builder.go:322-395`): the non-partitioned
+/// table and the partitioned table are each one `applyTableUpdate`. The
+/// auto-ID levelling it ends with (`updateAutoIDForExchangePartition`) is a
+/// store write this reader does not make: it is the same idempotent write
+/// every node performs, the DDL-running Go nodes included, and this catalog
+/// keeps no allocator state for it to feed. A full load would not make it
+/// either.
+fn exchange_table_partition<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &mut ClusterCatalog,
+    diff: &SchemaDiff,
+) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+    let first_affected = |diff: &SchemaDiff| {
+        diff.affected_options.iter_handles().next().map(|affected| {
+            let affected = affected.expect("nil affected option in exchange-partition schema diff");
+            let affected = affected.read();
+            (
+                affected.schema_id,
+                affected.table_id,
+                affected.old_schema_id,
+            )
+        })
+    };
+    // Not yet public: the diff names one table in place, and the partitioned
+    // table only if the first option carries its database.
+    if diff.old_table_id == diff.table_id && diff.old_schema_id == diff.schema_id {
+        if let Err(reason) = apply_table_update(snapshot, catalog, diff)? {
+            return Ok(Err(reason));
+        }
+        let Some((_, pt_id, pt_schema_id)) = first_affected(diff) else {
+            return Ok(Ok(()));
+        };
+        if pt_schema_id == 0 {
+            return Ok(Ok(()));
+        }
+        let pt_diff = SchemaDiff {
+            action_type: diff.action_type,
+            version: diff.version,
+            table_id: pt_id,
+            schema_id: pt_schema_id,
+            old_table_id: pt_id,
+            old_schema_id: pt_schema_id,
+            ..SchemaDiff::default()
+        };
+        return apply_table_update(snapshot, catalog, &pt_diff);
+    }
+    let nt_schema_id = diff.old_schema_id;
+    let nt_id = diff.old_table_id;
+    let mut pt_schema_id = diff.schema_id;
+    let mut pt_id = diff.table_id;
+    let part_id = diff.table_id;
+    if let Some((affected_schema_id, affected_table_id, _)) = first_affected(diff) {
+        pt_id = affected_table_id;
+        if affected_schema_id != 0 {
+            pt_schema_id = affected_schema_id;
+        }
+    }
+    // The normal table first; it takes the partition's ID when the diff
+    // carries the partitioned table's ID in its first option.
+    let mut current = SchemaDiff {
+        action_type: diff.action_type,
+        version: diff.version,
+        table_id: nt_id,
+        schema_id: nt_schema_id,
+        ..SchemaDiff::default()
+    };
+    if pt_id != part_id {
+        current.table_id = part_id;
+        current.old_table_id = nt_id;
+        current.old_schema_id = nt_schema_id;
+    }
+    if let Err(reason) = apply_table_update(snapshot, catalog, &current)? {
+        return Ok(Err(reason));
+    }
+    // Then the partitioned table, re-read whole.
+    current.table_id = pt_id;
+    current.schema_id = pt_schema_id;
+    current.old_table_id = pt_id;
+    current.old_schema_id = pt_schema_id;
+    apply_table_update(snapshot, catalog, &current)
+}
+
+/// Go `equalPlacementPolicy` (`builder.go:122-130`).
+fn equal_placement_policy(
+    left: Option<&tidb_model::GoShared<tidb_model::placement::PolicyRefInfo>>,
+    right: Option<&tidb_model::GoShared<tidb_model::placement::PolicyRefInfo>>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            let (left, right) = (left.read(), right.read());
+            left.id == right.id && left.name.lowercase() == right.name.lowercase()
+        }
+        _ => false,
+    }
+}
+
+/// Go `applyRefreshMeta` (`builder.go:137-258`), BR's PITR path: each diff
+/// names one database or one table, and the store decides whether it is
+/// dropped, created or updated.
+fn refresh_meta<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &mut ClusterCatalog,
+    diff: &SchemaDiff,
+) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+    let (schema_id, table_id) = (diff.schema_id, diff.table_id);
+    if table_id == 0 {
+        let Some(fresh) = read_database(snapshot, schema_id)? else {
+            // Gone from the store: drop it (absent is a no-op, as in Go).
+            catalog.databases.retain(|db| db.info.id != schema_id);
+            return Ok(Ok(()));
+        };
+        match catalog
+            .databases
+            .iter_mut()
+            .find(|db| db.info.id == schema_id)
+        {
+            None => catalog.databases.push(LoadedDatabase {
+                info: fresh,
+                tables: Vec::new(),
+            }),
+            Some(database) => {
+                let loaded = &mut database.info;
+                if loaded.charset != fresh.charset || loaded.collate != fresh.collate {
+                    loaded.charset = fresh.charset;
+                    loaded.collate = fresh.collate;
+                }
+                if !equal_placement_policy(
+                    loaded.placement_policy_ref.as_ref(),
+                    fresh.placement_policy_ref.as_ref(),
+                ) {
+                    loaded.placement_policy_ref = fresh.placement_policy_ref;
                 }
             }
         }
-        // Go `getTableIDs`'s `default:` case (`oldTableID = newTableID =
-        // diff.TableID`), reached through `ApplyDiff`'s own `default:` arm
-        // (`applyDefaultAction` -> `applyTableUpdate`) for every action type
-        // below: the table keeps its ID and its database, so re-reading its
-        // one `TableInfo` and swapping it in for the old copy is exactly what
-        // Go's `applyCreateTable` does for this case (`m.GetTable` then
-        // replace), modulo the in-memory caches (auto-ID allocators,
-        // placement bundles, masking-policy cache, `sortedTablesBuckets`)
-        // this simpler catalog does not keep at all -- there is nothing here
-        // for those Go side effects to go stale, so there is nothing to
-        // replicate for them. Excluded on purpose: anything that changes a
-        // table's ID (`CREATE_VIEW`, partition/multi-schema-change actions,
-        // ...), which Go's `getTableIDs` special-cases and this tier does not
-        // attempt to.
-        ActionType::ACTION_ADD_COLUMN
-        | ActionType::ACTION_DROP_COLUMN
-        | ActionType::ACTION_ADD_COLUMNS
-        | ActionType::ACTION_DROP_COLUMNS
-        | ActionType::ACTION_MODIFY_COLUMN
-        | ActionType::ACTION_ADD_INDEX
-        | ActionType::ACTION_DROP_INDEX
-        | ActionType::ACTION_RENAME_INDEX
-        | ActionType::ACTION_ALTER_INDEX_VISIBILITY
-        | ActionType::ACTION_ADD_PRIMARY_KEY
-        | ActionType::ACTION_DROP_PRIMARY_KEY
-        | ActionType::ACTION_SET_DEFAULT_VALUE
-        | ActionType::ACTION_MODIFY_TABLE_COMMENT
-        | ActionType::ACTION_MODIFY_TABLE_CHARSET_AND_COLLATE
-        | ActionType::ACTION_SHARD_ROW_ID
-        | ActionType::ACTION_REBASE_AUTO_ID
-        | ActionType::ACTION_REBASE_AUTO_RANDOM_BASE
-        | ActionType::ACTION_MODIFY_TABLE_AUTO_IDCACHE
-        | ActionType::ACTION_ADD_FOREIGN_KEY
-        | ActionType::ACTION_DROP_FOREIGN_KEY
-        | ActionType::ACTION_ADD_CHECK_CONSTRAINT
-        | ActionType::ACTION_DROP_CHECK_CONSTRAINT
-        | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
-        | ActionType::ACTION_LOCK_TABLE
-        | ActionType::ACTION_UNLOCK_TABLE
-        | ActionType::ACTION_REPAIR_TABLE
-        | ActionType::ACTION_SET_TI_FLASH_REPLICA
-        | ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS
-        | ActionType::ACTION_ALTER_TABLE_ATTRIBUTES
-        | ActionType::ACTION_ALTER_CACHE_TABLE
-        | ActionType::ACTION_ALTER_NO_CACHE_TABLE
-        | ActionType::ACTION_ALTER_TABLE_STATS_OPTIONS
-        | ActionType::ACTION_ALTER_TTLINFO
-        | ActionType::ACTION_ALTER_TTLREMOVE
-        | ActionType::ACTION_ADD_COLUMNAR_INDEX
-        | ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE
-        | ActionType::ACTION_ALTER_TABLE_MODE
-        | ActionType::ACTION_ALTER_TABLE_AFFINITY
-        | ActionType::ACTION_ALTER_TABLE_SOFT_DELETE_INFO
-        | ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY => {
-            if let Err(reason) = apply_table_update(snapshot, catalog, version, diff)? {
-                return Ok(Err(reason));
-            }
-        }
-        action => return Ok(Err(FullReloadReason::UnsupportedAction { version, action })),
+        return Ok(Ok(()));
     }
-    Ok(Ok(()))
+    // A table under a database this catalog does not have: the database is
+    // gone, so its tables are too.
+    if !catalog.databases.iter().any(|db| db.info.id == schema_id) {
+        return Ok(Ok(()));
+    }
+    let stored = snapshot
+        .get(&key::table_kv_key(schema_id, table_id))?
+        .is_some();
+    let synthetic = SchemaDiff {
+        version: diff.version,
+        action_type: if stored {
+            ActionType::ACTION_CREATE_TABLE
+        } else {
+            ActionType::ACTION_DROP_TABLE
+        },
+        schema_id,
+        table_id,
+        old_schema_id: schema_id,
+        old_table_id: table_id,
+        is_refresh_meta: true,
+        ..SchemaDiff::default()
+    };
+    if stored {
+        // Go `applyDefaultAction` with `AffectedOpts` unset.
+        apply_table_update(snapshot, catalog, &synthetic)
+    } else {
+        // Go `applyDropTableOrPartition`.
+        apply_table_update(snapshot, catalog, &synthetic)
+    }
 }
 
 const fn missing(version: i64, detail: String) -> FullReloadReason {
@@ -471,6 +779,8 @@ fn read_database<S: MetaSnapshot>(
         .map_err(|error| ClusterCatalogError::Decode(format!("DBInfo {db_id}: {error}")))
 }
 
+/// Go `applyCreateTable`'s catalog effect: the table read from the store
+/// replaces any loaded copy with the same ID in that database.
 fn create_table<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
@@ -494,34 +804,8 @@ fn create_table<S: MetaSnapshot>(
     Ok(Ok(()))
 }
 
-/// Go `applyTableUpdate`'s same-ID case: reload the diff's own table, then
-/// (Go `applyAffectedOpts`) do the same for every table an `AffectedOption`
-/// names, in case a covered action type's diff ever lists more than one
-/// table under a single schema version even though none of them changed ID
-/// (`ACTION_MULTI_SCHEMA_CHANGE` itself is not one of this tier's covered
-/// action types -- it stays on the `UnsupportedAction` path below).
-fn apply_table_update<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
-    version: i64,
-    diff: &SchemaDiff,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
-    if let Err(reason) = create_table(snapshot, catalog, version, diff.schema_id, diff.table_id)? {
-        return Ok(Err(reason));
-    }
-    for affected in diff.affected_options.iter_handles() {
-        let affected = affected.expect("nil affected option in schema diff");
-        let (schema_id, table_id) = {
-            let affected = affected.read();
-            (affected.schema_id, affected.table_id)
-        };
-        if let Err(reason) = create_table(snapshot, catalog, version, schema_id, table_id)? {
-            return Ok(Err(reason));
-        }
-    }
-    Ok(Ok(()))
-}
-
+/// Go `applyDropTable`'s catalog effect; an absent table is a no-op, an
+/// absent database is Go's `ErrDatabaseNotExists`.
 fn drop_table(
     catalog: &mut ClusterCatalog,
     version: i64,
@@ -533,31 +817,4 @@ fn drop_table(
     };
     database.tables.retain(|existing| existing.id != table_id);
     Ok(Ok(()))
-}
-
-/// One renamed table: Go `dropTableForUpdate`'s rename special case
-/// (`builder.go:568-579`) plus the `applyCreateTable` every `getTableIDs`
-/// case ends in. The comparison is literally Go's
-/// (`diff.OldSchemaID != diff.SchemaID`), with no exception for a zero
-/// `old_schema_id`: `SetSchemaDiffForRenameTable`/`SetSchemaDiffForRenameTables`
-/// always populate it from the job's real source schema for a genuine
-/// rename, so a zero here is a malformed diff, and Go's own code does not
-/// treat it as "same database" either -- it looks database `0` up and fails.
-/// This tier's equivalent of that failure is the same safe fallback any
-/// other missing object gets: `drop_table` reports
-/// `FullReloadReason::MissingObject` and the caller does a full load.
-fn apply_rename_table<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
-    version: i64,
-    schema_id: i64,
-    old_schema_id: i64,
-    table_id: i64,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
-    if old_schema_id != schema_id {
-        if let Err(reason) = drop_table(catalog, version, old_schema_id, table_id)? {
-            return Ok(Err(reason));
-        }
-    }
-    create_table(snapshot, catalog, version, schema_id, table_id)
 }

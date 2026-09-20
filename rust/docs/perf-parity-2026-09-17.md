@@ -3306,3 +3306,70 @@ still reaches the right end state. Fail-before confirmed: reverting the fix
 makes the new test panic (the old code silently succeeded instead of falling
 back). 23/23 passing; `rustfmt`/`cargo clippy -p tidb-exec` clean on both
 touched files.
+
+## 2026-09-20: task 66 closed at the code level -- `apply_schema_diff` is
+## now Go's `ApplyDiff` case for case, and no action type forces a full load
+
+The remaining gap was structural: the reload tier was an allow-list of
+action types with everything else refused, where Go's `ApplyDiff`
+(`builder.go:70-115`) has a real `default:` (`applyDefaultAction`) and a
+handful of dedicated cases. It is now the same switch:
+
+- `getTableIDs` (`builder.go:480-528`) is ported as `table_ids`: which ID a
+  diff drops and which it creates, per action -- `CREATE_SEQUENCE`/
+  `RECOVER_TABLE` create only; `CREATE_TABLE` drops `OldTableID` (set only
+  for the foreign-key two-step, `schema_version.go:257-259`); `DROP_TABLE`/
+  `DROP_VIEW`/`DROP_SEQUENCE` **re-add the table if the store still holds it
+  in a non-none state** (Go keeps it for `ON DELETE/UPDATE CASCADE` until
+  the last step -- the old tier dropped it at the first step);
+  `TRUNCATE_TABLE`/`CREATE_VIEW`/`EXCHANGE_TABLE_PARTITION`/
+  `ALTER_TABLE_PARTITIONING`/`REMOVE_PARTITIONING` use the old/new pair
+  (so `CREATE OR REPLACE VIEW` drops the replaced view's ID); everything
+  else is in place.
+- `applyTableUpdate` + `dropTableForUpdate` (`builder.go:546-620`) is
+  `apply_table_update`: database must be loaded, drop old (from the old
+  database for a cross-database rename), create new. `applyAffectedOpts`
+  (`builder.go:450-469`) is `apply_affected_opts`: each option replayed as
+  its own diff of the given type through the whole dispatch, recursively,
+  as Go does; a null option panics, as Go's dereference does.
+- Dedicated cases: `RECOVER_SCHEMA` (`applyRecoverSchema`: already loaded
+  is Go's `ErrDatabaseExists`, here the new `ConflictingObject` full-load
+  reason; `ReadTableFromMeta` -- which `RECOVER SCHEMA` always sets -- lists
+  the tables from the store, via the full load's own `load_database_tables`);
+  `MODIFY_SCHEMA_CHARSET_AND_COLLATE` / `MODIFY_SCHEMA_DEFAULT_PLACEMENT`
+  (copy the fresh fields); `TRUNCATE_TABLE(_PARTITION)`, `DROP_TABLE(_PARTITION)`,
+  `RECOVER_TABLE`, `REORGANIZE_PARTITION`, `REMOVE_PARTITIONING`,
+  `ALTER_TABLE_PARTITIONING` (one `applyTableUpdate`, no affected replay --
+  their `AffectedOpts` are partition IDs for bundle bookkeeping, not
+  tables); `CREATE_TABLES`; `EXCHANGE_TABLE_PARTITION` (both branches of
+  `applyExchangeTablePartition`, `builder.go:322-395`); `FLASHBACK_CLUSTER`
+  (no-op, Go returns `[]int64{-1}`); `REFRESH_META` (`applyRefreshMeta`,
+  `builder.go:137-258`, the store decides drop/create/update).
+- Placement-policy, resource-group and masking-policy diffs are no-ops:
+  Go's appliers touch only maps this catalog does not keep, and a full load
+  reads none of them either, so the no-op is the full load's result, not a
+  guess. Same for every cache Go maintains alongside (`updateBundleForTableUpdate`,
+  `copySortedTables`, kept allocators, the masking-policy cache reset).
+- `UnsupportedAction` is gone (nothing produces it); `ConflictingObject`
+  is new. The one thing deliberately not mirrored: `EXCHANGE_TABLE_PARTITION`'s
+  `updateAutoIDForExchangePartition` is a store write; this reader does not
+  make it (every Go node makes the same idempotent write, and this catalog
+  keeps no allocator state), and a full load would not make it either.
+
+**Tests** (`catalog_reload_source.rs`, 34/34): one per new arm or
+`getTableIDs` case -- `MULTI_SCHEMA_CHANGE` in place (this replaces the
+old `an_unsupported_diff_type...` test, which proved the old code took a
+full load for it: that pair is the behavioral before/after), schema-level
+default-tier diff touches nothing, drop keeps a write-only table until its
+key is gone, `DROP VIEW`/`DROP SEQUENCE`, `CREATE OR REPLACE VIEW`,
+`RECOVER TABLE`/`CREATE SEQUENCE`, `RECOVER SCHEMA` (listing + conflict),
+`MODIFY SCHEMA` charset, policy no-ops, exchange partition (both tables),
+refresh-meta (drop, add table, unloaded database, add database), flashback
+no-op. Reverting the source makes the test target fail to compile
+(`ConflictingObject`). `rustfmt`; `cargo clippy -p tidb-exec --lib` and
+`--test catalog_reload_source`: nothing on any touched line.
+
+**What task 66 still does not settle:** the original multi-minute stall
+was never reproduced byte-for-byte, so how much of it the three reload
+fixes together close remains unmeasured. What is closed is every
+"this action type forces a full reload" path.
