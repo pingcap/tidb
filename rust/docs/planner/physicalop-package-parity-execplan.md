@@ -4129,3 +4129,124 @@ fetched and matched local HEAD before committing. The two unconnected local
 drafts are still excluded. All test/lint processes are terminal; no cluster
 was started. Goal active, next work is the complete typed/error-path audit
 and validation of the shared checker and the remaining whole-package gates.
+
+
+## Complete checker typed-domain audit in progress (2026-09-21)
+
+Previous checkpoint 01936d8cca integrated the final existing checker consumer.
+Read the complete four-artifact Go checker package again. A temporary Go oracle
+covers 16 field-type/flag combinations in both vectorization modes, including
+NULLs, interior equality, boundary bytes and next-chunk continuation. All four
+original Go tests and the matrix pass. The native regression fails with seven
+mismatches: unsigned/BIT/numeric-ENUM tags, decimal boundary encoding, timestamp
+timezone, and ENUM/SET collated equality. Default duration FSP -1 also panics
+through generic scalar comparison; a temporary explicit FSP zero allowed the
+matrix to expose its other discrepancies. Restore the original -1 case when
+replacing generic comparison with the typed Go duration comparison.
+
+Implement typed grouping values and same-domain comparison; retain integer
+cell fast path. Boundary decimals must mirror Go's copy through ToString and
+FromString (which discards column shape), and timestamps must use session zone.
+Verify binary-literal warning/error handling instead of dropping conversion
+errors. The attempted SQL COLLATE-on-ENUM oracle is rejected by pinned Go with
+1235; do not introduce that unsupported SQL feature to make a test pass.
+Package acceptance remains open until all source contracts and gates have
+sufficient evidence. No workload speedup is inferred from these changes.
+
+
+### Typed-domain implementation and validation checkpoint
+
+The checker now normalizes unsigned, BIT, float32 and hybrid string values
+into Go's declared evaluation domain before grouping. Interior comparisons
+use typed decimal/time/duration/JSON/vector equality; duration compares raw
+nanoseconds and therefore accepts Go's unspecified FSP -1 without a panic.
+Boundary decimal copies clear source field shape, and timestamp keys use the
+statement timezone. The existing integer-cell fast path remains in place.
+This removes unnecessary generic comparison work but establishes no measured
+workload performance gain.
+
+The permanent 16-case matrix checks NULL/interior groups, exact boundary
+bytes and next-chunk continuation against Go output in both vector modes.
+The BIT regression checks error 1292 and its exact message, two endpoint
+warnings in warning mode, zero warnings in ignore mode, and empty grouping
+state on a strict error. It does not introduce the unsupported SQL COLLATE
+clause on ENUM/SET. The failed SQL probe remains only in /tmp.
+
+Successful Go command from repository root (temporary source overlay only):
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-typed-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+
+All four original tests and two oracle tests passed; the new fixtures run
+both vectorization modes. Output: /tmp/tidb-group-typed-oracle-final.log.
+No tracked Go/import/module/Bazel changes were made, so bazel_prepare is not
+triggered. This package has no injected failpoint calls requiring toggling.
+
+Successful native commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib issue_53867
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Counts respectively: 16, 1, 76, 76, 26, 23, 16 and 68 passed, zero failures or
+ignored tests in these filters. These are scoped run counts, not a deduplicated
+package-acceptance total. The merge-join session module includes the stream
+JSON-boundary SQL regression. An additional stream_agg_json filter matched
+zero tests and is not evidence. Logs: /tmp/tidb-group-typed-*.log.
+
+From repository root:
+
+    make lint
+    make -o tools/bin/revive lint
+    git diff --check
+
+Standard lint failed installing revive 1.2.1 (module does not contain package,
+exit 2); /tmp/tidb-group-typed-lint.log. The actual lint recipes passed using
+the existing binary; /tmp/tidb-group-typed-lint-existing.log. Diff check passed.
+
+Changed files: checker production/tests, this ExecPlan and source inventory.
+The package remains unaccepted: codec error-context handling, legacy collation
+mode and complete expression evaluation contracts need further audit. Whole
+consumer-package gates, release workloads, race checks and a current controlled
+performance comparison were not run in this checkpoint. Compatibility risk is
+concentrated at typed grouping and cross-chunk equality; the Go matrix and
+shared-consumer regressions cover the concrete changes, not every SQL input.
+
+
+Isolated red/green validation used /private/tmp/tidb-parity-publish-aba629bb.
+With production restored to 01936d8cca and only the current test module copied,
+the typed-domain regression failed on the unspecified-duration-FSP panic and
+the BIT regression failed because the old code returned generic Unsupported
+instead of Go error 1292. Commands from that checkout's rust/ (both exit 101):
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib typed_group_boundaries_match_go_evaluation_domains
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib bit_boundary_overflow_preserves_go_error_policy
+
+Logs: /tmp/tidb-group-typed-isolated-red-*.log. Restoring the production patch
+made the complete vec_group_checker filter pass (16 tests), recorded in
+/tmp/tidb-group-typed-isolated-green.log.
+
+Before publication, fetch revealed remote commit 90f1fe4db4, an independent
+ranger borrowing optimization. Both the main and isolated checkout were
+fast-forwarded to it without conflicts. The three modified files matched
+byte-for-byte between checkouts before the final validation receipt.
+
+The combined isolated checkout passed these final gates from rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-planner --lib ranger::detacher
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Counts: 13, 16, 16 and 68 passed, no failures/ignored tests; logs are
+/tmp/tidb-group-typed-combined-*.log. Existing-tool lint was rerun on the
+combined main checkout and passed with make -o tools/bin/revive lint.
+Formatting check passed with rustfmt --check --edition 2021
+rust/crates/tidb-executor/src/vec_group_checker.rs. All test/lint handles are
+terminal. No cluster was started. Only this receipt changed after validation;
+the two unrelated unconnected draft files remain excluded from publication.
+Goal active; this is validated progress, not whole-package acceptance.

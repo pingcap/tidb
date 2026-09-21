@@ -76,12 +76,17 @@ impl VecGroupChecker {
         // any interior row. Equal encoded boundaries skip the vector pass.
         let mut first = Vec::with_capacity(self.group_by_items.len());
         let mut last = Vec::with_capacity(self.group_by_items.len());
-        for item in &self.group_by_items {
-            first.push(item.eval(ctx, chunk.get_row(0))?);
-            last.push(item.eval(ctx, chunk.get_row(rows - 1))?);
+        for (item, collation) in self.group_by_items.iter().zip(&self.collations) {
+            first.push(eval_group_item(item, ctx, chunk.get_row(0), *collation)?);
+            last.push(eval_group_item(
+                item,
+                ctx,
+                chunk.get_row(rows - 1),
+                *collation,
+            )?);
         }
-        let first_encoded = encode_boundary_key(&first, &self.collations)?;
-        let last_encoded = encode_boundary_key(&last, &self.collations)?;
+        let first_encoded = encode_boundary_key(ctx, &first, &self.collations)?;
+        let last_encoded = encode_boundary_key(ctx, &last, &self.collations)?;
         let continues_previous = self.previous_last_key.as_ref() == Some(&first_encoded);
         let one_group = first_encoded == last_encoded;
         self.previous_last_key = Some(last_encoded);
@@ -98,13 +103,10 @@ impl VecGroupChecker {
             if resolve_integer_column(item, chunk, &mut self.same_group) {
                 continue;
             }
-            let mut previous = item.eval(ctx, chunk.get_row(0))?;
+            let mut previous = eval_group_item(item, ctx, chunk.get_row(0), *collation)?;
             for row in 1..rows {
-                let current = item.eval(ctx, chunk.get_row(row))?;
-                if self.same_group[row]
-                    && !tidb_expr::compare_datums_with_collation(&previous, &current, *collation)?
-                        .is_eq()
-                {
+                let current = eval_group_item(item, ctx, chunk.get_row(row), *collation)?;
+                if self.same_group[row] && !same_group_value(&previous, &current, *collation)? {
                     self.same_group[row] = false;
                 }
                 previous = current;
@@ -159,8 +161,8 @@ impl VecGroupChecker {
             .clone()
             .next_back()
             .expect("the non-empty iterator has a last key");
-        let first_encoded = encode_boundary_key(first, collations)?;
-        let last_encoded = encode_boundary_key(last, collations)?;
+        let first_encoded = encode_boundary_key(&tidb_expr::NoColumns, first, collations)?;
+        let last_encoded = encode_boundary_key(&tidb_expr::NoColumns, last, collations)?;
         let continues_previous = self.previous_last_key.as_ref() == Some(&first_encoded);
         self.previous_last_key = Some(last_encoded.clone());
 
@@ -264,7 +266,80 @@ fn resolve_integer_column(expr: &Expression, chunk: &Chunk, same_group: &mut [bo
     false
 }
 
-fn encode_boundary_key(values: &[Datum], collations: &[Collation]) -> Result<Vec<u8>, EvalError> {
+/// The Go checker calls EvalInt/EvalReal/EvalString, not the generic Eval.
+/// Hybrid values therefore enter the key's declared evaluation domain before
+/// either boundary encoding or adjacent comparison.
+fn eval_group_item(
+    item: &Expression,
+    ctx: &impl Columns,
+    row: tidb_chunk::row::Row<'_>,
+    collation: Collation,
+) -> Result<Datum, EvalError> {
+    let value = item.eval(ctx, row)?;
+    Ok(
+        match (item.static_type().map(|field| field.eval_type()), value) {
+            (Some(tidb_datatype::EvalType::Int), Datum::UInt(value)) => Datum::Int(value as i64),
+            (
+                Some(tidb_datatype::EvalType::Int),
+                Datum::Bit(value) | Datum::BinaryLiteral(value),
+            ) => {
+                let warnings = GroupWarnings(ctx);
+                let zone = ctx.time_zone();
+                let context = tidb_datatype::ConversionContext::new(
+                    ctx.type_flags(),
+                    tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                    &warnings,
+                );
+                let (integer, error) = value.to_int_with_context(&context);
+                if let Some(error) = error {
+                    return Err(EvalError::Conversion(error));
+                }
+                Datum::Int(integer as i64)
+            }
+            (Some(tidb_datatype::EvalType::Real), Datum::Float32(value)) => Datum::Real(value),
+            (Some(tidb_datatype::EvalType::String), value @ (Datum::Enum(..) | Datum::Set(..))) => {
+                Datum::String(StringDatum::new(value.go_bytes(), collation))
+            }
+            (_, value) => value,
+        },
+    )
+}
+
+struct GroupWarnings<'a, C>(&'a C);
+
+impl<C: Columns> tidb_datatype::ConversionWarningAppender for GroupWarnings<'_, C> {
+    fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
+        let warning = warning.to_sql_error();
+        self.0.append_warning(warning.code, &warning.message);
+    }
+}
+
+/// Go compares evaluated columns in their own domains. Avoid scalar SQL
+/// coercion (and its temporary datum clones) when only equality is needed.
+fn same_group_value(left: &Datum, right: &Datum, collation: Collation) -> Result<bool, EvalError> {
+    Ok(match (left, right) {
+        (Datum::Null, Datum::Null) => true,
+        (Datum::Null, _) | (_, Datum::Null) => false,
+        (Datum::Int(left), Datum::Int(right)) => left == right,
+        (Datum::Real(left), Datum::Real(right)) => left == right,
+        (Datum::Decimal(left), Datum::Decimal(right)) => left.cmp(right).is_eq(),
+        (Datum::Time(left), Datum::Time(right)) => left.compare(*right).is_eq(),
+        (Datum::Duration(left), Datum::Duration(right)) => {
+            left.nanoseconds() == right.nanoseconds()
+        }
+        (Datum::Json(left), Datum::Json(right)) => {
+            tidb_datatype::compare_binary_json(left, right).is_eq()
+        }
+        (Datum::VectorFloat32(left), Datum::VectorFloat32(right)) => left.compare(right).is_eq(),
+        _ => tidb_expr::compare_datums_with_collation(left, right, collation)?.is_eq(),
+    })
+}
+
+fn encode_boundary_key(
+    ctx: &impl Columns,
+    values: &[Datum],
+    collations: &[Collation],
+) -> Result<Vec<u8>, EvalError> {
     let values = values
         .iter()
         .zip(collations)
@@ -272,11 +347,16 @@ fn encode_boundary_key(values: &[Datum], collations: &[Collation]) -> Result<Vec
             Datum::String(_) | Datum::Bytes(_) | Datum::Enum(_, _) | Datum::Set(_, _) => {
                 Datum::String(StringDatum::new(value.go_bytes(), *collation))
             }
+            // Go creates fresh boundary decimals through ToString/FromString,
+            // dropping Datum.Length/Frac from the source column.
+            Datum::Decimal(value) => {
+                Datum::Decimal(tidb_datatype::Decimal::from_literal(&value.to_string()))
+            }
             value => value.clone(),
         })
         .collect::<Vec<_>>();
     tidb_codec::Encoder::new(true)
-        .encode_key(&values)
+        .encode_key_in_timezone(&ctx.time_zone(), &values)
         .map_err(|_| EvalError::Unsupported("group boundary key cannot be encoded"))
 }
 
@@ -314,6 +394,283 @@ mod tests {
             ranges.push(checker.get_next_group());
         }
         ranges
+    }
+
+    #[test]
+    fn typed_group_boundaries_match_go_evaluation_domains() {
+        use tidb_datatype::{
+            BinaryLiteral, CoreTime, FieldTypeFlags, MySqlDuration, MysqlSet, Time, TimeType,
+            VectorFloat32,
+        };
+        let time = |day, kind| {
+            Datum::Time(Time::new(CoreTime::from_date(2020, 1, day, 12, 0, 0, 0), kind, 0).unwrap())
+        };
+        let string = |value: &str| {
+            Datum::String(StringDatum::new(
+                value.as_bytes(),
+                Collation::Utf8Mb4GeneralCi,
+            ))
+        };
+        let enum_value =
+            |name, value| Datum::new_enum(MysqlEnum::new(name, value), Collation::Utf8Mb4GeneralCi);
+        let set_value =
+            |name, value| Datum::new_set(MysqlSet::new(name, value), Collation::Utf8Mb4GeneralCi);
+        // Endpoint bytes and ranges captured from all Go evaluation domains,
+        // with both vectorized evaluation modes and a +08:00 session zone.
+        let cases = [
+            (
+                "int",
+                FieldTypeCode::LongLong,
+                0,
+                [Datum::Int(1), Datum::Int(1), Datum::Int(2)],
+                "038000000000000002",
+            ),
+            (
+                "uint",
+                FieldTypeCode::LongLong,
+                FieldTypeFlags::UNSIGNED,
+                [Datum::UInt(1), Datum::UInt(1), Datum::UInt(u64::MAX)],
+                "037fffffffffffffff",
+            ),
+            (
+                "bit",
+                FieldTypeCode::Bit,
+                0,
+                [
+                    Datum::Bit(BinaryLiteral::from(vec![1])),
+                    Datum::Bit(BinaryLiteral::from(vec![0, 1])),
+                    Datum::Bit(BinaryLiteral::from(vec![2])),
+                ],
+                "038000000000000002",
+            ),
+            (
+                "float",
+                FieldTypeCode::Float,
+                0,
+                [
+                    Datum::Float32(1.0),
+                    Datum::Float32(1.0),
+                    Datum::Float32(2.0),
+                ],
+                "05c000000000000000",
+            ),
+            (
+                "double",
+                FieldTypeCode::Double,
+                0,
+                [Datum::Real(1.0), Datum::Real(1.0), Datum::Real(2.0)],
+                "05c000000000000000",
+            ),
+            (
+                "decimal",
+                FieldTypeCode::NewDecimal,
+                0,
+                [
+                    Datum::Decimal(Decimal::from_literal("1.0")),
+                    Datum::Decimal(Decimal::from_literal("1.00")),
+                    Datum::Decimal(Decimal::from_literal("2.00")),
+                ],
+                "0603028200",
+            ),
+            (
+                "date",
+                FieldTypeCode::Date,
+                0,
+                [
+                    time(1, TimeType::Date),
+                    time(1, TimeType::Date),
+                    time(2, TimeType::Date),
+                ],
+                "0419a544c000000000",
+            ),
+            (
+                "datetime",
+                FieldTypeCode::Datetime,
+                0,
+                [
+                    time(1, TimeType::DateTime),
+                    time(1, TimeType::DateTime),
+                    time(2, TimeType::DateTime),
+                ],
+                "0419a544c000000000",
+            ),
+            (
+                "timestamp",
+                FieldTypeCode::Timestamp,
+                0,
+                [
+                    time(1, TimeType::Timestamp),
+                    time(1, TimeType::Timestamp),
+                    time(2, TimeType::Timestamp),
+                ],
+                "0419a5444000000000",
+            ),
+            (
+                "duration",
+                FieldTypeCode::Duration,
+                0,
+                [
+                    Datum::Duration(MySqlDuration::new(0, 0, 1, 0, 0).unwrap()),
+                    Datum::Duration(MySqlDuration::new(0, 0, 1, 0, 0).unwrap()),
+                    Datum::Duration(MySqlDuration::new(0, 0, 2, 0, 0).unwrap()),
+                ],
+                "078000000077359400",
+            ),
+            (
+                "json",
+                FieldTypeCode::Json,
+                0,
+                [
+                    Datum::Json(BinaryJSON::parse("1").unwrap()),
+                    Datum::Json(BinaryJSON::parse("1.0").unwrap()),
+                    Datum::Json(BinaryJSON::parse("2").unwrap()),
+                ],
+                "0a090200000000000000",
+            ),
+            (
+                "vector",
+                FieldTypeCode::VectorFloat32,
+                0,
+                [
+                    Datum::VectorFloat32(VectorFloat32::parse("[1]").unwrap()),
+                    Datum::VectorFloat32(VectorFloat32::parse("[1]").unwrap()),
+                    Datum::VectorFloat32(VectorFloat32::parse("[2]").unwrap()),
+                ],
+                "140100000000000040",
+            ),
+            (
+                "string",
+                FieldTypeCode::VarString,
+                0,
+                [string("a"), string("A"), string("b")],
+                "010042000000000000f9",
+            ),
+            (
+                "enum",
+                FieldTypeCode::Enum,
+                0,
+                [enum_value("a", 1), enum_value("A", 2), enum_value("b", 3)],
+                "010042000000000000f9",
+            ),
+            (
+                "enum_int",
+                FieldTypeCode::Enum,
+                FieldTypeFlags::ENUM_SET_AS_INT,
+                [enum_value("a", 1), enum_value("a", 1), enum_value("b", 2)],
+                "038000000000000002",
+            ),
+            (
+                "set",
+                FieldTypeCode::Set,
+                0,
+                [set_value("a", 1), set_value("A", 2), set_value("b", 4)],
+                "010042000000000000f9",
+            ),
+        ];
+        let ctx = crate::stmt_context::StmtContext::default().with_time_zone(
+            tidb_expr::SessionTimeZone::Fixed {
+                name: "+08:00".to_owned(),
+                offset_secs: 8 * 3600,
+            },
+        );
+        let mut mismatches = Vec::new();
+        for (name, code, flags, values, expected_key) in cases {
+            let mut field = FieldType::new(code);
+            field.add_flags(flags);
+            field.set_collation(Collation::Utf8Mb4GeneralCi);
+            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+            chunk.append_null(0);
+            for value in &values {
+                chunk.append_datum(0, value);
+            }
+            let mut checker = VecGroupChecker::new(vec![column(0, field)]);
+            match checker.split_into_groups(&ctx, &chunk) {
+                Ok(continues) => assert!(!continues, "{name}"),
+                Err(error) => {
+                    mismatches.push(format!("{name}: {error:?}"));
+                    continue;
+                }
+            }
+            let actual_ranges = ranges(&mut checker);
+            if actual_ranges != [(0, 1), (1, 3), (3, 4)] {
+                mismatches.push(format!("{name}: ranges {actual_ranges:?}"));
+            }
+            let encoded = checker
+                .previous_last_key
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>();
+            if encoded != expected_key {
+                mismatches.push(format!(
+                    "{name}: boundary {encoded}, expected {expected_key}"
+                ));
+            }
+            chunk.reset();
+            chunk.append_datum(0, &values[2]);
+            assert!(checker.split_into_groups(&ctx, &chunk).unwrap(), "{name}");
+            assert_eq!(ranges(&mut checker), [(0, 1)], "{name}");
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+
+    #[test]
+    fn bit_boundary_overflow_preserves_go_error_policy() {
+        use tidb_expr::ErrorLevel;
+        struct Context {
+            level: ErrorLevel,
+            warnings: std::cell::RefCell<Vec<(u16, String)>>,
+        }
+        impl Columns for Context {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn truncate_level(&self) -> ErrorLevel {
+                self.level
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.warnings.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+        let message = "Truncated incorrect BINARY value: '0x010000000000000000'";
+        for level in [ErrorLevel::Error, ErrorLevel::Warn, ErrorLevel::Ignore] {
+            let context = Context {
+                level,
+                warnings: Default::default(),
+            };
+            let field = FieldType::new(FieldTypeCode::Bit);
+            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 2);
+            let value = Datum::Bit(tidb_datatype::BinaryLiteral::from(vec![
+                1, 0, 0, 0, 0, 0, 0, 0, 0,
+            ]));
+            chunk.append_datum(0, &value);
+            chunk.append_datum(0, &value);
+            let mut checker = VecGroupChecker::new(vec![column(0, field)]);
+            let result = checker.split_into_groups(&context, &chunk);
+            if level == ErrorLevel::Error {
+                let Err(EvalError::Conversion(error)) = result else {
+                    panic!("expected Go's conversion error, got {result:?}");
+                };
+                let error = error.to_sql_error();
+                assert_eq!((error.code, error.message.as_str()), (1292, message));
+                assert!(checker.previous_last_key.is_none());
+                assert_eq!(checker.group_count(), 0);
+            } else {
+                assert!(!result.unwrap());
+                assert_eq!(ranges(&mut checker), [(0, 2)]);
+                assert_eq!(
+                    checker.previous_last_key.as_deref(),
+                    Some(&[3, 127, 255, 255, 255, 255, 255, 255, 255][..])
+                );
+            }
+            let expected = if level == ErrorLevel::Warn {
+                vec![(1292, message.to_owned()); 2]
+            } else {
+                vec![]
+            };
+            assert_eq!(*context.warnings.borrow(), expected);
+        }
     }
 
     #[test]
