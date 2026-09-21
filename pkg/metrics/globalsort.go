@@ -90,7 +90,7 @@ func InitGlobalSortMetrics() {
 		},
 	)
 
-	GlobalSortResidualDataSize = prometheus.NewGauge(
+	GlobalSortResidualDataSize = metricscommon.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "global_sort",

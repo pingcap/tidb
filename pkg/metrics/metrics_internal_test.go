@@ -74,7 +74,12 @@ func TestGlobalSortResidualDataSizeMetric(t *testing.T) {
 	require.Equal(t, dto.MetricType_GAUGE, families[0].GetType())
 	require.Len(t, families[0].GetMetric(), 1)
 	metric := families[0].GetMetric()[0]
-	require.Empty(t, metric.GetLabel())
+	// the metric must carry the package-wide constant labels like its siblings.
+	labels := make(map[string]string, len(metric.GetLabel()))
+	for _, label := range metric.GetLabel() {
+		labels[label.GetName()] = label.GetValue()
+	}
+	require.Equal(t, map[string]string{"keyspace_name": "test_keyspace"}, labels)
 	require.Equal(t, float64(42), metric.GetGauge().GetValue())
 }
 
