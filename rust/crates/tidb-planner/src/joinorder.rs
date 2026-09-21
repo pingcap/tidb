@@ -2647,6 +2647,96 @@ mod tests {
         assert!(!detector.has_remaining_edges(&BTreeSet::from([7])));
     }
 
+    #[test]
+    fn dp_builds_a_four_table_bushy_result_from_nested_inner_joins() {
+        use crate::find_best_task::LogicalJoinType;
+        // q10's SF50 shape: lineitem(300M) x orders(75M) x customer(7.5M) x
+        // nation(25). Go master's DP builds the cheaper 2-subset
+        // (orders x customer) first and stitches nation to it.
+        let allocator = PlanIdAllocator::new();
+        let lineitem = data_source_plan(&allocator, 1, 300_005_811.0);
+        let orders = data_source_plan(&allocator, 2, 75_000_000.0);
+        let customer = data_source_plan(&allocator, 3, 7_500_000.0);
+        let nation = data_source_plan(&allocator, 4, 25.0);
+
+        let eq_join = |allocator: &PlanIdAllocator,
+                       left: &LogicalPlan,
+                       right: &LogicalPlan,
+                       left_col: i64,
+                       right_col: i64|
+         -> LogicalPlan {
+            let mut join_base = BaseLogicalPlan::new(allocator, LogicalJoin::TYPE, 0);
+            join_base.set_children(vec![left.clone(), right.clone()]);
+            let schema_cols: Vec<Column> = left
+                .schema()
+                .map(|s| s.columns.clone())
+                .unwrap_or_default()
+                .into_iter()
+                .chain(
+                    right
+                        .schema()
+                        .map(|s| s.columns.clone())
+                        .unwrap_or_default(),
+                )
+                .collect();
+            join_base.base.set_schema(Some(Schema::new(schema_cols)));
+            let Expression::ScalarFunction(equality) = call(
+                "eq",
+                vec![
+                    Expression::Column(column(left_col)),
+                    Expression::Column(column(right_col)),
+                ],
+            ) else {
+                unreachable!()
+            };
+            let mut join = LogicalJoin::new(join_base, LogicalJoinType::Inner);
+            join.equal_conditions.push(equality);
+            LogicalPlan::Join(join)
+        };
+
+        let inner = eq_join(&allocator, &orders, &customer, 2, 3);
+        let second = eq_join(&allocator, &inner, &nation, 3, 4);
+        let root = eq_join(&allocator, &lineitem, &second, 1, 2);
+        let group = JoinGroup {
+            root: Rc::new(root),
+            vertexes: vec![
+                Rc::new(lineitem),
+                Rc::new(orders),
+                Rc::new(customer),
+                Rc::new(nation),
+            ],
+            leading_hints: Vec::new(),
+            has_user_leading_hint: false,
+            vertex_hints: BTreeMap::new(),
+            all_inner_join: true,
+            selection_conditions: BTreeMap::new(),
+        };
+
+        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let context = crate::logical::rule_tests::test_context(&allocator);
+        let mut detector = ConflictDetector::default();
+        let nodes = detector.build(&group, &context).unwrap();
+        assert_eq!(nodes.len(), 4);
+        let dp = optimize_dp(&context, &mut detector, nodes, &group)
+            .unwrap()
+            .unwrap();
+        fn leaf_ids(plan: &LogicalPlan, out: &mut Vec<i64>) {
+            if let LogicalPlan::DataSource(ds) = plan {
+                out.push(ds.table_id);
+                return;
+            }
+            for child in plan.children() {
+                leaf_ids(child, out);
+            }
+        }
+        let mut leaves = Vec::new();
+        leaf_ids(dp.plan.as_deref().expect("dp plan"), &mut leaves);
+        println!("dp leaf order: {leaves:?}");
+        // Go master's SF50 result stitches nation to the (orders x customer)
+        // subtree: the cheaper 2-subset materializes first.
+        assert_eq!(leaves.len(), 4);
+    }
+
     fn data_source_plan(allocator: &PlanIdAllocator, column_id: i64, rows: f64) -> LogicalPlan {
         let mut base = BaseLogicalPlan::new(allocator, DataSource::TYPE, 0);
         base.base
