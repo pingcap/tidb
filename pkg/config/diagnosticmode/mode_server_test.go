@@ -87,6 +87,7 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		// Test harness, profile collection, and process-wide observability.
 		"testing.(*M).Run",
 		"TestTiDBServerGoroutinesInDiagnosticMode",
+		"os/signal.loop",
 		"go.opencensus.io/stats/view.(*worker).start",
 		"github.com/golang/glog.(*fileSink).flushDaemon",
 
@@ -183,6 +184,9 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 		bootstrapDom.Close()
 	}()
 
+	// Reuse the bootstrapped store to start the second Domain in diagnostic
+	// mode. Keep the mode enabled until all startup assertions and cleanup run.
+	t.Cleanup(diagnosticmode.SetForTest(true))
 	require.True(t, diagnosticmode.Enabled())
 
 	dom, err := session.BootstrapSession(store)

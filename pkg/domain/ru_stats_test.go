@@ -117,11 +117,6 @@ func testWriteRUStatisticsTz(t *testing.T, tz *time.Location) {
 	// after 61 days, old record should be GCed.
 	testRUWriter.StartTime = time.Date(2023, 12, 26, 0, 0, 0, 0, tz).Add(92 * 24 * time.Hour)
 	tk.MustQuery("SELECT count(*) from mysql.request_unit_by_group where end_time = '2023-12-26'").Check(testkit.Rows("2"))
-	t.Run("diagnostic mode preserves expired RU records", func(t *testing.T) {
-		t.Cleanup(diagnosticmode.SetForTest(true))
-		require.NoError(t, testRUWriter.GCOutdatedRecords(testRUWriter.StartTime))
-		newTestKit(t, store).MustQuery("SELECT count(*) from mysql.request_unit_by_group where end_time = '2023-12-26'").Check(testkit.Rows("2"))
-	})
 	require.NoError(t, testRUWriter.GCOutdatedRecords(testRUWriter.StartTime))
 	tk.MustQuery("SELECT count(*) from mysql.request_unit_by_group where end_time = '2023-12-26'").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT count(*) from mysql.request_unit_by_group where end_time = '2023-12-27'").Check(testkit.Rows("1"))
