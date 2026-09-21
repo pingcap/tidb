@@ -17,7 +17,11 @@ package stmtsummary
 import (
 	"context"
 	"errors"
+<<<<<<< HEAD
 	"maps"
+=======
+	"fmt"
+>>>>>>> 0a42bea5f50 (stmtsummary: surface logger init failures, drop leaked time-excluded FDs, fix absolute-path file pruning (#70175))
 	"math"
 	"sync"
 	"sync/atomic"
@@ -53,9 +57,32 @@ var (
 )
 
 // Setup initializes the GlobalStmtSummary.
-func Setup(cfg *Config) (err error) {
-	GlobalStmtSummary, err = NewStmtSummary(cfg)
-	return
+//
+// If NewStmtSummary fails the cluster config still advertises
+// `tidb_stmt_summary_enable_persistent = true`, while every v2 proxy (Add,
+// Enabled, ...) dereferences GlobalStmtSummary unconditionally on that flag.
+// A boot that "kept going" in that state would crash on the first SQL with a
+// nil pointer dereference: V2-11 traded silent data loss for a hard boot
+// loop. To avoid that half-initialized state Setup explicitly switches
+// persistent mode off on init failure, so the proxies fall back to the
+// always-available in-memory v1 aggregation (stmtsummary.StmtSummaryByDigestMap).
+// The error is returned with fallback context so the caller can emit one
+// actionable log entry rather than logging the same failure at every layer.
+func Setup(cfg *Config) error {
+	stmtSummary, err := NewStmtSummary(cfg)
+	if err != nil {
+		// Keep the failed result private and disable persistent mode before
+		// returning so proxies continue through the v1 implementation.
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Instance.StmtSummaryEnablePersistent = false
+		})
+		return fmt.Errorf(
+			"stmtsummary v2 persistent mode disabled; falling back to v1 in-memory aggregation: %w",
+			err,
+		)
+	}
+	GlobalStmtSummary = stmtSummary
+	return nil
 }
 
 // Close closes the GlobalStmtSummary.
@@ -100,6 +127,22 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		return nil, errors.New("stmtsummary: empty filename")
 	}
 
+	// Fail closed: a broken persistent logger makes persistent mode look
+	// enabled while silently dropping every rotated window (V2-11). Construct
+	// the storage before starting any goroutines so there are no background
+	// contexts to clean up on this early error path.
+	storage, err := newStmtLogStorage(&log.Config{
+		File: log.FileLogConfig{
+			Filename:   cfg.Filename,
+			MaxSize:    cfg.FileMaxSize,
+			MaxDays:    cfg.FileMaxDays,
+			MaxBackups: cfg.FileMaxBackups,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &StmtSummary{
 		ctx:    ctx,
@@ -113,6 +156,7 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
+<<<<<<< HEAD
 		window:                 newStmtWindow(timeNow(), uint(defaultMaxStmtCount)),
 		storage: newStmtLogStorage(&log.Config{
 			File: log.FileLogConfig{
@@ -122,6 +166,12 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 				MaxBackups: cfg.FileMaxBackups,
 			},
 		}),
+=======
+		optPersistEvicted:      atomic2.NewBool(false),
+		optGroupByUser:         atomic2.NewBool(false),
+		storage:                storage,
+		evictedCh:              make(chan *StmtRecord, evictedLogChanCap),
+>>>>>>> 0a42bea5f50 (stmtsummary: surface logger init failures, drop leaked time-excluded FDs, fix absolute-path file pruning (#70175))
 	}
 
 	s.closeWg.Add(1)

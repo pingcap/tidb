@@ -47,7 +47,11 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 13,
+=======
+    shard_count = 27,
+>>>>>>> 0a42bea5f50 (stmtsummary: surface logger init failures, drop leaked time-excluded FDs, fix absolute-path file pruning (#70175))
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/auth",
