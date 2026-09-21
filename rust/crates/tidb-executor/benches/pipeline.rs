@@ -490,16 +490,49 @@ fn bench_aggregate() {
 /// operand batches. Keep decimal kernels in the comparison to catch regressions.
 fn bench_numeric_projection() {
     use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite, NoColumns};
-    for (label, code, nested) in [
-        ("numeric_int", FieldTypeCode::LongLong, false),
-        ("numeric_int_nested", FieldTypeCode::LongLong, true),
-        ("numeric_decimal", FieldTypeCode::NewDecimal, false),
-        ("numeric_decimal_nested", FieldTypeCode::NewDecimal, true),
+    for (label, code, nested, op) in [
+        ("numeric_int", FieldTypeCode::LongLong, false, "plus"),
+        ("numeric_int_nested", FieldTypeCode::LongLong, true, "plus"),
+        ("numeric_decimal", FieldTypeCode::NewDecimal, false, "plus"),
+        (
+            "numeric_decimal_nested",
+            FieldTypeCode::NewDecimal,
+            true,
+            "plus",
+        ),
+        ("numeric_int_div", FieldTypeCode::LongLong, false, "intdiv"),
+        ("numeric_int_mod", FieldTypeCode::LongLong, false, "mod"),
+        (
+            "numeric_decimal_div",
+            FieldTypeCode::NewDecimal,
+            false,
+            "div",
+        ),
+        (
+            "numeric_decimal_intdiv",
+            FieldTypeCode::NewDecimal,
+            false,
+            "intdiv",
+        ),
+        (
+            "numeric_decimal_mod",
+            FieldTypeCode::NewDecimal,
+            false,
+            "mod",
+        ),
+        (
+            "numeric_real_intdiv",
+            FieldTypeCode::Double,
+            false,
+            "intdiv",
+        ),
     ] {
         let field = FieldType::new(code);
         let value = |number| {
             if code == FieldTypeCode::NewDecimal {
                 Datum::Decimal(tidb_datatype::Decimal::from_int(number))
+            } else if code == FieldTypeCode::Double {
+                Datum::Real(number as f64)
             } else {
                 Datum::Int(number)
             }
@@ -518,13 +551,18 @@ fn bench_numeric_projection() {
         } else {
             literal(2)
         };
+        let output_field = if op == "intdiv" {
+            FieldType::new(FieldTypeCode::LongLong)
+        } else {
+            field.clone()
+        };
         let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
-            field.clone(),
+            CiString::new(op),
+            output_field.clone(),
             vec![column(0, &field), right],
         ));
         let suite = EvaluatorSuite::new(vec![expression], false);
-        let mut output = Chunk::new_with_capacity(&[field], CHUNK);
+        let mut output = Chunk::new_with_capacity(&[output_field], CHUNK);
         let mut pass = || {
             output.reset();
             suite.run(&NoColumns, &mut input, &mut output).unwrap();

@@ -765,7 +765,7 @@ mod tests {
     #[test]
     fn numeric_batch_casts_unsigned_arguments_before_arithmetic() {
         use tidb_datatype::{Decimal, FieldTypeFlags};
-        let mut unsigned = long();
+        let mut unsigned = FieldType::new(FieldTypeCode::LongLong);
         unsigned.add_flags(FieldTypeFlags::UNSIGNED);
         let mut column = Column::new(1, unsigned.clone());
         column.index = 0;

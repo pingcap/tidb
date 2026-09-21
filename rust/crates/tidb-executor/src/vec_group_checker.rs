@@ -660,7 +660,7 @@ mod tests {
             FieldTypeCode::Double,
             FieldTypeCode::NewDecimal,
         ] {
-            for name in ["plus", "minus", "mul"] {
+            for name in ["plus", "minus", "mul", "div", "intdiv", "mod"] {
                 for vectorized in [false, true] {
                     let field = FieldType::new(code);
                     let value = |number: i64| match code {
@@ -683,9 +683,16 @@ mod tests {
                             Expression::Constant(Constant::new(value(2), field.clone())),
                         ],
                     ));
+                    let result_type = match name {
+                        "intdiv" => FieldType::new(FieldTypeCode::LongLong),
+                        "div" if code == FieldTypeCode::LongLong => {
+                            FieldType::new(FieldTypeCode::NewDecimal)
+                        }
+                        _ => field.clone(),
+                    };
                     let expression = Expression::ScalarFunction(ScalarFunction::new(
                         tidb_ast::CiString::new(name),
-                        field.clone(),
+                        result_type,
                         vec![column(0, field.clone()), right],
                     ));
                     let integer = FieldType::new(FieldTypeCode::LongLong);
@@ -705,8 +712,9 @@ mod tests {
                         .with_enable_vectorized_expression(vectorized);
                     let mut checker = VecGroupChecker::new(vec![expression, column(2, integer)]);
                     let result = checker.split_into_groups(&ctx, &chunk);
-                    let want_error =
-                        vectorized || (code == FieldTypeCode::Double && name == "plus");
+                    let want_error = vectorized
+                        || (code == FieldTypeCode::Double && name == "plus")
+                        || (code != FieldTypeCode::NewDecimal && name == "mod");
                     if want_error {
                         let class = match code {
                             FieldTypeCode::Double => "DOUBLE",
@@ -729,6 +737,139 @@ mod tests {
                         assert_eq!(ranges(&mut checker), [(0, 1), (1, 2), (2, 3)]);
                     }
                     assert!(ctx.take_warnings().is_empty());
+                }
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+
+    #[test]
+    fn integer_division_matches_go_values_diagnostics_and_warnings() {
+        use tidb_datatype::FieldTypeFlags;
+        use tidb_expr::scalar_function::{try_eval_numeric_batch, ScalarFunction};
+        let max = "9".repeat(81);
+        let cases = [
+            (
+                FieldTypeCode::LongLong,
+                "-9223372036854775808",
+                "-1",
+                false,
+                false,
+            ),
+            (
+                FieldTypeCode::LongLong,
+                "18446744073709551615",
+                "-1",
+                true,
+                false,
+            ),
+            (FieldTypeCode::LongLong, "-13", "11", false, true),
+            (
+                FieldTypeCode::NewDecimal,
+                "9223372036854775808",
+                "1",
+                false,
+                false,
+            ),
+            (FieldTypeCode::NewDecimal, "-0.5", "1", true, false),
+            (FieldTypeCode::Double, "0.3", "0.1", false, false),
+            (FieldTypeCode::Double, "1e100", "1", false, false),
+            (
+                FieldTypeCode::NewDecimal,
+                max.as_str(),
+                "0.000000001",
+                false,
+                false,
+            ),
+            (FieldTypeCode::Double, "0.39", "0.1", false, false),
+        ];
+        let mut mismatches = Vec::new();
+        for (case, &(code, a, b, lu, ru)) in cases.iter().enumerate() {
+            for vectorized in [false, true] {
+                let field = |unsigned| {
+                    let mut field = FieldType::new(code);
+                    if case == 8 {
+                        field.set_flen(10);
+                        field.set_decimal(1);
+                    }
+                    if unsigned {
+                        field.add_flags(FieldTypeFlags::UNSIGNED);
+                    }
+                    field
+                };
+                let value = |text: &str, unsigned| match code {
+                    FieldTypeCode::Double => Datum::Real(text.parse().unwrap()),
+                    FieldTypeCode::NewDecimal => Datum::Decimal(Decimal::from_literal(text)),
+                    _ if unsigned => Datum::UInt(text.parse().unwrap()),
+                    _ => Datum::Int(text.parse().unwrap()),
+                };
+                let (left, right) = (field(lu), field(ru));
+                let mut output = FieldType::new(FieldTypeCode::LongLong);
+                if lu || ru {
+                    output.add_flags(FieldTypeFlags::UNSIGNED);
+                }
+                let expression = Expression::ScalarFunction(ScalarFunction::new(
+                    tidb_ast::CiString::new("intdiv"),
+                    output,
+                    vec![column(0, left.clone()), column(1, right.clone())],
+                ));
+                let mut chunk = Chunk::new_with_capacity(&[left, right], 1);
+                chunk.append_datum(0, &value(a, lu));
+                chunk.append_datum(1, &value(b, ru));
+                let ctx = crate::stmt_context::StmtContext::default();
+                let result = if vectorized {
+                    try_eval_numeric_batch(&expression, &ctx, &chunk)
+                        .map(|values| values.unwrap().remove(0))
+                } else {
+                    expression.eval(&ctx, chunk.get_row(0))
+                };
+                let expected = match case {
+                    4 => Ok(Datum::UInt(0)),
+                    5 => Ok(Datum::Int(3)),
+                    8 => Ok(Datum::Int(4)),
+                    _ => Err(EvalError::DataOutOfRange {
+                        value: if lu || ru {
+                            "BIGINT UNSIGNED"
+                        } else {
+                            "BIGINT"
+                        },
+                        expression: if code == FieldTypeCode::LongLong {
+                            format!("({a}, {b})")
+                        } else if vectorized {
+                            format!("({} DIV {b})", if case == 6 { max.as_str() } else { a })
+                        } else if case == 6 {
+                            "(cast(Column#1, decimal(65,0) BINARY) DIV cast(Column#2, decimal(65,0) BINARY))".to_owned()
+                        } else {
+                            "(Column#1 DIV Column#2)".to_owned()
+                        },
+                    }),
+                };
+                if result != expected {
+                    mismatches.push(format!(
+                        "case {case}/{vectorized}: {result:?}, want {expected:?}"
+                    ));
+                }
+                let warnings: Vec<_> = ctx
+                    .take_warnings()
+                    .into_iter()
+                    .map(|(_, code, message)| (code, message))
+                    .collect();
+                let expected_warnings = match case {
+                    6 => vec![
+                        (
+                            1292,
+                            "Truncated incorrect DECIMAL value: 'Column#1'".to_owned(),
+                        ),
+                        (1292, format!("Truncated incorrect DECIMAL value: '{max}'")),
+                    ],
+                    7 => vec![(1292, format!("Truncated incorrect DECIMAL value: '{max}'"))],
+                    8 => vec![(1292, "Truncated incorrect DECIMAL value: '0.39'".to_owned())],
+                    _ => vec![],
+                };
+                if warnings != expected_warnings {
+                    mismatches.push(format!(
+                        "warnings {case}/{vectorized}: {warnings:?}, want {expected_warnings:?}"
+                    ));
                 }
             }
         }

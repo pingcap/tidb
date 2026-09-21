@@ -30,6 +30,13 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, division and modulo evaluation) Extended the shared
+  numeric path through /, DIV and MOD with Go scalar NULL rules and complete
+  argument-batch ordering. DIV now uses decimal input signatures for Real/
+  Decimal arguments, bounded decimal division warnings, source precision/scale
+  and signature/mode-specific overflow text. Regressions cover 36 checker
+  ordering cases, 18 DIV value/diagnostic cases and 24 SQL cases; final gates
+  and benchmark results are recorded below. Whole-package acceptance stays open.
 - [x] (2026-09-21, numeric arithmetic batch ordering) Reproduced scalar
   NULL short-circuit and vector operand-order mismatches against Go, including
   mixed real/integer SQL expressions. Shared expression batch evaluation now
@@ -4870,3 +4877,228 @@ session numeric-domain SQL regression, this ExecPlan and source inventory.
 The correctness risk is concentrated in typed operand dispatch and evaluation
 order; scoped differential and consumer gates cover the audited paths. No
 full-package or whole-workload claim is made, and the user's goal stays active.
+
+
+## Remaining numeric signatures audit (2026-09-21)
+
+
+The pushed 203183ab0b checkpoint is verified progress. Pulled the existing
+branch with --ff-only; remote is unchanged. Continue the inventoried checker
+package audit with /, DIV and MOD, including scalar NULL behavior, vector
+operand order, argument versus result domains and diagnostic differences.
+Go source specifies eager scalar Int/Real MOD, short-circuit Decimal MOD and
+all division signatures, and eager full argument batches in vector mode.
+Extend the prior differential regression before edits. Other expression
+signatures remain required; this audit does not redefine package acceptance.
+
+
+### Division audit findings and implementation
+
+
+The first native regression reproduced seven scalar NULL short-circuit errors:
+Int/Real/Decimal / and DIV, plus Decimal MOD. Go Int/Real MOD are eager even in
+scalar mode. The checker now tests all six numeric operators over three input
+domains in both modes (36 scenarios). DIV separates its integer result type
+from its argument type: both Int arguments use the Int signature; otherwise
+Go consumes Decimal. Native Real DIV previously used float division followed
+by truncation, so 0.3 DIV 0.1 incorrectly produced 2 instead of Go's 3.
+
+The direct Go value oracle inspected nine boundary pairs across /, DIV and MOD
+in both modes (54 observations). Its first version omitted Vectorized(), which
+initializes Go's child buffer allocators; that harness panic is excluded from
+regression evidence. The corrected oracle and accumulated race gate pass.
+Native assertions cover the 18 DIV cases: signed minimum, mixed signedness,
+decimal integer overflow, unsigned negative fraction, decimal conversion of
+real operands, oversized real/decimal inputs and declared real scale.
+
+The bounded decimal kernel now performs DecimalDiv before ToInt/ToUint, retaining
+1292 warnings that the old unbounded integer quotient skipped. Its warning
+rendering respects the nine-word decimal buffer after fractional truncation.
+The Go negative unsigned fraction exception returns zero. Integer-signature
+DIV overflow names the concrete numeric pair; Decimal-signature scalar errors
+name the source arguments (including implicit cast wrappers), while vector
+errors name the evaluated decimal arguments. Real-to-Decimal conversion keeps
+FromFloat64's overflow alias, ignores its truncation as Go does, and preserves
+the cast target precision/scale. A DOUBLE(10,1) source holding 0.39 therefore
+rounds to 0.4 before DIV 0.1, yielding 4 and warning 1292; the old result was 3
+without a warning. The existing UINT64_MAX widening test was corrected to use
+a LongLong field rather than a 32-bit Long field after the proper cast-width
+gate rejected that invalid fixture.
+
+Red logs: `/tmp/tidb-group-division-red.log`,
+`/tmp/tidb-division-values-red.log`, and `/tmp/tidb-division-scaled-red.log`.
+Initial fixture compilation errors are excluded. Focused green logs:
+`/tmp/tidb-group-division-green.log`, `/tmp/tidb-division-values-green.log`,
+and `/tmp/tidb-division-scaled-green.log`. The last two green runs were followed
+by final expression/consumer gates after all production edits.
+
+This remains a checkpoint within the complete inventoried packages. Explicit
+casts, nonnumeric argument shapes, other scalar signatures, deferred mismatched
+domains, remaining codec errors, full diagnostic rendering and complete
+platform/build/test artifact validation remain required. No whole-package or
+whole-workload completion is claimed. Source-level exception-policy and broader
+cast audits still need full coverage beyond the fixtures here.
+
+### Division validation receipt
+
+
+From root, cached Go 1.26.0 with no dependency downloads:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-division-overlay.json -run '^TestGroupCheckerDivisionBatchOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-division-overlay.json -run '^TestGroupCheckerDivisionValueOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-group-division-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-division-sql-overlay.json -run '^TestArithmeticNullBatchSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+The race gate contains 18 test functions (four originals and fourteen oracles).
+Both overlays retain original package tests. Logs: `/tmp/tidb-group-division-go.log`,
+`/tmp/tidb-division-values-go.log`, `/tmp/tidb-division-go-race.log`, and
+`/tmp/tidb-division-sql-go.log`. No tracked Go/module/Bazel input changed;
+these Go packages have no failpoint prerequisite. No cluster was started.
+
+From rust/, final gates:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Full expression validation passes 1,188 with 97 existing ignored tests;
+localhost access is required by its existing HTTP test. Consumer terminal
+counts and performance results follow below. Logs:
+`/tmp/tidb-division-final-*.log`. `make lint` again fails the existing revive
+bootstrap (exit 2); `make -o tools/bin/revive lint` passes the actual recipes
+using the existing binary (`/tmp/tidb-division-lint{,-existing}.log`). Changed
+Rust regions are formatted and `git diff --check` passes.
+
+
+The SQL consumer gate exposed an additional batch fallback through the
+rewriter's integer-to-decimal wrappers: `SELECT a / (b*2)` with NULL a and
+BIGINT_MAX b returned NULL in vector mode instead of Go's overflow. The
+shared batch evaluator now recognizes those cast nodes, evaluates the whole
+integer child batch before applying target precision/scale, and preserves
+source/target unsigned interpretation. The 24-case SQL NULL gate passes after
+this fix. Other cast signatures remain open. The failing consumer output was
+observed before the log was replaced by its successful rerun.
+
+An additional SQL regression verifies real operands through column projection
+and constant folding (`SELECT a DIV b` and `SELECT 0.3e0 DIV 0.1e0`) in both
+modes. Go returns 3 in all four cases. The test copied into the isolated
+203183ab0b baseline fails with actual Int(2), expected Int(3), before production
+edits are copied; current code passes. Logs:
+`/tmp/tidb-division-sql-value-{baseline,final}.log`. Exact native commands:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib real_integer_division_uses_decimal
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+
+The first command ran in isolated rust/ at 203183ab0b with only the current
+benchmark and SQL test file copied; the second ran in main rust/. Go's final
+SQL gate (28 scenarios across two functions) was:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-division-sql-overlay.json -run '^(TestArithmeticNullBatchSQLOracle|TestRealIntegerDivisionSQLOracle)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Final consumer counts are 28 checker, 76 merge, 76 aggregate, 26 shuffle,
+23 executor window, 8 session numeric-domain, 16 session merge and 68 session
+window tests, all passing without ignores. Full expression tests passed 1,188
+with 97 existing ignores after the cast integration; a subsequent eligibility
+guard rejects impossible integer-output / nodes before the integer batch
+kernel. Scoped publication tests cover the final tree. Final lint recipes also
+passed after cast integration (`/tmp/tidb-division-final-lint-existing.log`).
+
+
+### Conversion performance and publication checks
+
+
+The first six alternating benchmark runs showed integer DIV/MOD and decimal
+DIV improvements, but Real DIV rose from about 90 to 520 ns/row because the
+previous path incorrectly divided floats directly. A subsequent optimization
+preserves the corrected decimal domain: exact integral doubles within
+[-2^53, 2^53] construct the same decimal directly, and Go's no-op
+ProduceDecWithSpecifiedTp for unspecified scale skips redundant conversion.
+Negative zero, fractional values, out-of-range values and declared scales keep
+the checked path. A new test compares values and stored/visible scales against
+MyDecimal.FromFloat64 across the fast boundary and fallbacks. The initial test
+incorrectly demanded identical physical leading-zero layouts across Go and
+Rust decimal representations; it was corrected to compare the represented
+value and both scales. No datatype representation change was needed.
+
+After optimization, the complete expression suite passes 1,189 with 97 existing
+ignores; checker and numeric SQL suites pass 28 and 8. Commands repeat the
+scoped gates above; logs are `/tmp/tidb-division-optimized-expr.log` and
+`/tmp/tidb-division-optimized-tidb-{executor-vec_group_checker,session-numeric_domain}.log`.
+The final lint recipes pass (`/tmp/tidb-division-optimized-lint-existing.log`).
+
+For isolated validation, prior Rust changes in the disposable checkout were
+byte-compared with published 203183ab0b before resetting that checkout to the
+publication parent. Only current benchmark and SQL regression files were
+used for baseline measurements/red evidence. Those two files were compared
+with current sources (allowing formatting whitespace) before copying the eight
+tracked changes. Both unconnected drafts remained excluded. From isolated rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib numeric_
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+
+All pass: 22, 28 and 8; no ignores. Logs:
+`/tmp/tidb-division-isolated-*.log`. The six changed Rust files are byte-identical
+between main and isolated checkouts; final documentation receipts were appended
+afterward. `git diff --check` passes. Fetch confirms the branch parent remains
+203183ab0b. No full workspace/platform matrix or complete package acceptance is
+claimed; no end-to-end workload measurement was run.
+
+The expanded benchmark exercises ten projection cases with the same 1024-row,
+five 250ms-block harness. Baseline build from isolated rust/ at 203183ab0b,
+with only the benchmark changed:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+Final build from main rust/:
+
+    cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+The corresponding executables are copied before measuring three runs each in
+before/after/after/before/before/after order. No build or test runs during timing:
+
+    BENCH_ONLY=numeric_projection /tmp/tidb-division-pipeline-before
+    BENCH_ONLY=numeric_projection /tmp/tidb-division-pipeline-optimized
+
+Final logs: `/tmp/tidb-division-optimized-bench-{1..6}-{before,optimized}.log`.
+The first pre-optimization measurements remain `/tmp/tidb-division-bench-{1..6}-{before,final}.log`.
+
+
+Final paired medians (negative changes mean faster):
+
+| Projection | Before ns/row | Final ns/row | Time change | Calibrated change |
+| --- | ---: | ---: | ---: | ---: |
+| numeric_decimal | 32.3 | 31.8 | -1.5% | -1.0% |
+| numeric_decimal_div | 228.5 | 225.4 | -1.4% | -0.5% |
+| numeric_decimal_intdiv | 1064.5 | 186.6 | -82.5% | -82.5% |
+| numeric_decimal_mod | 1051.9 | 1054.8 | +0.3% | +0.2% |
+| numeric_decimal_nested | 47.2 | 47.4 | +0.4% | +0.1% |
+| numeric_int | 17.1 | 17.7 | +3.5% | +3.0% |
+| numeric_int_div | 82.9 | 17.1 | -79.4% | -79.5% |
+| numeric_int_mod | 84.2 | 16.5 | -80.4% | -80.3% |
+| numeric_int_nested | 24.3 | 25.1 | +3.3% | +4.4% |
+| numeric_real_intdiv | 89.0 | 219.3 | +146.4% | +144.0% |
+
+Integer DIV/MOD reduce measured time by 79–80%; bounded decimal DIV reduces
+it by 82.5%. Existing integer addition projections rise by 0.6–0.8 ns/row
+(3–4%); decimal addition, division and modulo remain within about 1.5%.
+Real DIV is 219.3 ns/row versus the incorrect old float path's 89.0, a
+remaining 146.4% cost increase despite reducing the first correct version's
+roughly 520 ns/row by about 58%. This is an explicit remaining performance
+risk, not a claimed workload improvement. Further performance work must keep
+Go's decimal conversion, precision, warnings and error order. Sysbench,
+TPC-C, TPC-H and YCSB still require end-to-end comparison.
+
+All benchmark, lint and validation processes are terminal. Files changed:
+expression scalar_function/ops and one existing evaluator fixture; executor
+checker regressions and pipeline benchmark; session numeric-domain SQL tests;
+this ExecPlan and source inventory. Correctness/compatibility validation is
+scoped to the source contracts and gates above. Full expression/cast/codec
+coverage, package acceptance and workload performance remain open. The active
+goal is unchanged; commit/push publishes a progress checkpoint only.

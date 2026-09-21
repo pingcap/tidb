@@ -895,6 +895,55 @@ pub(crate) const fn effective_div_precision_increment(raw: u32) -> u32 {
     }
 }
 
+/// Go Decimal DIV performs bounded DecimalDiv before converting the quotient
+/// to an integer. Its truncation/overflow warning precedes any integer error.
+pub(crate) fn decimal_integer_division(
+    a: &Decimal,
+    b: &Decimal,
+    unsigned: bool,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
+    if b.is_zero() {
+        ctx.handle_division_by_zero()?;
+        return Ok(Datum::Null);
+    }
+    let (quotient, warning) = a
+        .div_mysql_with_warning(
+            b,
+            effective_div_precision_increment(ctx.div_precision_increment()),
+        )
+        .expect("nonzero decimal divisor was checked");
+    // MyDecimal.String cannot pad resultFrac beyond the remaining nine-word
+    // buffer after DecimalDiv truncated its fractional storage.
+    let quotient = if warning == Some(tidb_datatype::DecimalCodecWarning::Truncated) {
+        let (precision, fraction) = quotient.precision_and_frac();
+        let integer_words = (precision - fraction + 8) / 9;
+        quotient.truncate_to_scale(((9 - integer_words).max(0) * 9).min(quotient.scale() as i32))
+    } else {
+        quotient
+    };
+    if warning.is_some() {
+        ctx.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{quotient}'"))?;
+    }
+    if unsigned {
+        let (value, warning) = quotient.to_u64_trunc();
+        if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow) {
+            if quotient.to_i64_trunc() == (0, Some(tidb_datatype::DecimalIntegerWarning::Truncated))
+            {
+                return Ok(Datum::UInt(0));
+            }
+            return Err(EvalError::IntOverflow);
+        }
+        Ok(Datum::UInt(value))
+    } else {
+        let (value, warning) = quotient.to_i64_trunc();
+        if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow) {
+            return Err(EvalError::IntOverflow);
+        }
+        Ok(Datum::Int(value))
+    }
+}
+
 /// Decimal arithmetic and comparison: an `Int` operand promotes to a scale-0
 /// decimal (MySQL's implicit rule), and `+`/`-`/`*` and every comparison are
 /// exact (see [`Decimal`]). `NullEq` has its own NULL rule; every other
@@ -951,41 +1000,8 @@ fn decimal_binary(
         Lt => bool_int(a < b),
         Ne => bool_int(a != b),
         Div => unreachable!("handled above"),
-        // `div_rem_unbounded` answers `None` only for a zero divisor. Go
-        // (`builtinArithmeticIntDivideDecimalSig.evalInt`,
-        // `builtin_arithmetic.go:926`) runs `DecimalDiv` first, then catches
-        // an out-of-`BIGINT` quotient in `ToInt`/`ToUint` as an unconditional
-        // `ErrOverflow`, never downgraded to a warning.
-        IntDiv => {
-            if b.is_zero() {
-                ctx.handle_division_by_zero()?;
-                Datum::Null
-            } else {
-                match a.div_rem_unbounded(&b) {
-                    Some((q, _)) if unsigned_pair => {
-                        // Go reads the quotient through `ToUint` when EITHER
-                        // argument carries `UnsignedFlag`
-                        // (`builtin_arithmetic.go:952-967`). It accepts the
-                        // complete `[0, u64::MAX]` range, rejects negative
-                        // quotients, and leaves the truncated `(-1, 0]`
-                        // quotient as zero.
-                        let (value, warning) = q.to_u64_trunc();
-                        if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow) {
-                            return Err(EvalError::IntOverflow);
-                        }
-                        Datum::UInt(value)
-                    }
-                    Some((q, _)) => {
-                        let (value, warning) = q.to_i64_trunc();
-                        if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow) {
-                            return Err(EvalError::IntOverflow);
-                        }
-                        Datum::Int(value)
-                    }
-                    None => unreachable!("nonzero decimal divisor was checked above"),
-                }
-            }
-        }
+        // The bounded decimal kernel preserves warnings before ToInt/ToUint.
+        IntDiv => decimal_integer_division(&a, &b, unsigned_pair, ctx)?,
         Mod => match a.rem_mysql(&b) {
             Some(r) => Datum::Decimal(r),
             None => {

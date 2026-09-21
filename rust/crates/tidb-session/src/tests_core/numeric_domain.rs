@@ -412,7 +412,7 @@ fn arithmetic_null_short_circuit_follows_vectorization_mode() {
         .run("INSERT INTO arith_r VALUES(NULL,1.7976931348623157e308)")
         .unwrap();
     for table in ["arith_i", "arith_r"] {
-        for op in ["+", "-", "*"] {
+        for op in ["+", "-", "*", "/", "DIV", "MOD"] {
             for vectorized in [false, true] {
                 session
                     .run(&format!(
@@ -422,7 +422,7 @@ fn arithmetic_null_short_circuit_follows_vectorization_mode() {
                     .unwrap();
                 let sql = format!("SELECT a {op} (b*2) FROM {table}");
                 let result = session.run(&sql);
-                if vectorized || (table == "arith_r" && op == "+") {
+                if vectorized || (table == "arith_r" && op == "+") || op == "MOD" {
                     assert!(
                         matches!(
                             result,
@@ -440,6 +440,30 @@ fn arithmetic_null_short_circuit_follows_vectorization_mode() {
                     );
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn real_integer_division_uses_decimal_operands_in_sql() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE div_real(a DOUBLE,b DOUBLE)")
+        .unwrap();
+    session.run("INSERT INTO div_real VALUES(0.3,0.1)").unwrap();
+    for vectorized in [false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        for sql in ["SELECT a DIV b FROM div_real", "SELECT 0.3e0 DIV 0.1e0"] {
+            assert_eq!(
+                session.run(sql).unwrap(),
+                StmtResult::Rows(vec![vec![Datum::Int(3)]]),
+                "{sql}/{vectorized}"
+            );
         }
     }
 }
