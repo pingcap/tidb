@@ -26,3 +26,18 @@ diff --git a/go/private/rules/nogo.bzl b/go/private/rules/nogo.bzl
          ),
      },
      toolchains = [GO_TOOLCHAIN],
+diff --git a/go/tools/builders/generate_test_main.go b/go/tools/builders/generate_test_main.go
+--- a/go/tools/builders/generate_test_main.go
++++ b/go/tools/builders/generate_test_main.go
+@@ -146,3 +146,8 @@
+-	if err != nil || totalShards <= 1 {
+-		return allTests
+-	}
++	if err != nil || totalShards <= 1 {
++		return allTests
++	}
++	file, err := os.Create(os.Getenv("TEST_SHARD_STATUS_FILE"))
++	if err != nil {
++		log.Fatalf("Failed to touch TEST_SHARD_STATUS_FILE: %v", err)
++	}
++	_ = file.Close()
