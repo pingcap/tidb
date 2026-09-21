@@ -590,8 +590,9 @@ func innerCondsImpliedByOuterSide(
 		return nil
 	}
 	outerKeySchema := expression.NewSchema(outerKeys...)
-	var implied []expression.Expression
-	for _, cond := range collectCondsHoldingOnOutput(outerChild, nil) {
+	outerConds := collectCondsHoldingOnOutput(outerChild, nil)
+	implied := make([]expression.Expression, 0, len(outerConds))
+	for _, cond := range outerConds {
 		if expression.IsMutableEffectsExpr(cond) || len(expression.ExtractCorColumns(cond)) > 0 {
 			continue
 		}
