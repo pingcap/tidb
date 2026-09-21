@@ -223,7 +223,7 @@ func DecodeBackendTag(name string) (int64, error) {
 // CleanupSortPath is used to clean up the temp data of the previous jobs.
 // Because we don't remove all the files after the support of checkpoint,
 // there maybe some stale files in the sort path if TiDB is killed during the backfill process.
-func (m *litBackendCtxMgr) CleanupSortPath(ctx context.Context, currentJobID int64) error {
+func (m *litBackendCtxMgr) CleanupSortPath(_ context.Context, currentJobID int64) error {
 	m.lifecycleMu.Lock()
 	defer m.lifecycleMu.Unlock()
 
