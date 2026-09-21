@@ -309,7 +309,7 @@ func TestFTSLikeSwitchMatrix(t *testing.T) {
 				t.Run(fmt.Sprintf("A%dL%dI%d", a, l, i), func(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set tidb_opt_enable_alternative_logical_plans=%d,tidb_enable_local_match_against=%d,tidb_enable_fts_like_fallback=%d", a, l, i))
 					var rounds []bool
-					ctx := context.WithValue(context.Background(), planner.FTSAlternativeCostTestKey{}, func(like bool, cost float64) float64 {
+					ctx := context.WithValue(context.Background(), planner.FTSAlternativeCostTestKey{}, func(like bool, _ float64) float64 {
 						rounds = append(rounds, like)
 						if like {
 							return 0
