@@ -515,27 +515,109 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	) {
 		return nil
 	}
+	impliedInnerConds := innerCondsImpliedByOuterSide(p.SCtx().GetExprCtx(), p.Children()[outerIdx], outerJoinKeys, innerJoinKeys)
 	// for pk path
 	indexJoinPropTS := &property.IndexJoinRuntimeProp{
-		OtherConditions: p.OtherConditions,
-		InnerJoinKeys:   innerJoinKeys,
-		OuterJoinKeys:   outerJoinKeys,
-		AvgInnerRowCnt:  avgInnerRowCnt,
-		TableRangeScan:  true,
+		OtherConditions:          p.OtherConditions,
+		InnerJoinKeys:            innerJoinKeys,
+		OuterJoinKeys:            outerJoinKeys,
+		AvgInnerRowCnt:           avgInnerRowCnt,
+		InnerCondsImpliedByOuter: impliedInnerConds,
+		TableRangeScan:           true,
 	}
 	// for normal index path
 	indexJoinPropIS := &property.IndexJoinRuntimeProp{
-		OtherConditions: p.OtherConditions,
-		InnerJoinKeys:   innerJoinKeys,
-		OuterJoinKeys:   outerJoinKeys,
-		AvgInnerRowCnt:  avgInnerRowCnt,
-		TableRangeScan:  false,
+		OtherConditions:          p.OtherConditions,
+		InnerJoinKeys:            innerJoinKeys,
+		OuterJoinKeys:            outerJoinKeys,
+		AvgInnerRowCnt:           avgInnerRowCnt,
+		InnerCondsImpliedByOuter: impliedInnerConds,
+		TableRangeScan:           false,
 	}
 	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropTS, outerStats)
 	indexJoins = append(indexJoins, constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropIS, outerStats)...)
 	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropTS, outerStats)...)
 	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropIS, outerStats)...)
 	return indexJoins
+}
+
+// collectCondsHoldingOnOutput collects predicates that every output row of p is known to satisfy.
+// It only walks operators that pass rows of a filtered child through unchanged and stops at anything
+// else, so the result is a conservative subset.
+func collectCondsHoldingOnOutput(p base.LogicalPlan, conds []expression.Expression) []expression.Expression {
+	switch x := p.(type) {
+	case *logicalop.DataSource:
+		return append(conds, x.AllConds...)
+	case *logicalop.LogicalSelection:
+		conds = append(conds, x.Conditions...)
+		return collectCondsHoldingOnOutput(x.Children()[0], conds)
+	case *logicalop.LogicalLimit, *logicalop.LogicalTopN, *logicalop.LogicalSort:
+		return collectCondsHoldingOnOutput(p.Children()[0], conds)
+	case *logicalop.LogicalJoin:
+		// Rows of a null-supplying side can be NULL-extended, so only the preserved sides count.
+		switch x.JoinType {
+		case base.InnerJoin:
+			conds = collectCondsHoldingOnOutput(x.Children()[0], conds)
+			return collectCondsHoldingOnOutput(x.Children()[1], conds)
+		case base.LeftOuterJoin, base.SemiJoin, base.AntiSemiJoin:
+			return collectCondsHoldingOnOutput(x.Children()[0], conds)
+		case base.RightOuterJoin:
+			return collectCondsHoldingOnOutput(x.Children()[1], conds)
+		}
+	}
+	return conds
+}
+
+// innerCondsImpliedByOuterSide returns the outer-side predicates that only reference outer join keys,
+// rewritten onto the inner join keys they are equated with. Because a probed inner row equals the
+// outer row on those keys, it satisfies the rewritten predicates too. A key pair is only used when
+// both columns have the same type, so a predicate keeps its meaning (for example its collation)
+// after the rewrite.
+func innerCondsImpliedByOuterSide(
+	ctx expression.BuildContext,
+	outerChild base.LogicalPlan,
+	outerJoinKeys, innerJoinKeys []*expression.Column,
+) []expression.Expression {
+	outerKeys := make([]*expression.Column, 0, len(outerJoinKeys))
+	innerKeys := make([]expression.Expression, 0, len(innerJoinKeys))
+	for i, outerKey := range outerJoinKeys {
+		if i < len(innerJoinKeys) && outerKey.RetType.Equal(innerJoinKeys[i].RetType) {
+			outerKeys = append(outerKeys, outerKey)
+			innerKeys = append(innerKeys, innerJoinKeys[i])
+		}
+	}
+	if len(outerKeys) == 0 {
+		return nil
+	}
+	outerKeySchema := expression.NewSchema(outerKeys...)
+	var implied []expression.Expression
+	for _, cond := range collectCondsHoldingOnOutput(outerChild, nil) {
+		if expression.IsMutableEffectsExpr(cond) || len(expression.ExtractCorColumns(cond)) > 0 {
+			continue
+		}
+		cols := expression.ExtractColumns(cond)
+		if len(cols) == 0 || outerKeySchema.ColumnsIndices(cols) == nil {
+			continue
+		}
+		implied = append(implied, expression.ColumnSubstitute(ctx, cond, outerKeySchema, innerKeys))
+	}
+	return implied
+}
+
+// removeCondsImpliedByOuter returns the conds that are not semantically equal to any implied predicate.
+func removeCondsImpliedByOuter(conds, implied []expression.Expression) []expression.Expression {
+	if len(implied) == 0 {
+		return conds
+	}
+	remained := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		if !slices.ContainsFunc(implied, func(e expression.Expression) bool {
+			return expression.ExpressionsSemanticEqual(cond, e)
+		}) {
+			remained = append(remained, cond)
+		}
+	}
+	return remained
 }
 
 func getProbeFullScanRowsForIndexJoinPrune(p base.LogicalPlan) float64 {
@@ -713,9 +795,9 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
 	var innerTask base.Task
 	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, prop.IndexJoinProp.InnerCondsImpliedByOuter, maxOneRow)
 	} else {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, prop.IndexJoinProp.InnerCondsImpliedByOuter, maxOneRow)
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
 	if innerTask == nil {
@@ -764,9 +846,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, prop.IndexJoinProp.InnerCondsImpliedByOuter, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, prop.IndexJoinProp.InnerCondsImpliedByOuter, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -787,9 +869,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
 			// The int handle is a single-column unique key, so the join key fully decides the range
 			// and no rows-after-access floor applies.
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, 0, prop.IndexJoinProp.InnerCondsImpliedByOuter, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, 0, prop.IndexJoinProp.InnerCondsImpliedByOuter, maxOneRow)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
@@ -884,6 +966,7 @@ func constructDS2TableScanTask(
 	desc bool,
 	rowCount float64,
 	accessRowsFloor float64,
+	impliedByOuter []expression.Expression,
 	maxOneRow bool,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -913,9 +996,11 @@ func constructDS2TableScanTask(
 	}
 	selectivity := float64(1)
 	countAfterAccess := rowCount
-	if len(ts.FilterCondition) > 0 {
+	// Filters the outer side already guarantees hold for every probed row, so only the others are
+	// treated as independent of the join keys.
+	if independentConds := removeCondsImpliedByOuter(ts.FilterCondition, impliedByOuter); len(independentConds) > 0 {
 		var err error
-		selectivity, err = cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.FilterCondition, ds.PossibleAccessPaths)
+		selectivity, err = cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, independentConds, ds.PossibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
 			selectivity = cost.SelectionFactor
@@ -1085,6 +1170,7 @@ func constructDS2IndexScanTask(
 	desc bool,
 	rowCount float64,
 	accessRowsFloor float64,
+	impliedByOuter []expression.Expression,
 	maxOneRow bool,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -1216,9 +1302,10 @@ func constructDS2IndexScanTask(
 		MinCountAfterAccess: 0,
 		MaxCountAfterAccess: 0,
 	}
-	// Assume equal conditions used by index join and other conditions are independent.
-	if len(tblConds) > 0 {
-		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, tblConds, ds.PossibleAccessPaths)
+	// Assume equal conditions used by index join and other conditions are independent. Filters the outer
+	// side already guarantees are the exception: every probed row satisfies them, so they are left out.
+	if independentConds := removeCondsImpliedByOuter(tblConds, impliedByOuter); len(independentConds) > 0 {
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, independentConds, ds.PossibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = cost.SelectionFactor
@@ -1235,8 +1322,8 @@ func constructDS2IndexScanTask(
 		tmpPath.CountAfterIndex = cnt
 		tmpPath.CountAfterAccess = cnt
 	}
-	if len(indexConds) > 0 {
-		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, indexConds, ds.PossibleAccessPaths)
+	if independentConds := removeCondsImpliedByOuter(indexConds, impliedByOuter); len(independentConds) > 0 {
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, independentConds, ds.PossibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = cost.SelectionFactor
