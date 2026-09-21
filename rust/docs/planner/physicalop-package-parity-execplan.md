@@ -30,6 +30,19 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, implicit string arithmetic) Reproduced and corrected
+  scalar NULL short-circuiting, operand-batch warning/error order, and scalar
+  versus vector decimal cast diagnostics for ordinary string operands. Strict
+  string literal casts now fold in the SQL builder's statement context, raising
+  one construction warning instead of one per row. Native fixtures cover 72
+  ordering/selection scenarios, 42 decimal diagnostic scenarios and 24 SQL
+  scenarios. Final validation and performance receipts follow below. Whole
+  expression and dependent-package acceptance remain open.
+- [x] (2026-09-21, value-level DIV precision) Published b969970ba9:
+  mixed Real/Decimal/UInt DIV preserves exact decimal conversion and NULL
+  behavior. Proven coefficient bounds avoid the general decimal quotient
+  calculation, reducing measured decimal DIV time 42.6% and Real DIV 37.7%
+  relative to fe4e828bd1. Whole-workload performance remains unaccepted.
 - [x] (2026-09-21, division and modulo evaluation) Extended the shared
   numeric path through /, DIV and MOD with Go scalar NULL rules and complete
   argument-batch ordering. DIV now uses decimal input signatures for Real/
@@ -5255,3 +5268,202 @@ Isolated gates passed: two focused expression tests and eight numeric-domain
 SQL tests. All test and benchmark processes are terminal. Remote refresh found
 no divergence from fe4e828bd1. This is a verified progress checkpoint; the active
 whole-package parity and workload optimization goal remains open.
+
+
+## Implicit string arithmetic audit (2026-09-21)
+
+
+Pulled b969970ba9 with no changes. Previous turn is verified progress. Continue
+the whole-expression dependency audit: String/NULL argument domains bypass the
+shared typed arithmetic path, losing scalar short-circuiting and operand-batch
+warning/error order. A temporary Go oracle covers six arithmetic signatures,
+warning/NULL/strict-error inputs and both modes (36 scenarios). Port these
+observations into the existing expression suite before changing dispatch, then
+validate SQL consumers and retained numeric performance. Full package acceptance
+and the four workload optimization gates remain open.
+
+
+### Decisions and source findings
+
+
+The scalar arithmetic dispatcher now admits non-hybrid String operands into
+its Real/Decimal argument domains; the same batch evaluator casts an entire
+left operand before the right. It still declines binary literal and hybrid
+signatures that require their own numeric domain rules. String-to-Real reuses
+the existing StrToFloat owner. String-to-Decimal uses MyDecimal::from_string,
+retains declared precision/scale, and routes parser errors through the active
+statement policy. Source `builtin_cast.go::builtinCastStringAsDecimalSig.evalDecimal`
+rewrites ErrTruncated to named DECIMAL error 1292; source
+`builtin_cast_vec.go::vecEvalDecimal` passes raw error 1265 through instead.
+Empty/digitless input keeps 1292 in both paths; overflow 1690 and Bad Number
+8029 retain their identities under error, warning and ignore policies.
+
+The SQL builder folds strict string literal casts using its existing live
+statement context. Go BuildCastFunction/FoldConstant raises the cast warning at
+construction and retains a typed constant; repeating the cast during row or
+batch evaluation was observably wrong. The native fold preserves unsigned/
+nullability metadata and subquery reference, refines decimal precision/scale,
+and keeps unsuccessful conversions for runtime evaluation. It does not cache
+parameter values or deferred constants. Reuse of the resolver's existing
+comparison_context supplies the same statement context without adding a new
+warning store or statement lifetime.
+
+Red-before-green evidence:
+`/tmp/tidb-string-arithmetic-red.log` records scalar NULL and vector diagnostic
+mismatches; `/tmp/tidb-string-constant-sql-red.log` records four warnings instead
+of one for `SELECT a + '2tail'` over four rows. Green evidence is in
+`/tmp/tidb-string-arithmetic-{green,selected}.log`,
+`/tmp/tidb-string-division-diagnostics.log`,
+`/tmp/tidb-string-arithmetic-sql.log`, and
+`/tmp/tidb-string-constant-sql-green.log`.
+
+Go oracle coverage is 72 ordinary/reversed-selection scalar/vector cases, 42
+malformed decimal diagnostic cases, and 12 selected-row constant construction/
+grouping cases. SQL oracles add 12 NULL/warning cases and 12 constant-warning
+cases. Go constant construction emits one warning, while selected-row grouping
+then emits none. Native SQL regressions assert the one warning and exact rows.
+No Go source or build manifest changed; temporary overlays retain original
+tests. Checker and windows packages contain neither failpoint injection nor a
+failpoint build dependency, so failpoint toggling is unnecessary.
+
+### Validation receipt
+
+
+Commands from repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-string-arithmetic-overlay.json -run '^TestGroupCheckerStringArithmeticOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-string-arithmetic-overlay.json -run '^TestGroupCheckerStringDivisionDiagnosticsOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-string-arithmetic-overlay.json -run '^TestGroupCheckerStringConstantOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-string-arithmetic-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-string-arithmetic-sql-overlay.json -run '^TestStringArithmeticSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-string-arithmetic-sql-overlay.json -run '^TestStringArithmeticConstantSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    make lint
+    make -o tools/bin/revive lint
+
+All final Go runs pass, including the accumulated 22-function checker race
+selection. Logs: `/tmp/tidb-string-arithmetic-go-race.log`,
+`/tmp/tidb-string-arithmetic-diagnostics-go.log`,
+`/tmp/tidb-string-constant-go.log`,
+`/tmp/tidb-string-arithmetic-sql-go.log`, and
+`/tmp/tidb-string-constant-sql-go.log`. Unlike the prior checkpoint, the standard
+make lint target now completes successfully, exit 0. The existing-tool command
+also exits 0. Logs: `/tmp/tidb-string-arithmetic-lint-{standard,existing}.log`.
+No bazel_prepare trigger applies to these Rust/test/benchmark/doc changes.
+
+Commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib string_arithmetic_preserves_go_cast_and_batch_order
+    cargo test --offline --locked -j12 -p tidb-expr --lib string_division_preserves_go_decimal_parser_diagnostics
+    cargo test --offline --locked -j12 -p tidb-session --lib string_arithmetic_nulls_and_warnings_follow_go_vectorization
+    cargo test --offline --locked -j12 -p tidb-session --lib implicit_arithmetic_string_literal_cast_warns_once_at_build_time
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Final native results: expression 1192 passed / 97 ignored; checker 28, merge 76,
+hash aggregate 76, shuffle 26, executor window 23, session numeric domain 10,
+merge SQL 16, window SQL 68 passed. The existing localhost HTTP test requires
+permission outside the network sandbox. Logs:
+`/tmp/tidb-string-arithmetic-final-<crate>-<filter-or-all>.log`.
+
+
+### Performance and implementation refinement
+
+
+The first six-run comparison found string DIV 36.1% faster (209.7 to 134.0
+ns/row) but string addition 2.5% slower (141.7 to 145.2 ns/row). Inspecting the
+new path identified a per-cell String/Datum copy between the source column and
+implicit cast. The final path borrows source string bytes directly and casts
+that complete operand batch before evaluating the right argument. It reuses
+the same Real/Decimal conversion helper as scalar/constant callers; only the
+vector diagnostic mode differs where Go does. Logical selection indices, NULL
+bits, and invalid column-index errors retain the original checks. Source helper
+bytes_to_f64 becomes crate-visible so both paths use the same StrToFloat policy.
+The 72 selection/order and 42 decimal diagnostic scenarios pass after this
+change. Repeat final native gates are justified by this additional code change.
+
+Build the unchanged numeric cases plus two string cases from isolated
+b969970ba9 with only the benchmark file updated; copy that executable before
+building main. Both fixtures use Go's already-folded typed literal operand.
+Commands from each checkout's rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+    cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+Run each pair three times, before/after/after/before/before/after, without
+concurrent builds or tests. Each of twelve cases measures 1024 rows using five
+250ms blocks. Baseline and first-corrected logs:
+`/tmp/tidb-string-arithmetic-bench-{1..6}-{before,after}.log`. Build logs:
+`/tmp/tidb-string-arithmetic-bench-{before,after,optimized}-build.log`.
+Final pair commands:
+
+    BENCH_ONLY=numeric_projection /tmp/tidb-string-arithmetic-pipeline-before
+    BENCH_ONLY=numeric_projection /tmp/tidb-string-arithmetic-pipeline-optimized
+
+The prior standard make lint result remains valid for its Go recipes; later
+changes only move/extract Rust conversion logic and reuse borrowed column bytes.
+All changed Rust regions are formatted; no unrelated file-wide formatting is
+introduced. Both pre-existing untracked drafts remain excluded. Publication
+will include seven tracked files: expression scalar_function, rewriter and
+ops/real_coerce; session numeric_domain; executor pipeline benchmark; this
+ExecPlan and source inventory.
+
+Remaining scope: hybrid/binary literal numeric signatures, parameter/deferred
+cast construction, vectorized computed string arguments, raw-AST child order,
+non-UTF-8 diagnostic byte fidelity and other expression/cast/codec contracts
+need complete source-to-Rust audit. These are open requirements, not accepted
+exceptions. Whole physicalop/checker/aggregate/join/expression packages and
+sysbench/TPC-C/TPC-H/YCSB performance are not accepted by these scoped results.
+
+
+Final three-run medians (negative means less time):
+
+| Projection | Before ns/row | Final ns/row | Time change | Calibrated change |
+| --- | ---: | ---: | ---: | ---: |
+| numeric_decimal | 30.7 | 31.0 | +1.0% | +2.4% |
+| numeric_decimal_div | 216.2 | 213.6 | -1.2% | -1.9% |
+| numeric_decimal_intdiv | 99.8 | 99.2 | -0.6% | -1.5% |
+| numeric_decimal_mod | 972.3 | 1000.5 | +2.9% | +3.1% |
+| numeric_decimal_nested | 44.7 | 45.9 | +2.7% | +1.4% |
+| numeric_int | 16.9 | 16.4 | -3.0% | -3.0% |
+| numeric_int_div | 16.4 | 16.1 | -1.8% | -0.9% |
+| numeric_int_mod | 15.5 | 15.5 | +0.0% | -0.8% |
+| numeric_int_nested | 24.1 | 23.3 | -3.3% | -3.1% |
+| numeric_real_intdiv | 129.2 | 131.4 | +1.7% | +1.9% |
+| numeric_string | 142.2 | 94.7 | -33.4% | -32.3% |
+| numeric_string_intdiv | 209.8 | 97.4 | -53.6% | -53.2% |
+
+Final logs: `/tmp/tidb-string-arithmetic-optimized-bench-{1..6}-{before,optimized}.log`.
+All timing processes completed successfully before isolated validation.
+
+
+Borrowing the source string column removes the first version's addition
+regression: final string addition measures 33.4% less time and string DIV 53.6%
+less time than b969970ba9. Unchanged numeric controls range from -3.3% to +2.9%
+in elapsed time (-3.1% to +3.1% calibrated); no gain is claimed for those kernels.
+This is a component comparison, not a sysbench/TPC-C/TPC-H/YCSB throughput claim.
+
+Publication checks use an isolated b969970ba9 checkout with only the seven
+tracked changed files copied and byte-verified. Commands from its rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib string_arithmetic
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib string_division
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+
+Logs: `/tmp/tidb-string-arithmetic-isolated-{order,diagnostics,sql}.log`.
+Self-review checked source warning modes, literal-fold timing/type metadata,
+borrowed-byte lifetime and selection order, and exclusion of unrelated drafts.
+No new SQL functionality was introduced. Correctness/compatibility evidence is
+limited to the source contracts and tests recorded above; the full goal remains
+active and package completion is not claimed.
+
+Isolated publication gates passed: one 72-case ordering test, one 42-case
+diagnostic test, and all ten numeric-domain SQL tests. All validation, build
+and benchmark processes are terminal. The seven-file checkpoint is ready for
+the requested commit/push; complete package and workload gates remain open.

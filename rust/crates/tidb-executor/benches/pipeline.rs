@@ -526,6 +526,13 @@ fn bench_numeric_projection() {
             false,
             "intdiv",
         ),
+        ("numeric_string", FieldTypeCode::VarString, false, "plus"),
+        (
+            "numeric_string_intdiv",
+            FieldTypeCode::VarString,
+            false,
+            "intdiv",
+        ),
     ] {
         let field = FieldType::new(code);
         let value = |number| {
@@ -533,11 +540,31 @@ fn bench_numeric_projection() {
                 Datum::Decimal(tidb_datatype::Decimal::from_int(number))
             } else if code == FieldTypeCode::Double {
                 Datum::Real(number as f64)
+            } else if code == FieldTypeCode::VarString {
+                Datum::new_string(number.to_string())
             } else {
                 Datum::Int(number)
             }
         };
-        let literal = |number| Expression::Constant(Constant::new(value(number), field.clone()));
+        let literal = |number| {
+            // Go folds the string literal's implicit cast during construction.
+            let (value, field) = if code == FieldTypeCode::VarString {
+                if op == "intdiv" {
+                    (
+                        Datum::Decimal(tidb_datatype::Decimal::from_int(number)),
+                        FieldType::new(FieldTypeCode::NewDecimal),
+                    )
+                } else {
+                    (
+                        Datum::Real(number as f64),
+                        FieldType::new(FieldTypeCode::Double),
+                    )
+                }
+            } else {
+                (value(number), field.clone())
+            };
+            Expression::Constant(Constant::new(value, field))
+        };
         let mut input = Chunk::new_with_capacity(std::slice::from_ref(&field), CHUNK);
         for row in 0..CHUNK {
             input.append_datum(0, &value((row % 100) as i64));
@@ -553,6 +580,8 @@ fn bench_numeric_projection() {
         };
         let output_field = if op == "intdiv" {
             FieldType::new(FieldTypeCode::LongLong)
+        } else if code == FieldTypeCode::VarString {
+            FieldType::new(FieldTypeCode::Double)
         } else {
             field.clone()
         };

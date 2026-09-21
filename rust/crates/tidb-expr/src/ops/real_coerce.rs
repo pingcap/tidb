@@ -254,7 +254,7 @@ pub(crate) fn to_f64_with_mysql_string(
 /// true)`. The flag changes nothing about the VALUE, only whether the EMPTY
 /// string counts as truncated -- and captured, an empty string raises no
 /// warning at all where `'abc' + 1` raises 1292.
-pub(super) fn bytes_to_f64(
+pub(crate) fn bytes_to_f64(
     bytes: &[u8],
     ctx: &dyn crate::context::Columns,
 ) -> Result<f64, EvalError> {

@@ -1135,12 +1135,65 @@ impl ScalarFunction {
             || !matches!(domain, EvalType::Int | EvalType::Real | EvalType::Decimal)
             || self.args.iter().any(|arg| {
                 arg.static_type()
-                    .is_none_or(|field| !numeric_argument_domain(field.eval_type(), domain))
+                    .is_none_or(|field| {
+                        !numeric_argument_domain(field.eval_type(), domain)
+                            || (field.eval_type() == EvalType::String
+                                && (field.is_hybrid()
+                                    || matches!(arg, Expression::Constant(c) if matches!(c.value, Datum::BinaryLiteral(_)))))
+                    })
             })
         {
             return None;
         }
         Some(domain)
+    }
+
+    /// Go folds an implicit cast of a strict string literal while building
+    /// arithmetic, so its warning occurs once even when a column spans rows.
+    pub(crate) fn fold_numeric_string_literals(&mut self, ctx: &dyn Columns) {
+        let Some(domain) = self.numeric_operand_domain() else {
+            return;
+        };
+        for argument in &mut self.args {
+            let Expression::Constant(constant) = argument else {
+                continue;
+            };
+            let Some(value) = constant.literal_value().cloned() else {
+                continue;
+            };
+            let Some(field) = constant.ret_type.as_ref() else {
+                continue;
+            };
+            if field.eval_type() != EvalType::String {
+                continue;
+            }
+            let subquery_ref_id = constant.subquery_ref_id;
+            let mut target = if domain == EvalType::Decimal {
+                numeric_decimal_cast_type(field)
+            } else {
+                crate::builtin_arithmetic::real_argument_type(field).into_owned()
+            };
+            target.add_flags(field.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED);
+            target.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            target.set_charset_name("binary");
+            target.set_collation_name("binary");
+            // FoldConstant retains the cast when evaluation fails. Leave its
+            // source here for the typed arithmetic evaluator to retry.
+            let Ok(value) = cast_numeric_argument(argument, value, domain, ctx) else {
+                continue;
+            };
+            if !value.is_null() {
+                target.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            }
+            if let Datum::Decimal(decimal) = &value {
+                let (precision, fraction) = decimal.precision_and_frac();
+                target.set_flen_under_limit(i64::from(precision));
+                target.set_decimal_under_limit(i64::from(fraction));
+            }
+            let mut folded = crate::constant::Constant::new(value, target);
+            folded.subquery_ref_id = subquery_ref_id;
+            *argument = Expression::Constant(folded);
+        }
     }
 
     fn eval_binary_values(
@@ -3162,6 +3215,7 @@ fn eval_numeric_row(
 
 fn numeric_argument_domain(source: EvalType, target: EvalType) -> bool {
     source == target
+        || (source == EvalType::String && matches!(target, EvalType::Real | EvalType::Decimal))
         || (target == EvalType::Real && matches!(source, EvalType::Int | EvalType::Decimal))
         || (target == EvalType::Decimal && matches!(source, EvalType::Int | EvalType::Real))
 }
@@ -3173,6 +3227,16 @@ pub(crate) fn cast_numeric_argument(
     value: Datum,
     target: EvalType,
     ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
+    cast_numeric_argument_in_mode(expression, value, target, ctx, false)
+}
+
+fn cast_numeric_argument_in_mode(
+    expression: &Expression,
+    value: Datum,
+    target: EvalType,
+    ctx: &dyn Columns,
+    vectorized: bool,
 ) -> Result<Datum, EvalError> {
     let field = expression
         .static_type()
@@ -3190,6 +3254,14 @@ pub(crate) fn cast_numeric_argument(
         EvalType::Decimal => tidb_datatype::FieldTypeCode::NewDecimal,
         _ => return Err(EvalError::Unsupported("numeric argument cast domain")),
     };
+    if field.eval_type() == EvalType::String {
+        let bytes = match &value {
+            Datum::String(value) => value.bytes(),
+            Datum::Bytes(value) => value.as_slice(),
+            _ => return Err(EvalError::Unsupported("string arithmetic argument domain")),
+        };
+        return cast_string_numeric_argument(field, bytes, target, ctx, vectorized);
+    }
     let value = if let (EvalType::Decimal, Datum::Real(real)) = (target, &value) {
         // Every integral double in [-2^53, 2^53] has the same exact integer
         // decimal as Go's shortest-float formatting followed by FromString.
@@ -3237,6 +3309,52 @@ pub(crate) fn cast_numeric_argument(
     convert_numeric_datum(value, &target_field, ctx)
 }
 
+fn cast_string_numeric_argument(
+    field: &FieldType,
+    bytes: &[u8],
+    target: EvalType,
+    ctx: &dyn Columns,
+    vectorized: bool,
+) -> Result<Datum, EvalError> {
+    if target == EvalType::Real {
+        return crate::ops::bytes_to_f64(bytes, ctx).map(Datum::Real);
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.trim();
+    let (decimal, error) = tidb_datatype::MyDecimal::from_string(text.as_bytes());
+    if let Some(error) = error {
+        use tidb_datatype::DecimalError;
+        // Go's scalar string cast names the truncated value; its vector
+        // cast passes FromString's raw ErrTruncated through HandleTruncate.
+        if error == DecimalError::TruncatedWrongValue
+            || (error == DecimalError::Truncated && !vectorized)
+        {
+            ctx.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{text}'"))?;
+        } else {
+            let error = match error {
+                DecimalError::Truncated => tidb_datatype::ERR_TRUNCATED.clone(),
+                DecimalError::Overflow => tidb_datatype::ERR_OVERFLOW.clone(),
+                _ => tidb_datatype::ERR_BAD_NUMBER.clone(),
+            };
+            match ctx.truncate_level() {
+                crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
+                crate::ErrorLevel::Warn => {
+                    let warning = error.to_sql_error();
+                    ctx.append_warning(warning.code, &warning.message);
+                }
+                crate::ErrorLevel::Ignore => {}
+            }
+        }
+    }
+    let value = Datum::Decimal(tidb_datatype::Decimal::from_my_decimal(&decimal));
+    let target = numeric_decimal_cast_type(field);
+    if target.decimal() < 0 {
+        Ok(value)
+    } else {
+        convert_numeric_datum(value, &target, ctx)
+    }
+}
+
 fn convert_numeric_datum(
     value: Datum,
     target: &FieldType,
@@ -3282,17 +3400,47 @@ fn eval_numeric_operand_batch(
     input: &Chunk,
     target: EvalType,
 ) -> Result<Vec<Datum>, EvalError> {
-    let source = expression
+    let field = expression
         .static_type()
-        .expect("numeric argument has a type")
-        .eval_type();
+        .expect("numeric argument has a type");
+    let source = field.eval_type();
+    // Go casts its borrowed string column buffer directly. Preserve the full
+    // operand pass while avoiding a String/Datum allocation for every cell.
+    if source == EvalType::String {
+        if let Expression::Column(column) = expression {
+            let index = usize::try_from(column.index)
+                .map_err(|_| EvalError::Unsupported("column index is negative"))?;
+            if index >= input.num_cols() {
+                return Err(EvalError::Unsupported(
+                    "column index is outside the input row",
+                ));
+            }
+            let column = input.column(index);
+            return (0..input.num_rows())
+                .map(|row| {
+                    let row = input.get_row(row).idx();
+                    if column.is_null(row) {
+                        Ok(Datum::Null)
+                    } else {
+                        cast_string_numeric_argument(
+                            field,
+                            column.get_bytes(row).as_ref(),
+                            target,
+                            ctx,
+                            true,
+                        )
+                    }
+                })
+                .collect();
+        }
+    }
     let values = eval_numeric_batch_values(expression, ctx, input, source)?;
     if source == target {
         return Ok(values);
     }
     values
         .into_iter()
-        .map(|value| cast_numeric_argument(expression, value, target, ctx))
+        .map(|value| cast_numeric_argument_in_mode(expression, value, target, ctx, true))
         .collect()
 }
 
@@ -3843,6 +3991,257 @@ mod tests {
     use crate::column::Column;
     use crate::constant::Constant;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+    #[test]
+    fn string_division_preserves_go_decimal_parser_diagnostics() {
+        struct Context {
+            level: crate::ErrorLevel,
+            warnings: std::cell::RefCell<Vec<(u16, String)>>,
+        }
+        impl crate::Columns for Context {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn truncate_level(&self) -> crate::ErrorLevel {
+                self.level
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.warnings.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+        use crate::ErrorLevel::{Error, Ignore, Warn};
+        for (case, text) in [
+            "",
+            "abc",
+            " 1x ",
+            "1e999",
+            "1e-999",
+            "1e18446744073709551620",
+            &"9".repeat(82),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for level in [Error, Warn, Ignore] {
+                for vectorized in [false, true] {
+                    let ctx = Context {
+                        level,
+                        warnings: Default::default(),
+                    };
+                    let field = FieldType::new(FieldTypeCode::VarString);
+                    let args = (0..2)
+                        .map(|index| {
+                            let mut column =
+                                crate::expression::Column::new(index + 1, field.clone());
+                            column.index = index;
+                            Expression::Column(column)
+                        })
+                        .collect::<Vec<_>>();
+                    let expression = Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new("intdiv"),
+                        FieldType::new(FieldTypeCode::LongLong),
+                        args,
+                    ));
+                    let mut chunk = Chunk::new_with_capacity(&[field.clone(), field], 1);
+                    chunk.append_datum(0, &Datum::new_string(text));
+                    chunk.append_datum(1, &Datum::new_string("1"));
+                    let result = if vectorized {
+                        super::try_eval_numeric_batch(&expression, &ctx, &chunk)
+                            .map(|batch| batch.unwrap().remove(0))
+                    } else {
+                        expression.eval(&ctx, chunk.get_row(0))
+                    };
+                    let error = match case {
+                        3 | 6 => EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.clone()),
+                        5 => EvalError::Conversion(tidb_datatype::ERR_BAD_NUMBER.clone()),
+                        2 | 4 if vectorized => {
+                            EvalError::Conversion(tidb_datatype::ERR_TRUNCATED.clone())
+                        }
+                        _ => EvalError::TruncatedWrongValue(format!(
+                            "Truncated incorrect DECIMAL value: '{}'",
+                            text.trim()
+                        )),
+                    };
+                    let warning = match &error {
+                        EvalError::Conversion(error) => {
+                            let e = error.to_sql_error();
+                            (e.code, e.message)
+                        }
+                        EvalError::TruncatedWrongValue(message) => (1292, message.clone()),
+                        _ => unreachable!(),
+                    };
+                    let mut warnings = if level == Warn { vec![warning] } else { vec![] };
+                    let expected = if level == Error {
+                        Err(error)
+                    } else if matches!(case, 3 | 6) {
+                        if level == Warn {
+                            warnings.push((
+                                1292,
+                                format!("Truncated incorrect DECIMAL value: '{}'", "9".repeat(81)),
+                            ));
+                        }
+                        Err(EvalError::DataOutOfRange {
+                            value: "BIGINT",
+                            expression: if vectorized {
+                                format!("({} DIV 1)", "9".repeat(81))
+                            } else {
+                                "(cast(Column#1, decimal(65,0) BINARY) DIV cast(Column#2, decimal(65,0) BINARY))".to_owned()
+                            },
+                        })
+                    } else {
+                        Ok(Datum::Int(if case == 2 { 1 } else { 0 }))
+                    };
+                    assert_eq!(result, expected, "{text:?}/{level:?}/{vectorized}");
+                    assert_eq!(
+                        *ctx.warnings.borrow(),
+                        warnings,
+                        "{text:?}/{level:?}/{vectorized}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn string_arithmetic_preserves_go_cast_and_batch_order() {
+        #[derive(Default)]
+        struct Context {
+            errors: bool,
+            warnings: std::cell::RefCell<Vec<(u16, String)>>,
+        }
+        impl crate::Columns for Context {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn truncate_level(&self) -> crate::ErrorLevel {
+                if self.errors {
+                    crate::ErrorLevel::Error
+                } else {
+                    crate::ErrorLevel::Warn
+                }
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.warnings.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+        let mut mismatches = Vec::new();
+        for name in ["plus", "minus", "mul", "div", "intdiv", "mod"] {
+            for mode in ["warnings", "nulls", "error"] {
+                for (vectorized, selected) in
+                    [(false, false), (false, true), (true, false), (true, true)]
+                {
+                    let field = FieldType::new(FieldTypeCode::VarString);
+                    let args = (0..2)
+                        .map(|index| {
+                            let mut column =
+                                crate::expression::Column::new(index + 1, field.clone());
+                            column.index = index;
+                            Expression::Column(column)
+                        })
+                        .collect::<Vec<_>>();
+                    let output =
+                        crate::builtin_arithmetic::infer_arithmetic_type(name, &args[0], &args[1])
+                            .unwrap();
+                    let expression = Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new(name),
+                        output,
+                        args,
+                    ));
+                    let mut chunk = Chunk::new_with_capacity(&[field.clone(), field], 2);
+                    let rows = match mode {
+                        "warnings" => [[Some("1x"), Some("3z")], [Some("2y"), Some("4w")]],
+                        "nulls" => [[None, Some("3z")], [Some("2y"), None]],
+                        _ => [[Some("1"), Some("3z")], [Some("2y"), Some("4")]],
+                    };
+                    for row in rows {
+                        for (i, value) in row.into_iter().enumerate() {
+                            chunk.append_datum(
+                                i,
+                                &value.map(Datum::new_string).unwrap_or(Datum::Null),
+                            );
+                        }
+                    }
+                    if selected {
+                        chunk.set_sel(Some(vec![1, 0]));
+                    }
+                    let ctx = Context {
+                        errors: mode == "error",
+                        ..Context::default()
+                    };
+                    let scalar = || {
+                        (0..2)
+                            .map(|i| expression.eval(&ctx, chunk.get_row(i)))
+                            .collect::<Result<Vec<_>, _>>()
+                    };
+                    let actual = if vectorized {
+                        super::try_eval_numeric_batch(&expression, &ctx, &chunk)
+                            .and_then(|batch| batch.map(Ok).unwrap_or_else(scalar))
+                    } else {
+                        scalar()
+                    };
+                    let class = if name == "intdiv" {
+                        "DECIMAL"
+                    } else {
+                        "DOUBLE"
+                    };
+                    let message = |value| format!("Truncated incorrect {class} value: '{value}'");
+                    let mut expected = if mode == "error" {
+                        if name == "intdiv" && vectorized {
+                            Err(EvalError::Conversion(tidb_datatype::ERR_TRUNCATED.clone()))
+                        } else {
+                            Err(EvalError::TruncatedWrongValue(message(
+                                if vectorized || selected { "2y" } else { "3z" },
+                            )))
+                        }
+                    } else if mode == "nulls" {
+                        Ok(vec![Datum::Null; 2])
+                    } else {
+                        Ok(match name {
+                            "plus" => vec![Datum::Real(4.0), Datum::Real(6.0)],
+                            "minus" => vec![Datum::Real(-2.0); 2],
+                            "mul" => vec![Datum::Real(3.0), Datum::Real(8.0)],
+                            "div" => vec![Datum::Real(1.0 / 3.0), Datum::Real(0.5)],
+                            "intdiv" => vec![Datum::Int(0); 2],
+                            _ => vec![Datum::Real(1.0), Datum::Real(2.0)],
+                        })
+                    };
+                    if selected {
+                        if let Ok(values) = &mut expected {
+                            values.reverse();
+                        }
+                    }
+                    let warning_inputs: &[&str] = match (mode, vectorized) {
+                        ("warnings", false) if selected => &["2y", "4w", "1x", "3z"],
+                        ("warnings", true) if selected => &["2y", "1x", "4w", "3z"],
+                        ("nulls", true) if selected => &["2y", "3z"],
+                        ("nulls", false) if selected && matches!(name, "plus" | "mod") => {
+                            &["2y", "3z"]
+                        }
+                        ("warnings", false) => &["1x", "3z", "2y", "4w"],
+                        ("warnings", true) => &["1x", "2y", "3z", "4w"],
+                        ("nulls", true) => &["2y", "3z"],
+                        ("nulls", false) if matches!(name, "plus" | "mod") => &["3z", "2y"],
+                        ("nulls", false) => &["2y"],
+                        _ => &[],
+                    };
+                    let warnings = warning_inputs
+                        .iter()
+                        .map(|v| {
+                            if name == "intdiv" && vectorized {
+                                (1265, "Data truncated for column '%s' at row %d".to_owned())
+                            } else {
+                                (1292, message(v))
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    if actual != expected || *ctx.warnings.borrow() != warnings {
+                        mismatches.push(format!("{name}/{mode}/{vectorized}/{selected}: {actual:?}, warnings {:?}; expected {expected:?}, {warnings:?}", ctx.warnings.borrow()));
+                    }
+                }
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
 
     fn ft() -> FieldType {
         FieldType::new(FieldTypeCode::Long)

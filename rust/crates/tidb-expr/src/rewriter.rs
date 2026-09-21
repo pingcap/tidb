@@ -582,11 +582,11 @@ fn binary_expression(
                     |argument| resolver.fold_constant(argument, ConstantFoldMode::Normal),
                 )?;
             }
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(name),
-                ret_type,
-                args,
-            )))
+            let mut function = ScalarFunction::new(CiString::new(name), ret_type, args);
+            function.fold_numeric_string_literals(
+                resolver.comparison_context().unwrap_or(&crate::NoColumns),
+            );
+            Ok(Expression::ScalarFunction(function))
         }
         None => Ok(scalar(name, vec![left, right])),
     }

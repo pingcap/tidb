@@ -467,3 +467,102 @@ fn real_integer_division_uses_decimal_operands_in_sql() {
         }
     }
 }
+
+#[test]
+fn string_arithmetic_nulls_and_warnings_follow_go_vectorization() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE string_arith(a VARCHAR(30),b VARCHAR(30))")
+        .unwrap();
+    session
+        .run("INSERT INTO string_arith VALUES(NULL,'3z'),('2y',NULL)")
+        .unwrap();
+    for vectorized in [false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        for op in ["+", "-", "*", "/", "DIV", "MOD"] {
+            let sql = format!("SELECT a {op} b FROM string_arith");
+            assert_eq!(
+                session.run(&sql).unwrap(),
+                StmtResult::Rows(vec![vec![Datum::Null]; 2]),
+                "{sql}/{vectorized}"
+            );
+            let inputs: &[&str] = if vectorized {
+                &["2y", "3z"]
+            } else if matches!(op, "+" | "MOD") {
+                &["3z", "2y"]
+            } else {
+                &["2y"]
+            };
+            let expected = inputs
+                .iter()
+                .map(|value| {
+                    if op == "DIV" && vectorized {
+                        (1265, "Data truncated for column '%s' at row %d".to_owned())
+                    } else {
+                        let class = if op == "DIV" { "DECIMAL" } else { "DOUBLE" };
+                        (
+                            1292,
+                            format!("Truncated incorrect {class} value: '{value}'"),
+                        )
+                    }
+                })
+                .collect::<Vec<_>>();
+            let warnings = session
+                .warnings()
+                .iter()
+                .map(|warning| (warning.code, warning.message.clone()))
+                .collect::<Vec<_>>();
+            assert_eq!(warnings, expected, "{sql}/{vectorized}");
+        }
+    }
+}
+
+#[test]
+fn implicit_arithmetic_string_literal_cast_warns_once_at_build_time() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE string_const(a VARCHAR(30))")
+        .unwrap();
+    session
+        .run("INSERT INTO string_const VALUES('1'),('1'),('2'),('2')")
+        .unwrap();
+    for vectorized in [false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        for (op, first, second) in [
+            ("+", "3", "4"),
+            ("-", "-1", "0"),
+            ("*", "2", "4"),
+            ("/", "0.5", "1"),
+            ("DIV", "0", "1"),
+            ("MOD", "1", "0"),
+        ] {
+            let sql = format!("SELECT a {op} '2tail' FROM string_const");
+            assert_eq!(
+                row_text(session.run(&sql)),
+                [[first], [first], [second], [second]],
+                "{sql}/{vectorized}"
+            );
+            let class = if op == "DIV" { "DECIMAL" } else { "DOUBLE" };
+            let warnings = session
+                .warnings()
+                .iter()
+                .map(|w| (w.code, w.message.clone()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                warnings,
+                [(1292, format!("Truncated incorrect {class} value: '2tail'"))],
+                "{sql}/{vectorized}"
+            );
+        }
+    }
+}

@@ -162,6 +162,15 @@ planning metadata. These decisions do not establish
 complete expression vectorization or whole-package acceptance on their own.
 
 
+String arithmetic follow-up adds 72 scalar/vector order and selection cases,
+42 malformed decimal diagnostic cases, 12 selected-row constant construction
+observations and 24 SQL scenarios. The accumulated Go checker race selection
+now contains 22 test functions. Strict string literal casts fold at construction;
+ordinary column casts retain source-specific scalar/vector warnings. These are
+dependent expression/integration receipts only: hybrid/binary literals, other
+expression vectorization and whole-package acceptance remain open.
+
+
 ## Dependent package inventory: executor/aggregate
 
 Pinned revision: `aba629bb455dc09d6a5d98b3c39a542bb1189b9d`.
