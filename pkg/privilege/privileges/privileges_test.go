@@ -2698,6 +2698,16 @@ func TestInsertReturningChecksSelectPrivilege(t *testing.T) {
 	rootTk.MustExec(`GRANT SELECT ON insert_ret_priv.t TO 'insert_ret_low'@'%'`)
 	tk.MustQuery(`INSERT INTO insert_ret_priv.t VALUES (8, 'y') RETURNING id, secret`).Check(testkit.Rows("8 y"))
 
+	// A prepared statement is checked on every execution, not only when it is prepared, so
+	// revoking the privilege stops a plan that is already cached.
+	tk.MustExec(`PREPARE ret FROM 'INSERT INTO insert_ret_priv.t VALUES (?, ''z'') RETURNING secret'`)
+	tk.MustExec(`SET @id = 9`)
+	tk.MustQuery(`EXECUTE ret USING @id`).Check(testkit.Rows("z"))
+	rootTk.MustExec(`REVOKE SELECT ON insert_ret_priv.t FROM 'insert_ret_low'@'%'`)
+	tk.MustExec(`SET @id = 10`)
+	err = tk.ExecToErr(`EXECUTE ret USING @id`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+
 	// _tidb_rowid is not a column a privilege can be granted on, so it takes SELECT on the
 	// table.
 	rootTk.MustExec(`CREATE TABLE insert_ret_priv.nonclustered (id INT PRIMARY KEY NONCLUSTERED)`)
