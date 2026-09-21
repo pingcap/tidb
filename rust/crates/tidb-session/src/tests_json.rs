@@ -1280,20 +1280,11 @@ fn json_validation_results_render_as_json_booleans() {
     );
 }
 
-/// `JSON_TYPE` cannot report Go's typed names, and the reason is NOT
-/// `json/report.rs`.
-///
-/// The typed JSON names a CAST produces, all CAPTURED from a running TiDB
-/// (`gorun`, 2026-08-15): a date is `DATE` printing `"2020-01-01"`, a
-/// datetime `DATETIME` printing at `MaxFsp` (`"2020-01-01 00:00:00.000000"`),
-/// a time `TIME` at `MaxFsp` (`"12:30:00.000000"`), and a binary literal is
-/// the Opaque `"base64:type253:qrs="` whose `JSON_TYPE` is `BLOB`.
-///
-/// The one loss left is unsignedness: Go answers `UNSIGNED INTEGER` for
-/// `cast(cast(1 as unsigned) as json)` where this tier answers `INTEGER`,
-/// because the cast still narrows through the text JSON model for numerics.
+/// CAST preserves Go's binary JSON type names. Unsigned integers retain
+/// UNSIGNED INTEGER, temporal values retain their type and MaxFsp rules,
+/// and binary literals produce Opaque JSON reported as BLOB.
 #[test]
-fn cast_as_json_keeps_gos_typed_names_except_unsignedness() {
+fn cast_as_json_keeps_gos_typed_names() {
     let mut session = Session::new();
     let text = |session: &mut Session, sql: &str| match session.run(sql) {
         Ok(StmtResult::Rows(rows)) => Ok(datum_text(&rows[0][0]).unwrap()),
@@ -1301,14 +1292,12 @@ fn cast_as_json_keeps_gos_typed_names_except_unsignedness() {
         Err(error) => Err(format!("{error:?}")),
     };
 
-    // Go: UNSIGNED INTEGER. The unsignedness is gone by the time JSON_TYPE
-    // sees the value.
     assert_eq!(
         text(
             &mut session,
             "SELECT json_type(cast(cast(1 as unsigned) as json))"
         ),
-        Ok("INTEGER".to_owned())
+        Ok("UNSIGNED INTEGER".to_owned())
     );
     // The typed arms, name and printed document both matching Go.
     for (sql, expected) in [

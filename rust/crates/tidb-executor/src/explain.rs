@@ -668,18 +668,21 @@ fn index_join_int_pk_decided_by_text(context: &IndexJoinExplainContext<'_>) -> S
     format!("range: decided by [{}]", decided)
 }
 
-/// The decided-by text for a `TableScan` probe. Single-column INT-PK probes
-/// (one join key, no outer-derived bounds) get the outer-keys-only rendering;
-/// multi-key or bounded probes get the full rendering with eq pairs + bounds.
+/// Integer table handles use Go's `indexJoinIntPKRangeInfo`; common handles
+/// use the equality pairs for the matched index columns.
 fn index_join_decided_by_text_for_scan(
     context: &IndexJoinExplainContext<'_>,
-    _scan: &tidb_planner::physical::PhysicalTableScan,
+    scan: &tidb_planner::physical::PhysicalTableScan,
+    catalog: &Catalog,
 ) -> String {
-    // A live Go master IndexHashJoin int-PK probe explains its inner
-    // TableRangeScan as `range: decided by [eq(inner, outer)]` -- the eq-pair
-    // form `indexJoinPathRangeInfo` builds -- and the list carries only the
-    // join-key pairs, never the residual access filters (q21's
-    // `ne(l_suppkey, l_suppkey)` stays out of Go's decided-by text).
+    // The handle kind, not the join variant or the number of join keys,
+    // selects the integer-PK form in buildDataSource2TableScanByIndexJoinProp.
+    if catalog
+        .physical_kv_table_by_id(scan.table_id)
+        .is_some_and(|table| table.common_handle_offsets().is_empty())
+    {
+        return index_join_int_pk_decided_by_text(context);
+    }
     let decided = context
         .inner_keys
         .iter()
@@ -1028,11 +1031,9 @@ fn physical_operator_info(
             let mut parts = Vec::new();
             if is_index_join_table_range(plan, index_join_context) {
                 let ctx = index_join_context.expect("index join context");
-                // Go `indexJoinIntPKRangeInfo` renders the INT-PK probe's
-                // decided-by as the OUTER join keys alone. For a composite-PK
-                // probe with outer-derived bounds on the trailing key column,
-                // the full rendering (eq pairs + bounds) applies.
-                let parts_text = index_join_decided_by_text_for_scan(&ctx, scan);
+                // Table handle metadata selects Go's integer-PK or common
+                // handle range description.
+                let parts_text = index_join_decided_by_text_for_scan(&ctx, scan, catalog);
                 parts.push(parts_text);
             } else if scan
                 .scan_kind()

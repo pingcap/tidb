@@ -1003,3 +1003,46 @@ fn computed_json_div_overflow_matches_go_scalar_and_vector_diagnostics() {
         );
     }
 }
+
+#[test]
+fn json_cast_source_types_match_go_through_sql() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE json_source(b BIT(64), e ENUM('null','123'), s SET('null','123'), d DECIMAL(20,1), y YEAR, f FLOAT)").unwrap();
+    session.run("INSERT INTO json_source VALUES(0xffffffffffffffff,'123','123',9007199254740993.0,2024,0.1),(NULL,NULL,NULL,NULL,NULL,NULL)").unwrap();
+    for vectorized in [false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        for (column, value, kind) in [
+            ("b", "18446744073709551615", "UNSIGNED INTEGER"),
+            ("e", "123", "INTEGER"),
+            ("s", "123", "INTEGER"),
+            ("d", "9.007199254740992e15", "DOUBLE"),
+            ("y", "2024", "UNSIGNED INTEGER"),
+            ("f", "0.10000000149011612", "DOUBLE"),
+        ] {
+            let sql = format!("SELECT CAST({column} AS JSON), JSON_TYPE(CAST({column} AS JSON)) FROM json_source ORDER BY {column}");
+            assert_eq!(
+                row_text(session.run(&sql)),
+                [["NULL", "NULL"], [value, kind]],
+                "{sql}/vectorized={vectorized}"
+            );
+            assert!(
+                warnings_of(&session).is_empty(),
+                "{sql}/vectorized={vectorized}"
+            );
+        }
+        for value in ["'[1,2]'", "NULL"] {
+            let sql = format!("SELECT CAST(CAST({value} AS VECTOR) AS JSON)");
+            let error = session.run(&sql).unwrap_err().to_mysql_error();
+            assert_eq!(error.code, 1105, "{sql}/vectorized={vectorized}");
+            assert_eq!(
+                error.message, "cannot cast from vector to json",
+                "{sql}/vectorized={vectorized}"
+            );
+        }
+    }
+}

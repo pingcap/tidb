@@ -79,30 +79,40 @@ fn fixture() -> Session {
 #[test]
 fn the_hinted_index_join_ranges_over_the_injected_cast_column() {
     let mut session = fixture();
-    let rows = plan(
-        &mut session,
-        "explain select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int \
-         join t_idx_str on t_idx_int.id = t_idx_str.id",
-    );
-    let join = rows
-        .iter()
-        .find(|row| row.contains("IndexJoin"))
-        .unwrap_or_else(|| panic!("the hint must reach the index strategy: {rows:#?}"));
-    assert!(
-        join.contains("inner:Projection")
-            && join.contains("outer key:Column#12")
-            && join.contains("inner key:Column#1")
-            && join.contains("equal cond:eq(Column#12, Column#1)"),
-        "the IndexJoin info must use Go's physical fields: {join}",
-    );
-    let scan = rows
-        .iter()
-        .find(|row| row.contains("TableRangeScan") && row.contains("table:t_idx_int"))
-        .unwrap_or_else(|| panic!("no ranged scan of t_idx_int in {rows:#?}"));
-    assert!(
-        scan.contains("range: decided by [Column#12]"),
-        "the range must name the rule's injected column: {scan}",
-    );
+    for hint in ["INL_JOIN", "INL_HASH_JOIN"] {
+        let rows = plan(
+            &mut session,
+            &format!(
+                "explain select /*+ {hint}(t_idx_int) */ * from t_idx_int \
+                 join t_idx_str on t_idx_int.id = t_idx_str.id"
+            ),
+        );
+        let join = rows
+            .iter()
+            .find(|row| {
+                row.contains(if hint == "INL_JOIN" {
+                    "IndexJoin"
+                } else {
+                    "IndexHashJoin"
+                })
+            })
+            .unwrap_or_else(|| panic!("the hint must reach the index strategy: {rows:#?}"));
+        assert!(
+            join.contains("inner:Projection")
+                && join.contains("outer key:Column#12")
+                && join.contains("inner key:Column#1")
+                && join.contains("equal cond:eq(Column#12, Column#1)"),
+            "the IndexJoin info must use Go's physical fields: {join}",
+        );
+        let scan = rows
+            .iter()
+            .find(|row| row.contains("TableRangeScan") && row.contains("table:t_idx_int"))
+            .unwrap_or_else(|| panic!("no ranged scan of t_idx_int in {rows:#?}"));
+        assert!(
+            scan.contains("range: decided by [Column#12]"),
+            "the range must name the rule's injected column: {scan}",
+        );
+    }
 }
 
 /// The same statement's ROWS: `'1.5'` must not match `1` -- the guard drops

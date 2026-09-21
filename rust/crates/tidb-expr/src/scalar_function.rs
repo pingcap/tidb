@@ -2031,27 +2031,24 @@ impl ScalarFunction {
         }
         if let Some(target) = name.strip_prefix("cast_") {
             if self.args.len() == 1 {
+                if target == "json" {
+                    let source = self.args[0]
+                        .static_type()
+                        .ok_or(EvalError::Unsupported("a JSON cast with no source type"))?
+                        .eval_type();
+                    // Go's unsupported vector signature fails before reading
+                    // its argument, even when that row would have been NULL.
+                    if source == EvalType::VectorFloat32 {
+                        return Err(EvalError::Vector(
+                            "cannot cast from vector to json".to_owned(),
+                        ));
+                    }
+                    let value = eval_numeric_row(&self.args[0], ctx, row, source)?;
+                    return cast_json_argument_value(self, value);
+                }
                 let value = self.args[0].eval(ctx, row)?;
                 if value.is_null() {
                     return Ok(Datum::Null);
-                }
-                // `CAST(expr AS JSON)` reads the SOURCE argument's static
-                // FieldType first: a genuine BINARY-charset argument renders
-                // as a JSON `Opaque` value (Go's `getRealJSONValue` rule),
-                // which `crate::cast::eval_cast`'s untyped `CastType::Json`
-                // arm cannot see.
-                if target == "json" {
-                    let parse_document = self.get_static_type().is_some_and(|field_type| {
-                        field_type.flags() & tidb_datatype::FieldTypeFlags::PARSE_TO_JSON != 0
-                    });
-                    return if parse_document {
-                        crate::builtin_ext::cast_as_json_typed(&value, self.args[0].static_type())
-                    } else {
-                        crate::builtin_ext::cast_as_json_value_typed(
-                            &value,
-                            self.args[0].static_type(),
-                        )
-                    };
                 }
                 let ret_type = self
                     .get_static_type()
@@ -3659,6 +3656,37 @@ fn eval_numeric_operand_batch(
         .collect()
 }
 
+/// Go JSON cast signatures consume their source EvalType, including hybrid
+/// string names and signed integer carriers, before constructing binary JSON.
+fn cast_json_argument_value(function: &ScalarFunction, value: Datum) -> Result<Datum, EvalError> {
+    let field = function.args[0]
+        .static_type()
+        .ok_or(EvalError::Unsupported("a JSON cast with no source type"))?;
+    let value = match value {
+        Datum::Int(value)
+            if field.is_unsigned() || field.code() == tidb_datatype::FieldTypeCode::Year =>
+        {
+            Datum::UInt(value as u64)
+        }
+        value @ (Datum::Enum(..) | Datum::Set(..)) if field.eval_type() == EvalType::String => {
+            Datum::new_bytes(
+                value
+                    .sql_bytes()
+                    .map_err(|_| EvalError::Unsupported("hybrid JSON string conversion"))?,
+            )
+        }
+        value => value,
+    };
+    if function
+        .get_static_type()
+        .is_some_and(|field| field.has_flag(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON))
+    {
+        crate::builtin_ext::cast_as_json_typed(&value, Some(field))
+    } else {
+        crate::builtin_ext::cast_as_json_value_typed(&value, Some(field))
+    }
+}
+
 fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
     match expression {
         Expression::Constant(constant) => constant
@@ -3669,6 +3697,7 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
         Expression::Column(column) => column.get_static_type().is_some_and(|field| {
             if field.is_hybrid() {
                 target == EvalType::Int
+                    || (target == EvalType::String && field.eval_type() == target)
             } else {
                 field.eval_type() == target
             }
@@ -3680,9 +3709,9 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
                     .is_some_and(|field| field.eval_type() == target)
                     && function.args.len() == 1
                     && function.args[0].static_type().is_some_and(|field| {
-                        field.eval_type() == EvalType::String && !field.is_hybrid()
-                    })
-                    && numeric_batch_supported(&function.args[0], EvalType::String);
+                        field.eval_type() != EvalType::VectorFloat32
+                            && numeric_batch_supported(&function.args[0], field.eval_type())
+                    });
             }
             function
                 .get_static_type()
@@ -3862,29 +3891,15 @@ fn eval_numeric_batch_values(
             .map(|index| eval_numeric_row(expression, ctx, input.get_row(index), target))
             .collect(),
         Expression::ScalarFunction(function) if function.func_name.lowercase() == "cast_json" => {
-            // Go finishes VecEvalString before parsing any JSON or running
-            // the enclosing numeric cast. This preserves errors and warnings
-            // across rows, including selection vectors and NULL operands.
-            let values =
-                eval_numeric_batch_values(&function.args[0], ctx, input, EvalType::String)?;
-            let parse_document = function
-                .get_static_type()
-                .is_some_and(|field| field.has_flag(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON));
+            // Go completes the source-typed batch before JSON conversion.
+            let source = function.args[0]
+                .static_type()
+                .expect("preflight checked JSON source")
+                .eval_type();
+            let values = eval_numeric_batch_values(&function.args[0], ctx, input, source)?;
             values
                 .into_iter()
-                .map(|value| {
-                    if parse_document {
-                        crate::builtin_ext::cast_as_json_typed(
-                            &value,
-                            function.args[0].static_type(),
-                        )
-                    } else {
-                        crate::builtin_ext::cast_as_json_value_typed(
-                            &value,
-                            function.args[0].static_type(),
-                        )
-                    }
-                })
+                .map(|value| cast_json_argument_value(function, value))
                 .collect()
         }
         Expression::ScalarFunction(function)

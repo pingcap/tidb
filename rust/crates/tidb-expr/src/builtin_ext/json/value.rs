@@ -158,7 +158,7 @@ pub(crate) fn cast_as_json(value: &Datum) -> Result<Datum, EvalError> {
 
 /// The cast arms whose result is a TYPED binary JSON value -- one the text
 /// [`Json`] model cannot carry, so the round trip through
-/// [`binary_json_datum`] would collapse it into a JSON string. `None` means
+/// [`binary_json_datum`] would lose source type identity. `None` means
 /// the argument has no typed arm and takes the ordinary path.
 ///
 /// Each arm is one Go cast signature (all captured through `gorun`):
@@ -174,10 +174,23 @@ pub(crate) fn cast_as_json(value: &Datum) -> Result<Datum, EvalError> {
 ///   static type is `var_string`, so they become the JSON Opaque
 ///   `"base64:type253:..."` and `JSON_TYPE` answers `BLOB`. (A BIT COLUMN
 ///   is unlike the literal: Go routes it through the INT cast -- measured,
-///   `cast(b AS JSON)` answers `5` -- a signature-selection step this tier
-///   does not have yet, so `Datum::Bit` keeps the ordinary path below.)
+///   `cast(b AS JSON)` answers `5`. The typed expression caller evaluates
+///   that integer signature before reaching this helper.)
 fn typed_cast_json(value: &Datum) -> Option<Result<Datum, EvalError>> {
     match value {
+        // Source signatures construct binary scalars directly. A text round
+        // trip loses unsigned integer identity and DECIMAL's DOUBLE cast.
+        Datum::Int(_)
+        | Datum::UInt(_)
+        | Datum::Real(_)
+        | Datum::Float32(_)
+        | Datum::Decimal(_)
+        | Datum::Json(_) => Some(
+            value
+                .to_mysql_json()
+                .map(Datum::Json)
+                .map_err(|_| EvalError::Unsupported("datum JSON conversion")),
+        ),
         Datum::Time(time) => {
             let mut time = *time;
             if time.set_fsp(tidb_datatype::MAX_FSP).is_err() {
@@ -271,6 +284,12 @@ pub(crate) fn cast_as_json_value_typed(
                 .map(Datum::Json)
                 .map_err(|_| EvalError::Unsupported("datum JSON conversion"));
         }
+    }
+    if let Some(int) = boolean_flagged_int(value, field_type) {
+        return binary_json_datum(Json::Bool(int != 0));
+    }
+    if let Some(typed) = typed_cast_json(value) {
+        return typed;
     }
     binary_json_datum(json_argument(value, StringArgument::Value, field_type)?)
 }

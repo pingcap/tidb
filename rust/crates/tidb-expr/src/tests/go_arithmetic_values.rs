@@ -1599,3 +1599,197 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
         }
     }
 }
+
+#[test]
+fn json_cast_source_signatures_preserve_binary_types_in_both_modes() {
+    use crate::scalar_function::{try_eval_numeric_batch, ScalarFunction};
+    use tidb_datatype::{
+        BinaryJSON, BinaryJSONValue, BinaryLiteral, Collation, MysqlEnum, MysqlSet,
+    };
+    let cases = [
+        ("int", 9, "-1"),
+        ("uint", 10, "18446744073709551615"),
+        ("year", 10, "2024"),
+        ("boolean", 4, "true"),
+        ("real", 11, "1.0"),
+        ("float", 11, "0.10000000149011612"),
+        ("decimal", 11, "1.0"),
+        ("decimal_large", 11, "9.007199254740992e15"),
+        ("date", 14, "\"2024-01-31\""),
+        ("datetime", 15, "\"2024-01-31 23:59:59.000000\""),
+        ("timestamp", 16, "\"2024-01-31 23:59:59.000000\""),
+        ("duration", 17, "\"-12:34:56.000000\""),
+        ("bit", 9, "-1"),
+        ("bit_unsigned", 10, "18446744073709551615"),
+        ("enum", 9, "123"),
+        ("set", 9, "123"),
+        ("json_uint", 10, "1"),
+    ];
+    let mut failures = vec![];
+    for (name, code, text) in cases {
+        let mut field = FieldType::new(C::LongLong);
+        let value = match name {
+            "int" => Datum::Int(-1),
+            "uint" => {
+                field.add_flags(FieldTypeFlags::UNSIGNED);
+                Datum::UInt(u64::MAX)
+            }
+            "year" => {
+                field = FieldType::new(C::Year);
+                Datum::Int(2024)
+            }
+            "boolean" => {
+                field.add_flags(FieldTypeFlags::IS_BOOLEAN);
+                Datum::Int(2)
+            }
+            "real" => {
+                field = FieldType::new(C::Double);
+                Datum::Real(1.0)
+            }
+            "float" => {
+                field = FieldType::new(C::Float);
+                Datum::Float32(f64::from(0.1_f32))
+            }
+            "decimal" | "decimal_large" => {
+                field = FieldType::new(C::NewDecimal);
+                field.set_flen(20);
+                field.set_decimal(1);
+                Datum::Decimal(tidb_datatype::Decimal::from_literal(if name == "decimal" {
+                    "1.0"
+                } else {
+                    "9007199254740993.0"
+                }))
+            }
+            "date" | "datetime" | "duration" => {
+                let fixture = temporal_json_arithmetic_fixture(match name {
+                    "date" => "date",
+                    "datetime" => "datetime0",
+                    _ => "duration0",
+                });
+                field = fixture.0;
+                fixture.1
+            }
+            "timestamp" => {
+                field = FieldType::new(C::Timestamp);
+                field.set_decimal(0);
+                Datum::Time(
+                    tidb_datatype::Time::from_date_checked(
+                        2024,
+                        1,
+                        31,
+                        23,
+                        59,
+                        59,
+                        0,
+                        tidb_datatype::TimeType::Timestamp,
+                        0,
+                    )
+                    .unwrap(),
+                )
+            }
+            "bit" | "bit_unsigned" => {
+                field = FieldType::new(C::Bit);
+                field.set_flen(64);
+                if name == "bit_unsigned" {
+                    field.add_flags(FieldTypeFlags::UNSIGNED)
+                };
+                Datum::Bit(BinaryLiteral::from(u64::MAX.to_be_bytes().to_vec()))
+            }
+            "enum" => {
+                field = FieldType::new(C::Enum);
+                Datum::Enum(MysqlEnum::new("123", 2), Collation::Utf8Mb4Bin)
+            }
+            "set" => {
+                field = FieldType::new(C::Set);
+                Datum::Set(MysqlSet::new("123", 2), Collation::Utf8Mb4Bin)
+            }
+            _ => {
+                field = FieldType::new(C::Json);
+                Datum::Json(BinaryJSON::from_typed_value(&BinaryJSONValue::Uint64(1)).unwrap())
+            }
+        };
+        for parse_document in [false, true] {
+            for vectorized in [false, true] {
+                for selected in [false, true] {
+                    let mut column = crate::column::Column::new(1, field.clone());
+                    column.index = 0;
+                    let expression = Expression::ScalarFunction(ScalarFunction::new(
+                        tidb_ast::CiString::new("cast_json"),
+                        FieldType::new(C::Json).with_added_flags(if parse_document {
+                            FieldTypeFlags::PARSE_TO_JSON
+                        } else {
+                            0
+                        }),
+                        vec![Expression::Column(column)],
+                    ));
+                    let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(
+                        std::slice::from_ref(&field),
+                        2,
+                    );
+                    input.append_datum(0, &value);
+                    input.append_null(0);
+                    if selected {
+                        input.set_sel(Some(vec![1, 0]));
+                    }
+                    let result = if vectorized {
+                        try_eval_numeric_batch(&expression, &crate::NoColumns, &input).and_then(
+                            |values| {
+                                values.ok_or(crate::EvalError::Unsupported("JSON batch declined"))
+                            },
+                        )
+                    } else {
+                        (0..2)
+                            .map(|index| expression.eval(&crate::NoColumns, input.get_row(index)))
+                            .collect()
+                    };
+                    let actual = result.map(|values| {
+                        values
+                            .into_iter()
+                            .map(|value| match value {
+                                Datum::Json(value) => {
+                                    Ok(Some((value.type_code(), value.to_string())))
+                                }
+                                Datum::Null => Ok(None),
+                                _ => Err("not JSON"),
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    });
+                    let (code, text) = if !parse_document && matches!(name, "enum" | "set") {
+                        (12, "\"123\"")
+                    } else {
+                        (code, text)
+                    };
+                    let mut expected = vec![Some((code, text.to_owned())), None];
+                    if selected {
+                        expected.reverse();
+                    }
+                    if actual != Ok(Ok(expected.clone())) {
+                        failures.push(format!("{name}/parse={parse_document}/vec={vectorized}/sel={selected}: {actual:?}; expected {expected:?}"));
+                    }
+                }
+            }
+        }
+    }
+
+    let vector = FieldType::new(C::VectorFloat32);
+    let mut column = crate::column::Column::new(1, vector.clone());
+    column.index = 0;
+    let expression = Expression::ScalarFunction(ScalarFunction::new(
+        tidb_ast::CiString::new("cast_json"),
+        FieldType::new(C::Json),
+        vec![Expression::Column(column)],
+    ));
+    let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[vector], 1);
+    input.append_null(0);
+    let result = expression.eval(&crate::NoColumns, input.get_row(0));
+    if result
+        != Err(crate::EvalError::Vector(
+            "cannot cast from vector to json".to_owned(),
+        ))
+    {
+        failures.push(format!(
+            "vector NULL cast must fail without reading the argument: {result:?}"
+        ));
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

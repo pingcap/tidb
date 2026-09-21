@@ -6220,3 +6220,171 @@ processes are terminal. Final Rust bytes match the isolated tested patch and
 git diff --check passes. The five-file checkpoint is ready for the requested
 commit and push. Remaining computed signatures/diagnostics, whole-package
 acceptance and all four workload performance gates remain open.
+
+
+## JSON cast source signatures (2026-09-21)
+
+
+Published 55d4a1caf6 is verified progress. Pulled again, no upstream changes.
+Continue the complete expression package audit across the remaining JSON cast
+source signatures: integer signedness/boolean/YEAR, REAL and FLOAT, DECIMAL,
+DATE/DATETIME/TIMESTAMP/DURATION, hybrid BIT/ENUM/SET and JSON identity. Source
+JSON type codes must match, not merely formatted text. Capture Go scalar/vector
+results before changes, add red regressions, use source-typed evaluation and
+native binary JSON constructors, then validate consumers and commit/push.
+Package-level inventory and all original workload/validation gates remain open.
+
+
+### Source-signature evidence and implementation
+
+Go `builtin_cast.go` dispatches by source EvalType before constructing JSON.
+The new reference matrix covers 17 source families in both scalar/vector modes
+and with ParseToJSONFlag set/cleared (68 cases, each with a NULL row). Native
+regression additionally reverses selection order, for 136 scenarios. It checks
+binary JSON type codes and text, not text alone. The independent published-parent
+regression fails on unsigned/decimal/hybrid identity, missing typed batches and
+the vector NULL cast; log /tmp/tidb-json-source-published-red.log. Initial focused
+red and green logs are /tmp/tidb-json-source-{red,green}.log.
+
+Integer signatures preserve unsigned carriers and YEAR's unsigned JSON result;
+boolean metadata takes precedence. REAL/FLOAT remain JSON DOUBLE even for an
+integral value. DECIMAL uses Go's DOUBLE conversion, including rounding
+9007199254740993.0 to 9.007199254740992e15. JSON identity preserves its binary
+unsigned code. BIT evaluates the integer signature; ENUM/SET evaluate string
+names, parsed as documents only when ParseToJSONFlag is set. Temporal signatures
+retain DATE/DATETIME/TIMESTAMP/TIME binary identity and Go's FSP rules in both
+parse modes. Binary scalar construction avoids the lossy text round trip.
+
+The scalar cast and supported batch path share source conversion. Batches finish
+the complete typed input pass before JSON conversion. Unsupported vector-to-JSON
+casts return Go's error before evaluating the argument, including NULL. This
+signature is not vectorized in Go: an initial oracle incorrectly called its
+unsupported VecEvalJSON method directly and failed with the base-method error.
+The corrected oracle asserts Vectorized=false and tests the scalar fallback;
+the real SQL path confirms the same error with vectorization enabled/disabled.
+
+Native SQL regression checks six source columns plus vector and NULL-vector
+errors in both modes (16 queries). Captured Go SQL reference command:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-json-source-sql-overlay.json -run '^TestJSONSourceSignatureSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Result: PASS; /tmp/tidb-json-source-sql-go.log. Source oracle and accumulated
+34-function race gate use unchanged pinned Go sources with temporary overlays:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-json-source-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+
+Result: PASS; /tmp/tidb-json-source-go-race.log. These harness packages have no
+failpoint dependency. This does not replace the full expression package's
+original failpoint/generator/platform validation gates.
+
+Changed files are the existing JSON value helper, scalar-function evaluator,
+Go arithmetic regression module, session numeric SQL regression module and this
+plan. No Go, module, Bazel or generated artifact changes; bazel_prepare is not
+required. Existing unrelated untracked drafts remain excluded. All expression
+inventory rows remain unaccepted; this is dependency audit progress only.
+
+
+### Validation and review
+
+The JSON consumer run found one historical test explicitly expecting the old
+unsigned-identity loss. Go and the new source matrix both prove UNSIGNED INTEGER;
+updated that assertion and removed its obsolete exception comment in the existing
+session tests_json.rs. The other 24 JSON tests passed before this test correction.
+No production change was needed for that failure. This makes six intended files.
+
+From rust/, the full expression test suite and focused consumer gates use:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-executor --lib checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge_join
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib json
+    cargo test --offline --locked -j12 -p tidb-session --lib cast
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Expression: 1,199 passed and 97 existing ignored, log
+/tmp/tidb-json-source-expr.log. Consumer logs use
+/tmp/tidb-json-source-tidb-<crate>-<filter>.log. Root make lint passed
+(/tmp/tidb-json-source-lint.log); git diff --check passed. The original package-wide
+suite, original source generators/platform gates, ignored tests and all complete
+sysbench/TPC-C/TPC-H/YCSB performance gates remain open. This checkpoint makes no
+new performance claim; direct binary construction removes a lossy conversion,
+but elapsed-time gains must be measured separately. Existing component benchmark
+evidence in the preceding stage is unchanged.
+
+
+The clean checkout independently passed the full expression suite (1,199 passed,
+97 ignored), executor merge tests (76), session numeric tests (16), JSON tests
+(25) and cast tests (34), with only the six intended files copied. Commands from
+/private/tmp/tidb-parity-publish-aba629bb/rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib json
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib cast
+
+Logs /tmp/tidb-json-source-isolated-tidb-<crate>-<filter>.log (expression filter
+is all). Other working-tree gates passed: checker 28, hash aggregation 76,
+shuffle 26, executor windows 23, session merge 16 and session windows 68.
+
+A final fetch found upstream dc389f42a3, a non-overlapping EXPLAIN-rendering
+change. Both working and isolated checkouts fast-forwarded to it. Go source
+pin is unchanged. The post-integration gates use the same CARGO_TARGET_DIR
+commands with executor filters explain/merge and session filters
+ tests_explain_merge_join/numeric_domain/json/cast. Logs use prefix
+/tmp/tidb-json-source-integrated-. No upstream code was overwritten.
+
+
+### Upstream integration regression: integer-handle EXPLAIN
+
+Post-integration cast tests failed only in the existing injected-join-key range
+assertion. Upstream dc389f42a3 changed every table probe to eq(inner, outer),
+including integer handles. The pinned Go source instead uses
+indexJoinIntPKRangeInfo for integer handles (exhaust_physical_plans.go), and the
+original join_key_type_cast.result fixture requires `decided by [Column#12]`.
+A fresh SQL reference confirmed that exact range for BOTH INL_JOIN and
+INL_HASH_JOIN, including the injected cast column:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-json-integration-explain-overlay.json -run '^TestJSONIntegrationIndexJoinExplainOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+PASS, /tmp/tidb-json-integration-explain-go.log. This source evidence supersedes
+the upstream comment's generalization from a live-master workload sample.
+The correction uses catalog table handle metadata, not key count or join variant,
+to select the existing integer-handle renderer. Common-handle rendering and the
+other upstream changes remain as integrated. Complete common-handle range/access
+condition parity is still an open package obligation; no new acceptance claim.
+
+Extended the existing tests_join_key_cast regression to both join variants.
+It failed before the production correction and passed afterward:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib the_hinted_index_join_ranges_over_the_injected_cast_column
+
+Logs /tmp/tidb-json-integration-explain-{red,green}.log. Additional files:
+rust/crates/tidb-executor/src/explain.rs and
+rust/crates/tidb-session/src/tests_join_key_cast.rs, for eight intended files total.
+Required make lint passed again (/tmp/tidb-json-integration-lint.log).
+Final isolated gates use the same shared CARGO_TARGET_DIR command prefix with
+executor explain and session index_join/tests_explain/cast filters. Logs use
+/tmp/tidb-json-source-final-tidb-<crate>-<filter>.log. The production expression
+code is unchanged from its successful complete isolated suite.
+
+
+Final integrated isolated checks passed: executor EXPLAIN 19; session index joins
+11 (one existing ignored), EXPLAIN 62 and casts 34. Exact final commands:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib explain
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib index_join
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib cast
+
+All validation processes are terminal. Final production/test Rust bytes match the
+isolated tested patch. Self-review checked static source dispatch, JSON identity,
+parse-flag modes, NULL/error boundaries, selection vectors, complete source passes
+and catalog handle-kind selection. git diff --check passed. The eight-file
+checkpoint is ready for the user's requested commit and push. No complete package
+or workload is marked accepted by this receipt.
