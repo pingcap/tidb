@@ -454,10 +454,55 @@ fn a_derived_table_with_order_by_or_group_by_offers_no_order() {
 }
 
 #[test]
+fn merge_join_json_boundary_uses_encoded_identity() {
+    let mut session = Session::new();
+    session
+        .run("SET tidb_executor_concurrency=1, tidb_init_chunk_size=32")
+        .unwrap();
+    session
+        .run("CREATE TABLE mj_outer(id INT, j JSON)")
+        .unwrap();
+    session
+        .run("CREATE TABLE mj_inner(id INT, j JSON)")
+        .unwrap();
+    session.run("INSERT INTO mj_outer VALUES (1,'1')").unwrap();
+    for id in 1..=32 {
+        session
+            .run(&format!("INSERT INTO mj_inner VALUES ({id},'1')"))
+            .unwrap();
+    }
+    session
+        .run("INSERT INTO mj_inner VALUES (33,'1.0')")
+        .unwrap();
+    for concurrency in [1, 4] {
+        session
+            .run(&format!("SET tidb_merge_join_concurrency={concurrency}"))
+            .unwrap();
+        for size in [32, 64] {
+            session
+                .run(&format!("SET tidb_max_chunk_size={size}"))
+                .unwrap();
+            for sql in [
+            "SELECT /*+ MERGE_JOIN(a,b) */ COUNT(b.id),SUM(b.id) FROM mj_outer a LEFT JOIN mj_inner b ON a.j=b.j",
+            "SELECT /*+ MERGE_JOIN(a,b) */ COUNT(a.id),SUM(a.id) FROM mj_inner a RIGHT JOIN mj_outer b ON a.j=b.j",
+        ] {
+            let physical = plan(&mut session, &format!("EXPLAIN {sql}"));
+            assert!(physical.iter().any(|row| row.contains("MergeJoin")));
+            assert_eq!(physical.iter().any(|row| row.contains("Shuffle")), concurrency > 1);
+            // Pinned Go retains only the first encoded inner group, although
+            // JSON 1 and 1.0 compare equal within the same chunk.
+            let expected = if size == 32 { vec![vec!["32", "528"]] } else { vec![vec!["33", "561"]] };
+            assert_eq!(row_text(session.run(sql)), expected, "chunk size {size}: {sql}");
+        }
+        }
+    }
+}
+
+#[test]
 fn stream_aggregate_json_boundary_uses_encoded_identity() {
     let mut session = Session::new();
     session
-        .run("SET tidb_streamagg_concurrency=1, tidb_init_chunk_size=32")
+        .run("SET tidb_streamagg_concurrency=1, tidb_executor_concurrency=1, tidb_init_chunk_size=32")
         .unwrap();
     session
         .run("CREATE TABLE boundary_json(id INT, j JSON)")

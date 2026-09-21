@@ -409,7 +409,7 @@ struct MergeSide {
     chunk: Chunk,
     /// The exact live capacity charge for `chunk`.
     chunk_bytes: i64,
-    row: usize,
+    group_checker: crate::vec_group_checker::VecGroupChecker,
     /// Whether the child has returned its final (empty) chunk.
     done: bool,
     /// The first row in the current OUTER equal-key range.
@@ -418,24 +418,30 @@ struct MergeSide {
     group_end: usize,
     /// Number of rows in the current group, including retained inner chunks.
     group_len: usize,
-    /// The last inner key at a child-chunk boundary, for continuation checks.
-    key: Vec<Datum>,
     /// Go MergeJoinTable.filtersSelected, evaluated once per outer input chunk.
     selected: Vec<bool>,
 }
 
 impl MergeSide {
-    fn new(chunk: Chunk) -> Self {
+    fn new(chunk: Chunk, keys: &[usize], types: &[FieldType]) -> Self {
         let chunk_bytes = chunk.memory_usage();
+        let group_by = keys
+            .iter()
+            .map(|&index| {
+                let mut column =
+                    tidb_expr::column::Column::new(index as i64 + 1, types[index].clone());
+                column.index = index as i64;
+                Expression::Column(column)
+            })
+            .collect();
         MergeSide {
             chunk,
             chunk_bytes,
-            row: 0,
+            group_checker: crate::vec_group_checker::VecGroupChecker::new(group_by),
             done: false,
             group_start: 0,
             group_end: 0,
             group_len: 0,
-            key: Vec::new(),
             selected: Vec::new(),
         }
     }
@@ -2851,17 +2857,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             .map_or(0, |group| group.rows.num_chunks())
     }
 
-    /// Pulls one OUTER row into owned datums.
-    ///
-    /// The equal-key INNER run remains installed across calls, so adjacent
-    /// OUTER rows with the same key reuse it. This is the bounded streaming
-    /// half of Go's merge join: only the INNER run is materialized and
-    /// spillable.
+    /// Go fetchNextOuterGroup: split one child chunk after evaluating its
+    /// filters, retaining the current inner group for equal outer ranges.
     fn fetch_outer_group(
         side: &mut MergeSide,
         child: &mut dyn Executor,
-        key_offsets: &[usize],
-        types: &[FieldType],
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
         ctx: &C,
@@ -2870,7 +2870,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         side.group_len = 0;
         side.group_start = 0;
         side.group_end = 0;
-        while side.row >= side.chunk.num_rows() {
+        if side.group_checker.is_exhausted() {
             if side.done {
                 return Ok(());
             }
@@ -2880,7 +2880,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             side.chunk_bytes = current_bytes;
             result?;
             memory.check()?;
-            side.row = 0;
             if side.chunk.num_rows() == 0 {
                 side.done = true;
                 return Ok(());
@@ -2890,21 +2889,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 side.selected
                     .push(crate::joiner::eval_bool(ctx, filters, side.chunk.get_row(index))?.0);
             }
+            side.group_checker.split_into_groups(ctx, &side.chunk)?;
         }
 
-        let first = side.row;
-        let first_row = side.chunk.get_row(first);
-        side.row += 1;
-        while side.row < side.chunk.num_rows() {
-            let row = side.chunk.get_row(side.row);
-            if merge_rows_cmp(first_row, row, key_offsets, types, false)? != Ordering::Equal {
-                break;
-            }
-            side.row += 1;
-        }
-        side.group_start = first;
-        side.group_end = side.row;
-        side.group_len = side.row - first;
+        let (begin, end) = side.group_checker.get_next_group();
+        side.group_start = begin;
+        side.group_end = end;
+        side.group_len = end - begin;
         memory.check()
     }
 
@@ -2914,24 +2905,19 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         side: &mut MergeSide,
         child: &mut dyn Executor,
         key_offsets: &[usize],
-        types: &[FieldType],
         group: &mut MergeInnerGroup,
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
+        ctx: &C,
     ) -> Result<(), ExecError> {
         group.reset();
         side.group_len = 0;
-        side.key.clear();
         loop {
-            if side.row >= side.chunk.num_rows() {
+            if side.group_checker.is_exhausted() {
                 if side.done {
                     break;
                 }
                 if group.child_start < group.child_end {
-                    side.key.clear();
-                    let last = side.chunk.get_row(group.child_end - 1);
-                    side.key
-                        .extend(key_offsets.iter().map(|&at| last.get_datum(at, &types[at])));
                     group.retain_child(side, tracker)?;
                     memory.check()?;
                 }
@@ -2941,40 +2927,26 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 side.chunk_bytes = current_bytes;
                 result?;
                 memory.check()?;
-                side.row = 0;
                 if side.chunk.num_rows() == 0 {
                     side.done = true;
                     break;
                 }
-            }
-            let row = side.chunk.get_row(side.row);
-            // Go selectNextGroup excludes NULL inner keys before buffering.
-            if key_offsets.iter().any(|&offset| row.is_null(offset)) {
-                if side.group_len != 0 {
+                let continues = side.group_checker.split_into_groups(ctx, &side.chunk)?;
+                if side.group_len != 0 && !continues {
+                    // Keep this new chunk's first group for the next fetch.
                     break;
                 }
-                side.row += 1;
+            }
+            let (begin, end) = side.group_checker.get_next_group();
+            // Go selectNextGroup excludes NULL inner keys before buffering.
+            let first = side.chunk.get_row(begin);
+            if key_offsets.iter().any(|&offset| first.is_null(offset)) {
                 continue;
             }
-            if side.group_len != 0
-                && merge_row_key_cmp(row, types, key_offsets, &side.key, false)? != Ordering::Equal
-            {
-                break;
-            }
-            let first = side.row;
-            side.row += 1;
-            while side.row < side.chunk.num_rows() {
-                if merge_rows_cmp(row, side.chunk.get_row(side.row), key_offsets, types, false)?
-                    != Ordering::Equal
-                {
-                    break;
-                }
-                side.row += 1;
-            }
-            group.child_start = first;
-            group.child_end = side.row;
-            side.group_len += side.row - first;
-            if side.row < side.chunk.num_rows() {
+            group.child_start = begin;
+            group.child_end = end;
+            side.group_len += end - begin;
+            if !side.group_checker.is_exhausted() {
                 break;
             }
         }
@@ -3210,8 +3182,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 self.registered_action = Some(action);
             }
             let inner_scratch_bytes = inner_group.read_back.memory_usage();
-            let left = MergeSide::new(self.left_exec().new_chunk());
-            let right = MergeSide::new(self.right_exec().new_chunk());
+            let left = MergeSide::new(self.left_exec().new_chunk(), &left_keys, &left_types);
+            let right = MergeSide::new(self.right_exec().new_chunk(), &right_keys, &right_types);
             let input_bytes = left.chunk_bytes + right.chunk_bytes;
             self.merge_state = Some(MergeState {
                 left,
@@ -3303,18 +3275,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     inner_side,
                     inner_child,
                     inner_keys,
-                    inner_types,
                     inner,
                     &tracker,
                     &memory,
+                    &self.ctx,
                 )?;
             }
             if outer_side.group_len == 0 {
                 Self::fetch_outer_group(
                     outer_side,
                     outer_child,
-                    outer_keys,
-                    outer_types,
                     &tracker,
                     &memory,
                     &self.ctx,
@@ -5895,76 +5865,6 @@ fn merge_join_rows_cmp(
                 left_type.collation(),
             )?
         };
-        if desc {
-            cmp = cmp.reverse();
-        }
-        if cmp != Ordering::Equal {
-            return Ok(cmp);
-        }
-    }
-    Ok(Ordering::Equal)
-}
-
-fn merge_rows_cmp(
-    left: Row<'_>,
-    right: Row<'_>,
-    key_offsets: &[usize],
-    types: &[FieldType],
-    desc: bool,
-) -> Result<Ordering, ExecError> {
-    merge_join_rows_cmp(left, right, key_offsets, key_offsets, types, types, desc)
-}
-
-fn merge_row_key_cmp(
-    row: Row<'_>,
-    types: &[FieldType],
-    key_offsets: &[usize],
-    key: &[Datum],
-    desc: bool,
-) -> Result<Ordering, ExecError> {
-    // Single signed-integer join key: compare the typed i64 directly instead
-    // of materializing the row's cell into a Datum (see merge_rows_cmp).
-    if key_offsets.len() == 1 {
-        let offset = key_offsets[0];
-        let ft = &types[offset];
-        if matches!(
-            ft.code(),
-            tidb_datatype::FieldTypeCode::Tiny
-                | tidb_datatype::FieldTypeCode::Short
-                | tidb_datatype::FieldTypeCode::Int24
-                | tidb_datatype::FieldTypeCode::Long
-                | tidb_datatype::FieldTypeCode::LongLong
-        ) && !ft.is_unsigned()
-        {
-            let (row_null, key_null) = (row.is_null(offset), key.first() == Some(&Datum::Null));
-            if row_null || key_null {
-                // The datum order the generic arm reproduces: NULL sorts
-                // first, and NULL against NULL is Equal -- the walk then
-                // still advances both sides, while the condition evaluator
-                // rejects the NULL pair itself.
-                let cmp = match (row_null, key_null) {
-                    (true, true) => Ordering::Equal,
-                    (true, false) => Ordering::Less,
-                    (false, true) => Ordering::Greater,
-                    (false, false) => unreachable!("checked above"),
-                };
-                return Ok(if desc { cmp.reverse() } else { cmp });
-            }
-            // Both sides must be signed integers for this to equal Go's
-            // `CompareInt`. Other boundary-key domains use the canonical
-            // datum comparison, just as cross-side row comparison does.
-            if let Some(Datum::Int(key_value)) = key.first() {
-                let cmp = row.get_int64(offset).cmp(key_value);
-                return Ok(if desc { cmp.reverse() } else { cmp });
-            }
-        }
-    }
-    for (&offset, key) in key_offsets.iter().zip(key) {
-        let mut cmp = tidb_expr::compare_datums_with_collation(
-            &row.get_datum(offset, &types[offset]),
-            key,
-            types[offset].collation(),
-        )?;
         if desc {
             cmp = cmp.reverse();
         }

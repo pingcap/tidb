@@ -30,6 +30,11 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, merge-join shared grouping) Both merge inputs now use
+  VecGroupChecker, including encoded cross-chunk continuation and NULL group
+  skipping. Eight SQL scenarios match Go under deterministic sort setup;
+  76 executor and 16 session tests pass. A 47-artifact join-package inventory
+  records remaining whole-package work. No package acceptance or speedup claim.
 - [x] (2026-09-21, stream aggregation shared grouping) Reproduced JSON
   cross-chunk grouping mismatch and requested-row overrun before fixing them.
   Stream aggregation now calls VecGroupChecker; its integer direct-column
@@ -4006,3 +4011,121 @@ Existing warnings were emitted. This publication step adds no production
 changes, package-acceptance claims, or benchmark claims. The only post-test
 staged edit is this validation receipt. Earlier 197-test evidence and the
 make lint bootstrap limitation remain applicable to the same source tree.
+
+
+## Merge-join shared group checker follow-up (2026-09-21)
+
+Previous turn made progress by committing/pushing 7c79401941. The remaining
+merge-join consumer still has independent datum-based chunk continuation.
+A pinned Go SQL oracle confirms JSON 1/1.0 inner input gives COUNT/SUM 32/528
+at chunk size 32 and 33/561 at 64 for both left and right outer joins.
+The plans contain MergeJoin. Reproduce this mismatch in a permanent Rust SQL
+regression before replacing the duplicate grouping with VecGroupChecker.
+Retain existing native spill ownership, NULL inner-key skipping, outer filters,
+required-row output and opposite-side typed comparison. Audit/check all nearby
+merge tests and shared consumers; package acceptance remains whole and open.
+Commit/push verified progress as the user requested, without folding the two
+unconnected drafts into the work.
+
+
+### Merge-join validation receipt and sorting discovery
+
+The initial SQL regression failed before the fix: Rust COUNT/SUM 33/561,
+Go 32/528 at chunk size 32; /tmp/tidb-merge-json-red.log. The fix removes the
+independent merge-row grouping and copied last-datum comparison. Both native
+MergeSide instances own VecGroupChecker with the side's typed column keys.
+Outer filters still run before splitting; inner NULL groups are skipped;
+completed inner ranges transfer to the existing spillable RowContainer.
+A new chunk's first group remains unconsumed when its encoded key differs
+from the retained prior group. Cross-side join comparison and pending output
+logic remain unchanged. Shared integer direct-column comparisons are reused.
+
+An expanded Go run exposed nondeterministic equal-JSON-key order from parallel
+Sort workers: one 32-row left-join case returned 33/561 instead of 32/528.
+Thus the original SQL capture alone did not establish a deterministic fixture.
+Set tidb_executor_concurrency=1 in both oracle and regression to make sorting
+reproducible, while independently testing tidb_merge_join_concurrency=1 and 4.
+Both Go and Rust plans show Shuffle only at merge concurrency 4, asserted by
+the permanent Rust regression. This does not change production sort policy.
+The earlier stream JSON fixture has the same equal-key sort sensitivity; its
+test now also sets executor concurrency to one and its Go oracle was repeated.
+The window fixture orders by id as well and does not have that equal-key tie.
+
+Five Go repetitions produce 40 merge records: both join directions at chunk
+size 32 give 32/528, and both at size 64 give 33/561, for merge concurrency
+1 and 4. Five stream repetitions give [[1,32],[33,1]] at 32 and [[1,33]] at 64.
+These are grouping-contract fixtures for the controlled input order, not a
+claim of one universal result across unspecified equal-key sort orders.
+
+Go commands from repository root, using temporary overlays (tracked Go files
+are unchanged):
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-merge-json-overlay.json -run '^TestMergeJSONBoundaryOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-merge-json-overlay.json -run '^TestMergeJSONBoundaryOracle$' -tags=intest,deadlock -count=5 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-stream-json-overlay.json -run '^TestStreamJSONBoundaryOracle$' -tags=intest,deadlock -count=5 -v ./pkg/executor/windows
+
+The first command ran before and after adding the shuffled scenarios; its
+logs are /tmp/tidb-merge-json-oracle.log and
+/tmp/tidb-merge-json-oracle-final.log (the latter exposes sort nondeterminism).
+Authoritative controlled runs: /tmp/tidb-merge-json-oracle-stable.log,
+/tmp/tidb-stream-json-oracle-stable.log. Overlay source files are
+/tmp/tidb-merge-json-oracle.go and /tmp/tidb-stream-json-oracle.go.
+These use the existing windows harness without package failpoint calls;
+join's failpoint-dependent original package tests were not run or counted.
+No Go/Bazel/module change requires bazel_prepare.
+
+Rust commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib merge_join_json_boundary_uses_encoded_identity
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-session --lib merge
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+
+The final targeted executor run passes 76 tests, including both spill
+orientations, large duplicate groups, outer NULL/filter behavior, chunk
+retention and required-row output: /tmp/tidb-merge-checker-executor-final.log.
+The final 16-test session suite passes, including all eight new scenarios and
+existing shuffled joins/stream aggregation:
+/tmp/tidb-merge-checker-session-final.log. Earlier wider session selector
+passes 24 and ignores four explicitly unported bootstrap/index-merge tests;
+those four are not coverage of this change (/tmp/tidb-merge-checker-session.log).
+Red/green and shuffled-only logs: /tmp/tidb-merge-json-red.log,
+/tmp/tidb-merge-json-green.log, /tmp/tidb-merge-json-parallel.log.
+Only changed code regions were formatted; self-review checked checker range
+consumption, fetching after final groups, NULL skipping, container ownership
+and unchanged cross-side comparison. No background executor was introduced.
+
+Repository-root gates:
+
+    make lint
+    make -o tools/bin/revive lint
+    git diff --check
+
+First command fails the existing revive1.2.1 bootstrap with exit 2;
+/tmp/tidb-merge-checker-lint.log. Existing-tool lint passes separately;
+/tmp/tidb-merge-checker-lint-existing.log. Diff check passes. No workload
+benchmark/release build was run and no performance gain is asserted.
+
+Changed files: rust/crates/tidb-executor/src/join.rs,
+rust/crates/tidb-session/src/tests_explain_merge_join.rs, this ExecPlan and
+physicalop-source-inventory.md. The inventory now includes all 47 artifacts
+of the complete join package and explicitly leaves its full validation open.
+The shared checker now serves window, shuffle, grouped stream aggregation and
+merge join. Remaining typed-expression/encoding/error-policy decisions and
+whole-package gates still preclude accepting vecgroupchecker or join.
+
+
+The merge publication gate also passed from the isolated checkout at
+/private/tmp/tidb-parity-publish-aba629bb, refreshed to 7c79401941 only after
+verifying it held exactly our previously published files and no other edits.
+All four staged files matched that checkout byte-for-byte. From its rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib merge_join_json_boundary_uses_encoded_identity
+
+The eight-case regression passed (22.15s build, 0.06s test), recorded in
+/tmp/tidb-merge-publish-test.log. Only this validation receipt changed after
+the check. git diff --cached --check passes; origin/hparser-integration was
+fetched and matched local HEAD before committing. The two unconnected local
+drafts are still excluded. All test/lint processes are terminal; no cluster
+was started. Goal active, next work is the complete typed/error-path audit
+and validation of the shared checker and the remaining whole-package gates.

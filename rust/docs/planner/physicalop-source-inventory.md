@@ -140,7 +140,7 @@ Status: audited integration progress; **not accepted as a complete package**.
 | --- | --- | --- |
 | `pkg/executor/internal/vecgroupchecker/BUILD.bazel` | `3167139245f1ab3f4eb5867b3a4db66cc49da8b8cb1d5245c127a541db3ee531` | Library/test inputs and dependencies inspected; Rust builds under tidb-executor Cargo targets. No Bazel file edit. |
 | `pkg/executor/internal/vecgroupchecker/main_test.go` | `2c78f211de0fac54b059512b8fd8afd30edae9cb772d5390248083133d31c874` | Go testsetup/config/client failpoint-registration/goleak harness runs in the Go oracle. Native checker owns no workers; no corresponding background services are introduced. |
-| `pkg/executor/internal/vecgroupchecker/vec_group_checker.go` | `25e9f350932453ed382742d805b50e056021e221aa5f2df2fbbf63b31f720bfe` | tidb-executor/src/vec_group_checker.rs; window normal/pipelined, shuffle range splitter and GroupedStreamAggExec call production split_into_groups. The stream duplicate hash-key implementation is removed; its integer-cell fast path is now shared. Merge-join integration and complete typed evaluation/error contracts remain to audit. |
+| `pkg/executor/internal/vecgroupchecker/vec_group_checker.go` | `25e9f350932453ed382742d805b50e056021e221aa5f2df2fbbf63b31f720bfe` | tidb-executor/src/vec_group_checker.rs; window normal/pipelined, shuffle range splitter and GroupedStreamAggExec call production split_into_groups. The stream duplicate hash-key implementation is removed; its integer-cell fast path is now shared. Merge join now uses the same checker on both inputs, retaining its native spill container. Complete typed evaluation/error contracts remain to audit before acceptance. |
 | `pkg/executor/internal/vecgroupchecker/vec_group_checker_test.go` | `ac1cce0c1ae1eb2a8be2fc69cc6b9a20332dd4a898c453b26326c339c0299795` | Four original tests map to tests_executor_internal_source.rs: datum ownership, group-count matrix, collation/padding, reset. Ports now call production chunk evaluation. Additional local fixtures and warning tests are in vec_group_checker.rs. |
 
 The package has no doc.go, platform/build-tag variant, generated source/input,
@@ -187,3 +187,69 @@ The separate SQL test package `pkg/executor/test/aggregate` and its support
 harness are also required integration evidence before full acceptance. This
 checkpoint ran a temporary SQL oracle in the existing windows test harness;
 it did not run the aggregate package's failpoint-dependent original tests.
+
+
+## Dependent package inventory: executor/join
+
+Go baseline `aba629bb455dc09d6a5d98b3c39a542bb1189b9d` is unchanged by Rust
+checkpoint 7c79401941. The entire package remains **unaccepted**. This manifest
+covers all 47 top-level package artifacts. The merge-input grouping
+fix is integration evidence, not a partial-package completion claim.
+
+| Go artifact | SHA-256 | Current audit decision |
+| --- | --- | --- |
+| `pkg/executor/join/BUILD.bazel` | `667717f219b0f272b8ddff27f5e4b5d65e3f0ed690d2c63c5b6ed7eb9301251c` | Build/test source manifest retained; no Bazel edits. Full package gate remains open. |
+| `pkg/executor/join/OWNERS` | `10e8453eaa4a21fbbf499614fc16a1e8228c8c9ea8a72034ca2de3abc48073f6` | Ownership artifact retained; no runtime translation. |
+| `pkg/executor/join/anti_semi_join_probe.go` | `7549d16ba1cbacadb421b92a733cbff725761d5bdb8f71e1e4282aeb78bc80d3` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/anti_semi_join_probe_test.go` | `e982dc946421117a3ba5af0af26f40066d97719b5cc65baf03ab219e05407132` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/base_join_probe.go` | `182a67ee39e1a6a089733d6e4744d2f78a440a2d6a409df80d00c07aca48dd6a` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/base_semi_join.go` | `0dd05407bfd38043f3b283eef671f44600f3c6b39a5a0d1cc341f70ba9615958` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/bench_test.go` | `90428e0e9cd435827e24799fa00d1d3b4c8d2af9dcab8005207683ee82aa8824` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/concurrent_map.go` | `e937a742aed26360b442a10a6a74cc4f21dd780a69938515d23d3e8b7b3da6b9` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/concurrent_map_test.go` | `247943795e48c11be7e451402a2409d3c919dd81d73c14ea833315784ee9b389` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/hash_join_base.go` | `e338c587135d53e506acfff49b09dd9d22232d8f5d288343fb1bb16787e4a854` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/hash_join_spill.go` | `47314a599375d3dd3e8f16f35e07d312d9d4e4a1a04c2011c4f3582cdd91bd56` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/hash_join_spill_helper.go` | `5cc9461a92150cb7b98f3370a7eae6bc2335ec2063c5749a6c4f817b4191942d` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/hash_join_stats.go` | `6d9cc03e902536539a573f8579d46fd71efbb1816407d84e128aeda94c560f63` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/hash_join_test_util.go` | `77be044b1a3b77bf249ea45bade55e4a5cfcbc6b7d49c06ee65affcd86903996` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/hash_join_v1.go` | `e2f16d8afcb24f01a2d6727658176dff625d3bc0362500ea373da123f958d78b` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/hash_join_v2.go` | `d8d44bac60b23b1d8c8c52a730ab5120e0a9c603eab7356527cce98473ec94e8` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/hash_table_v1.go` | `380a503ebb9cd82678fc93f4268f71d378fcbacf4101318521276a18de85c50f` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/hash_table_v1_test.go` | `b9375d83fd127c7405bc1029781c7ece2e2d650ce89749d926efbc39587fc84d` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/hash_table_v2.go` | `58db3be848015b58be6b7b567ef8d7a60c65175c9db635ef9d939a308288424d` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/hash_table_v2_test.go` | `e622f1e4cc0c89b1bf5922a8905a1a1e11b2f660da7691ae31a85e3477b0df83` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/index_lookup_hash_join.go` | `b224dcc8efff944e5c8b44d4643e5937c6d80b33c2d94ed3191d8e51d7e6871d` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/index_lookup_join.go` | `11f3d11fb0f391a102db34b7df2c66c1d743f95e48bdf3d3df90adbf59ee7e9e` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/index_lookup_merge_join.go` | `7d37845a23d3f4602396b8cbd5154e78e7d25c7f9dc2b11d968dd8eb0319abde` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/inner_join_probe.go` | `0308293a62beef3e097baad0625afb78e2e243c32ac61700ed06779496c88327` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/inner_join_probe_test.go` | `8da9e7fe2e35d59e82867fc286b094bb0da0d3675e066f78ee666ef07e34b06f` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/inner_join_spill_test.go` | `a9495e679c5691fb2fb7b9e91284892c36900372674b663e670889f16a1b731c` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/join_row_table.go` | `78e9dab50e24e4ef39efe49607eac5e1050c57b909671f19bc7d85288a581be3` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/join_row_table_test.go` | `056e4530e08729caebd939a7990dd9a79e949c51c0ade2a22b3e1502ec5c7b43` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/join_stats_test.go` | `930df8e3932a099749ce39600e5a5b6156e8679e7b7cd890a58d12ee09387ff8` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/join_table_meta.go` | `fd76aca85482ffa674cf14b6c1133be6829679b87c831a62a12ea23385b602e5` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/join_table_meta_test.go` | `72dc6ff4cad8a0934130cf7c1d8f1c4bbb481e1bcab2c01a2eec0a33f0cff1dc` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/joiner.go` | `0e168313310016d23c11481f73066b9f298cdb2d3f8d5592d0f00e101b8f5049` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/joiner_test.go` | `6c9380a35fcffccba28ac097734abe155f4fb6866b4fc5067d9ec34d81dc42e3` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/left_outer_anti_semi_join_probe_test.go` | `f3212f9a3b02ff1d1b976d77d7495896ec32435c34220dcd066cd36e4ad63115` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/left_outer_join_probe_test.go` | `38cf71006d4e16c796fff2956fbb95871340fcdd108896b301b4f268d52ed4ca` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/left_outer_semi_join_probe.go` | `f3b99488002825a6efde3c09ba29fb8247932a4d8c8ef0455dd87e1ddd58ae62` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/left_outer_semi_join_probe_test.go` | `c0ac78502f369fa8c38c6a3659eac015910b1f633f337077a6efbd6360168ed2` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/merge_join.go` | `3cfa59ee958c23df7db847a1da714df207e7d1795def4dcf0045d997ba3783f1` | Input grouping, NULL skipping, chunk/container handoff and output continuation reviewed. Rust join.rs now uses shared VecGroupChecker; whole executor contracts remain open. |
+| `pkg/executor/join/outer_join_probe.go` | `477b1623dd4b98bbba31fe512a6b96722b5a9b21f258cd081c9bd06344604ef4` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/outer_join_spill_test.go` | `7a35a444358900f80fdb67a2acc123f16e50a992b64875f0f228b87c23cc10b3` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/right_outer_join_probe_test.go` | `6152cdc7b55e4008bce57a4e1fdfb6049862f48fa5c9f9c9a7d5a8c175a259f1` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/row_table_builder.go` | `02fa7160e4ddc4a81139d02ff0085e575371d8cb684aee084f818ad3d93ef364` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/row_table_builder_test.go` | `1c9d460881f0f4d1f20119aeee6065d80fd6f2bbdc804f21873ea2a924eb934d` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/semi_join_probe.go` | `d5bcd8fe7060779419fb5bb42a734648f3d753d8412d3995d73ca972e6998bfd` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/semi_join_probe_test.go` | `be18aee2921869453fa0c6ab76228781f364924b5ee749ef6e4ddfaac523356e` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+| `pkg/executor/join/tagged_ptr.go` | `bbeeef94519a718ca615d2249759c7ffc45f68f43d52bc338e44742ecd137144` | Inventoried; complete source-to-Rust audit and validation remain open. |
+| `pkg/executor/join/tagged_ptr_test.go` | `9612f1486aae58a3f4abc9212cc93f94efae2f7017038bc3bf635782ece5a220` | Original test artifact inventoried; complete original-test mapping/gates remain open. |
+
+No doc.go, build-tag/platform variants, generator directives, embedded fixtures
+or package-local testdata were found. Nested joinversion is a separate Go
+package. Separate SQL test packages test/mergejoin and test/indexjoin include
+their own BUILD.bazel and original SQL test sources; their complete validation
+is required before claiming the corresponding executor integration accepted.
+The current SQL oracle uses the existing windows test harness. The join
+package's failpoint-dependent tests have not been run or counted here.
