@@ -15,6 +15,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/planner/core/base",
         "//pkg/planner/core/joinorder",
         "//pkg/planner/core/operator/logicalop",
@@ -28,8 +29,10 @@ go_library(
 
 go_test(
     name = "rule_test",
+    timeout = "short",
     srcs = ["rule_prune_indexes_internal_test.go"],
     embed = [":rule"],
+    flaky = True,
     deps = [
         "//pkg/expression",
         "//pkg/meta/model",
