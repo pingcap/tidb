@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort/residual"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -29,7 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type globalSortStorageURIResolver func(context.Context, kv.Storage) string
+type globalSortURIResolver func(context.Context, kv.Storage) string
 
 type globalSortStoreFactory func(context.Context, string) (storeapi.Storage, error)
 
@@ -41,37 +42,37 @@ func newGlobalSortStore(ctx context.Context, uri string) (storeapi.Storage, erro
 	return objstore.NewWithDefaultOpt(ctx, backend)
 }
 
-func (sm *Manager) requestGlobalSortResidualMonitor() {
+func (sm *Manager) requestGlobalSortMonitor() {
 	if kerneltype.IsClassic() {
 		return
 	}
 
-	sm.globalSortResidualMu.Lock()
-	defer sm.globalSortResidualMu.Unlock()
-	if sm.globalSortResidualStopping || sm.ctx.Err() != nil || sm.globalSortResidualRunning {
+	sm.globalSortMonitorMu.Lock()
+	defer sm.globalSortMonitorMu.Unlock()
+	if sm.globalSortMonitorStopping || sm.ctx.Err() != nil || sm.globalSortMonitorRunning {
 		return
 	}
-	sm.globalSortResidualRunning = true
+	sm.globalSortMonitorRunning = true
 	failpoint.InjectCall("beforeGlobalSortResidualMonitorRun")
 	sm.wg.Run(func() {
 		defer func() {
-			sm.globalSortResidualMu.Lock()
-			sm.globalSortResidualRunning = false
-			sm.globalSortResidualMu.Unlock()
+			sm.globalSortMonitorMu.Lock()
+			sm.globalSortMonitorRunning = false
+			sm.globalSortMonitorMu.Unlock()
 		}()
 		failpoint.InjectCall("globalSortResidualMonitorWorker")
-		sm.monitorGlobalSortResidual()
+		sm.monitorGlobalSort()
 	})
 }
 
-func (sm *Manager) monitorGlobalSortResidual() {
+func (sm *Manager) monitorGlobalSort() {
 	if sm.ctx.Err() != nil {
 		return
 	}
 
 	tasks, err := sm.taskMgr.GetAllTasks(sm.ctx)
 	if err != nil {
-		if !isGlobalSortResidualCancellation(err) {
+		if !isGlobalSortMonitorCancellation(err) {
 			sm.logger.Warn("global sort residual monitor failed to get all tasks", zap.Error(err))
 		}
 		return
@@ -84,13 +85,13 @@ func (sm *Manager) monitorGlobalSortResidual() {
 		return
 	}
 
-	storageURI := sm.globalSortStorageURIResolver(sm.ctx, sm.store)
+	storageURI := sm.globalSortURIResolver(sm.ctx, sm.store)
 	logStorageURI := globalSortStorageLogURI(storageURI)
-	var scan globalSortResidualScan
+	var scan residual.Stats
 	if storageURI != "" {
 		storage, err := sm.globalSortStoreFactory(sm.ctx, storageURI)
 		if err != nil {
-			if !isGlobalSortResidualCancellation(err) {
+			if !isGlobalSortMonitorCancellation(err) {
 				sm.logger.Warn("global sort residual monitor failed to create storage",
 					zap.String("storage-uri", logStorageURI))
 			}
@@ -98,9 +99,9 @@ func (sm *Manager) monitorGlobalSortResidual() {
 		}
 		defer storage.Close()
 
-		scan, err = scanGlobalSortResidual(sm.ctx, storage)
+		scan, err = residual.Scan(sm.ctx, storage)
 		if err != nil {
-			if !isGlobalSortResidualCancellation(err) {
+			if !isGlobalSortMonitorCancellation(err) {
 				sm.logger.Warn("global sort residual monitor failed to scan storage",
 					zap.String("storage-uri", logStorageURI))
 			}
@@ -113,7 +114,7 @@ func (sm *Manager) monitorGlobalSortResidual() {
 
 	tasks, err = sm.taskMgr.GetAllTasks(sm.ctx)
 	if err != nil {
-		if !isGlobalSortResidualCancellation(err) {
+		if !isGlobalSortMonitorCancellation(err) {
 			sm.logger.Warn("global sort residual monitor failed to get all tasks", zap.Error(err))
 		}
 		return
@@ -129,16 +130,16 @@ func (sm *Manager) monitorGlobalSortResidual() {
 		return
 	}
 
-	metrics.GlobalSortResidualDataSize.Set(float64(scan.sizeBytes))
+	metrics.GlobalSortResidualDataSize.Set(float64(scan.SizeBytes))
 	sm.logger.Info("global sort residual monitor success",
 		zap.String("storage-uri", logStorageURI),
-		zap.Int64("residual-size-bytes", scan.sizeBytes),
-		zap.Int64("residual-object-count", scan.objectCount),
-		zap.Strings("sample-prefixes", scan.samplePrefixes),
-		zap.Bool("sample-prefixes-omitted", scan.samplePrefixesOmitted))
+		zap.Int64("residual-size-bytes", scan.SizeBytes),
+		zap.Int64("residual-object-count", scan.ObjectCount),
+		zap.Strings("sample-prefixes", scan.SamplePrefixes),
+		zap.Bool("sample-prefixes-omitted", scan.SamplePrefixesOmitted))
 }
 
-func isGlobalSortResidualCancellation(err error) bool {
+func isGlobalSortMonitorCancellation(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 

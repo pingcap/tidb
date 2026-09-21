@@ -121,12 +121,12 @@ type Manager struct {
 	serverID string
 	logger   *zap.Logger
 
-	globalSortStorageURIResolver globalSortStorageURIResolver
-	globalSortStoreFactory       globalSortStoreFactory
-	// globalSortResidualMu serializes worker registration with the transition to stopping.
-	globalSortResidualMu       sync.Mutex
-	globalSortResidualRunning  bool
-	globalSortResidualStopping bool
+	globalSortURIResolver  globalSortURIResolver
+	globalSortStoreFactory globalSortStoreFactory
+	// globalSortMonitorMu serializes worker registration with the transition to stopping.
+	globalSortMonitorMu       sync.Mutex
+	globalSortMonitorRunning  bool
+	globalSortMonitorStopping bool
 
 	finishCh chan struct{}
 
@@ -164,9 +164,9 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			slotMgr:  slotMgr,
 			serverID: serverID,
 		}),
-		logger:                       logger,
-		globalSortStorageURIResolver: handle.GetCloudStorageURI,
-		globalSortStoreFactory:       newGlobalSortStore,
+		logger:                 logger,
+		globalSortURIResolver:  handle.GetCloudStorageURI,
+		globalSortStoreFactory: newGlobalSortStore,
 		// finishCh must be able to buffer finish signals for the largest runtime
 		// value of maxConcurrentTask. Otherwise, raising the limit after startup
 		// can make non-blocking sends drop signals until the cleanup ticker runs.
@@ -211,9 +211,9 @@ func (sm *Manager) Cancel() {
 // Stop the schedulerManager.
 func (sm *Manager) Stop() {
 	sm.cancel()
-	sm.globalSortResidualMu.Lock()
-	sm.globalSortResidualStopping = true
-	sm.globalSortResidualMu.Unlock()
+	sm.globalSortMonitorMu.Lock()
+	sm.globalSortMonitorStopping = true
+	sm.globalSortMonitorMu.Unlock()
 	sm.schedulerWG.Wait()
 	sm.wg.Wait()
 	sm.clearSchedulers()
@@ -425,7 +425,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 func (sm *Manager) cleanTaskLoop() {
 	sm.logger.Info("cleanup loop start")
 	sm.drainCleanTaskBatches()
-	sm.requestGlobalSortResidualMonitor()
+	sm.requestGlobalSortMonitor()
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -437,7 +437,7 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.drainCleanTaskBatches()
 		case <-ticker.C:
 			sm.drainCleanTaskBatches()
-			sm.requestGlobalSortResidualMonitor()
+			sm.requestGlobalSortMonitor()
 		}
 	}
 }

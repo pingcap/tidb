@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package residual
 
 import (
 	"context"
@@ -27,29 +27,30 @@ import (
 )
 
 const (
-	globalSortResidualPrefixLimit       = 256
-	globalSortResidualPrefixSampleLimit = 10
+	prefixLimit       = 256
+	prefixSampleLimit = 10
 )
 
-type globalSortResidualScan struct {
-	sizeBytes             int64
-	objectCount           int64
-	samplePrefixes        []string
-	samplePrefixesOmitted bool
+// Stats summarizes global-sort residual objects.
+type Stats struct {
+	SizeBytes             int64
+	ObjectCount           int64
+	SamplePrefixes        []string
+	SamplePrefixesOmitted bool
 }
 
-type globalSortResidualPrefixSampler struct {
+type prefixSampler struct {
 	prefixes []string
 	omitted  bool
 }
 
-func (s *globalSortResidualPrefixSampler) add(prefix string) {
+func (s *prefixSampler) add(prefix string) {
 	index, found := slices.BinarySearch(s.prefixes, prefix)
 	if found {
 		return
 	}
 
-	if len(s.prefixes) == globalSortResidualPrefixSampleLimit {
+	if len(s.prefixes) == prefixSampleLimit {
 		s.omitted = true
 		if index == len(s.prefixes) {
 			return
@@ -64,35 +65,36 @@ func (s *globalSortResidualPrefixSampler) add(prefix string) {
 	s.prefixes[index] = prefix
 }
 
-func scanGlobalSortResidual(ctx context.Context, storage storeapi.Storage) (globalSortResidualScan, error) {
-	var scan globalSortResidualScan
-	var sampler globalSortResidualPrefixSampler
+// Scan walks storage and returns global-sort residual object statistics.
+func Scan(ctx context.Context, storage storeapi.Storage) (Stats, error) {
+	var stats Stats
+	var sampler prefixSampler
 	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
-		scan.objectCount++
-		sampler.add(globalSortResidualPrefix(path))
+		stats.ObjectCount++
+		sampler.add(prefix(path))
 		if size < 0 {
 			return nil
 		}
-		if scan.sizeBytes > math.MaxInt64-size {
+		if stats.SizeBytes > math.MaxInt64-size {
 			return errors.Errorf(
 				"global sort residual size overflow: accumulated bytes %d, next object bytes %d",
-				scan.sizeBytes,
+				stats.SizeBytes,
 				size,
 			)
 		}
-		scan.sizeBytes += size
+		stats.SizeBytes += size
 		return nil
 	})
 	if err != nil {
-		return globalSortResidualScan{}, errors.Annotate(err, "scan global sort residual objects")
+		return Stats{}, errors.Annotate(err, "scan global sort residual objects")
 	}
 
-	scan.samplePrefixes = sampler.prefixes
-	scan.samplePrefixesOmitted = sampler.omitted
-	return scan, nil
+	stats.SamplePrefixes = sampler.prefixes
+	stats.SamplePrefixesOmitted = sampler.omitted
+	return stats, nil
 }
 
-func globalSortResidualPrefix(path string) string {
+func prefix(path string) string {
 	trimmedPath := strings.Trim(path, "/")
 	if trimmedPath == "" {
 		return "<empty>"
@@ -109,8 +111,8 @@ func globalSortResidualPrefix(path string) string {
 		}
 	}
 
-	if len(firstSegment) > globalSortResidualPrefixLimit {
-		firstSegment = firstSegment[:globalSortResidualPrefixLimit] + "..."
+	if len(firstSegment) > prefixLimit {
+		firstSegment = firstSegment[:prefixLimit] + "..."
 	}
 	return firstSegment + "/"
 }

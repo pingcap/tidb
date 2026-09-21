@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package residual
 
 import (
 	"context"
@@ -26,18 +26,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type globalSortResidualWalkEntry struct {
+type walkEntry struct {
 	path string
 	size int64
 }
 
-type globalSortResidualWalkStorage struct {
+type walkStorage struct {
 	storeapi.Storage
-	entries   []globalSortResidualWalkEntry
+	entries   []walkEntry
 	walkCount int
 }
 
-func (s *globalSortResidualWalkStorage) WalkDir(
+func (s *walkStorage) WalkDir(
 	ctx context.Context,
 	_ *storeapi.WalkOption,
 	fn func(path string, size int64) error,
@@ -54,7 +54,7 @@ func (s *globalSortResidualWalkStorage) WalkDir(
 	return nil
 }
 
-func TestScanGlobalSortResidual(t *testing.T) {
+func TestScan(t *testing.T) {
 	t.Run("count objects and sum bytes", func(t *testing.T) {
 		ctx := context.Background()
 		store := objstore.NewMemStorage()
@@ -62,47 +62,47 @@ func TestScanGlobalSortResidual(t *testing.T) {
 		require.NoError(t, store.WriteFile(ctx, "p00000001/456/data", []byte("45678")))
 		require.NoError(t, store.WriteFile(ctx, "unknown/file", nil))
 
-		scan, err := scanGlobalSortResidual(ctx, store)
+		stats, err := Scan(ctx, store)
 		require.NoError(t, err)
-		require.Equal(t, globalSortResidualScan{
-			sizeBytes:      8,
-			objectCount:    3,
-			samplePrefixes: []string{"123/", "p00000001/456/", "unknown/"},
-		}, scan)
+		require.Equal(t, Stats{
+			SizeBytes:      8,
+			ObjectCount:    3,
+			SamplePrefixes: []string{"123/", "p00000001/456/", "unknown/"},
+		}, stats)
 	})
 
 	t.Run("ignore negative object size", func(t *testing.T) {
-		store := &globalSortResidualWalkStorage{
+		store := &walkStorage{
 			Storage: objstore.NewMemStorage(),
-			entries: []globalSortResidualWalkEntry{{path: "unknown/file", size: -1}},
+			entries: []walkEntry{{path: "unknown/file", size: -1}},
 		}
 
-		scan, err := scanGlobalSortResidual(context.Background(), store)
+		stats, err := Scan(context.Background(), store)
 		require.NoError(t, err)
-		require.Equal(t, globalSortResidualScan{
-			objectCount:    1,
-			samplePrefixes: []string{"unknown/"},
-		}, scan)
+		require.Equal(t, Stats{
+			ObjectCount:    1,
+			SamplePrefixes: []string{"unknown/"},
+		}, stats)
 		require.Equal(t, 1, store.walkCount)
 	})
 
 	t.Run("reject size overflow without partial result", func(t *testing.T) {
-		store := &globalSortResidualWalkStorage{
+		store := &walkStorage{
 			Storage: objstore.NewMemStorage(),
-			entries: []globalSortResidualWalkEntry{
+			entries: []walkEntry{
 				{path: "123/first", size: math.MaxInt64},
 				{path: "456/second", size: 1},
 			},
 		}
 
-		scan, err := scanGlobalSortResidual(context.Background(), store)
+		stats, err := Scan(context.Background(), store)
 		require.ErrorContains(t, err, "overflow")
-		require.Equal(t, globalSortResidualScan{}, scan)
+		require.Equal(t, Stats{}, stats)
 		require.Equal(t, 1, store.walkCount)
 	})
 
 	t.Run("sample is bounded and independent of walk order", func(t *testing.T) {
-		entries := []globalSortResidualWalkEntry{
+		entries := []walkEntry{
 			{path: "unknown-k/file", size: 1},
 			{path: "unknown-b/file", size: 1},
 			{path: "unknown-h/file", size: 1},
@@ -120,10 +120,10 @@ func TestScanGlobalSortResidual(t *testing.T) {
 		}
 		reversedEntries := slices.Clone(entries)
 		slices.Reverse(reversedEntries)
-		expected := globalSortResidualScan{
-			sizeBytes:   int64(len(entries)),
-			objectCount: int64(len(entries)),
-			samplePrefixes: []string{
+		expected := Stats{
+			SizeBytes:   int64(len(entries)),
+			ObjectCount: int64(len(entries)),
+			SamplePrefixes: []string{
 				"another/",
 				"unknown-a/",
 				"unknown-b/",
@@ -135,23 +135,23 @@ func TestScanGlobalSortResidual(t *testing.T) {
 				"unknown-h/",
 				"unknown-i/",
 			},
-			samplePrefixesOmitted: true,
+			SamplePrefixesOmitted: true,
 		}
 
-		forwardStore := &globalSortResidualWalkStorage{
+		forwardStore := &walkStorage{
 			Storage: objstore.NewMemStorage(),
 			entries: entries,
 		}
-		forward, err := scanGlobalSortResidual(context.Background(), forwardStore)
+		forward, err := Scan(context.Background(), forwardStore)
 		require.NoError(t, err)
 		require.Equal(t, expected, forward)
 		require.Equal(t, 1, forwardStore.walkCount)
 
-		reverseStore := &globalSortResidualWalkStorage{
+		reverseStore := &walkStorage{
 			Storage: objstore.NewMemStorage(),
 			entries: reversedEntries,
 		}
-		reverse, err := scanGlobalSortResidual(context.Background(), reverseStore)
+		reverse, err := Scan(context.Background(), reverseStore)
 		require.NoError(t, err)
 		require.Equal(t, expected, reverse)
 		require.Equal(t, 1, reverseStore.walkCount)
@@ -159,7 +159,7 @@ func TestScanGlobalSortResidual(t *testing.T) {
 	})
 }
 
-func TestGlobalSortResidualPrefix(t *testing.T) {
+func TestPrefix(t *testing.T) {
 	longNumericSegment := strings.Repeat("1", 300)
 	testCases := []struct {
 		path     string
@@ -177,11 +177,11 @@ func TestGlobalSortResidualPrefix(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		require.Equal(t, testCase.expected, globalSortResidualPrefix(testCase.path), testCase.path)
+		require.Equal(t, testCase.expected, prefix(testCase.path), testCase.path)
 	}
 }
 
-func TestGlobalSortResidualPrefixSampler(t *testing.T) {
+func TestPrefixSampler(t *testing.T) {
 	prefixes := []string{
 		"unknown-k/",
 		"unknown-b/",
@@ -211,14 +211,14 @@ func TestGlobalSortResidualPrefixSampler(t *testing.T) {
 		"unknown-i/",
 	}
 
-	var forward globalSortResidualPrefixSampler
+	var forward prefixSampler
 	for _, prefix := range prefixes {
 		forward.add(prefix)
 	}
 	require.Equal(t, expected, forward.prefixes)
 	require.True(t, forward.omitted)
 
-	var reverse globalSortResidualPrefixSampler
+	var reverse prefixSampler
 	for i := len(prefixes) - 1; i >= 0; i-- {
 		reverse.add(prefixes[i])
 	}
