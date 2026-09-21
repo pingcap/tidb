@@ -343,7 +343,7 @@ const (
 
 	// TiDBEnableLocalMatchAgainst enables local no-score MATCH ... AGAINST evaluation.
 	TiDBEnableLocalMatchAgainst = "tidb_enable_local_match_against"
-	// TiDBEnableFTSLikeFallback enables ILIKE rewriting when local MATCH is disabled.
+	// TiDBEnableFTSLikeFallback enables the ILIKE alternative for MATCH predicates.
 	TiDBEnableFTSLikeFallback = "tidb_enable_fts_like_fallback"
 
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.

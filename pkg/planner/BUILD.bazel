@@ -46,6 +46,7 @@ go_test(
     srcs = ["optimize_test.go"],
     embed = [":planner"],
     deps = [
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "@com_github_stretchr_testify//require",
     ],

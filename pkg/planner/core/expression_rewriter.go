@@ -2260,6 +2260,11 @@ func (er *expressionRewriter) inDirectMatchBooleanContext() bool {
 	return true
 }
 
+// ErrLocalMatchDisabled identifies an unavailable default MATCH candidate.
+// Only this error may be rescued by the explicitly enabled ILIKE alternative;
+// unrelated build, privilege, and lock errors must remain fatal.
+var ErrLocalMatchDisabled = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST without tidb_enable_local_match_against")
+
 func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	numCols := len(v.ColumnNames)
 	stackLen := len(er.ctxStack)
@@ -2268,23 +2273,24 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		return
 	}
 
-	// Select the semantic mode before building any alternative plan. Never let
-	// cost comparison or a local MATCH error silently select substring semantics.
-	if er.inDirectMatchBooleanContext() {
-		sv := er.planCtx.builder.ctx.GetSessionVars()
-		if !sv.EnableLocalMatchAgainst && sv.EnableFTSLikeFallback {
-			er.matchAgainstToLike(v, numCols, stackLen)
-			return
-		}
-	}
-	if !er.inDirectMatchBooleanContext() || !expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+	if !er.inDirectMatchBooleanContext() {
 		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context")
 		return
 	}
-
 	sessVars := er.planCtx.builder.ctx.GetSessionVars()
+	sessVars.StmtCtx.AlternativeLogicalPlanHasPredicateMatch = true
+	// ILIKE is exclusively an alternative-round override, never the default
+	// rewrite even when the local MATCH user switch is disabled.
+	if sessVars.StmtCtx.InFTSLikeFallbackRound {
+		er.matchAgainstToLike(v, numCols, stackLen)
+		return
+	}
 	if !sessVars.EnableLocalMatchAgainst {
-		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST without tidb_enable_local_match_against")
+		er.err = ErrLocalMatchDisabled
+		return
+	}
+	if !expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context")
 		return
 	}
 	indexInfo, err := er.resolveLocalFullTextIndex(numCols, stackLen)

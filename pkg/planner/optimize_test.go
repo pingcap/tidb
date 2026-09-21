@@ -17,6 +17,7 @@ package planner
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
@@ -69,5 +70,28 @@ func TestAlternativeRoundRestoreOnPanic(t *testing.T) {
 			panic("optimization failed")
 		})
 		require.Equal(t, enabled, sv.EnableCorrelateSubquery)
+	}
+}
+
+func TestFTSAlternativeRoundRestore(t *testing.T) {
+	var round alternativeRound
+	for _, r := range alternativeRounds {
+		if r.name == "fts-like-fallback" {
+			round = r
+		}
+	}
+	require.NotNil(t, round.setup)
+	first := &variable.SessionVars{StmtCtx: &stmtctx.StatementContext{}}
+	second := &variable.SessionVars{StmtCtx: &stmtctx.StatementContext{InFTSLikeFallbackRound: true}}
+	cleanup1 := round.setup(first)
+	cleanup2 := round.setup(second)
+	cleanup1()
+	cleanup2()
+	require.False(t, first.StmtCtx.InFTSLikeFallbackRound)
+	require.True(t, second.StmtCtx.InFTSLikeFallbackRound)
+	for _, sv := range []*variable.SessionVars{first, second} {
+		old := sv.StmtCtx.InFTSLikeFallbackRound
+		require.Panics(t, func() { defer round.setup(sv)(); panic("round failed") })
+		require.Equal(t, old, sv.StmtCtx.InFTSLikeFallbackRound)
 	}
 }
