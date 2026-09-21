@@ -394,3 +394,52 @@ fn float_to_decimal_matches_gos_values_but_not_yet_its_from_float64_warning() {
         );
     }
 }
+
+/// Go's scalar arithmetic NULL rules differ from its operand-batch ordering.
+#[test]
+fn arithmetic_null_short_circuit_follows_vectorization_mode() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE arith_i(a BIGINT,b BIGINT)")
+        .unwrap();
+    session
+        .run("INSERT INTO arith_i VALUES(NULL,9223372036854775807)")
+        .unwrap();
+    session
+        .run("CREATE TABLE arith_r(a DOUBLE,b DOUBLE)")
+        .unwrap();
+    session
+        .run("INSERT INTO arith_r VALUES(NULL,1.7976931348623157e308)")
+        .unwrap();
+    for table in ["arith_i", "arith_r"] {
+        for op in ["+", "-", "*"] {
+            for vectorized in [false, true] {
+                session
+                    .run(&format!(
+                        "SET tidb_enable_vectorized_expression={}",
+                        u8::from(vectorized)
+                    ))
+                    .unwrap();
+                let sql = format!("SELECT a {op} (b*2) FROM {table}");
+                let result = session.run(&sql);
+                if vectorized || (table == "arith_r" && op == "+") {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(DriverError::Exec(tidb_executor::ExecError::Eval(
+                                tidb_executor::EvalError::DataOutOfRange { .. }
+                            )))
+                        ),
+                        "{sql}/{vectorized}: {result:?}"
+                    );
+                } else {
+                    assert_eq!(
+                        result.unwrap(),
+                        StmtResult::Rows(vec![vec![Datum::Null]]),
+                        "{sql}/{vectorized}"
+                    );
+                }
+            }
+        }
+    }
+}

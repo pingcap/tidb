@@ -486,6 +486,59 @@ fn bench_aggregate() {
     }
 }
 
+/// Arithmetic projection through the production evaluator, including nested
+/// operand batches. Keep decimal kernels in the comparison to catch regressions.
+fn bench_numeric_projection() {
+    use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite, NoColumns};
+    for (label, code, nested) in [
+        ("numeric_int", FieldTypeCode::LongLong, false),
+        ("numeric_int_nested", FieldTypeCode::LongLong, true),
+        ("numeric_decimal", FieldTypeCode::NewDecimal, false),
+        ("numeric_decimal_nested", FieldTypeCode::NewDecimal, true),
+    ] {
+        let field = FieldType::new(code);
+        let value = |number| {
+            if code == FieldTypeCode::NewDecimal {
+                Datum::Decimal(tidb_datatype::Decimal::from_int(number))
+            } else {
+                Datum::Int(number)
+            }
+        };
+        let literal = |number| Expression::Constant(Constant::new(value(number), field.clone()));
+        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&field), CHUNK);
+        for row in 0..CHUNK {
+            input.append_datum(0, &value((row % 100) as i64));
+        }
+        let right = if nested {
+            Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("mul"),
+                field.clone(),
+                vec![column(0, &field), literal(2)],
+            ))
+        } else {
+            literal(2)
+        };
+        let expression = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            field.clone(),
+            vec![column(0, &field), right],
+        ));
+        let suite = EvaluatorSuite::new(vec![expression], false);
+        let mut output = Chunk::new_with_capacity(&[field], CHUNK);
+        let mut pass = || {
+            output.reset();
+            suite.run(&NoColumns, &mut input, &mut output).unwrap();
+            assert_eq!(black_box(output.num_rows()), CHUNK);
+        };
+        let result = best_of_blocks(&mut [(label, &mut pass)])[0];
+        println!(
+            "{label} ns_per_row {:.1}",
+            result.0.as_secs_f64() * 1e9 / CHUNK as f64
+        );
+        println!("{label} cal_per_row {:.4}", result.1 / CHUNK as f64);
+    }
+}
+
 /// Sorted string groups through the production checker and stream aggregate.
 /// One chunk per pass keeps the replay globally sorted, including CI ties.
 fn bench_stream_grouping() {
@@ -586,6 +639,9 @@ fn main() {
     }
     if wanted("row_copy") {
         bench_row_copy();
+    }
+    if wanted("numeric_projection") {
+        bench_numeric_projection();
     }
     if wanted("stream_group") {
         bench_stream_grouping();

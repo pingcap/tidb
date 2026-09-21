@@ -94,7 +94,7 @@ pub(super) fn unary_minus_integer(
     }))
 }
 
-pub(super) fn integer_binary(
+pub(crate) fn integer_binary(
     op: BinaryOp,
     a: Integer,
     b: Integer,

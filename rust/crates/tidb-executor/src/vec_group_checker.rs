@@ -163,6 +163,18 @@ impl VecGroupChecker {
                     }
                     continue;
                 }
+                if let Some(values) =
+                    tidb_expr::scalar_function::try_eval_numeric_batch(item, ctx, chunk)?
+                {
+                    for (row, pair) in values.windows(2).enumerate() {
+                        if self.same_group[row + 1]
+                            && !same_group_value(&pair[0], &pair[1], *collation)?
+                        {
+                            self.same_group[row + 1] = false;
+                        }
+                    }
+                    continue;
+                }
             }
             if resolve_integer_column(item, chunk, &mut self.same_group)
                 || resolve_string_column(item, chunk, *collation, &mut self.same_group)
@@ -636,6 +648,134 @@ mod tests {
             assert_eq!(warnings.len(), if vectorized { 3 } else { 6 });
             assert!(warnings.iter().all(|(_, code, message)| *code == 1292
                 && message == "Truncated incorrect DOUBLE value: '12tail'"));
+        }
+    }
+
+    #[test]
+    fn arithmetic_grouping_preserves_go_scalar_and_batch_error_order() {
+        use tidb_expr::{constant::Constant, scalar_function::ScalarFunction};
+        let mut mismatches = Vec::new();
+        for code in [
+            FieldTypeCode::LongLong,
+            FieldTypeCode::Double,
+            FieldTypeCode::NewDecimal,
+        ] {
+            for name in ["plus", "minus", "mul"] {
+                for vectorized in [false, true] {
+                    let field = FieldType::new(code);
+                    let value = |number: i64| match code {
+                        FieldTypeCode::Double => Datum::Real(number as f64),
+                        FieldTypeCode::NewDecimal => Datum::Decimal(Decimal::from_int(number)),
+                        _ => Datum::Int(number),
+                    };
+                    let max = match code {
+                        FieldTypeCode::Double => Datum::Real(f64::MAX),
+                        FieldTypeCode::NewDecimal => {
+                            Datum::Decimal(Decimal::from_literal(&"9".repeat(81)))
+                        }
+                        _ => Datum::Int(i64::MAX),
+                    };
+                    let right = Expression::ScalarFunction(ScalarFunction::new(
+                        tidb_ast::CiString::new("mul"),
+                        field.clone(),
+                        vec![
+                            column(1, field.clone()),
+                            Expression::Constant(Constant::new(value(2), field.clone())),
+                        ],
+                    ));
+                    let expression = Expression::ScalarFunction(ScalarFunction::new(
+                        tidb_ast::CiString::new(name),
+                        field.clone(),
+                        vec![column(0, field.clone()), right],
+                    ));
+                    let integer = FieldType::new(FieldTypeCode::LongLong);
+                    let mut chunk =
+                        Chunk::new_with_capacity(&[field.clone(), field, integer.clone()], 3);
+                    for i in 0..3 {
+                        if i == 1 {
+                            chunk.append_null(0);
+                            chunk.append_datum(1, &max);
+                        } else {
+                            chunk.append_datum(0, &value(i + 1));
+                            chunk.append_datum(1, &value(i + 1));
+                        }
+                        chunk.append_int64(2, i);
+                    }
+                    let ctx = crate::stmt_context::StmtContext::default()
+                        .with_enable_vectorized_expression(vectorized);
+                    let mut checker = VecGroupChecker::new(vec![expression, column(2, integer)]);
+                    let result = checker.split_into_groups(&ctx, &chunk);
+                    let want_error =
+                        vectorized || (code == FieldTypeCode::Double && name == "plus");
+                    if want_error {
+                        let class = match code {
+                            FieldTypeCode::Double => "DOUBLE",
+                            FieldTypeCode::NewDecimal => "DECIMAL",
+                            _ => "BIGINT",
+                        };
+                        if result
+                            != Err(EvalError::DataOutOfRange {
+                                value: class,
+                                expression: "(Column#2 * 2)".to_owned(),
+                            })
+                        {
+                            mismatches.push(format!(
+                                "{code:?}/{name}/{vectorized}: expected overflow, got {result:?}"
+                            ));
+                        }
+                    } else if let Err(error) = result {
+                        mismatches.push(format!("{code:?}/{name}/{vectorized}: expected NULL short circuit, got {error:?}"));
+                    } else {
+                        assert_eq!(ranges(&mut checker), [(0, 1), (1, 2), (2, 3)]);
+                    }
+                    assert!(ctx.take_warnings().is_empty());
+                }
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+
+    #[test]
+    fn arithmetic_constant_warnings_follow_batch_evaluation() {
+        use tidb_expr::{constant::Constant, scalar_function::ScalarFunction};
+        for name in ["plus", "minus", "mul"] {
+            for vectorized in [false, true] {
+                let field = FieldType::new(FieldTypeCode::LongLong);
+                let expression = Expression::ScalarFunction(ScalarFunction::new(
+                    tidb_ast::CiString::new(name),
+                    field.clone(),
+                    vec![
+                        column(0, field.clone()),
+                        Expression::Constant(Constant::new(
+                            Datum::new_string("2tail"),
+                            field.clone(),
+                        )),
+                    ],
+                ));
+                let ctx = crate::stmt_context::StmtContext::default()
+                    .with_enable_vectorized_expression(vectorized)
+                    .with_truncate_level(tidb_expr::ErrorLevel::Warn);
+                let mut input = Chunk::new_with_capacity(&[field], 4);
+                for value in [1, 1, 2, 2] {
+                    input.append_int64(0, value);
+                }
+                let mut checker = VecGroupChecker::new(vec![expression]);
+                assert!(!checker.split_into_groups(&ctx, &input).unwrap());
+                assert_eq!(ranges(&mut checker), [(0, 2), (2, 4)]);
+                let warnings = ctx
+                    .take_warnings()
+                    .into_iter()
+                    .map(|(_, code, message)| (code, message))
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    warnings,
+                    vec![
+                        (1292, "Truncated incorrect DOUBLE value: '2tail'".to_owned());
+                        if vectorized { 3 } else { 6 }
+                    ],
+                    "{name}/{vectorized}"
+                );
+            }
         }
     }
 

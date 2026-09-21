@@ -30,6 +30,14 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, numeric arithmetic batch ordering) Reproduced scalar
+  NULL short-circuit and vector operand-order mismatches against Go, including
+  mixed real/integer SQL expressions. Shared expression batch evaluation now
+  covers audited +, -, * trees with typed leaves and numeric widening. Compact
+  integer intermediates reuse the existing overflow kernel. Checker warnings,
+  selection, unsigned widening, projection SQL and consumers pass scoped gates.
+  Isolated integer projections improve 77–82% in ns/row; whole workloads and
+  complete package acceptance remain unverified. Final receipts follow below.
 - [x] (2026-09-21, deferred/correlated grouping) Go-oracle regressions
   reproduced duplicate batch warnings and correlated string key mismatches.
   Typed correlated evaluation and deferred forwarding to literal/correlated/
@@ -4699,3 +4707,166 @@ Files changed: `tidb-expr/src/{constant,column}.rs`,
 inventory. Correctness evidence is scoped to the typed/batch contracts above;
 full package acceptance, scalar-function vectorization and workload performance
 remain open. The user's goal remains active.
+
+
+## Arithmetic batch audit checkpoint (2026-09-21)
+
+The prior deferred/correlated checkpoint bb4c672a3d is committed and pushed.
+The next remaining checker contract is scalar-function evaluation. Source
+inspection distinguishes scalar numeric +, -, * NULL behavior from their
+vectorized operand-batch order: scalar integer/decimal addition and every
+numeric subtraction/multiplication skip the right operand after a NULL left;
+real addition evaluates both. Vectorized signatures evaluate both operand
+batches before applying the operator. Native evaluation currently evaluates
+all arithmetic children per row. A pinned Go oracle and native regression
+will establish error order before edits.
+
+Implement shared numeric batch evaluation in the expression owner, with a
+side-effect-free shape eligibility check before evaluating any input. Reuse
+existing arithmetic value/error kernels and maintain argument metadata. Wire
+the checker and projection evaluator to the shared path, preserving the
+statement vectorization flag. Shape gaps stay explicit, and no new builtin or
+package acceptance is claimed. Validate scalar/batch differences, warnings,
+selection, signedness, and dependent executor/session behavior before publishing.
+
+
+### Evidence, decisions, and remaining scope
+
+
+Pinned Go `builtin_arithmetic.go` and its vector implementations establish
+scalar integer/decimal addition and numeric subtraction/multiplication stop
+on a NULL left operand, while real addition evaluates the right operand.
+Vector signatures evaluate the full left batch, then the full right batch,
+then arithmetic. The checker oracle exercises 18 domain/operator/mode cases;
+a second oracle verifies six warning-count cases. A third oracle confirms
+unnamed column diagnostics use `Column#N`. Native red evidence is in
+`/tmp/tidb-group-arithmetic-red.log`; initial fixture-construction/compilation
+errors are excluded. Checker regressions now assert exact overflow domains,
+expressions, warning codes/messages/counts, and successful scalar grouping.
+
+The native shared evaluator first checks the complete expression shape without
+evaluating an operand. Unsupported trees keep their existing evaluation path;
+empty batches read no prepared parameters. Numeric +, -, * trees support typed
+constant/correlated/ordinary-column leaves and implicit Int-to-Real,
+Int-to-Decimal and Decimal-to-Real widening. Go inserts those casts during
+function construction; native trees can retain mixed numeric FieldTypes.
+Unsigned integer bits are reinterpreted before widening, as in Go
+`builtinCastIntAsRealSig` and `builtinCastIntAsDecimalSig`. A regression checks
+UINT64_MAX through all three operators in both widening domains, including
+selected NULL rows and scalar results.
+
+A SQL oracle exposed the initially missed Real * Int child under subtraction:
+scalar evaluation correctly returned NULL, but vector evaluation also returned
+NULL instead of Go's overflow. `/tmp/tidb-arithmetic-sql-rust.log` records this
+red result; `/tmp/tidb-arithmetic-sql-rust-final.log` and the final numeric-domain
+suite record the fix. The pinned Go SQL oracle passes all 12 Int/Real,
+operator and mode scenarios. No Go source/build/module file was changed;
+Bazel regeneration and failpoint toggling were not required for these checker
+and windows oracle packages.
+
+The first benchmark found a 19–24% integer projection regression with Datum
+intermediates. The final implementation instead carries nullable i64 bits,
+reads selected chunk cells directly, and reuses the existing integer operator
+kernel. It preserves the existing decimal projection fast path. Six final
+alternating process runs (before, after, after, before, before, after) used
+identical benchmark code at bb4c672a3d and current code, 1024 rows, five timed
+250ms blocks per scenario, jemalloc, and the repository bench profile. No
+other build or test ran during measurement. Median ns/row was 74.1 -> 16.9
+for simple integer projections and 132.1 -> 23.5 for nested integer
+projections (77.2% and 82.2% reductions). Decimal was 29.9 -> 30.9 and nested
+decimal 44.4 -> 45.6; calibrated changes were +0.3% and -1.6%, respectively.
+Integer calibrated reductions were 78.0% and 82.6%. These are component
+measurements, not sysbench/TPC-C/TPC-H/YCSB results. Logs are
+`/tmp/tidb-arithmetic-final-bench-{1..6}-{before,final}.log`; the baseline
+binary remains `/tmp/tidb-arithmetic-pipeline-before`.
+
+This is progress within the inventoried complete packages, not acceptance.
+Other scalar signatures, explicit cast nodes, /, DIV, MOD, unsupported child
+shapes, deferred mismatched-domain columns, remaining codec failures and
+full diagnostic rendering remain open. The Go package remains the atomic
+acceptance unit. Workload performance and complete package validation are
+still required. The two unconnected user drafts remain untouched/untracked.
+
+### Validation receipt
+
+
+From root (cached Go 1.26.0, no module downloads), the following passed:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-arithmetic-overlay.json -run '^TestGroupCheckerArithmetic(Batch|Warning)Oracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-arithmetic-overlay.json -run '^TestGroupCheckerUnnamedOverflowOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-group-arithmetic-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-arithmetic-sql-overlay.json -run '^TestArithmeticNullBatchSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+The accumulated race gate contains 16 test functions, including four originals.
+Go oracle sources are `/tmp/tidb-group-arithmetic-oracle.go` and
+`/tmp/tidb-arithmetic-sql-oracle.go`; overlays retain original package tests.
+Logs are `/tmp/tidb-group-arithmetic-go-{final,race}.log`,
+`/tmp/tidb-group-arithmetic-unnamed-go.log` and
+`/tmp/tidb-arithmetic-sql-go.log`.
+
+From rust/, final expression/consumer checks:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+Expression tests pass 1,188, with 97 preexisting ignored tests; the existing
+HTTP test needed sandbox escalation to bind localhost. Initial fixture compile
+errors and sandbox failures are excluded from regression evidence. Final
+consumer counts in command order are 27, 76, 76, 26, 23, 7, 16, and 68
+passed, with no failures or ignored tests in those scoped filters. Earlier
+broad/narrow filters `merge_join` (executor), `merge` (session) and `windows`
+(session) were also run; those overlap the scoped gates and are not added to
+coverage counts. Logs: `/tmp/tidb-arithmetic-final-*.log`.
+
+From root, `make lint` failed the existing revive1.2.1 bootstrap (exit 2,
+module does not contain the requested package). `make -o tools/bin/revive lint`
+passed the actual lint recipes using the existing binary. Logs:
+`/tmp/tidb-group-arithmetic-lint.log` and
+`/tmp/tidb-arithmetic-final-lint-existing.log`. Changed Rust regions were
+formatted without unrelated whole-file changes. `git diff --check` passes.
+No cluster was started. Full workspace tests, all platform/build variants,
+package acceptance and end-to-end workload performance were not verified.
+
+
+The baseline bench build ran from the isolated rust/ checkout at bb4c672a3d,
+with only the current benchmark source copied in:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+The resulting baseline and final executables were copied to the paths below.
+Each invocation was repeated three times in the alternating order above:
+
+    BENCH_ONLY=numeric_projection /tmp/tidb-arithmetic-pipeline-before
+    BENCH_ONLY=numeric_projection /tmp/tidb-arithmetic-pipeline-final
+
+
+Publication validation used the disposable checkout at bb4c672a3d. Its only
+prior change (the benchmark source) was byte-compared with the current file
+before copying all ten tracked changes. Both unconnected drafts were excluded.
+The following passed from isolated rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib numeric_batch
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+
+Counts: 3, 27 and 7 passed; no failures/ignores. Logs are
+`/tmp/tidb-arithmetic-isolated-*.log`. Byte comparison confirms all eight
+tracked Rust files match the isolated validation checkout; final documentation
+receipts were appended afterward. Both checkout diffs pass whitespace checks.
+`git fetch origin --prune` confirmed the publication parent bb4c672a3d remains
+the remote branch head. All validation processes have terminated.
+
+Changed files: expression scalar_function/evaluator/operator dispatch and
+integer-kernel visibility, checker plus regression tests, projection benchmarks,
+session numeric-domain SQL regression, this ExecPlan and source inventory.
+The correctness risk is concentrated in typed operand dispatch and evaluation
+order; scoped differential and consumer gates cover the audited paths. No
+full-package or whole-workload claim is made, and the user's goal stays active.

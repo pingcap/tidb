@@ -129,7 +129,7 @@ fn an_unsigned_flag_selects_gos_unsigned_integer_signature() {
     };
     assert_eq!(
         over_columns("a - 2000", columns![("a", year(), Datum::Int(1990))]),
-        "IntOverflow"
+        r#"DataOutOfRange { value: "BIGINT UNSIGNED", expression: "(Column#1 - 2000)" }"#
     );
     assert_eq!(
         over_columns("a - 1000", columns![("a", year(), Datum::Int(1990))]),

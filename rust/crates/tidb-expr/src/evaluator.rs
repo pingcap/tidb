@@ -403,6 +403,22 @@ impl EvaluatorSuite {
                 .iter()
                 .zip(&program.calculated)
             {
+                if let Expression::ScalarFunction(function) = expression {
+                    // Go's typed `VecEvalDecimal` for decimal arithmetic.
+                    if function.vec_eval_decimal_arithmetic(input, output, *output_index)? {
+                        continue;
+                    }
+                }
+                if ctx.enable_vectorized_expression() {
+                    if let Some(values) =
+                        crate::scalar_function::try_eval_numeric_batch(expression, ctx, input)?
+                    {
+                        for value in values {
+                            output.append_datum(*output_index, &value);
+                        }
+                        continue;
+                    }
+                }
                 if let Expression::Constant(constant) = expression {
                     // Go Constant.VecEval* broadcasts only non-deferred
                     // constants. Deferred expressions still consume rows;
@@ -414,12 +430,6 @@ impl EvaluatorSuite {
                                 output.append_datum(*output_index, &value);
                             }
                         }
-                        continue;
-                    }
-                }
-                if let Expression::ScalarFunction(function) = expression {
-                    // Go's typed `VecEvalDecimal` for decimal arithmetic.
-                    if function.vec_eval_decimal_arithmetic(input, output, *output_index)? {
                         continue;
                     }
                 }
@@ -656,6 +666,198 @@ mod tests {
                 assert_eq!(input.num_rows(), rows);
             }
             assert_eq!(output.num_rows(), 0);
+        }
+    }
+
+    #[test]
+    fn numeric_batch_selection_signedness_and_preflight() {
+        use tidb_datatype::FieldTypeFlags;
+        for name in ["plus", "minus", "mul"] {
+            for left_unsigned in [false, true] {
+                for right_unsigned in [false, true] {
+                    let field = |unsigned| {
+                        let mut field = long();
+                        if unsigned {
+                            field.add_flags(FieldTypeFlags::UNSIGNED);
+                        }
+                        field
+                    };
+                    let left_type = field(left_unsigned);
+                    let right_type = field(right_unsigned);
+                    let out_type = field(left_unsigned || right_unsigned);
+                    let mut left = Column::new(1, left_type.clone());
+                    left.index = 0;
+                    let mut right = Column::new(2, right_type.clone());
+                    right.index = 1;
+                    let expression = Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new(name),
+                        out_type.clone(),
+                        vec![Expression::Column(left), Expression::Column(right)],
+                    ));
+                    let mut input = Chunk::new_with_capacity(&[left_type, right_type], 3);
+                    for (left, right) in [(5, 2), (6, 3), (7, 4)] {
+                        input.append_int64(0, left);
+                        input.append_int64(1, right);
+                    }
+                    input.set_sel(Some(vec![2, 0]));
+                    let mut output = Chunk::new_with_capacity(&[out_type.clone()], 2);
+                    EvaluatorSuite::new(vec![expression], false)
+                        .run(&crate::NoColumns, &mut input, &mut output)
+                        .unwrap();
+                    let expected = match name {
+                        "plus" => [11, 7],
+                        "minus" => [3, 3],
+                        _ => [28, 10],
+                    };
+                    for (index, value) in expected.into_iter().enumerate() {
+                        let expected = if left_unsigned || right_unsigned {
+                            Datum::UInt(value)
+                        } else {
+                            Datum::Int(value as i64)
+                        };
+                        assert_eq!(output.get_row(index).get_datum(0, &out_type), expected);
+                    }
+                }
+            }
+        }
+        let ctx = CountedParameter {
+            value: Err(EvalError::Unsupported("unbound prepared parameter")),
+            reads: Cell::new(0),
+        };
+        let unsupported = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("abs"),
+            long(),
+            vec![input_column(0)],
+        ));
+        let expression = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            long(),
+            vec![parameter(long()), unsupported],
+        ));
+        let mut input = Chunk::new_with_capacity(&[long()], 1);
+        input.append_int64(0, 1);
+        assert_eq!(
+            crate::scalar_function::try_eval_numeric_batch(&expression, &ctx, &input).unwrap(),
+            None
+        );
+        assert_eq!(
+            ctx.reads.get(),
+            0,
+            "declining a shape must not evaluate its earlier operand"
+        );
+        let expression = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            long(),
+            vec![parameter(long()), input_column(0)],
+        ));
+        input.reset();
+        assert_eq!(
+            crate::scalar_function::try_eval_numeric_batch(&expression, &ctx, &input).unwrap(),
+            Some(vec![])
+        );
+        assert_eq!(
+            ctx.reads.get(),
+            0,
+            "empty batches must not evaluate parameters"
+        );
+    }
+
+    #[test]
+    fn numeric_batch_casts_unsigned_arguments_before_arithmetic() {
+        use tidb_datatype::{Decimal, FieldTypeFlags};
+        let mut unsigned = long();
+        unsigned.add_flags(FieldTypeFlags::UNSIGNED);
+        let mut column = Column::new(1, unsigned.clone());
+        column.index = 0;
+        let mut input = Chunk::new_with_capacity(&[unsigned], 2);
+        input.append_int64(0, -1); // UINT64_MAX, not signed -1.
+        input.append_null(0);
+        input.set_sel(Some(vec![1, 0]));
+        for code in [FieldTypeCode::Double, FieldTypeCode::NewDecimal] {
+            for name in ["plus", "minus", "mul"] {
+                let field = FieldType::new(code);
+                let one = if code == FieldTypeCode::Double {
+                    Datum::Real(1.0)
+                } else {
+                    Datum::Decimal(Decimal::from_int(1))
+                };
+                let expression = Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(name),
+                    field.clone(),
+                    vec![
+                        Expression::Column(column.clone()),
+                        Expression::Constant(Constant::new(one, field)),
+                    ],
+                ));
+                let expected = if code == FieldTypeCode::Double {
+                    Datum::Real(u64::MAX as f64)
+                } else {
+                    let value = match name {
+                        "plus" => "18446744073709551616",
+                        "minus" => "18446744073709551614",
+                        _ => "18446744073709551615",
+                    };
+                    Datum::Decimal(Decimal::from_literal(value))
+                };
+                let batch = crate::scalar_function::try_eval_numeric_batch(
+                    &expression,
+                    &crate::NoColumns,
+                    &input,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(
+                    batch,
+                    vec![Datum::Null, expected.clone()],
+                    "{code:?}/{name}"
+                );
+                assert_eq!(
+                    expression
+                        .eval(&crate::NoColumns, input.get_row(1))
+                        .unwrap(),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn numeric_batch_does_not_suppress_nested_errors_on_null_rows() {
+        struct Context(bool);
+        impl Columns for Context {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn enable_vectorized_expression(&self) -> bool {
+                self.0
+            }
+        }
+        let nested = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("mul"),
+            long(),
+            vec![input_column(1), int_const(2)],
+        ));
+        let expression = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            long(),
+            vec![input_column(0), nested],
+        ));
+        for vectorized in [false, true] {
+            let mut input = Chunk::new_with_capacity(&[long(), long()], 1);
+            input.append_null(0);
+            input.append_int64(1, i64::MAX);
+            let mut output = Chunk::new_with_capacity(&[long()], 1);
+            let result = EvaluatorSuite::new(vec![expression.clone()], false).run(
+                &Context(vectorized),
+                &mut input,
+                &mut output,
+            );
+            if vectorized {
+                assert!(result.is_err());
+            } else {
+                assert!(result.is_ok());
+                assert!(output.get_row(0).is_null(0));
+            }
         }
     }
 
