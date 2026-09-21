@@ -174,7 +174,13 @@ func (m *Monitor) run() {
 	}
 
 	metrics.GlobalSortResidualDataSize.Set(float64(scan.SizeBytes))
-	m.cfg.Logger.Info("global sort residual monitor success",
+	// an idle cluster scans on every cleanup interval, so keep a clean scan at
+	// debug level and only report it as info when residual data was found.
+	logFn := m.cfg.Logger.Debug
+	if scan.ObjectCount > 0 {
+		logFn = m.cfg.Logger.Info
+	}
+	logFn("global sort residual monitor success",
 		zap.String("storage-uri", logStorageURI),
 		zap.Int64("residual-size-bytes", scan.SizeBytes),
 		zap.Int64("residual-object-count", scan.ObjectCount),
@@ -186,6 +192,9 @@ func isCancellation(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
+// storageLogURI returns a loggable form of the storage URI. ast.RedactURL
+// returns malformed input unchanged, so such URIs are dropped instead of being
+// logged verbatim: they can still embed credentials.
 func storageLogURI(storageURI string) string {
 	if _, err := url.Parse(storageURI); err != nil {
 		return "<invalid>"

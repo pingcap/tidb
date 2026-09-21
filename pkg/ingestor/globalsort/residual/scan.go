@@ -39,6 +39,9 @@ type Stats struct {
 	SamplePrefixesOmitted bool
 }
 
+// prefixSampler keeps a bounded sample of the smallest object prefixes seen
+// during a scan. Keeping the sample sorted makes the diagnostic log
+// independent of the order in which the object store lists objects.
 type prefixSampler struct {
 	prefixes []string
 	omitted  bool
@@ -53,16 +56,13 @@ func (s *prefixSampler) add(prefix string) {
 	if len(s.prefixes) == prefixSampleLimit {
 		s.omitted = true
 		if index == len(s.prefixes) {
+			// the new prefix sorts after every retained prefix.
 			return
 		}
-		copy(s.prefixes[index+1:], s.prefixes[index:len(s.prefixes)-1])
-		s.prefixes[index] = prefix
-		return
+		// drop the largest retained prefix to make room for the new one.
+		s.prefixes = s.prefixes[:len(s.prefixes)-1]
 	}
-
-	s.prefixes = append(s.prefixes, "")
-	copy(s.prefixes[index+1:], s.prefixes[index:])
-	s.prefixes[index] = prefix
+	s.prefixes = slices.Insert(s.prefixes, index, prefix)
 }
 
 // Scan walks storage and returns global-sort residual object statistics.
@@ -102,10 +102,10 @@ func prefix(path string) string {
 
 	segments := strings.Split(trimmedPath, "/")
 	firstSegment := segments[0]
-	if taskID, err := strconv.ParseInt(firstSegment, 10, 64); err == nil && taskID > 0 {
-		return firstSegment + "/"
-	}
-	if simplesst.IsValidPartition([]byte(firstSegment)) && len(segments) > 1 {
+	// intermediate data files are written under a partition prefix followed by
+	// the task ID, see simplesst.randPartitionedPrefix, everything else is
+	// written directly under the task ID.
+	if len(segments) > 1 && simplesst.IsValidPartition([]byte(firstSegment)) {
 		if taskID, err := strconv.ParseInt(segments[1], 10, 64); err == nil && taskID > 0 {
 			return firstSegment + "/" + segments[1] + "/"
 		}
