@@ -205,3 +205,28 @@ and YCSB runs against matching Go source and equivalent configuration. Existing
 component benchmarks do not satisfy that requirement. Historical equal/fixed
 rows in expr-builtin-divergence-inventory.md remain scoped evidence, not package
 acceptance or permission to skip revalidation.
+
+
+## Original Go reference validation, 2026-09-21
+
+
+All 133 direct artifacts were rechecked against both the pinned Git objects
+and the main checkout using SHA-256; no direct package file is omitted. The
+complete original expression unit-test selection passes on darwin/arm64 with
+Go 1.25.12, race detection and required failpoints. From the isolated checkout
+root /private/tmp/tidb-parity-publish-aba629bb:
+
+    GOTOOLCHAIN=go1.25.12 GOPROXY=off ./tools/check/failpoint-go-test.sh pkg/expression -race -count=1
+
+The runner supplies -tags=intest,deadlock and cleans up failpoints on exit.
+Result: PASS; package time 109.022s. Log:
+/tmp/tidb-expression-original-go12512.log. Cleanup returns refcount zero and
+leaves no Go-source diff. The cached Go 1.26.0 toolchain failed before test
+execution in its ARM64 linker; the go.mod minimum version avoids that failure
+without source changes. Earlier failed attempts and native/cache evidence are
+recorded in the linked ExecPlan.
+
+This closes this platform's original-Go reference test gate only. Native
+production/test mapping, ignored native cases, generated/build/platform and
+support-artifact gates, benchmarks and the four full workloads remain open.
+The package is still unaccepted; no inventory row is promoted by this result.

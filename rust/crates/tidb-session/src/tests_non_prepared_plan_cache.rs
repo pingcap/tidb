@@ -120,43 +120,49 @@ fn a_set_var_hint_breaks_the_cache_and_the_unhinted_twin_still_hits() {
     );
 }
 
-/// A literal's TYPE selects a different physical cache entry below the shared
-/// parameterized statement, exactly like Go's `SessionPlanCache.Get` type
-/// match. Values of one type then hit only that type's entry.
+/// Go allowCmpArgsRefining4PlanCache skips caching when an integer comparison
+/// may convert a non-integer constant. Literal parameterization alone does
+/// not make those comparisons reusable.
+#[test]
+fn integer_comparisons_skip_cache_for_non_integer_constants() {
+    let mut session = cache_session();
+    for (literal, expected, cached) in [
+        ("1", "1", "0"),
+        ("1.0", "1", "0"),
+        ("'1'", "1", "0"),
+        ("2", "2", "1"),
+        ("2.0", "2", "0"),
+        ("'2'", "2", "0"),
+        ("3", "3", "1"),
+    ] {
+        let sql = format!("select a from t where a = {literal}");
+        assert_eq!(rows(&mut session, &sql), [[expected]], "{sql}");
+        assert_eq!(hit(&mut session), cached, "{sql}");
+    }
+}
+
+/// A literal's TYPE selects a separate physical entry below the shared
+/// parameterized statement. A VARCHAR column avoids the integer conversion
+/// rule above, so all three types are cacheable in this source control.
 #[test]
 fn literals_of_different_kinds_do_not_share_an_entry() {
     let mut session = cache_session();
-
-    session.run("select a from t where a = 1").expect("int");
-    assert_eq!(hit(&mut session), "0");
-
+    session.run("create table texts(v varchar(5))").unwrap();
     session
-        .run("select a from t where a = 1.0")
-        .expect("decimal");
-    assert_eq!(
-        hit(&mut session),
-        "0",
-        "a decimal literal needs a different typed physical entry"
-    );
-
-    session
-        .run("select a from t where a = '1'")
-        .expect("string");
-    assert_eq!(
-        hit(&mut session),
-        "0",
-        "a string literal needs a different typed physical entry"
-    );
-
-    // Each kind is now its own entry, and each hits only its own.
-    session
-        .run("select a from t where a = 2")
-        .expect("int again");
-    assert_eq!(hit(&mut session), "1");
-    session
-        .run("select a from t where a = 2.0")
-        .expect("decimal again");
-    assert_eq!(hit(&mut session), "1");
+        .run("insert into texts values('1'),('2'),('3')")
+        .unwrap();
+    for (literal, expected, cached) in [
+        ("1", "1", "0"),
+        ("1.0", "1", "0"),
+        ("'1'", "1", "0"),
+        ("2", "2", "1"),
+        ("2.0", "2", "1"),
+        ("'2'", "2", "1"),
+    ] {
+        let sql = format!("select v from texts where v = {literal}");
+        assert_eq!(rows(&mut session, &sql), [[expected]], "{sql}");
+        assert_eq!(hit(&mut session), cached, "{sql}");
+    }
 }
 
 /// A DDL moves the catalog version, which makes every entry built before it
@@ -395,7 +401,10 @@ fn go_admits_custom_restore_func_call_shapes() {
         rows(&mut session, "select a from t where trim(' 2 ') = a"),
         [["2"]]
     );
-    assert_eq!(hit(&mut session), "1");
+    // TRIM passes AST admission, but its deferred STRING result versus INT
+    // must disable caching in allowCmpArgsRefining4PlanCache. POSITION above
+    // returns INT and can keep its deferred expression in the cached plan.
+    assert_eq!(hit(&mut session), "0");
 
     // TrimDirectionExpr is a separate Go AST child and is deliberately not
     // in nonPreparedPlanCacheableChecker's admitted node list.

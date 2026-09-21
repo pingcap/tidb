@@ -30,6 +30,22 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, cache expectations) Go rows, cache-hit statuses and
+  explanation warnings confirm both recorded cache failures were stale test
+  expectations. Corrected tests preserve typed-entry controls and row checks;
+  all 28 non-prepared cases (including the serial metrics case), 45 prepared
+  cases and lint pass. No cache production behavior changed.
+- [x] (2026-09-21, original expression reference gate) The full original Go
+  expression package passes with race detection, intest/deadlock tags and
+  failpoints under go.mod's Go 1.25.12 minimum on darwin/arm64 (109.022s).
+  Cleanup restores all Go sources. Native acceptance remains open.
+- [x] (2026-09-21, original types reference gate) The full original Go types
+  suite passes on darwin/arm64 with Go 1.25.12 and race detection (1.106s).
+  A complete pinned direct-artifact inventory now records the package unit;
+  native acceptance remains open.
+- [x] Finalize the verified cache-test corrections and reference-gate receipts
+  for ordinary commit/push.
+
 - [x] (2026-09-21, numeric datetime refinement) Source-oracle and red/green
   evidence covers non-Constant temporal operands, live date flags, decimal
   float-string conversion, zero-date policy and DST fractional carries.
@@ -7533,3 +7549,141 @@ prepared-cache and access-path consumers without claiming the full session
 package. Upstream fetch confirms the branch is current at 3241a43f86 before
 commit. Publication is an ordinary commit and push after reviewing the diff
 and comparing all tracked isolated validation paths byte-for-byte with main.
+
+
+## Continuing non-prepared comparison-cache evidence
+
+
+The previous goal turn was progress: commit 91312d129e was pushed and verified.
+A fresh pull is already current. The two non-prepared-cache failures recorded
+above reproduce on the published baseline; investigate their source contract
+before changing runtime behavior. Go allowCmpArgsRefining4PlanCache explicitly
+sets SkipPlanCache for an integer expression versus a STRING/REAL/DECIMAL
+constant. This includes a deferred folded TRIM result. The temporary Go
+TestNonPreparedComparisonCacheOracle verifies rows, hit status and plan-cache
+explanation warnings: the decimal/string/trim cases miss on repeated values,
+whereas ordinary integers and POSITION hit. A VARCHAR-column control verifies
+that INT/DECIMAL/STRING parameters still own distinct entries and then hit
+only their own types. Correct the stale tests using those source outcomes,
+retain typed-entry coverage on the control, run the cache suites and required
+lint, then commit/push. These are tests inside the continuing whole-package
+audit, not a new partial-package acceptance unit.
+
+
+### Cache validation outcome and original-package gate
+
+
+Source outcomes are recorded in /tmp/tidb-cache-parity-go-final.log. The exact
+Go command (repository root) passes:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-cache-parity-overlay.json -run '^TestNonPreparedComparisonCacheOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+The overlay preserves the existing windows harness and adds only a temporary
+oracle; it is not a tracked Go change. Its sixteen queries include integer,
+decimal, string, POSITION and TRIM cases and six VARCHAR controls. Source
+warnings explicitly say the decimal/string/TRIM constants may be converted
+to INT. The original native tests failed as recorded in the previous section;
+the correction changes expectations, not cache production logic. The
+VARCHAR control retains the earlier test's separate-typed-entry intent.
+
+From isolated rust/, with the shared CARGO_TARGET_DIR used above:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_non_prepared_plan_cache -- --include-ignored --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache
+
+Both pass: 28 and 45 tests, no failures or ignored cases in these selections.
+Logs /tmp/tidb-cache-parity-{nonprepared,prepared}-final.log. An earlier run
+from repository root using --manifest-path to the isolated rust/Cargo.toml
+also passed 27 cases with the serial case ignored
+(/tmp/tidb-cache-parity-native.log); it rebuilt without rust/.cargo config,
+so the final runs above use the normal Rust working directory. Required root
+GOTOOLCHAIN=go1.26.0 make lint passes (/tmp/tidb-cache-parity-lint.log).
+No Go/import/module/Bazel inputs changed, so bazel_prepare is unnecessary.
+
+The cache failures are now classified and resolved. The next gate runs all
+original Go expression tests, using the repository failpoint runner because
+source expression tests call failpoints (JSON schema, safe timestamps and PB
+pushdown). The runner serializes activation and disables failpoints on exit.
+It runs in the isolated checkout, without modifying main Go sources:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off ./tools/check/failpoint-go-test.sh pkg/expression -race -count=1
+
+Log /tmp/tidb-expression-original-go-package.log. This reference baseline alone
+cannot accept the native package: the native ignored cases and production,
+build/generated/platform/support mapping plus four workload gates remain.
+
+
+Reference-gate toolchain discovery: the initial GOPROXY=off invocation could
+not bootstrap failpoint-ctl. Retrying with network enabled installed the
+pinned tool and ran the full build, but Go 1.26.0's external ARM64 linker
+panicked in gensymlate/SetSymSect before any tests executed. Its internal
+linker failed on macOS C-framework symbols. Both failpoint-enabled attempts
+cleaned up to refcount zero. These are build failures, not passing tests.
+Logs /tmp/tidb-expression-original-go-package.log and
+/tmp/tidb-expression-original-go-internal.log. The exact retries were:
+
+    GOTOOLCHAIN=go1.26.0 ./tools/check/failpoint-go-test.sh pkg/expression -race -count=1
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off ./tools/check/failpoint-go-test.sh pkg/expression -race -ldflags=-linkmode=internal -count=1
+
+Use the go.mod minimum version instead of altering code: GOTOOLCHAIN=go1.25.12
+go version successfully installs and reports go1.25.12 darwin/arm64. The
+source has explicit Go 1.25 ABI support. The ongoing reference gate is now:
+
+    GOTOOLCHAIN=go1.25.12 GOPROXY=off ./tools/check/failpoint-go-test.sh pkg/expression -race -count=1
+
+Log /tmp/tidb-expression-original-go12512.log. A fresh independent check
+verifies that all 133 direct expression-package artifacts are enumerated and
+that their SHA-256 hashes match both main's files and pinned aba629bb Git
+objects. Failpoint instrumentation remains confined to the isolated checkout.
+The native ignored FIND_IN_SET cache-lifecycle test is still a real gap:
+Go builtin_string.go uses builtinFuncCache keyed by EvalContext.CtxID, memoizes
+NULL and first-match collation keys, does not cache constructor errors, and
+resets on context change and signature clone. Native repeated value tests
+alone do not establish those lifecycle/performance properties. This remains
+part of the continuing whole-expression audit.
+
+
+The original Go expression package gate PASSES with Go 1.25.12 on darwin/arm64:
+PASS; ok github.com/pingcap/tidb/pkg/expression 109.022s. Failpoint cleanup
+reports new_refcount=0, and git diff --stat -- pkg in the isolated checkout
+is empty afterward. This is the complete default unit-test selection with
+-race, -tags=intest,deadlock and -count=1, not a -run-filtered oracle. It does
+not execute benchmarks or establish Linux/Bazel/native Rust equivalence.
+
+The dependent Go types package has no failpoint., testfailpoint. or failpoint
+BUILD dependency (checked with rg), and no doc.go. Its full reference gate is
+now running from the isolated repository root after expression cleanup:
+
+    GOTOOLCHAIN=go1.25.12 GOPROXY=off go test -race -tags=intest,deadlock -count=1 ./pkg/types
+
+Log /tmp/tidb-types-original-go12512.log.
+
+
+The original types gate PASSES: ok github.com/pingcap/tidb/pkg/types 1.106s.
+A new rust/docs/types-package-source-inventory.md records every direct source,
+original test/benchmark/support and build artifact with pinned/current SHA-256
+checks. It keeps the types package explicitly unaccepted and separates the
+parser_driver child package. The expression inventory now includes its full
+original-Go reference receipt, without promoting any native mapping row.
+Both original reference gates are now evidenced for this platform; original
+benchmarks, other platforms/Bazel, complete native mappings and ignored cases,
+and all four full workload acceptance gates remain open.
+
+
+Publication scope: tests_non_prepared_plan_cache.rs, expression and types
+package source inventories, and this ExecPlan. No runtime implementation or
+Go source changes. Targeted native cache tests and original Go reference suites
+were selected to validate the changed expectations and close the observed
+reference-test gaps. make lint and git diff --check pass. Self-review confirms
+each changed hit expectation follows the Go oracle and each typed-entry check
+also asserts its own rows. The unrelated vs_helper.rs and fragment.rs drafts
+remain untouched, uncompiled and unstaged. All isolated tracked validation
+paths and the new inventory are compared with main before publication.
+
+
+Before publication, origin advanced to e1119df5f7, adding only the TPC-H Q15
+revenue0 SQL fixture. Fast-forward integrated it without conflicts. No Go or
+Rust production/test source changed upstream, so the recorded cache and
+reference-suite evidence still applies. The fixture is also copied into the
+isolated tree for content consistency. Publication uses an ordinary commit
+and non-force push.
