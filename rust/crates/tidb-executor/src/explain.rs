@@ -683,19 +683,7 @@ fn index_join_decided_by_text_for_scan(
     {
         return index_join_int_pk_decided_by_text(context);
     }
-    let decided = context
-        .inner_keys
-        .iter()
-        .zip(context.outer_keys)
-        .map(|(inner, outer)| {
-            format!(
-                "eq({}, {})",
-                expression_text(&tidb_expr::expression::Expression::Column(inner.clone())),
-                expression_text(&tidb_expr::expression::Expression::Column(outer.clone()))
-            )
-        })
-        .collect::<Vec<_>>();
-    format!("range: decided by [{}]", decided.join(" "))
+    index_join_decided_by_text(*context)
 }
 
 fn columns_text(columns: &[tidb_expr::column::Column]) -> String {
@@ -1361,7 +1349,7 @@ fn physical_explain_operator(
                             index_id: join.inner_access_index_id,
                             inner_keys: &join.inner_join_keys,
                             outer_keys: &join.outer_join_keys,
-                            access_conditions: &join.other_conditions,
+                            access_conditions: &join.inner_access_conditions,
                         }),
                     PhysicalPlan::IndexJoin(_) => None,
                     _ => index_join_context,

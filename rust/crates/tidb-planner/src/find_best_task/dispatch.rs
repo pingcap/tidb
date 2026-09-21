@@ -706,6 +706,7 @@ fn exhaust_physical_plans(
                             keep_outer_order,
                             inner_access_table_id: None,
                             inner_access_index_id: None,
+                            inner_access_conditions: Vec::new(),
                             left_join_keys: left_columns.clone(),
                             right_join_keys: right_columns.clone(),
                             outer_join_keys,
@@ -1809,7 +1810,7 @@ fn index_join_feedback(
             break;
         }
     }
-    let compare_filters = matched_runtime_key
+    let (compare_filters, last_col_access) = matched_runtime_key
         .then(|| access_columns.get(first_unmatched_index_offset).copied())
         .flatten()
         .and_then(|target_col| {
@@ -1820,7 +1821,43 @@ fn index_join_feedback(
                 first_unmatched_index_offset,
                 &idx_col_lens,
             )
+        })
+        .map_or((None, Vec::new()), |(filters, access)| {
+            (Some(filters), access)
         });
+    // RangeInfo lists chosen access predicates, not every join residual.
+    // Equality-fixed non-join prefix columns precede the final range column.
+    let mut access_conditions = Vec::new();
+    for (offset, column) in access_columns.iter().enumerate() {
+        if offset > first_unmatched_index_offset {
+            break;
+        }
+        if key_off2_idx_off.iter().any(|index| *index == offset as i64) {
+            continue;
+        }
+        let is_prefix = offset < first_unmatched_index_offset;
+        if !is_prefix && compare_filters.is_some() {
+            break;
+        }
+        let checker = crate::ranger::checker::ConditionChecker {
+            checker_col: Some(column),
+            length: idx_col_lens
+                .get(offset)
+                .copied()
+                .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+            opt_prefix_index_single_scan: false,
+        };
+        for condition in &ds.pushed_down_conds {
+            let prefix_equality = matches!(condition, tidb_expr::expression::Expression::ScalarFunction(function) if matches!(function.func_name.lowercase(), "eq" | "in"));
+            if (!is_prefix || prefix_equality)
+                && !tidb_expr::simple_expr::extract_columns(condition).is_empty()
+                && checker.check(condition).0
+            {
+                access_conditions.push(condition.clone());
+            }
+        }
+    }
+    access_conditions.extend(last_col_access);
     crate::task::IndexJoinInfo {
         table_id: ds.physical_table_id,
         index_id: match path {
@@ -1833,6 +1870,7 @@ fn index_join_feedback(
         ranges,
         idx_col_lens,
         key_off2_idx_off,
+        access_conditions,
         compare_filters,
     }
 }
@@ -1847,10 +1885,14 @@ fn index_join_compare_filters(
     target_col: &tidb_expr::column::Column,
     target_index_offset: usize,
     idx_col_lens: &[i64],
-) -> Option<crate::physical::IndexJoinCompareFilters> {
+) -> Option<(
+    crate::physical::IndexJoinCompareFilters,
+    Vec<tidb_expr::expression::Expression>,
+)> {
     let inner_schema = ds.base.base.schema()?;
     let mut ops = Vec::new();
     let mut args = Vec::new();
+    let mut access_conditions = Vec::new();
     for condition in &runtime.other_conditions {
         let tidb_expr::expression::Expression::ScalarFunction(function) = condition else {
             continue;
@@ -1892,16 +1934,22 @@ fn index_join_compare_filters(
         }
         ops.push(op);
         args.push(argument.clone());
+        access_conditions.push(condition.clone());
     }
-    (!ops.is_empty()).then(|| crate::physical::IndexJoinCompareFilters {
-        target_col: target_col.clone(),
-        target_index_offset,
-        col_length: idx_col_lens
-            .get(target_index_offset)
-            .copied()
-            .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
-        ops,
-        args,
+    (!ops.is_empty()).then(|| {
+        (
+            crate::physical::IndexJoinCompareFilters {
+                target_col: target_col.clone(),
+                target_index_offset,
+                col_length: idx_col_lens
+                    .get(target_index_offset)
+                    .copied()
+                    .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                ops,
+                args,
+            },
+            access_conditions,
+        )
     })
 }
 

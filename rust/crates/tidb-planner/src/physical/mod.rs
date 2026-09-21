@@ -672,6 +672,9 @@ pub struct PhysicalIndexJoin {
     /// The selected secondary index. `None` denotes a table/common-handle
     /// probe.
     pub inner_access_index_id: Option<i64>,
+    /// Go chosenAccess retained for scan RangeInfo rendering. These snapshots
+    /// are descriptive metadata, not additional execution predicates.
+    pub inner_access_conditions: Vec<tidb_expr::expression::Expression>,
     /// Go `BasePhysicalJoin.LeftJoinKeys`.
     pub left_join_keys: Vec<tidb_expr::column::Column>,
     /// Go `BasePhysicalJoin.RightJoinKeys`.
@@ -722,6 +725,7 @@ impl Default for PhysicalIndexJoin {
             keep_outer_order: false,
             inner_access_table_id: None,
             inner_access_index_id: None,
+            inner_access_conditions: Vec::new(),
             left_join_keys: Vec::new(),
             right_join_keys: Vec::new(),
             outer_join_keys: Vec::new(),
@@ -3629,6 +3633,7 @@ impl PhysicalPlan {
                 keep_outer_order: op.keep_outer_order,
                 inner_access_table_id: op.inner_access_table_id,
                 inner_access_index_id: op.inner_access_index_id,
+                inner_access_conditions: op.inner_access_conditions.clone(),
                 left_join_keys: op.left_join_keys.clone(),
                 right_join_keys: op.right_join_keys.clone(),
                 outer_join_keys: op.outer_join_keys.clone(),

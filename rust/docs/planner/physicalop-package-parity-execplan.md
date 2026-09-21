@@ -6388,3 +6388,100 @@ parse-flag modes, NULL/error boundaries, selection vectors, complete source pass
 and catalog handle-kind selection. git diff --check passed. The eight-file
 checkpoint is ready for the user's requested commit and push. No complete package
 or workload is marked accepted by this receipt.
+
+
+## Index-probe access versus residual EXPLAIN audit (2026-09-21)
+
+Published ed32149a2b is verified progress. Pulled again; no upstream changes.
+Continue the complete physicalop package audit through its index-probe rendering
+dependencies. The secondary-index context currently labels all join residuals as
+chosenAccess, while the common-handle renderer drops them all. Neither is source
+evidence for the Go distinction between actual range bounds and residual filters.
+Capture both handle forms and both index-join variants against pinned Go, then
+add red regressions before correcting demonstrated mismatches. Keep whole-package
+inventories unaccepted and commit/push validated progress.
+
+
+### Findings, implementation and validation
+
+The 24-case initial Go matrix covered common handles and secondary indexes,
+INL_JOIN and INL_HASH_JOIN, plain equality, runtime bounds, runtime inequality,
+non-key residuals, static bounds and two lookup keys. Native red regression
+(/tmp/tidb-probe-range-red.log) proved common-handle bound omission, secondary-index
+residual leakage, and static-bound omission in both access forms. The focused
+24-case green log is /tmp/tidb-probe-range-green.log.
+
+Expanded to 48 Go/native cases with reversed operands, two runtime bounds,
+simultaneous static/runtime bounds, static inequality, static non-key residuals,
+and a comparison on an already equality-bound key. Go retains the original
+comparison expression in its range description, including lt(outer, inner) when
+that is the input order; its runtime manager separately normalizes the operator.
+When that manager exists, its bounds take precedence over static bounds on the
+same trailing key. Native expanded gate passed in
+/tmp/tidb-probe-range-expanded-green.log.
+
+Retain the manager's original access expressions during its existing selection
+pass; do not re-evaluate them or reconstruct them from all residuals. Retain the
+admitted static equality prefix and first trailing range-column predicates using
+the existing ranger condition checker. Carry these descriptive snapshots through
+IndexJoinInfo and PhysicalIndexJoin, including the explicit physical-plan clone.
+The executor consumes that access list for both index and common-handle range
+text. Integer handles continue to use the outer-key-only form. This metadata is
+not a second set of execution conditions and does not change probe filtering.
+No new expression evaluation, warning handling or range-building pass is added.
+
+This remains source audit progress inside the complete physicalop package claim.
+The existing runtime access builder's full Eq/IN-prefix selection, memory-quota
+fallback, range construction, key-order mapping and cache/generator/platform
+obligations still require complete source validation. The admitted static
+predicate metadata is not evidence that those unaccepted builder paths are
+complete. No package inventory row is marked accepted and no workload performance
+claim is made. Additional metadata allocation has not been benchmarked.
+
+Go reference commands from repository root (same pinned Go revision):
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-probe-range-overlay.json -run '^TestProbeRangeAccessExplainOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-probe-range-overlay.json -run '^TestProbeRangeAccessExplainOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Both passed. Logs /tmp/tidb-probe-range-go.log (initial),
+/tmp/tidb-probe-range-go-expanded.log and /tmp/tidb-probe-range-go-race.log.
+The unchanged windows harness has no failpoint dependency. No tracked Go,
+Bazel, module or generated files changed, so bazel_prepare is not required.
+Required make lint passed (/tmp/tidb-probe-range-lint.log).
+
+Native working-tree commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib index_join
+    cargo test --offline --locked -j12 -p tidb-planner --lib physical::
+    cargo test --offline --locked -j12 -p tidb-planner --lib task::attach_tests
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_join
+    cargo test --offline --locked -j12 -p tidb-executor --lib explain
+    cargo test --offline --locked -j12 -p tidb-session --lib index_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    cargo test --offline --locked -j12 -p tidb-session --lib probe_explain
+
+Passed: planner index-join 19, physical 65, attachment 17; executor index-join 19
+and EXPLAIN 19; session index-join 12 (one existing ignored), EXPLAIN 62 and
+new matrix 1. Logs use /tmp/tidb-probe-range-tidb-<crate>-<filter>.log;
+physical/attachment logs use /tmp/tidb-probe-range-planner-physical__.log and
+/tmp/tidb-probe-range-planner-task__attach_tests.log.
+
+Six intended files: planner find_best_task/dispatch.rs, physical/mod.rs and
+task.rs; executor explain.rs; session tests_index_join_inner_pattern.rs; this
+plan. The two unrelated untracked drafts remain excluded. The disposable
+checkout's old changes were verified against published ed32149a2b before it
+was advanced, then exactly these six files were copied for the isolated gate.
+
+
+Final isolated gates passed with the same counts. From the disposable rust/
+directory, each native command above except the redundant probe_explain filter
+was run with CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target. Logs use
+/tmp/tidb-probe-range-isolated-tidb-<crate>-<filter>.log, with colons replaced by
+underscores. The index_join filter includes the full new 48-case regression.
+All processes are terminal, Rust bytes match the isolated tested patch, and
+git diff --check passes. Fetch confirmed origin/hparser-integration still at
+ed32149a2b. Self-review checked original comparison retention, no repeated
+expression evaluation, static/runtime precedence, propagation and explicit clone.
+Ready for the requested progress commit and push. Whole-package acceptance,
+the ignored session test, and sysbench/TPC-C/TPC-H/YCSB performance gates remain
+open.

@@ -275,3 +275,42 @@ fn a_selection_probe_walks_through_only_with_multi_pattern_on() {
          not a runtime-ranged probe:\n{off}"
     );
 }
+
+#[test]
+fn probe_explain_distinguishes_range_access_from_residual_filters() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE probe_outer(a INT NOT NULL,b INT NOT NULL)")
+        .unwrap();
+    session.run("CREATE TABLE probe_common(a INT NOT NULL,b INT NOT NULL,v INT,PRIMARY KEY(a,b) CLUSTERED)").unwrap();
+    session
+        .run("CREATE TABLE probe_index(a INT NOT NULL,b INT NOT NULL,v INT,INDEX ab(a,b))")
+        .unwrap();
+    let mut failures = Vec::new();
+    for table in ["probe_common", "probe_index"] {
+        for hint in ["INL_JOIN", "INL_HASH_JOIN"] {
+            for (condition, access) in [
+                ("", ""),
+                (" AND p.b>o.b", "gt(test.{table}.b, test.probe_outer.b)"),
+                (" AND p.b!=o.b", ""),
+                (" AND p.v>o.b", ""),
+                (" AND p.b>3", "gt(test.{table}.b, 3)"),
+                (" AND p.b=o.b", "eq(test.{table}.b, test.probe_outer.b)"),
+                (" AND o.b<p.b", "lt(test.probe_outer.b, test.{table}.b)"),
+                (" AND p.b>=o.b AND p.b<o.b+10", "ge(test.{table}.b, test.probe_outer.b) lt(test.{table}.b, plus(test.probe_outer.b, 10))"),
+                (" AND p.b>o.b AND p.b>3", "gt(test.{table}.b, test.probe_outer.b)"),
+                (" AND p.b!=3", "ne(test.{table}.b, 3)"),
+                (" AND p.b>3 AND p.v>4", "gt(test.{table}.b, 3)"),
+                (" AND p.a>o.b", ""),
+            ] {
+                let sql = format!("EXPLAIN SELECT /*+ {hint}(p) */ * FROM probe_outer o JOIN {table} p ON p.a=o.a{condition}");
+                let result = plan(&mut session, &sql);
+                let actual = result.lines().find_map(|line| line.split_once("range: decided by ").map(|(_,value)| value.split_once(", keep order:").unwrap().0));
+                let access = access.replace("{table}",table);
+                let expected = format!("[eq(test.{table}.a, test.probe_outer.a){}{}]", if access.is_empty(){""}else{" "}, access);
+                if actual != Some(expected.as_str()) { failures.push(format!("{sql}: expected {expected}; got {actual:?}\n{result}")); }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

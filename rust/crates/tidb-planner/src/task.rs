@@ -72,6 +72,9 @@ pub struct IndexJoinInfo {
     /// Go `IndexJoinInfo.KeyOff2IdxOff`; `-1` means the selected access cannot
     /// use that logical equality as a lookup key.
     pub key_off2_idx_off: Vec<i64>,
+    /// Chosen range predicates used by Go to construct the scan RangeInfo.
+    /// Retained as expressions for the executor renderer, not row evaluation.
+    pub access_conditions: Vec<tidb_expr::expression::Expression>,
     /// Go `IndexJoinInfo.CompareFilters`.
     pub compare_filters: Option<crate::physical::IndexJoinCompareFilters>,
 }
@@ -2200,6 +2203,7 @@ fn complete_physical_index_join(
 
     join.inner_access_table_id = Some(info.table_id);
     join.inner_access_index_id = info.index_id;
+    join.inner_access_conditions = info.access_conditions;
     join.ranges = info.ranges;
     join.idx_col_lens = info.idx_col_lens;
     join.compare_filters = info.compare_filters;
@@ -2905,6 +2909,7 @@ mod attach_tests {
                 ranges: crate::ranger::types::Ranges::new(),
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![0, -1],
+                access_conditions: vec![],
                 compare_filters: None,
             },
             &inner,
@@ -3007,6 +3012,7 @@ mod attach_tests {
                 ranges: crate::ranger::types::Ranges::new(),
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![-1],
+                access_conditions: vec![],
                 compare_filters: None,
             },
             &inner,
