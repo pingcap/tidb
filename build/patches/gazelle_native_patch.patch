@@ -1,0 +1,13 @@
+diff --git a/internal/go_repository.bzl b/internal/go_repository.bzl
+--- a/internal/go_repository.bzl
++++ b/internal/go_repository.bzl
+@@ -550,6 +550,9 @@
+     """Implementation of patching an already extracted repository"""
+     bash_exe = ctx.os.environ["BAZEL_SH"] if "BAZEL_SH" in ctx.os.environ else "bash"
+     for patchfile in ctx.attr.patches:
++        if ctx.attr.patch_tool == "patch" and len(ctx.attr.patch_args) == 1 and ctx.attr.patch_args[0].startswith("-p"):
++            ctx.patch(ctx.path(patchfile), strip = int(ctx.attr.patch_args[0][2:]))
++            continue
+         command = "{patchtool} {patch_args} < {patchfile}".format(
+             patchtool = ctx.attr.patch_tool,
+             patchfile = ctx.path(patchfile),
