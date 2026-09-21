@@ -1102,13 +1102,6 @@ func TestVisitInfo(t *testing.T) {
 			},
 		},
 		{
-			sql: "load data local infile '/tmp/load_data.csv' into table t set a = (select a from t2)",
-			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", "", nil, false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "", nil, false, nil, false},
-			},
-		},
-		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
 				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},

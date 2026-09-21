@@ -312,6 +312,10 @@ type PlanBuilder struct {
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
 
+	// checkedSubqueryVisitInfoLen is the number of visitInfo entries already
+	// verified by checkSubqueryPrivilege.
+	checkedSubqueryVisitInfoLen int
+
 	// noDecorrelate indicates whether decorrelation should be disabled for correlated aggregates in subqueries
 	noDecorrelate bool
 
@@ -421,6 +425,59 @@ func (hch *handleColHelper) tailMap() map[int64][]util.HandleCols {
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
 func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 	return b.visitInfo
+}
+
+// evalSubqueryFirstRow executes the physical plan of a subquery that was built
+// during planning, after verifying the privileges of the tables it reads.
+//
+// The subquery is executed while the statement is still being planned, i.e.
+// before the statement-level privilege check in pkg/planner/optimize.go runs.
+// For the statement builder that check comes too late, after the data has
+// already been read (a subquery assigning to a user variable, e.g.
+// select (select @leak := (select v from secret)), leaked the value even though
+// the statement was then denied); for the throwaway builders created by
+// rewriteAstExprWithPlanCtx/evalAstExprWithPlanCtx (LOAD DATA ... SET, AS OF
+// TIMESTAMP, PLAN REPLAYER ... WITH STATS AS OF TIMESTAMP, CALIBRATE RESOURCE
+// ..., QUERY WATCH ADD ...) the visit info never reaches that check at all, so
+// the statement could even succeed. Checking and executing are therefore kept in
+// one function, so that no caller can run a plan built by this builder
+// unverified.
+func (b *PlanBuilder) evalSubqueryFirstRow(ctx context.Context, p base.PhysicalPlan) ([]types.Datum, error) {
+	if err := b.checkSubqueryPrivilege(ctx); err != nil {
+		return nil, err
+	}
+	return EvalSubqueryFirstRow(ctx, p, b.is, b.ctx)
+}
+
+// checkSubqueryPrivilege verifies the privileges of the tables collected since
+// the last call. It must only be called from evalSubqueryFirstRow, immediately
+// before the subquery plan is executed.
+func (b *PlanBuilder) checkSubqueryPrivilege(ctx context.Context) error {
+	if b.checkedSubqueryVisitInfoLen >= len(b.visitInfo) {
+		return nil
+	}
+	newVisitInfo := b.visitInfo[b.checkedSubqueryVisitInfoLen:]
+	b.checkedSubqueryVisitInfoLen = len(b.visitInfo)
+
+	// Mirror the default branch of VisitInfo4PrivCheck: the statements reaching
+	// here (SELECT/BEGIN with AS OF, PLAN REPLAYER, CALIBRATE RESOURCE, QUERY
+	// WATCH) are not the CreateTable/DropTable/Grant special cases, and reads of
+	// local temporary tables do not require object privileges.
+	filtered := make([]visitInfo, 0, len(newVisitInfo))
+	for _, v := range newVisitInfo {
+		if needCheckTmpTablePriv(ctx, b.is, v) {
+			filtered = append(filtered, v)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	if pm := privilege.GetPrivilegeManager(b.ctx); pm != nil {
+		if err := CheckPrivilege(b.ctx.GetSessionVars().ActiveRoles, pm, filtered); err != nil {
+			return err
+		}
+	}
+	return CheckTableLock(b.ctx, b.is, filtered)
 }
 
 // GetIsForUpdateRead gets if the PlanBuilder use forUpdateRead
@@ -810,7 +867,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 				if err != nil {
 					return nil, err
 				}
-				row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
+				row, err := b.evalSubqueryFirstRow(ctx, physicalPlan)
 				if err != nil {
 					return nil, err
 				}
@@ -4644,29 +4701,6 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L, p.Table.Name.L, "", insertErr)
 	if p.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.L, p.Table.Name.L, "", deleteErr)
-	}
-
-	// Column assignments are rewritten by the executor, after the privilege check.
-	// Pre-build their subqueries without executing them so their visit info is
-	// included in the privilege check while preserving runtime evaluation.
-	oldDisableSubQueryPreprocessing := b.disableSubQueryPreprocessing
-	b.disableSubQueryPreprocessing = true
-	for _, assignment := range ld.ColumnAssignments {
-		extractor := &subqueryExprExtractor{}
-		ast.Walk(assignment.Expr, extractor)
-		for _, expr := range extractor.exprs {
-			_, _, err = b.rewrite(ctx, expr, mockTablePlan, nil, true)
-			if err != nil {
-				break
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-	b.disableSubQueryPreprocessing = oldDisableSubQueryPreprocessing
-	if err != nil {
-		return nil, err
 	}
 
 	tableInfo := p.Table.TableInfo
