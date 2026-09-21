@@ -31,12 +31,11 @@ use crate::{
     convert_decimal_to_uint, convert_float_to_int, convert_float_to_uint, convert_int_to_int,
     convert_int_to_uint, convert_uint_to_int, convert_uint_to_uint, integer_signed_lower_bound,
     integer_signed_upper_bound, integer_unsigned_upper_bound, json_to_int, parse_enum,
-    parse_enum_value, parse_set, parse_set_value, parse_time, parse_time_from_decimal,
-    parse_time_from_num, str_to_duration, truncate_float, BinaryJSON, BinaryLiteral,
-    BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted, CoreTime, Datum,
-    DatumValueError, Decimal, DurationOrTime, FieldType, FieldTypeCode, MySqlDuration,
-    ScalarConversionError, ScalarConversionEvent, SessionTimeZone, Time, TimeType, VectorFloat32,
-    UNSPECIFIED_LENGTH,
+    parse_enum_value, parse_set, parse_set_value, parse_time, parse_time_from_num, str_to_duration,
+    truncate_float, BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Charset, Collation,
+    ConversionFlags, Converted, CoreTime, Datum, DatumValueError, Decimal, DurationOrTime,
+    FieldType, FieldTypeCode, MySqlDuration, ScalarConversionError, ScalarConversionEvent,
+    SessionTimeZone, Time, TimeType, VectorFloat32, UNSPECIFIED_LENGTH,
 };
 
 /// Direction used by reverse expression evaluation.
@@ -687,10 +686,23 @@ impl Datum {
                 parsed.time
             }
             Self::Decimal(value) => {
-                let mut time = parse_time_from_decimal(value, zero_in_date, invalid_date, zone)
-                    .map_err(wrong_value)?;
-                time.set_kind(kind);
-                time.round_frac(fsp, zone).map_err(wrong_value)?
+                // Datum.ConvertTo uses ParseTimeFromFloatString, not the
+                // distinct ParseTimeFromDecimal helper used by numeric casts.
+                // Parse at the target FSP so every discarded digit and any
+                // carry across a date/DST boundary are handled in one step.
+                let parsed = crate::time_parse::parse_time_with_flags(
+                    &value.to_string(),
+                    kind,
+                    fsp,
+                    true,
+                    flags,
+                    zone,
+                )
+                .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             Self::Json(value) => {
                 let parsed = parse_time(
@@ -1557,6 +1569,77 @@ mod go_tests;
 mod tests {
     use super::*;
     use crate::{parse_enum_value, parse_set_value, FieldTypeFlags};
+
+    #[test]
+    fn decimal_temporal_conversion_uses_float_string_parser() {
+        // TestDecimalTemporalConversionOracle: 96 source conversions.
+        for (zone, daylight) in [
+            (SessionTimeZone::utc(), false),
+            (
+                SessionTimeZone::Named(chrono_tz::America::Los_Angeles),
+                true,
+            ),
+        ] {
+            for code in [
+                FieldTypeCode::Date,
+                FieldTypeCode::Datetime,
+                FieldTypeCode::Timestamp,
+            ] {
+                for fsp in [0, 6] {
+                    for (text, expected) in [
+                        ("0.0", Some("0000-00-00 00:00:00")),
+                        ("0.01", Some("0000-00-00 00:00:00")),
+                        ("0.1", None),
+                        ("20170118.123", Some("2017-01-18 00:00:00")),
+                        (
+                            "20110313015959.9",
+                            Some(if fsp == 6 {
+                                "2011-03-13 01:59:59.900000"
+                            } else if daylight {
+                                "2011-03-13 03:00:00"
+                            } else {
+                                "2011-03-13 02:00:00"
+                            }),
+                        ),
+                        (
+                            "20111106015959.9",
+                            Some(if fsp == 6 {
+                                "2011-11-06 01:59:59.900000"
+                            } else if daylight {
+                                "2011-11-06 01:00:00"
+                            } else {
+                                "2011-11-06 02:00:00"
+                            }),
+                        ),
+                        ("20240809235959.9999999", Some("2024-08-10 00:00:00")),
+                        ("201705051315111.22", None),
+                    ] {
+                        let input = Datum::Decimal(Decimal::parse_mysql(text).0);
+                        let target = FieldType::new(code).with_decimal(fsp);
+                        let actual = input.convert_to_in(&target, crate::STRICT_FLAGS, &zone);
+                        let case = format!("{zone:?} {code:?} fsp={fsp} input={text}");
+                        if let Some(expected) = expected {
+                            let actual = actual.unwrap_or_else(|error| panic!("{case}: {error:?}"));
+                            assert!(actual.event.is_none(), "{case}");
+                            let expected = if code == FieldTypeCode::Date {
+                                expected[..10].to_string()
+                            } else if fsp == 6
+                                && !text.starts_with("0.0")
+                                && !expected.contains('.')
+                            {
+                                format!("{expected}.000000")
+                            } else {
+                                expected.to_string()
+                            };
+                            assert_eq!(actual.value.sql_string().unwrap(), expected, "{case}");
+                        } else {
+                            assert!(actual.is_err(), "{case}: {actual:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// Casting a `TIME` to `YEAR` reads BOTH statement inputs Go reads:
     /// `ctx.Flags().CastTimeToYearThroughConcat()` and `ctx.Location()`.

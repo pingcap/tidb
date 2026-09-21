@@ -282,25 +282,6 @@ fn convert_refinement_constant(
     Some((refined, exceptional))
 }
 
-/// Whether `expr` reads a column, i.e. is NOT a constant expression.
-///
-/// Go's `refineArgs` distinguishes its two sides by `args[i].(*Constant)`,
-/// and a `CAST` of a literal is a folded `*Constant` there. This tier folds
-/// a constant subtree in place (`constant_fold`) but does NOT rewrite the
-/// node into a `Constant`, so `cast('2023-08-09' as datetime)` stays a
-/// `ScalarFunction`. Matching Go's constant/non-constant split therefore
-/// means asking whether the expression depends on a row -- a column-free
-/// datetime expression (a folded `CAST`) is the constant side and does not
-/// trigger rule 3, which is why `cast(...) > 20230809` compares as REAL
-/// (both constants) while `datetime_col > 20230809` compares as datetime.
-fn reads_column(expr: &Expression) -> bool {
-    match expr {
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => true,
-        Expression::Constant(_) => false,
-        Expression::ScalarFunction(function) => function.args.iter().any(reads_column),
-    }
-}
-
 /// Go `compareFunctionClass.refineNumericConstantCmpDatetime`
 /// (`builtin_compare.go:1876`, guarded by `matchRefineRule3Pattern` at the
 /// `refineArgs` call site, `:1802-1808`): `datetime/timestamp non-constant
@@ -316,7 +297,11 @@ fn reads_column(expr: &Expression) -> bool {
 /// `matchRefineRule3Pattern`; a `DATE` or `YEAR` non-constant does not, and
 /// compares as real (DATE) or datetime-via-YEAR-cast (YEAR, a separate rule)
 /// respectively. Returns whether rule 3 claimed this comparison.
-fn refine_numeric_constant_cmp_datetime(left: &mut Expression, right: &mut Expression) -> bool {
+fn refine_numeric_constant_cmp_datetime(
+    left: &mut Expression,
+    right: &mut Expression,
+    ctx: &dyn Columns,
+) -> bool {
     // The datetime side must be a non-constant DATETIME/TIMESTAMP expression;
     // the other side a constant whose eval type is Int/Real/Decimal.
     let is_datetime_expr = |expr: &Expression| {
@@ -325,7 +310,7 @@ fn refine_numeric_constant_cmp_datetime(left: &mut Expression, right: &mut Expre
                 ft.code(),
                 FieldTypeCode::Datetime | FieldTypeCode::Timestamp
             )
-        }) && reads_column(expr)
+        }) && !matches!(expr, Expression::Constant(_))
     };
     let numeric_const = |expr: &Expression| {
         matches!(expr, Expression::Constant(_))
@@ -345,20 +330,27 @@ fn refine_numeric_constant_cmp_datetime(left: &mut Expression, right: &mut Expre
     let Expression::Constant(con) = constant else {
         return false;
     };
-    if con.value.is_null() {
+    let Ok(value) = con.eval_in(ctx) else {
+        return true;
+    };
+    if value.is_null() {
         return true;
     }
-    // Go `dt.ConvertTo(ctx.TypeCtx(), NewFieldType(TypeDatetime))`: an invalid
-    // datetime (e.g. `20231310`, month 13) errors and leaves the comparison
-    // unrefined. TypeDatetime carries no zone dependence, so the default UTC
-    // conversion matches.
+    // Conversion failure leaves the numeric constant unchanged, as Go does.
+    // Date modes and location come from this statement, even for an unfolded
+    // temporal function with no column dependencies.
     let target = FieldType::new(FieldTypeCode::Datetime);
-    let flags = tidb_datatype::DEFAULT_STATEMENT_FLAGS;
-    match con.value.convert_to(&target, flags) {
-        Ok(converted) if !converted.value.is_null() => {
+    let warnings = crate::constant::ConversionWarnings(ctx);
+    let zone = ctx.time_zone();
+    let context = tidb_datatype::ConversionContext::new(
+        ctx.type_flags(),
+        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+        &warnings,
+    );
+    if let Ok(converted) = value.convert_to_in_context(&target, &context, &zone) {
+        if converted.error.is_none() && !converted.value.is_null() {
             *constant = Expression::Constant(Constant::new(converted.value, target));
         }
-        _ => {}
     }
     true
 }
@@ -980,7 +972,7 @@ fn refine_args(
     // non-constant expression compared with a numeric constant that converts
     // to a datetime. Go returns immediately once this fires, so the int arm
     // below never also runs on the same comparison.
-    if refine_numeric_constant_cmp_datetime(left, right) {
+    if refine_numeric_constant_cmp_datetime(left, right, ctx) {
         return;
     }
 
@@ -1263,6 +1255,200 @@ mod tests {
             Datum::new_string(text),
             FieldType::new(FieldTypeCode::Varchar),
         ))
+    }
+
+    #[test]
+    fn numeric_datetime_refinement_matches_go_shapes_and_date_flags() {
+        struct DateContext(u8, tidb_datatype::SessionTimeZone);
+        impl Columns for DateContext {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                self.1.clone()
+            }
+            fn type_flags(&self) -> tidb_datatype::ConversionFlags {
+                tidb_datatype::DEFAULT_STATEMENT_FLAGS
+                    .with_ignore_zero_date_err(self.0 & 1 != 0)
+                    .with_ignore_zero_in_date_err(self.0 & 1 != 0)
+                    .with_ignore_invalid_date_err(self.0 & 2 != 0)
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                panic!("unexpected warning {code}: {message}");
+            }
+        }
+        // Go oracle: all four modes, both operand orders, temporal node kinds,
+        // and integer/decimal/real/NULL controls. REAL conversion is rejected
+        // by Datum.ConvertTo, even though the refinement rule considers it.
+        for mode in 0..4 {
+            for code in [
+                FieldTypeCode::Datetime,
+                FieldTypeCode::Timestamp,
+                FieldTypeCode::Date,
+            ] {
+                let field = FieldType::new(code);
+                let column = crate::column::Column::new(1, field.clone());
+                let time = tidb_datatype::Time::new(
+                    tidb_datatype::CoreTime::from_date(2024, 8, 9, 0, 0, 0, 0),
+                    match code {
+                        FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
+                        FieldTypeCode::Date => tidb_datatype::TimeType::Date,
+                        _ => tidb_datatype::TimeType::DateTime,
+                    },
+                    0,
+                )
+                .unwrap();
+                for (shape, temporal) in [
+                    ("column", Expression::Column(column.clone())),
+                    (
+                        "correlated",
+                        Expression::CorrelatedColumn(crate::column::CorrelatedColumn::new(column)),
+                    ),
+                    (
+                        "scalar",
+                        Expression::ScalarFunction(crate::expression::ScalarFunction::new(
+                            tidb_ast::CiString::new("sysdate"),
+                            field.clone(),
+                            vec![],
+                        )),
+                    ),
+                    (
+                        "constant",
+                        Expression::Constant(Constant::new(Datum::new_time(time), field.clone())),
+                    ),
+                ] {
+                    for (value, source_code, expected) in [
+                        (
+                            Datum::Int(20240809),
+                            FieldTypeCode::LongLong,
+                            Some("2024-08-09 00:00:00"),
+                        ),
+                        (
+                            Datum::Int(0),
+                            FieldTypeCode::LongLong,
+                            (mode & 1 != 0).then_some("0000-00-00 00:00:00"),
+                        ),
+                        (
+                            Datum::Int(20240001),
+                            FieldTypeCode::LongLong,
+                            (mode & 1 != 0).then_some("2024-00-01 00:00:00"),
+                        ),
+                        (
+                            Datum::Int(20240231),
+                            FieldTypeCode::LongLong,
+                            (mode & 2 != 0).then_some("2024-02-31 00:00:00"),
+                        ),
+                        (Datum::Int(20241301), FieldTypeCode::LongLong, None),
+                        (
+                            Datum::Decimal(
+                                tidb_datatype::Decimal::parse_mysql("20240809235959.9").0,
+                            ),
+                            FieldTypeCode::NewDecimal,
+                            Some("2024-08-10 00:00:00"),
+                        ),
+                        (
+                            Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0.01").0),
+                            FieldTypeCode::NewDecimal,
+                            Some("0000-00-00 00:00:00"),
+                        ),
+                        (
+                            Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0.1").0),
+                            FieldTypeCode::NewDecimal,
+                            (mode & 1 != 0).then_some("0000-00-00 00:00:00"),
+                        ),
+                        (Datum::Real(20240809.0), FieldTypeCode::Double, None),
+                        (Datum::Null, FieldTypeCode::LongLong, None),
+                    ] {
+                        for flip in [false, true] {
+                            let mut numeric =
+                                Constant::new(value.clone(), FieldType::new(source_code));
+                            numeric.subquery_ref_id = 77;
+                            let numeric = Expression::Constant(numeric);
+                            let (mut left, mut right) = if flip {
+                                (numeric, temporal.clone())
+                            } else {
+                                (temporal.clone(), numeric)
+                            };
+                            refine_args(
+                                &mut left,
+                                &mut right,
+                                "lt",
+                                "gt",
+                                &DateContext(mode, tidb_datatype::SessionTimeZone::utc()),
+                            );
+                            let Expression::Constant(actual) = (if flip { &left } else { &right })
+                            else {
+                                panic!("numeric constant lost")
+                            };
+                            let expected = if code == FieldTypeCode::Date || shape == "constant" {
+                                None
+                            } else {
+                                expected
+                            };
+                            let case =
+                                format!("mode={mode} {code:?} {shape} {value:?} flip={flip}");
+                            if let Some(expected) = expected {
+                                assert_eq!(
+                                    actual.ret_type.as_ref().unwrap().code(),
+                                    FieldTypeCode::Datetime,
+                                    "{case}"
+                                );
+                                assert_eq!(actual.value.sql_string().unwrap(), expected, "{case}");
+                                assert_eq!(actual.subquery_ref_id, 0, "{case}");
+                            } else {
+                                assert_eq!(actual.value, value, "{case}");
+                                assert_eq!(actual.subquery_ref_id, 77, "{case}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (zone, spring, autumn) in [
+            (
+                tidb_datatype::SessionTimeZone::utc(),
+                "2011-03-13 02:00:00",
+                "2011-11-06 02:00:00",
+            ),
+            (
+                tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles),
+                "2011-03-13 03:00:00",
+                "2011-11-06 01:00:00",
+            ),
+        ] {
+            for (text, expected) in [("20110313015959.9", spring), ("20111106015959.9", autumn)] {
+                for flip in [false, true] {
+                    let temporal = Expression::Column(crate::column::Column::new(
+                        1,
+                        FieldType::new(FieldTypeCode::Datetime),
+                    ));
+                    let numeric = Expression::Constant(Constant::new(
+                        Datum::Decimal(tidb_datatype::Decimal::parse_mysql(text).0),
+                        FieldType::new(FieldTypeCode::NewDecimal),
+                    ));
+                    let (mut left, mut right) = if flip {
+                        (numeric, temporal)
+                    } else {
+                        (temporal, numeric)
+                    };
+                    refine_args(
+                        &mut left,
+                        &mut right,
+                        "lt",
+                        "gt",
+                        &DateContext(0, zone.clone()),
+                    );
+                    let Expression::Constant(actual) = (if flip { &left } else { &right }) else {
+                        panic!("constant lost")
+                    };
+                    assert_eq!(
+                        actual.value.sql_string().unwrap(),
+                        expected,
+                        "{zone:?} {text} flip={flip}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

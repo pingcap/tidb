@@ -564,6 +564,31 @@ pub fn parse_time<TZ: TimeZone>(
     allow_invalid_date: bool,
     timezone: &TZ,
 ) -> Result<ParsedTime, TimeError> {
+    parse_time_with_flags(
+        input,
+        kind,
+        fsp,
+        is_float,
+        crate::STRICT_FLAGS
+            .with_ignore_zero_date_err(true)
+            .with_ignore_zero_in_date_err(allow_zero_in_date)
+            .with_ignore_invalid_date_err(allow_invalid_date),
+        timezone,
+    )
+}
+
+// Float-string parsing calls ParseDatetimeFromNum before applying the fraction.
+// Its zero-date policy is independent of the zero-in-date validation below.
+pub(crate) fn parse_time_with_flags<TZ: TimeZone>(
+    input: &str,
+    kind: TimeType,
+    fsp: i64,
+    is_float: bool,
+    flags: crate::ConversionFlags,
+    timezone: &TZ,
+) -> Result<ParsedTime, TimeError> {
+    let allow_zero_in_date = flags.ignore_zero_in_date_err();
+    let allow_invalid_date = flags.ignore_invalid_date_err();
     if is_float && input.starts_with("0.0") {
         return Ok(ParsedTime {
             time: Time::new(CoreTime::default(), kind, 0)?,
@@ -572,14 +597,7 @@ pub fn parse_time<TZ: TimeZone>(
         });
     }
     let fsp = check_fsp(fsp).map_err(TimeError::InvalidFsp)?;
-    let (core, truncated) = parse_datetime_core(
-        input,
-        fsp,
-        is_float,
-        allow_zero_in_date,
-        allow_invalid_date,
-        timezone,
-    )?;
+    let (core, truncated) = parse_datetime_core(input, fsp, is_float, flags, timezone)?;
     let mut time = Time::new(core, kind, fsp)?;
     let mut dst_adjusted = false;
     match time.validate(allow_zero_in_date, allow_invalid_date, timezone) {
@@ -631,8 +649,7 @@ fn parse_datetime_core<TZ: TimeZone>(
     input: &str,
     fsp: i64,
     is_float: bool,
-    allow_zero_in_date: bool,
-    allow_invalid_date: bool,
+    flags: crate::ConversionFlags,
     timezone: &TZ,
 ) -> Result<(CoreTime, bool), TimeError> {
     let (mut parts, mut fraction, mut timezone_suffix, mut truncated) = split_datetime(input);
@@ -667,10 +684,10 @@ fn parse_datetime_core<TZ: TimeZone>(
             let numeric = parse_time_from_num(
                 number,
                 TimeType::DateTime,
-                fsp,
-                allow_zero_in_date,
-                allow_invalid_date,
-                true,
+                0,
+                flags.ignore_zero_in_date_err(),
+                flags.ignore_invalid_date_err(),
+                flags.ignore_zero_date_err(),
                 timezone,
             )?;
             let core = numeric.time.core_time();

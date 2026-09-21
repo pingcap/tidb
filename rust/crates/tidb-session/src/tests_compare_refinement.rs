@@ -762,3 +762,36 @@ fn decimal_comparison_refinement_keeps_large_integer_rows() {
         }
     }
 }
+
+#[test]
+fn numeric_datetime_refinement_obeys_statement_date_modes() {
+    let mut session = Session::new();
+    session
+        .run("create table temporal_refine(id int primary key,d datetime,key(d))")
+        .unwrap();
+    session
+        .run("insert into temporal_refine values(1,'2024-02-29'),(2,'2024-03-01'),(3,null)")
+        .unwrap();
+    for mode in ["", "ALLOW_INVALID_DATES"] {
+        session.run(&format!("set sql_mode='{mode}'")).unwrap();
+        for access in ["", "force index(d)", "ignore index(d)"] {
+            for (predicate, matches) in [
+                ("d < 20240231", mode == "ALLOW_INVALID_DATES"),
+                ("20240231 > d", mode == "ALLOW_INVALID_DATES"),
+                ("d < 20240301", true),
+                ("d < 20240231e0", false),
+            ] {
+                let query = format!(
+                    "select id from temporal_refine {access} where {predicate} order by id"
+                );
+                let expected: Vec<Vec<String>> = if matches {
+                    vec![vec!["1".into()]]
+                } else {
+                    vec![]
+                };
+                assert_eq!(row_text(session.run(&query)), expected, "{mode}: {query}");
+                assert!(session.warnings().is_empty(), "{mode}: {query}");
+            }
+        }
+    }
+}

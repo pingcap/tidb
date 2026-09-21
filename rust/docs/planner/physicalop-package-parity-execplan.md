@@ -30,6 +30,13 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, numeric datetime refinement) Source-oracle and red/green
+  evidence covers non-Constant temporal operands, live date flags, decimal
+  float-string conversion, zero-date policy and DST fractional carries.
+  Datatype (427), enabled expression (1210), planner (960), relevant session
+  filters and lint pass. Two non-prepared-cache failures reproduce on the
+  published baseline and remain open; whole-package acceptance is not claimed.
+
 - [x] (2026-09-21, typed comparison boundaries) Go-oracle and red/green
   evidence covers exact DECIMAL rounding above 2^53, signed-min conversion,
   subquery references, and contextual unsigned diagnostics. Full datatype,
@@ -7400,3 +7407,129 @@ Log /tmp/tidb-refine-rebase-planner.log. GOTOOLCHAIN=go1.26.0 make lint also
 passes after rebase (/tmp/tidb-refine-rebase-lint.log). All 23 tracked validation
 paths match the combined primary tree byte-for-byte. Publication uses an
 ordinary (non-force) push.
+
+
+## Continuing numeric-to-datetime comparison refinement
+
+
+Published 3241a43f86 is current after pulling. Audit the source rule that
+refines a numeric constant against any non-Constant DATETIME/TIMESTAMP
+expression. Native reads_column is narrower and the conversion uses fixed
+flags rather than the live statement context. Verify scalar/column/constant
+shapes, both operand orders, numeric domains and date modes against Go before
+replacing these shortcuts; add red regressions, validate consumers and lint,
+and commit/push. Full package and workload acceptance remain open.
+
+
+### Surprises, decisions and current evidence
+
+
+Go rule 3 matches every non-Constant DATETIME/TIMESTAMP expression, including
+column-free scalar functions. The old reads_column predicate predated native
+constant folding and is no longer the right discriminator. The numeric
+Constant must be evaluated with the live context; failed evaluation or
+conversion claims the rule but leaves its argument unchanged. Successful
+conversion replaces the constant and drops its mutable/reference metadata as
+Go does. DATE and Constant temporal operands stay outside this rule.
+
+The dependency audit found that Datum.ConvertTo for DECIMAL uses
+ParseTimeFromFloatString, whereas the native conversion used the distinct
+ParseTimeFromDecimal helper. Parse the decimal text directly at target FSP
+with the session zone. This preserves Go's prefix-0.0 special case, validation
+before applying the fraction, rounding using all fractional digits, and
+fractional carries across DST. A private parser entry accepts complete date
+flags so IgnoreZeroDateErr stays independent of IgnoreZeroInDate. Existing
+public parser callers retain their prior default zero-date policy; the
+separate ParseTimeFromDecimal helper is unchanged.
+
+The initial expression and SQL regressions failed before the refinement
+change (/tmp/tidb-datetime-refine-red.log and
+/tmp/tidb-datetime-refine-sql-red.log). The datatype regression failed before
+the decimal/parser change: strict DATE conversion incorrectly accepted 0.1
+(/tmp/tidb-datetime-decimal-red.log). All corresponding regressions pass after
+the fixes. Native tests assert 960 shape/date-mode combinations, eight zone
+comparisons, 96 decimal temporal conversions, and 24 SQL mode/access-path
+cases including an unsupported REAL control. Source overlay oracles are
+read-only Go evidence and are not added to upstream Go packages.
+
+Go commands, from repository root, using the temporary overlay that replaces
+only the existing executor/windows test harness:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-datetime-refine-overlay.json -run '^TestDatetimeRefinement(SQL)?Oracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-datetime-refine-overlay.json -run '^TestDecimalTemporalConversionOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-datetime-refine-overlay.json -run '^TestDatetimeRefinementZoneOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+All three pass. Logs: /tmp/tidb-datetime-refine-go-final.log,
+/tmp/tidb-datetime-decimal-go.log and /tmp/tidb-datetime-zone-go.log. A local
+checker verifies all 960 Go shape rows against native expected outcomes,
+subquery markers and zero warning counts. SQL and zone source results match
+the checked-in regression expectations. No Go source/imports/module/Bazel
+inputs change, so bazel_prepare is not required. The overlay harness has no
+failpoint dependency. This evidence is not a full original expression/types
+package test run or a whole-package acceptance receipt.
+
+
+### Consumer validation and remaining risks
+
+
+In the isolated validation checkout /private/tmp/tidb-parity-publish-aba629bb,
+run Rust commands from rust/ with
+CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target. This excludes the two
+unrelated untracked drafts from validation and publication.
+
+    cargo test --offline --locked -j12 -p tidb-datatype --lib
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-planner --lib
+
+These pass: datatype 427; expression 1210 with 97 pre-existing ignored;
+planner 960. Logs are /tmp/tidb-datetime-{datatype,expr,planner}-final.log.
+The expression run permits its existing localhost JSON-schema HTTP fixture.
+The required root command GOTOOLCHAIN=go1.26.0 make lint passes
+(/tmp/tidb-datetime-lint.log). git diff --check also passes.
+
+Session commands use the same Rust directory/target setup:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_compare_refinement
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_datetime_year_compare
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_timestamp_range
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_timezone_storage
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_zero_date
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_read_cast
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_non_prepared_plan_cache
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_sysbench_access
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_in
+
+The first seven filters pass 12, 3, 5, 15, 11, 4 and 45 tests respectively.
+The non-prepared cache filter exposes two existing failures:
+`go_admits_custom_restore_func_call_shapes` at line 398 and
+`literals_of_different_kinds_do_not_share_an_entry` at line 159. Both expect
+cache hit 1 but observe 0. Its other 24 tests pass and one is ignored.
+Replacing only the three production files changed in this checkpoint with
+published 3241a43f86 versions in the isolated checkout reproduces exactly the
+same failures and counts (/tmp/tidb-datetime-nonprepared-baseline.log).
+A finally block restores the current isolated files. Main sources are never
+replaced. This confirms the failures predate the temporal changes; it does
+not classify their behavior as source-correct. Compare Go cache eligibility,
+constant metadata and runtime values before fixing code or expectations in
+the continuing whole-package audit. Current session logs follow
+/tmp/tidb-datetime-session-<filter>.log.
+
+This checkpoint changes four Rust source/test files and this plan. It corrects
+source behavior and makes no performance improvement claim. Complete original
+Go-package validation, ignored native cases, all platform/generated/support
+artifacts, the two cache failures, and full sysbench/TPC-C/TPC-H/YCSB runs remain
+open. There is no live cluster or complete workload result in this checkpoint.
+Whole expression/types/planner package inventories remain unaccepted and the
+user's goal remains active.
+
+
+The remaining session filters pass: EXPLAIN 64, sysbench access 15, and the
+`tests_in` prefix 33 (including other module names with that prefix). All
+selected filters execute tests; no zero-test filter is counted. The measured
+SQL correctness set covers relevant conversion, date-mode, timezone,
+prepared-cache and access-path consumers without claiming the full session
+package. Upstream fetch confirms the branch is current at 3241a43f86 before
+commit. Publication is an ordinary commit and push after reviewing the diff
+and comparing all tracked isolated validation paths byte-for-byte with main.
