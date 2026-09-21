@@ -50,10 +50,10 @@ release binary from this branch's hparser-integration head. One client,
 * **q17 3.01x**: the pushed-down coprocessor aggregation over 300M rows is
   common to both sides; with 8GB quota rust improves to 357s and remains
   ~1.8x behind, implicating the IndexHashJoin inner-probe row fetch.
-* **q21 2.13x** (was 1.08x at 34b57852) and **q10's former 2.51x** regressed
-  across the group-key / index-probe EXPLAIN + runtime commits
-  (b497d04188fb, 403c269c66c8, e94c5159..b49c1a7e4b); needs bisect
-  attribution before further executor changes.
+* **q21 ~2x** is a pre-existing executor gap, NOT a commit regression: a
+  bisect across ed32149a/403c269c66/dc389f42a3 measured 96.8s / 75.0s /
+  76.6s — the original 45.33s first-lap number was a warm-cache artifact.
+  Steady state puts q21 at roughly 1.8-2x Go master on every revision.
 * **q2 1.74x**: same plan shape; profiler points at the hash-join probe and
   group-key resolve path shared with q13.
 
@@ -73,8 +73,7 @@ Column# allocator numbering.
 2. Parallel HashAgg group-map footprint (q13, q2): 7.5M-group maps exceed
    the 1GB query quota and spill while Go's equivalent stays resident;
    shrink the per-group key/state representation.
-3. Bisect q21/q10 regressions across the group-key commit series
-   (e94c515913d3..b49c1a7e4b49) and the index-probe EXPLAIN series
-   (b497d04188fb..403c269c66c8).
+3. q21's ~2x join execution gap (long-standing, not commit-specific): the
+   semi-join probes over lineitem via EXISTS predicates.
 4. q10 greedy node-assembly order and q18 column-number allocator for the
    last two plan-text mismatches.
