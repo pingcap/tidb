@@ -4645,6 +4645,30 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	if p.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.L, p.Table.Name.L, "", deleteErr)
 	}
+
+	// Column assignments are rewritten by the executor, after the privilege check.
+	// Pre-build their subqueries without executing them so their visit info is
+	// included in the privilege check while preserving runtime evaluation.
+	oldDisableSubQueryPreprocessing := b.disableSubQueryPreprocessing
+	b.disableSubQueryPreprocessing = true
+	for _, assignment := range ld.ColumnAssignments {
+		extractor := &subqueryExprExtractor{}
+		ast.Walk(assignment.Expr, extractor)
+		for _, expr := range extractor.exprs {
+			_, _, err = b.rewrite(ctx, expr, mockTablePlan, nil, true)
+			if err != nil {
+				break
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	b.disableSubQueryPreprocessing = oldDisableSubQueryPreprocessing
+	if err != nil {
+		return nil, err
+	}
+
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(ctx, tableInfo.ID)
 	if !ok {
