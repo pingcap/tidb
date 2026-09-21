@@ -30,10 +30,10 @@ compose-dev.yaml
 # Files generated when testing
 out
 /_bazel
-# Bazel convenience symlinks. The workspace symlink is named after the workspace
-# directory, so a worktree (e.g. tidb-worktree-foo) gets its own bazel-<dirname>
-# that the explicit bazel-bin/bazel-out/bazel-testlogs/bazel-tidb entries miss.
-/bazel-*
+bazel-bin
+bazel-out
+bazel-testlogs
+bazel-tidb
 MODULE.bazel.lock
 .ijwb/
 /oom_record/
