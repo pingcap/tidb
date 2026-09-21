@@ -717,3 +717,101 @@ fn temporal_and_json_arithmetic_match_go_sql() {
         }
     }
 }
+
+/// Go's implicit numeric casts fold temporal literals before deriving result
+/// precision, while MOD retains the original temporal argument width.
+#[test]
+fn temporal_constant_arithmetic_metadata_matches_go_sql() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE cast_const(a BIGINT)").unwrap();
+    session
+        .run("INSERT INTO cast_const VALUES(1),(2),(NULL)")
+        .unwrap();
+    for vectorized in [false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        for (left, op, flen, scale, first, second) in [
+            ("date '2024-01-31'", "+", 20, 0, "20240132", "20240133"),
+            ("date '2024-01-31'", "-", 20, 0, "20240130", "20240129"),
+            ("date '2024-01-31'", "*", 20, 0, "20240131", "40480262"),
+            (
+                "date '2024-01-31'",
+                "/",
+                13,
+                4,
+                "20240131.0000",
+                "10120065.5000",
+            ),
+            ("date '2024-01-31'", "DIV", 20, 0, "20240131", "10120065"),
+            ("date '2024-01-31'", "MOD", 20, 0, "0", "1"),
+            (
+                "timestamp '2024-01-31 23:59:59.600001'",
+                "+",
+                27,
+                6,
+                "20240131235960.600001",
+                "20240131235961.600001",
+            ),
+            (
+                "timestamp '2024-01-31 23:59:59.600001'",
+                "-",
+                27,
+                6,
+                "20240131235958.600001",
+                "20240131235957.600001",
+            ),
+            (
+                "timestamp '2024-01-31 23:59:59.600001'",
+                "*",
+                40,
+                6,
+                "20240131235959.600001",
+                "40480262471919.200002",
+            ),
+            (
+                "timestamp '2024-01-31 23:59:59.600001'",
+                "/",
+                24,
+                10,
+                "20240131235959.6000010000",
+                "10120065617979.8000005000",
+            ),
+            (
+                "timestamp '2024-01-31 23:59:59.600001'",
+                "DIV",
+                20,
+                0,
+                "20240131235959",
+                "10120065617979",
+            ),
+            (
+                "timestamp '2024-01-31 23:59:59.600001'",
+                "MOD",
+                26,
+                6,
+                "0.600001",
+                "1.600001",
+            ),
+        ] {
+            let sql = format!("SELECT {left} {op} a FROM cast_const ORDER BY a");
+            let StmtOutput::Rows { columns, rows } = session.run_with_columns(&sql).unwrap() else {
+                panic!("expected rows for {sql}");
+            };
+            assert_eq!(
+                (columns[0].1.flen(), columns[0].1.decimal()),
+                (flen, scale),
+                "{sql}/{vectorized}"
+            );
+            assert_eq!(
+                row_text(Ok(StmtResult::Rows(rows))),
+                [["NULL"], [first], [second]],
+                "{sql}/{vectorized}"
+            );
+            assert!(session.warnings().is_empty(), "{sql}/{vectorized}");
+        }
+    }
+}

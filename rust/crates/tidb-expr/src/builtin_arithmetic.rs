@@ -265,6 +265,30 @@ fn set_type4_mod_real_or_decimal(
     }
 }
 
+/// Recomputes the source function-class metadata after implicit casts and
+/// constant folding, without changing the already-selected result domain.
+pub(crate) fn refine_cast_arithmetic_metadata(
+    name: &str,
+    result: &mut FieldType,
+    left: &FieldType,
+    right: &FieldType,
+    div_precision_increment: u32,
+) {
+    let real = result.eval_type() == EvalType::Real;
+    if !matches!(result.eval_type(), EvalType::Real | EvalType::Decimal) {
+        return;
+    }
+    match name {
+        "plus" | "minus" | "mul" => {
+            set_flen_decimal4_real_or_decimal(result, left, right, real, name == "mul");
+        }
+        "div" if real => set_type4_div_real(result),
+        "div" => set_type4_div_decimal(result, left, right, i64::from(div_precision_increment)),
+        // MOD captures the original argument types before inserting casts.
+        _ => {}
+    }
+}
+
 fn unsigned(ft: Option<&FieldType>) -> bool {
     ft.is_some_and(FieldType::is_unsigned)
 }

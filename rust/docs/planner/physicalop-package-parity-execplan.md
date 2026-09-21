@@ -5789,3 +5789,120 @@ warning/error identities, ordered argument batches, NULL handling and source
 precision propagation. Final code bytes match the isolated validated patch;
 `git diff --check` passes. The five-file checkpoint is ready for the requested
 commit/push. No package-completion or workload-performance claim is made.
+
+
+## Arithmetic constant casts and whole-expression inventory (2026-09-21)
+
+
+The preceding 5427042cea checkpoint is verified progress; pulled again with no
+changes. The older expression divergence sweep contains dated blanket "done"
+claims that recent executed counterexamples contradict. A complete pinned
+expression inventory now enumerates all 133 direct artifacts and 11 generator/
+module inputs, with every artifact unaccepted pending atomic package evidence.
+Continue construction-time numeric constant casts through both the AST builder
+and direct NewFunction family, including warnings, operand/return metadata and
+overflow diagnostics. Go remains the source of values and observable behavior.
+
+
+### Constant-cast source decisions and regression evidence
+
+The direct NewFunction family now shares implicit numeric argument preparation
+with the AST arithmetic builder. Only strict Constant nodes are folded; parameter
+and deferred constants retain their context dependence. Successful casts retain
+source unsignedness and refine decimal precision. Failed folds leave evaluation
+for runtime. Result-domain selection is unchanged. Go's +, -, *, and / classes
+read the cast argument types when deriving return precision; MOD snapshots the
+original types before casts and must keep that separate behavior.
+
+The 144-case direct-construction regression failed on the published parent
+(`/tmp/tidb-arithmetic-constant-red.log`) and passes after the fix. It covers
+12 temporal/JSON families across six operators and scalar/vector execution,
+checks argument and result metadata, construction-time warnings, two-row values,
+and absence of repeated runtime warnings. The existing temporal/JSON fixture
+matrix is reused. A SQL regression covers 24 DATE and fractional TIMESTAMP
+literal cases, including NULL rows, values and protocol-visible precision.
+
+The Go reference confirms explicit CAST(... AS JSON) is not a strict Constant
+node: those casts remain runtime expressions. Do not recursively fold arbitrary
+constant-looking trees. The SQL probe also records an additional DIV warning
+for explicit JSON casts; its full native construction/evaluation correspondence
+is still open. Temporal overflow rendering and precision/timezone extremes,
+computed-argument vectorization, all original expression artifacts and 97
+ignored native tests remain open package obligations.
+
+The complete expression manifest verifies 133 direct artifacts and 11 generator/
+module inputs against both checkout bytes and pinned Git objects. Its status
+is unaccepted. Historical blanket arithmetic completion/skip claims in the old
+divergence inventory are explicitly superseded by this whole-package audit.
+
+### Constant-cast validation receipt
+
+Changed production files: tidb-expr's builtin_arithmetic.rs, new_function.rs,
+rewriter.rs and scalar_function.rs. Tests: existing go_arithmetic_values.rs and
+session tests_core/numeric_domain.rs. Documentation: this plan, the historical
+expr-builtin-divergence-inventory.md and new expression-package-source-inventory.md.
+No Go/import/Bazel/module changes were made; bazel_prepare is not required.
+The Go checker/windows probe packages do not require failpoint toggles; they
+are not substitutes for the original full expression package gate.
+
+Commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib arithmetic_constant_casts_fold_before_evaluation_and_shape_result_metadata
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-session --lib temporal_constant_arithmetic_metadata_matches_go_sql
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Commands from repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-arithmetic-constant-overlay.json -run '^TestGroupCheckerArithmeticConstantCastOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-arithmetic-constant-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-arithmetic-constant-sql-overlay.json -run '^TestArithmeticConstantCastSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    make lint
+    git diff --check
+
+The first full native expression run passed 1,196 tests, with 97 existing
+ignored. Focused SQL passed; all 29 accumulated Go checker/reference functions
+passed with the race detector, and the 48-query Go SQL probe passed. make lint
+passed. Logs use /tmp/tidb-arithmetic-constant- with suffixes expr-full.log,
+sql-native.log, go.log, go-race.log, sql-go.log and lint.log. A first native SQL
+command was accidentally invoked from the repository root (no Cargo.toml) and
+was rerun successfully from rust/.
+
+Consumer and isolated results are recorded below when complete. The disposable
+checkout was verified to contain only bytes from published 5427042cea before
+resetting to that commit and copying the nine intended files. The pre-existing
+untracked vs_helper.rs and fragment.rs drafts are excluded and untouched.
+
+This patch changes construction and literal-folding behavior; the existing
+projection microbenchmark constructs ScalarFunction directly and does not
+measure the changed builders. No performance improvement is claimed from that
+unrepresentative control. Equivalent sysbench/TPC-C/TPC-H/YCSB measurements,
+original whole-package gates and generated-input regeneration remain open.
+
+
+Consumer gates passed: executor checker 28, merge 76, aggregate 76, shuffle 26,
+and window 23; session numeric 13, merge 16 and window 68. Logs are
+/tmp/tidb-arithmetic-constant-tidb-<executor|session>-<filter>.log.
+Isolated validation runs from /private/tmp/tidb-parity-publish-aba629bb/rust:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+
+Logs are /tmp/tidb-arithmetic-constant-isolated-{expr,sql}.log. Review checked
+construction timing, source-type preservation, MOD's distinct metadata rule,
+context-bound constant exclusions and untouched unrelated drafts.
+
+
+Final isolated gates passed: 1,196 expression tests (97 existing ignored) and
+13 SQL numeric tests. All changed Rust bytes match the isolated checkout, all
+validation processes are terminal, and git diff --check passes. The remote
+fetch confirmed zero divergence from the published parent. This nine-file
+checkpoint is ready for the requested commit and push; no whole-package or
+workload-performance acceptance is claimed.

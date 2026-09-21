@@ -715,7 +715,6 @@ fn hybrid_arithmetic_preserves_null_and_selection_order() {
 #[test]
 fn temporal_json_arithmetic_uses_go_numeric_casts() {
     use crate::scalar_function::{try_eval_numeric_batch, ScalarFunction};
-    use tidb_datatype::{BinaryJSON, MySqlDuration, Time, TimeType};
     #[derive(Default)]
     struct Context(std::cell::RefCell<Vec<(u16, String)>>, bool);
     impl crate::Columns for Context {
@@ -733,7 +732,95 @@ fn temporal_json_arithmetic_uses_go_numeric_casts() {
             self.0.borrow_mut().push((code, message.to_owned()));
         }
     }
-    let cases = [
+    let cases = temporal_json_arithmetic_cases();
+    let mut failures = Vec::new();
+    for (name, expected) in cases {
+        let (field, value) = temporal_json_arithmetic_fixture(name);
+        for (index, op) in ["plus", "minus", "mul", "div", "intdiv", "mod"]
+            .into_iter()
+            .enumerate()
+        {
+            for vectorized in [false, true] {
+                for strict in [false, true] {
+                    let context = Context(Default::default(), strict);
+                    let column = |index, field| {
+                        let mut column = crate::column::Column::new(index + 1, field);
+                        column.index = index;
+                        Expression::Column(column)
+                    };
+                    let integer = FieldType::new(C::LongLong);
+                    let left = column(0, field.clone());
+                    let right = column(1, integer.clone());
+                    let output =
+                        crate::builtin_arithmetic::infer_arithmetic_type(op, &left, &right)
+                            .unwrap();
+                    let expr = Expression::ScalarFunction(ScalarFunction::new(
+                        tidb_ast::CiString::new(op),
+                        output,
+                        vec![left, right],
+                    ));
+                    let mut input =
+                        tidb_chunk::chunk::Chunk::new_with_capacity(&[field.clone(), integer], 1);
+                    input.append_datum(0, &value);
+                    input.append_int64(1, if name == "json_int" { 1 } else { 2 });
+                    let result = if vectorized {
+                        try_eval_numeric_batch(&expr, &context, &input).and_then(|batch| {
+                            Ok(batch
+                                .expect("typed numeric batch must be supported")
+                                .remove(0))
+                        })
+                    } else {
+                        expr.eval(&context, input.get_row(0))
+                    };
+                    let actual = result
+                        .map(|value| value.sql_string().unwrap())
+                        .map_err(|error| match error {
+                            crate::EvalError::Conversion(error) => {
+                                let error = error.to_sql_error();
+                                (error.code, error.message)
+                            }
+                            crate::EvalError::TruncatedWrongValue(message) => (1292, message),
+                            other => (0, format!("{other:?}")),
+                        });
+                    let warnings = match name {
+                        "json_string" if op == "intdiv" => {
+                            vec![(1265, "Data truncated for column '%s' at row %d".to_owned())]
+                        }
+                        "json_string" => {
+                            vec![(1292, "Truncated incorrect DOUBLE value: '2tail'".to_owned())]
+                        }
+                        "json_null" | "json_object" => {
+                            let class = if op == "intdiv" { "DECIMAL" } else { "FLOAT" };
+                            let value = if name == "json_null" {
+                                "null"
+                            } else {
+                                r#"{"a": 1}"#
+                            };
+                            vec![(
+                                1292,
+                                format!("Truncated incorrect {class} value: '{value}'"),
+                            )]
+                        }
+                        _ => vec![],
+                    };
+                    let wanted = if strict && !warnings.is_empty() {
+                        Err(warnings[0].clone())
+                    } else {
+                        Ok(expected[index].to_owned())
+                    };
+                    let warnings = if strict { vec![] } else { warnings };
+                    if actual != wanted || *context.0.borrow() != warnings {
+                        failures.push(format!("{name}/{op}/{vectorized}/{strict}: value={actual:?}, warnings={:?}; want {wanted:?}, {warnings:?}",context.0.borrow()));
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn temporal_json_arithmetic_cases() -> [(&'static str, [&'static str; 6]); 12] {
+    [
         (
             "date",
             [
@@ -816,130 +903,301 @@ fn temporal_json_arithmetic_uses_go_numeric_casts() {
         ("json_null", ["2", "-2", "0", "0", "0", "0"]),
         ("json_object", ["2", "-2", "0", "0", "0", "0"]),
         ("json_true", ["3", "-1", "2", "0.5", "0", "1"]),
+    ]
+}
+
+fn temporal_json_arithmetic_fixture(name: &str) -> (FieldType, Datum) {
+    use tidb_datatype::{BinaryJSON, MySqlDuration, Time, TimeType};
+    let fsp = if name.ends_with('6') { 6 } else { 0 };
+    let micro = if fsp > 0 { 600001 } else { 0 };
+    let code = match name {
+        "date" => C::Date,
+        "datetime0" | "datetime6" => C::Datetime,
+        "timestamp6" => C::Timestamp,
+        "duration0" | "duration6" => C::Duration,
+        _ => C::Json,
+    };
+    let mut field = FieldType::new(code);
+    let value = match code {
+        C::Date | C::Datetime | C::Timestamp => {
+            let (hour, minute, second, kind) = match code {
+                C::Date => (0, 0, 0, TimeType::Date),
+                C::Timestamp => (23, 59, 59, TimeType::Timestamp),
+                _ => (23, 59, 59, TimeType::DateTime),
+            };
+            field.set_decimal(fsp);
+            field.set_flen(if fsp > 0 { 26 } else { 19 });
+            Datum::Time(
+                Time::from_date_checked(2024, 1, 31, hour, minute, second, micro, kind, fsp)
+                    .unwrap(),
+            )
+        }
+        C::Duration => {
+            field.set_decimal(fsp);
+            field.set_flen(10 + fsp);
+            Datum::Duration(
+                MySqlDuration::new(12, 34, 56, i64::from(micro), fsp)
+                    .unwrap()
+                    .negated(),
+            )
+        }
+        _ => Datum::Json(
+            BinaryJSON::parse(match name {
+                "json_int" => "9007199254740993",
+                "json_float" => "0.3",
+                "json_string" => r#""2tail""#,
+                "json_null" => "null",
+                "json_object" => r#"{"a":1}"#,
+                _ => "true",
+            })
+            .unwrap(),
+        ),
+    };
+    (field, value)
+}
+
+#[test]
+fn arithmetic_constant_casts_fold_before_evaluation_and_shape_result_metadata() {
+    use crate::scalar_function::try_eval_numeric_batch;
+    #[derive(Default)]
+    struct Context(std::cell::RefCell<Vec<(u16, String)>>);
+    impl crate::Columns for Context {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn truncate_level(&self) -> crate::ErrorLevel {
+            crate::ErrorLevel::Warn
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+    let metadata = [
+        (
+            "date",
+            [
+                (20, 0, "Int", 19, 0),
+                (20, 0, "Int", 19, 0),
+                (20, 0, "Int", 19, 0),
+                (13, 4, "Decimal", 8, 0),
+                (20, 0, "Int", 19, 0),
+                (20, 0, "Int", 19, 0),
+            ],
+        ),
+        (
+            "datetime0",
+            [
+                (20, 0, "Int", 19, 0),
+                (20, 0, "Int", 19, 0),
+                (20, 0, "Int", 19, 0),
+                (19, 4, "Decimal", 14, 0),
+                (20, 0, "Int", 19, 0),
+                (20, 0, "Int", 19, 0),
+            ],
+        ),
+        (
+            "datetime6",
+            [
+                (27, 6, "Decimal", 20, 6),
+                (27, 6, "Decimal", 20, 6),
+                (40, 6, "Decimal", 20, 6),
+                (24, 10, "Decimal", 20, 6),
+                (20, 0, "Decimal", 20, 6),
+                (26, 6, "Decimal", 20, 6),
+            ],
+        ),
+        (
+            "timestamp6",
+            [
+                (27, 6, "Decimal", 20, 6),
+                (27, 6, "Decimal", 20, 6),
+                (40, 6, "Decimal", 20, 6),
+                (24, 10, "Decimal", 20, 6),
+                (20, 0, "Decimal", 20, 6),
+                (26, 6, "Decimal", 20, 6),
+            ],
+        ),
+        (
+            "duration0",
+            [
+                (20, 0, "Int", 10, 0),
+                (20, 0, "Int", 10, 0),
+                (20, 0, "Int", 10, 0),
+                (11, 4, "Decimal", 6, 0),
+                (20, 0, "Int", 10, 0),
+                (20, 0, "Int", 10, 0),
+            ],
+        ),
+        (
+            "duration6",
+            [
+                (27, 6, "Decimal", 12, 6),
+                (27, 6, "Decimal", 12, 6),
+                (32, 6, "Decimal", 12, 6),
+                (16, 10, "Decimal", 12, 6),
+                (20, 0, "Decimal", 12, 6),
+                (20, 6, "Decimal", 12, 6),
+            ],
+        ),
+        (
+            "json_int",
+            [
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (23, -1, "Real", 23, -1),
+                (20, 0, "Decimal", 16, 0),
+                (-1, -1, "Real", 23, -1),
+            ],
+        ),
+        (
+            "json_float",
+            [
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (23, -1, "Real", 23, -1),
+                (20, 0, "Decimal", 1, 1),
+                (-1, -1, "Real", 23, -1),
+            ],
+        ),
+        (
+            "json_string",
+            [
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (23, -1, "Real", 23, -1),
+                (20, 0, "Decimal", 1, 0),
+                (-1, -1, "Real", 23, -1),
+            ],
+        ),
+        (
+            "json_null",
+            [
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (23, -1, "Real", 23, -1),
+                (20, 0, "Decimal", 1, 0),
+                (-1, -1, "Real", 23, -1),
+            ],
+        ),
+        (
+            "json_object",
+            [
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (23, -1, "Real", 23, -1),
+                (20, 0, "Decimal", 1, 0),
+                (-1, -1, "Real", 23, -1),
+            ],
+        ),
+        (
+            "json_true",
+            [
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (-1, -1, "Real", 23, -1),
+                (23, -1, "Real", 23, -1),
+                (20, 0, "Decimal", 1, 0),
+                (-1, -1, "Real", 23, -1),
+            ],
+        ),
     ];
     let mut failures = Vec::new();
-    for (name, expected) in cases {
-        let fsp = if name.ends_with('6') { 6 } else { 0 };
-        let micro = if fsp > 0 { 600001 } else { 0 };
-        let code = match name {
-            "date" => C::Date,
-            "datetime0" | "datetime6" => C::Datetime,
-            "timestamp6" => C::Timestamp,
-            "duration0" | "duration6" => C::Duration,
-            _ => C::Json,
-        };
-        let mut field = FieldType::new(code);
-        let value = match code {
-            C::Date | C::Datetime | C::Timestamp => {
-                let (hour, minute, second, kind) = match code {
-                    C::Date => (0, 0, 0, TimeType::Date),
-                    C::Timestamp => (23, 59, 59, TimeType::Timestamp),
-                    _ => (23, 59, 59, TimeType::DateTime),
-                };
-                field.set_decimal(fsp);
-                field.set_flen(if fsp > 0 { 26 } else { 19 });
-                Datum::Time(
-                    Time::from_date_checked(2024, 1, 31, hour, minute, second, micro, kind, fsp)
-                        .unwrap(),
-                )
-            }
-            C::Duration => {
-                field.set_decimal(fsp);
-                field.set_flen(10 + fsp);
-                Datum::Duration(
-                    MySqlDuration::new(12, 34, 56, i64::from(micro), fsp)
-                        .unwrap()
-                        .negated(),
-                )
-            }
-            _ => Datum::Json(
-                BinaryJSON::parse(match name {
-                    "json_int" => "9007199254740993",
-                    "json_float" => "0.3",
-                    "json_string" => r#""2tail""#,
-                    "json_null" => "null",
-                    "json_object" => r#"{"a":1}"#,
-                    _ => "true",
-                })
-                .unwrap(),
-            ),
-        };
+    for ((name, values), (meta_name, meta)) in
+        temporal_json_arithmetic_cases().into_iter().zip(metadata)
+    {
+        assert_eq!(name, meta_name);
         for (index, op) in ["plus", "minus", "mul", "div", "intdiv", "mod"]
             .into_iter()
             .enumerate()
         {
             for vectorized in [false, true] {
-                for strict in [false, true] {
-                    let context = Context(Default::default(), strict);
-                    let column = |index, field| {
-                        let mut column = crate::column::Column::new(index + 1, field);
-                        column.index = index;
-                        Expression::Column(column)
-                    };
-                    let integer = FieldType::new(C::LongLong);
-                    let left = column(0, field.clone());
-                    let right = column(1, integer.clone());
-                    let output =
-                        crate::builtin_arithmetic::infer_arithmetic_type(op, &left, &right)
-                            .unwrap();
-                    let expr = Expression::ScalarFunction(ScalarFunction::new(
-                        tidb_ast::CiString::new(op),
-                        output,
-                        vec![left, right],
+                let context = Context::default();
+                let (field, value) = temporal_json_arithmetic_fixture(name);
+                let integer = FieldType::new(C::LongLong);
+                let mut right = crate::column::Column::new(2, integer.clone());
+                right.index = 0;
+                let expr = crate::new_function::new_function_base(
+                    &context,
+                    op,
+                    integer.clone(),
+                    vec![
+                        Expression::Constant(crate::constant::Constant::new(value, field)),
+                        Expression::Column(right),
+                    ],
+                )
+                .unwrap();
+                let Expression::ScalarFunction(function) = &expr else {
+                    panic!("non-constant arithmetic must remain a function")
+                };
+                let ret = expr.static_type().unwrap();
+                let arg = function.args[0].static_type().unwrap();
+                let actual_meta = (
+                    ret.flen(),
+                    ret.decimal(),
+                    format!("{:?}", arg.eval_type()),
+                    arg.flen(),
+                    arg.decimal(),
+                );
+                let wanted = meta[index];
+                if actual_meta != (wanted.0, wanted.1, wanted.2.to_owned(), wanted.3, wanted.4) {
+                    failures.push(format!(
+                        "{name}/{op}: metadata {actual_meta:?}; want {wanted:?}"
                     ));
-                    let mut input =
-                        tidb_chunk::chunk::Chunk::new_with_capacity(&[field.clone(), integer], 1);
-                    input.append_datum(0, &value);
-                    input.append_int64(1, if name == "json_int" { 1 } else { 2 });
-                    let result = if vectorized {
-                        try_eval_numeric_batch(&expr, &context, &input).and_then(|batch| {
-                            Ok(batch
-                                .expect("typed numeric batch must be supported")
-                                .remove(0))
-                        })
-                    } else {
-                        expr.eval(&context, input.get_row(0))
-                    };
-                    let actual = result
-                        .map(|value| value.sql_string().unwrap())
-                        .map_err(|error| match error {
-                            crate::EvalError::Conversion(error) => {
-                                let error = error.to_sql_error();
-                                (error.code, error.message)
-                            }
-                            crate::EvalError::TruncatedWrongValue(message) => (1292, message),
-                            other => (0, format!("{other:?}")),
-                        });
-                    let warnings = match name {
-                        "json_string" if op == "intdiv" => {
-                            vec![(1265, "Data truncated for column '%s' at row %d".to_owned())]
-                        }
-                        "json_string" => {
-                            vec![(1292, "Truncated incorrect DOUBLE value: '2tail'".to_owned())]
-                        }
-                        "json_null" | "json_object" => {
-                            let class = if op == "intdiv" { "DECIMAL" } else { "FLOAT" };
-                            let value = if name == "json_null" {
+                }
+                let build_warnings = std::mem::take(&mut *context.0.borrow_mut());
+                let expected_warning = match name {
+                    "json_string" if op == "intdiv" => {
+                        Some((1265, "Data truncated for column '%s' at row %d".to_owned()))
+                    }
+                    "json_string" => {
+                        Some((1292, "Truncated incorrect DOUBLE value: '2tail'".to_owned()))
+                    }
+                    "json_null" | "json_object" => Some((
+                        1292,
+                        format!(
+                            "Truncated incorrect {} value: '{}'",
+                            if op == "intdiv" { "DECIMAL" } else { "FLOAT" },
+                            if name == "json_null" {
                                 "null"
                             } else {
                                 r#"{"a": 1}"#
-                            };
-                            vec![(
-                                1292,
-                                format!("Truncated incorrect {class} value: '{value}'"),
-                            )]
-                        }
-                        _ => vec![],
-                    };
-                    let wanted = if strict && !warnings.is_empty() {
-                        Err(warnings[0].clone())
-                    } else {
-                        Ok(expected[index].to_owned())
-                    };
-                    let warnings = if strict { vec![] } else { warnings };
-                    if actual != wanted || *context.0.borrow() != warnings {
-                        failures.push(format!("{name}/{op}/{vectorized}/{strict}: value={actual:?}, warnings={:?}; want {wanted:?}, {warnings:?}",context.0.borrow()));
-                    }
+                            }
+                        ),
+                    )),
+                    _ => None,
+                };
+                if build_warnings != expected_warning.into_iter().collect::<Vec<_>>() {
+                    failures.push(format!(
+                        "{name}/{op}: wrong construction warnings {build_warnings:?}"
+                    ));
+                }
+                let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[integer], 2);
+                for _ in 0..2 {
+                    input.append_int64(0, if name == "json_int" { 1 } else { 2 });
+                }
+                let results = if vectorized {
+                    try_eval_numeric_batch(&expr, &context, &input)
+                        .unwrap()
+                        .unwrap()
+                } else {
+                    (0..2)
+                        .map(|i| expr.eval(&context, input.get_row(i)).unwrap())
+                        .collect()
+                };
+                let actual = results
+                    .iter()
+                    .map(|v| v.sql_string().unwrap())
+                    .collect::<Vec<_>>();
+                if actual != vec![values[index]; 2] || !context.0.borrow().is_empty() {
+                    failures.push(format!(
+                        "{name}/{op}/{vectorized}: values {actual:?}, runtime warnings {:?}",
+                        context.0.borrow()
+                    ));
                 }
             }
         }

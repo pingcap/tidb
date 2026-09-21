@@ -583,7 +583,7 @@ fn binary_expression(
                 )?;
             }
             let mut function = ScalarFunction::new(CiString::new(name), ret_type, args);
-            function.fold_numeric_string_literals(
+            function.prepare_numeric_arguments(
                 resolver.comparison_context().unwrap_or(&crate::NoColumns),
             );
             Ok(Expression::ScalarFunction(function))

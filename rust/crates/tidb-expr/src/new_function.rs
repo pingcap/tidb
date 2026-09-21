@@ -372,6 +372,7 @@ pub fn new_function_impl(
         ret_type,
         func_args,
     );
+    function.prepare_numeric_arguments(ctx);
     // Go's grouping signature marks its result as an unsigned BIGINT because
     // the returned bits encode multiple grouping flags.
     if func_name == "grouping" {
@@ -415,8 +416,8 @@ pub fn new_function(
     )
 }
 
-/// Go `NewFunctionBase` (`scalar_function.go:319`): builds with NO constant
-/// folding.
+/// Go `NewFunctionBase` (`scalar_function.go:319`): disables folding of the
+/// outer function; implicit argument casts still fold during construction.
 ///
 /// # Errors
 ///

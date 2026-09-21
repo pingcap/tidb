@@ -1158,9 +1158,9 @@ impl ScalarFunction {
         Some(domain)
     }
 
-    /// Go folds an implicit cast of a strict string or binary literal while
-    /// building arithmetic, so its warning occurs once across all rows.
-    pub(crate) fn fold_numeric_string_literals(&mut self, ctx: &dyn Columns) {
+    /// Go builds implicit argument casts before deriving arithmetic metadata.
+    /// Strict literal casts fold here, so their warnings occur once per build.
+    pub(crate) fn prepare_numeric_arguments(&mut self, ctx: &dyn Columns) {
         let Some(domain) = self.numeric_operand_domain() else {
             return;
         };
@@ -1168,13 +1168,13 @@ impl ScalarFunction {
             let Expression::Constant(constant) = argument else {
                 continue;
             };
-            let Some(value) = constant.literal_value().cloned() else {
+            if constant.literal_value().is_none() {
                 continue;
-            };
+            }
             let Some(field) = constant.ret_type.as_ref() else {
                 continue;
             };
-            if field.eval_type() != EvalType::String {
+            if field.eval_type() == domain {
                 continue;
             }
             let subquery_ref_id = constant.subquery_ref_id;
@@ -1194,11 +1194,7 @@ impl ScalarFunction {
             target.set_collation_name("binary");
             // FoldConstant retains the cast when evaluation fails. Leave its
             // source here for the typed arithmetic evaluator to retry.
-            let result = if field.is_hybrid() || matches!(value, Datum::BinaryLiteral(_)) {
-                eval_numeric_operand_row(argument, ctx, Row::empty(), domain)
-            } else {
-                cast_numeric_argument(argument, value, domain, ctx)
-            };
+            let result = eval_numeric_operand_row(argument, ctx, Row::empty(), domain);
             let Ok(value) = result else {
                 continue;
             };
@@ -1217,6 +1213,31 @@ impl ScalarFunction {
             let mut folded = crate::constant::Constant::new(value, target);
             folded.subquery_ref_id = subquery_ref_id;
             *argument = Expression::Constant(folded);
+        }
+        // Go's function classes read the cast argument types, including
+        // fine-grained constant precision, after newBaseBuiltinFuncWithTp.
+        let argument_type = |argument: &Expression| {
+            let field = argument.static_type().expect("typed numeric argument");
+            if field.eval_type() == domain {
+                field.clone()
+            } else if domain == EvalType::Decimal {
+                numeric_decimal_cast_type(field)
+            } else {
+                crate::builtin_arithmetic::real_argument_type(field).into_owned()
+            }
+        };
+        if matches!(domain, EvalType::Real | EvalType::Decimal) {
+            let left = argument_type(&self.args[0]);
+            let right = argument_type(&self.args[1]);
+            if let Some(ret_type) = self.ret_type.as_mut() {
+                crate::builtin_arithmetic::refine_cast_arithmetic_metadata(
+                    self.func_name.lowercase(),
+                    ret_type,
+                    &left,
+                    &right,
+                    ctx.div_precision_increment(),
+                );
+            }
         }
     }
 

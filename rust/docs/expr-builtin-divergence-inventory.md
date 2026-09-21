@@ -9,6 +9,14 @@ the package tests, not from changing Go source or build artifacts.
 **Status: PARTIAL.** See [Resume here](#resume-here) for exactly where the sweep
 stopped and what is untouched.
 
+The 2026-09-21 dependency audit supersedes blanket completion/skip claims in
+this historical sweep. Recent executed comparisons found additional arithmetic
+cast, NULL-order and diagnostic gaps. See the [complete pinned package
+inventory](expression-package-source-inventory.md) and [current execution
+receipts](planner/physicalop-package-parity-execplan.md). The package remains
+unaccepted; older "done", "resolved" and "verified equal" labels describe
+their stated evidence only.
+
 ---
 
 ## The structural cause behind most findings
@@ -246,8 +254,9 @@ packet-limited string builtins).
 
 ## Verified-equal inventory
 
-Read on both sides during this sweep and found to agree. A later unit can skip
-these.
+Read on both sides during this sweep and found to agree. These historical
+observations must be revalidated against the current implementation before
+they support any broader claim.
 
 ### Arithmetic
 
@@ -323,7 +332,7 @@ these.
 
 **Scope covered.**
 
-1. *Arithmetic* — **done** for `+ - * / DIV %` across integer (all four
+1. *Arithmetic* — **historical kernel review; package audit open** for `+ - * / DIV %` across integer (all four
    signedness pairs), decimal and real, plus division-by-zero on each. Findings
    A, B. RESOLVED (2026-09-03): the flen-and-decimal rules
    (`setFlenDecimal4RealOrDecimal` / `setType4DivDecimal` /
