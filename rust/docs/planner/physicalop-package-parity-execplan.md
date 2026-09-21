@@ -5102,3 +5102,156 @@ this ExecPlan and source inventory. Correctness/compatibility validation is
 scoped to the source contracts and gates above. Full expression/cast/codec
 coverage, package acceptance and workload performance remain open. The active
 goal is unchanged; commit/push publishes a progress checkpoint only.
+
+
+## Value-level division audit (2026-09-21)
+
+
+The prior fe4e828bd1 checkpoint is pushed and constitutes verified progress.
+Pulled the existing branch with --ff-only; no remote changes. The shared value
+operator still dispatches Real DIV through float division followed by truncation,
+while the compiled scalar function now correctly casts through Decimal. Audit
+that remaining route with fractional and mixed Decimal/Real/UInt inputs,
+reuse the typed conversion owner, preserve field precision and warning/error
+policy, and revalidate consumers. Complete package acceptance remains open.
+
+
+### Implementation and correctness evidence
+
+The shared value dispatcher now converts Real/FLOAT DIV operands separately
+through the same typed decimal conversion as compiled expressions. Decimal and
+UInt partners retain their exact value instead of passing through f64. Original
+FieldTypes still control the Real-to-Decimal precision and scale. The obsolete
+floating-point quotient path and its now-unused unsigned conversion are removed.
+NULL handling preserves left conversion before a right NULL and avoids converting
+a right operand after a left NULL. The first full expression run caught the
+missing NULL guard; the original Go-derived arithmetic test and explicit value
+cases now cover it.
+
+The bounded decimal DIV kernel has an exact coefficient fast path only when
+both scales match and are <= 3, both coefficients fit i128, and the effective
+division precision increment is <= 30. At most five integer words plus four
+fraction words fit Go's nine-word buffer, so this branch cannot skip a DecimalDiv
+truncation or overflow warning. Integer conversion still checks signed/unsigned
+bounds, including negative fractional quotients truncating to unsigned zero.
+Every other input keeps the existing bounded decimal kernel.
+
+Red evidence: `/tmp/tidb-value-division-red.log` records 0.3 DIV 0.1 returning 2
+instead of Go's 3. The expanded existing value test also checks 0.29/0.01,
+Decimal 9007199254740993 and UInt MAX paired with Real, mixed signedness, NULLs,
+and declared decimal scale. The new coefficient test compares 288 combinations
+against the bounded general kernel and passed before and after optimization:
+`/tmp/tidb-value-division-fast-{baseline,green}.log`. Go independently checks
+576 scalar/vector combinations across scales, increments, signs and coefficient
+bounds with zero warnings. The mixed SQL oracle checks six exact results.
+
+Commands from repository root (temporary overlays preserve original Go tests):
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-value-division-sql-overlay.json -run '^TestMixedIntegerDivisionSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-value-division-checker-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 ./pkg/executor/internal/vecgroupchecker
+
+Both pass. Logs: `/tmp/tidb-value-division-go.log` and
+`/tmp/tidb-value-division-go-race.log`. Checker race gate now includes 19 test
+functions. Go source baseline is unchanged, no Bazel preparation is triggered,
+and these Go test packages have no failpoint requirement.
+
+Rust validation, from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib go_test_arithmetic_int_divide
+    cargo test --offline --locked -j12 -p tidb-expr --lib integer_division_matches_go_signedness_helpers
+    cargo test --offline --locked -j12 -p tidb-expr --lib decimal_integer_division_small_coefficients_match_bounded_kernel
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Repository lint commands:
+
+    make lint
+    make -o tools/bin/revive lint
+
+The standard target again fails bootstrapping revive 1.2.1 (module does not
+contain the package), exit 2. The existing-tool invocation passes the actual
+lint recipes. Logs: `/tmp/tidb-value-division-lint{,-existing}.log`.
+
+
+Final native results: expression 1190 passed / 97 ignored; executor checker 28,
+merge 76, hash aggregate 76, shuffle 26 and window 23 passed; session numeric
+domain 8, merge SQL 16 and window SQL 68 passed. Logs use
+`/tmp/tidb-value-division-final-<crate>-<filter-or-all>.log`.
+The full expression suite required localhost permission for its existing HTTP
+test. Existing ignored tests are not counted as verified. Changed Rust regions
+are rustfmt-clean; `git diff --check` passes. Self-review removed the obsolete
+unsigned float conversion and corrected the new test's source attribution.
+
+Remaining correctness/compatibility scope is explicit: the raw AST evaluator
+still eagerly evaluates both children, and general string, NULL-typed, JSON,
+temporal and hybrid conversion/evaluation-order contracts need the ongoing
+whole-expression audit. This checkpoint does not accept that package or any
+physicalop/checker/aggregate/join package. It changes three expression source
+files plus this plan and its source inventory. No upstream Go source, fixtures,
+generated files or package boundaries changed. Workload-level sysbench, TPC-C,
+TPC-H and YCSB validation remains open.
+
+### Performance comparison with fe4e828bd1
+
+Build the unchanged ten-case numeric projection benchmark from the clean
+isolated fe4e828bd1 checkout, copying the executable before building current
+sources. Commands from each checkout's rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+    cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+Build logs: `/tmp/tidb-value-division-bench-{before,after}-build.log`.
+Run three measurements per executable in before/after/after/before/before/after
+order, with no concurrent test or build:
+
+    BENCH_ONLY=numeric_projection /tmp/tidb-value-division-pipeline-before
+    BENCH_ONLY=numeric_projection /tmp/tidb-value-division-pipeline-after
+
+Each case uses 1024 rows and five 250ms blocks. Results are component benchmarks,
+not end-to-end workload throughput claims. Run logs use
+`/tmp/tidb-value-division-bench-{1..6}-{before,after}.log`.
+
+
+Final medians across three runs per binary:
+
+| Projection | Before ns/row | After ns/row | Time change | Calibrated change |
+| --- | ---: | ---: | ---: | ---: |
+| numeric_decimal | 31.0 | 30.9 | -0.3% | +3.0% |
+| numeric_decimal_div | 223.2 | 225.5 | +1.0% | +2.0% |
+| numeric_decimal_intdiv | 174.8 | 100.3 | -42.6% | -42.4% |
+| numeric_decimal_mod | 1018.5 | 987.5 | -3.0% | -0.1% |
+| numeric_decimal_nested | 44.9 | 44.9 | +0.0% | +1.9% |
+| numeric_int | 17.2 | 17.1 | -0.6% | +2.3% |
+| numeric_int_div | 16.6 | 16.4 | -1.2% | +0.4% |
+| numeric_int_mod | 16.0 | 15.7 | -1.9% | +1.0% |
+| numeric_int_nested | 24.3 | 24.5 | +0.8% | +4.2% |
+| numeric_real_intdiv | 209.4 | 130.4 | -37.7% | -36.8% |
+
+
+Decimal DIV measured 42.6% less time and Real DIV 37.7% less time than the
+previous correct checkpoint. Other elapsed-time controls range from -3.0% to
++1.0%; calibrated controls range from -0.1% to +4.2%, so no improvement is
+claimed for those unchanged kernels. Real DIV still has the cost of Go's
+required decimal conversion; comparison with the older incorrect float kernel
+is not a correctness-equivalent benchmark. Workload performance is unverified.
+
+Publication validation uses an isolated checkout at fe4e828bd1 with only the
+five tracked changed files copied and byte-compared; the two pre-existing
+untracked drafts remain excluded. Additional commands from isolated rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib integer_division
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+
+Logs: `/tmp/tidb-value-division-isolated-{expression,sql}.log`.
+
+Isolated gates passed: two focused expression tests and eight numeric-domain
+SQL tests. All test and benchmark processes are terminal. Remote refresh found
+no divergence from fe4e828bd1. This is a verified progress checkpoint; the active
+whole-package parity and workload optimization goal remains open.

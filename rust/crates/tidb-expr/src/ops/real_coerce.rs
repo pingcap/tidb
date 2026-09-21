@@ -35,7 +35,7 @@ use super::*;
 /// `goeval`, not silently allowed as IEEE-754 would); `NullEq` has its
 /// own NULL rule; every other operator here is `NULL` if either operand
 /// is `NULL` — including `DIV`/`MOD` by zero, matching the `Int`/
-/// `Decimal` case. `DIV`'s quotient truncates toward zero, same as `Int`;
+/// `Decimal` case. `DIV` is dispatched through decimal operands by the caller;
 /// bitwise/shift operators round to the nearest `i64` first, but TIES TO
 /// EVEN — the OPPOSITE tie-breaking rule from `Decimal`'s own bitwise
 /// conversion (ties away from zero), confirmed via `goeval`, not assumed.
@@ -43,7 +43,6 @@ pub(super) fn float_binary(
     op: BinaryOp,
     l: Datum,
     r: Datum,
-    unsigned_pair: bool,
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
@@ -57,18 +56,6 @@ pub(super) fn float_binary(
     if l == Datum::Null || r == Datum::Null {
         return Ok(Datum::Null);
     }
-    // `intDivideFunctionClass.getFunction` stamps the result with
-    // `UnsignedFlag` when EITHER operand carries it, and
-    // `builtinArithmeticIntDivideDecimalSig` then reads the quotient back
-    // through `ConvertDecimalToUint`, which REJECTS a negative quotient rather
-    // than wrapping it. So `1u DIV -1` is an out-of-range error while
-    // `1u DIV -2` is an unsigned 0.
-    //
-    // `unsigned_pair` is the caller's answer because the `Datum` alone cannot
-    // give it: `DOUBLE UNSIGNED` and `DOUBLE` both read back as `Datum::Real`,
-    // so deriving it from the operand KIND here missed every unsigned
-    // floating-point column.
-    let unsigned_div = unsigned_pair;
     let a = to_f64(l);
     let b = to_f64(r);
     Ok(match op {
@@ -83,22 +70,7 @@ pub(super) fn float_binary(
                 finite_float(a / b)?
             }
         }
-        IntDiv => {
-            if b == 0.0 {
-                ctx.handle_division_by_zero()?;
-                Datum::Null
-            } else {
-                let quotient = (a / b).trunc();
-                if unsigned_div {
-                    if quotient < 0.0 {
-                        return Err(EvalError::IntOverflow);
-                    }
-                    Datum::UInt(f64_to_u64(quotient).ok_or(EvalError::IntOverflow)?)
-                } else {
-                    Datum::Int(f64_to_i64(quotient).ok_or(EvalError::IntOverflow)?)
-                }
-            }
-        }
+        IntDiv => unreachable!("DIV evaluates decimal operands before real dispatch"),
         Mod => {
             if b == 0.0 {
                 ctx.handle_division_by_zero()?;
@@ -132,6 +104,50 @@ pub(super) fn float_binary(
         }
         LogicAnd | LogicOr | LogicXor | NullEq => unreachable!("handled by caller"),
     })
+}
+
+// This value-level entrypoint also serves the literal AST evaluator. Keep
+// its operands in their own domains: converting a Decimal/UInt partner to
+// f64 first would irreversibly lose precision before the DIV cast.
+pub(super) fn decimal_div_operand(
+    value: Datum,
+    operand: Operand<'_>,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Decimal, EvalError> {
+    match value {
+        Datum::Decimal(value) => Ok(value),
+        Datum::Int(value) => Ok(Decimal::from_int(value)),
+        Datum::UInt(value) => Ok(Decimal::from_uint(value)),
+        value @ (Datum::Real(_) | Datum::Float32(_)) => {
+            let literal;
+            let expression = match operand {
+                Operand::Expr(expression) => expression,
+                Operand::Literal => {
+                    let code = if matches!(value, Datum::Float32(_)) {
+                        tidb_datatype::FieldTypeCode::Float
+                    } else {
+                        tidb_datatype::FieldTypeCode::Double
+                    };
+                    literal =
+                        crate::expression::Expression::Constant(crate::constant::Constant::new(
+                            value.clone(),
+                            tidb_datatype::FieldType::new(code),
+                        ));
+                    &literal
+                }
+            };
+            match crate::scalar_function::cast_numeric_argument(
+                expression,
+                value,
+                tidb_datatype::EvalType::Decimal,
+                ctx,
+            )? {
+                Datum::Decimal(value) => Ok(value),
+                _ => Err(EvalError::Unsupported("DIV decimal argument domain")),
+            }
+        }
+        _ => Err(EvalError::Unsupported("DIV numeric argument domain")),
+    }
 }
 
 /// Coerces a non-`NULL` value to `f64` (MySQL's implicit promotion:
@@ -309,17 +325,6 @@ pub(super) fn f64_to_i64(f: f64) -> Option<i64> {
     const I64_MAX_EXCLUSIVE: f64 = 9223372036854775808.0;
     if (I64_MIN..I64_MAX_EXCLUSIVE).contains(&f) {
         Some(f as i64)
-    } else {
-        None
-    }
-}
-
-/// The unsigned counterpart of [`f64_to_i64`], with the same exact-boundary
-/// reasoning: `2^64` is exactly representable, `u64::MAX` is not.
-pub(super) fn f64_to_u64(f: f64) -> Option<u64> {
-    const U64_MAX_EXCLUSIVE: f64 = 18446744073709551616.0;
-    if (0.0..U64_MAX_EXCLUSIVE).contains(&f) {
-        Some(f as u64)
     } else {
         None
     }

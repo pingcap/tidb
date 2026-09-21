@@ -743,7 +743,20 @@ pub(crate) fn eval_binary_full(
     if matches!(l, Datum::Real(_) | Datum::Float32(_))
         || matches!(r, Datum::Real(_) | Datum::Float32(_))
     {
-        return float_binary(op, l, r, unsigned_pair, ctx);
+        // Go has no Real DIV signature: preserve each operand's precision
+        // while casting to Decimal, before the ordinary real promotion below.
+        if op == IntDiv {
+            if l == Datum::Null {
+                return Ok(Datum::Null);
+            }
+            let a = decimal_div_operand(l, operands.lhs, ctx)?;
+            if r == Datum::Null {
+                return Ok(Datum::Null);
+            }
+            let b = decimal_div_operand(r, operands.rhs, ctx)?;
+            return decimal_integer_division(&a, &b, unsigned_pair, ctx);
+        }
+        return float_binary(op, l, r, ctx);
     }
     // `/` always promotes both operands to Decimal and produces a Decimal
     // result — even for two Int operands, MySQL's `/` never yields an Int
@@ -906,6 +919,28 @@ pub(crate) fn decimal_integer_division(
     if b.is_zero() {
         ctx.handle_division_by_zero()?;
         return Ok(Datum::Null);
+    }
+    // With matching scales <= 3 and i128 coefficients, the quotient has at
+    // most 39 integer digits (five words). Go's division increment <= 30
+    // needs at most four fraction words here, so DecimalDiv cannot truncate
+    // or overflow its nine-word buffer. ToInt/ToUint therefore equal exact
+    // coefficient division truncated toward zero, including (-1, 0] -> 0.
+    if a.storage_scale() <= 3
+        && a.storage_scale() == b.storage_scale()
+        && effective_div_precision_increment(ctx.div_precision_increment()) <= 30
+    {
+        if let (Some((left, _)), Some((right, _))) = (a.coefficient_i128(), b.coefficient_i128()) {
+            let quotient = left.checked_div(right).ok_or(EvalError::IntOverflow)?;
+            return if unsigned {
+                u64::try_from(quotient)
+                    .map(Datum::UInt)
+                    .map_err(|_| EvalError::IntOverflow)
+            } else {
+                i64::try_from(quotient)
+                    .map(Datum::Int)
+                    .map_err(|_| EvalError::IntOverflow)
+            };
+        }
     }
     let (quotient, warning) = a
         .div_mysql_with_warning(
@@ -2198,10 +2233,81 @@ mod tests {
         );
     }
 
+    /// The coefficient optimization must preserve bounded DecimalDiv warnings
+    /// and integer conversion at its scale, precision and magnitude limits.
+    #[test]
+    fn decimal_integer_division_small_coefficients_match_bounded_kernel() {
+        struct Precision(u32);
+        impl crate::Columns for Precision {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn div_precision_increment(&self) -> u32 {
+                self.0
+            }
+        }
+        for scale in 0..=3 {
+            for increment in [0, 1, 4, 30] {
+                for (numerator, denominator) in [
+                    (0, 1),
+                    (1, 3),
+                    (-1, 3),
+                    (3, -1),
+                    (i128::from(i64::MIN), -1),
+                    (i128::from(u64::MAX), 1),
+                    (i128::from(u64::MAX), 3),
+                    (i128::MAX, 1),
+                    (-i128::MAX, 1),
+                ] {
+                    let a = Decimal::from_scaled_i128(numerator, scale);
+                    let b = Decimal::from_scaled_i128(denominator, scale);
+                    let (quotient, warning) = a
+                        .div_mysql_with_warning(
+                            &b,
+                            super::effective_div_precision_increment(increment),
+                        )
+                        .unwrap();
+                    assert!(
+                        warning.is_none(),
+                        "{a} DIV {b} at increment {increment}: {warning:?}"
+                    );
+                    for unsigned in [false, true] {
+                        let expected = if unsigned {
+                            let (value, warning) = quotient.to_u64_trunc();
+                            if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow)
+                                && quotient.to_i64_trunc()
+                                    != (0, Some(tidb_datatype::DecimalIntegerWarning::Truncated))
+                            {
+                                Err(EvalError::IntOverflow)
+                            } else {
+                                Ok(Datum::UInt(value))
+                            }
+                        } else {
+                            let (value, warning) = quotient.to_i64_trunc();
+                            if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow) {
+                                Err(EvalError::IntOverflow)
+                            } else {
+                                Ok(Datum::Int(value))
+                            }
+                        };
+                        assert_eq!(
+                            super::decimal_integer_division(
+                                &a,
+                                &b,
+                                unsigned,
+                                &Precision(increment)
+                            ),
+                            expected,
+                            "{a} DIV {b}/{increment}/{unsigned}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Direct rows from `builtin_arithmetic_test.go::{TestArithmeticIntDivide,
-    /// TestArithmeticMod}`.  The source has separate evaluator signatures for
-    /// every signedness pair; these assertions keep that distinction visible
-    /// in the compact Datum evaluator instead of silently dividing raw bits.
+    /// TestArithmeticMod}` plus mixed numeric-domain regression cases.
     #[test]
     fn integer_division_matches_go_signedness_helpers() {
         for (lhs, rhs, expected) in [
@@ -2213,9 +2319,41 @@ mod tests {
             (Datum::Int(13), Datum::UInt(11), Ok(Datum::UInt(1))),
             (Datum::Int(-1), Datum::UInt(11), Ok(Datum::UInt(0))),
             (Datum::Int(13), Datum::Int(0), Ok(Datum::Null)),
+            (Datum::Real(0.3), Datum::Real(0.1), Ok(Datum::Int(3))),
+            (Datum::Real(0.29), Datum::Real(0.01), Ok(Datum::Int(29))),
+            (Datum::Null, Datum::Real(1.0), Ok(Datum::Null)),
+            (Datum::Real(1.0), Datum::Null, Ok(Datum::Null)),
+            (
+                Datum::Decimal(Decimal::from_literal("9007199254740993")),
+                Datum::Real(1.0),
+                Ok(Datum::Int(9007199254740993)),
+            ),
+            (
+                Datum::UInt(u64::MAX),
+                Datum::Real(1.0),
+                Ok(Datum::UInt(u64::MAX)),
+            ),
+            (Datum::Real(-0.5), Datum::UInt(1), Ok(Datum::UInt(0))),
+            (Datum::Real(1.0), Datum::UInt(u64::MAX), Ok(Datum::UInt(0))),
         ] {
             assert_eq!(eval_binary(BinaryOp::IntDiv, lhs, rhs), expected);
         }
+        let mut real = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
+        real.set_flen(10);
+        real.set_decimal(1);
+        let column = crate::expression::Expression::Column(crate::expression::Column::new(1, real));
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::IntDiv,
+                Datum::Real(0.39),
+                Datum::Real(0.1),
+                4,
+                DERIVATION_FREE_COLLATION,
+                Operands::of(&column, &column),
+                &crate::NoColumns
+            ),
+            Ok(Datum::Int(4))
+        );
         assert_eq!(
             eval_binary(BinaryOp::IntDiv, Datum::UInt(1), Datum::Int(-1)),
             Err(EvalError::IntOverflow)

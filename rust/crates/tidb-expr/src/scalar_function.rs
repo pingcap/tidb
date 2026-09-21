@@ -3168,7 +3168,7 @@ fn numeric_argument_domain(source: EvalType, target: EvalType) -> bool {
 
 // Go's builder inserts numeric argument casts. Native arithmetic retains
 // those source FieldTypes, so apply the same conversion before the operator.
-fn cast_numeric_argument(
+pub(crate) fn cast_numeric_argument(
     expression: &Expression,
     value: Datum,
     target: EvalType,
@@ -3182,6 +3182,7 @@ fn cast_numeric_argument(
     }
     let value = match value {
         Datum::Int(bits) if field.is_unsigned() => Datum::UInt(bits as u64),
+        Datum::Float32(value) => Datum::Real(f64::from(value as f32)),
         value => value,
     };
     let code = match target {
