@@ -151,6 +151,10 @@ func checkTTLInfoValid(schema ast.CIStr, tblInfo *model.TableInfo, foreignKeyChe
 		return err
 	}
 
+	if err := checkTTLJobInterval(tblInfo.TTLInfo.JobInterval); err != nil {
+		return err
+	}
+
 	if err := checkPrimaryKeyForTTLTable(tblInfo); err != nil {
 		return err
 	}
@@ -168,6 +172,17 @@ func checkTTLInfoValid(schema ast.CIStr, tblInfo *model.TableInfo, foreignKeyChe
 func checkTTLIntervalExpr(ttlInfo *model.TTLInfo) error {
 	_, err := cache.EvalExpireTime(time.Now(), ttlInfo.IntervalExprStr, ast.TimeUnitType(ttlInfo.IntervalTimeUnit))
 	return errors.Trace(err)
+}
+
+func checkTTLJobInterval(jobInterval string) error {
+	if !deploymode.IsStarter() {
+		return nil
+	}
+
+	if jobInterval != model.StarterDefaultTTLJobInterval {
+		return dbterror.ErrUnsupportedTTLJobIntervalInStarter
+	}
+	return nil
 }
 
 func checkTTLInfoColumnType(tblInfo *model.TableInfo) error {
@@ -258,6 +273,9 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 			ttlInfo.Enable = *ttlEnable
 		}
 		if ttlCronJobSchedule != nil {
+			if err := checkTTLJobInterval(*ttlCronJobSchedule); err != nil {
+				return nil, nil, nil, err
+			}
 			ttlInfo.JobInterval = *ttlCronJobSchedule
 		}
 	}

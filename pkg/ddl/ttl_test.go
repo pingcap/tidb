@@ -180,7 +180,7 @@ func TestGetTTLInfoInOptionsStarterDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.StarterDefaultTTLJobInterval, ttlInfo.JobInterval)
 
-	explicitInterval := "25h"
+	explicitInterval := model.StarterDefaultTTLJobInterval
 	ttlInfo, _, _, err = getTTLInfoInOptions([]*ast.TableOption{
 		{
 			Tp:            ast.TableOptionTTL,
@@ -195,6 +195,35 @@ func TestGetTTLInfoInOptionsStarterDefault(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, explicitInterval, ttlInfo.JobInterval)
+
+	_, _, _, err = getTTLInfoInOptions([]*ast.TableOption{
+		{
+			Tp:            ast.TableOptionTTL,
+			ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
+			Value:         ast.NewValueExpr(5, "", ""),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
+		},
+		{
+			Tp:       ast.TableOptionTTLJobInterval,
+			StrValue: "1h",
+		},
+	})
+	require.ErrorContains(t, err, "TTL_JOB_INTERVAL")
+}
+
+func TestCheckTTLJobIntervalInStarter(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deployment mode is only available in nextgen")
+	}
+
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	require.NoError(t, checkTTLJobInterval("15m"))
+	require.ErrorContains(t, checkTTLJobInterval("1h"), "TTL_JOB_INTERVAL")
 }
 
 type fakeExternalWorkloadManager struct {
