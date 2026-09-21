@@ -221,3 +221,57 @@ func TestFTSLikeAlternativeRoundBoundaries(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, tk.Session().GetSessionVars().StmtCtx.InFTSLikeFallbackRound)
 }
+
+func TestFTSLikeAlternativeQuotedWords(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table fts_quotes(id int primary key, a text, fulltext index(a))")
+	tk.MustExec("insert into fts_quotes values(1,'cat'),(2,'category dog'),(3,'dog'),(4,NULL),(5,'cat dog')")
+	tk.MustExec("set tidb_enable_local_match_against=off, tidb_enable_fts_like_fallback=on, tidb_opt_enable_alternative_logical_plans=on")
+	for _, mode := range []string{"", " in boolean mode"} {
+		for _, term := range []string{`cat`, `"cat"`} {
+			sql := fmt.Sprintf("select id from fts_quotes where match(a) against('%s'%s) order by id", term, mode)
+			tk.MustQuery(sql).Check(testkit.Rows("1", "2", "5"))
+			plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+			require.Contains(t, plan, "ilike")
+			require.Contains(t, plan, "%cat%")
+			require.NotContains(t, plan, "match_against")
+		}
+	}
+	tk.MustQuery(`select id from fts_quotes where match(a) against('+"cat" -"dog"' in boolean mode) order by id`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select id from fts_quotes where match(a) against('-"dog"' in boolean mode) order by id`).Check(testkit.Rows())
+	tk.MustQuery(`select id from fts_quotes where match(a) against('"cat" "dog"') order by id`).Check(testkit.Rows("1", "2", "3", "5"))
+	for _, term := range []string{`"cat dog"`, `"cat*"`, `+"cat*"`, `"cat`, `cat"`, `""`, `+""`, `"cat"dog`, `"cat-dog"`} {
+		sql := fmt.Sprintf("select id from fts_quotes where match(a) against('%s' in boolean mode)", term)
+		require.ErrorContains(t, tk.ExecToErr(sql), "LIKE fallback", term)
+		require.False(t, tk.Session().GetSessionVars().StmtCtx.InFTSLikeFallbackRound)
+	}
+	// Prepared queries must normalize each new argument, not cache old tokens.
+	tk.MustExec("prepare quoted from 'select id from fts_quotes where match(a) against(? in boolean mode) order by id'")
+	for _, tc := range []struct {
+		term string
+		rows []string
+	}{
+		{`"cat"`, []string{"1", "2", "5"}},
+		{`+"cat" -"dog"`, []string{"1"}},
+		{`"dog"`, []string{"2", "3", "5"}},
+	} {
+		tk.MustExec("set @term='" + tc.term + "'")
+		tk.MustQuery("execute quoted using @term").Check(testkit.Rows(tc.rows...))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	// Unsupported multi-word phrases must preserve a valid local candidate.
+	tk.MustExec("set tidb_enable_local_match_against=on")
+	tk.MustQuery(`select id from fts_quotes where match(a) against('"cat dog"' in boolean mode) order by id`).Check(testkit.Rows("5"))
+	if intest.InTest {
+		// A quoted single word may now participate in the ILIKE CBO round.
+		ctx := context.WithValue(context.Background(), planner.FTSAlternativeCostTestKey{}, func(like bool, _ float64) float64 {
+			if like {
+				return 0
+			}
+			return 1
+		})
+		tk.MustQueryWithContext(ctx, `select id from fts_quotes where match(a) against('"cat"' in boolean mode) order by id`).Check(testkit.Rows("1", "2", "5"))
+	}
+}
