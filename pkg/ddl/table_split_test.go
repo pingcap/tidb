@@ -356,31 +356,107 @@ func TestTableSplitPolicyMultipleIndexes(t *testing.T) {
 
 func TestTableSplitPolicyShowCreateRoundTrip(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_src, t_dst")
-	tk.MustExec(`create table t_src (
-		id bigint primary key,
-		user_id bigint,
-		index idx_user_id (user_id)
-	)
-	split between (0) and (1000000) regions 4
-	split index idx_user_id between (1000) and (100000) regions 3`)
 
-	createSQL := tk.MustQuery("show create table t_src").Rows()[0][1].(string)
-	require.Contains(t, createSQL, "/*T![region_split]")
+	t.Run("table-level-policy", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_src, t_dst")
+		tk.MustExec(`create table t_src (
+			id bigint primary key,
+			user_id bigint,
+			index idx_user_id (user_id)
+		)
+		split between (0) and (1000000) regions 4
+		split index idx_user_id between (1000) and (100000) regions 3`)
 
-	roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_src`", "CREATE TABLE `t_dst`", 1)
-	tk.MustExec(roundTripSQL)
+		createSQL := tk.MustQuery("show create table t_src").Rows()[0][1].(string)
+		require.Contains(t, createSQL, "/*T![region_split]")
 
-	tbl := external.GetTableByName(t, tk, "test", "t_dst")
-	require.NotNil(t, tbl.Meta().TableSplitPolicy)
-	require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+		roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_src`", "CREATE TABLE `t_dst`", 1)
+		tk.MustExec(roundTripSQL)
 
-	idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
-	require.NotNil(t, idxInfo)
-	require.NotNil(t, idxInfo.RegionSplitPolicy)
-	require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+		tbl := external.GetTableByName(t, tk, "test", "t_dst")
+		require.NotNil(t, tbl.Meta().TableSplitPolicy)
+		require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+
+		idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
+		require.NotNil(t, idxInfo)
+		require.NotNil(t, idxInfo.RegionSplitPolicy)
+		require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+	})
+
+	// The primary key branch of the grammar does not take an index name, so the
+	// non-clustered primary key policy must be emitted as `SPLIT PRIMARY KEY
+	// BETWEEN`, otherwise the output is not parseable
+	// (https://github.com/pingcap/tidb/issues/71467).
+	t.Run("primary-key-policy", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_pk_src, t_pk_dst")
+		tk.MustExec(`create table t_pk_src (
+			id bigint not null,
+			user_id bigint,
+			primary key (id) nonclustered,
+			index idx_user_id (user_id)
+		)`)
+		tk.MustExec("alter table t_pk_src split primary key between (0) and (1000000) regions 4")
+		tk.MustExec("alter table t_pk_src split index idx_user_id between (1000) and (100000) regions 3")
+
+		createSQL := tk.MustQuery("show create table t_pk_src").Rows()[0][1].(string)
+		require.Contains(t, createSQL, "/*T![region_split]")
+		require.Contains(t, createSQL, "SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4")
+		require.NotContains(t, createSQL, "SPLIT PRIMARY KEY `PRIMARY`")
+
+		roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_pk_src`", "CREATE TABLE `t_pk_dst`", 1)
+		tk.MustExec(roundTripSQL)
+
+		tbl := external.GetTableByName(t, tk, "test", "t_pk_dst")
+		require.Nil(t, tbl.Meta().TableSplitPolicy)
+
+		pkInfo := tbl.Meta().FindIndexByName("primary")
+		require.NotNil(t, pkInfo)
+		require.NotNil(t, pkInfo.RegionSplitPolicy)
+		require.Equal(t, int64(4), pkInfo.RegionSplitPolicy.Regions)
+
+		idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
+		require.NotNil(t, idxInfo)
+		require.NotNil(t, idxInfo.RegionSplitPolicy)
+		require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+	})
+
+	// A clustered primary key is the row handle itself, so there is no separate
+	// PRIMARY index to split and the policy is emitted as `SPLIT BETWEEN`.
+	t.Run("clustered-primary-key-policy", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@session.tidb_enable_clustered_index = ON")
+		tk.MustExec("drop table if exists t_ck_src, t_ck_dst")
+		tk.MustExec(`create table t_ck_src (
+			id bigint not null,
+			user_id bigint,
+			primary key (id) clustered,
+			index idx_user_id (user_id)
+		)
+		split between (0) and (1000000) regions 4
+		split index idx_user_id between (1000) and (100000) regions 3`)
+
+		createSQL := tk.MustQuery("show create table t_ck_src").Rows()[0][1].(string)
+		require.Contains(t, createSQL, "/*T![clustered_index] CLUSTERED */")
+		require.Contains(t, createSQL, "SPLIT BETWEEN (0) AND (1000000) REGIONS 4")
+		require.NotContains(t, createSQL, "SPLIT PRIMARY KEY")
+
+		roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_ck_src`", "CREATE TABLE `t_ck_dst`", 1)
+		tk.MustExec(roundTripSQL)
+
+		tbl := external.GetTableByName(t, tk, "test", "t_ck_dst")
+		require.NotNil(t, tbl.Meta().TableSplitPolicy)
+		require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+
+		idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
+		require.NotNil(t, idxInfo)
+		require.NotNil(t, idxInfo.RegionSplitPolicy)
+		require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+	})
 }
 
 func TestTableSplitPolicyRejectSplitIndexPrimaryOnClustered(t *testing.T) {

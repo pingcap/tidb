@@ -132,7 +132,7 @@ t	CREATE TABLE `t` (
   KEY `idx_user_id` (`user_id`),
   PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (1000000) REGIONS 4 */
+/*T![region_split] SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 */
 alter table t split index idx_user_id between (1000) and (100000) regions 3;
 show create table t;
 Table	Create Table
@@ -144,7 +144,7 @@ t	CREATE TABLE `t` (
   PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 /*T![region_split] SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3 */
-/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (1000000) REGIONS 4 */
+/*T![region_split] SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 */
 drop table if exists t;
 create table t (
 id bigint primary key nonclustered,
@@ -168,7 +168,7 @@ t	CREATE TABLE `t` (
   PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 /*T![region_split] SPLIT INDEX `idx_user_id` BETWEEN (-1000) AND (100000) REGIONS 3 */
-/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (-10000) AND (1000000) REGIONS 4 */
+/*T![region_split] SPLIT PRIMARY KEY BETWEEN (-10000) AND (1000000) REGIONS 4 */
 set tidb_enable_clustered_index=ON;
 drop table if exists t;
 create table t (
@@ -297,7 +297,7 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 /*T![region_split] SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3 */
 /*T![region_split] SPLIT INDEX `idx_status` BETWEEN ('a') AND ('z') REGIONS 2 */
-/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (1000000) REGIONS 4 */
+/*T![region_split] SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 */
 PARTITION BY RANGE (`id`)
 (PARTITION `p0` VALUES LESS THAN (100000),
  PARTITION `p1` VALUES LESS THAN (200000),
@@ -320,7 +320,7 @@ t	CREATE TABLE `t` (
   KEY `idx_val` (`val`),
   PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (10000) REGIONS 5 */
+/*T![region_split] SPLIT PRIMARY KEY BETWEEN (0) AND (10000) REGIONS 5 */
 PARTITION BY RANGE (`id`)
 (PARTITION `p0` VALUES LESS THAN (1000),
  PARTITION `p1` VALUES LESS THAN (2000))
@@ -334,7 +334,7 @@ t	CREATE TABLE `t` (
   PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 /*T![region_split] SPLIT INDEX `idx_val` BETWEEN (0) AND (10000) REGIONS 5 */
-/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (10000) REGIONS 5 */
+/*T![region_split] SPLIT PRIMARY KEY BETWEEN (0) AND (10000) REGIONS 5 */
 PARTITION BY RANGE (`id`)
 (PARTITION `p0` VALUES LESS THAN (1000),
  PARTITION `p1` VALUES LESS THAN (2000))
