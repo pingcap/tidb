@@ -319,24 +319,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	deleteSQLExec := statshandle.AttachStatsCollector(deleteSctx.GetSQLExecutor())
 	defer statshandle.DetachStatsCollector(deleteSQLExec)
 
-	countSctx, err := e.GetSysSession()
-	if err != nil {
-		return err
-	}
-	defer e.ReleaseSysSession(releaseCtx, countSctx)
-	countVars := countSctx.GetSessionVars()
-	restoreCountVars, err := applyMLogPurgeMaintenanceSessionVars(
-		countVars,
-		vars.MViewMaintainMemQuota,
-		vars.MViewMaintainIsolationReadEngines,
-		isInternalSQL,
-	)
-	if err != nil {
-		return err
-	}
-	defer restoreCountVars()
-	countSQLExec := countSctx.GetSQLExecutor()
-
 	histSctx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -347,11 +329,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 
 	var evalSctx sessionctx.Context
 	if isInternalSQL {
-		evalSctx, err = e.GetSysSession()
-		if err != nil {
-			return err
-		}
-		defer e.ReleaseSysSession(releaseCtx, evalSctx)
+		evalSctx = histSctx
 	}
 	stopTaskMonitor := func() {}
 	defer func() {
@@ -490,7 +468,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	skipDeleteByCheckpoint := lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
 	if !skipPurgeByCutoffFence && !skipDeleteByCheckpoint && safePurgeTSO > 0 {
 		deletePlan := tryBuildMLogPurgeDeletePlanBestEffort(
-			kctx, vars, evalSctx, countSQLExec, countVars, mlogInfo, isInternalSQL,
+			kctx, vars, evalSctx, deleteSQLExec, deleteVars, mlogInfo, isInternalSQL,
 			schemaName.O, mlogName.O, mlogShardRowIDBits, lockedLastPurgedTSO,
 			lockedLastPurgedTSOReady, safePurgeTSO, lockedNextTime,
 		)
@@ -1166,6 +1144,7 @@ func readMLogPurgePendingRowStatsOnTiFlash(
 	if sessVars == nil {
 		return mlogPurgePendingRowStats{}, errors.New("purge materialized view log: count session vars is nil")
 	}
+	failpoint.InjectCall("mvMLogPurgeCountTiFlashThreadsUsed", sessVars.TiFlashMaxThreads)
 	restoreIsolation, err := setSessionVarWithRestore(sessVars, vardef.TiDBIsolationReadEngines, kv.TiFlash.Name())
 	if err != nil {
 		return mlogPurgePendingRowStats{}, err
@@ -1517,20 +1496,6 @@ VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-func allocJobID(store kv.Storage) (uint64, error) {
-	if store == nil {
-		return 0, errors.New("invalid store")
-	}
-	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if ver.Ver == 0 {
-		return 0, errors.New("invalid job id")
-	}
-	return ver.Ver, nil
 }
 
 func (e *PurgeMaterializedViewLogExec) insertMLogPurgeHistFailedFallback(

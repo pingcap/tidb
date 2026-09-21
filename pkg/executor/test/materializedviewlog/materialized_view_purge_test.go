@@ -293,7 +293,7 @@ func TestPurgeMaterializedViewLogDefaultMVMaintainIsolationReadEnginesDoesNotInh
 	tk.MustQuery(fmt.Sprintf("select @@session.%s", vardef.TiDBIsolationReadEngines)).Check(testkit.Rows(currentIsolationReadEngines))
 }
 
-func TestPurgeMaterializedViewLogUsesDeleteTiFlashThreadsOnlyOnDeleteSession(t *testing.T) {
+func TestPurgeMaterializedViewLogUsesConfiguredTiFlashThreadsForCountAndDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
@@ -306,20 +306,27 @@ func TestPurgeMaterializedViewLogUsesDeleteTiFlashThreadsOnlyOnDeleteSession(t *
 	applied := false
 	gotTiFlashThreads := int64(0)
 	gotTargetTiFlashThreads := int64(0)
-	failpointName := "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeDeleteTiFlashThreadsAppliedOnPurgeDeleteSession"
-	require.NoError(t, failpoint.EnableCall(failpointName, func(currentTiFlashThreads int64, targetTiFlashThreads int64) {
+	gotCountTiFlashThreads := int64(0)
+	deleteFailpointName := "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeDeleteTiFlashThreadsAppliedOnPurgeDeleteSession"
+	require.NoError(t, failpoint.EnableCall(deleteFailpointName, func(currentTiFlashThreads int64, targetTiFlashThreads int64) {
 		applied = true
 		gotTiFlashThreads = currentTiFlashThreads
 		gotTargetTiFlashThreads = targetTiFlashThreads
 	}))
+	countFailpointName := "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeCountTiFlashThreadsUsed"
+	require.NoError(t, failpoint.EnableCall(countFailpointName, func(tiFlashThreads int64) {
+		gotCountTiFlashThreads = tiFlashThreads
+	}))
 	defer func() {
-		require.NoError(t, failpoint.Disable(failpointName))
+		require.NoError(t, failpoint.Disable(deleteFailpointName))
+		require.NoError(t, failpoint.Disable(countFailpointName))
 	}()
 
 	tk.MustExec("purge materialized view log on t_purge_tiflash_threads")
 	require.True(t, applied)
 	require.Equal(t, int64(2), gotTargetTiFlashThreads)
 	require.Equal(t, gotTargetTiFlashThreads, gotTiFlashThreads)
+	require.Equal(t, gotTargetTiFlashThreads, gotCountTiFlashThreads)
 	tk.MustQuery(fmt.Sprintf("select @@session.%s", vardef.TiDBMaxTiFlashThreads)).Check(testkit.Rows("9"))
 }
 
@@ -766,12 +773,12 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 2")
 	beforeDelete := readAffectedRowsMetricValue(t, "Delete")
-	beforePurgeMVLog := readAffectedRowsMetricValue(t, "PurgeMVLog")
+	beforePurgeMLog := readAffectedRowsMetricValue(t, "PurgeMLog")
 	tk.MustExec("purge materialized view log on t_purge_batch_delete")
 	require.Equal(t, uint64(5), tk.Session().AffectedRows())
 	tk.CheckLastMessage("Rows inserted: 0  Updated: 0  Deleted: 5")
 	require.Equal(t, 0.0, readAffectedRowsMetricValue(t, "Delete")-beforeDelete)
-	require.Equal(t, 5.0, readAffectedRowsMetricValue(t, "PurgeMVLog")-beforePurgeMVLog)
+	require.Equal(t, 5.0, readAffectedRowsMetricValue(t, "PurgeMLog")-beforePurgeMLog)
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_batch_delete`").Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf(
@@ -1450,6 +1457,18 @@ func TestPurgeMaterializedViewLogNextUnixSecondsOnlyUpdatesForInternalSQL(t *tes
 		"select PURGE_METHOD from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("auto"))
+
+	// DATE schedule expressions are evaluated at midnight in the persisted schedule timezone.
+	mlogTable.Meta().MaterializedViewLog.PurgeNext = "CAST('2030-01-02' AS DATE)"
+	tz, err := mlogTable.Meta().MaterializedViewLog.PurgeScheduleTimeZone.GetLocation()
+	require.NoError(t, err)
+	wantNextUnixSeconds := time.Date(2030, 1, 2, 0, 0, 0, 0, tz).Unix()
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS = null where MLOG_ID = %d", mlogID))
+	mustExecMViewPurgeInternal(t, tk, "purge materialized view log on t_purge_internal_next")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows(strconv.FormatInt(wantNextUnixSeconds, 10)))
 }
 
 func TestPurgeMaterializedViewLogInternalSQLStartWithNoNextSetsNextUnixSecondsNull(t *testing.T) {

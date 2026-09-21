@@ -2894,6 +2894,10 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 
 func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
+	if !vars.InTxn() {
+		return nil
+	}
+
 	stmtToValidate := stmtNode
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		preparedStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
@@ -2901,10 +2905,10 @@ func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
 			stmtToValidate = preparedStmt.PreparedAst.Stmt
 		}
 	}
-	if _, ok := stmtToValidate.(*ast.ImportIntoStmt); ok && vars.InTxn() {
+	if _, ok := stmtToValidate.(*ast.ImportIntoStmt); ok {
 		return errors.New("cannot run IMPORT INTO in explicit transaction")
 	}
-	if _, ok := stmtToValidate.(*ast.PurgeMaterializedViewLogStmt); ok && vars.InTxn() {
+	if _, ok := stmtToValidate.(*ast.PurgeMaterializedViewLogStmt); ok {
 		return errors.New("cannot run PURGE MATERIALIZED VIEW LOG in explicit transaction")
 	}
 	return nil

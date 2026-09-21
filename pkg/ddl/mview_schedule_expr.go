@@ -36,7 +36,7 @@ import (
 )
 
 // BuildAndValidateMViewScheduleExpr restores an AST expression into canonical SQL and
-// validates that its expression type is DATETIME/TIMESTAMP.
+// validates that its expression type is DATE/DATETIME/TIMESTAMP.
 func BuildAndValidateMViewScheduleExpr(sctx sessionctx.Context, expr ast.ExprNode, clause string) (string, error) {
 	exprSQL, err := restoreNodeToCanonicalSQL(expr)
 	if err != nil {
@@ -54,9 +54,9 @@ func BuildAndValidateMViewScheduleExpr(sctx sessionctx.Context, expr ast.ExprNod
 	}
 
 	tp := ft.GetType()
-	if tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
+	if tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
 		return "", dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
-			fmt.Sprintf("%s expression must return DATETIME/TIMESTAMP, but got %s", clause, types.TypeStr(tp)),
+			fmt.Sprintf("%s expression must return DATE/DATETIME/TIMESTAMP, but got %s", clause, types.TypeStr(tp)),
 		)
 	}
 	return exprSQL, nil

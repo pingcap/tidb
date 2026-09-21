@@ -1895,7 +1895,7 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 		case "NTDML-Replace":
 			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
 		case "PurgeMaterializedViewLog":
-			metrics.AffectedRowsCounterPurgeMVLog.Add(float64(affectedRows))
+			metrics.AffectedRowsCounterPurgeMLog.Add(float64(affectedRows))
 		}
 	}
 }

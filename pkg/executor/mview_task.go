@@ -50,6 +50,20 @@ const (
 
 var errMVTaskCanceledManually = errors.NewNoStackError("materialized view task canceled manually")
 
+func allocJobID(store kv.Storage) (uint64, error) {
+	if store == nil {
+		return 0, errors.New("invalid store")
+	}
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if ver.Ver == 0 {
+		return 0, errors.New("invalid job id")
+	}
+	return ver.Ver, nil
+}
+
 // CancelMaterializedViewJobExec executes a materialized view task cancellation request.
 type CancelMaterializedViewJobExec struct {
 	exec.BaseExecutor

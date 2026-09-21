@@ -111,11 +111,14 @@ func DeriveMaterializedScheduleNextTime(
 
 	sessVars := evalSctx.GetSessionVars()
 	origSQLMode := sessVars.SQLMode
+	origNoBackslashEscaped := sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped)
 	origTypeFlags := sessVars.StmtCtx.TypeFlags()
 	origErrLevels := sessVars.StmtCtx.ErrLevels()
 	origTimeZone := sessVars.TimeZone
 	origStmtTimeZone := sessVars.StmtCtx.TimeZone()
 	sessVars.SQLMode = scheduleSQLMode
+	// SQLMode is assigned directly below instead of through SetSystemVar, so keep
+	// the corresponding server status flag synchronized for this evaluation.
 	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, scheduleSQLMode.HasNoBackslashEscapesMode())
 	sessVars.StmtCtx.SetTypeFlags(MaterializedScheduleTypeFlagsWithSQLMode(scheduleSQLMode))
 	sessVars.StmtCtx.SetErrLevels(MaterializedScheduleErrLevelsWithSQLMode(scheduleSQLMode))
@@ -123,7 +126,7 @@ func DeriveMaterializedScheduleNextTime(
 	sessVars.StmtCtx.SetTimeZone(scheduleTimeZone)
 	defer func() {
 		sessVars.SQLMode = origSQLMode
-		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
+		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origNoBackslashEscaped)
 		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
 		sessVars.StmtCtx.SetErrLevels(origErrLevels)
 		sessVars.TimeZone = origTimeZone
@@ -142,6 +145,9 @@ func DeriveMaterializedScheduleNextTime(
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
+	// Execute a separate statement to refresh the statement timestamp cache.
+	// Schedule expressions can contain NOW(), which must use the current
+	// evaluation time instead of a timestamp left in the pooled session.
 	if _, err := sqlexec.ExecSQL(kctx, evalSctx.GetSQLExecutor(), "SELECT NOW(6)"); err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -152,13 +158,19 @@ func DeriveMaterializedScheduleNextTime(
 	if v.IsNull() {
 		return nil, true, nil
 	}
-	targetTp := types.NewFieldType(mysql.TypeDatetime)
-	targetTp.SetDecimal(types.MaxFsp)
-	datetimeV, err := v.ConvertTo(evalSctx.GetExprCtx().GetEvalCtx().TypeCtx(), targetTp)
-	if err != nil {
-		return nil, false, errors.Trace(err)
+	if v.Kind() != types.KindMysqlTime {
+		return nil, false, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.KindStr(v.Kind()),
+		)
 	}
-	t := datetimeV.GetMysqlTime()
+	t := v.GetMysqlTime()
+	if tp := t.Type(); tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
+		return nil, false, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.TypeStr(tp),
+		)
+	}
 	return &t, true, nil
 }
 
