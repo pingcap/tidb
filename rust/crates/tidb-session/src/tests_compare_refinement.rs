@@ -571,3 +571,81 @@ fn casting_a_zero_year_to_char_renders_four_digits() {
         vec![vec!["0".to_string()]]
     );
 }
+
+/// Rows and cache hits captured from Go TestUnsignedRefinementSQLOracle at
+/// aba629bb455dc09d6a5d98b3c39a542bb1189b9d.
+#[test]
+fn unsigned_comparison_refinement_preserves_nulls_and_cached_parameters() {
+    let mut session = Session::new();
+    for sql in [
+        "create table unsigned_cmp(id int primary key, a bigint unsigned not null, b bigint unsigned, s bigint not null, n bigint)",
+        "insert into unsigned_cmp values (1,0,null,-1,null),(2,1,0,0,0),(3,18446744073709551615,18446744073709551615,9223372036854775807,9223372036854775807)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, expected) in [
+        (
+            "select a < -1,a <= -1,a > -1,a >= -1,a = -1,a != -1,a <=> -1,b < -1,b <=> -1 \
+             from unsigned_cmp order by id",
+            vec![
+                "0 0 1 1 0 1 0 NULL 0",
+                "0 0 1 1 0 1 0 0 0",
+                "0 0 1 1 0 1 0 0 0",
+            ],
+        ),
+        (
+            "select a < 0,a <= 0,a > 0,a >= 0,a = 0,a != 0,a <=> 0,0 < a,0 >= a \
+             from unsigned_cmp order by id",
+            vec![
+                "0 1 0 1 1 0 1 0 1",
+                "0 0 1 1 0 1 0 1 0",
+                "0 0 1 1 0 1 0 1 0",
+            ],
+        ),
+        (
+            "select s = 18446744073709551615,s <=> 18446744073709551615, \
+             n = 18446744073709551615,n <=> 18446744073709551615 \
+             from unsigned_cmp order by id",
+            vec!["0 0 NULL 0", "0 0 0 0", "0 0 0 0"],
+        ),
+        ("select id from unsigned_cmp where a < 0", vec![]),
+        (
+            "select id from unsigned_cmp where a >= 0 order by id",
+            vec!["1", "2", "3"],
+        ),
+    ] {
+        let actual: Vec<_> = row_text(session.run(sql))
+            .iter()
+            .map(|row| row.join(" "))
+            .collect();
+        assert_eq!(actual, expected, "{sql}");
+        assert!(session.warnings().is_empty(), "{sql}");
+    }
+    for (predicate, empty) in [("a < 0", true), ("a >= 0", false)] {
+        let plan = row_text(session.run(&format!(
+            "explain format='brief' select id from unsigned_cmp where {predicate}"
+        )))
+        .iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert_eq!(plan.contains("TableDual"), empty, "{plan}");
+        assert!(!plan.contains("Selection"), "{plan}");
+    }
+    session
+        .run("prepare s1 from 'select id from unsigned_cmp where a > ? order by id'")
+        .unwrap();
+    for (value, expected, cache) in [
+        (-1, vec![vec!["1"], vec!["2"], vec!["3"]], "0"),
+        (0, vec![vec!["2"], vec!["3"]], "1"),
+        (1, vec![vec!["3"]], "1"),
+        (-1, vec![vec!["1"], vec!["2"], vec!["3"]], "1"),
+    ] {
+        session.run(&format!("set @x={value}")).unwrap();
+        assert_eq!(row_text(session.run("execute s1 using @x")), expected);
+        assert_eq!(
+            row_text(session.run("select @@last_plan_from_cache")),
+            [[cache]]
+        );
+    }
+}

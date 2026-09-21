@@ -526,9 +526,8 @@ fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut E
 /// and its mirror through `symmetricOp` (`:1836-1854`), and the
 /// numeric-constant-vs-datetime rule (`refineNumericConstantCmpDatetime`,
 /// `:1802-1808`) -- see [`refine_numeric_constant_cmp_datetime`].
-/// DEFERRED, each an independent rule of the same function:
-/// `refineArgsByUnsignedFlag` (`:1919`). The plan-cache guard and mutable
-/// constant removal now run before value-dependent refinement.
+/// The plan-cache guard and mutable constant removal run before refinement;
+/// unsigned-flag refinement runs after integer and YEAR argument adjustment.
 pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
     if let Expression::ScalarFunction(function) = expr {
         for arg in &mut function.args {
@@ -1015,6 +1014,66 @@ fn refine_args(
         (left_is_int, right_is_int),
         (left_is_year, right_is_year),
     );
+    refine_unsigned_arguments(left, right, name, mirrored, ctx);
+}
+
+/// Go compareFunctionClass.refineArgsByUnsignedFlag. The signed EvalInt
+/// carrier is deliberate: large unsigned constants have a negative carrier.
+fn refine_unsigned_arguments(
+    left: &mut Expression,
+    right: &mut Expression,
+    name: &str,
+    mirrored: &str,
+    ctx: &dyn Columns,
+) {
+    if [left.static_type(), right.static_type()]
+        .iter()
+        .any(|field| field.is_none_or(|field| field.eval_type() != EvalType::Int))
+    {
+        return;
+    }
+    fn column_of(expression: &Expression) -> Option<&FieldType> {
+        match expression {
+            Expression::Column(column) => column.ret_type.as_ref(),
+            Expression::CorrelatedColumn(column) => column.column.ret_type.as_ref(),
+            _ => None,
+        }
+    }
+    let (column, constant, column_first, operator) = match (&*left, &*right) {
+        (column, Expression::Constant(constant)) => (column_of(column), constant, true, name),
+        (Expression::Constant(constant), column) => (column_of(column), constant, false, mirrored),
+        _ => return,
+    };
+    let (Some(column), Some(constant_type)) = (column, constant.ret_type.as_ref()) else {
+        return;
+    };
+    let mut empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    empty.set_num_virtual_rows(1);
+    let Ok(Datum::Int(value)) = constant.eval_typed_as_on_row(ctx, empty.get_row(0), EvalType::Int)
+    else {
+        return;
+    };
+    if value > 0 {
+        return;
+    }
+    let not_null = column.flags() & FieldTypeFlags::NOT_NULL != 0;
+    let replace = if constant_type.is_unsigned() && !column.is_unsigned() {
+        ((operator == "eq" && not_null) || operator == "nulleq")
+            && value as u64 > tidb_datatype::integer_signed_upper_bound(column.code()) as u64
+    } else if column.is_unsigned() && not_null && !constant_type.is_unsigned() {
+        !(value == 0 && matches!(operator, "le" | "gt" | "nulleq" | "eq" | "ne"))
+    } else {
+        false
+    };
+    if replace {
+        let one = Expression::Constant(Constant::new_one());
+        let zero = Expression::Constant(Constant::new_zero());
+        (*left, *right) = if column_first {
+            (one, zero)
+        } else {
+            (zero, one)
+        };
+    }
 }
 
 /// `int non-constant [cmp] non-int constant` (`builtin_compare.go:1811-1833`)
@@ -1215,6 +1274,127 @@ mod tests {
             Datum::new_string(text),
             FieldType::new(FieldTypeCode::Varchar),
         ))
+    }
+
+    #[test]
+    fn unsigned_refinement_matches_go_across_widths_nullability_and_operand_order() {
+        // TestUnsignedRefinementOracle: each pair covers lt/le/gt/ge/eq/ne/nulleq,
+        // column first then constant first. Go returns these same masks for all
+        // five integer widths and both ordinary and correlated columns.
+        let masks = [
+            [
+                "------- -------",
+                "------- -------",
+                "------- -------",
+                "------- -------",
+                "------- -------",
+                "------Y ------Y",
+                "------Y ------Y",
+                "------- -------",
+            ],
+            ["------- -------"; 8],
+            [
+                "------- -------",
+                "------- -------",
+                "------- -------",
+                "------- -------",
+                "------- -------",
+                "----Y-Y ----Y-Y",
+                "----Y-Y ----Y-Y",
+                "------- -------",
+            ],
+            [
+                "YYYYYYY YYYYYYY",
+                "Y--Y--- -YY----",
+                "------- -------",
+                "------- -------",
+                "------- -------",
+                "------- -------",
+                "------- -------",
+                "------- -------",
+            ],
+        ];
+        let values = [
+            Datum::Int(-1),
+            Datum::Int(0),
+            Datum::Int(1),
+            Datum::UInt(0),
+            Datum::UInt(128),
+            Datum::UInt(1 << 63),
+            Datum::UInt(u64::MAX),
+            Datum::Null,
+        ];
+        let operators = ["lt", "le", "gt", "ge", "eq", "ne", "nulleq"];
+        for code in [
+            FieldTypeCode::Tiny,
+            FieldTypeCode::Short,
+            FieldTypeCode::Int24,
+            FieldTypeCode::Long,
+            FieldTypeCode::LongLong,
+        ] {
+            for (flags, masks) in masks.iter().enumerate() {
+                let mut column_type = FieldType::new(code);
+                if flags & 1 != 0 {
+                    column_type.add_flags(FieldTypeFlags::UNSIGNED);
+                }
+                if flags & 2 != 0 {
+                    column_type.add_flags(FieldTypeFlags::NOT_NULL);
+                }
+                for (value, mask) in values.iter().zip(masks) {
+                    let mut constant_type = FieldType::new(FieldTypeCode::LongLong);
+                    if matches!(value, Datum::UInt(_)) {
+                        constant_type.add_flags(FieldTypeFlags::UNSIGNED);
+                    }
+                    for correlated in [false, true] {
+                        for (flip, mask) in mask.split_whitespace().enumerate() {
+                            for (op, expected) in operators.iter().zip(mask.bytes()) {
+                                let column = crate::column::Column::new(1, column_type.clone());
+                                let column = if correlated {
+                                    Expression::CorrelatedColumn(
+                                        crate::column::CorrelatedColumn::new(column),
+                                    )
+                                } else {
+                                    Expression::Column(column)
+                                };
+                                let constant = Expression::Constant(Constant::new(
+                                    value.clone(),
+                                    constant_type.clone(),
+                                ));
+                                let (left, right) = if flip == 0 {
+                                    (column, constant)
+                                } else {
+                                    (constant, column)
+                                };
+                                let (actual, warnings) = refine(op, left, right);
+                                assert!(warnings.is_empty());
+                                let Expression::ScalarFunction(function) = actual else {
+                                    panic!("comparison")
+                                };
+                                let replaced = function
+                                    .args
+                                    .iter()
+                                    .all(|arg| matches!(arg, Expression::Constant(_)));
+                                assert_eq!(replaced, expected == b'Y', "{code:?} flags={flags} value={value:?} correlated={correlated} flip={flip} op={op}");
+                                if replaced {
+                                    for (index, argument) in function.args.iter().enumerate() {
+                                        let Expression::Constant(constant) = argument else {
+                                            unreachable!()
+                                        };
+                                        assert_eq!(
+                                            constant.value,
+                                            Datum::Int(i64::from(index == flip))
+                                        );
+                                        let field = constant.ret_type.as_ref().unwrap();
+                                        assert_eq!(field.code(), FieldTypeCode::Tiny);
+                                        assert!(field.is_unsigned());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// `<int column> <op> <constant>`, refined, as `(refined arg, warnings)`.

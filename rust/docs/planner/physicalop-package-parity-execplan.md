@@ -6800,3 +6800,110 @@ collation/rewriter/unsigned refinement branches, and full sysbench/TPC-C/TPC-H/
 YCSB performance measurements are still open. The brief pass does less redundant
 expression work; no throughput claim is made without workload measurements.
 No whole Go package is marked accepted by this checkpoint.
+
+
+## Continuing comparison audit: unsigned argument refinement
+
+
+Previous checkpoint 3561624397 is published and remote-verified; the next pull
+was current. It made authoritative progress without accepting a Go package.
+The next remaining comparison-construction branch is refineArgsByUnsignedFlag
+in pkg/expression/builtin_compare.go. It preserves nullable SQL semantics,
+interprets a Uint64 constant through Go's signed EvalInt carrier, handles
+correlated columns, mirrors operators when the constant is on the left, and
+replaces only source-proven comparisons with NewOne/NewZero arguments. This is
+part of the existing whole pkg/expression and dependent physicalop audit.
+
+First capture a Go matrix over integer widths, flags, signed/unsigned/NULL
+constants, all seven comparisons, operand order and correlated columns. Add a
+native regression against the measured rewrite decisions before implementing
+the missing rule. Verify SQL rows/plans/cache behavior and broader comparison
+consumers, then measure an appropriate execution control without claiming
+whole-workload performance from a component benchmark. Required lint, isolated
+validation, self-review and the requested commit/push remain mandatory. Whole
+package inventories and all four workload acceptance gates stay open.
+
+The source matrix now passes: five integer widths, four flag combinations,
+eight signed/unsigned/NULL constants, ordinary/correlated columns, both operand
+orders and seven operators (4,480 decisions). The new native regression failed
+before the implementation at signed nullable TINYINT <=> UINT64(1<<63), then
+passed with the source rewrite. Logs: /tmp/tidb-unsigned-red.log and
+/tmp/tidb-unsigned-green.log. The rule uses the existing signed EvalInt carrier,
+keeps Go's early positive/NULL/error exits, respects nullable columns and
+mirrored zero-boundary operators, and uses the existing NewOne/NewZero metadata.
+It executes after integer/YEAR refinement and inside the existing cache guard.
+
+The Go overlay /tmp/tidb-unsigned-overlay.json injects only temporary oracle
+tests into the existing windows test harness. It changes no tracked Go source,
+imports, Bazel metadata or modules; bazel_prepare is therefore not required.
+The harness has no failpoint dependency. The source matrix and five SQL cases
+plus four prepared executions pass with the race detector:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-unsigned-overlay.json -run '^(TestUnsignedRefinementOracle|TestUnsignedRefinementSQLOracle)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Log: /tmp/tidb-unsigned-go-race.log. Native SQL assertions preserve nullable
+results for ordinary equality, fold impossible null-safe equality, eliminate
+unsigned predicates only at source-proven bounds, and retain prepared-cache
+hits while parameters change -1, 0, 1, -1. EXPLAIN checks the empty TableDual
+and absence of redundant Selection for the two constant predicates.
+
+The pipeline benchmark adds two construction-and-folding projection cases:
+unsigned NOT NULL > -1 and its nullable control. Both validate all output rows
+before timing. Only execution is timed; construction is outside the loop.
+Baseline is published 3561624397 with the identical new benchmark source.
+Build commands from each checkout's rust directory:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+The baseline and patched executables are copied to
+/tmp/tidb-unsigned-before-pipeline and /tmp/tidb-unsigned-after-pipeline, so the
+shared Cargo target cannot replace a measured binary. Build logs are
+/tmp/tidb-unsigned-{before,after}-build.log. Timing results and final validation
+receipt follow after all background checks finish. This is component evidence;
+full sysbench/TPC-C/TPC-H/YCSB acceptance remains open, as do the whole-package
+original test/support/build/platform/generated artifact gates. No package
+inventory row is accepted by this dependency-progress checkpoint.
+
+Three alternating runs (before/after, after/before, before/after), with builds
+and tests stopped during measurement, all passed output assertions. Commands:
+
+    BENCH_ONLY=unsigned_comparison /tmp/tidb-unsigned-before-pipeline
+    BENCH_ONLY=unsigned_comparison /tmp/tidb-unsigned-after-pipeline
+
+Logs: /tmp/tidb-unsigned-bench-{1,2,3}-{before,after}.log. Median NOT NULL
+projection cost was 73.1 -> 8.1 ns/row; calibrated cost 148.3886 -> 16.7686,
+8.85x lower. Nullable control was 73.2 -> 73.1 ns/row and calibrated
+148.8405 -> 148.0540 (0.5%, within observed spread). This measures source-proven
+constant folding in a projection, not throughput of any complete workload.
+
+Final isolated validation over published 3561624397 plus only the intended
+four files passed. Commands from /private/tmp/tidb-parity-publish-aba629bb/rust,
+with CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_compare_refinement
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_sysbench_access
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_in_list_full_evaluation
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_datetime_year_compare
+
+Expression: 1,200 passed, 97 existing ignored. Session: comparison 9, prepared
+cache 45, EXPLAIN 64, sysbench access 15, IN evaluation 6, datetime/YEAR 3.
+Logs: /tmp/tidb-unsigned-isolated-<crate>-<filter>.log (expression filter all).
+The SQL comparison suite was repeated after improving fixture readability.
+
+Required lint and whitespace checks:
+
+    GOTOOLCHAIN=go1.26.0 make lint
+    git diff --check
+
+Lint passed (/tmp/tidb-unsigned-lint.log). Initial sandboxed/default and
+offline attempts could not satisfy make's mandatory revive installation;
+the authorized network/cache-enabled retry passed. No lint rule was skipped.
+Changed files: expression builtin_compare.rs, session tests_compare_refinement.rs,
+executor benches/pipeline.rs and this plan. The two unrelated untracked drafts
+remain untouched and outside the isolated build and publication. Whole-package
+acceptance, ignored native tests and the four complete workload runs are not
+verified by these checks. This remains dependency progress with no acceptance
+claim for pkg/expression or pkg/planner/core/operator/physicalop.

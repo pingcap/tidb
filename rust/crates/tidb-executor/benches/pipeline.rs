@@ -606,6 +606,68 @@ fn bench_numeric_projection() {
     }
 }
 
+/// Go refines unsigned NOT NULL columns against negative signed constants.
+/// The nullable case must retain the comparison and serves as a control.
+fn bench_unsigned_comparison_projection() {
+    use tidb_datatype::FieldTypeFlags;
+    use tidb_expr::{
+        constant::Constant,
+        evaluator::EvaluatorSuite,
+        expr_util::{FunctionBuilder, RealFunctionBuilder},
+        NoColumns,
+    };
+    for (label, not_null) in [
+        ("unsigned_comparison_not_null", true),
+        ("unsigned_comparison_nullable", false),
+    ] {
+        let mut field = FieldType::new(FieldTypeCode::LongLong);
+        field.add_flags(FieldTypeFlags::UNSIGNED);
+        if not_null {
+            field.add_flags(FieldTypeFlags::NOT_NULL);
+        }
+        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&field), CHUNK);
+        for row in 0..CHUNK {
+            input.append_datum(0, &Datum::UInt(row as u64));
+        }
+        let output_field = FieldType::new(FieldTypeCode::LongLong);
+        let mut expression = RealFunctionBuilder::new(&NoColumns)
+            .new_function(
+                "gt",
+                Some(output_field.clone()),
+                vec![
+                    column(0, &field),
+                    Expression::Constant(Constant::new(Datum::Int(-1), output_field.clone())),
+                ],
+            )
+            .unwrap();
+        tidb_expr::constant_fold::fold_constant_in_mode(
+            &mut expression,
+            &NoColumns,
+            tidb_expr::constant_fold::ConstantFoldMode::Normal,
+        );
+        let suite = EvaluatorSuite::new(vec![expression], false);
+        let mut output = Chunk::new_with_capacity(&[output_field.clone()], CHUNK);
+        suite.run(&NoColumns, &mut input, &mut output).unwrap();
+        for row in 0..CHUNK {
+            assert_eq!(
+                output.get_row(row).get_datum(0, &output_field),
+                Datum::Int(1)
+            );
+        }
+        let mut pass = || {
+            output.reset();
+            suite.run(&NoColumns, &mut input, &mut output).unwrap();
+            assert_eq!(black_box(output.num_rows()), CHUNK);
+        };
+        let result = best_of_blocks(&mut [(label, &mut pass)])[0];
+        println!(
+            "{label} ns_per_row {:.1}",
+            result.0.as_secs_f64() * 1e9 / CHUNK as f64
+        );
+        println!("{label} cal_per_row {:.4}", result.1 / CHUNK as f64);
+    }
+}
+
 /// Explicit string-to-JSON casts as arithmetic operands, through the same
 /// EvaluatorSuite used by projection. Inputs are valid, so timing excludes
 /// warning collection while retaining JSON parsing and numeric conversion.
@@ -761,6 +823,9 @@ fn main() {
     if wanted("numeric_projection") {
         bench_numeric_projection();
         bench_json_numeric_projection();
+    }
+    if wanted("unsigned_comparison") {
+        bench_unsigned_comparison_projection();
     }
     if wanted("stream_group") {
         bench_stream_grouping();
