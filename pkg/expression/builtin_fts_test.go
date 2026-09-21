@@ -151,7 +151,14 @@ func TestFTSMysqlMatchAgainstLocalEvalWordBoundary(t *testing.T) {
 	sf := newFTSMatchAgainstForTest(t, ctx, "+cat", 1, ast.FulltextSearchModifierBooleanMode)
 	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
 
-	v, _, err := sf.EvalReal(ctx, stringRow("concatenate the categories"))
+	// STANDARD keeps "category" as one token. ILIKE "%cat%" would match it,
+	// which is incompatible with the Local FTS result asserted here.
+	v, isNull, err := sf.EvalReal(ctx, stringRow("category"))
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, float64(0), v)
+
+	v, _, err = sf.EvalReal(ctx, stringRow("concatenate the categories"))
 	require.NoError(t, err)
 	require.Equal(t, float64(0), v)
 

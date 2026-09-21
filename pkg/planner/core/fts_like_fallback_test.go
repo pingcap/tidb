@@ -17,12 +17,12 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -110,6 +110,26 @@ func TestFTSLikeFallbackPrepared(t *testing.T) {
 	require.Error(t, tk.ExecToErr("execute lit"))
 }
 
+// TestFTSLocalWordBoundary checks STANDARD token semantics with only Local FTS.
+// ILIKE fallback is incompatible here: "%cat%" also matches "category".
+// Keep it disabled so this correctness test cannot select an ILIKE candidate.
+func TestFTSLocalWordBoundary(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_local_match_against=on, tidb_enable_fts_like_fallback=off, tidb_opt_enable_alternative_logical_plans=on")
+	tk.MustExec("create table fts_local_boundary(id int primary key, a text, fulltext index(a))")
+	tk.MustExec("insert into fts_local_boundary values(1,'cat'),(2,'category'),(3,'dog')")
+	q := "select id from fts_local_boundary where match(a) against('cat' in boolean mode) order by id"
+	tk.MustQuery(q).Check(testkit.Rows("1"))
+	plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + q).Rows())
+	require.Contains(t, plan, "match_against")
+	require.NotContains(t, plan, "ilike")
+}
+
+// TestFTSLikeAlternativeCBO checks candidate selection using data for which
+// Local FTS and ILIKE return the same rows. Word-boundary correctness is tested
+// separately with ILIKE disabled in TestFTSLocalWordBoundary.
 func TestFTSLikeAlternativeCBO(t *testing.T) {
 	if !intest.InTest {
 		t.Skip("requires intest cost observer")
@@ -118,7 +138,7 @@ func TestFTSLikeAlternativeCBO(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table fts_cbo(id int primary key, a text, fulltext index(a))")
-	tk.MustExec("insert into fts_cbo values(1,'cat'),(2,'category'),(3,'dog')")
+	tk.MustExec("insert into fts_cbo values(1,'cat'),(2,'bird'),(3,'dog')")
 	tk.MustExec("set tidb_enable_local_match_against=on, tidb_enable_fts_like_fallback=on, tidb_opt_enable_alternative_logical_plans=on")
 	q := "select id from fts_cbo where match(a) against('cat' in boolean mode) order by id"
 	for _, winner := range []string{"local", "ilike", "tie"} {
@@ -131,11 +151,7 @@ func TestFTSLikeAlternativeCBO(t *testing.T) {
 				}
 				return 1
 			})
-			expected := testkit.Rows("1")
-			if winner == "ilike" {
-				expected = testkit.Rows("1", "2")
-			}
-			tk.MustQueryWithContext(ctx, q).Check(expected)
+			tk.MustQueryWithContext(ctx, q).Check(testkit.Rows("1"))
 			require.Equal(t, []bool{false, true}, rounds)
 			plan := tk.MustQueryWithContext(ctx, "explain format='brief' "+q).Rows()
 			text := strings.ToLower(strings.TrimSpace(fmt.Sprint(plan)))
@@ -149,7 +165,7 @@ func TestFTSLikeAlternativeCBO(t *testing.T) {
 		})
 	}
 	// Unsupported ILIKE syntax drops only that candidate.
-	tk.MustQuery("select id from fts_cbo where match(a) against('cat*' in boolean mode) order by id").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select id from fts_cbo where match(a) against('cat*' in boolean mode) order by id").Check(testkit.Rows("1"))
 	require.False(t, tk.Session().GetSessionVars().StmtCtx.InFTSLikeFallbackRound)
 	// A literal prepared plan must not bypass the alternative switch on a cache hit.
 	tk.MustExec("prepare p from \"select id from fts_cbo where match(a) against('cat' in boolean mode) order by id\"")
@@ -159,19 +175,20 @@ func TestFTSLikeAlternativeCBO(t *testing.T) {
 		}
 		return 1
 	})
-	tk.MustQueryWithContext(ctx, "execute p").Check(testkit.Rows("1", "2"))
-	tk.MustQueryWithContext(ctx, "execute p").Check(testkit.Rows("1", "2"))
+	tk.MustQueryWithContext(ctx, "execute p").Check(testkit.Rows("1"))
+	tk.MustQueryWithContext(ctx, "execute p").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans=off")
 	tk.MustQueryWithContext(ctx, "execute p").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans=on")
-	tk.MustQueryWithContext(ctx, "execute p").Check(testkit.Rows("1", "2"))
+	tk.MustQueryWithContext(ctx, "execute p").Check(testkit.Rows("1"))
 	// Mutable ILIKE patterns must not cache the first parameter, including NULL.
 	tk.MustExec("prepare dyn from 'select id from fts_cbo where match(a) against(? in boolean mode) order by id'")
 	for _, tc := range []struct {
 		value string
 		rows  []string
-	}{{"NULL", nil}, {"'cat'", []string{"1", "2"}}, {"'dog'", []string{"3"}}, {"NULL", nil}} {
+	}{{"NULL", nil}, {"'cat'", []string{"1"}}, {"'dog'", []string{"3"}}, {"NULL", nil}} {
 		tk.MustExec("set @v=" + tc.value)
 		tk.MustQueryWithContext(ctx, "execute dyn using @v").Check(testkit.Rows(tc.rows...))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -274,4 +291,103 @@ func TestFTSLikeAlternativeQuotedWords(t *testing.T) {
 		})
 		tk.MustQueryWithContext(ctx, `select id from fts_quotes where match(a) against('"cat"' in boolean mode) order by id`).Check(testkit.Rows("1", "2", "5"))
 	}
+}
+
+func TestFTSLikeSwitchMatrix(t *testing.T) {
+	if !intest.InTest {
+		t.Skip("requires intest cost observer")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table delivery_matrix(id int primary key,a text,fulltext index(a))")
+	tk.MustExec("insert into delivery_matrix values(1,'cat'),(2,'category'),(3,'dog')")
+	q := "select id from delivery_matrix where match(a) against('cat' in boolean mode) order by id"
+	for a := 0; a < 2; a++ {
+		for l := 0; l < 2; l++ {
+			for i := 0; i < 2; i++ {
+				t.Run(fmt.Sprintf("A%dL%dI%d", a, l, i), func(t *testing.T) {
+					tk.MustExec(fmt.Sprintf("set tidb_opt_enable_alternative_logical_plans=%d,tidb_enable_local_match_against=%d,tidb_enable_fts_like_fallback=%d", a, l, i))
+					var rounds []bool
+					ctx := context.WithValue(context.Background(), planner.FTSAlternativeCostTestKey{}, func(like bool, cost float64) float64 {
+						rounds = append(rounds, like)
+						if like {
+							return 0
+						}
+						return 1
+					})
+					if l == 0 && (a == 0 || i == 0) {
+						require.Error(t, tk.ExecToErr(q))
+					} else {
+						expected := testkit.Rows("1")
+						if a == 1 && i == 1 {
+							expected = testkit.Rows("1", "2")
+						}
+						tk.MustQueryWithContext(ctx, q).Check(expected)
+						if a == 1 && i == 1 {
+							if l == 1 {
+								require.Equal(t, []bool{false, true}, rounds)
+							} else {
+								require.Equal(t, []bool{true}, rounds)
+							}
+						} else {
+							for _, like := range rounds {
+								require.False(t, like)
+							}
+						}
+					}
+					require.False(t, tk.Session().GetSessionVars().StmtCtx.InFTSLikeFallbackRound)
+				})
+			}
+		}
+	}
+}
+func TestFTSLikeConcurrentSessions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table delivery_sessions(id int primary key,a text,fulltext index(a))")
+	tk.MustExec("insert into delivery_sessions values(1,'cat'),(2,'category')")
+	for n := 0; n < 8; n++ {
+		n := n
+		t.Run(fmt.Sprintf("session%d", n), func(t *testing.T) {
+			t.Parallel()
+			s := testkit.NewTestKit(t, store)
+			s.MustExec("use test")
+			s.MustExec(fmt.Sprintf("set tidb_opt_enable_alternative_logical_plans=1,tidb_enable_local_match_against=%d,tidb_enable_fts_like_fallback=%d", n%2, 1-n%2))
+			rows := testkit.Rows("1")
+			if n%2 == 0 {
+				rows = testkit.Rows("1", "2")
+			}
+			for j := 0; j < 10; j++ {
+				s.MustQuery("select id from delivery_sessions where match(a) against('cat' in boolean mode) order by id").Check(rows)
+				require.False(t, s.Session().GetSessionVars().StmtCtx.InFTSLikeFallbackRound)
+			}
+		})
+	}
+}
+
+func TestFTSLikeErrorBoundaries(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table delivery_edges(id int,a text,b text,fulltext index(a,b))")
+	tk.MustExec("insert into delivery_edges values(1,'cat','dog'),(2,'category',NULL)")
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans=1,tidb_enable_local_match_against=1,tidb_enable_fts_like_fallback=1")
+	for _, q := range []string{
+		"select id from delivery_edges where match(a) against('cat' in boolean mode)",
+		"select id from delivery_edges where match(b,a) against('cat' in boolean mode)",
+		"select id from delivery_edges where match(a,b) against('cat')",
+		"select match(a,b) against('cat' in boolean mode) from delivery_edges",
+		"select id from delivery_edges where match(a,b) against('cat' in boolean mode)>0",
+		"select id from delivery_edges order by match(a,b) against('cat' in boolean mode)",
+	} {
+		require.Error(t, tk.ExecToErr(q), q)
+		require.False(t, tk.Session().GetSessionVars().StmtCtx.InFTSLikeFallbackRound)
+	}
+	tk.MustExec("set tidb_enable_local_match_against=0")
+	tk.MustQuery("select id from delivery_edges where match(a) against('cat' in boolean mode) order by id").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select id from delivery_edges where match(b,a) against('cat' in boolean mode) order by id").Check(testkit.Rows("1", "2"))
+	tk.MustExec("set tidb_enable_local_match_against=1,tidb_enable_fts_like_fallback=0")
+	tk.MustQuery("select id from delivery_edges where match(a,b) against('cat' in boolean mode) order by id").Check(testkit.Rows("1"))
 }

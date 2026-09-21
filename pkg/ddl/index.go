@@ -972,7 +972,7 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) onCreateFullTextIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func (*worker) onCreateFullTextIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if job.IsRollingback() {
 		return onDropIndex(jobCtx, job)
 	}

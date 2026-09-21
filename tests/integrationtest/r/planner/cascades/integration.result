@@ -879,7 +879,7 @@ sum(a)	(select t1.a from t1 where t1.a = t2.a limit 1)	(select t1.b from t1 wher
 6	1	11
 explain select a from t1 where exists(select 1 from t2 where t1.a = t2.a);
 id	estRows	task	access object	operator info
-MergeJoin_30	10000.00	root		semi join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
+MergeJoin_30	8000.00	root		semi join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
 ├─TableReader_35(Build)	10000.00	root		data:TableFullScan_36
 │ └─TableFullScan_36	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader_32(Probe)	10000.00	root		data:TableFullScan_33
