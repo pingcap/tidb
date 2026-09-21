@@ -531,49 +531,95 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 }
 
 func TestPlanReplayerLoadIgnoresLowResolutionTSO(t *testing.T) {
-	tempDir := t.TempDir()
-	ctx := context.Background()
-	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
-	require.NoError(t, err)
-	extstore.SetGlobalExtStorageForTest(storage)
-	defer func() {
-		extstore.SetGlobalExtStorageForTest(nil)
-		storage.Close()
-	}()
+	testCases := []struct {
+		name              string
+		tableName         string
+		setup             func(*testing.T, *testkit.TestKit)
+		setSQL            string
+		variableTOMLCheck string
+		postLoadCheck     func(*testkit.TestKit)
+	}{
+		{
+			name:              "low_resolution_tso",
+			tableName:         "t_load_low_res_tso",
+			setSQL:            "set @@tidb_low_resolution_tso = 1",
+			variableTOMLCheck: `tidb_low_resolution_tso = "ON"`,
+			postLoadCheck: func(loadTK *testkit.TestKit) {
+				loadTK.MustQuery("select @@tidb_low_resolution_tso").Check(testkit.Rows("0"))
+			},
+		},
+		{
+			name:      "snapshot",
+			tableName: "t_load_snapshot",
+			setup: func(t *testing.T, tk *testkit.TestKit) {
+				tk.MustExec(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05 -0700', 'All versions after safe point can be accessed. (DO NOT EDIT)')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '20060102-15:04:05 -0700', comment = 'All versions after safe point can be accessed. (DO NOT EDIT)'`)
+			},
+			setSQL:            "set @@tidb_snapshot = NOW(6)",
+			variableTOMLCheck: `tidb_snapshot = "`,
+		},
+		{
+			name:      "read_staleness",
+			tableName: "t_load_read_staleness",
+			setup: func(t *testing.T, _ *testkit.TestKit) {
+				time.Sleep(time.Second + 10*time.Millisecond)
+			},
+			setSQL:            "set @@tidb_read_staleness = '-1'",
+			variableTOMLCheck: `tidb_read_staleness = "-1"`,
+		},
+	}
 
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_load_low_res_tso(a int, b int, index idx_a(a))")
-	// The dumping session reads with a low resolution TSO, so the dumped
-	// variables.toml carries tidb_low_resolution_tso = "ON".
-	tk.MustExec("set @@tidb_low_resolution_tso = 1")
-	res := tk.MustQuery("plan replayer dump explain select * from t_load_low_res_tso where a = 1")
-	fileName := requirePlanReplayerFileToken(t, res.Rows())
-	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			ctx := context.Background()
+			storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+			require.NoError(t, err)
+			extstore.SetGlobalExtStorageForTest(storage)
+			defer func() {
+				extstore.SetGlobalExtStorageForTest(nil)
+				storage.Close()
+			}()
 
-	fileReader, err := storage.Open(ctx, filePath, nil)
-	require.NoError(t, err)
-	content, err := io.ReadAll(fileReader)
-	require.NoError(t, err)
-	require.NoError(t, fileReader.Close())
-	requireZipFileContains(t, content, "variables.toml", `tidb_low_resolution_tso = "ON"`)
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec(fmt.Sprintf("create table %s(a int, b int, index idx_a(a))", tc.tableName))
+			if tc.setup != nil {
+				tc.setup(t, tk)
+			}
+			tk.MustExec(tc.setSQL)
+			res := tk.MustQuery(fmt.Sprintf("plan replayer dump explain select * from %s where a = 1", tc.tableName))
+			fileName := requirePlanReplayerFileToken(t, res.Rows())
+			filePath := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
 
-	// Loading applies the dumped variables before creating the schema. DDL is
-	// rejected under tidb_low_resolution_tso, so the variable must be ignored or
-	// the load fails while creating the database.
-	loadStore := testkit.CreateMockStore(t)
-	loadTK := testkit.NewTestKit(t, loadStore)
-	loadTK.MustExec(fmt.Sprintf("plan replayer load '%s'", strings.ReplaceAll(filepath.Join(tempDir, filePath), "'", "''")))
-	loadInfo, ok := loadTK.Session().Value(executor.PlanReplayerLoadVarKey).(*executor.PlanReplayerLoadInfo)
-	require.True(t, ok)
-	defer loadTK.Session().ClearValue(executor.PlanReplayerLoadVarKey)
-	require.NoError(t, loadInfo.Update(content))
+			fileReader, err := storage.Open(ctx, filePath, nil)
+			require.NoError(t, err)
+			content, err := io.ReadAll(fileReader)
+			require.NoError(t, err)
+			require.NoError(t, fileReader.Close())
+			requireZipFileContains(t, content, "variables.toml", tc.variableTOMLCheck)
 
-	loadTK.MustQuery("select @@tidb_low_resolution_tso").Check(testkit.Rows("0"))
-	loadTK.MustExec("use test")
-	loadTK.MustQuery("select count(*) from information_schema.tables where table_schema = 'test' and table_name = 't_load_low_res_tso'").Check(testkit.Rows("1"))
-	loadTK.MustQuery("explain format='brief' select * from t_load_low_res_tso where a = 1").CheckContain("idx_a")
+			// Loading applies the dumped variables before creating the schema. These
+			// session variables change the loading session's read timestamp, so the
+			// loader must ignore them or schema replay fails / becomes invisible.
+			loadStore := testkit.CreateMockStore(t)
+			loadTK := testkit.NewTestKit(t, loadStore)
+			loadTK.MustExec(fmt.Sprintf("plan replayer load '%s'", strings.ReplaceAll(filepath.Join(tempDir, filePath), "'", "''")))
+			loadInfo, ok := loadTK.Session().Value(executor.PlanReplayerLoadVarKey).(*executor.PlanReplayerLoadInfo)
+			require.True(t, ok)
+			defer loadTK.Session().ClearValue(executor.PlanReplayerLoadVarKey)
+			require.NoError(t, loadInfo.Update(content))
+
+			if tc.postLoadCheck != nil {
+				tc.postLoadCheck(loadTK)
+			}
+			loadTK.MustExec("use test")
+			loadTK.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema = 'test' and table_name = '%s'", tc.tableName)).Check(testkit.Rows("1"))
+			loadTK.MustQuery(fmt.Sprintf("explain format='brief' select * from %s where a = 1", tc.tableName)).CheckContain("idx_a")
+		})
+	}
 }
 
 func TestPlanReplayerLoadReportsCreateDatabaseError(t *testing.T) {
