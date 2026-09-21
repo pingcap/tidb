@@ -123,6 +123,12 @@ scalar/vector/SQL fixtures and pinned Go overlays are recorded in the ExecPlan.
 This is evidence for the ongoing dependency audit; expression, datatype and
 all inventoried executor/planner packages remain unaccepted.
 
+Temporal and JSON numeric source domains now participate in the shared
+arithmetic dependency path, with strict/warning scalar/vector and SQL precision
+fixtures. The ExecPlan records the source conversion choices and remaining
+whole-expression validation gaps. This adds evidence without changing any
+package's unaccepted status or its complete artifact obligations.
+
 ## Acceptance obligations
 
 - Reconcile every production method and branch, including generated clone

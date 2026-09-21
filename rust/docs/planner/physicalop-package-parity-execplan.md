@@ -30,6 +30,12 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, temporal and JSON arithmetic) Shared numeric argument
+  conversion now covers temporal and JSON columns. A 288-case Go/native matrix
+  pins values, strict errors and warnings in both modes; 48 SQL scenarios cover
+  precision and NULL warning order. Broad native, Go race, lint, performance
+  control and isolated publication checks passed. Whole-package and workload
+  gates remain open.
 - [x] (2026-09-21, hybrid arithmetic) Native typed operands now preserve
   ENUM/SET integer conversion, signed BIT carriers and unsigned binary literal
   decimal/real values. Source overflow errors and SQL literal warning timing
@@ -5633,3 +5639,153 @@ selection, signed carriers, conversion error identity, scalar versus vector
 NULL/error ordering, binary cast fold timing and exclusion of unrelated drafts.
 `git diff --check` passes. The seven-file checkpoint is ready for the requested
 commit and push; the overall goal and whole-package acceptance remain open.
+
+
+## Temporal and JSON arithmetic audit (2026-09-21)
+
+
+Published hybrid checkpoint 93c0593c20 is verified progress. Pulled again with
+no remote changes. Continue the expression dependency audit with temporal and
+JSON numeric signatures: source precision selects Int versus Decimal temporal
+arguments, and JSON DIV must retain exact integer/decimal conversion while
+other operators evaluate Real. Capture Go outcomes before changing Rust and
+preserve warning/error ordering. All whole-package and workload gates remain
+open; this stage does not redefine acceptance around these signatures.
+
+
+### Temporal and JSON source decisions and regressions
+
+
+The 144-case warning-mode native regression failed before implementation
+(`/tmp/tidb-temporal-json-arithmetic-red.log`), with JSON operands rejected as
+unsupported. Temporal values previously used the scalar fallback; batch
+eligibility did not cover their typed source domains. The final matrix extends
+to 288 scenarios with strict error mode, and explicitly requires the numeric
+batch evaluator to accept every vector case.
+
+`scalar_function.rs` now admits Datetime/Timestamp/Duration source types into
+Int/Real/Decimal argument conversion and JSON into Real/Decimal. Int batches
+whose operands require temporal casts run the full ordered argument passes
+before integer arithmetic, avoiding reads of temporal storage as integer chunk
+cells. The existing compact integer path remains for actual integer operands.
+Temporal decimal conversion uses ToNumber before precision/scale fitting.
+JSON real conversion uses the existing source numeric converter and reports
+FLOAT for nonnumeric JSON versus DOUBLE for a truncated JSON string. JSON DIV
+uses the datatype contextful decimal converter, preserving exact integers above
+2^53 and the source's raw 1265 decimal-string truncation diagnostic.
+
+Go overlays are `/tmp/tidb-temporal-json-arithmetic-overlay.json` and
+`/tmp/tidb-temporal-json-arithmetic-sql-overlay.json`. The first includes
+TestGroupCheckerTemporalJSONArithmeticOracle in the unchanged checker harness;
+the second includes TestTemporalJSONArithmeticSQLOracle and
+TestTemporalJSONNullSQLOracle in the unchanged windows SQL harness. Go captures
+are `/tmp/tidb-temporal-json-arithmetic-{go,sql-go,null-sql-go}.log`.
+Native focused gates passed in `strict.log` and `sql-native.log` under the same
+prefix. SQL fixtures cover fractional DATETIME/TIME, JSON integers and JSON
+null, and the distinct scalar/vector short-circuit rules for NULL-left operands.
+
+This audit does not accept the whole expression package. Full original
+source/test mapping, computed-argument vectorization, temporal edge/error and
+platform/timezone coverage, and all four workload performance gates remain
+open. No new SQL behavior beyond the source implementation was introduced.
+
+
+### Temporal and JSON validation receipt
+
+
+The change touches only `rust/crates/tidb-expr/src/scalar_function.rs`, its
+existing `tests/go_arithmetic_values.rs`, the existing session
+`tests_core/numeric_domain.rs`, this plan and `physicalop-source-inventory.md`.
+No Go/import/Bazel/module files changed; bazel_prepare is not required. The Go
+checker/windows probe harnesses do not require failpoint toggles.
+
+From `rust/`, these native commands passed:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib temporal_json_arithmetic_uses_go_numeric_casts
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-session --lib temporal_and_json_arithmetic_match_go_sql
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+Full expression: 1,195 passed/97 existing ignored. Executor checker 28, merge
+76, aggregate 76, shuffle 26 and window 23 passed. Session numeric 12, merge 16
+and window 68 passed. Logs use prefix `/tmp/tidb-temporal-json-arithmetic-`
+and suffixes `expr-full.log`, `executor-<filter>.log`, `session-<filter>.log`.
+The full expression suite's existing HTTP test required localhost access.
+
+From repository root, the accumulated 28-function source gate and SQL probes
+passed, as did the required `make lint`:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-temporal-json-arithmetic-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-temporal-json-arithmetic-sql-overlay.json -run '^TestTemporalJSONArithmeticSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-temporal-json-arithmetic-sql-overlay.json -run '^TestTemporalJSONNullSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    make lint
+
+The final Go race log is `go-race.log` and lint log `lint.log` under that same
+prefix. Whole-package gates, ignored original tests and workload measurements
+are not discharged by these targeted integration checks.
+
+The disposable checkout was first verified byte-for-byte against published
+93c0593c20, then reset to that commit. Only the five changed tracked files were
+copied and byte-verified for isolated validation. The pre-existing untracked
+vs_helper.rs and fragment.rs drafts remain untouched and excluded.
+
+
+### Temporal and JSON performance controls and isolated gates
+
+
+Four alternating benchmark pairs compare the published 93c0593c20 binary
+`/tmp/tidb-hybrid-arithmetic-pipeline` with the final
+`/tmp/tidb-temporal-json-arithmetic-pipeline`, using the same existing twelve
+numeric projections. Every invocation sets `BENCH_ONLY=numeric_projection`.
+No tests/builds ran concurrently. Logs:
+`/tmp/tidb-temporal-json-arithmetic-bench-{1..4}-{before,after}.log`;
+medians: `/tmp/tidb-temporal-json-arithmetic-bench-summary.json`.
+
+| Projection | Before ns/row | After ns/row | Time change | Calibrated change |
+| --- | ---: | ---: | ---: | ---: |
+| numeric_decimal | 31.75 | 32.55 | +2.5% | +2.2% |
+| numeric_decimal_div | 230.60 | 237.95 | +3.2% | +2.4% |
+| numeric_decimal_intdiv | 106.30 | 108.00 | +1.6% | +0.0% |
+| numeric_decimal_mod | 1042.10 | 1082.80 | +3.9% | +3.0% |
+| numeric_decimal_nested | 47.45 | 47.55 | +0.2% | +1.5% |
+| numeric_int | 17.85 | 17.70 | -0.8% | -0.6% |
+| numeric_int_div | 17.35 | 17.50 | +0.9% | +1.0% |
+| numeric_int_mod | 16.45 | 16.90 | +2.7% | +1.4% |
+| numeric_int_nested | 25.35 | 24.95 | -1.6% | -2.3% |
+| numeric_real_intdiv | 139.70 | 143.20 | +2.5% | +1.7% |
+| numeric_string | 98.85 | 100.70 | +1.9% | +2.4% |
+| numeric_string_intdiv | 103.90 | 102.80 | -1.1% | -0.5% |
+
+The controls vary from -1.6% to +3.9% in time and -2.3% to +3.0% after
+calibration; no performance gain is claimed. This comparison does not benchmark
+the newly admitted JSON/temporal shapes or establish workload performance.
+Those measurements and full sysbench/TPC-C/TPC-H/YCSB comparisons remain open.
+
+From `/private/tmp/tidb-parity-publish-aba629bb/rust`, isolated validation uses:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+
+The logs are `/tmp/tidb-temporal-json-arithmetic-isolated-{expr,sql}.log`.
+The remote was fetched again with zero divergence from the published parent.
+Additional audit work remains for temporal constant overflow rendering and
+precision/error/timezone extremes, JSON extremes/constant casts, and computed
+argument vectorization. These are explicit remaining whole-expression work,
+not waived acceptance criteria.
+
+
+Final isolated gates passed: 1,195 expression tests (97 existing ignored) and
+all 12 numeric SQL tests. All build, test and timing processes are terminal.
+Self-review verified source domain selection, exact JSON decimal conversion,
+warning/error identities, ordered argument batches, NULL handling and source
+precision propagation. Final code bytes match the isolated validated patch;
+`git diff --check` passes. The five-file checkpoint is ready for the requested
+commit/push. No package-completion or workload-performance claim is made.

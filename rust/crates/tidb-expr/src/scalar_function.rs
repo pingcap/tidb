@@ -3285,7 +3285,12 @@ fn is_numeric_binary_literal(expression: &Expression) -> bool {
 
 fn numeric_argument_domain(source: EvalType, target: EvalType) -> bool {
     source == target
-        || (source == EvalType::String && matches!(target, EvalType::Real | EvalType::Decimal))
+        || (matches!(source, EvalType::String | EvalType::Json)
+            && matches!(target, EvalType::Real | EvalType::Decimal))
+        || (matches!(
+            source,
+            EvalType::Datetime | EvalType::Timestamp | EvalType::Duration
+        ) && matches!(target, EvalType::Int | EvalType::Real | EvalType::Decimal))
         || (target == EvalType::Real && matches!(source, EvalType::Int | EvalType::Decimal))
         || (target == EvalType::Decimal && matches!(source, EvalType::Int | EvalType::Real))
 }
@@ -3320,6 +3325,7 @@ fn cast_numeric_argument_in_mode(
         value => value,
     };
     let code = match target {
+        EvalType::Int => tidb_datatype::FieldTypeCode::LongLong,
         EvalType::Real => tidb_datatype::FieldTypeCode::Double,
         EvalType::Decimal => tidb_datatype::FieldTypeCode::NewDecimal,
         _ => return Err(EvalError::Unsupported("numeric argument cast domain")),
@@ -3332,6 +3338,45 @@ fn cast_numeric_argument_in_mode(
         };
         return cast_string_numeric_argument(field, bytes, target, ctx, vectorized);
     }
+    if let Datum::Json(json) = &value {
+        if target == EvalType::Real {
+            let converted = tidb_datatype::json_to_float(json);
+            if converted.event.is_some() {
+                if let Some(bytes) = json.as_string() {
+                    let text = String::from_utf8_lossy(bytes);
+                    ctx.handle_truncate(&format!(
+                        "Truncated incorrect DOUBLE value: '{}'",
+                        tidb_datatype::float_warning_input(&text),
+                    ))?;
+                } else {
+                    ctx.handle_truncate(&format!("Truncated incorrect FLOAT value: '{json}'"))?;
+                }
+            }
+            return Ok(Datum::Real(converted.value));
+        }
+    }
+    let value = if target == EvalType::Decimal
+        && matches!(value, Datum::Time(_) | Datum::Duration(_) | Datum::Json(_))
+    {
+        // Time/Duration.ToNumber and ConvertJSONToDecimal precede target
+        // precision fitting. JSON's integer path must never pass through f64.
+        let warnings = crate::constant::ConversionWarnings(ctx);
+        let zone = ctx.time_zone();
+        let context = tidb_datatype::ConversionContext::new(
+            ctx.type_flags(),
+            tidb_datatype::ConversionLocation::from_time_zone(&zone),
+            &warnings,
+        );
+        let (decimal, error) = value
+            .to_decimal_with_context(&context)
+            .map_err(|_| EvalError::Unsupported("numeric decimal argument conversion failed"))?;
+        if let Some(error) = error {
+            return Err(EvalError::Conversion(error));
+        }
+        Datum::Decimal(decimal)
+    } else {
+        value
+    };
     let value = if let (EvalType::Decimal, Datum::Real(real)) = (target, &value) {
         // Every integral double in [-2^53, 2^53] has the same exact integer
         // decimal as Go's shortest-float formatting followed by FromString.
@@ -3622,7 +3667,12 @@ fn eval_integer_batch(
                 .collect())
         }
         Expression::ScalarFunction(function) => {
-            if function.numeric_operand_domain() != Some(EvalType::Int) {
+            if function.numeric_operand_domain() != Some(EvalType::Int)
+                || function
+                    .args
+                    .iter()
+                    .any(|arg| numeric_argument_source(arg, EvalType::Int) != Some(EvalType::Int))
+            {
                 return eval_arithmetic_batch(function, ctx, input)?
                     .into_iter()
                     .map(bits)

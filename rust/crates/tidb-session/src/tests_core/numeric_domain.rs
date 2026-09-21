@@ -640,3 +640,80 @@ fn hybrid_arithmetic_and_binary_literal_casts_match_go_sql() {
         }
     }
 }
+
+#[test]
+fn temporal_and_json_arithmetic_match_go_sql() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE temporal_json(d DATETIME(6),t TIME(6),j JSON,a BIGINT)")
+        .unwrap();
+    session.run("INSERT INTO temporal_json VALUES('2024-01-31 23:59:59.600001','-12:34:56.600001','9007199254740993',1),(NULL,NULL,'null',NULL)").unwrap();
+    for vectorized in [false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        for (left, op, expected) in [
+            ("d", "+", "20240131235960.600001"),
+            ("t", "+", "-123455.600001"),
+            ("j", "+", "9007199254740992"),
+            ("d", "-", "20240131235958.600001"),
+            ("t", "-", "-123457.600001"),
+            ("j", "-", "9007199254740991"),
+            ("d", "*", "20240131235959.600001"),
+            ("t", "*", "-123456.600001"),
+            ("j", "*", "9007199254740992"),
+            ("d", "/", "20240131235959.6000010000"),
+            ("t", "/", "-123456.6000010000"),
+            ("j", "/", "9007199254740992"),
+            ("d", "DIV", "20240131235959"),
+            ("t", "DIV", "-123456"),
+            ("j", "DIV", "9007199254740993"),
+            ("d", "MOD", "0.600001"),
+            ("t", "MOD", "-0.600001"),
+            ("j", "MOD", "0"),
+        ] {
+            let sql = format!("SELECT {left} {op} a FROM temporal_json ORDER BY a");
+            assert_eq!(
+                row_text(session.run(&sql)),
+                [["NULL"], [expected]],
+                "{sql}/{vectorized}"
+            );
+            let warnings = warnings_of(&session);
+            let expected = if left == "j" {
+                vec![(
+                    1292,
+                    format!(
+                        "Truncated incorrect {} value: 'null'",
+                        if op == "DIV" { "DECIMAL" } else { "FLOAT" }
+                    ),
+                )]
+            } else {
+                vec![]
+            };
+            assert_eq!(warnings, expected, "{sql}/{vectorized}");
+        }
+        for op in ["+", "-", "*", "/", "DIV", "MOD"] {
+            let sql = format!("SELECT a {op} j FROM temporal_json WHERE a IS NULL");
+            assert_eq!(
+                row_text(session.run(&sql)),
+                [["NULL"]],
+                "{sql}/{vectorized}"
+            );
+            let expected = if vectorized || matches!(op, "+" | "MOD") {
+                vec![(
+                    1292,
+                    format!(
+                        "Truncated incorrect {} value: 'null'",
+                        if op == "DIV" { "DECIMAL" } else { "FLOAT" }
+                    ),
+                )]
+            } else {
+                vec![]
+            };
+            assert_eq!(warnings_of(&session), expected, "{sql}/{vectorized}");
+        }
+    }
+}
