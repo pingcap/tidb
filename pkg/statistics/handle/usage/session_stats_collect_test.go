@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -314,7 +315,7 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	// Test setup:
 	// 1) Create/analyze t and t_lock so stats_meta has baseline rows.
 	// 2) Lock t_lock's stats_meta row with FOR UPDATE to block the first DumpStatsDeltaToKV.
-	// 3) After the first dump is blocked, wait past dumpStatsMaxDuration, write to t again,
+	// 3) After the first dump initializes its deltas, wait past dumpStatsMaxDuration, write to t again,
 	//    and run a second dump to produce a later InitTime.
 	// 4) Release the lock, then dump before the second InitTime expires to verify the earlier
 	//    InitTime triggers flushing.
@@ -362,19 +363,36 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	tkLock.MustExec("begin")
 	tkLock.MustQuery("select * from mysql.stats_meta where table_id = ? for update", lockTableID)
 
+	dump1Ready := make(chan struct{})
+	var dump1ReadyOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/usage/beforeDumpStatsDeltaToKV", func() {
+		dump1ReadyOnce.Do(func() { close(dump1Ready) })
+	})
 	dump1Err := make(chan error, 1)
+	t.Cleanup(func() {
+		tkLock.MustExec("rollback")
+		select {
+		case err := <-dump1Err:
+			require.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Error("first dump did not finish after releasing the lock")
+		}
+	})
 	go func() {
+		defer close(dump1Err)
 		dump1Err <- dom.StatsHandle().DumpStatsDeltaToKV(false)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
-	var dump1BlockedAt time.Time
 	select {
+	case <-dump1Ready:
 	case err := <-dump1Err:
 		t.Fatalf("first dump finished early: %v", err)
-	default:
-		dump1BlockedAt = time.Now()
+	case <-time.After(10 * time.Second):
+		t.Fatal("first dump did not initialize its deltas")
 	}
+	// The first dump owns its deltas and has initialized their InitTime before
+	// signaling readiness. The held row lock prevents it from merging them back.
+	dump1ReadyAt := time.Now()
 
 	time.Sleep(usage.GetDumpStatsMaxDurationForTest() + 100*time.Millisecond)
 	tk.MustExec("insert into t values (12)")
@@ -389,9 +407,14 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	require.Equal(t, baseCount, afterSecondCount)
 
 	tkLock.MustExec("rollback")
-	require.NoError(t, <-dump1Err)
+	select {
+	case err := <-dump1Err:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("first dump did not finish after releasing the lock")
+	}
 
-	require.Greater(t, dump2Start.Sub(dump1BlockedAt), usage.GetDumpStatsMaxDurationForTest())
+	require.Greater(t, dump2Start.Sub(dump1ReadyAt), usage.GetDumpStatsMaxDurationForTest())
 	require.Less(t, time.Since(dump2Start), usage.GetDumpStatsMaxDurationForTest())
 
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
