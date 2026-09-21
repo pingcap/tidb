@@ -6891,8 +6891,36 @@ func (b *PlanBuilder) buildReturningClause(
 		names = append(names, colName)
 	}
 
+	// The clause reads the row that was written, so it needs SELECT on the columns it
+	// reads, like a query over them would. Postgres states the same rule for RETURNING.
+	b.requireSelectPrivForReturning(exprs, nameByUniqueID, tableInfo.Name, dbName)
+
 	needExtraHandle := len(expression.ExtractColumnsFromExpressions(exprs, func(col *expression.Column) bool {
 		return col.ID == model.ExtraHandleID
 	})) > 0
 	return exprs, expression.NewSchema(cols...), names, needExtraHandle, nil
+}
+
+// requireSelectPrivForReturning requires SELECT privilege for the target-table columns that
+// the RETURNING expressions read. Without it an INSERT-only user could read a column it
+// cannot select: `INSERT ... ON DUPLICATE KEY UPDATE c = c RETURNING secret` returns the row
+// as it stands after the update, so `secret` would come from the row that was already there.
+// _tidb_rowid is not a column a privilege can be granted on, so it takes SELECT on the table.
+func (b *PlanBuilder) requireSelectPrivForReturning(
+	exprs []expression.Expression,
+	nameByUniqueID map[int64]*types.FieldName,
+	tableName, dbName ast.CIStr,
+) {
+	var authErr error
+	if user := b.ctx.GetSessionVars().User; user != nil {
+		authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT",
+			user.AuthUsername, user.AuthHostname, tableName.L)
+	}
+	for _, col := range expression.ExtractColumnsFromExpressions(exprs, nil) {
+		column := ""
+		if name := nameByUniqueID[col.UniqueID]; name != nil && col.ID != model.ExtraHandleID {
+			column = name.OrigColName.L
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableName.L, column, authErr)
+	}
 }

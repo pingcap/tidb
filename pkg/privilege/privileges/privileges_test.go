@@ -2650,3 +2650,62 @@ func TestInsertValuesSubqueryChecksSelectPrivilege(t *testing.T) {
 	tk.MustExec(`INSERT INTO insert_subq_atk.exfil VALUES (2, (SELECT secret FROM insert_subq_secret.victim WHERE id = 1))`)
 	rootTk.MustQuery(`SELECT v FROM insert_subq_atk.exfil WHERE id = 2`).Check(testkit.Rows("topsecret"))
 }
+
+func TestInsertReturningChecksSelectPrivilege(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE insert_ret_priv`)
+	rootTk.MustExec(`CREATE TABLE insert_ret_priv.t (id INT PRIMARY KEY, secret VARCHAR(32))`)
+	rootTk.MustExec(`INSERT INTO insert_ret_priv.t VALUES (1, 'topsecret')`)
+	rootTk.MustExec(`CREATE USER 'insert_ret_low'@'%'`)
+	rootTk.MustExec(`GRANT INSERT, UPDATE ON insert_ret_priv.t TO 'insert_ret_low'@'%'`)
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "insert_ret_low", Hostname: "%", AuthUsername: "insert_ret_low", AuthHostname: "%",
+	}, nil, nil, nil))
+
+	// RETURNING reads the row that was written, so it needs SELECT on the columns it reads.
+	err := tk.ExecToErr(`INSERT INTO insert_ret_priv.t VALUES (2, 'x') RETURNING secret`)
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+	require.Contains(t, err.Error(), "SELECT command denied")
+	require.Contains(t, err.Error(), "'t'")
+
+	// `ON DUPLICATE KEY UPDATE` returns the row as it stands after the update, so the value
+	// returned here is the one that was already in the table.
+	err = tk.ExecToErr(
+		`INSERT INTO insert_ret_priv.t VALUES (1, 'x') ON DUPLICATE KEY UPDATE id = id RETURNING secret`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+
+	// A column inside an expression is read just the same, and so is every column `*`
+	// expands to.
+	err = tk.ExecToErr(`INSERT INTO insert_ret_priv.t VALUES (3, 'x') RETURNING concat(secret, '!')`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+	err = tk.ExecToErr(`INSERT INTO insert_ret_priv.t VALUES (4, 'x') RETURNING *`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+
+	// An expression that reads no column of the target table needs no SELECT.
+	tk.MustQuery(`INSERT INTO insert_ret_priv.t VALUES (5, 'x') RETURNING 1`).Check(testkit.Rows("1"))
+
+	// A column-level grant covers the column it was granted on, and nothing else.
+	rootTk.MustExec(`GRANT SELECT (id) ON insert_ret_priv.t TO 'insert_ret_low'@'%'`)
+	tk.MustQuery(`INSERT INTO insert_ret_priv.t VALUES (6, 'x') RETURNING id`).Check(testkit.Rows("6"))
+	err = tk.ExecToErr(`INSERT INTO insert_ret_priv.t VALUES (7, 'x') RETURNING id, secret`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+
+	// SELECT on the table returns the whole row.
+	rootTk.MustExec(`GRANT SELECT ON insert_ret_priv.t TO 'insert_ret_low'@'%'`)
+	tk.MustQuery(`INSERT INTO insert_ret_priv.t VALUES (8, 'y') RETURNING id, secret`).Check(testkit.Rows("8 y"))
+
+	// _tidb_rowid is not a column a privilege can be granted on, so it takes SELECT on the
+	// table.
+	rootTk.MustExec(`CREATE TABLE insert_ret_priv.nonclustered (id INT PRIMARY KEY NONCLUSTERED)`)
+	rootTk.MustExec(`GRANT INSERT ON insert_ret_priv.nonclustered TO 'insert_ret_low'@'%'`)
+	err = tk.ExecToErr(`INSERT INTO insert_ret_priv.nonclustered VALUES (1) RETURNING _tidb_rowid`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+	rootTk.MustExec(`GRANT SELECT ON insert_ret_priv.nonclustered TO 'insert_ret_low'@'%'`)
+	// The value is an allocated rowid, so only its presence is asserted.
+	require.Len(t, tk.MustQuery(
+		`INSERT INTO insert_ret_priv.nonclustered VALUES (2) RETURNING _tidb_rowid`).Rows(), 1)
+}
