@@ -4540,6 +4540,23 @@ impl ClusterServerSession {
             .clean();
         self.session
             .publish_transaction_buffer_metrics(self.buffer.len(), self.buffer.memory_footprint());
+        // Go charges the statement's lock activity to the dashboard families
+        // once per statement (`adapter.go:580-593`): keys locked and the
+        // pessimistic retry count, only when a lock actually happened.
+        if let Some(observation) =
+            tidb_exec::cluster_table_storage::take_last_pessimistic_lock_observation()
+        {
+            if observation.lock_keys > 0 {
+                tidb_session::metrics::STATEMENT_LOCK_KEYS_COUNT
+                    .with_label_values(&[] as &[&str])
+                    .observe(observation.lock_keys as f64);
+            }
+            if observation.retries > 0 {
+                tidb_session::metrics::STATEMENT_PESSIMISTIC_RETRY_COUNT
+                    .with_label_values(&[] as &[&str])
+                    .observe(f64::from(observation.retries));
+            }
+        }
         outcome
     }
 
@@ -5369,8 +5386,10 @@ impl ClusterServerSession {
         }
         let bindings_changed = self.binding_records_changed();
         let write_details = self.buffer_write_details();
-        // Go `pkg/session/metrics`: transaction duration and per-transaction
-        // statement count, labeled pessimistic/optimistic x commit x general.
+        // Go `session.Commit`'s `recordOnTransactionExecution`
+        // (`session.go:897`): the transaction's wall-clock duration since
+        // `BEGIN` and its statement count, labeled by pessimistic/optimistic
+        // mode and the commit's outcome.
         let txn_mode = if transaction.is_pessimistic() {
             "pessimistic"
         } else {
@@ -5379,11 +5398,16 @@ impl ClusterServerSession {
         let txn_opened_at = transaction.opened_at();
         let txn_statement_count = transaction.statement_count() as f64;
         let commit_result = transaction.commit(&self.buffer);
+        let (duration_label, num_label) = if commit_result.is_ok() {
+            ("commit", "ok")
+        } else {
+            ("abort", "error")
+        };
         tidb_session::metrics::TRANSACTION_DURATION
-            .with_label_values(&[txn_mode, "commit", "general"])
+            .with_label_values(&[txn_mode, duration_label, "general"])
             .observe(txn_opened_at.elapsed().as_secs_f64());
         tidb_session::metrics::STATEMENT_PER_TRANSACTION
-            .with_label_values(&[txn_mode, "ok", "general"])
+            .with_label_values(&[txn_mode, num_label, "general"])
             .observe(txn_statement_count);
         match commit_result {
             Ok(()) => {
@@ -6516,6 +6540,13 @@ impl QuerySession for ClusterServerSession {
         self.session.finish_txn_write_throughput(cost);
     }
 
+    /// The session's own `tidb_slow_log_threshold`, in milliseconds.
+    fn slow_log_threshold(&self) -> Option<std::time::Duration> {
+        let raw = self.session.vars().get_system("tidb_slow_log_threshold").ok()?;
+        let millis: u64 = raw.parse().ok()?;
+        Some(std::time::Duration::from_millis(millis))
+    }
+
     fn query_cancellation(&self) -> Option<Arc<dyn crate::sql_node::ActiveQueryCancellation>> {
         Some(Arc::new(self.session.begin_query_cancellation()))
     }
@@ -6706,6 +6737,11 @@ impl QuerySession for ClusterServerSession {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        // Go `TxnCtx.StatementCount`: every statement inside an explicit
+        // transaction counts toward its COMMIT observation.
+        if let Some(transaction) = self.explicit.as_ref() {
+            transaction.note_statement();
+        }
         self.session.clear_statement_message();
         // Go resolves and plans against the current infoschema before it
         // chooses a statement snapshot. Keep schema refresh ahead of routing,
@@ -7251,6 +7287,11 @@ impl QuerySession for ClusterServerSession {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        // Go `TxnCtx.StatementCount`: every statement inside an explicit
+        // transaction counts toward its COMMIT observation.
+        if let Some(transaction) = self.explicit.as_ref() {
+            transaction.note_statement();
+        }
         self.session.clear_statement_message();
         // Refresh before access-shape classification. Waiting until the
         // statement lifecycle would allow a stale point shape to select MaxTS

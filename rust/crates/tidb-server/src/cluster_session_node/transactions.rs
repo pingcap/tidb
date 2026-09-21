@@ -288,6 +288,10 @@ pub trait OpenClusterTransaction: Send {
     /// `tidb_session_transaction_statement_num` observation input).
     fn statement_count(&self) -> u64;
 
+    /// Counts one statement against this transaction (Go's
+    /// `TxnCtx.StatementCount`).
+    fn note_statement(&self);
+
     /// Rebinds all subsequent requests to the statement's resolved resource
     /// group while retaining the transaction and its timestamp.
     fn set_resource_group_name(&self, name: &str) -> Result<(), String>;
@@ -1295,6 +1299,10 @@ where
 
     fn statement_count(&self) -> u64 {
         SessionTransaction::statement_count(self)
+    }
+
+    fn note_statement(&self) {
+        SessionTransaction::note_statement(self)
     }
 
     fn set_resource_group_name(&self, name: &str) -> Result<(), String> {

@@ -86,6 +86,9 @@ pub(crate) struct PendingQuery {
     record_set: QueryRecordSet,
     context: StmtContext,
     pub(crate) transaction_end: QueryTransactionEnd,
+    /// Go `ExecStmt.startExecute`: the moment the executor was opened; the
+    /// run-duration observation at Finish/Close measures to here.
+    execute_opened_at: std::time::Instant,
 }
 
 impl PendingQuery {
@@ -94,10 +97,15 @@ impl PendingQuery {
             record_set,
             context,
             transaction_end: QueryTransactionEnd::None,
+            execute_opened_at: std::time::Instant::now(),
         }
     }
 
     fn finish(&mut self, session: &mut Session) -> Result<(), DriverError> {
+        crate::metrics::observe_execute_duration(
+            self.execute_opened_at.elapsed().as_secs_f64(),
+            false,
+        );
         let result = self.record_set.finish();
         session.drain_eval_warnings(&self.context);
         let finished = std::mem::take(&mut self.transaction_end).finish(session, result.is_ok());
@@ -105,10 +113,15 @@ impl PendingQuery {
     }
 
     fn collect(self, session: &mut Session) -> Result<StmtOutput, DriverError> {
+        crate::metrics::observe_execute_duration(
+            self.execute_opened_at.elapsed().as_secs_f64(),
+            false,
+        );
         let Self {
             record_set,
             context,
             transaction_end,
+            execute_opened_at: _,
         } = self;
         let result = record_set.collect();
         session.drain_eval_warnings(&context);

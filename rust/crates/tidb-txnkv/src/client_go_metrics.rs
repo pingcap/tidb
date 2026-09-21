@@ -155,6 +155,20 @@ pub fn gather_text() -> String {
         .unwrap_or_default()
 }
 
+/// Charges one pessimistic-lock acquisition to the client-go registry's
+/// `TiKVPessimisticLockKeysDuration` histogram (Go `LockKeysDetail.TotalTime`
+/// feeding `tidb_tikvclient_pessimistic_lock_keys_duration`, `adapter.go:588`).
+/// The family lives on the client's own 0.13 registry, where the vendored spec
+/// declares it, so the observation must go through [`global_metrics`] rather
+/// than this crate's default registry.
+pub fn observe_pessimistic_lock_keys_duration(seconds: f64) {
+    if let Some(tikv_client::metrics::ClientGoCollector::Histogram(histogram)) =
+        tikv_client::metrics::global_metrics().collector("TiKVPessimisticLockKeysDuration")
+    {
+        histogram.observe(seconds);
+    }
+}
+
 /// Materializes the series Go's bootstrap writes for the `tidb_tikvclient_*`
 /// families, using the exact label combinations the Go export carries.
 /// Store-scoped gauge series (`store` label) materialize on first real

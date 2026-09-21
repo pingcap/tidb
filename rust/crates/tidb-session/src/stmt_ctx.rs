@@ -461,7 +461,14 @@ impl Session {
     /// is this session's, which is the whole point: a front end must not lex
     /// with a mode of its own.
     pub fn parse_statement(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
-        self.parse(sql)
+        let started = std::time::Instant::now();
+        let stmt = self.parse(sql);
+        // Go observes the parse histogram only after a successful parse
+        // (`session.Parse` returns on the error path before observing).
+        if stmt.is_ok() {
+            crate::metrics::observe_parse_duration(started.elapsed().as_secs_f64(), false);
+        }
+        stmt
     }
 
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {

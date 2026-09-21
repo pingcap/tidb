@@ -1608,6 +1608,32 @@ impl Session {
     fn prepare_parsed_statement_with_optional_physical_plan(
         &mut self,
         sql: &str,
+        stmt: Stmt,
+        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+        select_plan: Option<RetainedSelectPlan<'_>>,
+        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    ) -> Result<PendingExecution, DriverError> {
+        // Go charges `SessionExecuteCompileDuration` for every statement whose
+        // compile succeeds (`session.go:2624`); a failed compile returns
+        // before the observation. This door is where preprocess, privilege,
+        // and planning happen, so it is the compile boundary.
+        let started = std::time::Instant::now();
+        let result = self.prepare_parsed_statement_compile_phase(
+            sql,
+            stmt,
+            prepared,
+            select_plan,
+            dml_plan,
+        );
+        if result.is_ok() {
+            crate::metrics::observe_compile_duration(started.elapsed().as_secs_f64(), false);
+        }
+        result
+    }
+
+    fn prepare_parsed_statement_compile_phase(
+        &mut self,
+        sql: &str,
         mut stmt: Stmt,
         prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
         select_plan: Option<RetainedSelectPlan<'_>>,

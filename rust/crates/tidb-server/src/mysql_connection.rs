@@ -1442,6 +1442,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     let mut queries = 0_u64;
     let mut last_metrics_sql_type = "general";
     let mut prepared = PreparedStatementRegistry::default();
+    // Go `clientConn.lastActive`: the moment the previous command finished;
+    // `dispatch` observes the idle gap before every command (`conn.go:1446`).
+    let mut last_active = std::time::Instant::now();
     // Go's `SetReadDeadline` before every packet is a netpoll bookkeeping
     // update, never a syscall. `set_read_timeout` is `setsockopt`, so the
     // socket is only rebound when `@@wait_timeout` actually changed; the
@@ -1522,6 +1525,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             engine.metrics_resource_group(),
         );
         command_metrics.sql_type = last_metrics_sql_type;
+        // Go `conn.go:1441-1447`: every dispatch first observes how long the
+        // connection sat idle since the previous command, labeled by the
+        // session's IN-TRANS status read as "0"/"1".
+        {
+            let idle = last_active.elapsed().as_secs_f64();
+            let in_txn = engine.wire_status().bits() & crate::wire_status::SERVER_STATUS_IN_TRANS != 0;
+            crate::server_metrics::CONN_IDLE_DURATION
+                .with_label_values(&[if in_txn { "1" } else { "0" }])
+                .observe(idle);
+        }
         let dispatch_result = (|| -> Result<Option<ConnectionReport>, MysqlConnectionError> {
             let command = match decode_command(&payload) {
                 Ok(command) => command,
@@ -1702,10 +1715,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         // Go `handleQuery` parses the command ONCE and hands each
                         // node to `handleStmt`; every door below takes that node
                         // and none parses the text again.
-                        // Go `session.go`'s SessionExecuteParseDuration:
-                        // time the parse, then label it with the parsed
-                        // statement's type (general when nothing parsed).
-                        let parse_started = std::time::Instant::now();
                         let parsed = match engine.parse_statement(sql) {
                             Ok(parsed) => parsed,
                             Err(error) => {
@@ -1714,9 +1723,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 break;
                             }
                         };
-                        tidb_session::metrics::SESSION_PARSE
-                            .with_label_values(&[parsed.as_ref().map_or("general", Stmt::label)])
-                            .observe(parse_started.elapsed().as_secs_f64());
                         command_metrics.sql_type = parsed.as_ref().map_or("general", Stmt::label);
                         // Go `executor.go`: StmtNodeCounter counts every
                         // executed statement by its executor label.
@@ -1878,11 +1884,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 break;
                             }
                         }
-                        // Go `session.go`'s SessionExecuteRunDuration: the
-                        // rust engine plans and runs inside one call, so this
-                        // observes the combined compile+run time Go splits
-                        // across SessionExecuteCompile/RunDuration.
-                        let execute_started = std::time::Instant::now();
                         let mut result = match execute_statement(&mut engine, sql, parsed.as_ref())
                         {
                             Ok(result) => result,
@@ -1892,9 +1893,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 break;
                             }
                         };
-                        tidb_session::metrics::SESSION_EXECUTE
-                            .with_label_values(&[command_metrics.sql_type])
-                            .observe(execute_started.elapsed().as_secs_f64());
                         let (write_result, next_sequence) = {
                             let statement_options = framing.result_set_with_output(
                                 stamp(result.wire_status()),
@@ -1945,6 +1943,30 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         engine.flush_multi_statement_warning();
                     }
                     engine.finish_execute_stmt(query_started.elapsed());
+                    // Go charges the slow-query families inside
+                    // `LogSlowQuery` (`adapter.go:2007-2024`) when the
+                    // statement cost reaches the threshold. The families'
+                    // `sql_type` label carries Go's internal/general scope
+                    // split (`executor_metrics.TotalQueryProcHistogramGeneral`
+                    // is pre-bound with `LblGeneral`), not the statement kind;
+                    // the wire serves general sessions only. This node has no
+                    // coprocessor time detail yet, so the cop/wait/mvcc
+                    // histograms stay uncharged, and one observation covers
+                    // the whole command.
+                    {
+                        let elapsed = query_started.elapsed();
+                        if engine
+                            .slow_log_threshold()
+                            .is_some_and(|threshold| elapsed >= threshold)
+                        {
+                            crate::server_metrics::SLOW_QUERY_PROCESS_DURATION
+                                .with_label_values(&["general"])
+                                .observe(elapsed.as_secs_f64());
+                            crate::server_metrics::SLOW_QUERY_TOTAL
+                                .with_label_values(&["general"])
+                                .inc();
+                        }
+                    }
                 }
                 Command::StmtPrepare(bytes) => {
                     commands.stmt_prepare_commands += 1;
@@ -2707,6 +2729,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         if dispatch_result.is_err() {
             crate::query_metrics::record_error();
         }
+        last_active = std::time::Instant::now();
         if let Some(report) = dispatch_result? {
             return Ok(report);
         }

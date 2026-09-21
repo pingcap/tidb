@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -35,6 +35,14 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
         .expect("metric registered once");
     collector
 }
+
+/// Go `SessionRetryErrorCounter` (`pkg/metrics/session.go`).
+pub static SESSION_RETRY_ERROR: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_session_retry_error_total", "Counter of session retry error."),
+        &["sql_type", "type"],
+    ))
+});
 
 /// Go `ResourceGroupQueryTotalCounter` (`pkg/metrics`).
 pub static RESOURCE_GROUP_QUERY_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
@@ -65,15 +73,73 @@ pub static TXN_STATE_ENTERING_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
     ))
 });
 
+/// Go `session.Parse`'s observation: the parse histogram is charged under
+/// `LblInternal` for internal sessions and `LblGeneral` otherwise. The
+/// session tier has no internal-session doors yet, so every current caller
+/// passes `false`.
+pub fn observe_parse_duration(seconds: f64, internal: bool) {
+    let label = if internal { "internal" } else { "general" };
+    SESSION_PARSE
+        .with_label_values(&[label])
+        .observe(seconds);
+}
+
+/// Go `session.ExecuteStmt`'s compile observation (`session.go:2624`).
+pub fn observe_compile_duration(seconds: f64, internal: bool) {
+    let label = if internal { "internal" } else { "general" };
+    SESSION_COMPILE
+        .with_label_values(&[label])
+        .observe(seconds);
+}
+
+/// Go `ExecStmt.finishExecutor`'s run observation (`adapter.go:1723`).
+pub fn observe_execute_duration(seconds: f64, internal: bool) {
+    let label = if internal { "internal" } else { "general" };
+    SESSION_EXECUTE
+        .with_label_values(&[label])
+        .observe(seconds);
+}
+
 /// Materializes the series Go's subsystem startup writes, mirroring the
 /// exported label combinations exactly.
+///
+/// Go pre-binds the transaction-state observers and counters for every
+/// state at package init (`pkg/session/txninfo/txn_info.go`
+/// `InitMetricsVars`, states idle / executing_sql / acquiring_lock /
+/// committing / rolling_back), and the retry histogram for both scopes
+/// (`pkg/session/metrics`). Those children therefore exist on Go's
+/// `/metrics` export with zero counts, and the Rust node materializes the
+/// same combinations here.
 pub fn init_dashboard_series() {
     let _ = RESOURCE_GROUP_QUERY_TOTAL.with_label_values(&["default", "default"]);
     LazyLock::force(&RESTRICTED_SQL_TOTAL);
     let _ = TRANSACTION_FAIR_LOCKING_USAGE.with_label_values(&["stmt-effective"]);
-    let _ = TXN_STATE_ENTERING_COUNT.with_label_values(&["acquiring_lock"]);    LazyLock::force(&STATEMENT_LOCK_KEYS_COUNT);
+    LazyLock::force(&STATEMENT_LOCK_KEYS_COUNT);
     LazyLock::force(&STATEMENT_PESSIMISTIC_RETRY_COUNT);
-
+    // Go `pkg/session/txninfo` InitMetricsVars pre-binds every state
+    // (idle / executing_sql / acquiring_lock / committing / rolling_back)
+    // times two has_lock values, and the session retry histogram for both
+    // scopes, so Go exports them at zero counts; mirror that here.
+    for state in [
+        "idle",
+        "executing_sql",
+        "acquiring_lock",
+        "committing",
+        "rolling_back",
+    ] {
+        let _ = TXN_STATE_ENTERING_COUNT.with_label_values(&[state]);
+        let _ = TXN_STATE_SECONDS.with_label_values(&[state, "false"]);
+        let _ = TXN_STATE_SECONDS.with_label_values(&[state, "true"]);
+    }
+    let _ = SESSION_RETRY.with_label_values(&["general"]);
+    let _ = SESSION_RETRY.with_label_values(&["internal"]);
+    LazyLock::force(&SESSION_PARSE);
+    LazyLock::force(&SESSION_COMPILE);
+    LazyLock::force(&SESSION_EXECUTE);
+    LazyLock::force(&SESSION_RETRY_ERROR);
+    LazyLock::force(&TRANSACTION_DURATION);
+    LazyLock::force(&STATEMENT_PER_TRANSACTION);
+    LazyLock::force(&STATEMENT_SHARED_LOCK_KEYS_COUNT);
 }
 
 pub static SESSION_PARSE: LazyLock<HistogramVec> = LazyLock::new(|| {

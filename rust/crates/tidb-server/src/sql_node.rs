@@ -1144,6 +1144,15 @@ pub trait QuerySession {
     /// called after the SQL command has written its response.
     fn finish_execute_stmt(&mut self, _cost: Duration) {}
 
+    /// The session's `tidb_slow_log_threshold`, which gates the dashboard's
+    /// slow-query histograms (`adapter.go:1958` reads it from the instance
+    /// config; the session variable mirrors it per session). `None` marks a
+    /// session that does not expose the variable: the slow-query observation
+    /// is skipped rather than guessed at the default.
+    fn slow_log_threshold(&self) -> Option<Duration> {
+        None
+    }
+
     /// Splits one COM_QUERY text into the statements the connection runs in
     /// order — Go `handleQuery` parses the whole text and loops the result
     /// (`conn.go:1861`). More than one statement is admitted by the client's

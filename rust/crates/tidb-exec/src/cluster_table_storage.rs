@@ -1123,6 +1123,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         promote_pessimistic_state(&mut state, self.fair_locking)?;
         let call = UnaryCallContext::with_timeout(self.timeout);
+        let lock_started = std::time::Instant::now();
         let outcome = match &mut *state {
             SessionTransactionState::Pessimistic {
                 transaction,
@@ -1157,6 +1158,16 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
                 ));
             }
         };
+        let lock_elapsed = lock_started.elapsed();
+        if !matches!(outcome, LockKeysOutcome::TransactionError(_)) {
+            // Go `LockKeysDetail.TotalTime` feeds the client-go
+            // `pessimistic_lock_keys_duration` histogram (`adapter.go:588`),
+            // charged per lock acquisition through the client's own registry.
+            accumulate_lock_observation(keys.len() as u64, lock_elapsed);
+            tidb_txnkv::client_go_metrics::observe_pessimistic_lock_keys_duration(
+                lock_elapsed.as_secs_f64(),
+            );
+        }
         if matches!(outcome, LockKeysOutcome::TransactionError(_)) {
             let _ = finish_session_transaction(&mut state);
         }
@@ -1532,6 +1543,62 @@ pub fn lock_pessimistic_statement<
 
 /// Shared Go pessimistic statement rebuild loop used by both the concrete
 /// TiKV transaction and the server's testable transaction authority.
+/// One pessimistic statement's lock observation, Go `LockKeysDetail`'s
+/// dashboard counterpart: how many keys the statement locked, how many
+/// pessimistic-statement retries it spent, and how long the lock acquisition
+/// waited. Go charges these to `StatementLockKeysCount`,
+/// `StatementPessimisticRetryCount`, and the client-go
+/// `pessimistic_lock_keys_duration` histogram (`adapter.go:580-588`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PessimisticLockObservation {
+    /// Go `LockKeysDetail.LockKeys`.
+    pub lock_keys: u64,
+    /// Go `a.retryCount`.
+    pub retries: u32,
+    /// Go `LockKeysDetail.TotalTime`.
+    pub lock_elapsed: std::time::Duration,
+}
+
+thread_local! {
+    /// The lock activity of the statement CURRENTLY RUNNING on this worker,
+    /// accumulated across every lock RPC the statement makes and drained at
+    /// the statement boundary. The generic lock loop knows the numbers; the
+    /// dashboard families live one crate up, so the server's statement seam
+    /// reads them here.
+    static LAST_LOCK_OBSERVATION: std::cell::Cell<PessimisticLockObservation> =
+        std::cell::Cell::new(PessimisticLockObservation {
+            lock_keys: 0,
+            retries: 0,
+            lock_elapsed: std::time::Duration::ZERO,
+        });
+}
+
+/// Reads (and clears) the accumulated lock observation for this worker.
+#[must_use]
+pub fn take_last_pessimistic_lock_observation() -> Option<PessimisticLockObservation> {
+    LAST_LOCK_OBSERVATION.with(|slot| {
+        let observation = slot.replace(PessimisticLockObservation::default());
+        (observation.lock_keys > 0 || observation.retries > 0).then_some(observation)
+    })
+}
+
+fn accumulate_lock_observation(keys: u64, elapsed: std::time::Duration) {
+    LAST_LOCK_OBSERVATION.with(|slot| {
+        let mut observation = slot.get();
+        observation.lock_keys += keys;
+        observation.lock_elapsed += elapsed;
+        slot.set(observation);
+    });
+}
+
+fn record_lock_retries(retries: u32) {
+    LAST_LOCK_OBSERVATION.with(|slot| {
+        let mut observation = slot.get();
+        observation.retries = retries;
+        slot.set(observation);
+    });
+}
+
 pub fn lock_pessimistic_statement_with<T>(
     start_ts: u64,
     mut snapshot: impl FnMut(Option<u64>) -> Result<Box<dyn ClusterSnapshot>, String>,
@@ -1578,10 +1645,14 @@ pub fn lock_pessimistic_statement_with<T>(
                     .map(|hint| (key.clone(), hint))
             })
             .collect::<BTreeMap<_, _>>();
+        let lock_started = std::time::Instant::now();
         match lock(keys, presume_not_exists, duplicate_hints)
             .map_err(PessimisticStatementTransactionError::Build)?
         {
-            LockKeysOutcome::Locked { .. } => return Ok((value, mutations)),
+            LockKeysOutcome::Locked { .. } => {
+                record_lock_retries(retries);
+                return Ok((value, mutations));
+            }
             LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
                 if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
                     return Err(PessimisticStatementTransactionError::Build(

@@ -507,6 +507,8 @@ impl OpenClusterTransaction for MockSessionTransaction {
         0
     }
 
+    fn note_statement(&self) {}
+
     fn set_resource_group_name(&self, name: &str) -> Result<(), String> {
         self.cluster.record_resource_group(name);
         Ok(())
