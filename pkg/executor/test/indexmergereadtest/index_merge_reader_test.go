@@ -502,59 +502,48 @@ var indexMergePanicRunSQL = func(t *testing.T, tk *testkit.TestKit, fp string) {
 	require.Contains(t, err.Error(), fp)
 }
 
-func TestIndexMergePanic(t *testing.T) {
+func TestIndexMergePanicPartialIndexWorker(t *testing.T) {
+	testIndexMergePanicWorker(t, "testIndexMergePanicPartialIndexWorker")
+}
+
+func TestIndexMergePanicPartialTableWorker(t *testing.T) {
+	testIndexMergePanicWorker(t, "testIndexMergePanicPartialTableWorker")
+}
+
+func TestIndexMergePanicProcessWorkerUnion(t *testing.T) {
+	testIndexMergePanicWorker(t, "testIndexMergePanicProcessWorkerUnion")
+}
+
+func TestIndexMergePanicProcessWorkerIntersection(t *testing.T) {
+	testIndexMergePanicWorker(t, "testIndexMergePanicProcessWorkerIntersection")
+}
+
+func TestIndexMergePanicPartitionTableIntersectionWorker(t *testing.T) {
+	testIndexMergePanicWorker(t, "testIndexMergePanicPartitionTableIntersectionWorker")
+}
+
+func TestIndexMergePanicTableScanWorker(t *testing.T) {
+	testIndexMergePanicWorker(t, "testIndexMergePanicTableScanWorker")
+}
+
+// Keep each worker independently shardable while retaining all 100 panic checks.
+func testIndexMergePanicWorker(t *testing.T, worker string) {
+	t.Helper()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
-
-	// TestIndexMergePanicPartialIndexWorker
-	fp := "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartialIndexWorker"
+	fp := "github.com/pingcap/tidb/pkg/executor/" + worker
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
 	for i := 0; i < 100; i++ {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
-	require.NoError(t, failpoint.Disable(fp))
+}
 
-	// TestIndexMergePanicPartialTableWorker
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartialTableWorker"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
-		indexMergePanicRunSQL(t, tk, fp)
-	}
-	require.NoError(t, failpoint.Disable(fp))
-
-	// TestIndexMergePanicProcessWorkerUnion
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicProcessWorkerUnion"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
-		indexMergePanicRunSQL(t, tk, fp)
-	}
-	require.NoError(t, failpoint.Disable(fp))
-
-	// TestIndexMergePanicProcessWorkerIntersection
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicProcessWorkerIntersection"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
-		indexMergePanicRunSQL(t, tk, fp)
-	}
-	require.NoError(t, failpoint.Disable(fp))
-
-	// TestIndexMergePanicPartitionTableIntersectionWorker
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartitionTableIntersectionWorker"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
-		indexMergePanicRunSQL(t, tk, fp)
-	}
-	require.NoError(t, failpoint.Disable(fp))
-
-	// TestIndexMergePanicTableScanWorker
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicTableScanWorker"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
-		indexMergePanicRunSQL(t, tk, fp)
-	}
-	require.NoError(t, failpoint.Disable(fp))
-
+func TestIndexMergePanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
 	tk.MustExec("insert into t1 values(1, 1, 1), (100, 100, 100)")
