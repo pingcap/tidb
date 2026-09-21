@@ -1296,6 +1296,72 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	return nil
 }
 
+// CheckDataSourceAccess checks whether the data source can be accessed without
+// discovering all matching files. It is used before submitting a task whose
+// full file discovery runs asynchronously.
+func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
+	u, err := objstore.ParseRawURL(e.Path)
+	if err != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err.Error())
+	}
+
+	var fileNameKey string
+	if objstore.IsLocal(u) {
+		u.Path = filepath.Dir(e.Path)
+		fileNameKey = filepath.Base(e.Path)
+	} else {
+		fileNameKey = strings.Trim(u.Path, "/")
+		u.Path = ""
+	}
+	// Check malformed glob patterns before probing the store.
+	if _, err = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), ""); err != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			"Glob pattern error: "+err.Error())
+	}
+
+	sourceStore, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	if err != nil {
+		return err
+	}
+	defer sourceStore.Close()
+
+	idx := strings.IndexAny(fileNameKey, "*[")
+	if idx == -1 {
+		reader, err := sourceStore.Open(ctx, fileNameKey, nil)
+		if err != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(
+				errors.GetErrStackMsg(err), "Please check the file location is correct")
+		}
+		terror.Log(reader.Close())
+		return nil
+	}
+
+	commonPrefix := ""
+	if !objstore.IsLocal(u) {
+		commonPrefix = fileNameKey[:idx]
+	}
+	err = sourceStore.WalkDir(ctx, &storeapi.WalkOption{
+		ObjPrefix:  commonPrefix,
+		SkipSubDir: true,
+		ListCount:  1,
+	}, func(remotePath string, _ int64) error {
+		reader, err := sourceStore.Open(ctx, remotePath, nil)
+		if err != nil {
+			return err
+		}
+		terror.Log(reader.Close())
+		// Stop after the first object. File matching and complete discovery are
+		// intentionally deferred to asynchronous prepare.
+		return io.EOF
+	})
+	if err != nil && errors.Cause(err) != io.EOF {
+		return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(
+			errors.GetErrStackMsg(err), "failed to access data source")
+	}
+	return nil
+}
+
 // Close closes all the resources.
 func (e *LoadDataController) Close() {
 	if e.dataStore != nil {
