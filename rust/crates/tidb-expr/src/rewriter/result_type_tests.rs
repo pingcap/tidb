@@ -133,6 +133,7 @@ fn cast_target_types_follow_go_parser_y_cast_rules() {
 
     // parser.y `"JSON"`: ParseToJSON + Binary flags, utf8mb4/utf8mb4_bin.
     let (_, json) = cast_target(&tidb_ast::CastType::Json).unwrap();
+    assert_eq!((json.flen(), json.decimal()), (4_194_304, 0));
     assert!(json.has_flag(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON));
     assert!(json.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
     assert_eq!(

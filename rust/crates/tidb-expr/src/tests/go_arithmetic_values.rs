@@ -1204,3 +1204,182 @@ fn arithmetic_constant_casts_fold_before_evaluation_and_shape_result_metadata() 
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn strict_scalar_decimal_precision_probes_preserve_runtime_evaluation() {
+    use crate::scalar_function::ScalarFunction;
+    #[derive(Default)]
+    struct Context(std::cell::RefCell<Vec<(u16, String)>>, bool);
+    impl crate::Columns for Context {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn truncate_level(&self) -> crate::ErrorLevel {
+            if self.1 {
+                crate::ErrorLevel::Error
+            } else {
+                crate::ErrorLevel::Warn
+            }
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+    let literal = |value, field| Expression::Constant(crate::constant::Constant::new(value, field));
+    for (name, values) in [
+        ("json_null", ["0", "0", "2"]),
+        ("json_string", ["1", "1", "4"]),
+        (
+            "json_int",
+            ["4503599627370496", "4503599627370496", "9007199254740994"],
+        ),
+        ("real_expr", ["0", "0.625", "3.25"]),
+        ("string_expr", ["1", "1", "4"]),
+        (
+            "datetime_expr",
+            [
+                "10120065617979",
+                "10120065617979.8000005000",
+                "20240131235961.600001",
+            ],
+        ),
+    ] {
+        for strict in [false, true] {
+            for (op, value) in ["intdiv", "div", "plus"].into_iter().zip(values) {
+                let context = Context(Default::default(), strict);
+                let left = match name {
+                    "real_expr" => ScalarFunction::new(
+                        tidb_ast::CiString::new("plus"),
+                        FieldType::new(C::Double),
+                        vec![
+                            literal(Datum::Real(1.25), FieldType::new(C::Double)),
+                            literal(Datum::Real(0.0), FieldType::new(C::Double)),
+                        ],
+                    ),
+                    "string_expr" => ScalarFunction::new(
+                        tidb_ast::CiString::new("concat"),
+                        FieldType::new(C::VarString),
+                        vec![
+                            literal(Datum::new_string("2tail"), FieldType::new(C::VarString)),
+                            literal(Datum::new_string(""), FieldType::new(C::VarString)),
+                        ],
+                    ),
+                    "datetime_expr" => {
+                        let (field, value) = temporal_json_arithmetic_fixture("datetime6");
+                        ScalarFunction::new(
+                            tidb_ast::CiString::new("ifnull"),
+                            field.clone(),
+                            vec![literal(value, field.clone()), literal(Datum::Null, field)],
+                        )
+                    }
+                    _ => {
+                        let text = match name {
+                            "json_null" => "null",
+                            "json_string" => r#""2tail""#,
+                            _ => "9007199254740993",
+                        };
+                        ScalarFunction::new(
+                            tidb_ast::CiString::new("cast_json"),
+                            FieldType::new(C::Json).with_added_flags(FieldTypeFlags::PARSE_TO_JSON),
+                            vec![literal(
+                                Datum::new_string(text),
+                                FieldType::new(C::VarString),
+                            )],
+                        )
+                    }
+                };
+                let integer = FieldType::new(C::LongLong);
+                let mut right = crate::column::Column::new(2, integer.clone());
+                right.index = 0;
+                let expr = crate::new_function::new_function_base(
+                    &context,
+                    op,
+                    integer.clone(),
+                    vec![Expression::ScalarFunction(left), Expression::Column(right)],
+                )
+                .unwrap();
+                let Expression::ScalarFunction(function) = &expr else {
+                    panic!("arithmetic must remain a function")
+                };
+                assert!(
+                    matches!(function.args[0], Expression::ScalarFunction(_)),
+                    "{name}/{op}"
+                );
+                let metadata = match (name, op) {
+                    (_, "intdiv") => (20, 0),
+                    ("datetime_expr", "div") => (24, 10),
+                    ("datetime_expr", "plus") => (27, 6),
+                    (_, "div") => (23, -1),
+                    _ => (-1, -1),
+                };
+                let field = expr.static_type().unwrap();
+                assert_eq!(
+                    (field.flen(), field.decimal()),
+                    metadata,
+                    "{name}/{op}/{strict}"
+                );
+                let warning = match name {
+                    "json_string" if op == "intdiv" => {
+                        Some((1265, "Data truncated for column '%s' at row %d".to_owned()))
+                    }
+                    "json_string" | "string_expr" => Some((
+                        1292,
+                        format!(
+                            "Truncated incorrect {} value: '2tail'",
+                            if op == "intdiv" { "DECIMAL" } else { "DOUBLE" }
+                        ),
+                    )),
+                    "json_null" => Some((
+                        1292,
+                        format!(
+                            "Truncated incorrect {} value: 'null'",
+                            if op == "intdiv" { "DECIMAL" } else { "FLOAT" }
+                        ),
+                    )),
+                    _ => None,
+                };
+                let expected_build = if op == "intdiv" && !strict {
+                    warning.clone().into_iter().collect::<Vec<_>>()
+                } else {
+                    vec![]
+                };
+                assert_eq!(
+                    std::mem::take(&mut *context.0.borrow_mut()),
+                    expected_build,
+                    "{name}/{op}/{strict}"
+                );
+                let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[integer], 1);
+                input.append_int64(0, 2);
+                for _ in 0..2 {
+                    let result = expr
+                        .eval(&context, input.get_row(0))
+                        .map(|value| value.sql_string().unwrap())
+                        .map_err(|error| match error {
+                            crate::EvalError::Conversion(error) => {
+                                let error = error.to_sql_error();
+                                (error.code, error.message)
+                            }
+                            crate::EvalError::TruncatedWrongValue(message) => (1292, message),
+                            other => (0, format!("{other:?}")),
+                        });
+                    let expected = if strict && warning.is_some() {
+                        Err(warning.clone().unwrap())
+                    } else {
+                        Ok(value.to_owned())
+                    };
+                    assert_eq!(result, expected, "{name}/{op}/{strict}");
+                    let expected_warnings = if strict {
+                        vec![]
+                    } else {
+                        warning.clone().into_iter().collect()
+                    };
+                    assert_eq!(
+                        std::mem::take(&mut *context.0.borrow_mut()),
+                        expected_warnings,
+                        "{name}/{op}/{strict}"
+                    );
+                }
+            }
+        }
+    }
+}

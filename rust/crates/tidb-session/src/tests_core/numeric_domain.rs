@@ -815,3 +815,159 @@ fn temporal_constant_arithmetic_metadata_matches_go_sql() {
         }
     }
 }
+
+/// Go WrapWithCastAsDecimal probes a strict expression for precision even
+/// when its explicit JSON cast stays unfolded and evaluates once per row.
+#[test]
+fn json_constant_cast_arithmetic_warnings_match_go_sql() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE json_const(a BIGINT)").unwrap();
+    session
+        .run("INSERT INTO json_const VALUES(1),(2),(NULL)")
+        .unwrap();
+    for vectorized in [false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        for (json, values) in [
+            (
+                "null",
+                [
+                    ["1", "2"],
+                    ["-1", "-2"],
+                    ["0", "0"],
+                    ["0", "0"],
+                    ["0", "0"],
+                    ["0", "0"],
+                ],
+            ),
+            (
+                r#""2tail""#,
+                [
+                    ["3", "4"],
+                    ["1", "0"],
+                    ["2", "4"],
+                    ["2", "1"],
+                    ["2", "1"],
+                    ["0", "0"],
+                ],
+            ),
+        ] {
+            for (op, values) in ["+", "-", "*", "/", "DIV", "MOD"].into_iter().zip(values) {
+                let sql =
+                    format!("SELECT CAST('{json}' AS JSON) {op} a FROM json_const ORDER BY a");
+                let StmtOutput::Rows { columns, rows } = session.run_with_columns(&sql).unwrap()
+                else {
+                    panic!("expected rows for {sql}");
+                };
+                let metadata = match op {
+                    "/" => (23, -1),
+                    "DIV" => (20, 0),
+                    "MOD" => (23, 0),
+                    _ => (-1, -1),
+                };
+                assert_eq!(
+                    (columns[0].1.flen(), columns[0].1.decimal()),
+                    metadata,
+                    "{sql}/{vectorized}"
+                );
+                assert_eq!(
+                    row_text(Ok(StmtResult::Rows(rows))),
+                    [["NULL"], [values[0]], [values[1]]],
+                    "{sql}/{vectorized}"
+                );
+                let warning = if op == "DIV" && json != "null" {
+                    (1265, "Data truncated for column '%s' at row %d".to_owned())
+                } else {
+                    (
+                        1292,
+                        format!(
+                            "Truncated incorrect {} value: '{}'",
+                            if op == "DIV" {
+                                "DECIMAL"
+                            } else if json == "null" {
+                                "FLOAT"
+                            } else {
+                                "DOUBLE"
+                            },
+                            if json == "null" { "null" } else { "2tail" }
+                        ),
+                    )
+                };
+                assert_eq!(
+                    warnings_of(&session),
+                    vec![warning; if op == "DIV" { 4 } else { 3 }],
+                    "{sql}/{vectorized}"
+                );
+            }
+        }
+
+        for (json, results) in [
+            (
+                "1.9",
+                [["2", "1"], ["1.9", "0.95"], ["0.8999999999999999", "1.9"]],
+            ),
+            (
+                "-1.9",
+                [
+                    ["-2", "-1"],
+                    ["-1.9", "-0.95"],
+                    ["-0.8999999999999999", "-1.9"],
+                ],
+            ),
+            (
+                r#""1.9tail""#,
+                [["2", "1"], ["1.9", "0.95"], ["0.8999999999999999", "1.9"]],
+            ),
+            (
+                "9007199254740993",
+                [
+                    ["9007199254740993", "4503599627370496"],
+                    ["9007199254740992", "4503599627370496"],
+                    ["0", "0"],
+                ],
+            ),
+        ] {
+            for (op, values) in ["DIV", "/", "MOD"].into_iter().zip(results) {
+                let sql =
+                    format!("SELECT CAST('{json}' AS JSON) {op} a FROM json_const ORDER BY a");
+                assert_eq!(
+                    row_text(session.run(&sql)),
+                    [["NULL"], [values[0]], [values[1]]],
+                    "{sql}/{vectorized}"
+                );
+                let conversion_warnings = if json == "9007199254740993" {
+                    vec![]
+                } else if op == "DIV" {
+                    let mut warnings = vec![];
+                    if json.starts_with('"') {
+                        warnings
+                            .push((1265, "Data truncated for column '%s' at row %d".to_owned()));
+                    }
+                    warnings.push((
+                        1292,
+                        format!(
+                            "Truncated incorrect DECIMAL value: '{}'",
+                            if json == "-1.9" { "-1.9" } else { "1.9" }
+                        ),
+                    ));
+                    warnings
+                } else if json.starts_with('"') {
+                    vec![(
+                        1292,
+                        "Truncated incorrect DOUBLE value: '1.9tail'".to_owned(),
+                    )]
+                } else {
+                    vec![]
+                };
+                let expected = (0..if op == "DIV" { 4 } else { 3 })
+                    .flat_map(|_| conversion_warnings.clone())
+                    .collect::<Vec<_>>();
+                assert_eq!(warnings_of(&session), expected, "{sql}/{vectorized}");
+            }
+        }
+    }
+}

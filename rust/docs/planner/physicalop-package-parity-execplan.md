@@ -5906,3 +5906,136 @@ validation processes are terminal, and git diff --check passes. The remote
 fetch confirmed zero divergence from the published parent. This nine-file
 checkpoint is ready for the requested commit and push; no whole-package or
 workload-performance acceptance is claimed.
+
+
+## Strict decimal-cast precision probes (2026-09-21)
+
+
+Published 43ae62aa26 is verified progress. Pulled again; branch was current.
+Continue the whole-expression audit at WrapWithCastAsDecimal's ConstStrict
+precision probe. Go evaluates a retained scalar expression during construction
+without replacing it with a Constant; explicit JSON casts expose this through
+one extra DIV warning before per-row execution. Add regressions against the
+captured Go SQL oracle, check direct construction and metadata, then run native
+consumers, Go references and lint before committing/pushing. This remains
+whole-package audit progress, not acceptance of an arithmetic subset.
+
+
+### Precision-probe source decisions and discovered JSON metadata
+
+
+Go builtin_cast.go WrapWithCastAsDecimal invokes EvalDecimal for every
+ConstStrict cast, independently of FoldConstant. Successful strict literal
+folds already supply the value. Retained scalar trees and failed literal folds
+must still be probed, with warnings preserved and errors left for runtime.
+Native arithmetic preparation now performs that probe and uses the resulting
+precision for return metadata without replacing the source scalar tree.
+Context-bound expressions are excluded. MOD retains original argument metadata.
+
+The SQL regression first failed because explicit JSON DIV emitted three
+runtime warnings instead of Go's construction warning plus three runtime
+warnings. After the probe fix, it exposed JSON MOD's wrong return metadata.
+Pinned pkg/parser/expr_cast_parser.go applies mysql's JSON CAST defaults,
+flen 4,194,304 and decimal 0; Rust's cast target had left both unspecified.
+The explicit JSON target now carries the source defaults. This also fixes
+fractional DIV: CAST('1.9' AS JSON) DIV 1 returns 2 and reports the decimal
+rounding warning, exactly as Go. The defaults belong to explicit SQL casts;
+low-level JSON fields retain their existing unspecified metadata.
+
+The 48-query native SQL matrix checks both execution modes, NULL rows, result
+metadata, exact JSON integer conversion, positive/negative fractions and
+truncated JSON strings with ordered parse/rounding warnings. The 36-case direct
+builder regression covers retained JSON, REAL arithmetic, string concat and
+temporal IFNULL trees in warning/error modes; it checks metadata, build
+warnings, deferred error identity and repeated runtime evaluation. The existing
+cast-target metadata test now checks the JSON width and scale explicitly.
+
+Red logs: /tmp/tidb-decimal-probe-sql-red.log (missing probe); the first
+sql-green.log attempt exposed MOD metadata, then was rerun successfully after
+the JSON default correction. Final fractional SQL evidence is sql-fraction.log.
+Direct source/native evidence: go.log and native.log under the same prefix.
+Go probes use /tmp/tidb-decimal-probe-{overlay,sql-overlay}.json. The first
+fractional oracle treated expected overflow as an unexpected error; the harness
+was corrected to capture errors as reference data and the full probe passed.
+
+The 1e60 JSON SQL case establishes an additional open obligation: Go's scalar
+DIV overflow contains retained nested casts with refined decimal(61,0), while
+its vector overflow renders the evaluated numeric operands. Native computed
+argument vectorization and diagnostic structure still need their complete
+source audit. Internal cast-node identity and retained argument metadata are
+also not accepted by these value/return-metadata checks. No whole expression
+package acceptance is claimed.
+
+### Precision-probe validation receipt
+
+
+Changed files: rust/crates/tidb-expr/src/scalar_function.rs,
+rewriter/result_type.rs, rewriter/result_type_tests.rs,
+tests/go_arithmetic_values.rs, rust/crates/tidb-session/src/tests_core/numeric_domain.rs
+and this plan. No Go/import/Bazel/module files changed; bazel_prepare is not
+required. Rechecked the Go checker/windows package sources and BUILD.bazel:
+no failpoint/testfailpoint/dependency markers, so those harnesses need no
+failpoint toggles. Original whole-expression tests still require their gate.
+
+Commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib json_constant_cast_arithmetic_warnings_match_go_sql
+    cargo test --offline --locked -j12 -p tidb-expr --lib strict_scalar_decimal_precision_probes_preserve_runtime_evaluation
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib json
+    cargo test --offline --locked -j12 -p tidb-session --lib cast
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Commands from repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-decimal-probe-overlay.json -run '^TestGroupCheckerStrictDecimalPrecisionOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-decimal-probe-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-decimal-probe-sql-overlay.json -run '^(TestArithmeticConstantCastSQLOracle|TestStrictDecimalJSONFractionSQLOracle)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    make lint
+    git diff --check
+
+Full expression validation passed 1,197 tests with 97 existing ignored. The
+accumulated 30 Go checker/reference functions passed with the race detector.
+The Go SQL capture covers 78 queries. make lint passed. Logs use prefix
+/tmp/tidb-decimal-probe-; native broad logs are tidb-<crate>-<filter>.log,
+Go logs go.log, go-race.log and sql-go.log, lint log lint.log.
+
+Runtime kernels are unchanged by the precision probe; the explicit JSON scale
+correction deliberately changes the previous incorrect fractional DIV behavior.
+No microbenchmark speedup or workload acceptance is claimed. Comparable full
+sysbench/TPC-C/TPC-H/YCSB runs, original expression tests, generated artifact
+regeneration, and ignored native cases remain open. The two unrelated untracked
+drafts are untouched and excluded from isolated validation and commit.
+
+
+Consumer results: executor checker 28, merge 76, aggregate 76, shuffle 26,
+window 23; session numeric 14, JSON 23, cast 33, merge 16 and window 68, all
+passed. Self-review checked source JSON CAST defaults, warning/error sequencing,
+strict-versus-context constant handling, retained runtime trees and decimal
+result precision. Remote fetch confirmed no divergence from 43ae62aa26.
+
+The disposable checkout's prior files were verified against published
+43ae62aa26 (only the final documentation receipt was absent), then reset to
+that commit. Exactly six intended files were copied and byte-checked. Commands
+from /private/tmp/tidb-parity-publish-aba629bb/rust:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib json
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib cast
+
+Isolated logs: /tmp/tidb-decimal-probe-isolated-{expr,numeric_domain,json,cast}.log.
+The first isolated gate passed all 1,197 expression tests (97 existing ignored).
+
+
+Final isolated SQL gates passed: numeric 14, JSON 23 and cast 33. All validation
+processes are terminal, final Rust bytes match the isolated tested patch, and
+git diff --check passes. The six-file checkpoint is ready for the requested
+commit/push. Whole-package acceptance and workload performance remain open.

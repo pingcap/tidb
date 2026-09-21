@@ -1164,20 +1164,24 @@ impl ScalarFunction {
         let Some(domain) = self.numeric_operand_domain() else {
             return;
         };
-        for argument in &mut self.args {
-            let Expression::Constant(constant) = argument else {
-                continue;
-            };
-            if constant.literal_value().is_none() {
+        let mut probed_types = [None, None];
+        for (index, argument) in self.args.iter_mut().enumerate() {
+            if argument.const_level() != ConstLevel::STRICT {
                 continue;
             }
-            let Some(field) = constant.ret_type.as_ref() else {
+            let Some(field) = argument.static_type() else {
                 continue;
             };
             if field.eval_type() == domain {
                 continue;
             }
-            let subquery_ref_id = constant.subquery_ref_id;
+            let literal_ref_id = match argument {
+                Expression::Constant(constant) if constant.literal_value().is_some() => {
+                    Some(constant.subquery_ref_id)
+                }
+                _ => None,
+            };
+            let field = argument.static_type().expect("typed numeric argument");
             let mut target = if domain == EvalType::Decimal {
                 numeric_decimal_cast_type(field)
             } else if domain == EvalType::Int {
@@ -1192,27 +1196,39 @@ impl ScalarFunction {
             target.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
             target.set_charset_name("binary");
             target.set_collation_name("binary");
-            // FoldConstant retains the cast when evaluation fails. Leave its
-            // source here for the typed arithmetic evaluator to retry.
-            let result = eval_numeric_operand_row(argument, ctx, Row::empty(), domain);
-            let Ok(value) = result else {
-                continue;
+            let refine_decimal = |target: &mut FieldType, value: &Datum| {
+                if let Datum::Decimal(decimal) = value {
+                    let (precision, fraction) = decimal.precision_and_frac();
+                    target.set_flen_under_limit(i64::from(precision));
+                    target.set_decimal_under_limit(i64::from(fraction));
+                }
             };
-            let value = match value {
-                Datum::Int(value) if target.is_unsigned() => Datum::UInt(value as u64),
-                value => value,
-            };
-            if !value.is_null() {
-                target.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            if let Some(subquery_ref_id) = literal_ref_id {
+                // FoldConstant retains a failed cast for runtime evaluation.
+                if let Ok(value) = eval_numeric_operand_row(argument, ctx, Row::empty(), domain) {
+                    let value = match value {
+                        Datum::Int(value) if target.is_unsigned() => Datum::UInt(value as u64),
+                        value => value,
+                    };
+                    if !value.is_null() {
+                        target.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                    }
+                    refine_decimal(&mut target, &value);
+                    let mut folded = crate::constant::Constant::new(value, target);
+                    folded.subquery_ref_id = subquery_ref_id;
+                    *argument = Expression::Constant(folded);
+                    continue;
+                }
             }
-            if let Datum::Decimal(decimal) = &value {
-                let (precision, fraction) = decimal.precision_and_frac();
-                target.set_flen_under_limit(i64::from(precision));
-                target.set_decimal_under_limit(i64::from(fraction));
+            // WrapWithCastAsDecimal probes every ConstStrict cast, including
+            // retained scalar trees and failed literal folds. Keep its warnings
+            // and precision without folding a tree Go leaves for runtime.
+            if domain == EvalType::Decimal {
+                if let Ok(value) = eval_numeric_operand_row(argument, ctx, Row::empty(), domain) {
+                    refine_decimal(&mut target, &value);
+                    probed_types[index] = Some(target);
+                }
             }
-            let mut folded = crate::constant::Constant::new(value, target);
-            folded.subquery_ref_id = subquery_ref_id;
-            *argument = Expression::Constant(folded);
         }
         // Go's function classes read the cast argument types, including
         // fine-grained constant precision, after newBaseBuiltinFuncWithTp.
@@ -1227,8 +1243,12 @@ impl ScalarFunction {
             }
         };
         if matches!(domain, EvalType::Real | EvalType::Decimal) {
-            let left = argument_type(&self.args[0]);
-            let right = argument_type(&self.args[1]);
+            let left = probed_types[0]
+                .take()
+                .unwrap_or_else(|| argument_type(&self.args[0]));
+            let right = probed_types[1]
+                .take()
+                .unwrap_or_else(|| argument_type(&self.args[1]));
             if let Some(ret_type) = self.ret_type.as_mut() {
                 crate::builtin_arithmetic::refine_cast_arithmetic_metadata(
                     self.func_name.lowercase(),

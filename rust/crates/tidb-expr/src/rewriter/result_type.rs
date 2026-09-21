@@ -348,6 +348,9 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
         // default utf8mb4 charset/collation.
         CastType::Json => {
             let mut ft = FieldType::new(FieldTypeCode::Json);
+            // expr_cast_parser.go applies the JSON-specific CAST defaults.
+            ft.set_flen(4_194_304);
+            ft.set_decimal(0);
             ft.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
             ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
             ft.set_charset_name("utf8mb4");
