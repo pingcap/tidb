@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner"
@@ -348,11 +349,15 @@ func TestFTSLikeConcurrentSessions(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table delivery_sessions(id int primary key,a text,fulltext index(a))")
 	tk.MustExec("insert into delivery_sessions values(1,'cat'),(2,'category')")
+	var wg sync.WaitGroup
+	start := make(chan struct{})
 	for n := 0; n < 8; n++ {
 		n := n
-		t.Run(fmt.Sprintf("session%d", n), func(t *testing.T) {
-			t.Parallel()
-			s := testkit.NewTestKit(t, store)
+		s := testkit.NewTestKit(t, store)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
 			s.MustExec("use test")
 			s.MustExec(fmt.Sprintf("set tidb_opt_enable_alternative_logical_plans=1,tidb_enable_local_match_against=%d,tidb_enable_fts_like_fallback=%d", n%2, 1-n%2))
 			rows := testkit.Rows("1")
@@ -363,8 +368,10 @@ func TestFTSLikeConcurrentSessions(t *testing.T) {
 				s.MustQuery("select id from delivery_sessions where match(a) against('cat' in boolean mode) order by id").Check(rows)
 				require.False(t, s.Session().GetSessionVars().StmtCtx.InFTSLikeFallbackRound)
 			}
-		})
+		}()
 	}
+	close(start)
+	wg.Wait()
 }
 
 func TestFTSLikeErrorBoundaries(t *testing.T) {
