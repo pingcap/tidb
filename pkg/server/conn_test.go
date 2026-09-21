@@ -1559,7 +1559,12 @@ func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
 	data = append(data, "new_db"...)
 	data = append(data, 0)
 	data = append(data, 0, 0)
+	closeFP := "github.com/pingcap/tidb/pkg/server/mockContextCloseError"
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(closeFP)) })
+	// Cleanup failure must not prevent restoring the authenticated old session.
+	require.NoError(t, failpoint.Enable(closeFP, "1*return"))
 	err = cc.handleChangeUser(context.Background(), data)
+	require.NoError(t, failpoint.Disable(closeFP))
 	require.Error(t, err)
 	require.Same(t, tc, cc.getCtx())
 	require.Equal(t, "root", cc.user)
@@ -1589,7 +1594,10 @@ func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
 	// A valid change on the same connection must remain possible after those failures.
 	cc.capability &^= mysql.ClientPluginAuth
 	successData := []byte("root\x00\x00test\x00\x00\x00")
+	// Closing the old session can report an error after cleanup; the authenticated new session stays usable.
+	require.NoError(t, failpoint.Enable(closeFP, "1*return"))
 	require.NoError(t, cc.handleChangeUser(context.Background(), successData))
+	require.NoError(t, failpoint.Disable(closeFP))
 	require.NotSame(t, tc, cc.getCtx())
 	require.Equal(t, "root", cc.user)
 	require.Equal(t, "test", cc.dbname)
