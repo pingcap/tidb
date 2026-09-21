@@ -1515,13 +1515,14 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		policy := indexInfo.RegionSplitPolicy
 		buf.WriteString("\n/*T![region_split] ")
 
-		fmt.Fprintf(buf, "SPLIT ")
+		// Note: the primary key branch of the region split policy grammar does not
+		// accept an index name, so only non-PRIMARY indexes are emitted as
+		// `SPLIT INDEX <name>`.
 		if indexInfo.Name.O == mysql.PrimaryKeyName {
-			fmt.Fprintf(buf, "PRIMARY KEY ")
+			buf.WriteString("SPLIT PRIMARY KEY BETWEEN (")
 		} else {
-			fmt.Fprintf(buf, "INDEX ")
+			fmt.Fprintf(buf, "SPLIT INDEX %s BETWEEN (", stringutil.Escape(indexInfo.Name.O, sqlMode))
 		}
-		fmt.Fprintf(buf, "%s BETWEEN (", stringutil.Escape(indexInfo.Name.O, sqlMode))
 
 		for i, val := range policy.Lower {
 			if i > 0 {
