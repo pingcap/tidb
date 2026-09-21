@@ -30,6 +30,14 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, prepared EXPLAIN and comparison construction) Current
+  statement parameters reach expression rendering; deferred display/evaluation,
+  string probe ranges and brief-binary evaluation counts match source rules.
+  Go-oracle expansion also corrected comparison cache admission and IN
+  construction/refinement. Source race comparisons, isolated native gates and
+  required lint pass; detailed receipts follow at the end. Whole-package and
+  workload performance acceptance remain open.
+
 - [x] (2026-09-21, temporal and JSON arithmetic) Shared numeric argument
   conversion now covers temporal and JSON columns. A 288-case Go/native matrix
   pins values, strict errors and warnings in both modes; 48 SQL scenarios cover
@@ -6637,3 +6645,158 @@ initially hit sandbox DNS restrictions fetching revive; rerunning with network
 and cache permissions passed, with log /tmp/tidb-probe-keys-final-lint.log.
 No additional source-package acceptance or workload performance claim follows
 from these targeted gates.
+
+
+## Continuing expression/physicalop audit: execution-context EXPLAIN
+
+
+Previous checkpoint 403c269c66 was committed and remote-verified progress. The
+next pull was already current. Whole-package inventories and acceptance gates
+remain unchanged. Audit current parameter and deferred constants in physical
+EXPLAIN, including retained prepared process plans. Go Constant.ExplainInfo
+(explain.go) evaluates a constant with the current execution context, whereas
+Constant.StringWithCtx (constant.go) reads current parameters and renders a
+deferred expression without evaluating it. IndexJoin range descriptions use
+StringWithCtx too (index_join_path.go), including unquoted string constants.
+Rust plan_trace currently rejects both dynamic constant kinds and receives no
+execution context, so reusing the cached planning value would also be incorrect.
+
+Implementation plan: reproduce missing prepared expression text against Go;
+thread the existing statement evaluation context through the physical renderer
+and process-plan publication; use it to evaluate predicate constants and fetch
+projection parameters, while rendering deferred projection/range expressions.
+Extend the closest renderer and session suites with current-vs-stale parameter,
+deferred evaluation/error, and quoted-vs-unquoted range cases. Preserve Go's
+error text and avoid extra evaluations for descriptive StringWithCtx paths.
+Validate targeted renderer/EXPLAIN/prepared/index-join consumers, the Go oracle
+under race, required lint, then self-review and publish the checkpoint. No
+source inventory row is accepted by these dependency fixes alone.
+
+Go baseline: unchanged windows package with temporary overlay
+/tmp/tidb-explain-params-overlay.json; log /tmp/tidb-explain-params-go.log.
+Its tests and BUILD.bazel have no failpoint/testfailpoint dependency. No tracked
+Go/Bazel/module files change, so bazel_prepare is not required.
+
+
+### Findings and implementation decisions
+
+
+The original prepared SELECT regression failed with empty projection text
+(/tmp/tidb-explain-params-red.log). A direct renderer test failed on a parameter
+with stale saved value (/tmp/tidb-explain-dynamic-red.log). Context now flows from
+ordinary EXPLAIN and retained process-plan publication to each expression
+renderer. ExplainInfo evaluates dynamic constants and preserves Go's error text;
+StringWithCtx fetches parameters and renders deferred expressions, preserving
+the source's early return before a subquery label. Literal datums remain borrowed
+rather than cloned for display. The direct Go oracle verifies parameters,
+deferred arithmetic, deferred overflow, conversion to string and parameter
+precedence over a deferred expression; the native test additionally checks the
+source's release-build missing-parameter fallback.
+
+The prepared index-probe matrix failed because range descriptions quoted strings
+(/tmp/tidb-explain-probe-strings-red.log). Source indexJoinPathRangeInfo uses
+StringWithCtx, while Selection uses ExplainInfo. Both variants now match Go for
+one/two string prefix executions, including the second-execution cache hit.
+
+Context-aware rendering exposed duplicate constant evaluation in the previous
+binary-plan renderer, which rendered full and brief trees indiscriminately. The
+new counted regression failed with two reads instead of one
+(/tmp/tidb-explain-double-red.log). Go binaryOpTreeFromFlatOps rerenders operator
+metadata only for table/index readers and the four join names. The native brief
+pass now uses that same set, avoiding extra Selection/Projection evaluations.
+
+Expanding the prepared oracle found a construction bug rather than a display
+bug: integer column > string parameter retained a mutable marker after integer
+refinement, and a heterogeneous IN retained an IN signature where Go builds OR
+of typed equalities. The session regression remained red until both underlying
+rules were corrected. Comparison construction now applies Go's plan-cache guard
+and RemoveMutableConst before value-dependent refinement. A statement-context
+seam exposes cache use and records the source-shaped refinement rejection via
+the existing PlanCacheTracker (including its force-cache behavior). Integer IN
+candidates are refined before the homogeneous-comparison check; heterogeneous
+and singleton IN lists use the existing typed binary comparison builder and DNF
+composer. Full collation and package-wide rewriter acceptance remain subject to
+the original atomic package audit, not this regression matrix.
+
+The final prepared matrix checks six ordinary executions and four index-probe
+executions: exact relevant operator expressions, rows and cache-hit values. Go
+integer/string refinement has cache hits 0/0; the other pairs have 0/1. Source
+race oracle passed all three test functions, log
+/tmp/tidb-explain-params-go-race.log. The native expanded matrix passes in
+/tmp/tidb-explain-refinement-green.log. Broader expression/consumer validation
+and final isolated publication checks are in progress.
+
+
+### Final validation and remaining scope
+
+
+The broader IN suite initially failed three old literal-list assertions marked
+PREDICTION/UNRUN. Go race recordings of the exact statements confirm two 1292
+warnings for each invalid string, ordered by candidate, from conversion and
+comparison during RefineComparedConstant. Updated those predictions and their
+wire-warning counts to the measured source results; the unchanged subquery
+warning checks still pass. Source log /tmp/tidb-explain-in-warnings-go.log.
+
+Final Go commands (repository root):
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-explain-params-overlay.json -run '^TestPreparedExplainConstantsOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-explain-params-overlay.json -run '^TestDynamicExplainConstantsOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-explain-params-overlay.json -run '^TestIndexProbeStringExplainOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-explain-params-overlay.json -run '^(TestPreparedExplainConstantsOracle|TestDynamicExplainConstantsOracle|TestIndexProbeStringExplainOracle)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-explain-params-overlay.json -run '^TestInRefinementWarningsOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+All passed. The first draft oracle had a duplicate fmt import, corrected before
+behavioral capture. TopSQL decoding intentionally omits operator text, so the
+final oracle decodes the ordinary connection format instead. No production Go,
+Bazel, module or generated artifact changed. Windows has no failpoint dependency;
+no bazel_prepare or failpoint mutation was required.
+
+Native commands from rust/ (also run in the isolated rust/ directory with
+CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target):
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-executor --lib explain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_compare_refinement
+    cargo test --offline --locked -j12 -p tidb-session --lib index_join
+    cargo test --offline --locked -j12 -p tidb-session --lib index_probe
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_sysbench_access
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_in_list_full_evaluation
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_collation
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_datetime_year_compare
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_json
+
+The isolated checkout is /private/tmp/tidb-parity-publish-aba629bb over published
+403c269c66, with only the intended patch copied. All listed gates passed there.
+Expression: 1199 passed, 97 existing ignored; executor EXPLAIN: 21; session
+EXPLAIN: 64; prepared cache: 45; comparison refinement: 8; index join: 14 plus
+one existing ignored; index probe: 3; sysbench access: 15; IN evaluation: 6;
+collation: 13; datetime/year: 3; JSON: 15. Logs are
+/tmp/tidb-explain-isolated-<crate>-<filter>.log (expression filter is all).
+The full expression suite initially encountered a sandbox denial binding its
+existing JSON-schema HTTP fixture; it passed with localhost permission.
+
+Additional red/green commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib prepared_explain_constants_follow_current_parameters
+    cargo test --offline --locked -j12 -p tidb-executor --lib dynamic_constants_use_go
+    cargo test --offline --locked -j12 -p tidb-executor --lib brief_binary_plan_does_not_render
+    cargo test --offline --locked -j12 -p tidb-session --lib prepared_explain_index_probe_strings
+    cargo test --offline --locked -j12 -p tidb-session --lib prepared_explain
+    cargo test --offline --locked -j12 -p tidb-executor --lib plan_trace::
+
+Required make lint and git diff --check pass. Lint logs:
+/tmp/tidb-explain-lint.log and /tmp/tidb-explain-final-lint.log. Final files are
+executor explain, plan_trace and stmt_context; expression builtin_compare,
+context, expr_util/predicates and rewriter; session tests_explain and
+tests_in_list_full_evaluation; this plan. The two unrelated untracked drafts
+remain untouched and outside validation/publication.
+
+This checkpoint changes real expression construction and cache admission, not
+only text. The targeted suites cover those consumers, but source package-wide
+original artifact/generator/platform gates, ignored native tests, remaining
+collation/rewriter/unsigned refinement branches, and full sysbench/TPC-C/TPC-H/
+YCSB performance measurements are still open. The brief pass does less redundant
+expression work; no throughput claim is made without workload measurements.
+No whole Go package is marked accepted by this checkpoint.

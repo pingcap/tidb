@@ -1295,6 +1295,56 @@ fn rewrite_leaf_compound(
             for item in list {
                 args.push(rewrite_expr_resolved(item, resolver)?);
             }
+            let ctx = resolver.comparison_context().unwrap_or(&crate::NoColumns);
+            crate::builtin_compare::refine_integer_in_arguments(&mut args, ctx)?;
+            let left = &args[0];
+            let left_type = left.static_type();
+            if left_type.is_some_and(|field| field.code() == FieldTypeCode::Null) {
+                return Ok(Expression::Constant(Constant::new_null()));
+            }
+            fn operand(expression: &Expression) -> crate::builtin_compare::CmpOperand<'_> {
+                crate::builtin_compare::CmpOperand {
+                    field_type: expression.static_type().expect("typed IN argument"),
+                    is_constant: matches!(expression, Expression::Constant(_)),
+                    is_column: matches!(expression, Expression::Column(_)),
+                }
+            }
+            let all_same_type = left_type.is_some_and(|field| {
+                args[1..].iter().all(|argument| {
+                    argument.static_type().is_some_and(|other| {
+                        other.code() == FieldTypeCode::Null
+                            || crate::builtin_compare::get_accurate_cmp_type(
+                                operand(left),
+                                operand(argument),
+                            ) == field.eval_type()
+                    })
+                })
+            });
+            if !all_same_type || list.len() == 1 {
+                let mut equalities = Vec::with_capacity(list.len());
+                for right in &args[1..] {
+                    equalities.push(binary_expression(
+                        BinaryOp::Eq,
+                        left.clone(),
+                        right.clone(),
+                        resolver,
+                    )?);
+                }
+                let call = crate::simple_expr::compose_dnf_condition(equalities).ok_or(
+                    EvalError::Unsupported("an IN expression with no candidates"),
+                )?;
+                return if *not {
+                    Ok(Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new(unary_op_name(UnaryOp::Not)),
+                        call.static_type()
+                            .cloned()
+                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
+                        vec![call],
+                    )))
+                } else {
+                    Ok(call)
+                };
+            }
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type.set_flen(1);
             // `ast.In` is in Go's `booleanFunctions` map, so the result carries

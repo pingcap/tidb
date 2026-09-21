@@ -208,16 +208,10 @@ fn in_subquery_probe_show_warnings_lists_all_four() {
     );
 }
 
-/// The literal-list form of the same thing -- same operand shape as the
-/// reported query (int left, all-string list) so the comparison type is the
-/// same `ETReal`, with the coercing value placed AFTER the matching one so
-/// only full evaluation can reach it.
-///
-/// `'0'` is a complete valid float prefix and coerces silently; `'abc'` is
-/// what a short-circuit drops.
-///
-/// PREDICTION, not an oracle recording: the four-warning count of the
-/// reported query is recorded, this shape is not. UNRUN.
+/// Go inToExpression refines every constant against the integer left side.
+/// RefineComparedConstant warns during conversion and again when comparing
+/// the integer with the original string, even after an earlier match.
+/// Recorded with TestInRefinementWarningsOracle against the pinned Go source.
 #[test]
 fn literal_in_list_coerces_values_after_the_match() {
     let mut session = Session::new();
@@ -229,16 +223,16 @@ fn literal_in_list_coerces_values_after_the_match() {
     );
     assert_eq!(
         warning_texts(&session),
-        vec!["1292 Truncated incorrect DOUBLE value: 'abc'".to_owned()],
+        vec!["1292 Truncated incorrect DOUBLE value: 'abc'".to_owned(); 2],
         "the value after the match must still be coerced"
     );
-    assert_eq!(session.wire_warning_count(), 1);
+    assert_eq!(session.wire_warning_count(), 2);
 }
 
 /// `NOT IN` takes the same path -- the negation is applied to the settled
 /// boolean, not used to skip evaluation.
 ///
-/// PREDICTION. UNRUN.
+/// The Go oracle records the same two refinement warnings before negation.
 #[test]
 fn literal_not_in_list_coerces_values_after_the_match() {
     let mut session = Session::new();
@@ -250,7 +244,7 @@ fn literal_not_in_list_coerces_values_after_the_match() {
     );
     assert_eq!(
         warning_texts(&session),
-        vec!["1292 Truncated incorrect DOUBLE value: 'abc'".to_owned()],
+        vec!["1292 Truncated incorrect DOUBLE value: 'abc'".to_owned(); 2],
     );
 }
 
@@ -279,12 +273,10 @@ fn full_evaluation_keeps_match_outranking_null() {
     }
 }
 
-/// Two coercing values after the match: both are still coerced, so the count
-/// is two, not one. A count of one is the short-circuit surviving.
-///
-/// PREDICTION. UNRUN.
+/// Each invalid string contributes two refinement warnings. The exact Go
+/// recording orders both warnings for x before both warnings for y.
 #[test]
-fn every_coercing_value_after_the_match_warns_once() {
+fn every_coercing_value_after_the_match_warns_twice() {
     let mut session = Session::new();
     let sql = "select 0 in ('0', 'x', 'y')";
     assert_eq!(
@@ -296,8 +288,10 @@ fn every_coercing_value_after_the_match_warns_once() {
         warning_texts(&session),
         vec![
             "1292 Truncated incorrect DOUBLE value: 'x'".to_owned(),
+            "1292 Truncated incorrect DOUBLE value: 'x'".to_owned(),
+            "1292 Truncated incorrect DOUBLE value: 'y'".to_owned(),
             "1292 Truncated incorrect DOUBLE value: 'y'".to_owned(),
         ]
     );
-    assert_eq!(session.wire_warning_count(), 2);
+    assert_eq!(session.wire_warning_count(), 4);
 }

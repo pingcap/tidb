@@ -74,8 +74,12 @@ fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
     }
 }
 
-fn expression_text(expression: &tidb_expr::expression::Expression) -> String {
+fn expression_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    expression: &tidb_expr::expression::Expression,
+) -> String {
     crate::plan_trace::physical_expression_text_with_columns(
+        eval_ctx,
         expression,
         &[],
         crate::plan_trace::ExpressionTextStyle::Explain,
@@ -86,8 +90,12 @@ fn expression_text(expression: &tidb_expr::expression::Expression) -> String {
 /// Go `Expression.StringWithCtx`: the renderer `ExplainExpressionList` uses
 /// for a Projection's own expressions, where a nested string constant prints
 /// bare instead of quoted.
-fn expression_string_text(expression: &tidb_expr::expression::Expression) -> String {
+fn expression_string_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    expression: &tidb_expr::expression::Expression,
+) -> String {
     crate::plan_trace::physical_expression_text_with_columns(
+        eval_ctx,
         expression,
         &[],
         crate::plan_trace::ExpressionTextStyle::StringWithCtx,
@@ -104,10 +112,13 @@ fn scan_uses_pseudo_statistics(base: &tidb_planner::physical::BasePhysicalPlan) 
         .is_none_or(|stats| stats.stats_version() == tidb_stats::PSEUDO_VERSION)
 }
 
-fn expressions_text(expressions: &[tidb_expr::expression::Expression]) -> String {
+fn expressions_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    expressions: &[tidb_expr::expression::Expression],
+) -> String {
     expressions
         .iter()
-        .map(expression_text)
+        .map(|expression| expression_text(eval_ctx, expression))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -117,6 +128,7 @@ fn expressions_text(expressions: &[tidb_expr::expression::Expression]) -> String
 /// `expr->Column#N`, EXCEPT a direct column whose own text already equals the
 /// output column's.
 fn projection_text(
+    eval_ctx: &dyn tidb_expr::Columns,
     expressions: &[tidb_expr::expression::Expression],
     schema: Option<&tidb_expr::schema::Schema>,
 ) -> String {
@@ -124,12 +136,14 @@ fn projection_text(
         .iter()
         .enumerate()
         .map(|(index, expression)| {
-            let rendered = expression_string_text(expression);
+            let rendered = expression_string_text(eval_ctx, expression);
             let Some(output) = schema.and_then(|schema| schema.columns.get(index)) else {
                 return rendered;
             };
-            let output =
-                expression_string_text(&tidb_expr::expression::Expression::Column(output.clone()));
+            let output = expression_string_text(
+                eval_ctx,
+                &tidb_expr::expression::Expression::Column(output.clone()),
+            );
             match expression {
                 // A column projected under the SAME identity prints once;
                 // a re-projected column with a different UniqueID prints both.
@@ -146,11 +160,14 @@ fn projection_text(
         .join(", ")
 }
 
-fn by_items_text(items: &[tidb_expr::aggregation::ByItems]) -> String {
+fn by_items_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    items: &[tidb_expr::aggregation::ByItems],
+) -> String {
     items
         .iter()
         .map(|item| {
-            let expression = expression_text(&item.expr);
+            let expression = expression_text(eval_ctx, &item.expr);
             if item.desc {
                 format!("{expression}:desc")
             } else {
@@ -191,8 +208,14 @@ fn plan_explain_id(plan: &PhysicalPlan, ignore_suffix: bool) -> String {
 /// the rendered strings, and join with `", "`. `PhysicalHashJoin`'s and
 /// `PhysicalMergeJoin`'s `right cond`/`other cond` both use it, and so does
 /// MergeJoin's `left cond`.
-fn sorted_expressions_text(expressions: &[tidb_expr::expression::Expression]) -> String {
-    let mut rendered = expressions.iter().map(expression_text).collect::<Vec<_>>();
+fn sorted_expressions_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    expressions: &[tidb_expr::expression::Expression],
+) -> String {
+    let mut rendered = expressions
+        .iter()
+        .map(|expression| expression_text(eval_ctx, expression))
+        .collect::<Vec<_>>();
     rendered.sort();
     rendered.join(", ")
 }
@@ -206,6 +229,7 @@ fn sorted_expressions_text(expressions: &[tidb_expr::expression::Expression]) ->
 /// join renders its equal conditions, and only the HASH join brackets
 /// `left cond`.
 fn join_info(
+    eval_ctx: &dyn tidb_expr::Columns,
     join_type: tidb_planner::find_best_task::LogicalJoinType,
     left_child: Option<&PhysicalPlan>,
     ignore_explain_id_suffix: bool,
@@ -230,10 +254,10 @@ fn join_info(
     }
     if merge {
         if !left_keys.is_empty() {
-            parts.push(format!("left key:{}", columns_text(left_keys)));
+            parts.push(format!("left key:{}", columns_text(eval_ctx, left_keys)));
         }
         if !right_keys.is_empty() {
-            parts.push(format!("right key:{}", columns_text(right_keys)));
+            parts.push(format!("right key:{}", columns_text(eval_ctx, right_keys)));
         }
     } else if !equal_conditions.is_empty() {
         // Go `PhysicalHashJoin.explainInfo` (`physical_hash_join.go:243-256`):
@@ -244,9 +268,10 @@ fn join_info(
         let equal = equal_conditions
             .iter()
             .map(|condition| {
-                expression_text(&tidb_expr::expression::Expression::ScalarFunction(
-                    condition.clone(),
-                ))
+                expression_text(
+                    eval_ctx,
+                    &tidb_expr::expression::Expression::ScalarFunction(condition.clone()),
+                )
             })
             .collect::<Vec<_>>();
         parts.push(format!("equal:[{}]", equal.join(" ")));
@@ -261,9 +286,10 @@ fn join_info(
         let equal = na_equal_conditions
             .iter()
             .map(|condition| {
-                expression_text(&tidb_expr::expression::Expression::ScalarFunction(
-                    condition.clone(),
-                ))
+                expression_text(
+                    eval_ctx,
+                    &tidb_expr::expression::Expression::ScalarFunction(condition.clone()),
+                )
             })
             .collect::<Vec<_>>();
         parts.push(format!("equal:[{}]", equal.join(" ")));
@@ -282,8 +308,14 @@ fn join_info(
                 };
                 format!(
                     "{operator}({}, {})",
-                    expression_text(&tidb_expr::expression::Expression::Column(left.clone())),
-                    expression_text(&tidb_expr::expression::Expression::Column(right.clone()))
+                    expression_text(
+                        eval_ctx,
+                        &tidb_expr::expression::Expression::Column(left.clone())
+                    ),
+                    expression_text(
+                        eval_ctx,
+                        &tidb_expr::expression::Expression::Column(right.clone())
+                    )
                 )
             })
             .collect::<Vec<_>>();
@@ -295,14 +327,14 @@ fn join_info(
         if merge {
             parts.push(format!(
                 "left cond:{}",
-                sorted_expressions_text(left_conditions)
+                sorted_expressions_text(eval_ctx, left_conditions)
             ));
         } else {
             // Go's `PhysicalHashJoin` non-normalized `left cond` is the ONLY
             // bracketed condition list, and it keeps the original order.
             let rendered = left_conditions
                 .iter()
-                .map(expression_text)
+                .map(|expression| expression_text(eval_ctx, expression))
                 .collect::<Vec<_>>()
                 .join(" ");
             parts.push(format!("left cond:[{rendered}]"));
@@ -311,19 +343,20 @@ fn join_info(
     if !right_conditions.is_empty() {
         parts.push(format!(
             "right cond:{}",
-            sorted_expressions_text(right_conditions)
+            sorted_expressions_text(eval_ctx, right_conditions)
         ));
     }
     if !other_conditions.is_empty() {
         parts.push(format!(
             "other cond:{}",
-            sorted_expressions_text(other_conditions)
+            sorted_expressions_text(eval_ctx, other_conditions)
         ));
     }
     parts.join(", ")
 }
 
 fn aggregate_info(
+    eval_ctx: &dyn tidb_expr::Columns,
     functions: &[tidb_expr::aggregation::AggFuncDesc],
     group_by: &[tidb_expr::expression::Expression],
     schema: Option<&tidb_expr::schema::Schema>,
@@ -340,7 +373,7 @@ fn aggregate_info(
         // `expression.SortedExplainExpressionList`, which SORTS the rendered
         // strings; the aggregate list below keeps its own order.
         text.push_str("group by:");
-        text.push_str(&sorted_expressions_text(group_by));
+        text.push_str(&sorted_expressions_text(eval_ctx, group_by));
         text.push_str(", ");
     }
     for (index, function) in functions.iter().enumerate() {
@@ -355,14 +388,17 @@ fn aggregate_info(
         let output = schema
             .and_then(|schema| schema.columns.get(index))
             .map(|column| {
-                expression_text(&tidb_expr::expression::Expression::Column(column.clone()))
+                expression_text(
+                    eval_ctx,
+                    &tidb_expr::expression::Expression::Column(column.clone()),
+                )
             })
             .unwrap_or_else(|| format!("Column#{index}"));
         text.push_str(&format!(
             "funcs:{}({}{})->{output}",
             function.base.name,
             distinct,
-            expressions_text(&function.base.args)
+            expressions_text(eval_ctx, &function.base.args)
         ));
     }
     text
@@ -372,7 +408,10 @@ fn aggregate_info(
 /// `FormatWindowFuncDescs` (`:218`): the window functions' own renderings
 /// (each consuming its trailing schema column) followed by
 /// `over(partition by ... order by ... <frame>)`.
-fn window_info(window: &tidb_planner::physical::PhysicalWindow) -> String {
+fn window_info(
+    eval_ctx: &dyn tidb_expr::Columns,
+    window: &tidb_planner::physical::PhysicalWindow,
+) -> String {
     use tidb_expr::expression::Expression;
     let schema = window.base.base.schema();
     let result_start = schema
@@ -390,12 +429,12 @@ fn window_info(window: &tidb_planner::physical::PhysicalWindow) -> String {
         .map(|(index, descriptor)| {
             let output = schema
                 .and_then(|schema| schema.columns.get(result_start + index))
-                .map(|column| expression_text(&Expression::Column(column.clone())))
+                .map(|column| expression_text(eval_ctx, &Expression::Column(column.clone())))
                 .unwrap_or_else(|| format!("Column#{}", result_start + index));
             format!(
                 "{}({})->{output}",
                 descriptor.base.name,
-                expressions_text(&descriptor.base.args)
+                expressions_text(eval_ctx, &descriptor.base.args)
             )
         })
         .collect::<Vec<_>>()
@@ -407,7 +446,7 @@ fn window_info(window: &tidb_planner::physical::PhysicalWindow) -> String {
             window
                 .partition_by
                 .iter()
-                .map(|item| expression_text(&Expression::Column(item.col.clone())))
+                .map(|item| expression_text(eval_ctx, &Expression::Column(item.col.clone())))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -419,7 +458,7 @@ fn window_info(window: &tidb_planner::physical::PhysicalWindow) -> String {
                 .order_by
                 .iter()
                 .map(|item| {
-                    let text = expression_text(&Expression::Column(item.col.clone()));
+                    let text = expression_text(eval_ctx, &Expression::Column(item.col.clone()));
                     if item.desc {
                         format!("{text} desc")
                     } else {
@@ -639,7 +678,10 @@ fn is_index_join_index_range(
 
 /// Go `indexJoinPathRangeInfo`: `eq(inner_idx_col, outer_key)` for every
 /// matched key, then `chosenAccess`.
-fn index_join_decided_by_text(context: IndexJoinExplainContext<'_>) -> String {
+fn index_join_decided_by_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    context: IndexJoinExplainContext<'_>,
+) -> String {
     let mut keys = context
         .inner_keys
         .iter()
@@ -658,23 +700,42 @@ fn index_join_decided_by_text(context: IndexJoinExplainContext<'_>) -> String {
         .map(|(_, (inner, outer))| {
             format!(
                 "eq({}, {})",
-                expression_text(&tidb_expr::expression::Expression::Column(inner.clone())),
-                expression_text(&tidb_expr::expression::Expression::Column(outer.clone()))
+                expression_text(
+                    eval_ctx,
+                    &tidb_expr::expression::Expression::Column(inner.clone())
+                ),
+                expression_text(
+                    eval_ctx,
+                    &tidb_expr::expression::Expression::Column(outer.clone())
+                )
             )
         })
         .collect::<Vec<_>>();
-    decided.extend(context.access_conditions.iter().map(expression_text));
+    decided.extend(
+        context
+            .access_conditions
+            .iter()
+            .map(|expression| expression_string_text(eval_ctx, expression)),
+    );
     format!("range: decided by [{}]", decided.join(" "))
 }
 
 /// Go `indexJoinIntPKRangeInfo` (`index_join_path.go:597`): the INT-PK probe
 /// scan's `decided by` text is the OUTER join keys rendered alone --
 /// `indexJoinIntPKRangeInfo` writes each outer key with no eq wrapping.
-fn index_join_int_pk_decided_by_text(context: &IndexJoinExplainContext<'_>) -> String {
+fn index_join_int_pk_decided_by_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    context: &IndexJoinExplainContext<'_>,
+) -> String {
     let decided = context
         .outer_keys
         .iter()
-        .map(|outer| expression_text(&tidb_expr::expression::Expression::Column(outer.clone())))
+        .map(|outer| {
+            expression_text(
+                eval_ctx,
+                &tidb_expr::expression::Expression::Column(outer.clone()),
+            )
+        })
         .collect::<Vec<_>>()
         .join(" ");
     format!("range: decided by [{}]", decided)
@@ -683,6 +744,7 @@ fn index_join_int_pk_decided_by_text(context: &IndexJoinExplainContext<'_>) -> S
 /// Integer table handles use Go's `indexJoinIntPKRangeInfo`; common handles
 /// use the equality pairs for the matched index columns.
 fn index_join_decided_by_text_for_scan(
+    eval_ctx: &dyn tidb_expr::Columns,
     context: &IndexJoinExplainContext<'_>,
     scan: &tidb_planner::physical::PhysicalTableScan,
     catalog: &Catalog,
@@ -693,15 +755,23 @@ fn index_join_decided_by_text_for_scan(
         .physical_kv_table_by_id(scan.table_id)
         .is_some_and(|table| table.common_handle_offsets().is_empty())
     {
-        return index_join_int_pk_decided_by_text(context);
+        return index_join_int_pk_decided_by_text(eval_ctx, context);
     }
-    index_join_decided_by_text(*context)
+    index_join_decided_by_text(eval_ctx, *context)
 }
 
-fn columns_text(columns: &[tidb_expr::column::Column]) -> String {
+fn columns_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    columns: &[tidb_expr::column::Column],
+) -> String {
     columns
         .iter()
-        .map(|column| expression_text(&tidb_expr::expression::Expression::Column(column.clone())))
+        .map(|column| {
+            expression_text(
+                eval_ctx,
+                &tidb_expr::expression::Expression::Column(column.clone()),
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -871,6 +941,7 @@ fn point_handle_text_unsigned(range: &tidb_planner::ranger::types::Range) -> Str
 }
 
 fn physical_operator_info(
+    eval_ctx: &dyn tidb_expr::Columns,
     plan: &PhysicalPlan,
     catalog: &Catalog,
     ignore_explain_id_suffix: bool,
@@ -882,10 +953,10 @@ fn physical_operator_info(
             // `expression.SortedExplainExpressionList`: the conditions are
             // sorted by their rendered text, so the operator text is stable
             // regardless of the CNF extraction order.
-            sorted_expressions_text(&selection.conditions)
+            sorted_expressions_text(eval_ctx, &selection.conditions)
         }
         PhysicalPlan::Projection(projection) => {
-            projection_text(&projection.exprs, projection.base.base.schema())
+            projection_text(eval_ctx, &projection.exprs, projection.base.base.schema())
         }
         PhysicalPlan::HashJoin(join) => {
             let prefix = if join.left_join_keys.is_empty() && join.equal_conditions.is_empty() {
@@ -898,6 +969,7 @@ fn physical_operator_info(
                 ""
             };
             let info = join_info(
+                eval_ctx,
                 join.join_type,
                 join.base.children().first(),
                 ignore_explain_id_suffix,
@@ -914,6 +986,7 @@ fn physical_operator_info(
             format!("{prefix}{info}")
         }
         PhysicalPlan::MergeJoin(join) => join_info(
+            eval_ctx,
             join.join_type,
             join.base.children().first(),
             ignore_explain_id_suffix,
@@ -957,10 +1030,16 @@ fn physical_operator_info(
                 }
             }
             if !join.outer_join_keys.is_empty() {
-                parts.push(format!("outer key:{}", columns_text(&join.outer_join_keys)));
+                parts.push(format!(
+                    "outer key:{}",
+                    columns_text(eval_ctx, &join.outer_join_keys)
+                ));
             }
             if !join.inner_join_keys.is_empty() {
-                parts.push(format!("inner key:{}", columns_text(&join.inner_join_keys)));
+                parts.push(format!(
+                    "inner key:{}",
+                    columns_text(eval_ctx, &join.inner_join_keys)
+                ));
             }
             if !join.outer_hash_keys.is_empty()
                 && join.kind != tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin
@@ -978,12 +1057,14 @@ fn physical_operator_info(
                         };
                         format!(
                             "{operator}({}, {})",
-                            expression_text(&tidb_expr::expression::Expression::Column(
-                                outer.clone()
-                            )),
-                            expression_text(&tidb_expr::expression::Expression::Column(
-                                inner.clone()
-                            )),
+                            expression_text(
+                                eval_ctx,
+                                &tidb_expr::expression::Expression::Column(outer.clone())
+                            ),
+                            expression_text(
+                                eval_ctx,
+                                &tidb_expr::expression::Expression::Column(inner.clone())
+                            ),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -994,24 +1075,25 @@ fn physical_operator_info(
             if !join.left_conditions.is_empty() {
                 parts.push(format!(
                     "left cond:{}",
-                    sorted_expressions_text(&join.left_conditions)
+                    sorted_expressions_text(eval_ctx, &join.left_conditions)
                 ));
             }
             if !join.right_conditions.is_empty() {
                 parts.push(format!(
                     "right cond:{}",
-                    sorted_expressions_text(&join.right_conditions)
+                    sorted_expressions_text(eval_ctx, &join.right_conditions)
                 ));
             }
             if !join.other_conditions.is_empty() {
                 parts.push(format!(
                     "other cond:{}",
-                    sorted_expressions_text(&join.other_conditions)
+                    sorted_expressions_text(eval_ctx, &join.other_conditions)
                 ));
             }
             parts.join(", ")
         }
         PhysicalPlan::Apply(apply) => join_info(
+            eval_ctx,
             apply.hash_join.join_type,
             apply.hash_join.base.children().first(),
             ignore_explain_id_suffix,
@@ -1025,7 +1107,7 @@ fn physical_operator_info(
             &apply.hash_join.right_conditions,
             &apply.hash_join.other_conditions,
         ),
-        PhysicalPlan::Sort(sort) => by_items_text(&sort.by_items),
+        PhysicalPlan::Sort(sort) => by_items_text(eval_ctx, &sort.by_items),
         PhysicalPlan::Limit(limit) => limit.explain_info(RedactMode::Disable),
         PhysicalPlan::TableScan(scan) => {
             let mut parts = Vec::new();
@@ -1033,7 +1115,7 @@ fn physical_operator_info(
                 let ctx = index_join_context.expect("index join context");
                 // Table handle metadata selects Go's integer-PK or common
                 // handle range description.
-                let parts_text = index_join_decided_by_text_for_scan(&ctx, scan, catalog);
+                let parts_text = index_join_decided_by_text_for_scan(eval_ctx, &ctx, scan, catalog);
                 parts.push(parts_text);
             } else if scan
                 .scan_kind()
@@ -1062,6 +1144,7 @@ fn physical_operator_info(
             let mut parts = Vec::new();
             if is_index_join_index_range(plan, index_join_context) {
                 parts.push(index_join_decided_by_text(
+                    eval_ctx,
                     index_join_context.expect("index join context"),
                 ));
             } else if !scan.ranges.is_empty()
@@ -1154,16 +1237,18 @@ fn physical_operator_info(
         PhysicalPlan::Dml(_) => "N/A".to_owned(),
         PhysicalPlan::TopN(topn) => format!(
             "{}, offset:{}, count:{}",
-            by_items_text(&topn.by_items),
+            by_items_text(eval_ctx, &topn.by_items),
             topn.offset,
             topn.count
         ),
         PhysicalPlan::HashAgg(aggregation) => aggregate_info(
+            eval_ctx,
             &aggregation.agg_funcs,
             &aggregation.group_by_items,
             aggregation.base.base.schema(),
         ),
         PhysicalPlan::StreamAgg(aggregation) => aggregate_info(
+            eval_ctx,
             &aggregation.agg_funcs,
             &aggregation.group_by_items,
             aggregation.base.base.schema(),
@@ -1171,17 +1256,17 @@ fn physical_operator_info(
         PhysicalPlan::Shuffle(shuffle) => shuffle
             .explain_info(ignore_explain_id_suffix)
             .unwrap_or_else(|error| format!("{error:?}")),
-        PhysicalPlan::Window(window) => window_info(window),
+        PhysicalPlan::Window(window) => window_info(eval_ctx, window),
         PhysicalPlan::Expand(expand) => format!(
             "level-projection:{}; schema: [{}]",
             expand
                 .level_exprs
                 .iter()
-                .map(|level| format!("[{}]", expressions_text(level)))
+                .map(|level| format!("[{}]", expressions_text(eval_ctx, level)))
                 .collect::<Vec<_>>()
                 .join(","),
             plan.schema()
-                .map(|schema| columns_text(&schema.columns))
+                .map(|schema| columns_text(eval_ctx, &schema.columns))
                 .unwrap_or_default()
         ),
         PhysicalPlan::MaxOneRow(_)
@@ -1203,6 +1288,8 @@ fn runtime_rows(
 }
 
 fn physical_explain_operator(
+    eval_ctx: &dyn tidb_expr::Columns,
+    brief_binary: bool,
     plan: &PhysicalPlan,
     catalog: &Catalog,
     task: ExplainTask,
@@ -1217,6 +1304,8 @@ fn physical_explain_operator(
 ) -> ExplainOperator {
     let mut children = match plan {
         PhysicalPlan::ShuffleReceiver(receiver) => vec![physical_explain_operator(
+            eval_ctx,
+            brief_binary,
             &receiver.data_source,
             catalog,
             ExplainTask::Root,
@@ -1259,6 +1348,8 @@ fn physical_explain_operator(
                     }
                 };
                 vec![physical_explain_operator(
+                    eval_ctx,
+                    brief_binary,
                     child,
                     catalog,
                     task,
@@ -1275,6 +1366,8 @@ fn physical_explain_operator(
             .as_deref()
             .map(|child| {
                 vec![physical_explain_operator(
+                    eval_ctx,
+                    brief_binary,
                     child,
                     catalog,
                     ExplainTask::Cop {
@@ -1297,6 +1390,8 @@ fn physical_explain_operator(
         .flatten()
         .map(|(child, label)| {
             physical_explain_operator(
+                eval_ctx,
+                brief_binary,
                 child,
                 catalog,
                 ExplainTask::Cop {
@@ -1318,6 +1413,8 @@ fn physical_explain_operator(
             .chain(reader.table_plan.as_deref().map(|child| (child, "(Probe)")))
             .map(|(child, label)| {
                 physical_explain_operator(
+                    eval_ctx,
+                    brief_binary,
                     child,
                     catalog,
                     ExplainTask::Cop {
@@ -1337,6 +1434,8 @@ fn physical_explain_operator(
             .as_deref()
             .map(|child| {
                 vec![physical_explain_operator(
+                    eval_ctx,
+                    brief_binary,
                     child,
                     catalog,
                     ExplainTask::Root,
@@ -1388,6 +1487,8 @@ fn physical_explain_operator(
                     _ => probe_count,
                 };
                 physical_explain_operator(
+                    eval_ctx,
+                    brief_binary,
                     child,
                     catalog,
                     task.clone(),
@@ -1429,16 +1530,22 @@ fn physical_explain_operator(
         }
     }
 
-    let mut operator =
-        ExplainOperator::new(physical_operator_name(plan, index_join_context), plan.id())
-            .with_task(task)
-            .with_operator_info(physical_operator_info(
-                plan,
-                catalog,
-                ignore_explain_id_suffix,
-                index_join_context,
-            ))
-            .with_children(children);
+    let name = physical_operator_name(plan, index_join_context);
+    let info = if brief_binary && !has_brief_operator_info(&name) {
+        String::new()
+    } else {
+        physical_operator_info(
+            eval_ctx,
+            plan,
+            catalog,
+            ignore_explain_id_suffix,
+            index_join_context,
+        )
+    };
+    let mut operator = ExplainOperator::new(name, plan.id())
+        .with_task(task)
+        .with_operator_info(info)
+        .with_children(children);
     if let Some(access_object) = physical_access(plan, catalog) {
         operator = operator.with_access_object(access_object);
     }
@@ -1472,6 +1579,8 @@ fn physical_explain_operator(
 }
 
 fn cte_definitions(
+    eval_ctx: &dyn tidb_expr::Columns,
+    brief_binary: bool,
     plan: &PhysicalPlan,
     catalog: &Catalog,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
@@ -1482,6 +1591,8 @@ fn cte_definitions(
     if let PhysicalPlan::CTE(cte) = plan {
         if seen.insert(cte.id_for_storage) {
             let mut children = vec![physical_explain_operator(
+                eval_ctx,
+                brief_binary,
                 &cte.seed_plan,
                 catalog,
                 ExplainTask::Root,
@@ -1493,6 +1604,8 @@ fn cte_definitions(
             )];
             if let Some(recursive) = cte.recursive_plan.as_deref() {
                 children.push(physical_explain_operator(
+                    eval_ctx,
+                    brief_binary,
                     recursive,
                     catalog,
                     ExplainTask::Root,
@@ -1516,6 +1629,8 @@ fn cte_definitions(
             out.push(definition);
         }
         cte_definitions(
+            eval_ctx,
+            brief_binary,
             &cte.seed_plan,
             catalog,
             runtime,
@@ -1525,6 +1640,8 @@ fn cte_definitions(
         );
         if let Some(recursive) = cte.recursive_plan.as_deref() {
             cte_definitions(
+                eval_ctx,
+                brief_binary,
                 recursive,
                 catalog,
                 runtime,
@@ -1535,10 +1652,21 @@ fn cte_definitions(
         }
     }
     for child in plan.children() {
-        cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
+        cte_definitions(
+            eval_ctx,
+            brief_binary,
+            child,
+            catalog,
+            runtime,
+            seen,
+            out,
+            ignore_explain_id_suffix,
+        );
     }
     match plan {
         PhysicalPlan::ShuffleReceiver(receiver) => cte_definitions(
+            eval_ctx,
+            brief_binary,
             &receiver.data_source,
             catalog,
             runtime,
@@ -1548,25 +1676,70 @@ fn cte_definitions(
         ),
         PhysicalPlan::TableReader(reader) => {
             if let Some(child) = reader.table_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
+                cte_definitions(
+                    eval_ctx,
+                    brief_binary,
+                    child,
+                    catalog,
+                    runtime,
+                    seen,
+                    out,
+                    ignore_explain_id_suffix,
+                );
             }
         }
         PhysicalPlan::IndexReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
+                cte_definitions(
+                    eval_ctx,
+                    brief_binary,
+                    child,
+                    catalog,
+                    runtime,
+                    seen,
+                    out,
+                    ignore_explain_id_suffix,
+                );
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
+                cte_definitions(
+                    eval_ctx,
+                    brief_binary,
+                    child,
+                    catalog,
+                    runtime,
+                    seen,
+                    out,
+                    ignore_explain_id_suffix,
+                );
             }
             if let Some(child) = reader.table_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
+                cte_definitions(
+                    eval_ctx,
+                    brief_binary,
+                    child,
+                    catalog,
+                    runtime,
+                    seen,
+                    out,
+                    ignore_explain_id_suffix,
+                );
             }
         }
         PhysicalPlan::Dml(root) => {
             if let Some(child) = root.select_plan.as_deref() {
-                cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
+                cte_definitions(
+                    eval_ctx,
+                    brief_binary,
+                    child,
+                    catalog,
+                    runtime,
+                    seen,
+                    out,
+                    ignore_explain_id_suffix,
+                );
             }
         }
         _ => {}
@@ -1574,6 +1747,8 @@ fn cte_definitions(
 }
 
 fn physical_explain_roots(
+    eval_ctx: &dyn tidb_expr::Columns,
+    brief_binary: bool,
     physical: &PhysicalPlan,
     catalog: &Catalog,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
@@ -1581,6 +1756,8 @@ fn physical_explain_roots(
     scalar_subqueries: &[crate::driver::planner_bridge::RegisteredScalarSubquery],
 ) -> Vec<ExplainOperator> {
     let mut roots = vec![physical_explain_operator(
+        eval_ctx,
+        brief_binary,
         physical,
         catalog,
         ExplainTask::Root,
@@ -1591,6 +1768,8 @@ fn physical_explain_roots(
         1.0,
     )];
     cte_definitions(
+        eval_ctx,
+        brief_binary,
         physical,
         catalog,
         runtime,
@@ -1600,6 +1779,8 @@ fn physical_explain_roots(
     );
     for subquery in scalar_subqueries {
         roots.push(scalar_subquery_root(
+            eval_ctx,
+            brief_binary,
             subquery,
             catalog,
             runtime,
@@ -1614,6 +1795,8 @@ fn physical_explain_roots(
 /// `ExplainInfo` lists the output column ids the folded constants carry and
 /// whose single child is the optimized subquery plan.
 fn scalar_subquery_root(
+    eval_ctx: &dyn tidb_expr::Columns,
+    brief_binary: bool,
     subquery: &crate::driver::planner_bridge::RegisteredScalarSubquery,
     catalog: &Catalog,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
@@ -1628,6 +1811,8 @@ fn scalar_subquery_root(
     ExplainOperator::new("ScalarSubQuery", subquery.block_offset)
         .with_operator_info(format!("Output: {output}"))
         .with_children(vec![physical_explain_operator(
+            eval_ctx,
+            brief_binary,
             &subquery.physical,
             catalog,
             ExplainTask::Root,
@@ -1637,6 +1822,15 @@ fn scalar_subquery_root(
             None,
             1.0,
         )])
+}
+
+// Go binaryOpTreeFromFlatOps rerenders only operators with ID-sensitive
+// brief metadata. Rerendering a Selection would evaluate its constants twice.
+fn has_brief_operator_info(operator: &str) -> bool {
+    matches!(
+        operator,
+        "TableReader" | "IndexReader" | "HashJoin" | "IndexJoin" | "IndexHashJoin" | "MergeJoin"
+    )
 }
 
 fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOperator {
@@ -1665,12 +1859,9 @@ fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOp
         .zip(brief.children)
         .map(|(full, brief)| binary_operator(full, brief))
         .collect();
-    let brief_operator_info = matches!(
-        full.operator.as_str(),
-        "TableReader" | "IndexReader" | "HashJoin" | "IndexJoin" | "IndexHashJoin" | "MergeJoin"
-    )
-    .then_some(brief.operator_info)
-    .unwrap_or_default();
+    let brief_operator_info = has_brief_operator_info(&full.operator)
+        .then_some(brief.operator_info)
+        .unwrap_or_default();
     let mut operator = PbExplainOperator {
         name: format!("{}_{}", full.operator, full.id),
         children,
@@ -1694,9 +1885,13 @@ fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOp
 /// Go `GetBriefBinaryPlan`: encodes the retained ordinary physical tree with
 /// build-side-first traversal and brief operator metadata.
 #[must_use]
-pub fn brief_binary_plan(physical: &PhysicalPlan, catalog: &Catalog) -> String {
-    let mut full = physical_explain_roots(physical, catalog, None, false, &[]);
-    let mut brief = physical_explain_roots(physical, catalog, None, true, &[]);
+pub fn brief_binary_plan(
+    eval_ctx: &dyn tidb_expr::Columns,
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+) -> String {
+    let mut full = physical_explain_roots(eval_ctx, false, physical, catalog, None, false, &[]);
+    let mut brief = physical_explain_roots(eval_ctx, true, physical, catalog, None, true, &[]);
     if full.is_empty() || brief.is_empty() {
         return String::new();
     }
@@ -1907,8 +2102,12 @@ fn collect_stats_info(
 /// The plan-derived fields Go publishes while the ordinary executor is
 /// constructed.
 #[must_use]
-pub fn process_plan_info(physical: &PhysicalPlan, catalog: &Catalog) -> crate::ProcessPlanInfo {
-    process_plan_info_with_brief(physical, catalog, true)
+pub fn process_plan_info(
+    eval_ctx: &dyn tidb_expr::Columns,
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+) -> crate::ProcessPlanInfo {
+    process_plan_info_with_brief(eval_ctx, physical, catalog, true)
 }
 
 /// [`process_plan_info`] with the brief binary plan rendered only when
@@ -1916,13 +2115,14 @@ pub fn process_plan_info(physical: &PhysicalPlan, catalog: &Catalog) -> crate::P
 /// collected, as Go's `StmtCtx.TableIDs`/`IndexNames` are.
 #[must_use]
 pub fn process_plan_info_with_brief(
+    eval_ctx: &dyn tidb_expr::Columns,
     physical: &PhysicalPlan,
     catalog: &Catalog,
     with_brief: bool,
 ) -> crate::ProcessPlanInfo {
     let mut info = crate::ProcessPlanInfo {
         brief_binary_plan: if with_brief {
-            brief_binary_plan(physical, catalog)
+            brief_binary_plan(eval_ctx, physical, catalog)
         } else {
             String::new()
         },
@@ -1939,6 +2139,7 @@ pub fn process_plan_info_with_brief(
 }
 
 fn render_physical_plan(
+    eval_ctx: &dyn tidb_expr::Columns,
     physical: &PhysicalPlan,
     catalog: &Catalog,
     format: ExplainFormat,
@@ -1948,6 +2149,8 @@ fn render_physical_plan(
 ) -> Result<SelectMeta, DriverError> {
     let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
     let roots = physical_explain_roots(
+        eval_ctx,
+        false,
         physical,
         catalog,
         runtime,
@@ -2000,6 +2203,7 @@ fn render_physical_query(
         .then(|| crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx))
         .transpose()?;
     render_physical_plan(
+        ctx,
         &physical,
         catalog,
         format,
@@ -2110,7 +2314,7 @@ pub fn explain_insert_stmt(
         current_db,
         ctx,
     )?;
-    render_physical_plan(&physical, catalog, format, false, None, &[])
+    render_physical_plan(ctx, &physical, catalog, format, false, None, &[])
 }
 
 /// `EXPLAIN ANALYZE <insert>`: unlike [`explain_insert_stmt`], this really
@@ -2151,7 +2355,7 @@ pub fn explain_analyze_insert_stmt(
         Some(&mut runtime),
     )?;
     runtime.insert(root_key, crate::executor::RowCount::default().into());
-    render_physical_plan(&physical, catalog, format, true, Some(&runtime), &[])
+    render_physical_plan(ctx, &physical, catalog, format, true, Some(&runtime), &[])
 }
 
 /// Plans an `UPDATE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -2178,7 +2382,7 @@ pub fn explain_update_stmt(
         current_db,
         ctx,
     )?;
-    render_physical_plan(&physical, catalog, format, false, None, &[])
+    render_physical_plan(ctx, &physical, catalog, format, false, None, &[])
 }
 
 /// Plans a `DELETE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -2202,7 +2406,7 @@ pub fn explain_delete_stmt(
         current_db,
         ctx,
     )?;
-    render_physical_plan(&physical, catalog, format, false, None, &[])
+    render_physical_plan(ctx, &physical, catalog, format, false, None, &[])
 }
 
 /// `EXPLAIN ANALYZE <update>`: unlike [`explain_update_stmt`], this really
@@ -2243,7 +2447,7 @@ pub fn explain_analyze_update_stmt(
         Some(&mut runtime),
     )?;
     runtime.insert(root_key, crate::executor::RowCount::default().into());
-    render_physical_plan(&physical, catalog, format, true, Some(&runtime), &[])
+    render_physical_plan(ctx, &physical, catalog, format, true, Some(&runtime), &[])
 }
 
 /// `EXPLAIN ANALYZE <delete>`: see [`explain_analyze_update_stmt`] -- the
@@ -2278,7 +2482,7 @@ pub fn explain_analyze_delete_stmt(
         Some(&mut runtime),
     )?;
     runtime.insert(root_key, crate::executor::RowCount::default().into());
-    render_physical_plan(&physical, catalog, format, true, Some(&runtime), &[])
+    render_physical_plan(ctx, &physical, catalog, format, true, Some(&runtime), &[])
 }
 
 fn text(value: &str) -> Datum {
@@ -2417,7 +2621,13 @@ mod tests {
             ..Default::default()
         });
 
-        let info = physical_operator_info(&index_join, &Catalog::default(), false, None);
+        let info = physical_operator_info(
+            &crate::StmtContext::default(),
+            &index_join,
+            &Catalog::default(),
+            false,
+            None,
+        );
         assert!(
             info.contains("inner:HashJoin_7"),
             "the inner: field must name the child by its real physical type, \
@@ -2440,6 +2650,7 @@ mod tests {
         index.inner_hash_keys = vec![column(3), column(4)];
         index.is_null_eq = vec![true, false];
         let info = physical_operator_info(
+            &crate::StmtContext::default(),
             &PhysicalPlan::IndexJoin(index),
             &Catalog::default(),
             false,
@@ -2471,6 +2682,7 @@ mod tests {
         // Go sorts the rendered conditions; `eq` precedes `gt` here.
         merge.other_conditions = vec![condition("gt", 1, 5), condition("eq", 2, 6)];
         let info = physical_operator_info(
+            &crate::StmtContext::default(),
             &PhysicalPlan::MergeJoin(merge),
             &Catalog::default(),
             true,
@@ -2496,6 +2708,7 @@ mod tests {
         outer.right_join_keys = vec![column(2)];
         outer.base.set_children(vec![child()]);
         let info = physical_operator_info(
+            &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(outer),
             &Catalog::default(),
             true,
@@ -2515,6 +2728,7 @@ mod tests {
         inner.right_join_keys = vec![column(2)];
         inner.base.set_children(vec![child()]);
         let info = physical_operator_info(
+            &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(inner),
             &Catalog::default(),
             true,
@@ -2532,6 +2746,7 @@ mod tests {
         join.join_type = tidb_planner::find_best_task::LogicalJoinType::Inner;
         assert_eq!(
             physical_operator_info(
+                &crate::StmtContext::default(),
                 &PhysicalPlan::HashJoin(join),
                 &Catalog::default(),
                 true,
@@ -2554,6 +2769,7 @@ mod tests {
             tidb_planner::physical::PhysicalHashJoin::default(),
         )]);
         let info = physical_operator_info(
+            &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(join),
             &Catalog::default(),
             true,
@@ -2563,5 +2779,31 @@ mod tests {
             info.starts_with("semi join, left side:HashJoin, equal:[nulleq(Column#1, Column#3) eq(Column#2, Column#4)]"),
             "{info}"
         );
+    }
+    #[test]
+    fn brief_binary_plan_does_not_render_selection_constants_twice() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Parameters(AtomicUsize);
+        impl tidb_expr::Columns for Parameters {
+            fn get(&self, _: &[String]) -> Option<tidb_datatype::Datum> {
+                None
+            }
+            fn param_value(&self, _: usize) -> Result<tidb_datatype::Datum, tidb_expr::EvalError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(tidb_datatype::Datum::Int(42))
+            }
+        }
+        let ctx = Parameters(AtomicUsize::new(0));
+        let mut parameter = tidb_expr::constant::Constant::new(
+            tidb_datatype::Datum::Int(0),
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        parameter.param_marker = Some(tidb_expr::constant::ParamMarker { order: 0 });
+        let plan = PhysicalPlan::Selection(tidb_planner::physical::PhysicalSelection {
+            conditions: vec![tidb_expr::expression::Expression::Constant(parameter)],
+            ..Default::default()
+        });
+        assert!(!super::brief_binary_plan(&ctx, &plan, &Catalog::default()).is_empty());
+        assert_eq!(ctx.0.load(Ordering::SeqCst), 1);
     }
 }

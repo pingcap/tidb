@@ -54,6 +54,7 @@ pub(crate) enum ExpressionTextStyle {
 
 /// Renders the physical-expression subset used by physical-plan EXPLAIN.
 pub(crate) fn physical_expression_text_with_columns(
+    ctx: &dyn tidb_expr::Columns,
     expression: &Expression,
     column_names: &[Option<String>],
     style: ExpressionTextStyle,
@@ -86,6 +87,7 @@ pub(crate) fn physical_expression_text_with_columns(
                 let mut parts = Vec::new();
                 collect_physical_or(expression, &mut parts);
                 let mut rendered = physical_expression_text_with_columns(
+                    ctx,
                     parts.pop().expect("OR has an operand"),
                     column_names,
                     style,
@@ -93,7 +95,7 @@ pub(crate) fn physical_expression_text_with_columns(
                 for part in parts.into_iter().rev() {
                     rendered = format!(
                         "or({}, {rendered})",
-                        physical_expression_text_with_columns(part, column_names, style)?
+                        physical_expression_text_with_columns(ctx, part, column_names, style)?
                     );
                 }
                 return Some(rendered);
@@ -102,7 +104,7 @@ pub(crate) fn physical_expression_text_with_columns(
                 .args
                 .iter()
                 .map(|argument| {
-                    physical_expression_text_with_columns(argument, column_names, style)
+                    physical_expression_text_with_columns(ctx, argument, column_names, style)
                 })
                 .collect::<Option<Vec<_>>>()?;
             match function.func_name.lowercase() {
@@ -124,22 +126,45 @@ pub(crate) fn physical_expression_text_with_columns(
                 name => Some(format!("{name}({})", arguments.join(", "))),
             }
         }
-        Expression::Constant(constant) if constant.param_marker.is_none() => match style {
-            ExpressionTextStyle::Explain => explain_constant(constant),
-            ExpressionTextStyle::StringWithCtx => string_with_ctx_constant(constant),
+        Expression::Constant(constant) => match style {
+            ExpressionTextStyle::Explain => explain_constant(constant, ctx),
+            ExpressionTextStyle::StringWithCtx => {
+                string_with_ctx_constant(constant, ctx, column_names)
+            }
         },
-        Expression::Constant(_) | Expression::CorrelatedColumn(_) => None,
+        Expression::CorrelatedColumn(_) => None,
     }
 }
 
 /// Go `Constant.StringWithCtx` (`constant.go:181`): the Projection
 /// renderer, which prints a string constant WITHOUT quotes.
-fn string_with_ctx_constant(constant: &tidb_expr::constant::Constant) -> Option<String> {
-    if constant.deferred_expr.is_some() || constant.param_marker.is_some() {
-        return None;
-    }
-    let value = constant
-        .value
+fn string_with_ctx_constant(
+    constant: &tidb_expr::constant::Constant,
+    ctx: &dyn tidb_expr::Columns,
+    column_names: &[Option<String>],
+) -> Option<String> {
+    let parameter;
+    let value = if let Some(marker) = constant.param_marker {
+        let Some(value) = usize::try_from(marker.order)
+            .ok()
+            .and_then(|order| ctx.param_value(order).ok())
+        else {
+            return Some("?".to_owned());
+        };
+        parameter = value;
+        &parameter
+    } else if let Some(deferred) = &constant.deferred_expr {
+        // Go returns the expression's text before applying SubqueryRefID.
+        return physical_expression_text_with_columns(
+            ctx,
+            deferred,
+            column_names,
+            ExpressionTextStyle::StringWithCtx,
+        );
+    } else {
+        &constant.value
+    };
+    let value = value
         .truncated_stringify()
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())?;
@@ -153,16 +178,27 @@ fn string_with_ctx_constant(constant: &tidb_expr::constant::Constant) -> Option<
     }
 }
 
-fn explain_constant(constant: &tidb_expr::constant::Constant) -> Option<String> {
-    if constant.deferred_expr.is_some() || constant.param_marker.is_some() {
-        return None;
-    }
-    let value = constant
-        .value
+fn explain_constant(
+    constant: &tidb_expr::constant::Constant,
+    ctx: &dyn tidb_expr::Columns,
+) -> Option<String> {
+    // Literal datums are immutable; borrowing keeps large strings/JSON from
+    // being cloned merely to render a plan. Only lazy constants need evaluation.
+    let evaluated;
+    let datum = if constant.param_marker.is_some() || constant.deferred_expr.is_some() {
+        evaluated = match constant.eval_in(ctx) {
+            Ok(value) => value,
+            Err(_) => return Some("not recognized const value".to_owned()),
+        };
+        &evaluated
+    } else {
+        &constant.value
+    };
+    let value = datum
         .truncated_stringify()
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())?;
-    let value = match &constant.value {
+    let value = match datum {
         Datum::String(_)
         | Datum::Bytes(_)
         | Datum::Enum(_, _)
@@ -255,6 +291,7 @@ mod tests {
     fn a_min_unique_id_column_renders_without_overflow() {
         let column = Column::new(i64::MIN, FieldType::new(FieldTypeCode::LongLong));
         let rendered = physical_expression_text_with_columns(
+            &tidb_expr::NoColumns,
             &Expression::Column(column),
             &[],
             ExpressionTextStyle::Explain,
@@ -263,5 +300,80 @@ mod tests {
             rendered.as_deref(),
             Some("ScalarQueryCol#-9223372036854775808")
         );
+    }
+    #[test]
+    fn dynamic_constants_use_go_explain_and_string_semantics() {
+        use tidb_datatype::Datum;
+        use tidb_expr::constant::{Constant, ParamMarker};
+        use tidb_expr::scalar_function::ScalarFunction;
+        let ctx = crate::StmtContext::default()
+            .with_prepared_params(vec![Datum::new_string("current")].into());
+        let mut parameter = Constant::new(
+            Datum::new_string("stale"),
+            FieldType::new(FieldTypeCode::VarString),
+        );
+        parameter.param_marker = Some(ParamMarker { order: 0 });
+        parameter.subquery_ref_id = 9;
+        let integer = |value| {
+            Expression::Constant(Constant::new(
+                Datum::Int(value),
+                FieldType::new(FieldTypeCode::LongLong),
+            ))
+        };
+        let mut deferred = Constant::new(Datum::Int(-1), FieldType::new(FieldTypeCode::LongLong));
+        deferred.deferred_expr = Some(Box::new(Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("plus"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![integer(40), integer(2)],
+        ))));
+        deferred.subquery_ref_id = 7;
+        let mut missing = parameter.clone();
+        missing.param_marker = Some(ParamMarker { order: 1 });
+        let mut overflow = Constant::new(Datum::Int(-1), FieldType::new(FieldTypeCode::LongLong));
+        overflow.deferred_expr = Some(Box::new(Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("plus"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![integer(i64::MAX), integer(1)],
+        ))));
+        overflow.subquery_ref_id = 8;
+        let mut converted = Constant::new(
+            Datum::new_string("stale"),
+            FieldType::new(FieldTypeCode::VarString),
+        );
+        converted.deferred_expr = Some(Box::new(integer(42)));
+        let mut both = parameter.clone();
+        both.deferred_expr = overflow.deferred_expr.clone();
+        let cases = [
+            (
+                overflow,
+                "not recognized const value",
+                "plus(9223372036854775807, 1)",
+            ),
+            (converted, "\"42\"", "42"),
+            (
+                both,
+                "ScalarQueryCol#9(\"current\")",
+                "ScalarQueryCol#9(current)",
+            ),
+            (
+                parameter,
+                "ScalarQueryCol#9(\"current\")",
+                "ScalarQueryCol#9(current)",
+            ),
+            (deferred, "ScalarQueryCol#7(42)", "plus(40, 2)"),
+            (missing, "not recognized const value", "?"),
+        ];
+        for (constant, explain, display) in cases {
+            let expression = Expression::Constant(constant);
+            for (style, expected) in [
+                (ExpressionTextStyle::Explain, explain),
+                (ExpressionTextStyle::StringWithCtx, display),
+            ] {
+                assert_eq!(
+                    physical_expression_text_with_columns(&ctx, &expression, &[], style).as_deref(),
+                    Some(expected)
+                );
+            }
+        }
     }
 }

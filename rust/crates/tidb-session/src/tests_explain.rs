@@ -2500,3 +2500,148 @@ fn binary_prepared_execution_keeps_plan_detail_out_of_the_process_list() {
         .expect("registered process");
     assert!(!info.brief_binary_plan.is_empty());
 }
+
+#[test]
+fn prepared_explain_constants_follow_current_parameters() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = Session::new();
+    let guard = registry.register(
+        43,
+        "root".to_owned(),
+        "localhost".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    session.attach_process(43, guard);
+    session
+        .run("CREATE TABLE explain_param(a INT, b VARCHAR(20))")
+        .unwrap();
+    session
+        .run("INSERT INTO explain_param VALUES (1,'one'),(2,'two')")
+        .unwrap();
+    for (query, kind) in [
+        ("SELECT a+?,b FROM explain_param WHERE b=?", 0),
+        ("SELECT ?,a FROM explain_param WHERE a>?", 1),
+        ("SELECT a,b FROM explain_param WHERE b IN (?,?)", 2),
+    ] {
+        session.run(&format!("PREPARE s FROM '{query}'")).unwrap();
+        for (number, word, value, cache) in [(1, "one", "2", "0"), (2, "two", "4", "1")] {
+            session
+                .run(&format!("SET @x={number},@y='{word}'"))
+                .unwrap();
+            let actual = row_text(session.run("EXECUTE s USING @x,@y"));
+            let number_text = number.to_string();
+            let expected = match kind {
+                0 => vec![vec![value, word]],
+                1 => vec![
+                    vec![number_text.as_str(), "1"],
+                    vec![number_text.as_str(), "2"],
+                ],
+                _ => vec![vec![number_text.as_str(), word]],
+            };
+            assert_eq!(actual, expected, "{query}");
+            let info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 43)
+                .unwrap();
+            let rows = tidb_util::plancodec::decode_binary_plan_for_connection(
+                info.brief_binary_plan.clone(),
+                "row",
+                false,
+            )
+            .unwrap();
+            if kind < 2 {
+                let projection = rows
+                    .iter()
+                    .find(|row| row[0].contains("Projection"))
+                    .unwrap();
+                let expected = if kind == 0 {
+                    format!("plus(test.explain_param.a, {number})")
+                } else {
+                    number_text
+                };
+                assert_eq!(
+                    projection[4].split("->").next().unwrap(),
+                    expected,
+                    "{query}"
+                );
+            }
+            let selection = rows
+                .iter()
+                .find(|row| row[0].contains("Selection"))
+                .unwrap();
+            let expected = match kind {
+                0 => format!("eq(test.explain_param.b, \"{word}\")"),
+                1 => "gt(test.explain_param.a, 0)".to_owned(),
+                _ => format!("or(eq(cast(test.explain_param.b, double BINARY), {number}), eq(test.explain_param.b, \"{word}\"))"),
+            };
+            assert_eq!(selection[4], expected, "{query}");
+            assert_eq!(
+                row_text(session.run("SELECT @@last_plan_from_cache")),
+                vec![vec![if kind == 1 { "0" } else { cache }]],
+                "{query}"
+            );
+        }
+        session.run("DEALLOCATE PREPARE s").unwrap();
+    }
+}
+
+#[test]
+fn prepared_explain_index_probe_strings_match_go() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = Session::new();
+    session.attach_process(
+        44,
+        registry.register(
+            44,
+            "root".to_owned(),
+            "localhost".to_owned(),
+            "test".to_owned(),
+            None,
+        ),
+    );
+    session
+        .run("CREATE TABLE exp_outer(a INT NOT NULL)")
+        .unwrap();
+    session.run("CREATE TABLE exp_inner(a INT NOT NULL,b VARCHAR(20) NOT NULL,PRIMARY KEY(a,b) CLUSTERED)").unwrap();
+    session.run("INSERT INTO exp_outer VALUES (1),(2)").unwrap();
+    session
+        .run("INSERT INTO exp_inner VALUES (1,'one'),(2,'two')")
+        .unwrap();
+    for hint in ["INL_JOIN", "INL_HASH_JOIN"] {
+        session.run(&format!("PREPARE s FROM 'SELECT /*+ {hint}(p) */ p.b FROM exp_outer o JOIN exp_inner p ON p.a=o.a AND p.b=?'")).unwrap();
+        for (word, cache) in [("one", "0"), ("two", "1")] {
+            session.run(&format!("SET @x='{word}'")).unwrap();
+            assert_eq!(
+                row_text(session.run("EXECUTE s USING @x")),
+                vec![vec![word]]
+            );
+            let info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 44)
+                .unwrap();
+            let rows = tidb_util::plancodec::decode_binary_plan_for_connection(
+                info.brief_binary_plan.clone(),
+                "row",
+                false,
+            )
+            .unwrap();
+            let scan = rows
+                .iter()
+                .find(|row| row[0].contains("TableRangeScan"))
+                .unwrap();
+            assert_eq!(scan[4], format!("range: decided by [eq(test.exp_inner.a, test.exp_outer.a) eq(test.exp_inner.b, {word})], keep order:false, stats:pseudo"), "{hint}");
+            let selection = rows
+                .iter()
+                .find(|row| row[0].contains("Selection"))
+                .unwrap();
+            assert_eq!(
+                selection[4],
+                format!("eq(test.exp_inner.b, \"{word}\")"),
+                "{hint}"
+            );
+            assert_eq!(
+                row_text(session.run("SELECT @@last_plan_from_cache")),
+                vec![vec![cache]],
+                "{hint}"
+            );
+        }
+        session.run("DEALLOCATE PREPARE s").unwrap();
+    }
+}

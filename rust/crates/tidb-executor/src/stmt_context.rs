@@ -2785,6 +2785,7 @@ impl StmtContext {
             return;
         }
         self.publish_process_plan_info(crate::explain::process_plan_info_with_brief(
+            self,
             physical,
             catalog,
             self.publish_brief_binary_plan,
@@ -3687,6 +3688,30 @@ fn resolve_statement_clock(
 }
 
 impl Columns for StmtContext {
+    fn use_plan_cache(&self) -> bool {
+        self.range_fallback.get().is_some_and(|state| {
+            state.cache_started.load(Ordering::Acquire) && state.tracker.use_cache()
+        }) && !self.skip_plan_cache()
+    }
+
+    fn skip_plan_cache_for_comparison(
+        &self,
+        constant: &tidb_expr::constant::Constant,
+        target: &str,
+    ) {
+        let expression = tidb_expr::expression::Expression::Constant(constant.clone());
+        let text = crate::plan_trace::physical_expression_text_with_columns(
+            self,
+            &expression,
+            &[],
+            crate::plan_trace::ExpressionTextStyle::StringWithCtx,
+        )
+        .unwrap_or_default();
+        self.statement_range_fallback()
+            .tracker
+            .set_skip_plan_cache(&format!("'{text}' may be converted to {target}"));
+    }
+
     fn enable_vectorized_expression(&self) -> bool {
         self.enable_vectorized_expression
     }

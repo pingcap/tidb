@@ -422,13 +422,13 @@ pub fn maybe_over_optimized_4_plan_cache(use_cache: bool, exprs: &[Expression]) 
 /// # Errors
 ///
 /// Returns the evaluation error from a deferred expression.
-pub fn remove_mutable_const(exprs: &mut [Expression], ctx: &impl Columns) -> Result<(), EvalError> {
+pub fn remove_mutable_const(exprs: &mut [Expression], ctx: &dyn Columns) -> Result<(), EvalError> {
     for expr in exprs {
         match expr {
             Expression::Constant(constant) => {
                 constant.param_marker = None;
                 if let Some(deferred) = constant.deferred_expr.take() {
-                    constant.value = super::substitute::eval_once(&deferred, ctx)?;
+                    constant.value = crate::eval_expression_once(&deferred, ctx)?;
                 }
             }
             Expression::ScalarFunction(function) => {

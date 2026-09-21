@@ -495,6 +495,17 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// Go BuildContext.IsUseCache at expression construction time.
+    fn use_plan_cache(&self) -> bool {
+        false
+    }
+
+    /// Go allowCmpArgsRefining4PlanCache rejects sharing a value-dependent
+    /// comparison. The statement owner formats its source expression in the
+    /// skip reason with StringWithCtx.
+    fn skip_plan_cache_for_comparison(&self, _constant: &crate::constant::Constant, _target: &str) {
+    }
+
     /// Whether executor expression batches use Go's vectorized path.
     fn enable_vectorized_expression(&self) -> bool {
         true

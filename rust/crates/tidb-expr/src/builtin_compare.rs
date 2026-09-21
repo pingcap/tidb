@@ -527,9 +527,8 @@ fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut E
 /// numeric-constant-vs-datetime rule (`refineNumericConstantCmpDatetime`,
 /// `:1802-1808`) -- see [`refine_numeric_constant_cmp_datetime`].
 /// DEFERRED, each an independent rule of the same function:
-/// `refineArgsByUnsignedFlag` (`:1919`) and the plan-cache guard
-/// `allowCmpArgsRefining4PlanCache` (`:1789`) -- which matters only once
-/// refined plans are cached across parameter values.
+/// `refineArgsByUnsignedFlag` (`:1919`). The plan-cache guard and mutable
+/// constant removal now run before value-dependent refinement.
 pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
     if let Expression::ScalarFunction(function) = expr {
         for arg in &mut function.args {
@@ -624,6 +623,90 @@ pub(crate) fn refine_comparison_dyn(
     Ok(())
 }
 
+/// Go expressionRewriter.inToExpression refines integer IN candidates before
+/// deciding whether every equality can share a single comparison signature.
+pub(crate) fn refine_integer_in_arguments(
+    args: &mut [Expression],
+    ctx: &dyn Columns,
+) -> Result<(), EvalError> {
+    let Some((left, candidates)) = args.split_first_mut() else {
+        return Ok(());
+    };
+    let Some(target) = left.static_type() else {
+        return Ok(());
+    };
+    if target.eval_type() != EvalType::Int {
+        return Ok(());
+    }
+    for candidate in candidates {
+        let Expression::Constant(constant) = candidate else {
+            continue;
+        };
+        if ctx.use_plan_cache()
+            && (constant.param_marker.is_some() || constant.deferred_expr.is_some())
+        {
+            if constant.get_type(ctx)?.eval_type() == EvalType::Int {
+                continue;
+            }
+            ctx.skip_plan_cache_for_comparison(constant, "INT");
+            crate::expr_util::remove_mutable_const(std::slice::from_mut(candidate), ctx)?;
+        }
+        let Expression::Constant(constant) = candidate else {
+            unreachable!()
+        };
+        if let Some((refined, false)) = refine_compared_constant(ctx, target, constant, "eq") {
+            *constant = refined;
+        }
+    }
+    Ok(())
+}
+
+// Go allowCmpArgsRefining4PlanCache: only the three value-dependent
+// conversions may refine a mutable operand, and they must disable caching.
+fn allow_comparison_refinement(ctx: &dyn Columns, args: &[Expression]) -> Result<bool, EvalError> {
+    if !crate::expr_util::maybe_over_optimized_4_plan_cache(ctx.use_plan_cache(), args) {
+        return Ok(true);
+    }
+    for (index, argument) in args.iter().enumerate() {
+        let Expression::Constant(constant) = argument else {
+            continue;
+        };
+        let other = &args[1 - index];
+        let other_type = match other {
+            Expression::Constant(value) => Some(value.get_type(ctx)?),
+            _ => other.static_type().map(std::borrow::Cow::Borrowed),
+        };
+        let Some(other_type) = other_type else {
+            continue;
+        };
+        let constant_type = constant.get_type(ctx)?.eval_type();
+        let target = if other_type.code() == FieldTypeCode::Year
+            || (other_type.eval_type() == EvalType::Int
+                && matches!(
+                    constant_type,
+                    EvalType::String | EvalType::Real | EvalType::Decimal
+                )) {
+            "INT"
+        } else if !matches!(other, Expression::Constant(_))
+            && matches!(
+                other_type.code(),
+                FieldTypeCode::Datetime | FieldTypeCode::Timestamp
+            )
+            && matches!(
+                constant_type,
+                EvalType::Int | EvalType::Real | EvalType::Decimal
+            )
+        {
+            "datetime"
+        } else {
+            continue;
+        };
+        ctx.skip_plan_cache_for_comparison(constant, target);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Applies Go's comparison argument refinement before either wrapper chooses
 /// the comparison signature. The caller decides whether the generated casts
 /// have a real construction context and therefore can be folded immediately.
@@ -635,14 +718,23 @@ fn refine_comparison_core(expr: &mut Expression, ctx: &dyn Columns) -> Result<bo
     let Some(mirrored) = symmetric_op(name) else {
         return Ok(false);
     };
-    let [left, right] = function.args.as_mut_slice() else {
-        return Ok(false);
-    };
-    if name == "nulleq" && rewrite_invalid_duration_null_eq(left, right, ctx)? {
+    if function.args.len() != 2 {
         return Ok(false);
     }
-    refine_args(left, right, name, mirrored, ctx);
-    fold_temporal_comparison_string_constant(left, right, ctx)?;
+    let allow_refining = allow_comparison_refinement(ctx, &function.args)?;
+    if allow_refining {
+        crate::expr_util::remove_mutable_const(&mut function.args, ctx)?;
+    }
+    let [left, right] = function.args.as_mut_slice() else {
+        unreachable!()
+    };
+    if allow_refining {
+        if name == "nulleq" && rewrite_invalid_duration_null_eq(left, right, ctx)? {
+            return Ok(false);
+        }
+        refine_args(left, right, name, mirrored, ctx);
+        fold_temporal_comparison_string_constant(left, right, ctx)?;
+    }
     // Go's own order: `getFunction` runs `refineArgs` first and only then
     // derives the comparison type -- and the argument casts that go with it --
     // from the arguments that survived it (`builtin_compare.go:1984-1989`).
