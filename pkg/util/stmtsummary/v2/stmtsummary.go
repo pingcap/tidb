@@ -17,11 +17,8 @@ package stmtsummary
 import (
 	"context"
 	"errors"
-<<<<<<< HEAD
-	"maps"
-=======
 	"fmt"
->>>>>>> 0a42bea5f50 (stmtsummary: surface logger init failures, drop leaked time-excluded FDs, fix absolute-path file pruning (#70175))
+	"maps"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -156,22 +153,8 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
-<<<<<<< HEAD
 		window:                 newStmtWindow(timeNow(), uint(defaultMaxStmtCount)),
-		storage: newStmtLogStorage(&log.Config{
-			File: log.FileLogConfig{
-				Filename:   cfg.Filename,
-				MaxSize:    cfg.FileMaxSize,
-				MaxDays:    cfg.FileMaxDays,
-				MaxBackups: cfg.FileMaxBackups,
-			},
-		}),
-=======
-		optPersistEvicted:      atomic2.NewBool(false),
-		optGroupByUser:         atomic2.NewBool(false),
 		storage:                storage,
-		evictedCh:              make(chan *StmtRecord, evictedLogChanCap),
->>>>>>> 0a42bea5f50 (stmtsummary: surface logger init failures, drop leaked time-excluded FDs, fix absolute-path file pruning (#70175))
 	}
 
 	s.closeWg.Add(1)

@@ -19,9 +19,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -94,8 +96,6 @@ func TestStmtFileInvalidLine(t *testing.T) {
 	require.Equal(t, time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local).Unix(), f.end)
 }
 
-<<<<<<< HEAD
-=======
 func TestStmtFileAbsoluteConfiguredFilename(t *testing.T) {
 	restore := config.RestoreFunc()
 	t.Cleanup(restore)
@@ -119,15 +119,6 @@ func TestStmtFileAbsoluteConfiguredFilename(t *testing.T) {
 	require.False(t, checker.isTimeValid(f.begin, f.end))
 }
 
-type stmtDirEntryInfoError struct {
-	os.DirEntry
-}
-
-func (stmtDirEntryInfoError) Info() (os.FileInfo, error) {
-	return nil, os.ErrPermission
-}
-
->>>>>>> 0a42bea5f50 (stmtsummary: surface logger init failures, drop leaked time-excluded FDs, fix absolute-path file pruning (#70175))
 func TestStmtFiles(t *testing.T) {
 	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
 	filename1 := "tidb-statements-2022-12-27T16-21-20.245.log"

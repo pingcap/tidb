@@ -17,14 +17,7 @@ package stmtsummary
 import (
 	"testing"
 
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util/stmtsummary"
-	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
->>>>>>> 0a42bea5f50 (stmtsummary: surface logger init failures, drop leaked time-excluded FDs, fix absolute-path file pruning (#70175))
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,20 +93,6 @@ func TestStmtSummaryFlush(t *testing.T) {
 	storage.Lock()
 	require.Equal(t, 3, len(storage.windows))
 	storage.Unlock()
-}
-<<<<<<< HEAD
-=======
-
-func TestDefaultConfig(t *testing.T) {
-	cfg := &Config{
-		Filename: filepath.Join(t.TempDir(), "test.log"),
-	}
-	ss, err := NewStmtSummary(cfg)
-	require.NoError(t, err)
-	defer ss.Close()
-
-	// Verify RefreshInterval (should be 1800 = 30 min)
-	require.Equal(t, uint32(1800), ss.RefreshInterval())
 }
 
 // TestNewStmtSummaryLoggerInitError closes V2-11 in the statement-summary
@@ -196,40 +175,3 @@ func TestSetupDisablesPersistentOnLoggerInitError(t *testing.T) {
 		Add(GenerateStmtExecInfo4Test("digest_setup_fallback_does_not_panic"))
 	})
 }
-
-// TestEvictedConcurrentWithRotate verifies that Evicted() is safe to call
-// concurrently with rotate (V2-25 data race fix).
-func TestEvictedConcurrentWithRotate(t *testing.T) {
-	ss := NewStmtSummary4Test(2)
-	defer ss.Close()
-
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest3"))
-
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 100; i++ {
-			_ = ss.Evicted()
-		}
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 50; i++ {
-			ss.windowLock.Lock()
-			ss.rotate(timeNow())
-			ss.windowLock.Unlock()
-			ss.Add(GenerateStmtExecInfo4Test("digest_new"))
-			ss.Add(GenerateStmtExecInfo4Test("digest_new2"))
-			ss.Add(GenerateStmtExecInfo4Test("digest_new3"))
-		}
-	}()
-
-	wg.Wait()
-}
->>>>>>> 0a42bea5f50 (stmtsummary: surface logger init failures, drop leaked time-excluded FDs, fix absolute-path file pruning (#70175))
