@@ -103,6 +103,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return []int64{-1}, nil
 	case model.ActionModifySchemaReadOnly:
 		return nil, applyModifySchemaReadOnly(b, m, diff)
+	case model.ActionModifySchemaArchive:
+		return nil, applyModifySchemaArchive(b, m, diff)
 	default:
 		return applyDefaultAction(b, m, diff)
 	}
@@ -615,6 +617,22 @@ func (b *Builder) applyModifySchemaReadOnly(m meta.Reader, diff *model.SchemaDif
 	}
 	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
 	newDbInfo.ReadOnly = di.ReadOnly
+	return nil
+}
+
+func (b *Builder) applyModifySchemaArchive(m meta.Reader, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo.Archived = di.Archived
 	return nil
 }
 

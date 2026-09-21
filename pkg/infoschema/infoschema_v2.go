@@ -1316,6 +1316,13 @@ func applyModifySchemaReadOnly(b *Builder, m meta.Reader, diff *model.SchemaDiff
 	return b.applyModifySchemaReadOnly(m, diff)
 }
 
+func applyModifySchemaArchive(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaArchiveV2(m, diff)
+	}
+	return b.applyModifySchemaArchive(m, diff)
+}
+
 func applyDropTable(b *Builder, diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
 	if b.enableV2 {
 		return b.applyDropTableV2(diff, dbInfo, tableID, affected)
@@ -1498,6 +1505,25 @@ func (b *Builder) applyModifySchemaReadOnlyV2(m meta.Reader, diff *model.SchemaD
 	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	newDBInfo := oldDBInfo.Clone()
 	newDBInfo.ReadOnly = di.ReadOnly
+	b.infoschemaV2.deleteDB(di, diff.Version)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
+}
+
+func (b *Builder) applyModifySchemaArchiveV2(m meta.Reader, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo := oldDBInfo.Clone()
+	newDBInfo.Archived = di.Archived
 	b.infoschemaV2.deleteDB(di, diff.Version)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil

@@ -28,8 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
@@ -1631,4 +1633,128 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 			require.Equal(t, ca.err2, err2.Error())
 		}
 	}
+}
+
+// TestForeignKeyCascadeIntoReadOnlyDBAllowsReplicaWriterBypass verifies that
+// RESTRICTED_REPLICA_WRITER_ADMIN - the privilege that lets a replication applier read and write
+// a database regardless of its archived or read-only state - continues to bypass an FK cascade
+// write into a READ ONLY database (skipReadOnlyCheckForReplica, pre-existing in this codebase)
+// once the archived check below is added ahead of it: the new archived branch must not disturb
+// this existing bypass for the read-only branch it sits in front of.
+func TestForeignKeyCascadeIntoReadOnlyDBAllowsReplicaWriterBypass(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("create database if not exists rw_db")
+	tk.MustExec("create database if not exists ro_db")
+	tk.MustExec("create table rw_db.parent(id int key)")
+	tk.MustExec("create table ro_db.child(id int key, foreign key (id) references rw_db.parent(id) ON DELETE CASCADE)")
+	tk.MustExec("insert into rw_db.parent values (1)")
+	tk.MustExec("insert into ro_db.child values (1)")
+	tk.MustExec("alter database ro_db read only = 1")
+
+	tk.MustExec("create user 'replica'@'%'")
+	tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'replica'@'%'")
+	tk.MustExec("grant all on rw_db.* to 'replica'@'%'")
+	tk.MustExec("grant all on ro_db.* to 'replica'@'%'")
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "replica", Hostname: "%"}, nil, nil, nil))
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "delete from rw_db.parent where id = 1")
+	require.NoError(t, err)
+
+	tk.MustQuery("select * from rw_db.parent").Check(testkit.Rows())
+	tk.MustQuery("select * from ro_db.child").Check(testkit.Rows())
+}
+
+// TestForeignKeyCascadeIntoArchivedDBAllowsReplicaWriterBypass verifies the intended counterpart
+// to the read-only test above: RESTRICTED_REPLICA_WRITER_ADMIN does bypass an FK cascade write
+// into an ARCHIVED database, since that bypass exists specifically so a replication applier can
+// keep a downstream replica consistent regardless of the target's lockdown state, and a cascade
+// delete is exactly the kind of write that role must still be able to perform.
+func TestForeignKeyCascadeIntoArchivedDBAllowsReplicaWriterBypass(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaArchiveDDL", "return")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("create database if not exists rw_db")
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table rw_db.parent(id int key)")
+	tk.MustExec("create table archived_db.child(id int key, foreign key (id) references rw_db.parent(id) ON DELETE CASCADE)")
+	tk.MustExec("insert into rw_db.parent values (1)")
+	tk.MustExec("insert into archived_db.child values (1)")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	tk.MustExec("create user 'replica'@'%'")
+	tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'replica'@'%'")
+	tk.MustExec("grant all on rw_db.* to 'replica'@'%'")
+	tk.MustExec("grant all on archived_db.* to 'replica'@'%'")
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "replica", Hostname: "%"}, nil, nil, nil))
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "delete from rw_db.parent where id = 1")
+	require.NoError(t, err)
+
+	tk.MustQuery("select * from rw_db.parent").Check(testkit.Rows())
+	// archived_db blocks reads for everyone but the bypassed replica session, so the cascade's
+	// effect on it must be verified through se, not tk.
+	rss, err := se.Execute(ctx, "select * from archived_db.child")
+	require.NoError(t, err)
+	rows, err := session.ResultSetToStringSlice(ctx, se, rss[0])
+	require.NoError(t, err)
+	require.Empty(t, rows)
+}
+
+// TestForeignKeyCheckOnModifyChildTableBlocksArchivedParent verifies that inserting into a live
+// table with an FK referencing an archived table is blocked outright, rather than succeeding or
+// failing with ErrNoReferencedRow2 depending on whether the referenced key happens to exist in
+// the archived table. Letting that check run would make the FK constraint an oracle for the
+// existence of specific key values in data that archive is supposed to make completely
+// unreadable.
+func TestForeignKeyCheckOnModifyChildTableBlocksArchivedParent(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaArchiveDDL", "return")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create database if not exists live_db")
+	tk.MustExec("create table archived_db.parent(id int key)")
+	tk.MustExec("create table live_db.child(id int key, foreign key (id) references archived_db.parent(id))")
+	tk.MustExec("insert into archived_db.parent values (5)")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	// Whether or not key 5 exists in archived_db.parent, the statement must fail the same way:
+	// with the archived-mode error, never with success or ErrNoReferencedRow2.
+	tk.MustGetErrMsg("insert into live_db.child values (5)", "[schema:3990]Schema 'archived_db' is in archived mode.")
+	tk.MustGetErrMsg("insert into live_db.child values (999)", "[schema:3990]Schema 'archived_db' is in archived mode.")
+}
+
+// TestForeignKeyCheckForReferredFKBlocksArchivedChild verifies that deleting from a live table
+// referenced (without CASCADE) by an FK in an archived table is blocked outright, rather than
+// succeeding or failing with ErrRowIsReferenced2 depending on whether a referring row happens to
+// exist in the archived table - the same existence-oracle problem as the insert-side check above,
+// but for the "does any child row still reference this one" direction.
+func TestForeignKeyCheckForReferredFKBlocksArchivedChild(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaArchiveDDL", "return")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("create database if not exists live_db")
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table live_db.parent(id int key)")
+	tk.MustExec("create table archived_db.child(id int key, foreign key (id) references live_db.parent(id))")
+	tk.MustExec("insert into live_db.parent values (1), (2)")
+	tk.MustExec("insert into archived_db.child values (1)")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	// id=1 is referenced by archived_db.child, id=2 is not - but both deletes must fail the same
+	// way, with the archived-mode error, never with success or ErrRowIsReferenced2.
+	tk.MustGetErrMsg("delete from live_db.parent where id = 1", "[schema:3990]Schema 'archived_db' is in archived mode.")
+	tk.MustGetErrMsg("delete from live_db.parent where id = 2", "[schema:3990]Schema 'archived_db' is in archived mode.")
 }

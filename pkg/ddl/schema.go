@@ -267,6 +267,112 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 	return ver, nil
 }
 
+func (w *worker) onModifySchemaArchive(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if job.SchemaState == model.StateNone && dbInfo.Archived == args.Archive {
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+	// If the database is set to unarchived from archived, we don't need the middle state.
+	if dbInfo.Archived && !args.Archive {
+		dbInfo.Archived = args.Archive
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateSchemaVersion(jobCtx, job)
+		failpoint.Inject("mockErrorOnModifySchemaArchive2Unarchived", func() {
+			err = errors.New("mock error at archived to unarchived")
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+	trxTableName := infoschema.ClusterTableTiDBTrx
+	failpoint.Inject("mockModifySchemaArchiveDDL", func() {
+		trxTableName = infoschema.TableTiDBTrx
+	})
+
+	switch job.SchemaState {
+	case model.StateNone:
+		dbInfo.Archived = args.Archive
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateSchemaVersion(jobCtx, job)
+		failpoint.Inject("mockErrorOnModifySchemaArchiveStateNone", func() {
+			err = errors.New("mock error at StateNone")
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StatePendingArchive
+	case model.StatePendingArchive:
+		sessCtx, err := w.sessPool.Get()
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		defer w.sessPool.Put(sessCtx)
+		session := sess.NewSession(sessCtx)
+		sampleLogger := logutil.SampleLoggerFactory(time.Second, 5, zap.String(logutil.LogFieldCategory, "ddl"))
+		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, session, dbInfo.ID, trxTableName, args.DDLStartTS)
+		failpoint.Inject("mockErrorOnModifySchemaArchiveStatePendingArchive", func() {
+			err = errors.New("mock error at StatePendingArchive")
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// check and wait all uncommitted txn
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+		for len(uncommittedTxn) > 0 {
+			select {
+			case <-ticker.C:
+				for txnID := range uncommittedTxn {
+					sql := fmt.Sprintf("SELECT ID FROM INFORMATION_SCHEMA.%s WHERE ID = %d", trxTableName, txnID)
+					r, err := session.Execute(jobCtx.stepCtx, sql, "check if txn committed")
+					if err != nil {
+						return ver, errors.Trace(err)
+					}
+					if len(r) == 0 {
+						delete(uncommittedTxn, txnID)
+						continue
+					}
+					sampleLogger().Info("uncommitted txn block archive ddl",
+						zap.Int64("txn ID", txnID),
+						zap.Int64("job ID", job.ID),
+					)
+					break
+				}
+				failpoint.InjectCall("checkUncommittedTxns", uncommittedTxn)
+			case <-jobCtx.stepCtx.Done():
+				return ver, errors.Trace(jobCtx.stepCtx.Err())
+			}
+		}
+
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	}
+	return ver, nil
+}
+
 func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, targetDBID int64, trxTableName string, ddlStartTS uint64) (map[int64]struct{}, error) {
 	var currTS = uint64(0)
 	err := kv.RunInNewTxn(jobCtx.ctx, jobCtx.store, true, func(_ context.Context, txn kv.Transaction) error {

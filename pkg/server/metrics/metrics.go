@@ -31,6 +31,7 @@ var (
 	DisconnectNormal            prometheus.Counter
 	DisconnectByClientWithError prometheus.Counter
 	DisconnectErrorUndetermined prometheus.Counter
+	DisconnectArchived          prometheus.Counter
 
 	ConnIdleDurationHistogramNotInTxn prometheus.Observer
 	ConnIdleDurationHistogramInTxn    prometheus.Observer
@@ -112,6 +113,7 @@ func InitMetricsVars() {
 	DisconnectNormal = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
 	DisconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
 	DisconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
+	DisconnectArchived = metrics.DisconnectionCounter.WithLabelValues("archived")
 
 	ConnIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
 	ConnIdleDurationHistogramInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("1")

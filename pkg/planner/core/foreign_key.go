@@ -221,6 +221,14 @@ func (*Insert) buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infosch
 			fkCascades = append(fkCascades, fkCascade)
 			if !skipReadOnlyCheck {
 				fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
+				// Archived is checked first, matching preprocess.go's ordering: it's the
+				// stronger restriction, and only its branch sets DisconnectAfterResponse - a
+				// database that's both archived and read-only must report the archived error
+				// (and still close the connection), not silently fall into the read-only one.
+				if ok && fkDBInfo.Archived {
+					ctx.GetSessionVars().DisconnectAfterResponse = true
+					return nil, nil, errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
 				if ok && fkDBInfo.ReadOnly {
 					return nil, nil, errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
 				}
@@ -276,6 +284,15 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 			if !skipReadOnlyCheck {
 				for _, fk := range referredFKCascades {
 					fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
+					// Archived is checked first, matching preprocess.go's ordering: it's the
+					// stronger restriction, and only its branch sets DisconnectAfterResponse -
+					// a database that's both archived and read-only must report the archived
+					// error (and still close the connection), not silently fall into the
+					// read-only one.
+					if ok && fkDBInfo.Archived {
+						ctx.GetSessionVars().DisconnectAfterResponse = true
+						return errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(fkDBInfo.Name.O))
+					}
 					if ok && fkDBInfo.ReadOnly {
 						return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
 					}
@@ -323,6 +340,14 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.I
 				fkCascades[tid] = append(fkCascades[tid], fkCascade)
 				if !skipReadOnlyCheck {
 					fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
+					// Archived is checked first, matching preprocess.go's ordering: it's the
+					// stronger restriction, and only its branch sets DisconnectAfterResponse - a
+					// database that's both archived and read-only must report the archived error
+					// (and still close the connection), not silently fall into the read-only one.
+					if ok && fkDBInfo.Archived {
+						ctx.GetSessionVars().DisconnectAfterResponse = true
+						return errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(fkDBInfo.Name.O))
+					}
 					if ok && fkDBInfo.ReadOnly {
 						return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
 					}
@@ -439,9 +464,28 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 		fkCascade, err := buildFKCascade(ctx, tp, referredFK, childTable, fk)
 		return nil, fkCascade, err
 	default:
-		fkCheck, err := buildFKCheckForReferredFK(ctx, childTable, fk, referredFK)
+		fkCheck, err := buildFKCheckForReferredFK(ctx, is, childTable, fk, referredFK)
 		return fkCheck, nil, err
 	}
+}
+
+// checkFKCheckTargetNotArchived blocks building an FKCheck against a table in an archived
+// database. An FKCheck never returns the target row's data - it only reports whether a specific
+// key exists, surfacing as ErrNoReferencedRow2 (checking a referenced row exists) or
+// ErrRowIsReferenced2 (checking no referring rows exist) - but that yes/no signal is itself a
+// read of the archived table: without this, "INSERT INTO live.child VALUES (5)" with an FK into
+// an archived parent succeeds or fails depending on whether key 5 exists there, which lets a
+// caller probe the existence of specific archived key values without ever running a SELECT
+// against the table. Archive blocks all reads regardless of how narrow the leak is, so this must
+// be checked exactly like the cascade checks above, with the same RESTRICTED_REPLICA_WRITER_ADMIN
+// bypass.
+func checkFKCheckTargetNotArchived(ctx base.PlanContext, is infoschema.InfoSchema, tbl table.Table) error {
+	dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
+	if ok && dbInfo.Archived && !hasReplicaWriterBypass(ctx) {
+		ctx.GetSessionVars().DisconnectAfterResponse = true
+		return errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(dbInfo.Name.O))
+	}
+	return nil
 }
 
 func isMapContainAnyCols(colsMap map[string]struct{}, cols ...pmodel.CIStr) bool {
@@ -459,6 +503,9 @@ func buildFKCheckOnModifyChildTable(ctx base.PlanContext, is infoschema.InfoSche
 	if err != nil {
 		return nil, nil
 	}
+	if err := checkFKCheckTargetNotArchived(ctx, is, referTable); err != nil {
+		return nil, err
+	}
 	fkCheck, err := buildFKCheck(ctx, referTable, fk.RefCols, failedErr)
 	if err != nil {
 		return nil, err
@@ -468,7 +515,10 @@ func buildFKCheckOnModifyChildTable(ctx base.PlanContext, is infoschema.InfoSche
 	return fkCheck, nil
 }
 
-func buildFKCheckForReferredFK(ctx base.PlanContext, childTable table.Table, fk *model.FKInfo, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
+func buildFKCheckForReferredFK(ctx base.PlanContext, is infoschema.InfoSchema, childTable table.Table, fk *model.FKInfo, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
+	if err := checkFKCheckTargetNotArchived(ctx, is, childTable); err != nil {
+		return nil, err
+	}
 	failedErr := plannererrors.ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
 	fkCheck, err := buildFKCheck(ctx, childTable, fk.Cols, failedErr)
 	if err != nil {

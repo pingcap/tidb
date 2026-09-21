@@ -267,6 +267,7 @@ var Keywords = []KeywordsType{
 	{"ALWAYS", false, "unreserved"},
 	{"ANY", false, "unreserved"},
 	{"APPLY", false, "unreserved"},
+	{"ARCHIVE", false, "unreserved"},
 	{"ASCII", false, "unreserved"},
 	{"ATTRIBUTE", false, "unreserved"},
 	{"ATTRIBUTES", false, "unreserved"},

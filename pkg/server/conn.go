@@ -1193,6 +1193,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
+
+			// A denied statement against an archived database gets its error response above like
+			// any other error, but the connection itself must not survive to retry - a plain grant
+			// revoke would let the client keep hammering the same connection forever, so close it
+			// here to force a reconnect on the next attempt.
+			if cc.ctx.GetSessionVars().DisconnectAfterResponse {
+				cc.addMetrics(data[0], startTime, err)
+				server_metrics.DisconnectArchived.Inc()
+				return
+			}
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.SetSequence(0)
@@ -1271,6 +1281,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
+	// DisconnectAfterResponse only ever means "this command"; clear whatever an earlier command
+	// left behind before it can be set again below, so a stale true can't survive to be read by
+	// Run() after a later, unrelated command.
+	cc.ctx.GetSessionVars().DisconnectAfterResponse = false
 	defer func() {
 		// reset killed for each request
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
@@ -1912,7 +1926,15 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
 		nodeW := resolve.NewNodeW(stmt)
-		if err = plannercore.Preprocess(ctx, cc.getCtx(), nodeW); err != nil {
+		// This speculative Preprocess call runs on the real session and its error is discarded
+		// below, but checkSchemaArchived's DisconnectAfterResponse side effect (preprocess.go)
+		// would otherwise stick even when the error is thrown away - restore it so a later
+		// statement failing for an unrelated reason in the real execution loop can't get
+		// mistaken for an archived-database denial.
+		disconnectBefore := vars.DisconnectAfterResponse
+		err = plannercore.Preprocess(ctx, cc.getCtx(), nodeW)
+		vars.DisconnectAfterResponse = disconnectBefore
+		if err != nil {
 			// error might happen, see https://github.com/pingcap/tidb/issues/39664
 			return nil, nil
 		}

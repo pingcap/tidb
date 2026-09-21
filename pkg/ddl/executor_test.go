@@ -331,3 +331,17 @@ func TestAlterSystemDBReadOnlyRejected(t *testing.T) {
 		tk.MustGetErrCode(fmt.Sprintf("alter database `%s` read only 1", dbName), errno.ErrAccessSysDBRejected)
 	}
 }
+
+func TestAlterSystemDBArchiveRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	for _, dbName := range []string{
+		"mysql",
+		"sys",
+		"performance_schema",
+		"metrics_schema",
+		"information_schema",
+	} {
+		tk.MustGetErrCode(fmt.Sprintf("alter database `%s` archive 1", dbName), errno.ErrAccessSysDBRejected)
+	}
+}

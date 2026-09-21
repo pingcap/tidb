@@ -112,6 +112,7 @@ const (
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
 	ActionModifySchemaReadOnly   ActionType = 77
+	ActionModifySchemaArchive    ActionType = 78
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -185,6 +186,7 @@ var ActionMap = map[ActionType]string{
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
 	ActionModifySchemaReadOnly:          "modify schema read only",
+	ActionModifySchemaArchive:           "modify schema archive",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -222,6 +224,8 @@ const (
 	StateGlobalTxnOnly
 	// StatePendingReadOnly means this database is pending to be read-only.
 	StatePendingReadOnly
+	// StatePendingArchive means this database is pending to be archived.
+	StatePendingArchive
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
@@ -244,6 +248,10 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
+	case StatePendingReadOnly:
+		return "pending read only"
+	case StatePendingArchive:
+		return "pending archive"
 	default:
 		return "none"
 	}

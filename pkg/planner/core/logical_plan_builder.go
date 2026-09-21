@@ -5003,6 +5003,31 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 		failpoint.Inject("BuildDataSourceFailed", func() {})
 		return nil, err
 	}
+	// A view body is parsed and planned directly here, never through core.Preprocess, so
+	// checkSchemaArchived never runs against the databases it actually reads from - only
+	// against the view's own database, which may not be archived at all. Without this, a view
+	// defined over an archived table serves its rows to any caller with SELECT on the view,
+	// completely bypassing archive's "blocks all reads" guarantee. b.visitInfo at this point
+	// holds exactly the tables this view's own body touched (it was reset to a fresh slice
+	// before b.Build above, and isn't merged back into the outer originalVisitInfo until
+	// below), so this only checks what this view invocation itself references - nested views
+	// are covered by their own recursive call into this same function.
+	if !hasReplicaWriterBypass(b.ctx) {
+		checkedDBs := make(map[string]struct{}, len(b.visitInfo))
+		for _, v := range b.visitInfo {
+			if v.db == "" {
+				continue
+			}
+			if _, ok := checkedDBs[v.db]; ok {
+				continue
+			}
+			checkedDBs[v.db] = struct{}{}
+			if viewDBInfo, exists := b.ctx.GetDomainInfoSchema().SchemaByName(pmodel.NewCIStr(v.db)); exists && viewDBInfo.Archived {
+				b.ctx.GetSessionVars().DisconnectAfterResponse = true
+				return nil, errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(viewDBInfo.Name.O))
+			}
+		}
+	}
 	pm := privilege.GetPrivilegeManager(b.ctx)
 	if viewDepth != 0 &&
 		b.ctx.GetSessionVars().StmtCtx.InExplainStmt &&

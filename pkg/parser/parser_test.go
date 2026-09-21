@@ -2733,6 +2733,43 @@ func TestDDL(t *testing.T) {
 		{"ALTER SCHEMA S READ ONLY=default CHARSET=gbk", false, ""},
 		{"ALTER SCHEMA S READ ONLY=default COLLATION = utf8_general_ci", false, ""},
 		{"CREATE SCHEMA S(a INT, READ ONLY=0)", false, ""},
+		{"ALTER DATABASE test ARCHIVE = 1", true, "ALTER DATABASE `test` ARCHIVE = 1"},
+		{"ALTER DATABASE test ARCHIVE = 0", true, "ALTER DATABASE `test` ARCHIVE = 0"},
+		{"ALTER DATABASE test ARCHIVE = default", true, "ALTER DATABASE `test` ARCHIVE = DEFAULT"},
+		{"ALTER SCHEMA test ARCHIVE = 1", true, "ALTER DATABASE `test` ARCHIVE = 1"},
+		{"ALTER DATABASE test ARCHIVE 1", true, "ALTER DATABASE `test` ARCHIVE = 1"},
+		{"ALTER DATABASE ARCHIVE 1", true, "ALTER DATABASE ARCHIVE = 1"},
+		{"ALTER DATABASE test ARCHIVE = 2", false, ""},
+		{"ALTER DATABASE test ARCHIVE = '1'", false, ""},
+		{"ALTER DATABASE test ARCHIVE = `1`", false, ""},
+		{"ALTER DATABASE test ARCHIVE = true", false, ""},
+		{"CREATE DATABASE test ARCHIVE = 1", false, ""},
+		{"ALTER DATABASE test CHARSET = gbk ARCHIVE = 1", false, ""},
+		{"ALTER SCHEMA S ARCHIVE=0 ARCHIVE=0", false, ""},
+		{"ALTER SCHEMA S ARCHIVE=1 ARCHIVE=0", false, ""},
+		{"ALTER SCHEMA S ARCHIVE=default ARCHIVE=1", false, ""},
+		{"ALTER SCHEMA S ARCHIVE=default CHARSET=gbk", false, ""},
+		{"ALTER SCHEMA S ARCHIVE=default COLLATION = utf8_general_ci", false, ""},
+		{"CREATE SCHEMA S(a INT, ARCHIVE=0)", false, ""},
+		{"ALTER SCHEMA S ARCHIVE=off", false, ""},
+		{"ALTER SCHEMA S ARCHIVE=-1", false, ""},
+		{"ALTER SCHEMA S READ ONLY=1 ARCHIVE=1", false, ""},
+		{"ALTER SCHEMA S ARCHIVE=1 READ ONLY=1", false, ""},
+		// ARCHIVE is an unreserved keyword, unlike READ ONLY's READ/ONLY: existing SQL using
+		// "archive" as an identifier (table/column/database name) must keep working.
+		{"CREATE TABLE t (archive INT)", true, "CREATE TABLE `t` (`archive` INT)"},
+		{"SELECT archive FROM t", true, "SELECT `archive` FROM `t`"},
+		{"CREATE TABLE archive (a INT)", true, "CREATE TABLE `archive` (`a` INT)"},
+		{"USE archive", true, "USE `archive`"},
+		// A database literally named "archive" must still be alterable, including toggling its
+		// own ARCHIVE option and using unrelated options that happen to start with DEFAULT.
+		{"ALTER DATABASE archive ARCHIVE = 1", true, "ALTER DATABASE `archive` ARCHIVE = 1"},
+		{"ALTER DATABASE archive DEFAULT CHARACTER SET utf8mb4", true, "ALTER DATABASE `archive` CHARACTER SET = utf8mb4"},
+		// The nameless "ALTER DATABASE ARCHIVE = DEFAULT" form requires "=" before DEFAULT,
+		// unlike the bare-NUM form, to stay unambiguous with "archive" the DBName followed by a
+		// DEFAULT-prefixed option list (see the grammar comment on this alternative).
+		{"ALTER DATABASE ARCHIVE = default", true, "ALTER DATABASE ARCHIVE = DEFAULT"},
+		{"ALTER DATABASE ARCHIVE default", false, ""},
 
 		// 5. create partition
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, false, ""},

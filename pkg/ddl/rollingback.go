@@ -655,6 +655,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingBackAlterConstraint(jobCtx, job)
 	case model.ActionModifySchemaReadOnly:
 		ver, err = rollbackModifySchemaReadOnly(jobCtx, job)
+	case model.ActionModifySchemaArchive:
+		ver, err = rollbackModifySchemaArchive(jobCtx, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -774,6 +776,28 @@ func rollbackModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64
 		return ver, errors.Trace(err)
 	}
 	dbInfo.ReadOnly = !args.ReadOnly
+	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StateNone
+	return ver, nil
+}
+
+func rollbackModifySchemaArchive(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	dbInfo.Archived = !args.Archive
 	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
