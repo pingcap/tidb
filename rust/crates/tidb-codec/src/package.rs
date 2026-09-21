@@ -93,9 +93,12 @@ pub fn encode_mysql_time<TZ: TimeZone + 'static>(
 ) -> Result<(), CodecError> {
     let kind = target.unwrap_or(value.kind());
     if kind == TimeType::Timestamp && !timezone_is_utc(timezone) {
-        value
-            .convert_time_zone(timezone, &Utc)
-            .map_err(|_| CodecError::InvalidEncoding("invalid MySQL timestamp"))?;
+        let original = value;
+        if value.convert_time_zone(timezone, &Utc).is_err() {
+            // Go returns nil, discarding the supplied prefix on failure.
+            output.clear();
+            return Err(CodecError::InvalidMysqlTimestamp(original));
+        }
     }
     encode_uint(
         output,

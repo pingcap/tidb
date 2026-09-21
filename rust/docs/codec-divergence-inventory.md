@@ -5,7 +5,7 @@ commit `e2788410d8d696605e8cb002585877a063ccc909`:
 
 | Go package | Rust implementation | Current findings |
 | --- | --- | --- |
-| `pkg/util/codec` | `tidb-codec` plus its `tidb-datatype` decimal/collation dependencies | 0 |
+| `pkg/util/codec` | `tidb-codec` plus its `tidb-datatype` decimal/collation dependencies | Historical zero-findings audit; current malformed-timestamp correction verified below, complete current re-audit open |
 | root `pkg/tablecodec` | `tidb-tablecodec` plus shared key/row codecs | 0 |
 
 `pkg/tablecodec/rowindexcodec` is a separate Go package and has its own package
@@ -56,3 +56,22 @@ The package audit includes exact source behavior for:
 Resolved findings were removed instead of retained as supported deviations.
 The package receipts contain the exact validation commands and results. This
 record does not claim parity for other Go packages that share either Rust crate.
+
+## 2026-09-21 timestamp-error correction
+
+The shared checker audit found that encode_mysql_time retained an existing
+output prefix on a timezone conversion error, whereas Go EncodeMySQLTime
+returns nil. The codec now clears that prefix and returns the original Time
+in a structured InvalidMysqlTimestamp error. Its generic Display spelling is
+unchanged; the checker can now report the original CoreTime fields and apply
+statement strict/warn/ignore handling. UTC still packs raw fields without
+calendar validation. The existing temporal test now covers prefix clearing
+and exact error payloads. It failed before the production fix.
+
+The 12-file Go package inventory above is unchanged. All original Go codec
+tests pass with the repository failpoint wrapper and cleanup; Rust codec's
+46 library and 167 integration tests pass. The checker Go oracles and its
+consumer tests cover the statement policy. Exact commands, logs and scope
+limits are in planner/physicalop-package-parity-execplan.md. These results
+correct the concrete finding; the older zero-findings receipt alone is not
+proof of complete current package acceptance.

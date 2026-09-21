@@ -4250,3 +4250,122 @@ rust/crates/tidb-executor/src/vec_group_checker.rs. All test/lint handles are
 terminal. No cluster was started. Only this receipt changed after validation;
 the two unrelated unconnected draft files remain excluded from publication.
 Goal active; this is validated progress, not whole-package acceptance.
+
+## Checker runtime collation and encoding-error audit (2026-09-21)
+
+Checkpoint e94c515913 is pushed. Continue the complete checker package audit,
+with the four-artifact inventory unchanged. The Go source uses the process
+collation switch and exact FieldType collation spelling for both boundaries
+and interior keys. Native boundary encoding forces new mode and caches a
+normalized collation. A temporary oracle covers both modes, four names and
+both vectorization modes; legacy mode retains all byte differences, unknown
+and uppercase names fall back to the new PAD SPACE binary collator, and only
+the exact lowercase CI name merges the case variants.
+
+A second oracle covers invalid timestamp month zero in UTC and +08:00,
+strict/warn/ignore policies and both vectorization modes. UTC packs raw fields.
+Non-UTC strict mode returns 1292 with CoreTime's original field representation.
+Warn/ignore drops the whole encoded boundary and warning mode emits one error
+for each endpoint. Repeating a chunk with empty encoded keys does not continue
+the previous chunk. The initial oracle incorrectly used SetErrLevels for
+truncation; Go explicitly excludes truncation there. Its corrected version
+uses SetTypeFlags, the authoritative truncation-policy setter.
+
+Add red regressions before changing the checker and codec seam. Preserve the
+original timestamp in codec errors, apply the checker statement policy, and
+respect Go's empty-key continuation sentinel. A subprocess isolates the Rust
+process-global collation switch from concurrently running tests. No public
+SQL behavior absent from Go is introduced. Codec remains a whole-package
+validation unit, using its existing inventory and test mappings; this audit
+must not silently reuse its older zero-findings receipt as current evidence.
+
+### Runtime audit implementation and validation receipt
+
+Both new checker regressions failed on the previous production code: legacy
+CI strings incorrectly merged, and strict timestamp conversion returned
+Unsupported instead of the source diagnostic. Logs:
+/tmp/tidb-group-runtime-red-runtime_collation_mode_and_exact_names_match_go.log
+and /tmp/tidb-group-runtime-red-timestamp_boundary_errors_follow_statement_policy.log.
+A separate codec prefix-clearing regression failed before its fix:
+/tmp/tidb-group-codec-prefix-red.log. Initial test compilation used the wrong
+SessionTimeZone constructor; only the subsequent behavioral failures above
+count as red evidence.
+
+The checker now resolves exact FieldType collation names, honors the runtime
+mode, compares string keys in the source collation domain, handles timestamp
+encoding errors through statement truncation policy and excludes empty prior
+keys from continuation. Codec timestamp failures preserve the original Time
+and clear the caller's prefix; generic codec Display text is unchanged.
+Binary/padding-only comparison borrows keys. CI key generation can allocate;
+no performance improvement is claimed without workload measurements.
+
+Successful Go validations from repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-runtime-overlay.json -run '^TestGroupChecker(CollationMode|TimestampError)Oracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-runtime-overlay.json -run '^TestGroupCheckerTimestampErrorOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-group-runtime-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off ./tools/check/failpoint-go-test.sh pkg/util/codec -count=1
+
+The timestamp oracle's final repeated-chunk evidence is in
+/tmp/tidb-group-time-error-oracle-final.log; the initial combined log used the
+incorrect policy setter noted above and is only collation evidence. The race
+run uses the corrected overlay and passes all four original checker tests and
+four oracle tests. Codec original tests pass with failpoints enabled and
+cleanup confirmed at refcount zero in /tmp/tidb-group-runtime-go-codec-failpoints.log.
+A preceding plain codec go test passed but did not satisfy failpoint policy;
+it is excluded from gate evidence. No tracked Go changes remain, and no
+Bazel/module/source-list edits require bazel_prepare.
+
+Successful native validations from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-codec --test all encode_timestamp_in_utc_skips_timezone_validation
+    cargo test --offline --locked -j12 -p tidb-codec
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Codec: 46 library, 167 integration tests passed. Checker: 18; executor merge:
+76; hash_agg: 76; shuffle: 26; window: 23; session merge/stream module: 16;
+session windows: 68. No failures or ignored tests in those runs. An early
+command after a test-writing path error matched zero tests and is not evidence.
+Logs: /tmp/tidb-group-runtime-*.log. Repeated runs are not additional distinct
+coverage. Shared-consumer gates cover the grouping change; they do not replace
+complete aggregate/join/window package acceptance.
+
+From repository root, make lint again failed the existing revive bootstrap
+(exit 2). make -o tools/bin/revive lint passed the actual recipes with the
+existing binary. git diff --check and rustfmt --check --edition 2021 on
+rust/crates/tidb-codec/src/error.rs and
+rust/crates/tidb-executor/src/vec_group_checker.rs pass. The touched regions in
+the larger codec source/test files retain local formatting without whole-file
+churn. No release workload or controlled performance comparison was run.
+
+Changed production/test files: tidb-codec/src/{error,package}.rs,
+tidb-codec/tests/codec_package_source.rs, and tidb-executor/src/vec_group_checker.rs.
+Updated records: this plan, physicalop-source-inventory.md,
+codec-divergence-inventory.md and operations/util-codec-audit-execplan.md.
+The historical codec zero-findings entry is qualified rather than treated as
+current acceptance. Remaining checker expression-domain and codec-error
+contracts are still open. The full goal remains active.
+
+
+Publication validation used /private/tmp/tidb-parity-publish-aba629bb at
+pushed HEAD e94c515913 with the same eight changed files. The prior temporary
+checkout was reset only after verifying its contents matched the published
+checkpoint (except its missing final receipt). From isolated rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-codec
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+
+All passed (codec 46+167, checker 18, session 16); logs:
+/tmp/tidb-group-runtime-isolated-{codec,checker,merge-session}.log. Seven files
+remain byte-identical across checkouts; only this plan's final receipt was
+appended after validation. Fetch confirmed origin/hparser-integration matched
+local HEAD before publication. All test/lint processes are terminal; failpoint
+cleanup is complete and no cluster was started. The two unconnected draft
+files remain excluded. This is progress evidence, not a completion claim.

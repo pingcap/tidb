@@ -313,12 +313,18 @@ fn encode_timestamp_in_utc_skips_timezone_validation() {
     let east_eight = FixedOffset::east_opt(8 * 60 * 60).unwrap();
     assert_eq!(
         encode_mysql_time(&east_eight, invalid, None, &mut Vec::new()),
-        Err(CodecError::InvalidEncoding("invalid MySQL timestamp"))
+        Err(CodecError::InvalidMysqlTimestamp(invalid))
+    );
+    let mut prefix = vec![3, 128, 0, 0, 0, 0, 0, 0, 42];
+    assert!(encode_mysql_time(&east_eight, invalid, None, &mut prefix).is_err());
+    assert!(
+        prefix.is_empty(),
+        "Go returns nil on timestamp conversion errors"
     );
     let fixed_zero = FixedOffset::east_opt(0).unwrap();
     assert_eq!(
         encode_mysql_time(&fixed_zero, invalid, None, &mut Vec::new()),
-        Err(CodecError::InvalidEncoding("invalid MySQL timestamp"))
+        Err(CodecError::InvalidMysqlTimestamp(invalid))
     );
     let session_fixed_zero = SessionTimeZone::Fixed {
         name: "+00:00".to_owned(),
@@ -326,7 +332,7 @@ fn encode_timestamp_in_utc_skips_timezone_validation() {
     };
     assert_eq!(
         encode_mysql_time(&session_fixed_zero, invalid, None, &mut Vec::new()),
-        Err(CodecError::InvalidEncoding("invalid MySQL timestamp"))
+        Err(CodecError::InvalidMysqlTimestamp(invalid))
     );
 }
 

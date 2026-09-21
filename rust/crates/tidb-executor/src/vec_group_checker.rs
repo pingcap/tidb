@@ -41,7 +41,22 @@ impl VecGroupChecker {
     /// Creates a checker for `group_by_items`.
     #[must_use]
     pub(crate) fn new(group_by_items: Vec<Expression>) -> Self {
-        let collations = group_by_items.iter().map(collation_of_node).collect();
+        let collations = group_by_items
+            .iter()
+            .map(|item| {
+                // GetCollator uses the exact FieldType spelling, including its
+                // binary fallback for unknown or differently-cased names.
+                item.static_type().map_or_else(
+                    || collation_of_node(item),
+                    |field| {
+                        field
+                            .runtime_collator_with_mode(true)
+                            .new_collation()
+                            .unwrap_or(Collation::Binary)
+                    },
+                )
+            })
+            .collect();
         Self {
             group_by_items,
             collations,
@@ -87,7 +102,11 @@ impl VecGroupChecker {
         }
         let first_encoded = encode_boundary_key(ctx, &first, &self.collations)?;
         let last_encoded = encode_boundary_key(ctx, &last, &self.collations)?;
-        let continues_previous = self.previous_last_key.as_ref() == Some(&first_encoded);
+        let continues_previous = self
+            .previous_last_key
+            .as_ref()
+            .filter(|key| !key.is_empty())
+            == Some(&first_encoded);
         let one_group = first_encoded == last_encoded;
         self.previous_last_key = Some(last_encoded);
         if one_group {
@@ -163,7 +182,11 @@ impl VecGroupChecker {
             .expect("the non-empty iterator has a last key");
         let first_encoded = encode_boundary_key(&tidb_expr::NoColumns, first, collations)?;
         let last_encoded = encode_boundary_key(&tidb_expr::NoColumns, last, collations)?;
-        let continues_previous = self.previous_last_key.as_ref() == Some(&first_encoded);
+        let continues_previous = self
+            .previous_last_key
+            .as_ref()
+            .filter(|key| !key.is_empty())
+            == Some(&first_encoded);
         self.previous_last_key = Some(last_encoded.clone());
 
         // Upstream has this fast path and its callers guarantee sorted input.
@@ -317,6 +340,13 @@ impl<C: Columns> tidb_datatype::ConversionWarningAppender for GroupWarnings<'_, 
 /// Go compares evaluated columns in their own domains. Avoid scalar SQL
 /// coercion (and its temporary datum clones) when only equality is needed.
 fn same_group_value(left: &Datum, right: &Datum, collation: Collation) -> Result<bool, EvalError> {
+    if let (Some(left), Some(right)) = (left.as_raw_bytes(), right.as_raw_bytes()) {
+        return Ok(if tidb_datatype::new_collation_enabled() {
+            collation.immutable_key(left) == collation.immutable_key(right)
+        } else {
+            left == right
+        });
+    }
     Ok(match (left, right) {
         (Datum::Null, Datum::Null) => true,
         (Datum::Null, _) | (_, Datum::Null) => false,
@@ -355,9 +385,20 @@ fn encode_boundary_key(
             value => value.clone(),
         })
         .collect::<Vec<_>>();
-    tidb_codec::Encoder::new(true)
+    match tidb_codec::Encoder::new(tidb_datatype::new_collation_enabled())
         .encode_key_in_timezone(&ctx.time_zone(), &values)
-        .map_err(|_| EvalError::Unsupported("group boundary key cannot be encoded"))
+    {
+        Ok(encoded) => Ok(encoded),
+        Err(tidb_codec::CodecError::InvalidMysqlTimestamp(value)) => {
+            ctx.handle_truncate(&format!("Incorrect time value: '{}'", value.core_time()))?;
+            // EncodeMySQLTime returns nil on conversion failure, discarding
+            // even an already encoded prefix. ErrCtx may keep the statement.
+            Ok(Vec::new())
+        }
+        Err(_) => Err(EvalError::Unsupported(
+            "group boundary key cannot be encoded",
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -394,6 +435,168 @@ mod tests {
             ranges.push(checker.get_next_group());
         }
         ranges
+    }
+
+    #[test]
+    fn runtime_collation_mode_and_exact_names_match_go() {
+        // This switch is process-global; run the fixture alone in a child
+        // test process so concurrent executor tests cannot observe it.
+        const CHILD: &str = "TIDB_GROUP_CHECKER_COLLATION_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "vec_group_checker::tests::runtime_collation_mode_and_exact_names_match_go",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        for enabled in [false, true] {
+            tidb_datatype::set_new_collation_enabled(enabled);
+            for name in [
+                "utf8mb4_general_ci",
+                "UTF8MB4_GENERAL_CI",
+                "unknown_collation",
+                "utf8mb4_bin",
+            ] {
+                let field = FieldType::new(FieldTypeCode::VarString).with_collation_name(name);
+                let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+                for value in ["A", "A ", "a", "b"] {
+                    chunk.append_string(0, value);
+                }
+                let mut checker = VecGroupChecker::new(vec![column(0, field)]);
+                assert!(!checker.split_into_groups(&NoColumns, &chunk).unwrap());
+                let ci = enabled && name == "utf8mb4_general_ci";
+                let expected = if !enabled {
+                    vec![(0, 1), (1, 2), (2, 3), (3, 4)]
+                } else if ci {
+                    vec![(0, 3), (3, 4)]
+                } else {
+                    vec![(0, 2), (2, 3), (3, 4)]
+                };
+                assert_eq!(
+                    ranges(&mut checker),
+                    expected,
+                    "enabled={enabled}, name={name}"
+                );
+                let expected_key: &[u8] = if ci {
+                    &[1, 0, 66, 0, 0, 0, 0, 0, 0, 249]
+                } else {
+                    &[1, 98, 0, 0, 0, 0, 0, 0, 0, 248]
+                };
+                assert_eq!(checker.previous_last_key.as_deref(), Some(expected_key));
+                chunk.reset();
+                chunk.append_string(0, "B ");
+                assert_eq!(checker.split_into_groups(&NoColumns, &chunk).unwrap(), ci);
+            }
+        }
+    }
+
+    #[test]
+    fn timestamp_boundary_errors_follow_statement_policy() {
+        use tidb_datatype::{CoreTime, Time, TimeType};
+        use tidb_expr::{ErrorLevel, SessionTimeZone};
+        struct Context {
+            level: ErrorLevel,
+            zone: SessionTimeZone,
+            warnings: std::cell::RefCell<Vec<(u16, String)>>,
+        }
+        impl Columns for Context {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn truncate_level(&self) -> ErrorLevel {
+                self.level
+            }
+            fn time_zone(&self) -> SessionTimeZone {
+                self.zone.clone()
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.warnings.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+        for zone in [
+            SessionTimeZone::utc(),
+            SessionTimeZone::Fixed {
+                name: "+08:00".to_owned(),
+                offset_secs: 8 * 3600,
+            },
+        ] {
+            for level in [ErrorLevel::Error, ErrorLevel::Warn, ErrorLevel::Ignore] {
+                let context = Context {
+                    level,
+                    zone: zone.clone(),
+                    warnings: Default::default(),
+                };
+                let field = FieldType::new(FieldTypeCode::Timestamp);
+                let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 2);
+                for day in [1, 2] {
+                    chunk.append_datum(
+                        0,
+                        &Datum::Time(
+                            Time::new(
+                                CoreTime::from_date(2020, 0, day, 0, 0, 0, 0),
+                                TimeType::Timestamp,
+                                0,
+                            )
+                            .unwrap(),
+                        ),
+                    );
+                }
+                let mut checker = VecGroupChecker::new(vec![column(0, field)]);
+                let result = checker.split_into_groups(&context, &chunk);
+                let first_message = "Incorrect time value: '{2020 0 1 0 0 0 0}'";
+                if !zone.is_utc() && level == ErrorLevel::Error {
+                    assert_eq!(
+                        result,
+                        Err(EvalError::TruncatedWrongValue(first_message.to_owned()))
+                    );
+                    assert_eq!(checker.group_count(), 0);
+                    assert!(checker.previous_last_key.is_none());
+                } else {
+                    assert!(!result.as_ref().unwrap());
+                    assert_eq!(
+                        ranges(&mut checker),
+                        if zone.is_utc() {
+                            vec![(0, 1), (1, 2)]
+                        } else {
+                            vec![(0, 2)]
+                        }
+                    );
+                    let expected_key: &[u8] = if zone.is_utc() {
+                        &[4, 25, 165, 4, 0, 0, 0, 0, 0]
+                    } else {
+                        &[]
+                    };
+                    assert_eq!(checker.previous_last_key.as_deref(), Some(expected_key));
+                }
+                let expected_warnings = if !zone.is_utc() && level == ErrorLevel::Warn {
+                    vec![
+                        (1292, first_message.to_owned()),
+                        (
+                            1292,
+                            "Incorrect time value: '{2020 0 2 0 0 0 0}'".to_owned(),
+                        ),
+                    ]
+                } else {
+                    vec![]
+                };
+                assert_eq!(*context.warnings.borrow(), expected_warnings);
+                if result.is_ok() {
+                    // Go treats a zero-length previous key as no prior group.
+                    assert!(!checker.split_into_groups(&context, &chunk).unwrap());
+                }
+            }
+        }
     }
 
     #[test]

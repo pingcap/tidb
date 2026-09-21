@@ -21,6 +21,9 @@ pub enum CodecError {
     InsufficientBytes,
     /// The input cannot be a canonical encoding for the requested type.
     InvalidEncoding(&'static str),
+    /// Timestamp timezone conversion failed. Keep the original wall-clock
+    /// fields so statement callers can report Go's exact diagnostic.
+    InvalidMysqlTimestamp(tidb_datatype::Time),
     /// The datum kind is not part of the dependency-closed codec domain.
     UnsupportedDatum(&'static str),
     /// An exact decimal is outside TiDB DECIMAL's production bounds.
@@ -38,6 +41,9 @@ impl fmt::Display for CodecError {
         match self {
             Self::InsufficientBytes => formatter.write_str("insufficient bytes to decode value"),
             Self::InvalidEncoding(reason) => write!(formatter, "invalid encoded value: {reason}"),
+            Self::InvalidMysqlTimestamp(_) => {
+                formatter.write_str("invalid encoded value: invalid MySQL timestamp")
+            }
             Self::UnsupportedDatum(kind) => write!(formatter, "unsupported datum kind: {kind}"),
             Self::DecimalOutOfRange => {
                 formatter.write_str("decimal precision or scale is out of range")

@@ -77,3 +77,31 @@ dependency changed, so `make bazel_prepare` is not required.
 Go codec value/hash behavior now has one non-collating implementation matching
 current master and the Rust owner. Exact removal of legacy methods is deferred
 until the owning tablecodec consumer package is audited atomically.
+
+
+## 2026-09-21 checker-driven correction
+
+The later shared VecGroupChecker audit found a missed codec failure contract:
+EncodeMySQLTime returns nil when timezone conversion fails, discarding any
+existing key prefix. Rust retained the prefix and erased the source timestamp
+from its error. The implementation now clears the buffer and carries the
+original Time in InvalidMysqlTimestamp, retaining its existing Display text.
+The original UTC-versus-fixed-zone regression now verifies the error payload
+and prefix clearing. UTC packing remains deliberately unvalidated.
+
+The regression failed before the fix. Current validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-codec --test all encode_timestamp_in_utc_skips_timezone_validation
+    cargo test --offline --locked -j12 -p tidb-codec
+
+All 46 library and 167 integration tests pass. From repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off ./tools/check/failpoint-go-test.sh pkg/util/codec -count=1
+
+The original Go package tests pass; the wrapper enabled failpoints and disabled
+them afterward (final reference count zero). A preceding plain go test run
+also passed but did not satisfy failpoint policy and is not the required gate.
+No tracked Go/module/Bazel changes remain. The complete 12-artifact inventory
+has not changed; package-wide current acceptance is not inferred solely from
+these tests. The active living plan and full consumer/error-policy evidence
+are in ../planner/physicalop-package-parity-execplan.md.
