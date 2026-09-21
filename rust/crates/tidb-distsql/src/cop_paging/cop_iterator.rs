@@ -21,7 +21,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Wake, Waker};
 
 use tidb_txnkv::rpc::{
-    go_max_procs, query_worker_runtime, wait_with_call, CompletionError, UnaryCallContext,
+    CompletionError, UnaryCallContext, go_max_procs, query_worker_runtime, wait_with_call,
 };
 
 use crate::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
@@ -174,6 +174,12 @@ enum Event {
     Row(Row),
     Finished,
 }
+
+/// Go's scheduler keeps an idle P briefly runnable before parking it. A
+/// coprocessor continuation can complete in that interval; polling here keeps
+/// the response on the query worker instead of paying a cross-runtime wakeup.
+/// The bound is deliberately small so a slow RPC still parks promptly.
+const CONTINUATION_SPIN_ROUNDS: u32 = 2048;
 
 struct Task<R> {
     source: Option<R>,
@@ -429,6 +435,24 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
     }
 }
 
+fn spin_pending<R: CopTaskSource>(
+    source: &mut R,
+) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+    let mut result = Err(QueryResponseError::Pending);
+    for spin in 0..CONTINUATION_SPIN_ROUNDS {
+        result = recover(|| source.try_next());
+        if !matches!(result, Err(QueryResponseError::Pending)) {
+            break;
+        }
+        if spin % 64 == 63 {
+            std::thread::yield_now();
+        } else {
+            std::hint::spin_loop();
+        }
+    }
+    result
+}
+
 async fn run_worker<R: CopWorkerSource + Send + 'static>(
     exit: WorkerExit<R>,
     wake: Arc<tokio::sync::Notify>,
@@ -444,7 +468,19 @@ async fn run_worker<R: CopWorkerSource + Send + 'static>(
                 break;
             }
             match recover(|| source.try_next()) {
-                Err(QueryResponseError::Pending) => completed.await,
+                Err(QueryResponseError::Pending) => match spin_pending(&mut source) {
+                    Err(QueryResponseError::Pending) => completed.await,
+                    Ok(Some(row)) => {
+                        if !group.send_row(index, Ok(row)).await {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        group.send_row(index, Err(error)).await;
+                        break;
+                    }
+                },
                 Ok(Some(row)) => {
                     if !group.send_row(index, Ok(row)).await {
                         break;
@@ -638,4 +674,73 @@ fn recover(
             "coprocessor worker panicked: {message}"
         )))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    struct PendingSource {
+        polls: u32,
+        ready_after: u32,
+    }
+
+    impl QueryResponse for PendingSource {
+        fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+            self.try_next()
+        }
+
+        fn close(&mut self) {}
+    }
+
+    impl CopTaskSource for PendingSource {
+        fn try_next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+            self.polls += 1;
+            if self.polls > self.ready_after {
+                Ok(Some(QueryResultSubset::default()))
+            } else {
+                Err(QueryResponseError::Pending)
+            }
+        }
+
+        fn task_count(&self) -> usize {
+            1
+        }
+
+        fn has_remaining_work(&self) -> bool {
+            true
+        }
+
+        fn call(&self) -> UnaryCallContext {
+            UnaryCallContext::with_timeout(Duration::from_secs(1))
+        }
+
+        fn use_task_worker(&mut self) {}
+
+        fn set_waker(&mut self, _waker: Waker) {}
+    }
+
+    #[test]
+    fn continuation_spin_consumes_a_ready_page_without_waiting() {
+        let mut source = PendingSource {
+            polls: 0,
+            ready_after: 4,
+        };
+        assert!(matches!(
+            spin_pending(&mut source),
+            Ok(Some(QueryResultSubset { .. }))
+        ));
+        assert_eq!(source.polls, 5);
+    }
+
+    #[test]
+    fn continuation_spin_has_a_bounded_pending_budget() {
+        let mut source = PendingSource {
+            polls: 0,
+            ready_after: CONTINUATION_SPIN_ROUNDS + 1,
+        };
+        assert_eq!(spin_pending(&mut source), Err(QueryResponseError::Pending));
+        assert_eq!(source.polls, CONTINUATION_SPIN_ROUNDS);
+    }
 }
