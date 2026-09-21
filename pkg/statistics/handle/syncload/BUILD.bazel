@@ -35,7 +35,11 @@ go_test(
     srcs = ["stats_syncload_test.go"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 8,
+=======
+    shard_count = 7,
+>>>>>>> 6b6b4c343ea (statistics: report sync load failure regardless of result arrival order (#70316))
     deps = [
         ":syncload",
         "//pkg/config",
