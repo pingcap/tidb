@@ -7032,3 +7032,114 @@ original whole-Go-package tests and build/generated/platform/support artifact
 gates remain open. Whole pkg/expression and dependent core/physicalop package
 inventories are still unaccepted. This checkpoint is progress, not completion
 of the user's goal.
+
+## Continuing native cast substitution audit
+
+
+Checkpoint edad9e9b15 is committed, pushed and remote-verified; the next pull
+was current. Continue the whole expression/core package audit at cast
+substitution. Native cast_* nodes currently bypass ColumnSubstituteImpl's
+cast-specific metadata preservation, while RealFunctionBuilder.build_cast
+ignores explicit charset and returns an unfolded cast even for constants.
+Compare ordinary/correlated substitution, flags/coercibility, charset metadata,
+folding and JSON's deliberate no-fold behavior directly with Go before fixing
+these construction boundaries. Add red regressions, validate consumers and
+required lint, then commit/push the verified progress. This does not accept a
+partial package or replace any of the four workload performance gates.
+
+Cast substitution implementation and receipt
+
+The shared native cast-name predicate now routes cast_* through the same
+ColumnSubstituteImpl special branch as Go ast.Cast. Rebuilds preserve the
+original flags and coercibility after construction, including NULL replacements.
+RealFunctionBuilder.build_cast derives signature collation in the live context,
+honors explicit charset/repertoire, and folds non-JSON casts at construction.
+It keeps the requested target FieldType charset distinct from signature
+collation, matching Go newBaseBuiltinFunc. JSON remains unfolded because its
+parse flags may change later. SubstituteCorCol2Constant deliberately uses the
+non-explicit cast builder, as the Go source does, rather than inheriting the
+ordinary substitution branch's explicit-charset option.
+
+The temporary Go overlay captures fifteen substitutions across signed,
+unsigned, CHAR, explicit ASCII and JSON casts, including negative, positive
+and NULL constants. Every original flag and coercibility is preserved. It also
+checks nonconstant explicit ASCII reconstruction and the correlated-rewrite
+entry point (explicit false, signature utf8mb4/utf8mb4_bin, numeric coercibility,
+ASCII repertoire, target FieldType still ASCII). Command from repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-cast-substitution-overlay.json -run '^TestCastSubstitution(SQL)?Oracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+All pass (/tmp/tidb-cast-substitution-go.log). The SQL oracle confirms unsigned
+wrapping, explicit-charset derived-table predicates and result coercibility.
+It disproves the tempting assumption that folding should always reduce the
+warning count: this derived-table truncating cast warns per row, three warnings
+for three rows and six for six. The native SQL regression preserves both
+counts and all result rows. No warning deduplication or alternate behavior is
+introduced to obtain a performance improvement.
+
+Native regressions fail before the fix: signed cast substitution drops the
+original NOT NULL flag, and explicit ASCII reconstruction drops the explicit
+charset bit. Log /tmp/tidb-cast-substitution-red.log. They pass after the fix
+(/tmp/tidb-cast-substitution-green.log), with further correlated-rewrite metadata
+assertions passing in /tmp/tidb-cast-substitution-final-unit.log.
+
+Commands from /private/tmp/tidb-parity-publish-aba629bb/rust, using
+CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-planner --lib
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_collation
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_compare_refinement
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_subquery
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_json
+    cargo test --offline --locked -j12 -p tidb-session --lib union
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_sysbench_access
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_datetime_year_compare
+    cargo test --offline --locked -j12 -p tidb-expr --lib native_cast_substitution
+
+Expression 1,205 pass (97 existing ignored), planner 959 pass; session
+collation 13, comparison 10, prepared cache 45, EXPLAIN 64, subquery 23,
+JSON 15, UNION 27, sysbench access 15, datetime/YEAR 3 all pass. The comparison
+suite was repeated after adding the SQL oracle cases. Logs:
+/tmp/tidb-cast-substitution-isolated-<crate>-<filter>.log, with all as the
+unfiltered crate suffix. Final metadata assertions use the final-unit log above.
+
+Required checks from repository root:
+
+    GOTOOLCHAIN=go1.26.0 make lint
+    git diff --check
+
+Lint passes (/tmp/tidb-cast-substitution-lint.log). No tracked Go, imports,
+Bazel or module files changed, so bazel_prepare is not required. The temporary
+Go harness has no failpoint dependency. Changed files: expression collation_derive.rs, expr_util/builder.rs,
+expr_util/substitute.rs, session tests_compare_refinement.rs and this plan.
+All intended tracked files are compared against isolated validation content
+before publication; unrelated untracked vs_helper.rs and fragment.rs remain
+untouched and excluded.
+
+This continues whole pkg/expression and dependent planner package work.
+Whole-package original tests, platform/build/generated/support artifacts,
+ignored native tests and complete sysbench/TPC-C/TPC-H/YCSB performance runs
+remain open. No package inventory is accepted and no throughput gain is claimed.
+One still-observed utility audit item is RemoveMutableConst's deferred-error
+state: Rust currently takes DeferredExpr before evaluation whereas Go clears
+it only after successful evaluation. That contract needs its own source-backed
+error-state regression; it is not claimed fixed by this cast checkpoint.
+
+The final coercibility assertion exposed another source mismatch before
+publication: native deriveCollation("cast") used generic string aggregation,
+changing NUMERIC (5) to COERCIBLE (4), and used connection charset even for
+non-string targets. Go's cast arm directly preserves the argument's
+coercibility/repertoire and uses connection charset only for string targets.
+Correct that shared arm; include collation_derive.rs in this checkpoint and
+repeat affected validation. The initial final-unit failure is retained as
+/tmp/tidb-cast-substitution-collation-red.log before replacing the pass log.
+
+After the shared cast-collation correction, every command in the receipt above
+was repeated and passed, including the final metadata assertions, both full
+native crate suites, all listed session filters and make lint. The pass counts
+are unchanged. The source oracle and changed-hunk review confirm no Go source
+or package inventory acceptance state changed. The checkpoint is ready for the
+user-requested commit/push; all remaining acceptance gates above stay open.

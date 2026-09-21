@@ -23,7 +23,7 @@
 //! Every function here rebuilds nodes and therefore takes a
 //! [`FunctionBuilder`]; see [`super::builder`] for what that boundary defers.
 
-use super::builder::{tiny_int_type, FunctionBuildError, FunctionBuilder};
+use super::builder::{is_cast_name, tiny_int_type, FunctionBuildError, FunctionBuilder};
 use super::extract::set_expr_column_in_operand;
 use super::traits::check_collation_strictness;
 use crate::collation_derive::{check_and_derive_collation_from_exprs, coercibility_of};
@@ -166,7 +166,7 @@ pub fn column_substitute_impl(
             let name = function.func_name.lowercase().to_owned();
 
             // (1) CAST / GROUPING: first argument only.
-            if name == "cast" || name == "grouping" {
+            if is_cast_name(&name) || name == "grouping" {
                 return substitute_cast_or_grouping(expr, schema, new_exprs, fail1return, opts);
             }
 
@@ -238,7 +238,7 @@ fn substitute_cast_or_grouping(
         .ret_type
         .as_ref()
         .map(tidb_datatype::FieldType::flags);
-    let is_cast = function.func_name.lowercase() == "cast";
+    let is_cast = is_cast_name(function.func_name.lowercase());
 
     let rebuilt = if is_cast {
         // Go deep-copies the new argument's RetType first: cast construction
@@ -454,11 +454,11 @@ pub fn substitute_cor_col_2_constant(
                 return Ok(Expression::Constant(constant));
             }
             let name = function.func_name.lowercase();
-            if name == "cast" {
+            if is_cast_name(name) {
                 return Ok(opts.builder.build_cast(
                     new_args.swap_remove(0),
                     function.ret_type.clone(),
-                    function.collation.is_explicit_charset(),
+                    false,
                 )?);
             }
             if name == "grouping" {
@@ -763,5 +763,142 @@ fn static_type_mut(expr: &mut Expression) -> Option<&mut FieldType> {
         Expression::Constant(c) => c.ret_type.as_mut(),
         Expression::CorrelatedColumn(c) => c.column.ret_type.as_mut(),
         Expression::ScalarFunction(c) => c.ret_type.as_mut(),
+    }
+}
+
+#[cfg(test)]
+mod native_cast_tests {
+    use super::*;
+    use crate::{
+        column::Column, expr_collation::Coercibility, expr_util::RealFunctionBuilder, NoColumns,
+    };
+    use tidb_datatype::FieldTypeFlags;
+
+    #[test]
+    fn native_cast_substitution_folds_and_preserves_original_metadata() {
+        let builder = RealFunctionBuilder::new(&NoColumns);
+        let opts = SubstituteOptions::new(&builder);
+        for kind in ["signed", "unsigned", "char", "json"] {
+            for value in [Datum::Int(-1), Datum::Int(3), Datum::Null] {
+                let mut source = FieldType::new(FieldTypeCode::LongLong);
+                source.add_flags(FieldTypeFlags::NOT_NULL);
+                let column = Column::new(1, source.clone());
+                let mut target = match kind {
+                    "char" => FieldType::new(FieldTypeCode::VarString),
+                    "json" => FieldType::new(FieldTypeCode::Json),
+                    _ => source,
+                };
+                target.add_flags(FieldTypeFlags::NOT_NULL);
+                if kind == "unsigned" {
+                    target.add_flags(FieldTypeFlags::UNSIGNED);
+                }
+                if kind == "char" {
+                    target.set_flen(20);
+                    target.set_charset_name("utf8mb4");
+                    target.set_collation_name("utf8mb4_bin");
+                }
+                let mut original = crate::simple_expr::build_cast_function(
+                    Expression::Column(column.clone()),
+                    target,
+                    false,
+                )
+                .unwrap();
+                collation_info_of_mut(&mut original)
+                    .unwrap()
+                    .set_coercibility(Coercibility::EXPLICIT);
+                let flags = original.static_type().unwrap().flags();
+                let replacement = Expression::Constant(Constant::new(
+                    value.clone(),
+                    FieldType::new(FieldTypeCode::LongLong),
+                ));
+                let outcome = column_substitute_impl(
+                    &original,
+                    &Schema::new(vec![column]),
+                    &[replacement],
+                    false,
+                    &opts,
+                );
+                assert!(outcome.substituted && !outcome.has_fail, "{kind} {value:?}");
+                assert_eq!(
+                    outcome.expr.static_type().unwrap().flags(),
+                    flags,
+                    "{kind} {value:?}"
+                );
+                assert_eq!(coercibility_of(&outcome.expr), Coercibility::EXPLICIT);
+                if kind == "json" {
+                    assert!(matches!(outcome.expr, Expression::ScalarFunction(_)));
+                } else {
+                    let Expression::Constant(result) = outcome.expr else {
+                        panic!("{kind} {value:?}: cast must fold")
+                    };
+                    let expected = match &value {
+                        Datum::Int(v) if kind == "unsigned" => Datum::UInt(*v as u64),
+                        Datum::Int(v) if kind == "char" => Datum::new_string(v.to_string()),
+                        _ => value,
+                    };
+                    assert_eq!(result.value, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_cast_substitution_preserves_explicit_charset() {
+        let builder = RealFunctionBuilder::new(&NoColumns);
+        let opts = SubstituteOptions::new(&builder);
+        let column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+        let mut target = FieldType::new(FieldTypeCode::VarString);
+        target.set_flen(20);
+        target.set_charset_name("ascii");
+        target.set_collation_name("ascii_bin");
+        let mut original = crate::simple_expr::build_cast_function(
+            Expression::Column(column.clone()),
+            target,
+            false,
+        )
+        .unwrap();
+        let info = collation_info_of_mut(&mut original).unwrap();
+        info.set_explicit_charset(true);
+        info.set_coercibility(Coercibility::EXPLICIT);
+        let replacement =
+            Expression::Column(Column::new(2, FieldType::new(FieldTypeCode::LongLong)));
+        let outcome = column_substitute_impl(
+            &original,
+            &Schema::new(vec![column]),
+            &[replacement],
+            false,
+            &opts,
+        );
+        assert!(outcome.substituted && !outcome.has_fail);
+        let Expression::ScalarFunction(result) = outcome.expr else {
+            panic!("column cast")
+        };
+        assert!(result.collation.is_explicit_charset());
+        assert_eq!(
+            result.collation.charset_and_collation(),
+            ("ascii", "ascii_bin")
+        );
+        assert_eq!(
+            result.collation.repertoire(),
+            crate::expr_collation::Repertoire::ASCII
+        );
+        assert_eq!(result.collation.coercibility(), Coercibility::EXPLICIT);
+        // Go SubstituteCorCol2Constant uses BuildCastFunction, whose explicit
+        // charset option is false, even when no correlated column was present.
+        let rebuilt = substitute_cor_col_2_constant(&original, &NoColumns, &opts).unwrap();
+        let Expression::ScalarFunction(rebuilt) = rebuilt else {
+            panic!("column cast")
+        };
+        assert!(!rebuilt.collation.is_explicit_charset());
+        assert_eq!(rebuilt.collation.coercibility(), Coercibility::NUMERIC);
+        assert_eq!(
+            rebuilt.collation.repertoire(),
+            crate::expr_collation::Repertoire::ASCII
+        );
+        assert_eq!(rebuilt.ret_type.as_ref().unwrap().charset_name(), "ascii");
+        assert_eq!(
+            rebuilt.collation.charset_and_collation(),
+            ("utf8mb4", "utf8mb4_bin")
+        );
     }
 }

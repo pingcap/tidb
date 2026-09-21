@@ -613,13 +613,20 @@ pub fn derive_collation_with_connection(
             Ok(ec)
         }
         "cast" if args.len() == 1 => {
-            let mut ec = check_and_derive_collation_from_exprs_with_connection(
-                func_name, ret_type, args, connection,
-            )?;
-            let (charset, collation) = connection;
-            ec.charset = charset.to_owned();
-            ec.collation = collation.to_owned();
-            Ok(ec)
+            // Go preserves the argument's coercibility and repertoire here;
+            // generic string aggregation would turn NUMERIC into COERCIBLE.
+            let argument_type = ret_type_of(&args[0]);
+            let (charset, collation) = if ret_type == EvalType::String {
+                connection
+            } else {
+                (argument_type.charset_name(), argument_type.collation_name())
+            };
+            Ok(ExprCollation {
+                coer: coercibility_of(&args[0]),
+                repe: repertoire_of(&args[0]),
+                charset: charset.to_owned(),
+                collation: collation.to_owned(),
+            })
         }
         "in" if !args.is_empty() => {
             if ret_type_of(&args[0]).eval_type() == EvalType::String {

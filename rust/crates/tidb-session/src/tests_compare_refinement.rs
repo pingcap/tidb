@@ -649,3 +649,59 @@ fn unsigned_comparison_refinement_preserves_nulls_and_cached_parameters() {
         );
     }
 }
+
+/// Go TestCastSubstitutionSQLOracle: substitutions preserve cast values,
+/// explicit charset behavior and per-row truncation warnings.
+#[test]
+fn derived_cast_substitution_matches_go_warnings_and_charset() {
+    let mut session = Session::new();
+    session
+        .run("create table cast_src(a int not null)")
+        .unwrap();
+    session
+        .run("insert into cast_src values(1),(2),(3)")
+        .unwrap();
+    assert_eq!(
+        row_text(
+            session.run("select cast(x as signed) from (select '12ab' x) d join cast_src on true")
+        ),
+        [["12"], ["12"], ["12"]]
+    );
+    assert_eq!(
+        warning_texts(&session),
+        vec!["1292 Truncated incorrect INTEGER value: '12ab'"; 3]
+    );
+    assert_eq!(
+        row_text(
+            session.run("select cast(x as unsigned) from (select -1 x) d join cast_src on true")
+        ),
+        [
+            ["18446744073709551615"],
+            ["18446744073709551615"],
+            ["18446744073709551615"]
+        ]
+    );
+    assert!(session.warnings().is_empty());
+    assert_eq!(row_text(session.run(
+        "select c,coercibility(c) from (select cast(a as char character set ascii) c from cast_src) d where c='3'"
+    )), [["3", "2"]]);
+    assert!(session.warnings().is_empty());
+    assert_eq!(row_text(session.run(
+        "select c from (select cast(a as char character set ascii) c from cast_src) d where c='3' collate utf8mb4_general_ci"
+    )), [["3"]]);
+    assert!(session.warnings().is_empty());
+    session
+        .run("insert into cast_src values(4),(5),(6)")
+        .unwrap();
+    assert_eq!(
+        row_text(
+            session.run("select cast(x as signed) from (select '12ab' x) d join cast_src on true")
+        ),
+        [["12"], ["12"], ["12"], ["12"], ["12"], ["12"]]
+    );
+    assert_eq!(
+        warning_texts(&session),
+        vec!["1292 Truncated incorrect INTEGER value: '12ab'"; 6]
+    );
+    assert_eq!(session.wire_warning_count(), 6);
+}

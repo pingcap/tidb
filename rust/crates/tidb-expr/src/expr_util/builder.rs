@@ -15,17 +15,12 @@
 //! `// boundary:` Go `NewFunction` / `NewFunctionInternal` /
 //! `BuildCastFunction` / `BuildCastFunctionWithCheck`.
 //!
-//! Faithful function construction -- argument type inference, collation
-//! derivation, constant folding and the `getFunction` dispatch that picks a
-//! signature -- is its own unit and is not in this crate yet. Every `util.go`
-//! symbol that REBUILDS a function calls one of those four Go entry points, so
-//! rather than guess at construction, this module names the dependency as a
-//! trait the caller supplies.
-//!
-//! The split matters for honesty about what is ported: the rewrite RULE (which
-//! node is replaced by which shape, and under what condition) is fully
-//! transcribed from Go; the resulting node's TYPE DERIVATION is whatever the
-//! injected builder does.
+//! Rewrites use this boundary for argument inference, collation, signature
+//! selection and folding. RealFunctionBuilder supplies the live evaluation
+//! context; PreservingFunctionBuilder deliberately retains the requested
+//! structure for callers that do not perform construction-time evaluation.
+//! These native construction paths remain part of the whole expression
+//! package audit; this module does not claim package acceptance.
 
 use super::traits::is_logical_op;
 use crate::expression::Expression;
@@ -73,6 +68,11 @@ fn dedicated_cast(arg: Expression, target: FieldType) -> Result<Expression, Func
             reason: format!("{error:?}"),
         }
     })
+}
+
+/// Native cast signatures share Go's single ast.Cast rewrite contract.
+pub(super) fn is_cast_name(name: &str) -> bool {
+    name == "cast" || name.starts_with("cast_")
 }
 
 /// The construction half of Go's `BuildContext`, as the ported `util.go`
@@ -235,7 +235,7 @@ impl<C: crate::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> 
         // a substitution that has to rebuild a cast (for example pushing a
         // predicate through a projection) reports `hasFail` and the predicate
         // is not pushed.
-        if func_name.starts_with("cast") && args.len() == 1 {
+        if is_cast_name(func_name) && args.len() == 1 {
             return self.build_cast(
                 args.into_iter().next().expect("one argument"),
                 ret_type,
@@ -264,11 +264,58 @@ impl<C: crate::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> 
         // builder that `NewFunction` explicitly refuses. `dedicated_cast` is
         // its port; the generic `cast` name has no executor arm, so a
         // placeholder left under it fails at run time.
-        let _ = is_explicit_charset;
-        match ret_type {
-            Some(target) => dedicated_cast(arg, target),
-            None => PreservingFunctionBuilder.new_function("cast", None, vec![arg]),
+        let Some(target) = ret_type else {
+            return PreservingFunctionBuilder.new_function("cast", None, vec![arg]);
+        };
+        let mut expression = dedicated_cast(arg, target)?;
+        let Expression::ScalarFunction(function) = &mut expression else {
+            unreachable!("the dedicated cast builder produces a function")
+        };
+        let target = function.ret_type.as_ref().expect("cast target");
+        let eval_type = target.eval_type();
+        // Go newBaseBuiltinCastFunc4String preserves an explicitly requested
+        // charset; ordinary casts derive signature collation from the context.
+        let collation = if is_explicit_charset && eval_type == tidb_datatype::EvalType::String {
+            crate::expr_collation::ExprCollation {
+                coer: crate::expr_collation::Coercibility::EXPLICIT,
+                repe: if target.charset_name() == "ascii" {
+                    crate::expr_collation::Repertoire::ASCII
+                } else {
+                    crate::expr_collation::Repertoire::UNICODE
+                },
+                charset: target.charset_name().to_owned(),
+                collation: target.collation_name().to_owned(),
+            }
+        } else {
+            crate::collation_derive::derive_collation_with_connection(
+                "cast",
+                &function.args,
+                eval_type,
+                self.ctx.connection_charset_info(),
+            )
+            .map_err(|error| FunctionBuildError {
+                func_name: "cast".to_owned(),
+                reason: format!("{error:?}"),
+            })?
+        };
+        function.collation.set_coercibility(collation.coer);
+        function.collation.set_repertoire(collation.repe);
+        function
+            .collation
+            .set_charset_and_collation(&collation.charset, &collation.collation);
+        function.collation.set_explicit_charset(
+            is_explicit_charset && eval_type == tidb_datatype::EvalType::String,
+        );
+        // BuildCastFunctionWithCheck leaves JSON unfolded because callers may
+        // still change its parse flag after construction.
+        if eval_type != tidb_datatype::EvalType::Json {
+            crate::constant_fold::fold_constant_in_mode(
+                &mut expression,
+                self.ctx,
+                crate::constant_fold::ConstantFoldMode::Normal,
+            );
         }
+        Ok(expression)
     }
 }
 
