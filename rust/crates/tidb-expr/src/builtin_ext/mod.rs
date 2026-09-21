@@ -22,6 +22,7 @@
 
 use crate::{Datum, EvalError};
 
+pub(crate) mod cache;
 pub(crate) mod compare2;
 pub(crate) mod crypto;
 pub(crate) mod info;
@@ -32,13 +33,16 @@ pub(crate) mod regexp;
 pub(crate) mod string2;
 pub(crate) mod vec;
 
+pub(crate) use cache::BuiltinFuncCache;
 pub(crate) use compare2::{extremum_with_signature, interval_lazy, GlCmpStringMode, GlSignature};
 pub(crate) use crypto::eval_aes_lazy;
 pub(crate) use json::{
     cast_as_json, cast_as_json_typed, cast_as_json_value_typed,
     dispatch_typed as json_dispatch_typed, JsonSchemaCache,
 };
-pub(crate) use string2::find_in_set_with_collation;
+pub(crate) use string2::{
+    build_find_in_set_lookup, find_in_set_lookup, find_in_set_with_collation, FindInSetLookup,
+};
 
 /// Tries each family in turn; `None` if no family implements `name`.
 ///

@@ -285,6 +285,7 @@ pub struct ScalarFunction {
     in_string_non_const_args: Vec<usize>,
     in_string_has_null: bool,
     json_schema_cache: crate::builtin_ext::JsonSchemaCache,
+    find_in_set_cache: crate::builtin_ext::BuiltinFuncCache<crate::builtin_ext::FindInSetLookup>,
 }
 
 fn arithmetic_symbol(op: tidb_ast::BinaryOp) -> Option<&'static str> {
@@ -663,6 +664,7 @@ impl ScalarFunction {
         self.in_string_non_const_args.clear();
         self.in_string_has_null = false;
         self.json_schema_cache = Default::default();
+        self.find_in_set_cache = Default::default();
     }
 
     /// Go `BuiltinGroupingImplSig.SetMetadata`: install validated grouping
@@ -2525,8 +2527,21 @@ impl ScalarFunction {
                     return crate::string_fn::strcmp_with_collation(&vals, collation);
                 }
                 "find_in_set" if self.args.len() == 2 => {
-                    let vals = [self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?];
-                    return crate::builtin_ext::find_in_set_with_collation(&vals, collation);
+                    let needle = self.args[0].eval(ctx, row)?;
+                    if self.args[1].const_level() >= ConstLevel::ONLY_IN_CONTEXT {
+                        let lookup =
+                            self.find_in_set_cache
+                                .get_or_init_cache(ctx.context_id(), || {
+                                    let list = self.args[1].eval(ctx, Row::empty())?;
+                                    crate::builtin_ext::build_find_in_set_lookup(&list, collation)
+                                })?;
+                        return crate::builtin_ext::find_in_set_lookup(&needle, &lookup, collation);
+                    }
+                    let list = self.args[1].eval(ctx, row)?;
+                    return crate::builtin_ext::find_in_set_with_collation(
+                        &[needle, list],
+                        collation,
+                    );
                 }
                 // Go `greatestFunctionClass`/`leastFunctionClass`: the
                 // ETString signature compares under `b.collation`, and

@@ -26,6 +26,8 @@ use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use crate::time_fn;
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier};
 use tidb_ast::{CiString, QueryStmt, SelectField, Stmt};
 use tidb_datatype::{FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone, Time, TimeType};
 
@@ -1706,14 +1708,70 @@ fn test_lock() {
 /// eight goroutines racing one lazy initializer must call it exactly once
 /// (all see 101).
 #[test]
-#[ignore = "go-parity-gap: Go's builtinFuncCache[T] lazy-init memo keyed by stmt CtxID has no Rust counterpart anywhere in this crate"]
-fn test_builtin_func_cache_concurrency() {}
+fn test_builtin_func_cache_concurrency() {
+    let cache = Arc::new(crate::builtin_ext::BuiltinFuncCache::<i64>::default());
+    let barrier = Arc::new(Barrier::new(8));
+    let invoked = Arc::new(AtomicUsize::new(0));
+    let mut workers = Vec::new();
+    for _ in 0..8 {
+        let cache = Arc::clone(&cache);
+        let barrier = Arc::clone(&barrier);
+        let invoked = Arc::clone(&invoked);
+        workers.push(std::thread::spawn(move || {
+            barrier.wait();
+            cache
+                .get_or_init_cache(7, || {
+                    let call = invoked.fetch_add(1, Ordering::SeqCst) + 1;
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    Ok::<_, &'static str>(100 + call as i64)
+                })
+                .expect("cache constructor")
+        }));
+    }
+    for worker in workers {
+        assert_eq!(*worker.join().expect("cache worker"), 101);
+    }
+    assert_eq!(invoked.load(Ordering::SeqCst), 1);
+}
 
 /// Go `pkg/expression/builtin_test.go:196 TestBuiltinFuncCache`: miss/get /
 /// ctx-id-change / error-not-cached lifecycle of the same memo type.
 #[test]
-#[ignore = "go-parity-gap: builtinFuncCache[T] has no Rust counterpart (same missing type as the concurrency test)"]
-fn test_builtin_func_cache_lifecycle() {}
+fn test_builtin_func_cache_lifecycle() {
+    let cache = crate::builtin_ext::BuiltinFuncCache::<i64>::default();
+    assert!(cache.get_cache(1).is_none());
+
+    let invoked = AtomicUsize::new(0);
+    let value = cache
+        .get_or_init_cache(1, || {
+            invoked.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, &'static str>(101)
+        })
+        .expect("cache constructor");
+    assert_eq!(*value, 101);
+    assert_eq!(*cache.get_cache(1).expect("cache hit"), 101);
+    assert_eq!(invoked.load(Ordering::SeqCst), 1);
+
+    let error = cache.get_or_init_cache(2, || {
+        invoked.fetch_add(1, Ordering::SeqCst);
+        Err::<i64, _>("constructor failed")
+    });
+    assert_eq!(error, Err("constructor failed"));
+    assert!(cache.get_cache(2).is_none());
+
+    let replacement = cache
+        .get_or_init_cache(2, || {
+            invoked.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, &'static str>(202)
+        })
+        .expect("replacement constructor");
+    assert_eq!(*replacement, 202);
+    assert!(cache.get_cache(1).is_none());
+    assert_eq!(invoked.load(Ordering::SeqCst), 3);
+
+    let clone = cache.clone();
+    assert!(clone.get_cache(2).is_none());
+}
 
 // ---------------------------------------------------------------------------
 // builtin_time_test.go

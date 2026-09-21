@@ -7687,3 +7687,43 @@ Rust production/test source changed upstream, so the recorded cache and
 reference-suite evidence still applies. The fixture is also copied into the
 isolated tree for content consistency. Publication uses an ordinary commit
 and non-force push.
+
+
+## Continuing FIND_IN_SET cache parity
+
+The next source gap is Go `pkg/expression/builtinFuncCache[T]` and its
+`builtinFindInSetSig.constStrlistLookupCache` consumer. The Rust expression
+layer now has `builtin_ext/cache.rs`: a context-keyed lazy value with a
+read-lock hit path, serialized construction, context replacement, empty
+clone state, and no caching of constructor errors. `FIND_IN_SET` builds the
+same first-position `KeyWithoutTrimRightSpace` map as Go, memoizes a NULL list,
+returns zero for an empty list, and uses the cache only for
+`ConstLevel::ONLY_IN_CONTEXT`; ordinary row-dependent lists still evaluate
+per row. Statement contexts expose a monotonically allocated `CtxID` through
+`Columns`, while expression-only contexts retain their zero/default seam.
+
+Native source tests now cover the eight-way concurrent constructor race,
+miss/get/context-change/error-not-cached/clone lifecycle, PAD SPACE first
+match, duplicate entries, empty and NULL lists, and the concrete lookup-cache
+identity. The focused commands from `rust/` pass:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib find_in_set_lookup_source -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-expr --lib builtin_func_cache -- --include-ignored --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_non_prepared_plan_cache -- --include-ignored --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache -- --include-ignored --test-threads=1
+
+The selections pass 4, 2, 28 and 45 tests respectively. A full native
+expression run after the final scope correction reaches 1213 passing tests
+with one sandbox-blocked localhost JSON-schema fixture; the existing AST
+`COLLATE` passthrough and weight-string boundary remain unchanged. The focused
+reruns above pass after that scope correction. Formatting checks for all
+changed Rust files and `git diff --check` pass. The lint body also passes; the
+normal `make lint` bootstrap is blocked locally because the offline module
+cache cannot resolve the pinned `github.com/mgechev/revive` module package, so
+the exact target was run with a wrapper that skips only that already-installed
+tool bootstrap.
+
+This closes the concrete FIND_IN_SET cache gap but does not accept the whole
+expression, types, planner, executor, or workload packages. Native ignored
+cases, complete production/build/generated/support inventories, and full
+sysbench/TPC-C/TPC-H/YCSB measurements remain open under the original goal.

@@ -20,6 +20,7 @@ use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::string_fn::{format_num_locale, substring};
 use crate::string_signature::{is_binary_str, StrUnits};
 use crate::{Datum, EvalError};
+use std::collections::HashMap;
 
 /// Dispatches this family's builtins; `None` if `name` isn't one of them.
 pub(crate) fn dispatch(
@@ -247,11 +248,20 @@ fn format_with_locale(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum,
 }
 
 /// `FIND_IN_SET(str, strlist)`, ported from `builtinFindInSetSig.evalInt` in
-/// `pkg/expression/builtin_string.go`.  The collation-free entry point, for
-/// the AST evaluator and any caller with no derived collation to offer; see
-/// [`find_in_set_with_collation`].
+/// `pkg/expression/builtin_string.go`. The values-only entry point retains a
+/// non-default collation already carried by a datum; plain AST literals use
+/// the connection default because that tier has no derived function type.
 fn find_in_set(vals: &[Datum]) -> Result<Datum, EvalError> {
-    find_in_set_with_collation(vals, crate::ops::DERIVATION_FREE_COLLATION)
+    // The AST/value tier has no separately derived function type, so retain
+    // the explicit collation stamped on a COLLATE operand. Plain literals
+    // carry the connection default (`utf8mb4_bin`) and therefore do not
+    // override an explicit non-default operand collation.
+    let collation = vals
+        .iter()
+        .filter_map(Datum::collation)
+        .find(|collation| *collation != tidb_datatype::Collation::DEFAULT)
+        .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION);
+    find_in_set_with_collation(vals, collation)
 }
 
 /// [`find_in_set`] under the collation the expression derivation aggregated
@@ -265,6 +275,66 @@ fn find_in_set(vals: &[Datum]) -> Result<Datum, EvalError> {
 ///
 /// `KeyWithoutTrimRightSpace` -- rather than the ordinary sort key -- is why a
 /// PAD SPACE collation still distinguishes `'a'` from `'a '` here.
+#[derive(Clone, Debug)]
+pub(crate) struct FindInSetLookup {
+    pub(crate) is_null: bool,
+    pub(crate) positions: HashMap<Vec<u8>, i64>,
+}
+
+/// Builds Go `getConstStrlistLookup`'s first-position map.
+pub(crate) fn build_find_in_set_lookup(
+    list: &Datum,
+    collation: tidb_datatype::Collation,
+) -> Result<FindInSetLookup, EvalError> {
+    let Some(list) = crate::coerce::coerce_str_bytes(list)? else {
+        return Ok(FindInSetLookup {
+            is_null: true,
+            positions: HashMap::new(),
+        });
+    };
+    if list.is_empty() {
+        // Go's buildFindInSetLookup returns a nil map for an empty strlist;
+        // the lookup then answers 0 even when the needle is the empty string.
+        return Ok(FindInSetLookup {
+            is_null: false,
+            positions: HashMap::new(),
+        });
+    }
+    let collator = tidb_datatype::get_collator(collation.name());
+    let mut positions = HashMap::new();
+    for (index, entry) in list.split(|byte| *byte == b',').enumerate() {
+        positions
+            .entry(collator.key_without_trim_right_space(entry))
+            .or_insert(index as i64 + 1);
+    }
+    Ok(FindInSetLookup {
+        is_null: false,
+        positions,
+    })
+}
+
+/// Looks up one needle in a previously constructed constant-list map.
+pub(crate) fn find_in_set_lookup(
+    needle: &Datum,
+    lookup: &FindInSetLookup,
+    collation: tidb_datatype::Collation,
+) -> Result<Datum, EvalError> {
+    if lookup.is_null {
+        return Ok(Datum::Null);
+    }
+    let Some(needle) = crate::coerce::coerce_str_bytes(needle)? else {
+        return Ok(Datum::Null);
+    };
+    let collator = tidb_datatype::get_collator(collation.name());
+    Ok(Datum::Int(
+        lookup
+            .positions
+            .get(&collator.key_without_trim_right_space(&needle))
+            .copied()
+            .unwrap_or(0),
+    ))
+}
+
 pub(crate) fn find_in_set_with_collation(
     vals: &[Datum],
     collation: tidb_datatype::Collation,
@@ -339,7 +409,7 @@ fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch, locate3};
+    use super::{build_find_in_set_lookup, dispatch, find_in_set_lookup, locate3};
     use crate::coerce::coerce_str;
     use crate::string_fn::{char_func, format_num, format_num_locale, position, substring};
     use crate::string_packet::to_base64;
@@ -501,6 +571,22 @@ mod tests {
             .sql_string()
             .unwrap(),
             "N,Y,N,Y,Y"
+        );
+    }
+
+    #[test]
+    fn find_in_set_lookup_preserves_first_position_and_spaces() {
+        let lookup =
+            build_find_in_set_lookup(&string("  , , ,"), tidb_datatype::Collation::Binary).unwrap();
+        assert_eq!(
+            find_in_set_lookup(&string(" "), &lookup, tidb_datatype::Collation::Binary,).unwrap(),
+            Datum::Int(2)
+        );
+        let empty =
+            build_find_in_set_lookup(&string(""), tidb_datatype::Collation::Binary).unwrap();
+        assert_eq!(
+            find_in_set_lookup(&string(""), &empty, tidb_datatype::Collation::Binary,).unwrap(),
+            Datum::Int(0)
         );
     }
 

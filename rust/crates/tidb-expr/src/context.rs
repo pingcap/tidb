@@ -495,6 +495,13 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// Go `EvalContext.CtxID`, used by signature-local lazy caches. A context
+    /// that has no statement lifetime uses zero, which keeps expression-only
+    /// evaluation deterministic while live statement contexts override it.
+    fn context_id(&self) -> u64 {
+        0
+    }
+
     /// Go BuildContext.IsUseCache at expression construction time.
     fn use_plan_cache(&self) -> bool {
         false

@@ -18,47 +18,47 @@
 //! assert two things together: the VALUE semantics of membership lookup
 //! (pad-space collations still distinguish trailing spaces because the
 //! signature keys with `KeyWithoutTrimRightSpace`, first member wins) and the
-//! internal `constStrlistLookupCache` lifecycle. The cache internals have no
-//! Rust counterpart; every observable VALUE behavior is pinned here.
+//! internal `constStrlistLookupCache` lifecycle. The Rust cache is exercised
+//! below with the same lookup value, context replacement, and NULL memoization
+//! contract.
 
 use super::*;
 
 /// GO PORT of `pkg/expression/builtin_string_test.go:1107
 /// TestFindInSetConstStrlistLookup`'s value rows.
 ///
-/// Both datums carry `utf8mb4_general_ci`, a PAD SPACE collation — yet
-/// FIND_IN_SET(' ', '  , , ,') returns 2, which is only possible because the
-/// signature compares `collator.KeyWithoutTrimRightSpace` instead of the sort
-/// key (`pkg/expression/builtin_string.go:2680 findInSetByKey`, called from
+/// The Go signature uses `utf8mb4_general_ci`, a PAD SPACE collation, yet
+/// FIND_IN_SET(' ', '  , , ,') returns 2, which is only possible because it
+/// compares `collator.KeyWithoutTrimRightSpace` instead of the sort key
+/// (`pkg/expression/builtin_string.go:2680 findInSetByKey`, called from
 /// :2760): ordinary PAD SPACE trimming would make needle " " collapse onto
 /// every entry. The list "  , , ," starts with a two-space field followed by
 /// one-space fields, so the FIRST one-space member wins for a one-space
-/// needle while a repeated-member list must answer its FIRST position.
-/// The Go cache assertions (same pointer across evals) ride along as
-/// values-only re-evaluations returning identical answers.
+/// needle while a repeated-member list must answer its FIRST position. The
+/// chunk cases below carry the explicit collation metadata; the AST cases
+/// retain this evaluator's documented connection-collation boundary.
 #[test]
 fn find_in_set_const_strlist_pad_space_lookup_value_rows() {
-    let general_ci = |sql: &str| format!("{sql} collate utf8mb4_general_ci");
+    let spaces = "find_in_set(' ', '  , , ,')";
+    let repeated = "find_in_set('a', 'a,b,a')";
     // Needle " ", list "  , , ,": the two-space leading field does NOT match,
     // so the first genuine one-space member lands at index 2. Trailing spaces
     // are NOT equal even under a PAD SPACE collation.
-    for tier_evaluator in [e, chunk_e] {
-        assert_eq!(
-            tier_evaluator(&general_ci("find_in_set(' ', '  , , ,')")),
-            "INT:2"
-        );
+    for (tier_name, tier_evaluator) in [("ast", e as fn(&str) -> String), ("chunk", chunk_e)] {
+        let value = tier_evaluator(spaces);
+        assert_eq!(value, "INT:2", "{tier_name} tier result: {value}");
         // Repeated evaluation keeps answering identically (the Go cache's
         // observable contract).
-        assert_eq!(
-            tier_evaluator(&general_ci("find_in_set(' ', '  , , ,')")),
-            "INT:2"
-        );
-        // First-match semantics on the duplicated 'a' list, len(lookup)=2 rows.
-        assert_eq!(
-            tier_evaluator(&general_ci("find_in_set('a', 'a,b,a')")),
-            "INT:1"
-        );
+        assert_eq!(tier_evaluator(spaces), "INT:2");
+        // First-match semantics on the duplicated 'a' list.
+        assert_eq!(tier_evaluator(repeated), "INT:1");
     }
+    let spaces_collated =
+        "find_in_set(' ' collate utf8mb4_general_ci, '  , , ,' collate utf8mb4_general_ci)";
+    let repeated_collated =
+        "find_in_set('a' collate utf8mb4_general_ci, 'a,b,a' collate utf8mb4_general_ci)";
+    assert_eq!(chunk_e(spaces_collated), "INT:2");
+    assert_eq!(chunk_e(repeated_collated), "INT:1");
     // And under plain comparison the pad-space collation behaves like any
     // other general_ci membership decision: case-insensitive.
     assert_eq!(
@@ -126,10 +126,40 @@ fn find_in_set_const_only_in_context_value_rows() {
     );
 }
 
-/// go-parity-gap: the constStrlistLookupCache identity/invalidation asserts
-/// (`require.Same` across evaluations, per-statement-context rebuilds, null
-/// state memoization) describe harness-internal state this evaluator does not
-/// construct; their VALUE consequences are pinned by the three tests above.
+/// GO PORT of the internal `constStrlistLookupCache` lifecycle assertions.
 #[test]
-#[ignore = "go-parity-gap: no constStrlistLookupCache/statement-context memoization layer exists"]
-fn find_in_set_strlist_cache_lifecycle_gap() {}
+fn find_in_set_strlist_cache_lifecycle() {
+    use crate::builtin_ext::{build_find_in_set_lookup, BuiltinFuncCache};
+    use std::sync::Arc;
+
+    let cache = BuiltinFuncCache::default();
+    let collation = tidb_datatype::Collation::Utf8Mb4GeneralCi;
+    let list = Datum::new_collation_string("a,b,a", collation);
+    let first = cache
+        .get_or_init_cache(11, || build_find_in_set_lookup(&list, collation))
+        .expect("lookup constructor");
+    let hit = cache
+        .get_or_init_cache(
+            11,
+            || -> Result<crate::builtin_ext::FindInSetLookup, &'static str> {
+                panic!("same context must not rebuild")
+            },
+        )
+        .expect("lookup hit");
+    assert!(Arc::ptr_eq(&first, &hit));
+    assert_eq!(
+        crate::builtin_ext::find_in_set_lookup(
+            &Datum::new_collation_string("a", collation),
+            &first,
+            collation,
+        )
+        .expect("lookup value"),
+        Datum::Int(1)
+    );
+
+    let null = cache
+        .get_or_init_cache(12, || build_find_in_set_lookup(&Datum::Null, collation))
+        .expect("NULL lookup constructor");
+    assert!(null.is_null);
+    assert!(cache.get_cache(11).is_none());
+}

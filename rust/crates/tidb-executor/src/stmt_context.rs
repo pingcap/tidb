@@ -34,6 +34,8 @@ use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKi
 use crate::DriverError;
 use tidb_util::spill_storage::SpillStorage;
 
+static NEXT_STATEMENT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
+
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
 /// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
 /// `InDeleteStmt`, `InSelectStmt`, `InLoadDataStmt`).
@@ -381,6 +383,8 @@ impl Default for StmtContextSessionState {
 #[doc(hidden)]
 #[derive(Clone, Default)]
 pub struct StmtContextData {
+    /// Go `StatementContext.CtxID`, unique for each newly created statement.
+    context_id: u64,
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
     ///
     /// The level is not decoration. Go reaches this one buffer through three
@@ -1724,6 +1728,7 @@ impl StmtContext {
         session: StmtContextSessionState,
     ) -> Self {
         Self(Arc::new(StmtContextData {
+            context_id: NEXT_STATEMENT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
             warnings: Arc::default(),
             message: Arc::default(),
             cop_batch_warnings: Arc::default(),
@@ -3688,6 +3693,17 @@ fn resolve_statement_clock(
 }
 
 impl Columns for StmtContext {
+    fn context_id(&self) -> u64 {
+        if self.context_id != 0 {
+            self.context_id
+        } else {
+            // `StmtContext::default()` is an expression-only test helper, not
+            // a real statement constructor. Its allocation identity still
+            // prevents two such helpers from sharing a signature cache.
+            Arc::as_ptr(&self.0) as usize as u64
+        }
+    }
+
     fn use_plan_cache(&self) -> bool {
         self.range_fallback.get().is_some_and(|state| {
             state.cache_started.load(Ordering::Acquire) && state.tracker.use_cache()
