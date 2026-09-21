@@ -799,7 +799,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+	if cfg.WithSysTable && client.HasBackedUpSysDB() {
 		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
 			return errors.Trace(err)
 		}
@@ -1070,7 +1070,9 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// The cost of rename user table / replace into system table wouldn't be so high.
 	// So leave it out of the pipeline for easier implementation.
-	client.RestoreSystemSchemas(ctx, cfg.TableFilter)
+	if err = client.RestoreSystemSchemas(ctx, cfg.TableFilter); err != nil {
+		return errors.Trace(err)
+	}
 
 	schedulersRemovable = true
 
