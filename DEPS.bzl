@@ -4534,8 +4534,13 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:fGwB/Oqk9UL9VptcF0dsxjlQgFWTdqNyJ8NXeyLSVh4=",
         version = "v2.0.8-0.20260929035807-7ee0b27f5157",
+=======
+        sum = "h1:tBvGAp1tCs/V1s0MYqP2jRzGh4NjMDPYWsRP7ox1tE4=",
+        version = "v2.0.8-0.20260921040125-5f38569c8cc0",
+>>>>>>> ead9d38239a (store: back off when TiKV ignores cop lock hints (#71446))
     )
     go_repository(
         name = "com_github_tikv_pd_client",
