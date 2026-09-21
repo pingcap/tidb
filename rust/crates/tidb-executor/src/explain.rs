@@ -1130,6 +1130,9 @@ fn physical_operator_info(
             &aggregation.group_by_items,
             aggregation.base.base.schema(),
         ),
+        PhysicalPlan::Shuffle(shuffle) => shuffle
+            .explain_info(ignore_explain_id_suffix)
+            .unwrap_or_else(|error| format!("{error:?}")),
         PhysicalPlan::Window(window) => window_info(window),
         PhysicalPlan::Expand(expand) => format!(
             "level-projection:{}; schema: [{}]",
@@ -1144,6 +1147,7 @@ fn physical_operator_info(
                 .unwrap_or_default()
         ),
         PhysicalPlan::MaxOneRow(_)
+        | PhysicalPlan::ShuffleReceiver(_)
         | PhysicalPlan::NominalSort(_)
         | PhysicalPlan::Show(_)
         | PhysicalPlan::ShowDDLJobs(_)
@@ -1174,6 +1178,16 @@ fn physical_explain_operator(
     probe_count: f64,
 ) -> ExplainOperator {
     let mut children = match plan {
+        PhysicalPlan::ShuffleReceiver(receiver) => vec![physical_explain_operator(
+            &receiver.data_source,
+            catalog,
+            ExplainTask::Root,
+            "",
+            runtime,
+            ignore_explain_id_suffix,
+            index_join_context,
+            probe_count,
+        )],
         PhysicalPlan::TableReader(reader) => reader
             .table_plan
             .as_deref()
@@ -1406,6 +1420,12 @@ fn physical_explain_operator(
             .and_then(|stats| stats.get(&crate::driver::physical_builder::runtime_plan_key(plan)))
             .and_then(|counter| counter.execution_info())
         {
+            let info = if let PhysicalPlan::Shuffle(shuffle) = plan {
+                // ShuffleExec.Close registers RuntimeStatsWithConcurrencyInfo.
+                format!("{info}, ShuffleConcurrency:{}", shuffle.concurrency)
+            } else {
+                info
+            };
             operator = operator.with_execution_info(info);
         }
     }
@@ -1479,6 +1499,14 @@ fn cte_definitions(
         cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
     }
     match plan {
+        PhysicalPlan::ShuffleReceiver(receiver) => cte_definitions(
+            &receiver.data_source,
+            catalog,
+            runtime,
+            seen,
+            out,
+            ignore_explain_id_suffix,
+        ),
         PhysicalPlan::TableReader(reader) => {
             if let Some(child) = reader.table_plan.as_deref() {
                 cte_definitions(child, catalog, runtime, seen, out, ignore_explain_id_suffix);
@@ -1649,6 +1677,7 @@ pub fn brief_binary_plan(physical: &PhysicalPlan, catalog: &Catalog) -> String {
 
 fn first_table_scan(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::PhysicalTableScan> {
     match plan {
+        PhysicalPlan::ShuffleReceiver(receiver) => first_table_scan(&receiver.data_source),
         PhysicalPlan::TableScan(scan) => Some(scan),
         PhysicalPlan::TableReader(reader) => {
             reader.table_plan.as_deref().and_then(first_table_scan)
@@ -1666,6 +1695,7 @@ fn first_table_scan(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::Phys
 
 fn first_index_scan(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::PhysicalIndexScan> {
     match plan {
+        PhysicalPlan::ShuffleReceiver(receiver) => first_index_scan(&receiver.data_source),
         PhysicalPlan::IndexScan(scan) => Some(scan),
         PhysicalPlan::IndexReader(reader) => {
             reader.index_plan.as_deref().and_then(first_index_scan)
@@ -1705,6 +1735,12 @@ fn collect_executor_process_fields(
     index_names: &mut Vec<String>,
 ) {
     match plan {
+        PhysicalPlan::ShuffleReceiver(receiver) => collect_executor_process_fields(
+            &receiver.data_source,
+            catalog,
+            table_ids,
+            index_names,
+        ),
         PhysicalPlan::TableReader(reader) => {
             if let Some(scan) = reader.table_plan.as_deref().and_then(first_table_scan) {
                 table_ids.push(logical_table_id(catalog, scan.table_id));
@@ -1788,6 +1824,9 @@ fn collect_stats_info(
         collect_stats_info(child, catalog, stats_info);
     }
     match plan {
+        PhysicalPlan::ShuffleReceiver(receiver) => {
+            collect_stats_info(&receiver.data_source, catalog, stats_info);
+        }
         PhysicalPlan::TableReader(reader) => {
             if let Some(inner) = reader.table_plan.as_deref() {
                 collect_stats_info(inner, catalog, stats_info);

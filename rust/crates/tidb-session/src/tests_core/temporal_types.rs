@@ -3,6 +3,77 @@
 use crate::tests_support::row_text;
 use crate::*;
 
+#[test]
+fn date_arithmetic_overflow_uses_statement_error_policy() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE source_date(k DATETIME(6))")
+        .unwrap();
+    session
+        .run("INSERT INTO source_date VALUES ('9999-12-31 23:59:59.999999')")
+        .unwrap();
+    let expected = [[
+        "Warning",
+        "1441",
+        "Datetime function: datetime field overflow",
+    ]];
+    for interval in [
+        "1 DAY",
+        "1 WEEK",
+        "1 MONTH",
+        "1 QUARTER",
+        "1 YEAR",
+        "1 HOUR",
+        "1 MINUTE",
+        "1 SECOND",
+        "1 MICROSECOND",
+        "'1 1' YEAR_MONTH",
+        "'1 1' DAY_HOUR",
+        "9223372036854775807 DAY",
+        "9223372036854775807 HOUR",
+        "9223372036854775807 YEAR",
+    ] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT DATE_ADD(k, INTERVAL {interval}) FROM source_date"
+            ))),
+            [["NULL"]],
+            "{interval}"
+        );
+        assert_eq!(
+            row_text(session.run("SHOW WARNINGS")),
+            expected,
+            "{interval}"
+        );
+    }
+    session
+        .run("CREATE TABLE result_date(k DATETIME(6))")
+        .unwrap();
+    let error = session
+        .run("INSERT INTO result_date SELECT DATE_ADD(k, INTERVAL 1 DAY) FROM source_date")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1441);
+    assert_eq!(error.state, *b"22008");
+    session
+        .run("INSERT IGNORE INTO result_date SELECT DATE_ADD(k, INTERVAL 1 DAY) FROM source_date")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+    assert_eq!(
+        row_text(session.run("SELECT k FROM result_date")),
+        [["NULL"]]
+    );
+
+    // NULL operands never reach the calendar arithmetic overflow check.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT DATE_ADD(NULL, INTERVAL 1 DAY), DATE_ADD(k, INTERVAL NULL SECOND) FROM source_date"
+        )),
+        [["NULL", "NULL"]]
+    );
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+}
+
 /// Go's `types.ETDatetime` argument declaration over real columns, where the
 /// static `YEAR` type selects `ParseTimeFromYear` and other integers select
 /// `ParseTimeFromNum`.

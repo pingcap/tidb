@@ -135,14 +135,19 @@ fn vec_group_checker_datarace_owns_variable_length_and_complex_values() {
     ];
 
     for (original, replacement) in cases {
-        let mut checker = VecGroupChecker::new(Vec::new());
-        let mut source = vec![vec![original.clone()]];
+        let field = tidb_datatype::infer_param_type_from_datum(&original);
+        let mut checker = VecGroupChecker::new(vec![grouping_column(0, field.clone())]);
+        let mut source = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
+        source.append_datum(0, &original);
         checker
-            .split_evaluated(&source, &[Collation::Binary])
+            .split_into_groups(&NoColumns, &source)
             .expect("first key evaluates");
-        source[0][0] = replacement;
+        source.reset();
+        source.append_datum(0, &replacement);
+        let mut next = Chunk::new_with_capacity(&[field], 1);
+        next.append_datum(0, &original);
         assert!(checker
-            .split_evaluated(&[vec![original]], &[Collation::Binary])
+            .split_into_groups(&NoColumns, &next)
             .expect("second key evaluates"));
     }
 }
@@ -190,36 +195,35 @@ fn vec_group_checker_four_group_count_matrix_matches_go() {
 /// UTF-8 binary group.
 #[test]
 fn vec_group_checker_matches_collation_and_padding() {
-    let keys = ["aaa", "AAA", "😜", "😃", "À", "A"]
-        .into_iter()
-        .map(|value| vec![Datum::new_string(value)])
-        .collect::<Vec<_>>();
-
-    let mut checker = VecGroupChecker::new(Vec::new());
+    for (collation, expected) in [
+        (
+            Collation::Binary,
+            vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6)],
+        ),
+        (Collation::Utf8Mb4GeneralCi, vec![(0, 2), (2, 4), (4, 6)]),
+        (Collation::Utf8Mb4UnicodeCi, vec![(0, 2), (2, 4), (4, 6)]),
+    ] {
+        let field = FieldType::new(FieldTypeCode::Varchar).with_collation(collation);
+        let mut checker = VecGroupChecker::new(vec![grouping_column(0, field.clone())]);
+        let mut input = Chunk::new_with_capacity(&[field], 6);
+        for value in ["aaa", "AAA", "😜", "😃", "À", "A"] {
+            input.append_string(0, value);
+        }
+        checker
+            .split_into_groups(&NoColumns, &input)
+            .expect("grouping succeeds");
+        assert_eq!(ranges(&mut checker), expected);
+    }
+    let field = FieldType::new(FieldTypeCode::Varchar)
+        .with_collation(Collation::Utf8Mb4Bin)
+        .with_flen(6);
+    let mut checker = VecGroupChecker::new(vec![grouping_column(0, field.clone())]);
+    let mut input = Chunk::new_with_capacity(&[field], 3);
+    for value in ["a", "a  ", "a    "] {
+        input.append_string(0, value);
+    }
     checker
-        .split_evaluated(&keys, &[Collation::Binary])
-        .expect("binary grouping");
-    assert_eq!(ranges(&mut checker).len(), 6);
-
-    checker = VecGroupChecker::new(Vec::new());
-    checker
-        .split_evaluated(&keys, &[Collation::Utf8Mb4GeneralCi])
-        .expect("general-ci grouping");
-    assert_eq!(ranges(&mut checker), [(0, 2), (2, 4), (4, 6)]);
-
-    checker = VecGroupChecker::new(Vec::new());
-    checker
-        .split_evaluated(&keys, &[Collation::Utf8Mb4UnicodeCi])
-        .expect("unicode-ci grouping");
-    assert_eq!(ranges(&mut checker), [(0, 2), (2, 4), (4, 6)]);
-
-    let padded = ["a", "a  ", "a    "]
-        .into_iter()
-        .map(|value| vec![Datum::new_string(value)])
-        .collect::<Vec<_>>();
-    checker = VecGroupChecker::new(Vec::new());
-    checker
-        .split_evaluated(&padded, &[Collation::Utf8Mb4Bin])
+        .split_into_groups(&NoColumns, &input)
         .expect("padded grouping");
     assert_eq!(ranges(&mut checker), [(0, 3)]);
 }
@@ -230,12 +234,13 @@ fn vec_group_checker_matches_collation_and_padding() {
 /// partially consumed checker is exhausted after reset.
 #[test]
 fn issue_53867_reset_discards_unconsumed_groups() {
-    let mut checker = VecGroupChecker::new(Vec::new());
+    let field = FieldType::new(FieldTypeCode::LongLong);
+    let mut checker = VecGroupChecker::new(vec![grouping_column(0, field.clone())]);
+    let mut input = Chunk::new_with_capacity(&[field], 2);
+    input.append_int64(0, 1);
+    input.append_int64(0, 2);
     checker
-        .split_evaluated(
-            &[vec![Datum::Int(1)], vec![Datum::Int(2)]],
-            &[Collation::Binary],
-        )
+        .split_into_groups(&NoColumns, &input)
         .expect("grouping succeeds");
     assert!(!checker.is_exhausted());
     assert_eq!(checker.get_next_group(), (0, 1));

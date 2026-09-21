@@ -27,6 +27,18 @@ use crate::kv_table::TableCharset;
 use std::collections::BTreeMap;
 use tidb_hack::GoToLower;
 
+// Cache versions must distinguish independently rebuilt catalogs and schema
+// mutations on divergent clones, not just count mutations in one instance.
+// Clones/snapshots retain their version; DML does not allocate a new one.
+fn next_metadata_version() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |version| {
+        version.checked_add(1)
+    })
+    .expect("catalog metadata version exhausted")
+}
+
 /// The folded schema/table identity, corresponding to Go's two `CIStr.L`
 /// fields. Construct once when resolving retained plan metadata; raw-name
 /// catalog entrypoints normalize through the same constructor.
@@ -590,7 +602,7 @@ impl Default for Catalog {
             next_database_id: 3,
             next_table_id: 0,
             version: 0,
-            metadata_version: 0,
+            metadata_version: next_metadata_version(),
             latest_index_schema: std::sync::OnceLock::new(),
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
@@ -1620,9 +1632,11 @@ impl Catalog {
         self.version
     }
 
-    /// The counter that moves only when key-decode-relevant schema metadata
-    /// mutators run: the cache key Go's per-infoschema row-decode metadata is
-    /// keyed on (a schema version that DDL moves and DML never does).
+    /// Process-local identity of this schema metadata image. Unlike a local
+    /// mutation count, this cannot collide when a cluster catalog is rebuilt
+    /// with the same number of tables. Clones retain it until metadata changes;
+    /// DML leaves it unchanged, like Go's InfoSchema version cache boundary.
+    /// This is an internal cache key, not the persisted cluster schema version.
     #[must_use]
     pub fn metadata_version(&self) -> u64 {
         self.metadata_version
@@ -1646,7 +1660,7 @@ impl Catalog {
     }
 
     fn bump_metadata_version(&mut self) {
-        self.metadata_version += 1;
+        self.metadata_version = next_metadata_version();
         self.latest_index_schema.take();
         self.planner_view.take();
         self.statistics_schemas = Arc::default();
@@ -3927,6 +3941,36 @@ mod statistics_request_tests {
 mod planner_view_tests {
     use super::*;
     use tidb_planner::plan_builder::catalog::TableSource as _;
+
+    #[test]
+    fn schema_versions_distinguish_rebuilt_and_divergent_catalogs() {
+        let mut original = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE epoch(a INT)", &mut original).unwrap();
+        let snapshot = CatalogSnapshot::capture(&original);
+        let mut branch = original.clone();
+        assert_eq!(original.metadata_version(), branch.metadata_version());
+        assert_eq!(
+            original.metadata_version(),
+            snapshot.restore(&original).metadata_version()
+        );
+        let before_write = original.metadata_version();
+        crate::run_insert_on(
+            "INSERT INTO epoch VALUES (1)",
+            &mut original,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(before_write, original.metadata_version());
+        crate::run_create_table_on("CREATE TABLE left_branch(a INT)", &mut original).unwrap();
+        crate::run_create_table_on("CREATE TABLE right_branch(a VARCHAR(10))", &mut branch).unwrap();
+        assert_ne!(original.metadata_version(), branch.metadata_version());
+        let mut rebuilt = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE epoch(a INT, b INT)", &mut rebuilt).unwrap();
+        assert_ne!(
+            rebuilt.metadata_version(),
+            snapshot.restore(&original).metadata_version()
+        );
+    }
 
     /// The planner's schema view is Go's immutable per-version `InfoSchema`:
     /// one value shared by every statement and every clone that plans the

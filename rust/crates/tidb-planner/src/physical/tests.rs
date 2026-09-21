@@ -947,6 +947,86 @@ fn resolve_indices_restores_tree_and_stops_after_first_child_error() {
 }
 
 #[test]
+fn index_merge_resolve_indices_binds_virtual_columns_with_and_without_table_plan() {
+    // Go PhysicalIndexMergeReader.ResolveIndices binds the table plan's
+    // virtual expressions (or the reader's for an index-only merge) against
+    // the reader output, before visiting either kind of hidden plan.
+    for has_table_plan in [false, true] {
+        let mut dependency = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
+        dependency.index = 77;
+        let mut generated = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
+        generated.virtual_expr = Some(Box::new(Expression::Column(dependency.clone())));
+        let mut base = BasePhysicalPlan::with_id(3, "IndexMerge", 0);
+        base.base.set_schema(Some(Schema::new(vec![
+            generated.clone(),
+            dependency.clone(),
+        ])));
+        let table_plan = has_table_plan.then(|| {
+            let mut table = scan(1, &[11, 12]);
+            table
+                .base_mut()
+                .base
+                .set_schema(Some(Schema::new(vec![dependency, generated])));
+            Box::new(table)
+        });
+        let mut reader = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+            base,
+            table_plan,
+            partial_plans_raw: vec![scan(2, &[11])],
+            ..Default::default()
+        });
+        reader.resolve_indices().unwrap();
+        let PhysicalPlan::IndexMergeReader(reader) = &reader else {
+            unreachable!();
+        };
+        let source = reader.table_plan.as_deref().map_or_else(
+            || reader.base.base.schema().unwrap(),
+            |plan| plan.schema().unwrap(),
+        );
+        let generated = source
+            .columns
+            .iter()
+            .find(|col| col.unique_id == 12)
+            .unwrap();
+        let Expression::Column(dependency) = generated.virtual_expr.as_deref().unwrap() else {
+            panic!("generated expression must remain a column");
+        };
+        assert_eq!(dependency.index, 1, "must use the reader output position");
+    }
+}
+
+#[test]
+fn index_merge_resolve_indices_stops_before_partial_plans_on_table_error() {
+    let mut table = selection(2, scan(1, &[11]));
+    if let PhysicalPlan::Selection(op) = &mut table {
+        op.conditions.push(Expression::Column(Column::new(
+            99,
+            FieldType::new(FieldTypeCode::LongLong),
+        )));
+    }
+    let mut partial = scan(3, &[11]);
+    let mut schema = partial.schema().unwrap().clone();
+    schema.columns[0].index = 77;
+    partial.base_mut().base.set_schema(Some(schema));
+    let mut base = BasePhysicalPlan::with_id(4, "IndexMerge", 0);
+    base.base.set_schema(table.schema().cloned());
+    let mut reader = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+        base,
+        table_plan: Some(Box::new(table)),
+        partial_plans_raw: vec![partial],
+        ..Default::default()
+    });
+    assert!(reader.resolve_indices().is_err());
+    let PhysicalPlan::IndexMergeReader(reader) = &reader else {
+        unreachable!();
+    };
+    assert_eq!(
+        reader.partial_plans_raw[0].schema().unwrap().columns[0].index,
+        77
+    );
+}
+
+#[test]
 fn flatten_list_push_down_plan_reverses_a_unary_chain() {
     let reader_base = BasePhysicalPlan::with_id(4, "TableReader", 0);
     let reader = PhysicalPlan::TableReader(PhysicalTableReader {
@@ -1773,4 +1853,162 @@ fn index_join_compare_filters_weigh_what_gos_manager_allocates() {
         + 2 * outer.memory_usage()
         + 2 * tmp_constant.memory_usage();
     assert_eq!(filters.memory_usage(), expected);
+}
+
+#[test]
+fn shuffle_resolves_partition_keys_against_source_not_worker_output() {
+    let source = scan(100, &[1, 2]);
+    let key = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
+    let mut projection_base = BasePhysicalPlan::with_id(101, "Projection", 0);
+    projection_base
+        .base
+        .set_schema(Some(Schema::new(vec![key.clone()])));
+    projection_base.set_children(vec![source]);
+    let projection = PhysicalPlan::Projection(PhysicalProjection {
+        base: projection_base,
+        exprs: vec![Expression::Column(key.clone())],
+        ..Default::default()
+    });
+    let mut base = BasePhysicalPlan::with_id(102, "Shuffle", 0);
+    base.set_children(vec![projection]);
+    let mut plan = PhysicalPlan::Shuffle(PhysicalShuffle {
+        base,
+        concurrency: 2,
+        tails: vec![101],
+        data_sources: vec![100],
+        by_item_arrays: vec![vec![Expression::Column(key)]],
+        ..Default::default()
+    });
+    plan.resolve_indices().unwrap();
+    let PhysicalPlan::Shuffle(shuffle) = &plan else {
+        unreachable!()
+    };
+    let Expression::Column(key) = &shuffle.by_item_arrays[0][0] else {
+        unreachable!()
+    };
+    assert_eq!(key.index, 1);
+    assert_eq!(plan.schema().unwrap().len(), 1);
+    assert_eq!(
+        shuffle.explain_info(false).unwrap(),
+        "execution info: concurrency:2, data sources:[TableFullScan_100]"
+    );
+    let cloned = plan.deep_clone();
+    let PhysicalPlan::Shuffle(cloned) = cloned else {
+        unreachable!()
+    };
+    assert_eq!(
+        cloned.referenced_plan(100).unwrap().schema().unwrap().len(),
+        2
+    );
+    assert!(cloned.referenced_plan(999).is_err());
+    assert_eq!(
+        crate::physical_plan_cache::plan_cacheable(
+            &plan,
+            crate::physical_plan_cache::PlanCacheabilityContext {
+                parameter_count: 0,
+                enable_generated_columns: false,
+                max_plan_size: 0
+            }
+        ),
+        Err("get a Shuffle plan".to_owned())
+    );
+}
+
+#[test]
+fn shuffle_keeps_source_projection_alive_across_post_optimization() {
+    let source = scan(100, &[1, 2]);
+    let schema = source.schema().unwrap().clone();
+    let mut base = BasePhysicalPlan::with_id(101, "Projection", 0);
+    base.base.set_schema(Some(schema.clone()));
+    base.set_children(vec![source]);
+    let projection = PhysicalPlan::Projection(PhysicalProjection {
+        base,
+        exprs: schema
+            .columns
+            .iter()
+            .cloned()
+            .map(Expression::Column)
+            .collect(),
+        ..Default::default()
+    });
+    let mut base = BasePhysicalPlan::with_id(102, "Sort", 0);
+    base.set_children(vec![projection]);
+    let sort = PhysicalPlan::Sort(PhysicalSort {
+        base,
+        ..Default::default()
+    });
+    let mut base = BasePhysicalPlan::with_id(103, "Shuffle", 0);
+    base.set_children(vec![sort]);
+    let plan = PhysicalPlan::Shuffle(PhysicalShuffle {
+        base,
+        concurrency: 2,
+        tails: vec![102],
+        data_sources: vec![101],
+        by_item_arrays: vec![vec![]],
+        ..Default::default()
+    });
+    let mut plan = eliminate_physical_projection(plan);
+    let ids = PlanIdAllocator::new();
+    for _ in 0..103 {
+        ids.alloc();
+    }
+    super::shuffle::install_receivers(&mut plan, &ids).unwrap();
+    assert_eq!(ids.current(), 104);
+    super::shuffle::install_receivers(&mut plan, &ids).unwrap();
+    assert_eq!(ids.current(), 104, "preparation must be idempotent");
+    let PhysicalPlan::Shuffle(shuffle) = plan else {
+        unreachable!()
+    };
+    let receiver = &shuffle.referenced_plan(102).unwrap().children()[0];
+    assert!(matches!(receiver, PhysicalPlan::ShuffleReceiver(_)));
+    assert_eq!(receiver.id(), 104);
+    assert!(receiver.children().is_empty());
+    let PhysicalPlan::ShuffleReceiver(receiver) = receiver else {
+        unreachable!()
+    };
+    assert_eq!(receiver.data_source.id(), 101);
+    assert!(matches!(
+        shuffle.referenced_plan(101).unwrap(),
+        PhysicalPlan::Projection(_)
+    ));
+    assert_eq!(
+        shuffle.referenced_plan(101).unwrap().children()[0].id(),
+        100
+    );
+}
+
+#[test]
+fn limit_candidates_wrap_uint64_row_bounds_like_go() {
+    use crate::logical::{BaseLogicalPlan, LogicalLimit, LogicalTopN};
+    for (offset, count, expected) in [(0, 10, 10.0), (u64::MAX, 1, 0.0), (u64::MAX, 8, 7.0)] {
+        let allocator = PlanIdAllocator::new();
+        let limit = LogicalLimit::new(
+            BaseLogicalPlan::new(&allocator, LogicalLimit::TYPE, 0),
+            offset,
+            count,
+        );
+        let topn = LogicalTopN::new(
+            BaseLogicalPlan::new(&allocator, LogicalTopN::TYPE, 0),
+            Vec::new(),
+            offset,
+            count,
+        );
+        let prop = PhysicalProperty::default();
+        for plans in [
+            exhaust_physical_plans_4_logical_limit(&limit, &prop, &allocator),
+            get_phys_limits(&topn, &prop, &allocator),
+        ] {
+            assert_eq!(plans.len(), 3);
+            for plan in plans {
+                assert_eq!(
+                    plan.base().child_req_prop(0).unwrap().expected_cnt,
+                    expected
+                );
+                let PhysicalPlan::Limit(limit) = plan else {
+                    panic!("expected Limit")
+                };
+                assert_eq!((limit.offset, limit.count), (offset, count));
+            }
+        }
+    }
 }

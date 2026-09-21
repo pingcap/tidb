@@ -111,6 +111,9 @@ fn physical_plan_cacheable(
         PhysicalPlan::TableDual(_) if context.parameter_count > 0 => {
             return Err("get a TableDual plan".to_owned());
         }
+        PhysicalPlan::Shuffle(_) | PhysicalPlan::ShuffleReceiver(_) => {
+            return Err("get a Shuffle plan".to_owned());
+        }
         PhysicalPlan::MemTable(_) => {
             return Err("PhysicalMemTable plan is un-cacheable".to_owned());
         }
@@ -155,8 +158,7 @@ fn physical_plan_cacheable(
 }
 
 /// Go `isPlanCacheable` over the physical operators represented by this
-/// planner. Operators that do not exist in [`PhysicalPlan`] (such as
-/// Shuffle) cannot enter this tree; every represented refusal is checked
+/// planner. Every represented refusal is checked
 /// recursively, including reader-owned subplans.
 pub fn plan_cacheable(plan: &PhysicalPlan, context: PlanCacheabilityContext) -> Result<(), String> {
     let physical = match plan {
@@ -458,6 +460,12 @@ fn bind_plan_expressions(
     context: &CachedPlanRebuildContext<'_>,
 ) -> Result<(), PlanCacheRebuildError> {
     match plan {
+        PhysicalPlan::ShuffleReceiver(_) => {}
+        PhysicalPlan::Shuffle(shuffle) => {
+            for items in &mut shuffle.by_item_arrays {
+                bind_conditions(items, context)?;
+            }
+        }
         PhysicalPlan::Selection(selection) => {
             bind_conditions(&mut selection.conditions, context)?;
         }

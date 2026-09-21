@@ -1767,6 +1767,7 @@ impl ScalarFunction {
                     &amount,
                     if subtract { -1 } else { 1 },
                     result_fsp,
+                    ctx,
                 )?;
                 let Some(result_type) = result_type else {
                     return Ok(result);

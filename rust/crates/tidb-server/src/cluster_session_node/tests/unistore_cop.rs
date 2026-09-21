@@ -7935,6 +7935,125 @@ fn begin_inside_a_transaction_implicitly_commits_it() {
     );
 }
 
+#[test]
+fn prepared_select_replans_after_another_session_changes_columns() {
+    use crate::resultset_source::ResultSetSource;
+    use tidb_protocol::PreparedValue;
+
+    let (stack, _users) = cop_backed_stack();
+    let mut reader = stack
+        .factory
+        .open_session(session_context(90))
+        .expect("reader");
+    let mut ddl = stack
+        .factory
+        .open_session(session_context(91))
+        .expect("DDL session");
+    // Equality exercises the retained point reader; range exercises a physical SELECT.
+    for (table, comparison) in [
+        ("prepared_point_schema", "="),
+        ("prepared_range_schema", ">="),
+    ] {
+        rows(
+            &mut ddl,
+            &format!("CREATE TABLE test.{table} (id INT PRIMARY KEY, v INT)"),
+        );
+        rows(
+            &mut ddl,
+            &format!("INSERT INTO test.{table} VALUES (1, 10)"),
+        );
+        let statement = reader
+            .prepare_general(&format!(
+                "SELECT * FROM test.{table} WHERE id {comparison} ?"
+            ))
+            .expect("prepare");
+        let select = |session: &mut ClusterServerSession| {
+            let crate::sql_node::GeneralExecuteOutcome::Rows(mut result) = session
+                .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+                .expect("execute")
+            else {
+                panic!("SELECT returns rows")
+            };
+            let source = result.source();
+            let mut selected = Vec::new();
+            loop {
+                let batch = source.next_batch(8).expect("read rows");
+                if batch.is_empty() {
+                    break;
+                }
+                selected.extend(batch);
+            }
+            source.finish().expect("finish");
+            source.close().expect("close");
+            displayed(selected)
+        };
+        assert_eq!(select(&mut reader), [["1", "10"]]);
+        assert_eq!(select(&mut reader), [["1", "10"]]);
+        rows(
+            &mut ddl,
+            &format!("ALTER TABLE test.{table} ADD COLUMN extra INT DEFAULT 7"),
+        );
+        assert_eq!(select(&mut reader), [["1", "10", "7"]]);
+        rows(
+            &mut ddl,
+            &format!("ALTER TABLE test.{table} DROP COLUMN extra"),
+        );
+        assert_eq!(select(&mut reader), [["1", "10"]]);
+    }
+}
+
+#[test]
+fn prepared_update_replans_after_another_session_adds_a_column() {
+    use tidb_protocol::PreparedValue;
+
+    let (stack, _users) = cop_backed_stack();
+    let mut writer = stack
+        .factory
+        .open_session(session_context(90))
+        .expect("writer");
+    let mut ddl = stack
+        .factory
+        .open_session(session_context(91))
+        .expect("DDL session");
+    rows(
+        &mut writer,
+        "CREATE TABLE test.prepared_schema (id INT PRIMARY KEY, v INT)",
+    );
+    rows(
+        &mut writer,
+        "INSERT INTO test.prepared_schema VALUES (1, 10)",
+    );
+    let statement = writer
+        .prepare_general("UPDATE test.prepared_schema SET v = v + 1 WHERE id = ?")
+        .expect("prepare");
+    writer
+        .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+        .expect("populate prepared cache");
+    // Keep the prepared handle alive while a separate connection publishes DDL.
+    rows(
+        &mut ddl,
+        "ALTER TABLE test.prepared_schema ADD COLUMN extra INT DEFAULT 7",
+    );
+    writer
+        .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+        .expect("execute against the new schema");
+    assert_eq!(
+        displayed(rows(&mut writer, "SELECT * FROM test.prepared_schema")),
+        [["1", "12", "7"]]
+    );
+    rows(
+        &mut ddl,
+        "ALTER TABLE test.prepared_schema DROP COLUMN extra",
+    );
+    writer
+        .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+        .expect("execute after dropping the column");
+    assert_eq!(
+        displayed(rows(&mut writer, "SELECT * FROM test.prepared_schema")),
+        [["1", "13"]]
+    );
+}
+
 /// Go's pessimistic point write folds its row read INTO its lock:
 /// `PointGetExecutor.getAndLock` (`pkg/executor/point_get.go:549`) locks with
 /// `InitReturnValues(1)` (line 614) and reads the row from the answer, cached

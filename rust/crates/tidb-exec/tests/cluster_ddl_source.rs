@@ -1554,6 +1554,47 @@ fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
 }
 
 #[test]
+fn clustered_notifier_events_use_the_composite_primary_key() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let (_, notifier) = catalog.find_table("mysql", "tidb_ddl_notifier").unwrap();
+    let mut notifier = notifier.clone_like_go();
+    notifier.is_common_handle = true;
+    notifier.common_handle_version = 1;
+    store.put(
+        key::table_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID, notifier.id),
+        value::serialize_table_info(&notifier).unwrap(),
+    );
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.clustered_notified (id BIGINT PRIMARY KEY)",
+        7,
+    );
+    let prefix = tidb_codec::gen_table_record_prefix(notifier.id);
+    let record = write
+        .mutations
+        .iter()
+        .find(|mutation| mutation.key().starts_with(&prefix))
+        .unwrap();
+    // Go's common handle stores signed integers as datum flag 3 followed by
+    // the comparable eight-byte integer, once per primary-key component.
+    let mut expected = prefix;
+    expected.push(3);
+    expected.extend_from_slice(&((write.ddl_job_id as u64) ^ (1_u64 << 63)).to_be_bytes());
+    expected.push(3);
+    expected.extend_from_slice(&(((-1_i64) as u64) ^ (1_u64 << 63)).to_be_bytes());
+    assert_eq!(record.key(), expected);
+    let allocator =
+        key::auto_table_id_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID, notifier.id);
+    assert!(
+        write
+            .mutations
+            .iter()
+            .all(|mutation| mutation.key() != allocator)
+    );
+}
+
+#[test]
 fn system_database_ddl_stages_no_notifier_event() {
     let mut store = bootstrapped();
     let write = plan(

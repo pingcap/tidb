@@ -1467,3 +1467,21 @@ fn test_source_semi_index_join_pays_for_the_rows_it_cannot_stop_reading() {
     // ...but only when there IS more than one row per key.
     assert_eq!(cost(1.0, true), cost(1.0, false));
 }
+
+#[test]
+fn topn_cost_wraps_uint64_row_bound_before_applying_floor() {
+    let factors = Ver2Factors::default();
+    let cost = |count, offset| {
+        top_n_cost(
+            None,
+            1000.0,
+            (count, offset),
+            16.0,
+            &[false],
+            (&factors.tikv_cpu, &factors.tikv_mem, 1.0),
+            &recorded_child(0.0),
+        )
+    };
+    // Go casts the uint64 sum to float64 only after addition; MAX+8 is 7.
+    assert_eq!(printed(&cost(8, u64::MAX)), printed(&cost(7, 0)));
+}

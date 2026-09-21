@@ -588,6 +588,7 @@ pub(crate) fn logical_from_scope(
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
+    builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
@@ -1584,6 +1585,7 @@ pub(crate) fn physical_plan_for_logical(
     };
     let mut dispatch = DispatchContext::new(plan_ids, &coster, 1.0)
         .with_expression_evaluator(&evaluate)
+        .with_mpp_allowed(ctx.optimizer_cost_env().session.mpp_allowed)
         .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
         .with_selectivity_factor(ctx.selectivity_factor())
         .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())
@@ -1609,6 +1611,7 @@ pub(crate) fn physical_plan_for_logical(
                 .get_bool_with_default(tidb_planner::fix_control::FIX_44855, true),
         )
         .with_column_ids(column_ids);
+    dispatch.shuffle_options = ctx.optimizer_cost_env().session.shuffle_options;
     let task = find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)?;
     let mut physical = task.plan().cloned().ok_or_else(|| {
         tidb_planner::plan_base::PlanError::internal("physical planning produced no plan")
@@ -1622,6 +1625,7 @@ pub(crate) fn physical_plan_for_logical(
     // nominal sorts) that the elimination pass removed.
     let mut physical =
         tidb_planner::physical::inject_extra_projection(physical, plan_ids, column_ids);
+    tidb_planner::physical::shuffle::install_receivers(&mut physical, plan_ids)?;
     physical
         .base_mut()
         .base
@@ -2070,6 +2074,7 @@ fn planner_optimized_query_with_allocators(
     );
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
         .with_subquery_evaluator(&evaluator);
+    builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
@@ -2125,6 +2130,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     );
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
         .with_subquery_evaluator(&evaluator);
+    builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
@@ -2473,6 +2479,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
+    builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();

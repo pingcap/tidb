@@ -652,9 +652,11 @@ impl ProbeFetcher {
                 self.memory.check()?;
                 Err(ExecError::internal("probe kill event without a kill reason"))
             },
-            send(input, chunk) -> result => result
-                .map(|()| true)
-                .map_err(|_| ExecError::internal("probe worker input channel disconnected")),
+            // A worker drops its input while unwinding, before its recovered
+            // error reaches the result channel. Stop fetching and let that
+            // worker report the original error instead of racing it with a
+            // secondary channel-disconnection error.
+            send(input, chunk) -> result => Ok(result.is_ok()),
         }
     }
 

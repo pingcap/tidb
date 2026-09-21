@@ -362,6 +362,8 @@ impl PhysicalPlan {
 
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
         match self {
+            Self::ShuffleReceiver(_) => {}
+            Self::Shuffle(op) => op.resolve_by_items()?,
             Self::ExchangeSender(op) => {
                 // Go `PhysicalExchangeSender.ResolveIndices`
                 // (`physical_exchange_sender.go`): resolve each hash column
@@ -573,10 +575,34 @@ impl PhysicalPlan {
                 }
             }
             Self::IndexMergeReader(op) => {
-                for plan in &mut op.partial_plans_raw {
-                    plan.resolve_indices()?;
-                }
+                let input =
+                    op.base.base.schema().ok_or_else(|| {
+                        PlanError::internal("IndexMergeReader has no output schema")
+                    })?;
                 if let Some(plan) = &mut op.table_plan {
+                    let schema = plan.schema().ok_or_else(|| {
+                        PlanError::internal("IndexMergeReader table plan has no schema")
+                    })?;
+                    if schema
+                        .columns
+                        .iter()
+                        .any(|column| column.virtual_expr.is_some())
+                    {
+                        let mut schema = schema.clone();
+                        bind_virtual_columns(&mut schema.columns, input)?;
+                        plan.base_mut().base.set_schema(Some(schema));
+                    }
+                    plan.resolve_indices()?;
+                } else if input
+                    .columns
+                    .iter()
+                    .any(|column| column.virtual_expr.is_some())
+                {
+                    let mut schema = input.clone();
+                    bind_virtual_columns(&mut schema.columns, input)?;
+                    op.base.base.set_schema(Some(schema));
+                }
+                for plan in &mut op.partial_plans_raw {
                     plan.resolve_indices()?;
                 }
             }

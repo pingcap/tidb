@@ -295,6 +295,8 @@ pub struct CopTask {
     /// Go `NeedExtraProj`: a double read may output one extra handle column
     /// that must be pruned above.
     pub need_extra_proj: bool,
+    /// Go `OriginSchema`: output before adding handle or virtual-dependency columns.
+    pub origin_schema: Option<tidb_expr::schema::Schema>,
     /// Go `IdxMergePartPlans`: the real plans of an index-merge reader while
     /// `IndexPlanFinished` is false.
     pub idx_merge_part_plans: Vec<PhysicalPlan>,
@@ -311,7 +313,7 @@ pub struct CopTask {
     /// Go `CopTask.IndexJoinInfo`, produced only while this data source is an
     /// index-join inner child.
     pub index_join_info: Option<IndexJoinInfo>,
-    // boundary: `OriginSchema`, `ExtraHandleCol`,
+    // boundary: `ExtraHandleCol`,
     // `TblColHists`, `TblCols`,
     // `IdxMergeMatchWithAdvisorySortItems`, `IdxMergePartPlansMatchResults`,
     // `PhysPlanPartInfo`,
@@ -457,9 +459,8 @@ impl CopTask {
     /// Go `BuildIndexLookUpTask` (`physical_indexlookup_reader.go:284`): the
     /// double-read cop task becomes a root task holding a
     /// `PhysicalIndexLookUpReader` whose schema and stats are the TABLE
-    /// side's (`Init`, `:205`). The `NeedExtraProj` projection reads the unported
-    /// `OriginSchema` — a task that needs it refuses by name rather than
-    /// serving a broken schema. Go skips that projection when the table side
+    /// side's (`Init`, `:205`). The `NeedExtraProj` projection restores
+    /// `OriginSchema`. Go skips that projection when the table side
     /// already holds a pushed partial aggregate.
     fn build_index_look_up_task(
         mut self,
@@ -477,12 +478,6 @@ impl CopTask {
             &*table_plan,
             PhysicalPlan::HashAgg(_) | PhysicalPlan::StreamAgg(_)
         );
-        if self.need_extra_proj && !agg_pushed_down {
-            return Err(PlanError::internal(
-                "BuildIndexLookUpTask: the NeedExtraProj projection reads \
-                 OriginSchema, not ported",
-            ));
-        }
         let mut base = crate::physical::BasePhysicalPlan::new(
             allocator,
             "IndexLookUp",
@@ -625,6 +620,11 @@ impl CopTask {
             paging: false,
             pushed_limit: None,
         });
+        let reader = if self.need_extra_proj && !agg_pushed_down {
+            Self::project_origin_schema(reader, self.origin_schema.take(), allocator)?
+        } else {
+            reader
+        };
         let mut root = RootTask::default();
         root.set_plan(reader);
         root.index_join_info = self.index_join_info.take();
@@ -652,33 +652,37 @@ impl CopTask {
                 .and_then(PhysicalPlan::schema)
                 .is_some_and(|schema| schema.len() != origin.len())
         });
-        let mut task = self.convert_expanded_to_root_task(allocator)?;
-        if expanded {
-            let Task::Root(root) = &mut task else {
-                return Ok(task);
-            };
-            let Some(plan) = root.take_plan() else {
-                return Ok(task);
-            };
-            let schema = origin.expect("expanded table plan retains its origin schema");
-            let mut base = crate::physical::BasePhysicalPlan::new(
-                allocator,
-                "Projection",
-                plan.query_block_offset(),
-            );
-            base.base.set_stats(plan.stats_info().cloned());
-            base.base.set_schema(Some(schema.clone()));
-            base.set_children(vec![plan]);
-            root.set_plan(PhysicalPlan::Projection(
-                crate::physical::PhysicalProjection {
-                    base,
-                    exprs: schema.columns.into_iter().map(Expression::Column).collect(),
-                    calculate_no_delay: false,
-                    avoid_column_evaluator: false,
-                },
-            ));
+        if expanded && !self.need_extra_proj {
+            self.need_extra_proj = true;
+            self.origin_schema = origin;
         }
-        Ok(task)
+        self.convert_expanded_to_root_task(allocator)
+    }
+
+    fn project_origin_schema(
+        plan: PhysicalPlan,
+        schema: Option<tidb_expr::schema::Schema>,
+        allocator: &crate::plan_base::PlanIdAllocator,
+    ) -> Result<PhysicalPlan, PlanError> {
+        let schema = schema.ok_or_else(|| {
+            PlanError::internal("NeedExtraProj requires the cop task's OriginSchema")
+        })?;
+        let mut base = crate::physical::BasePhysicalPlan::new(
+            allocator,
+            "Projection",
+            plan.query_block_offset(),
+        );
+        base.base.set_stats(plan.stats_info().cloned());
+        base.base.set_schema(Some(schema.clone()));
+        base.set_children(vec![plan]);
+        Ok(PhysicalPlan::Projection(
+            crate::physical::PhysicalProjection {
+                base,
+                exprs: schema.columns.into_iter().map(Expression::Column).collect(),
+                calculate_no_delay: false,
+                avoid_column_evaluator: false,
+            },
+        ))
     }
 
     fn convert_expanded_to_root_task(
@@ -686,12 +690,6 @@ impl CopTask {
         allocator: &crate::plan_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
         if !self.idx_merge_part_plans.is_empty() {
-            if self.need_extra_proj {
-                return Err(PlanError::internal(
-                    "convertToRootTaskImpl: index-merge NeedExtraProj reads \
-                     OriginSchema, not ported",
-                ));
-            }
             let partial_plans_raw = std::mem::take(&mut self.idx_merge_part_plans);
             let first = partial_plans_raw
                 .first()
@@ -716,6 +714,11 @@ impl CopTask {
                     by_items: Vec::new(),
                     keep_order: self.keep_order,
                 });
+            let reader = if self.need_extra_proj {
+                Self::project_origin_schema(reader, self.origin_schema.take(), allocator)?
+            } else {
+                reader
+            };
             let mut root = RootTask::default();
             root.set_plan(reader);
             root.index_join_info = self.index_join_info.take();
@@ -811,6 +814,11 @@ impl CopTask {
             )));
         };
         let store_type = scan.store_type;
+        let projection_stats = scan.base.base.stats_info().cloned();
+        let agg_pushed_down = matches!(
+            &*table_plan,
+            PhysicalPlan::HashAgg(_) | PhysicalPlan::StreamAgg(_)
+        );
         let is_common_handle = scan
             .resolved_is_common_handle()
             .unwrap_or(!self.common_handle_cols.is_empty());
@@ -858,6 +866,14 @@ impl CopTask {
             is_common_handle,
             read_req_type,
         });
+        let reader = if self.need_extra_proj && !agg_pushed_down {
+            let mut projection =
+                Self::project_origin_schema(reader, self.origin_schema.take(), allocator)?;
+            projection.base_mut().base.set_stats(projection_stats);
+            projection
+        } else {
+            reader
+        };
         let mut root = RootTask::default();
         root.set_plan(reader);
         root.index_join_info = self.index_join_info.take();
@@ -1350,6 +1366,50 @@ mod tests {
     }
 
     #[test]
+    fn cop_pushdown_wraps_uint64_row_bounds_like_go() {
+        for is_topn in [false, true] {
+            let allocator = PlanIdAllocator::new();
+            let child = Task::Cop(CopTask {
+                table_plan: Some(Box::new(table_scan_with_rows(100.0))),
+                index_plan_finished: true,
+                ..CopTask::default()
+            });
+            let base = crate::physical::BasePhysicalPlan::with_id(9, "Limit", 0);
+            let plan = if is_topn {
+                PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+                    by_items: vec![tidb_expr::aggregation::ByItems::new(
+                        Expression::Column(column_with_id(1)),
+                        false,
+                    )],
+                    base,
+                    offset: u64::MAX,
+                    count: 8,
+                    ..Default::default()
+                })
+            } else {
+                PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                    base,
+                    offset: u64::MAX,
+                    count: 8,
+                    ..Default::default()
+                })
+            };
+            let task = attach2_task(plan, vec![child], None, &allocator).unwrap();
+            let root = task.plan().unwrap();
+            let bound = |plan: &PhysicalPlan| match plan {
+                PhysicalPlan::Limit(p) => (p.offset, p.count),
+                PhysicalPlan::TopN(p) => (p.offset, p.count),
+                _ => panic!("expected row bound: {plan:?}"),
+            };
+            assert_eq!(bound(root), (u64::MAX, 8));
+            let PhysicalPlan::TableReader(reader) = &root.children()[0] else {
+                panic!("expected table reader");
+            };
+            assert_eq!(bound(reader.table_plan.as_deref().unwrap()), (0, 7));
+        }
+    }
+
+    #[test]
     fn a_limit_sinks_into_the_index_lookup_reader() {
         // `sinkIntoIndexLookUp` (`task.go:733`): a root Limit over a
         // converted double read becomes the reader's PushedLimit — no root
@@ -1392,6 +1452,144 @@ mod tests {
             (scan.base.base.stats_info().expect("stats").row_count() - 5.0).abs() < f64::EPSILON,
             "the table side adopts the smaller stats"
         );
+    }
+
+    #[test]
+    fn need_extra_proj_restores_origin_before_root_conditions_for_all_readers() {
+        use tidb_expr::schema::Schema;
+
+        for kind in ["table", "lookup", "merge"] {
+            let allocator = PlanIdAllocator::new();
+            let origin = Schema::new(vec![column_with_id(11)]);
+            let expanded = Schema::new(vec![column_with_id(11), column_with_id(12)]);
+            let mut cop = CopTask {
+                table_plan: Some(Box::new(scan_with_schema(
+                    &allocator,
+                    "TableScan",
+                    expanded.clone(),
+                    20.0,
+                ))),
+                need_extra_proj: true,
+                origin_schema: Some(origin),
+                root_task_conds: vec![Expression::Column(column_with_id(11))],
+                ..Default::default()
+            };
+            if kind == "lookup" {
+                cop.index_plan = Some(Box::new(scan_with_schema(
+                    &allocator,
+                    "IndexScan",
+                    expanded.clone(),
+                    20.0,
+                )));
+            } else if kind == "merge" {
+                cop.idx_merge_part_plans.push(scan_with_schema(
+                    &allocator,
+                    "IndexScan",
+                    expanded,
+                    20.0,
+                ));
+            }
+            let task = cop.convert_to_root_task_impl(&allocator).expect(kind);
+            let PhysicalPlan::Selection(selection) = task.plan().unwrap() else {
+                panic!("root conditions must remain above the projection");
+            };
+            let PhysicalPlan::Projection(projection) = &selection.base.children()[0] else {
+                panic!("{kind}: extra columns must be projected away");
+            };
+            assert_eq!(projection.base.base.schema().unwrap().len(), 1);
+            let [Expression::Column(column)] = projection.exprs.as_slice() else {
+                panic!("origin columns must be passed through");
+            };
+            assert_eq!(column.unique_id, 11);
+            let reader = &projection.base.children()[0];
+            assert_eq!(reader.schema().unwrap().len(), 2);
+            assert_eq!(projection.base.base.stats_info().unwrap().row_count(), 20.0);
+            assert_eq!(
+                projection.base.base.query_block_offset(),
+                reader.query_block_offset()
+            );
+            assert!(matches!(
+                (kind, reader),
+                ("table", PhysicalPlan::TableReader(_))
+                    | ("lookup", PhysicalPlan::IndexLookUpReader(_))
+                    | ("merge", PhysicalPlan::IndexMergeReader(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn need_extra_proj_does_not_replace_pushed_aggregate_schema() {
+        use crate::physical::{BasePhysicalPlan, PhysicalHashAgg, PhysicalStreamAgg};
+        use tidb_expr::schema::Schema;
+        for double_read in [false, true] {
+            for hash in [false, true] {
+                let allocator = PlanIdAllocator::new();
+                let input = Schema::new(vec![column_with_id(11), column_with_id(12)]);
+                let mut base = BasePhysicalPlan::new(&allocator, "Aggregation", 10);
+                base.base
+                    .set_schema(Some(Schema::new(vec![column_with_id(21)])));
+                base.base.set_stats(Some(StatsInfo::new(5.0, [])));
+                base.set_children(vec![scan_with_schema(
+                    &allocator,
+                    "TableScan",
+                    input.clone(),
+                    20.0,
+                )]);
+                let aggregate = if hash {
+                    PhysicalPlan::HashAgg(PhysicalHashAgg {
+                        base,
+                        ..Default::default()
+                    })
+                } else {
+                    PhysicalPlan::StreamAgg(PhysicalStreamAgg {
+                        base,
+                        ..Default::default()
+                    })
+                };
+                let cop = CopTask {
+                    table_plan: Some(Box::new(aggregate)),
+                    index_plan: double_read
+                        .then(|| Box::new(scan_with_schema(&allocator, "IndexScan", input, 20.0))),
+                    need_extra_proj: true,
+                    origin_schema: Some(Schema::new(vec![column_with_id(11)])),
+                    ..Default::default()
+                };
+                let task = cop.convert_to_root_task_impl(&allocator).unwrap();
+                let plan = task.plan().unwrap();
+                assert!(matches!(
+                    plan,
+                    PhysicalPlan::TableReader(_) | PhysicalPlan::IndexLookUpReader(_)
+                ));
+                assert_eq!(plan.schema().unwrap().columns[0].unique_id, 21);
+            }
+        }
+    }
+
+    #[test]
+    fn virtual_expansion_keeps_root_conditions_above_origin_projection() {
+        use tidb_expr::schema::Schema;
+        let allocator = PlanIdAllocator::new();
+        let mut generated = column_with_id(12);
+        generated.virtual_expr = Some(Box::new(Expression::Column(column_with_id(11))));
+        let cop = CopTask {
+            table_plan: Some(Box::new(scan_with_schema(
+                &allocator,
+                "TableScan",
+                Schema::new(vec![generated.clone()]),
+                20.0,
+            ))),
+            root_task_conds: vec![Expression::Column(generated)],
+            ..Default::default()
+        };
+        let task = cop.convert_to_root_task_impl(&allocator).unwrap();
+        let PhysicalPlan::Selection(selection) = task.plan().unwrap() else {
+            panic!("Go applies root conditions after constructing the origin projection");
+        };
+        let PhysicalPlan::Projection(projection) = &selection.base.children()[0] else {
+            panic!("virtual dependency expansion requires a projection");
+        };
+        assert_eq!(projection.base.base.schema().unwrap().len(), 1);
+        assert_eq!(projection.base.children()[0].schema().unwrap().len(), 2);
     }
 
     #[test]
@@ -2059,7 +2257,7 @@ pub fn attach2_task(
         // `attach2Task4PhysicalWindow` (`task.go:2230`): convert the child to
         // a root task and attach. The TiFlash MPP arm is absent with that
         // tier.
-        PhysicalPlan::Window(_) => {
+        PhysicalPlan::Window(_) | PhysicalPlan::Shuffle(_) | PhysicalPlan::ShuffleReceiver(_) => {
             let converted = first.copy().convert_to_root_task(allocator)?;
             Ok(attach_plan_to_task(plan, converted))
         }
@@ -2137,7 +2335,7 @@ pub fn attach2_task(
                         (!cop.keep_order || !cop.index_plan_finished || cop.index_plan.is_none())
                             && cop.root_task_conds.is_empty();
                     if pushable {
-                        let new_count = limit.offset + limit.count;
+                        let new_count = limit.offset.wrapping_add(limit.count);
                         let stats = cop
                             .plan()
                             .and_then(PhysicalPlan::stats_info)
@@ -2351,7 +2549,7 @@ pub fn attach2_task(
                             }
                             return Ok(attach_plan_to_task(plan, converted));
                         }
-                        let new_count = topn.offset + topn.count;
+                        let new_count = topn.offset.wrapping_add(topn.count);
                         let stats = cop
                             .plan()
                             .and_then(PhysicalPlan::stats_info)

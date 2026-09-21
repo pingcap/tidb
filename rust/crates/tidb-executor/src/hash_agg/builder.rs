@@ -158,12 +158,15 @@ impl AggFunc {
             .and_then(Expression::as_column)
             .map(|column| column.orig_name.clone())
             .unwrap_or_default();
+        // Go buildApproxPercentile does not consult HasDistinct: its
+        // percentile accumulator ranks every row, including duplicates.
+        let distinct = desc.has_distinct && !matches!(&kind, AggKind::ApproxPercentile(_));
         let mut args = args.into_iter();
         Ok(Self {
             kind,
             arg: args.next(),
             extra_args: args.collect(),
-            distinct: desc.has_distinct,
+            distinct,
             order_by: desc
                 .order_by_items
                 .iter()

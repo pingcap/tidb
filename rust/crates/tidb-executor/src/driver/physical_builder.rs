@@ -81,6 +81,8 @@ struct CteBuildSlot {
 
 #[derive(Default)]
 struct BuildState {
+    /// Receiver substitutions while building a shuffle worker subtree.
+    shuffle_receivers: HashMap<i32, Box<dyn Executor>>,
     cte_slots: HashMap<i32, CteBuildSlot>,
     runtime_counters: Option<PhysicalRuntimeStats>,
     /// The coprocessor `Limit offset:o, count:c` a covering `IndexReader`'s
@@ -166,15 +168,19 @@ impl BuildState {
                 return executor;
             }
         }
-        let counter = crate::executor::RowCount::default();
-        let calls = Arc::new(Mutex::new(PhysicalCallStats::default()));
-        counters.insert(
-            runtime_plan_key(plan),
+        // Shuffle builds several executors for the same physical node. Go
+        // merges their BasicRuntimeStats by plan ID; share one accumulator
+        // instead of replacing it with the last worker's counters.
+        let stats = counters.entry(runtime_plan_key(plan)).or_insert_with(|| {
             PhysicalRuntimeCounter {
-                rows: counter.clone(),
-                calls: Some(Arc::clone(&calls)),
-            },
-        );
+                rows: crate::executor::RowCount::default(),
+                calls: None,
+            }
+        });
+        let counter = stats.rows.clone();
+        let calls = Arc::clone(stats.calls.get_or_insert_with(|| {
+            Arc::new(Mutex::new(PhysicalCallStats::default()))
+        }));
         Box::new(PhysicalCountExec {
             child: executor,
             counter,
@@ -207,6 +213,8 @@ impl Executor for PhysicalCountExec {
         let mut calls = self.calls.lock().unwrap();
         calls.next += start.elapsed();
         calls.loops += 1;
+        // The shared calls lock also serializes the read/modify/write of the
+        // row counter across shuffle workers.
         self.counter
             .set(self.counter.get().saturating_add(req.num_rows() as u64));
         result
@@ -885,6 +893,8 @@ fn aggregate_function(
         String::new()
     };
     let arg = (!args.is_empty()).then(|| args.remove(0));
+    // Go's percentile builder ranks every input row even with DISTINCT.
+    let distinct = descriptor.has_distinct && !matches!(&kind, AggKind::ApproxPercentile(_));
     Ok(AggFunc {
         kind,
         arg,
@@ -897,7 +907,7 @@ fn aggregate_function(
                     .map(|expression| (expression, item.desc))
             })
             .collect::<Result<Vec<_>, _>>()?,
-        distinct: descriptor.has_distinct,
+        distinct,
         arg_orig_name,
     })
 }
@@ -1004,8 +1014,11 @@ fn build_window(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
     let child_schema = child.schema().clone();
-    let child_width = child_schema.len();
     let output_schema = plan_schema(plan)?;
+    let child_width = output_schema
+        .len()
+        .checked_sub(window.window_func_descs.len())
+        .ok_or_else(|| DriverError::unsupported("Window schema is missing function columns"))?;
     let mut partition_by = Vec::with_capacity(window.partition_by.len());
     for item in &window.partition_by {
         partition_by.push(resolve_expression(
@@ -1131,7 +1144,7 @@ fn build_window(
         };
         funcs.push(crate::window::WindowFuncSpec { func, output_type });
     }
-    Ok(Box::new(crate::window::WindowExec::new(
+    let base = crate::window::WindowExec::new(
         meta(ctx, plan, output_schema),
         funcs,
         partition_by,
@@ -1140,11 +1153,16 @@ fn build_window(
             .iter()
             .map(|item| resolve_expression(Expression::Column(item.col.clone()), &child_schema))
             .collect::<Result<Vec<_>, _>>()?,
-        frame,
+        window.frame.as_ref().map(|_| frame),
         child,
         ctx.clone(),
         child_width,
-    )))
+    );
+    if ctx.enable_pipelined_window_exec() {
+        Ok(Box::new(crate::window::PipelinedWindowExec::new(base)))
+    } else {
+        Ok(Box::new(base))
+    }
 }
 
 /// Retains Go's typed RANGE expressions and positional ROWS bounds.
@@ -3813,6 +3831,9 @@ pub(crate) fn prepare_execution_plan(
     }
 
     match plan {
+        PhysicalPlan::ShuffleReceiver(receiver) => {
+            prepare_execution_plan(&mut receiver.data_source, catalog, ctx)?;
+        }
         PhysicalPlan::TableReader(reader) => {
             if let Some(plan) = reader.table_plan.as_deref_mut() {
                 prepare_execution_plan(plan, catalog, ctx)?;
@@ -3978,13 +3999,99 @@ fn build_cte_table(
 }
 
 /// Recursively instantiates one retained physical operator tree.
+fn build_shuffle(
+    plan: &PhysicalPlan,
+    shuffle: &tidb_planner::physical::PhysicalShuffle,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    state: &mut BuildState,
+) -> Result<Box<dyn Executor>, DriverError> {
+    use crate::shuffle::{
+        FinishFlag, InboxHandle, PartitionHashSplitter, PartitionRangeSplitter, PartitionSplitter,
+        ShuffleExec, ShuffleReceiver, ShuffleWorker,
+    };
+    use tidb_planner::physical::shuffle::PartitionSplitterType;
+    let mut sources = Vec::with_capacity(shuffle.data_sources.len());
+    let mut splitters: Vec<Box<dyn PartitionSplitter<crate::StmtContext>>> = Vec::new();
+    let mut source_plans = Vec::new();
+    let mut receiver_plans = Vec::new();
+    for (i, id) in shuffle.data_sources.iter().enumerate() {
+        let source = shuffle
+            .referenced_plan(*id)
+            .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
+        let schema = plan_schema(source)?;
+        let items = shuffle
+            .by_item_arrays
+            .get(i)
+            .ok_or_else(|| DriverError::unsupported("shuffle partition expressions are absent"))?
+            .iter()
+            .cloned()
+            .map(|item| resolve_expression(item, &schema))
+            .collect::<Result<Vec<_>, _>>()?;
+        splitters.push(match shuffle.splitter_type {
+            PartitionSplitterType::Hash => {
+                Box::new(PartitionHashSplitter::new(shuffle.concurrency, items))
+            }
+            PartitionSplitterType::Range => {
+                Box::new(PartitionRangeSplitter::new(shuffle.concurrency, items))
+            }
+        });
+        sources.push(build_with_state(source, catalog, ctx, state)?);
+        source_plans.push(source);
+        let tail = shuffle
+            .referenced_plan(shuffle.tails[i])
+            .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
+        let receiver = only_child(tail)?;
+        if !matches!(receiver, PhysicalPlan::ShuffleReceiver(_)) {
+            return Err(DriverError::unsupported(
+                "shuffle receiver boundary was not prepared",
+            ));
+        }
+        receiver_plans.push(receiver);
+    }
+    let finish = FinishFlag::new();
+    let mut workers = Vec::with_capacity(shuffle.concurrency);
+    for _ in 0..shuffle.concurrency {
+        let inboxes: Vec<_> = source_plans.iter().map(|_| InboxHandle::new()).collect();
+        let saved_receivers = std::mem::take(&mut state.shuffle_receivers);
+        let result = (|| {
+            for (receiver_plan, inbox) in receiver_plans.iter().zip(&inboxes) {
+                let receiver = ShuffleReceiver::new(
+                    meta(ctx, receiver_plan, plan_schema(receiver_plan)?),
+                    inbox.clone(),
+                    finish.clone(),
+                );
+                state
+                    .shuffle_receivers
+                    .insert(receiver_plan.id(), Box::new(receiver));
+            }
+            build_with_state(only_child(plan)?, catalog, ctx, state)
+        })();
+        state.shuffle_receivers = saved_receivers;
+        workers.push(ShuffleWorker::new(result?, inboxes, finish.clone()));
+    }
+    Ok(Box::new(ShuffleExec::new(
+        meta(ctx, plan, plan_schema(plan)?),
+        ctx.clone(),
+        workers,
+        splitters,
+        sources,
+        finish,
+    )))
+}
+
 fn build_with_state(
     plan: &PhysicalPlan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    if let Some(receiver) = state.shuffle_receivers.remove(&plan.id()) {
+        return Ok(state.meter(plan, receiver));
+    }
     let executor: Box<dyn Executor> = match plan {
+        PhysicalPlan::Shuffle(shuffle) => build_shuffle(plan, shuffle, catalog, ctx, state),
+        PhysicalPlan::ShuffleReceiver(_) => Err(DriverError::unsupported("shuffle receiver has no owning worker")),
         PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
         PhysicalPlan::TableScan(scan) => build_table_scan(plan, scan, catalog, ctx),
         PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
@@ -4785,6 +4892,57 @@ mod tests {
             .iter()
             .map(|handle| handle.int_value().expect("int handle"))
             .collect()
+    }
+
+    #[test]
+    fn physical_shuffle_builds_worker_receivers_and_reads_each_source_once() {
+        use tidb_planner::physical::PhysicalShuffle;
+        let mut projection_base = BasePhysicalPlan::with_id(7, "Projection", 0);
+        projection_base.base.set_schema(Some(empty_schema()));
+        projection_base.set_children(vec![dual(1, 1)]);
+        let projected = PhysicalPlan::Projection(tidb_planner::physical::PhysicalProjection {
+            base: projection_base,
+            ..Default::default()
+        });
+        let mut tails = Vec::new();
+        for (id, source) in [(5, projected), (6, dual(2, 1))] {
+            let mut base = BasePhysicalPlan::with_id(id, "Selection", 0);
+            base.set_children(vec![source]);
+            tails.push(PhysicalPlan::Selection(PhysicalSelection {
+                base,
+                ..Default::default()
+            }));
+        }
+        let child = union(3, tails);
+        let mut base = BasePhysicalPlan::with_id(4, "Shuffle", 0);
+        base.set_children(vec![child]);
+        let plan = PhysicalPlan::Shuffle(PhysicalShuffle {
+            base,
+            concurrency: 3,
+            tails: vec![5, 6],
+            data_sources: vec![7, 2],
+            by_item_arrays: vec![vec![], vec![]],
+            ..Default::default()
+        });
+        let mut plan = tidb_planner::physical::eliminate_physical_projection(plan);
+        let ids = tidb_planner::plan_base::PlanIdAllocator::new();
+        for _ in 0..7 { ids.alloc(); }
+        tidb_planner::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
+        let mut exec = build(&plan, &Catalog::default(), &crate::StmtContext::default()).unwrap();
+        for _ in 0..2 {
+            exec.open().unwrap();
+            let mut rows = 0;
+            loop {
+                let mut chunk = exec.new_chunk();
+                exec.next(&mut chunk).unwrap();
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                rows += chunk.num_rows();
+            }
+            exec.close().unwrap();
+            assert_eq!(rows, 2);
+        }
     }
 
     #[test]

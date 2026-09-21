@@ -15,178 +15,145 @@
 //! `pkg/executor/shuffle.go`: [`ShuffleExec`], the operator that runs N copies
 //! of a child executor over N disjoint partitions of its data sources.
 //!
-//! Go splits every source chunk row-by-row into per-worker buffers, hands those
-//! buffers to N goroutines through channels, and merges whatever each worker
-//! emits back onto one output channel. This port keeps the split, the buffers,
-//! the receivers and the per-worker child executors exactly as Go has them, and
-//! replaces the goroutines with a sequential drive. See `ORDERING` below for
-//! what that costs and what it does not.
+//! Each source and worker owns its executor on a dedicated thread. One recycled
+//! input chunk per source/worker pair and one output chunk per worker provide
+//! Go's backpressure without aliasing mutable executors. Close broadcasts
+//! cancellation, joins every thread, and returns executors to their original
+//! owners before closing them. Output ordering between workers is unspecified.
 //!
-//! ORDERING. Go's `Next` reads `e.outputCh` (`shuffle.go:253`), a single
-//! buffered channel written by *every* worker's `run` (`shuffle.go:432`) and by
-//! every source's `fetchDataAndSplit` error path (`shuffle.go:297`,
-//! `shuffle.go:303`). Go channels impose no order between distinct senders, so
-//! the interleaving of one worker's chunks with another's is genuinely
-//! nondeterministic upstream -- `ShuffleExec` is only planned under parents
-//! that do not need a global order (each `PARTITION BY` group lands wholly
-//! inside one worker). Three orderings *are* structural, and this port
-//! preserves all three:
-//!
-//! 1. Within one worker, the child executor is driven by one goroutine in a
-//!    loop (`shuffle.go:414-434`), so that worker's output chunks keep the
-//!    order its child produced them.
-//! 2. Within one (source, worker) pair, rows are appended in ascending source
-//!    row index (`shuffle.go:305-320`: `for i := range numRows` appending
-//!    `chk.GetRow(i)` into `results[workerIdx]`), and each filled buffer is
-//!    pushed to that receiver's `inputCh` before the next one is started. So a
-//!    worker sees its share of a source in the source's own relative order.
-//! 3. A source's chunks reach `inputCh` in source order, because one goroutine
-//!    per source owns that loop.
-//!
-//! This port chooses the one legal interleaving that is easiest to reason
-//! about: every source is fetched and split to exhaustion, then every worker is
-//! drained in ascending worker index. Errors are queued as they occur, so a
-//! fetch error precedes any worker output -- also a legal Go interleaving, and
-//! the safe one (the caller sees the failure rather than a truncated result).
-//!
-//! The one behavioural difference this creates is *not* visible in the row
-//! stream: Go stops pulling a source once every worker has exited and the
-//! finish channel closes, whereas this port always drains each source fully
-//! before running any worker. That changes how many times a source's `next` is
-//! called under an early-stopping child, never which rows come out.
-//!
-//! TESTS: WRITTEN, not transcreated. `pkg/executor/shuffle.go` has no
-//! `shuffle_test.go`; its upstream coverage lives in
-//! `pkg/executor/test/executor/executor_test.go` and
-//! `pkg/executor/aggregate/agg_test.go` behind testkit sessions and the
-//! `shuffleError` / `shuffleExecFetchDataAndSplit` / `shuffleWorkerRun`
-//! failpoints, none of which are reachable from this crate. The murmur3
-//! vectors are the published MurmurHash3 x86_32 reference values, which is
-//! what `github.com/twmb/murmur3.Sum32` computes.
+//! Physical-planner integration is present; complete upstream package validation
+//! remains pending. Unit tests are focused regression evidence.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+
+use crossbeam_channel::{Receiver, Sender, bounded, select_biased};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
+use tidb_expr::Columns;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::hash_agg::group_key_part;
 use crate::vec_group_checker::VecGroupChecker;
 
-/// Go `shuffleOutput` (`shuffle.go:106`): one item on the shuffle's output
-/// channel.
-///
-/// Go's struct carries `chk`, `err` and `giveBackCh` together and readers
-/// inspect `err` first (`shuffle.go:258`), so exactly one of the two is ever
-/// meaningful. Making that an enum removes the third state (both set) rather
-/// than trusting a convention.
-///
-/// boundary: Go `shuffleOutput.giveBackCh` is dropped. It returns the emptied
-/// chunk to `shuffleWorker.outputHolderCh` so the worker can refill it; it
-/// carries no rows and no error, and this port allocates a fresh chunk per
-/// worker iteration instead of recycling one.
 enum ShuffleOutput {
-    /// Go `shuffleOutput{chk: ..., giveBackCh: ...}`. Never empty: the worker
-    /// explicitly refuses to send a zero-row chunk (`shuffle.go:428`).
-    Chunk(Chunk),
-    /// Go `shuffleOutput{err: ...}`.
+    Chunk(Chunk, Sender<Chunk>),
     Err(ExecError),
 }
 
-/// The shared mailbox behind Go's `shuffleReceiver.inputCh`.
-///
-/// Go pairs `inputCh` with `inputHolderCh`, a one-slot channel that returns the
-/// drained chunk to the splitter so it can be refilled. The holder channel is a
-/// pure allocation optimisation -- it moves no rows and reports no state -- so
-/// only the row-carrying direction is modelled here.
-///
-/// boundary: Go `shuffleReceiver.inputHolderCh`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Inbox {
-    /// Chunks queued for the receiver, in the order the splitter filled them.
-    queue: VecDeque<Chunk>,
-    /// Go's closing of `inputCh` in `fetchDataAndSplit`'s defer
-    /// (`shuffle.go:288-290`): no further chunk will arrive for this
-    /// (source, worker) pair.
-    closed: bool,
+    input: Option<Sender<Chunk>>,
+    incoming: Receiver<Chunk>,
+    holder: Sender<Chunk>,
+    available: Receiver<Chunk>,
 }
 
-/// A handle on one receiver's mailbox, shared by the splitter that fills it and
-/// the [`ShuffleReceiver`] that drains it.
+impl Default for Inbox {
+    fn default() -> Self {
+        let (input, incoming) = bounded(1);
+        let (holder, available) = bounded(1);
+        Self {
+            input: Some(input),
+            incoming,
+            holder,
+            available,
+        }
+    }
+}
+
+/// Shared channels for one source/worker pair. Only the source fills buffers;
+/// only its receiver returns buffers after swapping columns into its request.
 #[derive(Clone, Debug, Default)]
 pub struct InboxHandle(Arc<Mutex<Inbox>>);
 
 impl InboxHandle {
-    /// A fresh, open mailbox.
     #[must_use]
     pub fn new() -> Self {
-        InboxHandle(Arc::new(Mutex::new(Inbox::default())))
+        Self::default()
     }
 
     fn push(&self, chunk: Chunk) {
-        self.0.lock().unwrap().queue.push_back(chunk);
-    }
-
-    fn pop(&self) -> Option<Chunk> {
-        self.0.lock().unwrap().queue.pop_front()
+        let input = self.0.lock().unwrap().input.clone();
+        if let Some(input) = input {
+            let _ = input.send(chunk);
+        }
     }
 
     fn close(&self) {
-        self.0.lock().unwrap().closed = true;
+        self.0.lock().unwrap().input.take();
     }
 
-    /// Go's `channel.Clear(r.inputCh)` in `ShuffleExec.Close`
-    /// (`shuffle.go:186`): drop whatever the splitter left queued.
     fn clear(&self) {
-        self.0.lock().unwrap().queue.clear();
-    }
-
-    /// Whether Go's `inputCh` has been closed for this (source, worker) pair.
-    fn is_closed(&self) -> bool {
-        self.0.lock().unwrap().closed
+        let inbox = self.0.lock().unwrap();
+        while inbox.incoming.try_recv().is_ok() {}
+        while inbox.available.try_recv().is_ok() {}
     }
 
     fn reopen(&self) {
-        let mut inbox = self.0.lock().unwrap();
-        inbox.queue.clear();
-        inbox.closed = false;
+        *self.0.lock().unwrap() = Inbox::default();
+    }
+
+    fn recycle(&self, chunk: Chunk) {
+        let holder = self.0.lock().unwrap().holder.clone();
+        let _ = holder.send(chunk);
+    }
+
+    fn acquire(&self, finish: &FinishFlag) -> Option<Chunk> {
+        let available = self.0.lock().unwrap().available.clone();
+        let closed = finish.receiver();
+        select_biased! {
+            recv(closed) -> _ => None,
+            recv(available) -> chunk => chunk.ok(),
+        }
+    }
+
+    fn receive(&self, finish: &FinishFlag) -> Option<Chunk> {
+        let incoming = self.0.lock().unwrap().incoming.clone();
+        let closed = finish.receiver();
+        select_biased! {
+            recv(closed) -> _ => None,
+            recv(incoming) -> chunk => chunk.ok(),
+        }
     }
 }
 
-/// A handle on Go's `finishCh`, the broadcast that tells sources and workers to
-/// abandon their loops.
-///
-/// Go closes it only in `ShuffleExec.Close` (`shuffle.go:171`). Because this
-/// port runs sources and workers inside `Next` rather than on goroutines,
-/// `Close` cannot overlap them and the flag is never observed set from inside a
-/// loop -- the checks are kept so the structure matches Go's and so a future
-/// concurrent drive inherits the same shape.
+#[derive(Debug)]
+struct FinishState {
+    sender: Option<Sender<()>>,
+    receiver: Receiver<()>,
+}
+
+impl Default for FinishState {
+    fn default() -> Self {
+        let (sender, receiver) = bounded(0);
+        Self {
+            sender: Some(sender),
+            receiver,
+        }
+    }
+}
+
+/// Dropping the sole sender broadcasts cancellation to all blocked receivers.
 #[derive(Clone, Debug, Default)]
-pub struct FinishFlag(Arc<AtomicBool>);
+pub struct FinishFlag(Arc<Mutex<FinishState>>);
 
 impl FinishFlag {
-    /// An unset flag, matching Go's freshly made `finishCh`.
     #[must_use]
     pub fn new() -> Self {
-        FinishFlag(Arc::new(AtomicBool::new(false)))
+        Self::default()
     }
-
-    fn is_set(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
+    fn receiver(&self) -> Receiver<()> {
+        self.0.lock().unwrap().receiver.clone()
     }
-
     fn set(&self) {
-        self.0.store(true, Ordering::Relaxed);
+        self.0.lock().unwrap().sender.take();
     }
-
-    /// Go's `Open` replacing `finishCh` with a fresh, open channel.
     fn reset(&self) {
-        self.0.store(false, Ordering::Relaxed);
+        *self.0.lock().unwrap() = FinishState::default();
     }
 }
 
@@ -227,40 +194,18 @@ impl Executor for ShuffleReceiver {
         if self.executed {
             return Ok(());
         }
-        // Go's `select` over `finishCh` and `inputCh`.
-        if self.finish.is_set() {
-            self.executed = true;
-            return Ok(());
-        }
-        match self.inbox.pop() {
-            // Go's `!ok` (channel closed and drained) branch.
-            None if self.inbox.is_closed() => {
-                self.executed = true;
-                Ok(())
-            }
-            // Empty but still open: Go would *block* here waiting for the
-            // splitter. The sequential drive exhausts every source (closing
-            // every mailbox) before it runs a single worker, so reaching this
-            // means that ordering was broken. Reporting it is the safe
-            // direction -- silently treating it as exhaustion would drop the
-            // rows still to come.
-            None => Err(ExecError::internal(
-                "shuffle receiver read an open but empty input channel",
-            )),
+        match self.inbox.receive(&self.finish) {
+            None => self.executed = true,
             Some(mut result) => {
-                // Go quirk reproduced: a zero-row chunk on `inputCh` ends the
-                // receiver just like a closed channel (`shuffle.go:388`),
-                // *without* forwarding it. The splitter never sends one -- it
-                // only pushes a buffer it has appended at least one row to --
-                // so this arm is defensive in Go too, and stays so here.
                 if result.num_rows() == 0 {
                     self.executed = true;
                     return Ok(());
                 }
                 req.swap_columns(&mut result);
-                Ok(())
+                self.inbox.recycle(result);
             }
         }
+        Ok(())
     }
 
     /// Go `shuffleReceiver.Close` (`shuffle.go:370`).
@@ -320,28 +265,39 @@ impl ShuffleWorker {
         }
     }
 
-    /// Go `shuffleWorker.run` (`shuffle.go:409`).
-    ///
-    /// boundary: Go's `defer recover() -> recoveryShuffleExec` and the
-    /// `shuffleWorkerRun` failpoint are dropped; this port has no panicking
-    /// child to catch.
-    fn run(&mut self, output: &mut VecDeque<ShuffleOutput>) {
+    fn run(&mut self, output: &Sender<ShuffleOutput>, first: Chunk) {
+        let (holder, available) = bounded(1);
+        holder.send(first).unwrap();
+        let closed = self.finish.receiver();
         loop {
-            if self.finish.is_set() {
-                return;
-            }
-            let mut chk = self.child_exec.new_chunk();
+            let mut chk = select_biased! {
+                recv(closed) -> _ => return,
+                recv(available) -> chunk => match chunk { Ok(chunk) => chunk, Err(_) => return },
+            };
             if let Err(err) = self.child_exec.next(&mut chk) {
-                output.push_back(ShuffleOutput::Err(err));
+                let _ = output.send(ShuffleOutput::Err(err));
                 return;
             }
-            // Go: "Should not send an empty `chk` to `e.outputCh`."
             if chk.num_rows() == 0 {
                 return;
             }
-            output.push_back(ShuffleOutput::Chunk(chk));
+            if output
+                .send(ShuffleOutput::Chunk(chk, holder.clone()))
+                .is_err()
+            {
+                return;
+            }
         }
     }
+}
+
+fn report_panic(output: &Sender<ShuffleOutput>, payload: Box<dyn std::any::Any + Send>) {
+    let message = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("shuffle panicked");
+    let _ = output.send(ShuffleOutput::Err(ExecError::internal(message.to_owned())));
 }
 
 /// Go `partitionSplitter` (`shuffle.go:440`): assigns each input row a worker.
@@ -402,19 +358,30 @@ impl<C: Columns> PartitionSplitter<C> for PartitionHashSplitter {
             self.hash_keys
                 .push(Vec::with_capacity(10 * self.by_items.len()));
         }
+        let timezone = ctx.time_zone();
         for item in &self.by_items {
-            // Same derivation `hash_agg`'s private `expr_collation` performs,
-            // so a shuffle partition key and a hash-aggregation group key are
-            // encoded identically.
-            let collation = tidb_expr::collation_derive::collation_of_node(item);
+            // Go aggregate.GetGroupKey evaluates enums by their numeric value
+            // (including invalid zero) and derives decimal precision per value.
+            let mut field_type = item
+                .static_type()
+                .cloned()
+                .ok_or_else(|| ExecError::internal("shuffle group expression has no field type"))?;
+            match field_type.code() {
+                tidb_datatype::FieldTypeCode::Enum => {
+                    field_type.add_flags(tidb_datatype::FieldTypeFlags::ENUM_SET_AS_INT);
+                }
+                tidb_datatype::FieldTypeCode::NewDecimal => field_type.set_flen(0),
+                _ => {}
+            }
             for row_index in 0..num_rows {
                 let datum = item.eval(ctx, input.get_row(row_index))?;
-                // `group_key_part` is this crate's port of Go's
-                // `codec.HashGroupKey` element encoding, shared with
-                // `hash_agg`/`stream_agg` so a shuffle partition and a hash
-                // aggregation group agree on what "same key" means.
-                let part = group_key_part(&collation, &datum);
-                self.hash_keys[row_index].extend_from_slice(&part);
+                tidb_codec::append_hash_group_key_in_timezone(
+                    &timezone,
+                    &datum,
+                    &field_type,
+                    &mut self.hash_keys[row_index],
+                )
+                .map_err(|error| ExecError::internal(error.to_string()))?;
             }
         }
 
@@ -507,13 +474,18 @@ pub struct ShuffleExec<C: Columns> {
     data_sources: Vec<Box<dyn Executor>>,
 
     finish: FinishFlag,
-    /// Go's `outputCh`. Go sizes it `concurrency + len(dataSources)`; a
-    /// `VecDeque` needs no bound because nothing here blocks on a full channel.
-    output: VecDeque<ShuffleOutput>,
-
-    ctx: C,
-    /// Go `allSourceAndWorkerExitForTest` (`shuffle.go:104`).
-    all_source_and_worker_exit_for_test: bool,
+    output: Option<Receiver<ShuffleOutput>>,
+    ctx: Arc<Mutex<C>>,
+    source_threads: Vec<JoinHandle<(Box<dyn Executor>, Box<dyn PartitionSplitter<C>>)>>,
+    worker_threads: Vec<JoinHandle<ShuffleWorker>>,
+    #[cfg(test)]
+    fail_spawn_after: Option<usize>,
+    #[cfg(test)]
+    fail_next: bool,
+    #[cfg(test)]
+    source_panic_gate: Option<Receiver<()>>,
+    #[cfg(test)]
+    panic_workers: bool,
 }
 
 impl<C: Columns> ShuffleExec<C> {
@@ -557,9 +529,18 @@ impl<C: Columns> ShuffleExec<C> {
             splitters,
             data_sources,
             finish,
-            output: VecDeque::new(),
-            ctx,
-            all_source_and_worker_exit_for_test: false,
+            output: None,
+            ctx: Arc::new(Mutex::new(ctx)),
+            source_threads: Vec::new(),
+            worker_threads: Vec::new(),
+            #[cfg(test)]
+            fail_spawn_after: None,
+            #[cfg(test)]
+            fail_next: false,
+            #[cfg(test)]
+            source_panic_gate: None,
+            #[cfg(test)]
+            panic_workers: false,
         }
     }
 
@@ -570,142 +551,222 @@ impl<C: Columns> ShuffleExec<C> {
         self.concurrency
     }
 
-    /// Go `ShuffleExec.prepare4ParallelExec` (`shuffle.go:217`), sequentially.
-    ///
-    /// Go starts one goroutine per data source, one per worker, and one joiner
-    /// (`waitWorkerAndCloseOutput`). Here the sources run to exhaustion first
-    /// -- which is what closes every mailbox, exactly as Go's per-source defer
-    /// does -- and the workers then run in ascending index. See the module
-    /// header for why that is a legal interleaving of Go's channel order.
-    fn prepare4_parallel_exec(&mut self) {
-        self.all_source_and_worker_exit_for_test = false;
-        let ShuffleExec {
-            workers,
-            splitters,
-            data_sources,
-            finish,
-            output,
-            ctx,
-            ..
-        } = self;
-
-        for (source_index, (source, splitter)) in data_sources
-            .iter_mut()
-            .zip(splitters.iter_mut())
-            .enumerate()
-        {
-            fetch_data_and_split(
-                source.as_mut(),
-                splitter.as_mut(),
-                ctx,
-                workers,
-                source_index,
-                finish,
-                output,
-            );
+    fn join_threads(&mut self) {
+        // Cancellation must precede joining: a source may be waiting for an
+        // input buffer held by an early-stopped worker.
+        self.finish.set();
+        for handle in self.worker_threads.drain(..) {
+            self.workers
+                .push(handle.join().expect("shuffle worker recovery failed"));
         }
-
-        for worker in workers.iter_mut() {
-            worker.run(output);
+        for handle in self.source_threads.drain(..) {
+            let (source, splitter) = handle.join().expect("shuffle source recovery failed");
+            self.data_sources.push(source);
+            self.splitters.push(splitter);
         }
-
-        // Go `waitWorkerAndCloseOutput` (`shuffle.go:234`).
-        self.all_source_and_worker_exit_for_test = true;
+        self.output.take();
     }
 }
 
-/// Go `ShuffleExec.fetchDataAndSplit` (`shuffle.go:278`).
-///
-/// Free-standing so the source, its splitter and the workers' mailboxes are
-/// borrowed as the disjoint pieces they are.
-///
-/// boundary: Go's `defer recover() -> recoveryShuffleExec` and the
-/// `shuffleExecFetchDataAndSplit` failpoint are dropped -- neither the sources
-/// nor the splitters panic in this port; their failures are `ExecError`s.
+impl<C: Columns + Send + 'static> ShuffleExec<C> {
+    #[cfg(test)]
+    fn check_thread_spawn(&mut self) -> std::io::Result<()> {
+        if let Some(remaining) = &mut self.fail_spawn_after {
+            if *remaining == 0 {
+                self.fail_spawn_after = None;
+                return Err(std::io::Error::other(
+                    "injected shuffle thread creation failure",
+                ));
+            }
+            *remaining -= 1;
+        }
+        Ok(())
+    }
+
+    fn spawn_job<T: Send + 'static>(
+        &mut self,
+        job: T,
+        run: impl FnOnce(&mut T) + Send + 'static,
+    ) -> Result<JoinHandle<T>, (std::io::Error, T)> {
+        #[cfg(test)]
+        if let Err(error) = self.check_thread_spawn() {
+            return Err((error, job));
+        }
+        // Keep executor ownership here until the OS accepts the new thread.
+        // Builder::spawn drops its closure on failure, so moving the executor
+        // directly into that closure would prevent Close from releasing it.
+        let (sender, receiver) = bounded(1);
+        match std::thread::Builder::new().spawn(move || {
+            let mut job = receiver.recv().expect("shuffle startup job");
+            run(&mut job);
+            job
+        }) {
+            Ok(handle) => {
+                assert!(sender.send(job).is_ok(), "shuffle startup receiver exited");
+                Ok(handle)
+            }
+            Err(error) => Err((error, job)),
+        }
+    }
+
+    fn prepare4_parallel_exec(&mut self) -> Result<(), ExecError> {
+        let (output, receiver) = bounded(self.workers.len() + self.data_sources.len());
+        self.output = Some(receiver);
+        let inboxes: Vec<Vec<InboxHandle>> = self
+            .workers
+            .iter()
+            .map(|worker| worker.inboxes.clone())
+            .collect();
+        let mut sources = std::mem::take(&mut self.data_sources)
+            .into_iter()
+            .zip(std::mem::take(&mut self.splitters))
+            .enumerate();
+        while let Some((source_index, job)) = sources.next() {
+            let inputs: Vec<_> = inboxes
+                .iter()
+                .map(|row| row[source_index].clone())
+                .collect();
+            let finish = self.finish.clone();
+            let ctx = self.ctx.clone();
+            let output = output.clone();
+            #[cfg(test)]
+            let source_panic_gate = self.source_panic_gate.clone();
+            let spawned = self.spawn_job(job, move |(source, splitter)| {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    #[cfg(test)]
+                    if let Some(gate) = source_panic_gate {
+                        let _ = gate.recv();
+                        panic!("shuffleExecFetchDataAndSplitPanic");
+                    }
+                    fetch_data_and_split(
+                        source.as_mut(),
+                        splitter.as_mut(),
+                        &ctx,
+                        &inputs,
+                        &finish,
+                        &output,
+                    );
+                }));
+                if let Err(payload) = result {
+                    report_panic(&output, payload);
+                }
+                for inbox in &inputs {
+                    inbox.close();
+                }
+            });
+            match spawned {
+                Ok(handle) => self.source_threads.push(handle),
+                Err((error, (source, splitter))) => {
+                    self.join_threads();
+                    self.data_sources.push(source);
+                    self.splitters.push(splitter);
+                    for (_, (source, splitter)) in sources {
+                        self.data_sources.push(source);
+                        self.splitters.push(splitter);
+                    }
+                    return Err(ExecError::internal(format!(
+                        "shuffle thread creation failure: {error}"
+                    )));
+                }
+            }
+        }
+        let mut workers = std::mem::take(&mut self.workers).into_iter();
+        while let Some(worker) = workers.next() {
+            let output = output.clone();
+            let first = self.meta.new_chunk();
+            #[cfg(test)]
+            let panic_worker = self.panic_workers;
+            let spawned = self.spawn_job(worker, move |worker| {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    #[cfg(test)]
+                    if panic_worker {
+                        panic!("ShufflePanic");
+                    }
+                    worker.run(&output, first);
+                }));
+                if let Err(payload) = result {
+                    report_panic(&output, payload);
+                }
+            });
+            match spawned {
+                Ok(handle) => self.worker_threads.push(handle),
+                Err((error, worker)) => {
+                    self.join_threads();
+                    self.workers.push(worker);
+                    self.workers.extend(workers);
+                    return Err(ExecError::internal(format!(
+                        "shuffle thread creation failure: {error}"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<C: Columns> Drop for ShuffleExec<C> {
+    fn drop(&mut self) {
+        self.join_threads();
+    }
+}
+
 fn fetch_data_and_split<C: Columns>(
     source: &mut dyn Executor,
     splitter: &mut dyn PartitionSplitter<C>,
-    ctx: &C,
-    workers: &[ShuffleWorker],
-    source_index: usize,
+    ctx: &Mutex<C>,
+    inboxes: &[InboxHandle],
     finish: &FinishFlag,
-    output: &mut VecDeque<ShuffleOutput>,
+    output: &Sender<ShuffleOutput>,
 ) {
-    // Go's `defer` closes this source's `inputCh` on every worker, on every
-    // exit path. `close_inboxes` is called at each `return` below for the same
-    // reason: a worker's receiver must be able to tell "drained" from
-    // "waiting".
-    let close_inboxes = |workers: &[ShuffleWorker]| {
-        for worker in workers {
-            worker.inboxes[source_index].close();
-        }
-    };
-
-    let mut results: Vec<Option<Chunk>> = (0..workers.len()).map(|_| None).collect();
-    let mut worker_indices: Vec<usize> = Vec::new();
-    // Go `exec.TryNewCacheChunk(e.dataSources[dataSourceIndex])`.
+    let mut results: Vec<Option<Chunk>> = (0..inboxes.len()).map(|_| None).collect();
+    let mut worker_indices = Vec::new();
     let mut chk = source.new_chunk();
-
     loop {
         if let Err(err) = source.next(&mut chk) {
-            output.push_back(ShuffleOutput::Err(err));
-            close_inboxes(workers);
+            let _ = output.send(ShuffleOutput::Err(err));
             return;
         }
         if chk.num_rows() == 0 {
             break;
         }
-        if let Err(err) = splitter.split(ctx, &chk, &mut worker_indices) {
-            output.push_back(ShuffleOutput::Err(err));
-            close_inboxes(workers);
+        // Columns permits non-Sync evaluation contexts. Share the same context
+        // and serialize evaluation rather than cloning session warning state.
+        let split = splitter.split(
+            &*ctx.lock().unwrap_or_else(|e| e.into_inner()),
+            &chk,
+            &mut worker_indices,
+        );
+        if let Err(err) = split {
+            let _ = output.send(ShuffleOutput::Err(err));
             return;
         }
-        // Go indexes `workerIndices[i]` for `i` in `0..numRows` and would
-        // panic on a short slice. Asserting the length up front keeps that
-        // loudness while letting the loop walk the indices directly -- walking
-        // them without the check would silently *drop* the unassigned tail
-        // rows, which is exactly the wrong direction for a narrowing.
         assert_eq!(
             worker_indices.len(),
             chk.num_rows(),
             "partition splitter must assign every input row a worker"
         );
         for (row_index, &worker_index) in worker_indices.iter().enumerate() {
-            let worker = &workers[worker_index];
             if results[worker_index].is_none() {
-                // Go blocks here on `select { <-finishCh; <-inputHolderCh }`.
-                if finish.is_set() {
-                    close_inboxes(workers);
+                results[worker_index] = inboxes[worker_index].acquire(finish);
+                if results[worker_index].is_none() {
                     return;
                 }
-                // Go `exec.NewFirstChunk(e.dataSources[i])`, pushed onto
-                // `inputHolderCh` in `Open` (`shuffle.go:143`): the buffer
-                // carries the *source*'s types and sizing, not the shuffle's.
-                results[worker_index] = Some(source.new_chunk());
             }
-            let buffer = results[worker_index]
-                .as_mut()
-                .expect("shuffle split buffer was just installed");
+            let buffer = results[worker_index].as_mut().unwrap();
             buffer.append_row(chk.get_row(row_index));
             if buffer.is_full() {
-                let full = results[worker_index]
-                    .take()
-                    .expect("shuffle split buffer was just filled");
-                worker.inboxes[source_index].push(full);
+                inboxes[worker_index].push(results[worker_index].take().unwrap());
             }
         }
     }
-
-    // Go flushes the partial buffers before the defer closes the channels.
-    for (worker_index, worker) in workers.iter().enumerate() {
-        if let Some(partial) = results[worker_index].take() {
-            worker.inboxes[source_index].push(partial);
+    for (inbox, result) in inboxes.iter().zip(results) {
+        if let Some(partial) = result {
+            inbox.push(partial);
         }
     }
-    close_inboxes(workers);
 }
 
-impl<C: Columns + Send> Executor for ShuffleExec<C> {
+impl<C: Columns + Send + 'static> Executor for ShuffleExec<C> {
     /// Go `ShuffleExec.Open` (`shuffle.go:113`).
     fn open(&mut self) -> Result<(), ExecError> {
         for source in &mut self.data_sources {
@@ -713,7 +774,7 @@ impl<C: Columns + Send> Executor for ShuffleExec<C> {
         }
 
         self.prepared = false;
-        self.output.clear();
+        self.output = None;
         // Go allocates a *new* `finishCh` here (`shuffle.go:124`), so a
         // shuffle reopened after `Close` is not permanently finished. The Arc
         // is shared with every worker and receiver, which is how Go's
@@ -724,6 +785,9 @@ impl<C: Columns + Send> Executor for ShuffleExec<C> {
                 inbox.reopen();
             }
             worker.child_exec.open()?;
+            for (inbox, source) in worker.inboxes.iter().zip(&self.data_sources) {
+                inbox.recycle(source.new_chunk());
+            }
         }
         Ok(())
     }
@@ -732,23 +796,31 @@ impl<C: Columns + Send> Executor for ShuffleExec<C> {
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         if !self.prepared {
-            self.prepare4_parallel_exec();
             self.prepared = true;
+            if let Err(error) = self.prepare4_parallel_exec() {
+                self.executed = true;
+                return Err(error);
+            }
         }
-        // boundary: Go's `shuffleError` failpoint (`shuffle.go:247`) has no
-        // Rust counterpart.
+        // Go shuffleError runs after launching sources/workers, before reading
+        // their output. Keep the same injection boundary in unit tests.
+        #[cfg(test)]
+        if self.fail_next {
+            return Err(ExecError::internal("ShuffleExec.Next error"));
+        }
         if self.executed {
             return Ok(());
         }
-        match self.output.pop_front() {
+        match self.output.as_ref().expect("shuffle prepared").recv().ok() {
             // Go's closed-and-drained `outputCh`.
             None => {
                 self.executed = true;
                 Ok(())
             }
             Some(ShuffleOutput::Err(err)) => Err(err),
-            Some(ShuffleOutput::Chunk(mut chk)) => {
+            Some(ShuffleOutput::Chunk(mut chk, holder)) => {
                 req.swap_columns(&mut chk);
+                let _ = holder.send(chk);
                 Ok(())
             }
         }
@@ -761,23 +833,12 @@ impl<C: Columns + Send> Executor for ShuffleExec<C> {
     /// and the first-error rule are both reproduced -- a later failure never
     /// masks an earlier one, and every child is closed even after one fails.
     ///
-    /// boundary: Go's `RuntimeStatsWithConcurrencyInfo` registration
-    /// (`shuffle.go:194-198`) is dropped with the rest of this crate's runtime
-    /// stats; [`ShuffleExec::concurrency`] exposes the number it would report.
+    /// The instrumented physical builder and EXPLAIN renderer report
+    /// Go's `RuntimeStatsWithConcurrencyInfo` using this plan's concurrency.
     fn close(&mut self) -> Result<(), ExecError> {
         let mut first_err: Option<ExecError> = None;
 
-        self.finish.set();
-        self.output.clear();
-
-        // Go's `intest` assertion: if `Next` ever ran, every source and worker
-        // must have finished. The sequential drive makes that structural --
-        // `prepare4_parallel_exec` returns only after both loops complete --
-        // so this can only fire if that invariant is broken by a later edit.
-        debug_assert!(
-            !self.prepared || self.all_source_and_worker_exit_for_test,
-            "there are still some running sources or workers"
-        );
+        self.join_threads();
 
         for worker in &mut self.workers {
             for inbox in &worker.inboxes {
@@ -872,9 +933,10 @@ pub fn murmur3_sum32(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tidb_datatype::FieldTypeCode;
-    use tidb_expr::column::Column;
     use tidb_expr::NoColumns;
+    use tidb_expr::column::Column;
 
     const MAX_CHUNK: usize = 4;
 
@@ -914,7 +976,9 @@ mod tests {
         batches: Vec<Vec<i64>>,
         next_batch: usize,
         fail_at: Option<usize>,
+        panic_at: Option<usize>,
         close_err: bool,
+        next_calls: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     impl ReplaySource {
@@ -924,7 +988,9 @@ mod tests {
                 batches,
                 next_batch: 0,
                 fail_at: None,
+                panic_at: None,
                 close_err: false,
+                next_calls: Arc::default(),
             }
         }
     }
@@ -937,6 +1003,10 @@ mod tests {
 
         fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
             req.reset();
+            self.next_calls.fetch_add(1, Ordering::Relaxed);
+            if self.panic_at == Some(self.next_batch) {
+                panic!("shuffle test panic");
+            }
             if self.fail_at == Some(self.next_batch) {
                 return Err(ExecError::internal("source exploded"));
             }
@@ -1137,6 +1207,60 @@ mod tests {
         assert_eq!(indices[0], indices[3]);
     }
 
+    #[test]
+    fn hash_splitter_uses_go_group_keys_for_unsigned_enum_and_decimal() {
+        use tidb_datatype::{Collation, Datum, Decimal, FieldTypeFlags, MysqlEnum};
+        let mut unsigned = long();
+        unsigned.add_flags(FieldTypeFlags::UNSIGNED);
+        let mut enumeration = FieldType::new(FieldTypeCode::Enum);
+        enumeration.set_elems(vec!["".into(), "a".into()]);
+        let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
+        decimal.set_flen(2);
+        decimal.set_decimal(2);
+        // Captured from Go aggregate.GetGroupKey and murmur3.Sum32 at aba629bb455.
+        // The decimal values exceed the declared flen, exercising GetGroupKey's
+        // flen=0 adjustment; enum zero and declared empty-string value differ.
+        let cases = [
+            (
+                unsigned,
+                vec![Datum::UInt(u64::MAX), Datum::UInt(1)],
+                vec![vec![8, 1], vec![8, 2]],
+                vec![5, 5],
+            ),
+            (
+                enumeration,
+                vec![
+                    Datum::new_enum(MysqlEnum::new("", 0), Collation::Utf8Mb4Bin),
+                    Datum::new_enum(MysqlEnum::new("", 1), Collation::Utf8Mb4Bin),
+                ],
+                vec![vec![8, 0], vec![8, 2]],
+                vec![6, 5],
+            ),
+            (
+                decimal,
+                vec![
+                    Datum::new_decimal(Decimal::from_literal("1.20")),
+                    Datum::new_decimal(Decimal::from_literal("12.30")),
+                ],
+                vec![vec![6, 3, 2, 129, 20], vec![6, 4, 2, 140, 30]],
+                vec![6, 2],
+            ),
+        ];
+        for (field_type, values, expected_keys, expected_workers) in cases {
+            let mut column = Column::new(1, field_type.clone());
+            column.index = 0;
+            let mut input = Chunk::new(&[field_type], MAX_CHUNK, MAX_CHUNK);
+            for value in values {
+                input.append_datum(0, &value);
+            }
+            let mut splitter = PartitionHashSplitter::new(7, vec![Expression::Column(column)]);
+            let mut indices = Vec::new();
+            splitter.split(&NoColumns, &input, &mut indices).unwrap();
+            assert_eq!(splitter.hash_keys, expected_keys);
+            assert_eq!(indices, expected_workers);
+        }
+    }
+
     /// Go reuses `s.hashKeys` across calls, truncating only the prefix it can
     /// reuse. A shorter chunk after a longer one must not leak the stale tail.
     #[test]
@@ -1163,6 +1287,24 @@ mod tests {
         PartitionSplitter::<NoColumns>::split(&mut splitter, &NoColumns, &chunk, &mut indices)
             .unwrap();
         assert_eq!(indices, vec![0, 0, 1, 0]);
+    }
+
+    /// Original pkg/executor/shuffle_test.go::TestPartitionRangeSplitter.
+    #[test]
+    fn range_splitter_matches_original_varchar_fixture() {
+        let field_type = FieldType::new(FieldTypeCode::Varchar);
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        let mut input = Chunk::new(&[field_type], 1024, 1024);
+        for value in [
+            "a", "a", "a", "a", "c", "c", "b", "b", "b", "q", "eee", "eee", "ddd",
+        ] {
+            input.append_string(0, value);
+        }
+        let mut splitter = PartitionRangeSplitter::new(2, vec![Expression::Column(column)]);
+        let mut obtained = Vec::new();
+        splitter.split(&NoColumns, &input, &mut obtained).unwrap();
+        assert_eq!(obtained, vec![0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1]);
     }
 
     /// Go quirk reproduced: `s.idx` persists across chunks, so a group split
@@ -1211,7 +1353,6 @@ mod tests {
     fn receiver_treats_an_empty_chunk_as_end_of_input() {
         let inbox = InboxHandle::new();
         inbox.push(chunk_of(&[]));
-        inbox.push(chunk_of(&[9]));
         inbox.close();
         let mut receiver = ShuffleReceiver::new(
             ExecutorMeta::new(one_col_schema(), 0, MAX_CHUNK, MAX_CHUNK),
@@ -1244,22 +1385,35 @@ mod tests {
         assert_eq!(chunk.num_rows(), 0);
     }
 
-    /// The fail-loud narrowing: an open-but-empty mailbox is Go's blocking
-    /// case, unreachable in the sequential drive, and is reported rather than
-    /// silently read as exhaustion.
     #[test]
-    fn receiver_reports_an_open_but_empty_mailbox() {
+    fn receiver_waits_for_an_open_mailbox_and_wakes_on_finish() {
+        let finish = FinishFlag::new();
         let mut receiver = ShuffleReceiver::new(
             ExecutorMeta::new(one_col_schema(), 0, MAX_CHUNK, MAX_CHUNK),
             InboxHandle::new(),
-            FinishFlag::new(),
+            finish.clone(),
         );
         receiver.open().unwrap();
-        let mut chunk = receiver.new_chunk();
-        assert!(matches!(
-            receiver.next(&mut chunk),
-            Err(ExecError::Internal(_))
-        ));
+        let (done, result) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut chunk = receiver.new_chunk();
+            done.send(receiver.next(&mut chunk).map(|()| chunk.num_rows()))
+                .unwrap();
+        });
+        assert!(
+            result
+                .recv_timeout(std::time::Duration::from_millis(20))
+                .is_err()
+        );
+        finish.set();
+        assert_eq!(
+            result
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        worker.join().unwrap();
     }
 
     // ---- end to end ----------------------------------------------------
@@ -1287,6 +1441,173 @@ mod tests {
         )
     }
 
+    #[test]
+    fn shuffle_returns_output_before_draining_its_source() {
+        let finish = FinishFlag::new();
+        let source = ReplaySource::new(vec![vec![42; MAX_CHUNK]; 100]);
+        let calls = source.next_calls.clone();
+        let mut exec = ShuffleExec::new(
+            ExecutorMeta::new(one_col_schema(), 1, MAX_CHUNK, MAX_CHUNK),
+            NoColumns,
+            build_workers(1, 1, &finish),
+            vec![Box::new(PartitionHashSplitter::new(
+                1,
+                vec![column_expr(0)],
+            ))],
+            vec![Box::new(source)],
+            finish,
+        );
+        exec.open().unwrap();
+        let mut chunk = exec.new_chunk();
+        exec.next(&mut chunk).unwrap();
+        assert_eq!(ints(&chunk), vec![42; MAX_CHUNK]);
+        let fetched = calls.load(Ordering::Relaxed);
+        exec.close().unwrap();
+        assert!(fetched <= 5, "fetched {fetched} chunks before first output");
+    }
+
+    #[test]
+    fn shuffle_recovers_source_and_worker_panics_and_closes_blocked_inputs() {
+        for panic_in_worker in [false, true] {
+            let finish = FinishFlag::new();
+            let mut workers = build_workers(1, 1, &finish);
+            let mut source = ReplaySource::new(vec![vec![42; MAX_CHUNK]; 100]);
+            if panic_in_worker {
+                let mut child = ReplaySource::new(vec![]);
+                child.panic_at = Some(0);
+                workers[0].child_exec = Box::new(child);
+            } else {
+                source.panic_at = Some(0);
+            }
+            let mut exec = ShuffleExec::new(
+                ExecutorMeta::new(one_col_schema(), 1, MAX_CHUNK, MAX_CHUNK),
+                NoColumns,
+                workers,
+                vec![Box::new(PartitionHashSplitter::new(
+                    1,
+                    vec![column_expr(0)],
+                ))],
+                vec![Box::new(source)],
+                finish,
+            );
+            exec.open().unwrap();
+            let mut chunk = exec.new_chunk();
+            let error = exec.next(&mut chunk).unwrap_err();
+            assert!(
+                format!("{error:?}").contains("shuffle test panic"),
+                "{error:?}"
+            );
+            exec.close().unwrap();
+            assert_eq!(exec.workers.len(), 1);
+            assert_eq!(exec.data_sources.len(), 1);
+            assert!(exec.worker_threads.is_empty());
+            assert!(exec.source_threads.is_empty());
+        }
+    }
+
+    #[test]
+    fn shuffle_thread_start_failure_preserves_executors_for_close_and_reopen() {
+        for failed_thread in 0..5 {
+            let finish = FinishFlag::new();
+            let mut exec = ShuffleExec::new(
+                ExecutorMeta::new(one_col_schema(), 1, MAX_CHUNK, MAX_CHUNK),
+                NoColumns,
+                build_workers(3, 2, &finish),
+                (0..2)
+                    .map(|_| {
+                        Box::new(PartitionHashSplitter::new(3, vec![column_expr(0)]))
+                            as Box<dyn PartitionSplitter<NoColumns>>
+                    })
+                    .collect(),
+                vec![
+                    Box::new(ReplaySource::new(vec![vec![1, 2, 3]])),
+                    Box::new(ReplaySource::new(vec![vec![4, 5, 6]])),
+                ],
+                finish,
+            );
+            let source_ids: Vec<_> = exec
+                .data_sources
+                .iter()
+                .map(|e| e.schema() as *const _)
+                .collect();
+            let worker_ids: Vec<_> = exec
+                .workers
+                .iter()
+                .map(|w| w.child_exec.schema() as *const _)
+                .collect();
+            exec.open().unwrap();
+            exec.fail_spawn_after = Some(failed_thread);
+            let mut chunk = exec.new_chunk();
+            let error = exec.next(&mut chunk).unwrap_err();
+            assert!(format!("{error:?}").contains("shuffle thread creation failure"));
+            assert!(exec.source_threads.is_empty());
+            assert!(exec.worker_threads.is_empty());
+            assert_eq!(
+                exec.data_sources
+                    .iter()
+                    .map(|e| e.schema() as *const _)
+                    .collect::<Vec<_>>(),
+                source_ids
+            );
+            assert_eq!(
+                exec.workers
+                    .iter()
+                    .map(|w| w.child_exec.schema() as *const _)
+                    .collect::<Vec<_>>(),
+                worker_ids
+            );
+            exec.close().unwrap();
+            exec.open().unwrap();
+            let mut rows: Vec<_> = drain(&mut exec).unwrap().into_iter().flatten().collect();
+            rows.sort_unstable();
+            assert_eq!(rows, vec![1, 2, 3, 4, 5, 6]);
+            exec.close().unwrap();
+        }
+    }
+
+    /// Go TestShuffleExit combines an immediate Next error with a delayed
+    /// source panic and unconditional worker panics. Use a gate instead of
+    /// Go's 100 ms sleep, so cleanup sees the same ordering deterministically.
+    #[test]
+    fn shuffle_exit_preserves_caller_error_and_joins_panicking_threads() {
+        let (mut exec, _) = hash_shuffle(5, vec![vec![1, 2, 3, 4]]);
+        let (release, gate) = bounded(0);
+        exec.source_panic_gate = Some(gate);
+        exec.panic_workers = true;
+        exec.fail_next = true;
+        exec.open().unwrap();
+        let mut chunk = exec.new_chunk();
+        let error = exec.next(&mut chunk).unwrap_err();
+        assert!(format!("{error:?}").contains("ShuffleExec.Next error"));
+        assert_eq!(exec.source_threads.len(), 1);
+        assert_eq!(exec.worker_threads.len(), 5);
+        // Drop wakes the source after the caller has already received its error.
+        drop(release);
+        exec.close().unwrap();
+        assert!(exec.source_threads.is_empty());
+        assert!(exec.worker_threads.is_empty());
+        assert_eq!(exec.data_sources.len(), 1);
+        assert_eq!(exec.workers.len(), 5);
+        exec.fail_next = false;
+        exec.panic_workers = false;
+        exec.source_panic_gate = None;
+        exec.open().unwrap();
+        let mut rows: Vec<_> = drain(&mut exec).unwrap().into_iter().flatten().collect();
+        rows.sort_unstable();
+        assert_eq!(rows, vec![1, 2, 3, 4]);
+        exec.close().unwrap();
+    }
+
+    #[test]
+    fn shuffle_drop_joins_workers_without_explicit_close() {
+        let (mut exec, _) = hash_shuffle(2, vec![vec![42; MAX_CHUNK]; 100]);
+        exec.open().unwrap();
+        let mut chunk = exec.new_chunk();
+        exec.next(&mut chunk).unwrap();
+        // If Drop failed to cancel a blocked holder receive, this would hang.
+        drop(exec);
+    }
+
     /// Every input row comes out exactly once, and equal keys stay together.
     #[test]
     fn shuffle_partitions_every_row_exactly_once() {
@@ -1303,18 +1624,17 @@ mod tests {
         assert_eq!(flat, expected);
     }
 
-    /// The ordering guarantee this port fixes: workers are drained in
-    /// ascending index, and within a worker the source's relative row order
-    /// survives.
+    /// Equal partition keys stay together; output order between workers is
+    /// deliberately unspecified, as in Go.
     #[test]
-    fn shuffle_output_is_worker_ordered_and_stable_within_a_worker() {
+    fn shuffle_keeps_equal_partition_keys_together() {
         let (mut exec, _finish) = hash_shuffle(2, vec![vec![0, 1, 0, 1, 0, 1]]);
         exec.open().unwrap();
         let out = drain(&mut exec).unwrap();
         exec.close().unwrap();
 
         // Two keys, two workers: each worker emits one constant-valued run,
-        // and worker 0's run precedes worker 1's.
+        // without requiring either worker to finish first.
         let runs: Vec<Vec<i64>> = out.clone();
         assert!(!runs.is_empty());
         for run in &runs {
@@ -1327,8 +1647,8 @@ mod tests {
         assert!(flat[boundary..].iter().all(|&v| v != first));
     }
 
-    /// A buffer that fills mid-chunk is pushed immediately and a fresh one
-    /// started, so a partition larger than one chunk arrives as several -- in
+    /// A buffer that fills mid-chunk is pushed immediately and recycled after
+    /// consumption, so a partition larger than one chunk arrives as several -- in
     /// order.
     #[test]
     fn shuffle_splits_a_large_partition_into_ordered_chunks() {
@@ -1373,8 +1693,8 @@ mod tests {
         assert_eq!(flat, vec![1, 2, 3, 4]);
     }
 
-    /// A source failure reaches the caller through `Next`, ahead of any worker
-    /// output -- the safe interleaving of Go's shared output channel.
+    /// A source failure reaches Next. Here neither partial input buffer is
+    /// flushed before the error, so no worker can emit a chunk first.
     #[test]
     fn shuffle_surfaces_a_source_error() {
         let finish = FinishFlag::new();
@@ -1436,11 +1756,14 @@ mod tests {
     fn shuffle_is_replayable_after_close_and_reopen() {
         let (mut exec, _finish) = hash_shuffle(2, vec![vec![1, 2, 3, 4]]);
         exec.open().unwrap();
-        let first = drain(&mut exec).unwrap();
+        let mut first: Vec<_> = drain(&mut exec).unwrap().into_iter().flatten().collect();
         exec.close().unwrap();
 
         exec.open().unwrap();
-        let second = drain(&mut exec).unwrap();
+        let mut second: Vec<_> = drain(&mut exec).unwrap().into_iter().flatten().collect();
+        exec.close().unwrap();
+        first.sort_unstable();
+        second.sort_unstable();
         assert_eq!(first, second);
     }
 }

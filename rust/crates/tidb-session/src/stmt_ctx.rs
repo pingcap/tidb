@@ -54,6 +54,8 @@ pub(crate) struct StatementVarSnapshot {
     like_default_escape: u8,
     week_format: i64,
     div_scale: u32,
+    windowing_use_high_precision: bool,
+    enable_pipelined_window_exec: bool,
     cte_depth: i64,
     join_reorder_threshold: i32,
     default_string_match_selectivity: f64,
@@ -196,6 +198,12 @@ impl Session {
 
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
         env.session.hash_join_concurrency = resolved_concurrency("tidb_hash_join_concurrency");
+        env.session.shuffle_options = tidb_planner::physical::shuffle_optimize::ShuffleOptions {
+            window_concurrency: resolved_concurrency("tidb_window_concurrency") as usize,
+            stream_agg_concurrency: resolved_concurrency("tidb_streamagg_concurrency") as usize,
+            merge_join_concurrency: resolved_concurrency("tidb_merge_join_concurrency") as usize,
+            group_ndv_skew_ratio: number("tidb_opt_group_ndv_skew_ratio", 0.0),
+        };
         env.session.distsql_scan_concurrency = number("tidb_distsql_scan_concurrency", 15.0);
         env.session.index_lookup_concurrency =
             resolved_concurrency("tidb_index_lookup_concurrency");
@@ -218,7 +226,9 @@ impl Session {
             .ok()
             .is_none_or(|value| tidb_exec::hash_join_version::is_optimized_version(&value))
             && tidb_exec::hash_join_version::is_hash_join_v2_supported();
-        env.session.mpp_enforced = enabled("tidb_enforce_mpp", false);
+        env.session.mpp_allowed = enabled("tidb_allow_mpp", true);
+        env.session.mpp_enforced =
+            env.session.mpp_allowed && enabled("tidb_enforce_mpp", false);
 
         env.cost_factors.index_scan = number("tidb_opt_index_scan_cost_factor", 1.0);
         env.cost_factors.table_row_id_scan = number("tidb_opt_table_rowid_scan_cost_factor", 1.0);
@@ -720,6 +730,8 @@ impl Session {
                 .and_then(|value| value.parse::<u32>().ok())
                 .filter(|value| *value > 0)
                 .unwrap_or(4),
+            windowing_use_high_precision: not_off("windowing_use_high_precision"),
+            enable_pipelined_window_exec: not_off("tidb_enable_pipelined_window_function"),
             cte_depth: self
                 .vars
                 .get_system("cte_max_recursion_depth")
@@ -966,6 +978,8 @@ impl Session {
         let like_default_escape = snapshot.like_default_escape;
         let week_format = snapshot.week_format;
         let div_scale = snapshot.div_scale;
+        let windowing_use_high_precision = snapshot.windowing_use_high_precision;
+        let enable_pipelined_window_exec = snapshot.enable_pipelined_window_exec;
         let cte_depth = snapshot.cte_depth;
         let join_reorder_threshold = snapshot.join_reorder_threshold;
         let default_string_match_selectivity = snapshot.default_string_match_selectivity;
@@ -1148,6 +1162,8 @@ impl Session {
                     .with_last_found_rows(self.last_found_rows)
                     .with_client_found_rows(self.client_found_rows)
                     .with_week_and_division_scale(week_format, div_scale)
+                    .with_windowing_use_high_precision(windowing_use_high_precision)
+                    .with_pipelined_window_exec(enable_pipelined_window_exec)
                     .with_max_allowed_packet(max_allowed_packet)
                     .with_group_concat_max_len(group_concat_max_len)
                     .with_apply_cache_capacity(apply_cache_capacity)
@@ -1243,6 +1259,8 @@ impl Session {
                 .with_last_found_rows(self.last_found_rows)
                 .with_client_found_rows(self.client_found_rows)
                 .with_week_and_division_scale(week_format, div_scale)
+                .with_windowing_use_high_precision(windowing_use_high_precision)
+                .with_pipelined_window_exec(enable_pipelined_window_exec)
                 .with_max_allowed_packet(max_allowed_packet)
                 .with_group_concat_max_len(group_concat_max_len)
                 .with_apply_cache_capacity(apply_cache_capacity)
@@ -1465,6 +1483,31 @@ pub(crate) const fn scanner_sql_mode_of(mode: tidb_mysql::SqlMode) -> tidb_parse
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn mpp_enforcement_requires_both_session_switches() {
+        let mut session = Session::new();
+        let state = |session: &Session| {
+            let context = session.statement_context(false);
+            let options = &context.optimizer_cost_env().session;
+            (options.mpp_allowed, options.mpp_enforced)
+        };
+        session.run("SET tidb_allow_mpp = ON").unwrap();
+        session.run("SET tidb_enforce_mpp = OFF").unwrap();
+        assert_eq!(state(&session), (true, false));
+        session.run("SET tidb_enforce_mpp = ON").unwrap();
+        let original = session.statement_context(false);
+        assert_eq!(state(&session), (true, true));
+        session.run("SET tidb_allow_mpp = OFF").unwrap();
+        assert_eq!(state(&session), (false, false));
+        assert!(original.optimizer_cost_env().session.mpp_allowed);
+        assert!(original.optimizer_cost_env().session.mpp_enforced);
+        session.run("SET tidb_allow_mpp = ON").unwrap();
+        assert_eq!(state(&session), (true, true));
+        session.run("SET tidb_enforce_mpp = OFF").unwrap();
+        session.run("SET tidb_allow_mpp = OFF").unwrap();
+        assert_eq!(state(&session), (false, false));
+    }
     #[test]
     fn range_quota_uses_session_snapshot_and_refreshes_after_set() {
         let mut session = crate::Session::new();

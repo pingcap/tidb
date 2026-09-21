@@ -8,6 +8,60 @@
 use crate::tests_support::*;
 use crate::*;
 
+#[test]
+fn window_json_partition_boundary_uses_encoded_identity() {
+    let mut session = Session::new();
+    for sql in [
+        "SET tidb_window_concurrency=1",
+        "SET tidb_init_chunk_size=32",
+        "SET tidb_max_chunk_size=32",
+        "CREATE TABLE t(id INT, j JSON)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for id in 1..=32 {
+        session
+            .run(&format!("INSERT INTO t VALUES ({id},'1')"))
+            .unwrap();
+    }
+    session.run("INSERT INTO t VALUES (33,'1.0')").unwrap();
+    for size in [32, 64] {
+        session
+            .run(&format!("SET tidb_max_chunk_size={size}"))
+            .unwrap();
+        let expected: Vec<Vec<String>> = (1..=33)
+            .map(|id| {
+                vec![
+                    id.to_string(),
+                    if size == 64 {
+                        "33"
+                    } else if id <= 32 {
+                        "32"
+                    } else {
+                        "1"
+                    }
+                    .into(),
+                ]
+            })
+            .collect();
+        for pipeline in [0, 1] {
+            session
+                .run(&format!(
+                    "SET tidb_enable_pipelined_window_function={pipeline}"
+                ))
+                .unwrap();
+            assert_eq!(
+                row_text(session.run(
+                    "SELECT id,COUNT(*) OVER (PARTITION BY j ORDER BY id ROWS BETWEEN \
+                     UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t ORDER BY id"
+                )),
+                expected,
+                "size={size}, pipeline={pipeline}"
+            );
+        }
+    }
+}
+
 /// A `_ci` fixture where the case-folded groups (`a/A/a`, `b/B`) differ from
 /// the byte-wise ones (`A`, `B`, `a`, `a`, `b`), so a collation-blind
 /// comparison is visible in every column.
@@ -201,4 +255,24 @@ fn window_frame_shape_is_refused_with_gos_own_code() {
         ),
         Err(DriverError::WindowFrameIllegal)
     ));
+}
+
+#[test]
+fn window_min_max_keep_latest_collation_equal_value() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE window_extrema (id INT, s VARCHAR(10) COLLATE utf8mb4_general_ci)")
+        .unwrap();
+    session
+        .run("INSERT INTO window_extrema VALUES (1,'A'),(2,'a'),(3,'B')")
+        .unwrap();
+    // Go MinMaxDeque.Enqueue removes an older equal value from the back.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT MIN(s) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), \
+                MAX(s) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) \
+         FROM window_extrema ORDER BY id"
+        )),
+        [["A", "A"], ["a", "a"], ["a", "B"]]
+    );
 }

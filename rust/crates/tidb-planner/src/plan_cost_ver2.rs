@@ -273,6 +273,8 @@ pub struct CostSessionOpts {
     /// `tidb_hash_join_concurrency`, resolved and stamped on each
     /// `PhysicalHashJoin` candidate when it is built.
     pub hash_join_concurrency: f64,
+    /// Session inputs for shuffle planning alongside the cost settings.
+    pub shuffle_options: crate::physical::shuffle_optimize::ShuffleOptions,
     /// `tidb_distsql_scan_concurrency`.
     pub distsql_scan_concurrency: f64,
     /// `tidb_index_lookup_concurrency`, resolved.
@@ -302,7 +304,9 @@ pub struct CostSessionOpts {
     /// enumerates Go's second shape for semi and anti-semi joins, the build
     /// on the outer side (`getHashJoins` in `exhaust_physical_plans.go`).
     pub use_hash_join_v2: bool,
-    /// Whether `tidb_enforce_mpp` is on.
+    /// Go `SessionVars.IsMPPAllowed()`.
+    pub mpp_allowed: bool,
+    /// Go `SessionVars.IsMPPEnforced()`: both allow and enforce are on.
     pub mpp_enforced: bool,
 }
 
@@ -310,6 +314,7 @@ impl Default for CostSessionOpts {
     fn default() -> Self {
         Self {
             hash_join_concurrency: 5.0,
+            shuffle_options: Default::default(),
             distsql_scan_concurrency: 15.0,
             index_lookup_concurrency: 5.0,
             index_lookup_join_concurrency: 5.0,
@@ -323,6 +328,7 @@ impl Default for CostSessionOpts {
             mem_quota: 0,
             enable_paging: true,
             use_hash_join_v2: true,
+            mpp_allowed: true,
             mpp_enforced: false,
         }
     }
@@ -1040,7 +1046,7 @@ pub fn top_n_cost(
     let (cpu_factor, mem_factor, topn_cost_factor) = factors;
     let (count, offset) = count_and_offset;
     let rows = child_rows.max(MIN_NUM_ROWS);
-    let mut n = MIN_NUM_ROWS.max((count + offset) as f64);
+    let mut n = MIN_NUM_ROWS.max(count.wrapping_add(offset) as f64);
     let min_topn_threshold = 100.0;
     if n > min_topn_threshold {
         if rows < offset as f64 {

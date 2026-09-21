@@ -605,6 +605,8 @@ pub struct StmtContextData {
     /// so a context with no session behind it behaves like a stock one.
     default_week_format: i64,
     div_precision_increment: u32,
+    windowing_use_high_precision: bool,
+    enable_pipelined_window_exec: bool,
     /// Go `SessionVars.ForeignKeyChecks` (`@@foreign_key_checks`, ON by
     /// default): whether referential integrity is enforced at all. A context
     /// with no session behind it enforces, as a stock session does.
@@ -1196,6 +1198,20 @@ context_configuration! {
         self
     }
 
+    /// Sets Go's floating-point window SUM/AVG precision policy.
+    #[must_use]
+    pub fn with_windowing_use_high_precision(mut self, enabled: bool) -> Self {
+        self.windowing_use_high_precision = enabled;
+        self
+    }
+
+    /// Sets Go's normal versus pipelined window execution choice.
+    #[must_use]
+    pub fn with_pipelined_window_exec(mut self, enabled: bool) -> Self {
+        self.enable_pipelined_window_exec = enabled;
+        self
+    }
+
     /// Sets `@@cte_max_recursion_depth`; a non-positive session value clamps
     /// to `0`, which refuses the very first recursive round.
     #[must_use]
@@ -1782,6 +1798,8 @@ impl StmtContext {
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
             div_precision_increment: 4,
+            windowing_use_high_precision: true,
+            enable_pipelined_window_exec: true,
             cte_max_recursion_depth: 1000,
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
@@ -2179,6 +2197,11 @@ impl StmtContext {
     #[must_use]
     pub fn div_precision_increment(&self) -> u32 {
         self.div_precision_increment
+    }
+
+    /// Statement snapshot of `tidb_enable_pipelined_window_function`.
+    pub fn enable_pipelined_window_exec(&self) -> bool {
+        self.enable_pipelined_window_exec
     }
 
     /// The implicit `LIKE` escape for expressions built in this statement.
@@ -3903,6 +3926,10 @@ impl Columns for StmtContext {
         self.div_precision_increment
     }
 
+    fn windowing_use_high_precision(&self) -> bool {
+        self.windowing_use_high_precision
+    }
+
     fn division_by_zero_level(&self) -> ErrorLevel {
         self.division_by_zero
     }
@@ -3956,6 +3983,10 @@ impl Columns for StmtContext {
 
     fn append_warning(&self, code: u16, message: &str) {
         self.append_leveled(WarningLevel::Warning, code, message);
+    }
+
+    fn append_note(&self, code: u16, message: &str) {
+        self.append_leveled(WarningLevel::Note, code, message);
     }
 
     fn warning_count(&self) -> usize {

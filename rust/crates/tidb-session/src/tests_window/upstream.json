@@ -1,0 +1,1871 @@
+{
+  "source": "pkg/executor/windows/window_sql_test.go",
+  "sha256": "eb7adcdc6d89cf4fdb1165025e05c17d5e8f04652bb250c39b6d9d4a3b2eacb3",
+  "suites": {
+    "doTestWindowFunctions": [
+      {
+        "line": 50,
+        "sql": "use test"
+      },
+      {
+        "line": 51,
+        "sql": "drop table if exists t"
+      },
+      {
+        "line": 52,
+        "sql": "create table t (a int, b int, c int)"
+      },
+      {
+        "line": 53,
+        "sql": "set @@tidb_enable_window_function = 1"
+      },
+      {
+        "line": 57,
+        "sql": "insert into t values (1,2,3),(4,3,2),(2,3,4)"
+      },
+      {
+        "line": 58,
+        "sql": "select count(a) over () from t",
+        "sort": false,
+        "rows": [
+          "3",
+          "3",
+          "3"
+        ]
+      },
+      {
+        "line": 60,
+        "sql": "select sum(a) over () + count(a) over () from t",
+        "sort": false,
+        "rows": [
+          "10",
+          "10",
+          "10"
+        ]
+      },
+      {
+        "line": 62,
+        "sql": "select sum(a) over (partition by a) from t",
+        "sort": true,
+        "rows": [
+          "1",
+          "2",
+          "4"
+        ]
+      },
+      {
+        "line": 64,
+        "sql": "select 1 + sum(a) over (), count(a) over () from t",
+        "sort": false,
+        "rows": [
+          "8 3",
+          "8 3",
+          "8 3"
+        ]
+      },
+      {
+        "line": 66,
+        "sql": "select sum(t1.a) over() from t t1, t t2",
+        "sort": false,
+        "rows": [
+          "21",
+          "21",
+          "21",
+          "21",
+          "21",
+          "21",
+          "21",
+          "21",
+          "21"
+        ]
+      },
+      {
+        "line": 68,
+        "sql": "select _tidb_rowid, sum(t.a) over() from t",
+        "sort": false,
+        "rows": [
+          "1 7",
+          "2 7",
+          "3 7"
+        ]
+      },
+      {
+        "line": 71,
+        "sql": "select a, row_number() over() from t",
+        "sort": false,
+        "rows": [
+          "1 1",
+          "4 2",
+          "2 3"
+        ]
+      },
+      {
+        "line": 73,
+        "sql": "select a, row_number() over(partition by a) from t",
+        "sort": true,
+        "rows": [
+          "1 1",
+          "2 1",
+          "4 1"
+        ]
+      },
+      {
+        "line": 76,
+        "sql": "select a, sum(a) over(rows between unbounded preceding and 1 following) from t",
+        "sort": false,
+        "rows": [
+          "1 5",
+          "4 7",
+          "2 7"
+        ]
+      },
+      {
+        "line": 78,
+        "sql": "select a, sum(a) over(rows between 1 preceding and 1 following) from t",
+        "sort": false,
+        "rows": [
+          "1 5",
+          "4 7",
+          "2 6"
+        ]
+      },
+      {
+        "line": 80,
+        "sql": "select a, sum(a) over(rows between unbounded preceding and 1 preceding) from t",
+        "sort": false,
+        "rows": [
+          "1 <nil>",
+          "4 1",
+          "2 5"
+        ]
+      },
+      {
+        "line": 83,
+        "sql": "drop table t"
+      },
+      {
+        "line": 84,
+        "sql": "create table t(a int, b date)"
+      },
+      {
+        "line": 85,
+        "sql": "insert into t values (null,null),(1,20190201),(2,20190202),(3,20190203),(5,20190205)"
+      },
+      {
+        "line": 86,
+        "sql": "select a, sum(a) over(order by a range between 1 preceding and 2 following) from t",
+        "sort": false,
+        "rows": [
+          "<nil> <nil>",
+          "1 6",
+          "2 6",
+          "3 10",
+          "5 5"
+        ]
+      },
+      {
+        "line": 88,
+        "sql": "select a, sum(a) over(order by a desc range between 1 preceding and 2 following) from t",
+        "sort": false,
+        "rows": [
+          "5 8",
+          "3 6",
+          "2 6",
+          "1 3",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 90,
+        "sql": "select a, b, sum(a) over(order by b range between interval 1 day preceding and interval 2 day following) from t",
+        "sort": false,
+        "rows": [
+          "<nil> <nil> <nil>",
+          "1 2019-02-01 6",
+          "2 2019-02-02 6",
+          "3 2019-02-03 10",
+          "5 2019-02-05 5"
+        ]
+      },
+      {
+        "line": 92,
+        "sql": "select a, b, sum(a) over(order by b desc range between interval 1 day preceding and interval 2 day following) from t",
+        "sort": false,
+        "rows": [
+          "5 2019-02-05 8",
+          "3 2019-02-03 6",
+          "2 2019-02-02 6",
+          "1 2019-02-01 3",
+          "<nil> <nil> <nil>"
+        ]
+      },
+      {
+        "line": 95,
+        "sql": "drop table t"
+      },
+      {
+        "line": 96,
+        "sql": "CREATE TABLE t (id INTEGER, sex CHAR(1))"
+      },
+      {
+        "line": 97,
+        "sql": "insert into t values (1, 'M'), (2, 'F'), (3, 'F'), (4, 'F'), (5, 'M'), (10, NULL), (11, NULL)"
+      },
+      {
+        "line": 98,
+        "sql": "SELECT sex, id, RANK() OVER (PARTITION BY sex ORDER BY id DESC) FROM t",
+        "sort": true,
+        "rows": [
+          "<nil> 10 2",
+          "<nil> 11 1",
+          "F 2 3",
+          "F 3 2",
+          "F 4 1",
+          "M 1 2",
+          "M 5 1"
+        ]
+      },
+      {
+        "line": 101,
+        "sql": "drop table t"
+      },
+      {
+        "line": 102,
+        "sql": "create table t(a int, b int)"
+      },
+      {
+        "line": 103,
+        "sql": "insert into t values (1,1),(1,2),(2,1),(2,2)"
+      },
+      {
+        "line": 104,
+        "sql": "select a, b, rank() over() from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 2 1",
+          "2 1 1",
+          "2 2 1"
+        ]
+      },
+      {
+        "line": 106,
+        "sql": "select a, b, rank() over(order by a) from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 2 1",
+          "2 1 3",
+          "2 2 3"
+        ]
+      },
+      {
+        "line": 108,
+        "sql": "select a, b, rank() over(order by a, b) from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 2 2",
+          "2 1 3",
+          "2 2 4"
+        ]
+      },
+      {
+        "line": 111,
+        "sql": "select a, b, dense_rank() over() from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 2 1",
+          "2 1 1",
+          "2 2 1"
+        ]
+      },
+      {
+        "line": 113,
+        "sql": "select a, b, dense_rank() over(order by a) from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 2 1",
+          "2 1 2",
+          "2 2 2"
+        ]
+      },
+      {
+        "line": 115,
+        "sql": "select a, b, dense_rank() over(order by a, b) from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 2 2",
+          "2 1 3",
+          "2 2 4"
+        ]
+      },
+      {
+        "line": 118,
+        "sql": "select row_number() over(rows between 1 preceding and 1 following) from t",
+        "sort": false,
+        "rows": [
+          "1",
+          "2",
+          "3",
+          "4"
+        ]
+      },
+      {
+        "line": 120,
+        "sql": "show warnings",
+        "sort": false,
+        "rows": [
+          "Note 3599 Window function 'row_number' ignores the frame clause of window '<unnamed window>' and aggregates over the whole partition"
+        ]
+      },
+      {
+        "line": 123,
+        "sql": "select a, sum(a) over() from t",
+        "sort": false,
+        "rows": [
+          "1 6",
+          "1 6",
+          "2 6",
+          "2 6"
+        ]
+      },
+      {
+        "line": 125,
+        "sql": "select a, sum(a) over(order by a) from t",
+        "sort": false,
+        "rows": [
+          "1 2",
+          "1 2",
+          "2 6",
+          "2 6"
+        ]
+      },
+      {
+        "line": 127,
+        "sql": "select a, sum(a) over(order by a, b) from t",
+        "sort": false,
+        "rows": [
+          "1 1",
+          "1 2",
+          "2 4",
+          "2 6"
+        ]
+      },
+      {
+        "line": 130,
+        "sql": "select a, first_value(a) over(), last_value(a) over() from t",
+        "sort": false,
+        "rows": [
+          "1 1 2",
+          "1 1 2",
+          "2 1 2",
+          "2 1 2"
+        ]
+      },
+      {
+        "line": 132,
+        "sql": "select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 1 2",
+          "2 1 2",
+          "2 2 2"
+        ]
+      },
+      {
+        "line": 134,
+        "sql": "select a, first_value(a) over(rows between 1 following and 1 following), last_value(a) over(rows between 1 following and 1 following) from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 2 2",
+          "2 2 2",
+          "2 <nil> <nil>"
+        ]
+      },
+      {
+        "line": 136,
+        "sql": "select a, first_value(rand(0)) over(), last_value(rand(0)) over() from t",
+        "sort": false,
+        "rows": [
+          "1 0.15522042769493574 0.33109208227236947",
+          "1 0.15522042769493574 0.33109208227236947",
+          "2 0.15522042769493574 0.33109208227236947",
+          "2 0.15522042769493574 0.33109208227236947"
+        ]
+      },
+      {
+        "line": 140,
+        "sql": "select a, b, cume_dist() over() from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 2 1",
+          "2 1 1",
+          "2 2 1"
+        ]
+      },
+      {
+        "line": 142,
+        "sql": "select a, b, cume_dist() over(order by a) from t",
+        "sort": false,
+        "rows": [
+          "1 1 0.5",
+          "1 2 0.5",
+          "2 1 1",
+          "2 2 1"
+        ]
+      },
+      {
+        "line": 144,
+        "sql": "select a, b, cume_dist() over(order by a, b) from t",
+        "sort": false,
+        "rows": [
+          "1 1 0.25",
+          "1 2 0.5",
+          "2 1 0.75",
+          "2 2 1"
+        ]
+      },
+      {
+        "line": 147,
+        "sql": "select a, nth_value(a, null) over() from t",
+        "sort": false,
+        "rows": [
+          "1 <nil>",
+          "1 <nil>",
+          "2 <nil>",
+          "2 <nil>"
+        ]
+      },
+      {
+        "line": 149,
+        "sql": "select a, nth_value(a, 1) over() from t",
+        "sort": false,
+        "rows": [
+          "1 1",
+          "1 1",
+          "2 1",
+          "2 1"
+        ]
+      },
+      {
+        "line": 151,
+        "sql": "select a, nth_value(a, 4) over() from t",
+        "sort": false,
+        "rows": [
+          "1 2",
+          "1 2",
+          "2 2",
+          "2 2"
+        ]
+      },
+      {
+        "line": 153,
+        "sql": "select a, nth_value(a, 5) over() from t",
+        "sort": false,
+        "rows": [
+          "1 <nil>",
+          "1 <nil>",
+          "2 <nil>",
+          "2 <nil>"
+        ]
+      },
+      {
+        "line": 156,
+        "sql": "select ntile(3) over() from t",
+        "sort": false,
+        "rows": [
+          "1",
+          "1",
+          "2",
+          "3"
+        ]
+      },
+      {
+        "line": 158,
+        "sql": "select ntile(2) over() from t",
+        "sort": false,
+        "rows": [
+          "1",
+          "1",
+          "2",
+          "2"
+        ]
+      },
+      {
+        "line": 160,
+        "sql": "select ntile(null) over() from t",
+        "sort": false,
+        "rows": [
+          "<nil>",
+          "<nil>",
+          "<nil>",
+          "<nil>"
+        ]
+      },
+      {
+        "line": 163,
+        "sql": "select a, percent_rank() over() from t",
+        "sort": false,
+        "rows": [
+          "1 0",
+          "1 0",
+          "2 0",
+          "2 0"
+        ]
+      },
+      {
+        "line": 165,
+        "sql": "select a, percent_rank() over(order by a) from t",
+        "sort": false,
+        "rows": [
+          "1 0",
+          "1 0",
+          "2 0.6666666666666666",
+          "2 0.6666666666666666"
+        ]
+      },
+      {
+        "line": 167,
+        "sql": "select a, b, percent_rank() over(order by a, b) from t",
+        "sort": false,
+        "rows": [
+          "1 1 0",
+          "1 2 0.3333333333333333",
+          "2 1 0.6666666666666666",
+          "2 2 1"
+        ]
+      },
+      {
+        "line": 170,
+        "sql": "select a, lead(a) over (), lag(a) over() from t",
+        "sort": false,
+        "rows": [
+          "1 1 <nil>",
+          "1 2 1",
+          "2 2 1",
+          "2 <nil> 2"
+        ]
+      },
+      {
+        "line": 172,
+        "sql": "select a, lead(a, 0) over(), lag(a, 0) over() from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 1 1",
+          "2 2 2",
+          "2 2 2"
+        ]
+      },
+      {
+        "line": 174,
+        "sql": "select a, lead(a, 1, a) over(), lag(a, 1, a) over() from t",
+        "sort": false,
+        "rows": [
+          "1 1 1",
+          "1 2 1",
+          "2 2 1",
+          "2 2 2"
+        ]
+      },
+      {
+        "line": 176,
+        "sql": "select a, lead(a, 1, 'lead') over(), lag(a, 1, 'lag') over() from t",
+        "sort": false,
+        "rows": [
+          "1 1 lag",
+          "1 2 1",
+          "2 2 1",
+          "2 lead 2"
+        ]
+      },
+      {
+        "line": 179,
+        "sql": "SELECT CUME_DIST() OVER (ORDER BY null);",
+        "sort": false,
+        "rows": [
+          "1"
+        ]
+      },
+      {
+        "line": 182,
+        "sql": "select lead(a) over(partition by null) from t",
+        "sort": true,
+        "rows": [
+          "1",
+          "2",
+          "2",
+          "<nil>"
+        ]
+      },
+      {
+        "line": 184,
+        "sql": "drop table if exists issue10494"
+      },
+      {
+        "line": 185,
+        "sql": "create table issue10494(a INT, b CHAR(1), c DATETIME, d BLOB)"
+      },
+      {
+        "line": 186,
+        "sql": "insert into issue10494 VALUES (1,'x','2010-01-01','blob'), (2, 'y', '2011-01-01', ''), (3, 'y', '2012-01-01', ''), (4, 't', '2012-01-01', 'blob'), (5, null, '2013-01-01', null)"
+      },
+      {
+        "line": 187,
+        "sql": "SELECT a, b, c, SUM(a) OVER (RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM issue10494 order by a;",
+        "sort": false,
+        "rows": [
+          "1 x 2010-01-01 00:00:00 15",
+          "2 y 2011-01-01 00:00:00 15",
+          "3 y 2012-01-01 00:00:00 15",
+          "4 t 2012-01-01 00:00:00 15",
+          "5 <nil> 2013-01-01 00:00:00 15"
+        ]
+      },
+      {
+        "line": 197,
+        "sql": "drop table if exists td_dec"
+      },
+      {
+        "line": 198,
+        "sql": "CREATE TABLE td_dec (id DECIMAL(10,2), sex CHAR(1));"
+      },
+      {
+        "line": 199,
+        "sql": "insert into td_dec value (2.0, 'F'), (NULL, 'F'), (1.0, 'F')"
+      },
+      {
+        "line": 200,
+        "sql": "SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id);",
+        "sort": false,
+        "rows": [
+          "<nil> <nil>",
+          "1.00 <nil>",
+          "2.00 <nil>"
+        ]
+      },
+      {
+        "line": 204,
+        "sql": "select sum(a) over w, sum(b) over w from t window w as (order by a)",
+        "sort": false,
+        "rows": [
+          "2 3",
+          "2 3",
+          "6 6",
+          "6 6"
+        ]
+      },
+      {
+        "line": 206,
+        "sql": "select row_number() over w, sum(b) over w from t window w as (order by a)",
+        "sort": false,
+        "rows": [
+          "1 3",
+          "2 3",
+          "3 6",
+          "4 6"
+        ]
+      },
+      {
+        "line": 208,
+        "sql": "select row_number() over w, sum(b) over w from t window w as (rows between 1 preceding and 1 following)",
+        "sort": false,
+        "rows": [
+          "1 3",
+          "2 4",
+          "3 5",
+          "4 3"
+        ]
+      },
+      {
+        "line": 211,
+        "chunk": 1
+      },
+      {
+        "line": 212,
+        "sql": "select a, row_number() over (partition by a) from t",
+        "sort": true,
+        "rows": [
+          "1 1",
+          "1 2",
+          "2 1",
+          "2 2"
+        ]
+      },
+      {
+        "sql": "set @@tidb_enable_window_function = 0",
+        "deferred": true
+      }
+    ],
+    "TestWindowFunctionsDataReference": [
+      {
+        "line": 220,
+        "sql": "use test"
+      },
+      {
+        "line": 221,
+        "sql": "drop table if exists t"
+      },
+      {
+        "line": 222,
+        "sql": "create table t(a int, b int)"
+      },
+      {
+        "line": 223,
+        "sql": "insert into t values (2,1),(2,2),(2,3)"
+      },
+      {
+        "line": 225,
+        "chunk": 2
+      },
+      {
+        "line": 226,
+        "sql": "select a, b, rank() over (partition by a order by b) from t",
+        "sort": false,
+        "rows": [
+          "2 1 1",
+          "2 2 2",
+          "2 3 3"
+        ]
+      },
+      {
+        "line": 228,
+        "sql": "select a, b, PERCENT_RANK() over (partition by a order by b) from t",
+        "sort": false,
+        "rows": [
+          "2 1 0",
+          "2 2 0.5",
+          "2 3 1"
+        ]
+      },
+      {
+        "line": 230,
+        "sql": "select a, b, CUME_DIST() over (partition by a order by b) from t",
+        "sort": false,
+        "rows": [
+          "2 1 0.3333333333333333",
+          "2 2 0.6666666666666666",
+          "2 3 1"
+        ]
+      },
+      {
+        "line": 234,
+        "sql": "select b, first_value(b) over (order by b RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t",
+        "sort": false,
+        "rows": [
+          "1 1",
+          "2 1",
+          "3 1"
+        ]
+      },
+      {
+        "line": 236,
+        "sql": "select b, first_value(b) over (order by b ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t",
+        "sort": false,
+        "rows": [
+          "1 1",
+          "2 1",
+          "3 1"
+        ]
+      }
+    ],
+    "baseTestSlidingWindowFunctions": [
+      {
+        "line": 261,
+        "sql": "insert into t values (1,'M')"
+      },
+      {
+        "line": 262,
+        "sql": "insert into t values (2,'F')"
+      },
+      {
+        "line": 263,
+        "sql": "insert into t values (3,'F')"
+      },
+      {
+        "line": 264,
+        "sql": "insert into t values (4,'F')"
+      },
+      {
+        "line": 265,
+        "sql": "insert into t values (5,'M')"
+      },
+      {
+        "line": 266,
+        "sql": "insert into t values (10,null)"
+      },
+      {
+        "line": 267,
+        "sql": "insert into t values (11,null)"
+      },
+      {
+        "line": 269,
+        "sql": "PREPARE p FROM 'SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN ? PRECEDING and ? PRECEDING) FROM t';"
+      },
+      {
+        "line": 270,
+        "sql": "SET @p1= 1;"
+      },
+      {
+        "line": 271,
+        "sql": "SET @p2= 2;"
+      },
+      {
+        "line": 272,
+        "sql": "EXECUTE p USING @p1, @p2;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 0",
+          "F 0",
+          "F 0",
+          "M 0",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 274,
+        "sql": "EXECUTE p USING @p2, @p1;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 1",
+          "F 2",
+          "F 2",
+          "M 2",
+          "<nil> 2",
+          "<nil> 2"
+        ]
+      },
+      {
+        "line": 276,
+        "sql": "DROP PREPARE p;"
+      },
+      {
+        "line": 277,
+        "sql": "PREPARE p FROM 'SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN ? FOLLOWING and ? FOLLOWING) FROM t';"
+      },
+      {
+        "line": 278,
+        "sql": "SET @p1= 1;"
+      },
+      {
+        "line": 279,
+        "sql": "SET @p2= 2;"
+      },
+      {
+        "line": 280,
+        "sql": "EXECUTE p USING @p2, @p1;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 0",
+          "F 0",
+          "F 0",
+          "M 0",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 282,
+        "sql": "EXECUTE p USING @p1, @p2;",
+        "sort": false,
+        "rows": [
+          "M 2",
+          "F 2",
+          "F 2",
+          "F 2",
+          "M 2",
+          "<nil> 1",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 284,
+        "sql": "DROP PREPARE p;"
+      },
+      {
+        "line": 287,
+        "sql": "SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 2",
+          "F 2",
+          "F 2",
+          "F 2",
+          "M 2",
+          "<nil> 1",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 289,
+        "sql": "SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 0",
+          "F 0",
+          "F 0",
+          "M 0",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 291,
+        "sql": "SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 1",
+          "F 2",
+          "F 2",
+          "M 2",
+          "<nil> 2",
+          "<nil> 2"
+        ]
+      },
+      {
+        "line": 293,
+        "sql": "SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 0",
+          "F 0",
+          "F 0",
+          "M 0",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 297,
+        "sql": "SELECT sex, COUNT(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 2",
+          "F 2",
+          "F 2",
+          "F 1",
+          "M 0",
+          "<nil> 1",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 299,
+        "sql": "SELECT sex, COUNT(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 0",
+          "F 0",
+          "F 0",
+          "M 0",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 301,
+        "sql": "SELECT sex, COUNT(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 1",
+          "F 2",
+          "F 2",
+          "M 2",
+          "<nil> 0",
+          "<nil> 1"
+        ]
+      },
+      {
+        "line": 303,
+        "sql": "SELECT sex, COUNT(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 0",
+          "F 0",
+          "F 0",
+          "M 0",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 307,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 5",
+          "F 7",
+          "F 9",
+          "F 15",
+          "M 21",
+          "<nil> 11",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 309,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 311,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F 1",
+          "F 3",
+          "F 5",
+          "M 7",
+          "<nil> 9",
+          "<nil> 15"
+        ]
+      },
+      {
+        "line": 313,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 315,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 3",
+          "F 6",
+          "F 10",
+          "F 15",
+          "M 25",
+          "<nil> 36",
+          "<nil> 36"
+        ]
+      },
+      {
+        "line": 319,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 5",
+          "F 7",
+          "F 9",
+          "F 5",
+          "M <nil>",
+          "<nil> 11",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 321,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 323,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F 1",
+          "F 3",
+          "F 5",
+          "M 7",
+          "<nil> <nil>",
+          "<nil> 10"
+        ]
+      },
+      {
+        "line": 325,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 6",
+          "F 10",
+          "F 14",
+          "F 12",
+          "M 9",
+          "<nil> 21",
+          "<nil> 21"
+        ]
+      },
+      {
+        "line": 327,
+        "sql": "SELECT sex, SUM(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "<nil> 21",
+          "<nil> 21",
+          "M 12",
+          "F 14",
+          "F 10",
+          "F 6",
+          "M 3"
+        ]
+      },
+      {
+        "line": 331,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 2.5",
+          "F 3.5",
+          "F 4.5",
+          "F 7.5",
+          "M 10.5",
+          "<nil> 11",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 333,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 335,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F 1",
+          "F 1.5",
+          "F 2.5",
+          "M 3.5",
+          "<nil> 4.5",
+          "<nil> 7.5"
+        ]
+      },
+      {
+        "line": 337,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 339,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 1.5",
+          "F 2",
+          "F 2.5",
+          "F 3",
+          "M 4.166666666666667",
+          "<nil> 5.142857142857143",
+          "<nil> 5.142857142857143"
+        ]
+      },
+      {
+        "line": 343,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 2.5",
+          "F 3.5",
+          "F 4.5",
+          "F 5",
+          "M <nil>",
+          "<nil> 11",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 345,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 347,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F 1",
+          "F 1.5",
+          "F 2.5",
+          "M 3.5",
+          "<nil> <nil>",
+          "<nil> 10"
+        ]
+      },
+      {
+        "line": 349,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 2",
+          "F 2.5",
+          "F 3.5",
+          "F 4",
+          "M 4.5",
+          "<nil> 10.5",
+          "<nil> 10.5"
+        ]
+      },
+      {
+        "line": 351,
+        "sql": "SELECT sex, AVG(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "<nil> 10.5",
+          "<nil> 10.5",
+          "M 4",
+          "F 3.5",
+          "F 2.5",
+          "F 2",
+          "M 1.5"
+        ]
+      },
+      {
+        "line": 355,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 1",
+          "F 7",
+          "F 1",
+          "F 15",
+          "M 1",
+          "<nil> 11",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 357,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 0",
+          "F 0",
+          "F 0",
+          "M 0",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 359,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 1",
+          "F 3",
+          "F 1",
+          "M 7",
+          "<nil> 1",
+          "<nil> 15"
+        ]
+      },
+      {
+        "line": 361,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 0",
+          "F 0",
+          "F 0",
+          "M 0",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 363,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 3",
+          "F 0",
+          "F 4",
+          "F 1",
+          "M 11",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 367,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 1",
+          "F 7",
+          "F 1",
+          "F 5",
+          "M 0",
+          "<nil> 11",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 369,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 0",
+          "F 0",
+          "F 0",
+          "M 0",
+          "<nil> 0",
+          "<nil> 0"
+        ]
+      },
+      {
+        "line": 371,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 1",
+          "F 3",
+          "F 1",
+          "M 7",
+          "<nil> 0",
+          "<nil> 10"
+        ]
+      },
+      {
+        "line": 373,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 0",
+          "F 4",
+          "F 0",
+          "F 2",
+          "M 1",
+          "<nil> 1",
+          "<nil> 1"
+        ]
+      },
+      {
+        "line": 375,
+        "sql": "SELECT sex, BIT_XOR(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "<nil> 1",
+          "<nil> 1",
+          "M 2",
+          "F 0",
+          "F 4",
+          "F 0",
+          "M 3"
+        ]
+      },
+      {
+        "line": 379,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 2",
+          "F 3",
+          "F 4",
+          "F 5",
+          "M 10",
+          "<nil> 11",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 381,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 383,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F 1",
+          "F 1",
+          "F 2",
+          "M 3",
+          "<nil> 4",
+          "<nil> 5"
+        ]
+      },
+      {
+        "line": 385,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 387,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 1",
+          "F 1",
+          "F 1",
+          "F 1",
+          "M 1",
+          "<nil> 1",
+          "<nil> 1"
+        ]
+      },
+      {
+        "line": 391,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 2",
+          "F 3",
+          "F 4",
+          "F 5",
+          "M <nil>",
+          "<nil> 11",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 393,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 395,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F 1",
+          "F 1",
+          "F 2",
+          "M 3",
+          "<nil> <nil>",
+          "<nil> 10"
+        ]
+      },
+      {
+        "line": 397,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 1",
+          "F 1",
+          "F 2",
+          "F 3",
+          "M 4",
+          "<nil> 10",
+          "<nil> 10"
+        ]
+      },
+      {
+        "line": 399,
+        "sql": "SELECT sex, MIN(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "<nil> 10",
+          "<nil> 10",
+          "M 3",
+          "F 2",
+          "F 1",
+          "F 1",
+          "M 1"
+        ]
+      },
+      {
+        "line": 403,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 3",
+          "F 4",
+          "F 5",
+          "F 10",
+          "M 11",
+          "<nil> 11",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 405,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 407,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F 1",
+          "F 2",
+          "F 3",
+          "M 4",
+          "<nil> 5",
+          "<nil> 10"
+        ]
+      },
+      {
+        "line": 409,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 411,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 2",
+          "F 3",
+          "F 4",
+          "F 5",
+          "M 10",
+          "<nil> 11",
+          "<nil> 11"
+        ]
+      },
+      {
+        "line": 415,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 3",
+          "F 4",
+          "F 5",
+          "F 5",
+          "M <nil>",
+          "<nil> 11",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 417,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F <nil>",
+          "F <nil>",
+          "F <nil>",
+          "M <nil>",
+          "<nil> <nil>",
+          "<nil> <nil>"
+        ]
+      },
+      {
+        "line": 419,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M <nil>",
+          "F 1",
+          "F 2",
+          "F 3",
+          "M 4",
+          "<nil> <nil>",
+          "<nil> 10"
+        ]
+      },
+      {
+        "line": 421,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "M 3",
+          "F 4",
+          "F 5",
+          "F 5",
+          "M 5",
+          "<nil> 11",
+          "<nil> 11"
+        ]
+      },
+      {
+        "line": 423,
+        "sql": "SELECT sex, MAX(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;",
+        "sort": false,
+        "rows": [
+          "<nil> 11",
+          "<nil> 11",
+          "M 5",
+          "F 5",
+          "F 4",
+          "F 3",
+          "M 2"
+        ]
+      }
+    ],
+    "TestIssue45964And46050": [
+      {
+        "line": 442,
+        "sql": "use test"
+      },
+      {
+        "line": 443,
+        "sql": "drop table if exists agg;"
+      },
+      {
+        "line": 444,
+        "sql": "create table agg(p int not null, o int not null, v int not null);"
+      },
+      {
+        "line": 445,
+        "sql": "INSERT INTO agg VALUES (0, 0, 1), (1, 1, 2), (1, 2, 3), (1, 3, 4), (1, 4, 5), (2, 5, 6), (2, 6, 7);"
+      },
+      {
+        "line": 447,
+        "nullable": "first_value(v)",
+        "flag": true
+      },
+      {
+        "line": 448,
+        "nullable": "last_value(v)",
+        "flag": true
+      },
+      {
+        "line": 449,
+        "nullable": "nth_value(v, 2)",
+        "flag": true
+      },
+      {
+        "line": 450,
+        "nullable": "lead(v)",
+        "flag": true
+      },
+      {
+        "line": 451,
+        "nullable": "lead(v, 1)",
+        "flag": true
+      },
+      {
+        "line": 452,
+        "nullable": "lead(1, 1, 1)",
+        "flag": false
+      },
+      {
+        "line": 453,
+        "nullable": "lead(1, 1, null)",
+        "flag": true
+      },
+      {
+        "line": 454,
+        "nullable": "lead(null, 1, 1)",
+        "flag": true
+      },
+      {
+        "line": 455,
+        "nullable": "lead(v, 1, 1)",
+        "flag": false
+      },
+      {
+        "line": 456,
+        "nullable": "lead(v, 1, null)",
+        "flag": true
+      },
+      {
+        "line": 457,
+        "nullable": "lag(v)",
+        "flag": true
+      },
+      {
+        "line": 458,
+        "nullable": "lag(v, 1)",
+        "flag": true
+      },
+      {
+        "line": 459,
+        "nullable": "lag(1, 1, 1)",
+        "flag": false
+      },
+      {
+        "line": 460,
+        "nullable": "lag(1, 1, null)",
+        "flag": true
+      },
+      {
+        "line": 461,
+        "nullable": "lag(null, 1, 1)",
+        "flag": true
+      },
+      {
+        "line": 462,
+        "nullable": "lag(v, 1, 1)",
+        "flag": false
+      },
+      {
+        "line": 463,
+        "nullable": "lag(v, 1, null)",
+        "flag": true
+      },
+      {
+        "line": 464,
+        "nullable": "ntile(2)",
+        "flag": true
+      },
+      {
+        "line": 465,
+        "nullable": "sum(v)",
+        "flag": true
+      },
+      {
+        "line": 466,
+        "nullable": "count(v)",
+        "flag": false
+      },
+      {
+        "line": 467,
+        "nullable": "row_number()",
+        "flag": false
+      },
+      {
+        "line": 468,
+        "nullable": "rank()",
+        "flag": false
+      },
+      {
+        "line": 469,
+        "nullable": "dense_rank()",
+        "flag": false
+      },
+      {
+        "line": 470,
+        "nullable": "cume_dist()",
+        "flag": false
+      },
+      {
+        "line": 471,
+        "nullable": "percent_rank()",
+        "flag": false
+      }
+    ],
+    "TestVarSampAsAWindowFunction": [
+      {
+        "line": 477,
+        "sql": "use test"
+      },
+      {
+        "line": 478,
+        "sql": "create table t1 (c1 int)"
+      },
+      {
+        "line": 479,
+        "sql": "select var_samp(c1) from t1"
+      },
+      {
+        "line": 480,
+        "sql": "select c1, var_samp(c1) over (partition by c1) from t1"
+      }
+    ]
+  }
+}

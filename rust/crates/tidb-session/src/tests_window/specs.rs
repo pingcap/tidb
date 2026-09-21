@@ -566,14 +566,12 @@ fn window_errors_and_refusals() {
         Err(DriverError::NotSupportedYet(ref feature)) if feature == "<window function>(DISTINCT ..)"
     ));
 
-    // Approximate aggregates lack OptWindowingClause in Go's SumExpr.
-    let error = session
-        .run("SELECT g, APPROX_COUNT_DISTINCT(v) OVER (ORDER BY v) FROM t")
-        .unwrap_err();
-    assert!(matches!(&error, DriverError::Parse(_)));
-    let diagnostic = error.to_mysql_error();
-    assert_eq!(diagnostic.code, 1064);
-    assert_eq!(diagnostic.state, *b"42000");
+    // Current Go parses approximate aggregates with OVER; DISTINCT still
+    // reaches the common planner refusal rather than a syntax error.
+    assert!(matches!(
+        session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT v) OVER (ORDER BY v) FROM t"),
+        Err(DriverError::NotSupportedYet(ref feature)) if feature == "<window function>(DISTINCT ..)"
+    ));
 
     // Frame validation is the PLANNER's, so it fires for every function
     // -- including the ranking ones, whose frame is then ignored.
@@ -802,4 +800,86 @@ fn window_nested_in_larger_expression() {
             ["2", "30", "2"]
         ]
     );
+}
+
+/// Go handleDefaultFrame emits one note per ignored explicit frame, with the
+/// declared window name and lower-case function spelling.
+#[test]
+fn window_ignored_frame_notes() {
+    for pipelined in [0, 1] {
+        let mut session = Session::new();
+        session
+            .run(&format!(
+                "SET tidb_enable_pipelined_window_function={pipelined}"
+            ))
+            .unwrap();
+        session.run("SELECT RANK() OVER MiXeD, DENSE_RANK() OVER MiXeD WINDOW MiXeD AS (ROWS BETWEEN CURRENT ROW AND CURRENT ROW)").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW WARNINGS")),
+            [
+                [
+                    "Note",
+                    "3599",
+                    "Window function 'rank' ignores the frame clause of window 'MiXeD' and aggregates over the whole partition"
+                ],
+                [
+                    "Note",
+                    "3599",
+                    "Window function 'dense_rank' ignores the frame clause of window 'MiXeD' and aggregates over the whole partition"
+                ],
+            ],
+        );
+        session.run("SELECT ROW_NUMBER() OVER(), SUM(1) OVER (ROWS BETWEEN CURRENT ROW AND CURRENT ROW)").unwrap();
+        assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+    }
+}
+
+#[test]
+fn window_shuffle_is_selected_by_session_concurrency() {
+    let mut session = window_session();
+    let sql = "SELECT g, v, SUM(v) OVER (PARTITION BY g ORDER BY v) AS s FROM t";
+    session.run("SET tidb_window_concurrency=1").unwrap();
+    let serial_plan = row_text(session.run(&format!("EXPLAIN {sql}")));
+    assert!(!serial_plan
+        .iter()
+        .flatten()
+        .any(|cell| cell.contains("Shuffle")));
+    let mut expected = row_text(session.run(sql));
+    expected.sort();
+    session.run("SET tidb_window_concurrency=4").unwrap();
+    let parallel_plan = row_text(session.run(&format!("EXPLAIN {sql}")));
+    assert!(
+        parallel_plan
+            .iter()
+            .flatten()
+            .any(|cell| cell.contains("Shuffle")),
+        "{parallel_plan:?}"
+    );
+    let mut actual = row_text(session.run(sql));
+    actual.sort();
+    assert_eq!(actual, expected);
+    session.run("SET tidb_window_concurrency=1").unwrap();
+    let restored = row_text(session.run(&format!("EXPLAIN {sql}")));
+    assert!(!restored
+        .iter()
+        .flatten()
+        .any(|cell| cell.contains("Shuffle")));
+}
+
+#[test]
+fn shuffled_window_runtime_rows_include_every_worker() {
+    let mut session = window_session();
+    session.run("SET tidb_window_concurrency=4").unwrap();
+    let rows = row_text(
+        session.run("EXPLAIN ANALYZE SELECT g,v,SUM(v) OVER (PARTITION BY g ORDER BY v) FROM t"),
+    );
+    let shuffle = rows.iter().find(|row| row[0].contains("Shuffle_")).unwrap();
+    assert!(shuffle[5].contains("ShuffleConcurrency:4"), "{rows:?}");
+    for operator in ["Shuffle_", "Window_", "Sort_", "ShuffleReceiver_"] {
+        let row = rows
+            .iter()
+            .find(|row| row[0].contains(operator))
+            .unwrap_or_else(|| panic!("missing {operator}: {rows:?}"));
+        assert_eq!(row[2], "8", "{operator}: {rows:?}");
+    }
 }

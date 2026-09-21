@@ -1767,6 +1767,8 @@ mod tests {
             for sql in [
                 "SELECT b,d,b FROM t FORCE INDEX(idx_c) WHERE c>=21 ORDER BY c",
                 "SELECT b,d,b FROM t IGNORE INDEX(idx_c) ORDER BY c",
+                "SELECT b,d,b FROM t FORCE INDEX(idx_c) WHERE c>=21 AND b>10 ORDER BY c",
+                "SELECT b,d,b FROM t IGNORE INDEX(idx_c) WHERE b>10 ORDER BY c",
             ] {
                 assert_eq!(
                     run_select_on(sql, &catalog, &ctx).unwrap(),

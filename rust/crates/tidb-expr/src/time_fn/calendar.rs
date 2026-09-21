@@ -16,7 +16,7 @@
 
 use crate::cast::to_i64_signed;
 use crate::coerce::coerce_str;
-use crate::{Datum, EvalError};
+use crate::{Columns, Datum, ErrorLevel, EvalError};
 
 /// The calendar `(year, month, day)` a *component* date-part function
 /// (`YEAR`/`MONTH`/`DAYOFMONTH`/`QUARTER`) reads, which in Go is the whole of
@@ -669,7 +669,7 @@ pub(crate) fn date_add(
     amount: &Datum,
     sign: i64,
 ) -> Result<Datum, EvalError> {
-    date_add_with_result_fsp(unit, date, amount, sign, None)
+    date_add_with_result_fsp(unit, date, amount, sign, None, &crate::NoColumns)
 }
 
 /// Go determines a temporal `DATE_ADD` result's FSP from the argument
@@ -716,15 +716,42 @@ pub(crate) fn date_add_result_fsp(
     Some(field_fsp(date_type).max(interval_fsp))
 }
 
+// Go baseDateArithmetical.addDate sends out-of-range calendar results
+// through handleInvalidTimeError (the statement's truncation error group).
+fn date_arithmetic_overflow(ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    const MESSAGE: &str = "Datetime function: datetime field overflow";
+    match ctx.truncate_level() {
+        ErrorLevel::Ignore => {}
+        ErrorLevel::Warn => ctx.append_warning(1441, MESSAGE),
+        ErrorLevel::Error => {
+            return Err(EvalError::Conversion(
+                tidb_datatype::ERR_DATETIME_FUNCTION_OVERFLOW.generate(MESSAGE),
+            ));
+        }
+    }
+    Ok(Datum::Null)
+}
+
+// Formatting receives an already valid arithmetic result. Its only NULL
+// case is a year outside the supported range, unlike operand parsing.
+fn date_arithmetic_result(value: Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    if value.is_null() {
+        date_arithmetic_overflow(ctx)
+    } else {
+        Ok(value)
+    }
+}
+
 pub(crate) fn date_add_with_result_fsp(
     unit: &str,
     date: &Datum,
     amount: &Datum,
     sign: i64,
     result_fsp: Option<u32>,
+    ctx: &dyn Columns,
 ) -> Result<Datum, EvalError> {
     if let Some((index, cnt)) = composite_spec(unit) {
-        return date_add_composite(unit, date, amount, sign, index, cnt, result_fsp);
+        return date_add_composite(unit, date, amount, sign, index, cnt, result_fsp, ctx);
     }
     let Some(s) = interval_date_text(date)? else {
         return Ok(Datum::Null);
@@ -749,31 +776,30 @@ pub(crate) fn date_add_with_result_fsp(
             .checked_mul(n)
             .and_then(|value| value.checked_mul(unit_micros))
         else {
-            return Ok(Datum::Null);
+            return date_arithmetic_overflow(ctx);
         };
         let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {
             return Ok(Datum::Null);
         };
-        return Ok(date_add_time(
-            (y, m, d, h, mi, sec, microsecond),
-            delta_micros,
-            result_fsp,
-        ));
+        return date_arithmetic_result(
+            date_add_time((y, m, d, h, mi, sec, microsecond), delta_micros, result_fsp),
+            ctx,
+        );
     }
     if unit.eq_ignore_ascii_case("SECOND") {
-        let Some(delta_micros) =
-            second_interval_micros(amount)?.and_then(|value| sign.checked_mul(value))
-        else {
+        let Some(amount) = second_interval_micros(amount)? else {
             return Ok(Datum::Null);
+        };
+        let Some(delta_micros) = sign.checked_mul(amount) else {
+            return date_arithmetic_overflow(ctx);
         };
         let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {
             return Ok(Datum::Null);
         };
-        return Ok(date_add_time(
-            (y, m, d, h, mi, sec, microsecond),
-            delta_micros,
-            result_fsp,
-        ));
+        return date_arithmetic_result(
+            date_add_time((y, m, d, h, mi, sec, microsecond), delta_micros, result_fsp),
+            ctx,
+        );
     }
     if unit.eq_ignore_ascii_case("MICROSECOND") {
         let Some(n) = whole_interval_amount(unit, amount)? else {
@@ -783,13 +809,12 @@ pub(crate) fn date_add_with_result_fsp(
             return Ok(Datum::Null);
         };
         let Some(delta_micros) = sign.checked_mul(n) else {
-            return Ok(Datum::Null);
+            return date_arithmetic_overflow(ctx);
         };
-        return Ok(date_add_time(
-            (y, m, d, h, mi, sec, microsecond),
-            delta_micros,
-            result_fsp,
-        ));
+        return date_arithmetic_result(
+            date_add_time((y, m, d, h, mi, sec, microsecond), delta_micros, result_fsp),
+            ctx,
+        );
     }
     let Some(n) = whole_interval_amount(unit, amount)? else {
         return Ok(Datum::Null);
@@ -822,28 +847,28 @@ pub(crate) fn date_add_with_result_fsp(
     let (y2, m2, d2) = if unit.eq_ignore_ascii_case("DAY") {
         match shifted_days(1) {
             Some(days) => civil_from_days(days),
-            None => return Ok(Datum::Null),
+            None => return date_arithmetic_overflow(ctx),
         }
     } else if unit.eq_ignore_ascii_case("WEEK") {
         match shifted_days(7) {
             Some(days) => civil_from_days(days),
-            None => return Ok(Datum::Null),
+            None => return date_arithmetic_overflow(ctx),
         }
     } else if unit.eq_ignore_ascii_case("MONTH") {
         match scaled(1) {
             Some(months) => match add_months(y, m, d, months) {
                 Some(ymd) => ymd,
-                None => return Ok(Datum::Null),
+                None => return date_arithmetic_overflow(ctx),
             },
-            None => return Ok(Datum::Null),
+            None => return date_arithmetic_overflow(ctx),
         }
     } else if unit.eq_ignore_ascii_case("YEAR") {
         match scaled(12) {
             Some(months) => match add_months(y, m, d, months) {
                 Some(ymd) => ymd,
-                None => return Ok(Datum::Null),
+                None => return date_arithmetic_overflow(ctx),
             },
-            None => return Ok(Datum::Null),
+            None => return date_arithmetic_overflow(ctx),
         }
     } else if unit.eq_ignore_ascii_case("QUARTER") {
         // `parseSingleTimeValue`'s `QUARTER` case is `3 * riv` MONTHs
@@ -855,14 +880,14 @@ pub(crate) fn date_add_with_result_fsp(
         match scaled(3) {
             Some(months) => match add_months(y, m, d, months) {
                 Some(ymd) => ymd,
-                None => return Ok(Datum::Null),
+                None => return date_arithmetic_overflow(ctx),
             },
-            None => return Ok(Datum::Null),
+            None => return date_arithmetic_overflow(ctx),
         }
     } else {
         return Err(EvalError::Unsupported("INTERVAL unit"));
     };
-    Ok(format_ymd_result(y2, m2, d2, time_suffix))
+    date_arithmetic_result(format_ymd_result(y2, m2, d2, time_suffix), ctx)
 }
 
 /// The TEXT the `DATE_ADD`/`DATE_SUB` date pipeline below should read for
@@ -1176,6 +1201,7 @@ fn date_add_composite(
     index: usize,
     cnt: usize,
     result_fsp: Option<u32>,
+    ctx: &dyn Columns,
 ) -> Result<Datum, EvalError> {
     let format = match amount {
         Datum::Null => return Ok(Datum::Null),
@@ -1209,22 +1235,21 @@ fn date_add_composite(
             .and_then(|v| sign.checked_mul(v))
             .and_then(|delta| add_months(y, m, d, delta))
         else {
-            return Ok(Datum::Null);
+            return date_arithmetic_overflow(ctx);
         };
-        return Ok(format_ymd_result(y2, m2, d2, time_suffix));
+        return date_arithmetic_result(format_ymd_result(y2, m2, d2, time_suffix), ctx);
     }
     let Some(delta_micros) = days
         .checked_mul(86_400_000_000)
         .and_then(|value| value.checked_add(nanos / 1_000))
         .and_then(|value| sign.checked_mul(value))
     else {
-        return Ok(Datum::Null);
+        return date_arithmetic_overflow(ctx);
     };
-    Ok(date_add_time(
-        (y, m, d, h, mi, sec, microsecond),
-        delta_micros,
-        result_fsp,
-    ))
+    date_arithmetic_result(
+        date_add_time((y, m, d, h, mi, sec, microsecond), delta_micros, result_fsp),
+        ctx,
+    )
 }
 
 /// `EXTRACT(<composite unit> FROM value)`, ported from

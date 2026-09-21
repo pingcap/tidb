@@ -633,6 +633,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// ROW`, not with the written frame.
     #[must_use]
     pub fn handle_default_frame(&self, spec: &WindowDef, func_name: &str) -> (WindowDef, bool) {
+        self.handle_named_default_frame(spec, func_name, "")
+    }
+
+    fn handle_named_default_frame(
+        &self,
+        spec: &WindowDef,
+        func_name: &str,
+        spec_name: &str,
+    ) -> (WindowDef, bool) {
         let needs_frame = need_frame(func_name);
         if needs_frame && spec.spec.frame.is_none() && !spec.spec.order_by.is_empty() {
             let mut new_spec = spec.clone();
@@ -657,9 +666,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut updated = false;
         let mut new_spec = spec.clone();
         if new_spec.spec.frame.is_some() {
-            // `// boundary:` `StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame)`
-            // (`:7268`). There is no statement-context warning sink in this
-            // crate; the ERASURE, which is what the plan shows, is applied.
+            self.ctx.append_note(
+                3599,
+                &format!(
+                    "Window function '{}' ignores the frame clause of window '{}' and aggregates over the whole partition",
+                    func_name.to_ascii_lowercase(),
+                    window_name(spec_name),
+                ),
+            );
             new_spec.spec.frame = None;
             updated = true;
         }
@@ -756,8 +770,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let Some(&spec_id) = named.get(&lower) else {
                 return Err(PlanError::window_definition(3579, name, ""));
             };
-            let (new_spec, updated) =
-                self.handle_default_frame(&arena.get(spec_id).def, &window_func.name);
+            let named_spec = arena.get(spec_id);
+            let (new_spec, updated) = self.handle_named_default_frame(
+                &named_spec.def,
+                &window_func.name,
+                &named_spec.name,
+            );
             if !updated {
                 grouped.entry(spec_id).or_default().push(position);
                 append_if_absent_window_spec(&mut ordered, spec_id);

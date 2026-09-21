@@ -40,6 +40,9 @@
 //!   [`crate::plan_base`].
 
 mod resolve_indices;
+pub mod shuffle;
+pub mod shuffle_optimize;
+pub use shuffle::{PhysicalShuffle, PhysicalShuffleReceiverStub};
 
 use tidb_expr::expression::Expression;
 use tidb_expr::expression::{Column, CorrelatedColumn};
@@ -1002,7 +1005,7 @@ pub fn exhaust_physical_plans_4_logical_limit(
     for tp in all_task_types {
         let result_prop = PhysicalProperty {
             task_tp: tp,
-            expected_cnt: (p.count + p.offset) as f64,
+            expected_cnt: p.count.wrapping_add(p.offset) as f64,
             cte_producer_status: prop.cte_producer_status,
             no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
@@ -2543,7 +2546,7 @@ pub fn get_phys_limits(
     for tp in all_task_types {
         let result_prop = PhysicalProperty {
             task_tp: tp,
-            expected_cnt: (topn.count + topn.offset) as f64,
+            expected_cnt: topn.count.wrapping_add(topn.offset) as f64,
             sort_items: sort_items.clone(),
             cte_producer_status: prop.cte_producer_status,
             no_cop_push_down: prop.no_cop_push_down,
@@ -2990,6 +2993,10 @@ pub fn exhaust_physical_plans_4_logical_window(
 /// Go `base.PhysicalPlan`: a tree of physical operators.
 #[derive(Clone, Debug)]
 pub enum PhysicalPlan {
+    /// Go `physicalop.PhysicalShuffle`.
+    Shuffle(PhysicalShuffle),
+    /// Go `physicalop.PhysicalShuffleReceiverStub`.
+    ShuffleReceiver(PhysicalShuffleReceiverStub),
     /// Grouping-level projections for ROLLUP.
     Expand(expand::PhysicalExpand),
     /// Go `physicalop.PhysicalSelection`.
@@ -3070,6 +3077,8 @@ impl PhysicalPlan {
     #[must_use]
     pub const fn base(&self) -> &BasePhysicalPlan {
         match self {
+            Self::Shuffle(op) => &op.base,
+            Self::ShuffleReceiver(op) => &op.base,
             Self::Expand(op) => &op.base,
             Self::Selection(op) => &op.base,
             Self::Projection(op) => &op.base,
@@ -3112,6 +3121,8 @@ impl PhysicalPlan {
     /// The shared physical base, mutably.
     pub const fn base_mut(&mut self) -> &mut BasePhysicalPlan {
         match self {
+            Self::Shuffle(op) => &mut op.base,
+            Self::ShuffleReceiver(op) => &mut op.base,
             Self::Expand(op) => &mut op.base,
             Self::Selection(op) => &mut op.base,
             Self::Projection(op) => &mut op.base,
@@ -3480,6 +3491,9 @@ impl PhysicalPlan {
         let mut stack = vec![self];
         while let Some(node) = stack.pop() {
             total += match node {
+                Self::ShuffleReceiver(receiver) => receiver.base.base.memory_usage()
+                    + std::mem::size_of::<Box<Self>>() as i64 + receiver.data_source.memory_usage(),
+                Self::Shuffle(shuffle) => shuffle.memory_usage(),
                 Self::Sort(sort) => sort.memory_usage(),
                 Self::TableSample(sample) => sample.memory_usage(),
                 Self::HashJoin(join) => join.memory_usage(),
@@ -3857,6 +3871,18 @@ impl PhysicalPlan {
                 agg_funcs: op.agg_funcs.clone(),
                 group_by_items: op.group_by_items.clone(),
             }),
+            Self::ShuffleReceiver(op) => Self::ShuffleReceiver(PhysicalShuffleReceiverStub {
+                base: base_of(&op.base),
+                data_source: op.data_source.clone(),
+            }),
+            Self::Shuffle(op) => Self::Shuffle(PhysicalShuffle {
+                base: base_of(&op.base),
+                concurrency: op.concurrency,
+                tails: op.tails.clone(),
+                data_sources: op.data_sources.clone(),
+                splitter_type: op.splitter_type,
+                by_item_arrays: op.by_item_arrays.clone(),
+            }),
             Self::Window(op) => Self::Window(PhysicalWindow {
                 base: base_of(&op.base),
                 window_func_descs: op.window_func_descs.clone(),
@@ -4124,19 +4150,37 @@ pub fn rebind_correlated_columns_by_schema_4_physical_plan(
 /// pass. It removes only strict identity projections; computed expressions,
 /// reordered columns, `CalculateNoDelay`, and schema-width changes remain.
 #[must_use]
-pub fn eliminate_physical_projection(mut plan: PhysicalPlan) -> PhysicalPlan {
+pub fn eliminate_physical_projection(plan: PhysicalPlan) -> PhysicalPlan {
+    eliminate_projection_preserving_shuffle(plan, &mut std::collections::BTreeSet::new())
+}
+
+fn eliminate_projection_preserving_shuffle(
+    mut plan: PhysicalPlan,
+    retained: &mut std::collections::BTreeSet<i32>,
+) -> PhysicalPlan {
+    if let PhysicalPlan::Shuffle(shuffle) = &plan {
+        // Go's boundary pointers retain nodes even if projection elimination
+        // removes them from ordinary child links. Keep these nodes owned until
+        // the builder substitutes receivers, while still rewriting descendants.
+        retained.extend(shuffle.data_sources.iter().copied());
+        retained.extend(shuffle.tails.iter().copied());
+    }
+    let retain_node = retained.contains(&plan.id());
     let children = std::mem::take(plan.base_mut().children_mut());
     plan.base_mut().set_children(
         children
             .into_iter()
-            .map(eliminate_physical_projection)
+            .map(|child| eliminate_projection_preserving_shuffle(child, retained))
             .collect(),
     );
 
     if let PhysicalPlan::TableReader(reader) = &mut plan {
         if reader.store_type == crate::physical_table_reader::StoreType::TiFlash {
             if let Some(table_plan) = reader.table_plan.take() {
-                reader.table_plan = Some(Box::new(eliminate_physical_projection(*table_plan)));
+                reader.table_plan = Some(Box::new(eliminate_projection_preserving_shuffle(
+                    *table_plan,
+                    retained,
+                )));
             }
         }
     }
@@ -4177,11 +4221,14 @@ pub fn eliminate_physical_projection(mut plan: PhysicalPlan) -> PhysicalPlan {
     let PhysicalPlan::Projection(mut projection) = plan else {
         unreachable!("the projection arm was checked above")
     };
-    let mut child = projection.base.children_mut().remove(0);
+    let child = &mut projection.base.children_mut()[0];
     if !projection_schema.is_empty() && matches!(child, PhysicalPlan::Projection(_)) {
         child.base_mut().base.set_schema(Some(projection_schema));
     }
-    child
+    if retain_node {
+        return PhysicalPlan::Projection(projection);
+    }
+    projection.base.children_mut().remove(0)
 }
 
 pub mod expand;

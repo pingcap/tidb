@@ -705,12 +705,12 @@ fn misc_keyword_functions() {
         r("select weight_string(a) from t"),
         "SELECT WEIGHT_STRING(`a`) FROM `t`"
     );
-    // Go's approximate aggregate grammar excludes the DISTINCT modifier.
+    // Current Go parseAggregateFuncCall accepts DISTINCT for approximate aggregates.
     assert_eq!(
         r("select approx_count_distinct(a) from t"),
         "SELECT APPROX_COUNT_DISTINCT(`a`) FROM `t`"
     );
-    assert!(parse("select approx_count_distinct(distinct a) from t").is_err());
+    assert!(parse("select approx_count_distinct(distinct a) from t").is_ok());
     // `WEIGHT_STRING(str AS {CHAR|BINARY}(N))` — the extended form — now
     // has its own dedicated grammar; see `weight_string`'s own test below
     // for the full coverage (this assertion used to expect a
@@ -724,16 +724,24 @@ fn misc_keyword_functions() {
 }
 
 #[test]
-fn approximate_aggregates_follow_expression_list_grammar() {
+fn approximate_aggregates_follow_current_go_aggregate_grammar() {
+    // Pinned expr_func_parser.go uses the shared aggregate argument parser
+    // and wraps approximate aggregates in WindowFuncExpr when OVER follows.
     for name in ["APPROX_COUNT_DISTINCT", "APPROX_PERCENTILE"] {
-        for args in ["DISTINCT a", "DISTINCTROW a", "ALL a", "*", "a, ALL b"] {
-            let sql = format!("SELECT {name}({args}) FROM t");
-            assert!(parse(&sql).is_err(), "{sql}");
+        for args in [
+            "DISTINCT a",
+            "DISTINCTROW a",
+            "ALL a",
+            "*",
+            "a, ALL b",
+            "DISTINCT ALL a",
+        ] {
+            for suffix in ["", "OVER ()", "OVER w"] {
+                let sql = format!("SELECT {name}({args}) {suffix} FROM t");
+                assert!(parse(&sql).is_ok(), "{sql}");
+            }
         }
-        for suffix in ["OVER ()", "OVER w"] {
-            let sql = format!("SELECT {name}(a, 50) {suffix} FROM t");
-            assert!(parse(&sql).is_err(), "{sql}");
-        }
+        assert!(parse(&format!("SELECT {name}() FROM t")).is_err());
         assert!(parse(&format!("SELECT {name}(a, b) FROM t")).is_ok());
     }
     assert!(parse("SELECT JSON_ARRAYAGG(a) OVER () FROM t").is_ok());

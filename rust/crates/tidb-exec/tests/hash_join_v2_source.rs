@@ -1,26 +1,3 @@
-//! MIGRATION NOTE (this target currently does not compile — see below).
-//!
-//! `native_probe_stage_next_close_and_error_source` (and its driver helpers at
-//! `events.recv_timeout` / `stage.next(&mut source, ...)`) were written for the
-//! pre-fetcher `ProbeStage` API, where `next` took the probe source per call.
-//! Since commit 2593651018 the stage owns a fetcher that runs on the persistent
-//! execution pool: `new` wants `&mut Option<Box<dyn Executor>>`, `next` wants
-//! only the output chunk, and the fetcher emits `FetcherDone` / `FetcherError`
-//! events the driver loop must now handle.
-//!
-//! To migrate:
-//!   1. Wrap the probe source as `&mut Some(Box::new(source) as
-//!      Box<dyn Executor>)` before `ProbeStage::new`.
-//!   2. Drop the source argument from `stage.next(&mut output)`.
-//!   3. Handle `FetcherDone` (source EOF: finish the fetch) and
-//!      `FetcherError { error }` (surface it) in the driver loop.
-//!   4. `source.calls` / `source.allocations` are read after the source is
-//!      boxed — route them through an `Arc<Mutex<..>>`-style shared handle
-//!      captured before boxing.
-//!   5. Re-derive per-mode expectations: source fail/panic now surface as
-//!      fetcher events, the empty-build path takes `skip_probe`, and the kill
-//!      path flows through the fetcher's kill select.
-
 // Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,11 +46,19 @@ use tidb_executor::{ExecError, Executor, ExecutorMeta, OomAction, StatementMemor
 
 // Go mockDataSource. Open/Close belong to the parent; Next owns the child
 // exclusively and may run on the join's build coordinator.
+#[derive(Default)]
+struct ProbeSourceObservations {
+    calls: usize,
+    allocations: usize,
+    requested_rows: Vec<usize>,
+}
+
 struct BuildSource {
     meta: ExecutorMeta,
     chunks: std::collections::VecDeque<Chunk>,
     owner: std::thread::ThreadId,
     allocations: std::cell::Cell<usize>,
+    observations: Option<std::sync::Arc<std::sync::Mutex<ProbeSourceObservations>>>,
     calls: usize,
     fail_at: Option<usize>,
     panic_at: Option<usize>,
@@ -106,6 +91,7 @@ impl BuildSource {
             chunks: chunks.into(),
             owner: std::thread::current().id(),
             allocations: std::cell::Cell::new(0),
+            observations: None,
             calls: 0,
             fail_at: None,
             panic_at: None,
@@ -155,6 +141,11 @@ impl Executor for BuildSource {
     }
     fn next(&mut self, output: &mut Chunk) -> Result<(), ExecError> {
         self.calls += 1;
+        if let Some(observations) = &self.observations {
+            let mut observations = observations.lock().unwrap();
+            observations.calls += 1;
+            observations.requested_rows.push(output.required_rows());
+        }
         if self.calls == 1 {
             if let Some(required) = self.first_required_rows {
                 assert_eq!(output.required_rows(), required);
@@ -201,6 +192,9 @@ impl Executor for BuildSource {
     }
     fn new_chunk(&self) -> Chunk {
         self.allocations.set(self.allocations.get() + 1);
+        if let Some(observations) = &self.observations {
+            observations.lock().unwrap().allocations += 1;
+        }
         self.meta.new_chunk()
     }
 }
@@ -982,6 +976,9 @@ fn run_worker_stage(
                     ProbeWorkerEvent::Done { .. } => {
                         drop(close);
                         return Ok(results);
+                    }
+                    ProbeWorkerEvent::FetcherDone | ProbeWorkerEvent::FetcherError { .. } => {
+                        panic!("a directly driven worker has no fetcher")
                     }
                     ProbeWorkerEvent::Error { error, .. } => {
                         drop(close);
@@ -1812,6 +1809,9 @@ fn outer_join_worker_scan_waits_for_all_probers_source() {
                 ProbeWorkerEvent::Done { worker_id, .. } => {
                     assert!(probe_done.iter().all(|done| *done));
                     done[worker_id] = true;
+                }
+                ProbeWorkerEvent::FetcherDone | ProbeWorkerEvent::FetcherError { .. } => {
+                    panic!("a directly driven worker has no fetcher")
                 }
                 ProbeWorkerEvent::Error { error, .. } => panic!("{error:?}"),
             }
@@ -2925,8 +2925,12 @@ fn native_probe_stage_next_close_and_error_source() {
                     3,
                 );
                 let lane_fixture = Arc::clone(&fixture);
+                let observations =
+                    Arc::new(std::sync::Mutex::new(ProbeSourceObservations::default()));
+                source.observations = Some(Arc::clone(&observations));
+                let mut source = Some(Box::new(source) as Box<dyn Executor>);
                 let mut stage = ProbeStage::new(
-                    &source,
+                    &mut source,
                     &output_meta,
                     &fixture.0,
                     memory.clone(),
@@ -2996,7 +3000,14 @@ fn native_probe_stage_next_close_and_error_source() {
                     },
                 )
                 .unwrap();
-                assert_eq!(source.allocations.get(), concurrency);
+                assert_eq!(
+                    observations.lock().unwrap().allocations,
+                    if mode == 7 && kind != JoinType::LeftOuter {
+                        0
+                    } else {
+                        concurrency
+                    }
+                );
                 if mode == 4 {
                     memory
                         .sql_killer()
@@ -3009,7 +3020,7 @@ fn native_probe_stage_next_close_and_error_source() {
                     Ok(())
                 } else {
                     loop {
-                        if let Err(error) = stage.next(&mut source, &mut output) {
+                        if let Err(error) = stage.next(&mut output) {
                             break Err(error);
                         }
                         if output.num_rows() == 0 {
@@ -3026,6 +3037,15 @@ fn native_probe_stage_next_close_and_error_source() {
                         }
                     }
                 };
+                // Join the fetcher before reading shared observations. Mode 6
+                // still exercises Drop without an explicit Close.
+                let mut stage = Some(stage);
+                if mode == 6 {
+                    drop(stage.take());
+                } else {
+                    stage.as_mut().unwrap().close().unwrap();
+                }
+                let source = observations.lock().unwrap();
                 match mode {
                     0 => {
                         result.unwrap();
@@ -3050,7 +3070,7 @@ fn native_probe_stage_next_close_and_error_source() {
                         expected.sort();
                         assert_eq!(rows, expected);
                         assert_eq!(source.calls, 14);
-                        assert!(stage.is_finished());
+                        assert!(stage.as_ref().unwrap().is_finished());
                         if kind == JoinType::LeftOuter {
                             assert!(source.requested_rows.iter().all(|&rows| rows == 2));
                         }
@@ -3062,7 +3082,8 @@ fn native_probe_stage_next_close_and_error_source() {
                         ))
                     )),
                     2 | 3 => assert!(
-                        matches!(result, Err(ExecError::Internal(ref message)) if message.contains("panic"))
+                        matches!(result, Err(ExecError::Internal(ref message)) if message.contains("panic")),
+                        "mode={mode} concurrency={concurrency} kind={kind:?}: {result:?}"
                     ),
                     4 => assert!(
                         matches!(result, Err(ExecError::Killed(ref error)) if error.code == 1317)
@@ -3097,9 +3118,9 @@ fn native_probe_stage_next_close_and_error_source() {
                     _ => unreachable!(),
                 }
                 if mode != 6 {
-                    stage.close().unwrap();
-                    stage.close().unwrap();
-                    assert!(stage.is_finished());
+                    stage.as_mut().unwrap().close().unwrap();
+                    stage.as_mut().unwrap().close().unwrap();
+                    assert!(stage.as_ref().unwrap().is_finished());
                 }
                 drop(stage);
                 let (mut exec, _) = Arc::try_unwrap(fixture)

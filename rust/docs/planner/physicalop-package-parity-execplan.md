@@ -1,0 +1,4008 @@
+# Complete the pinned physicalop package without behavioral gaps
+
+This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`,
+`Decision Log`, and `Outcomes & Retrospective` current while the work proceeds.
+
+Reference: `PLANS.md` at repository root. Repository policy also requires one
+complete pinned Go package, including production, generated, test, support, and
+build artifacts, as the minimum package-completion unit. The user explicitly
+requested committing and pushing progress on 2026-09-21; progress checkpoints
+do not claim package acceptance.
+
+## Purpose / Big Picture
+
+Rust planning must produce, cost, clone, rebuild, serialize, and attach the
+same physical operators and distributed tasks as pinned Go package
+`pkg/planner/core/operator/physicalop` at the current audit baseline
+`aba629bb455dc09d6a5d98b3c39a542bb1189b9d`. The physicalop source tree is
+unchanged from `be35d4c762f4a8252c059ab0eedc24b310270b8c`; its current
+57-artifact inventory and hashes are in `physicalop-source-inventory.md`.
+Earlier progress below was
+measured against `e2788410d8d696605e8cb002585877a063ccc909` and is historical
+evidence, not acceptance of the current package. A user should observe the same
+plan shape, SQL result, warning, cache-rebuild behavior, and task placement for
+the same statement and session state. Completion means the package has no
+Rust-only policy, cache-only physical path, named refusal, ignored substitute,
+or missing Go branch.
+
+## Progress
+
+The entries below are checkpoints; older counts and pending items describe
+their recorded stage. The latest verified state is summarized first.
+
+- [x] (2026-09-21, stream aggregation shared grouping) Reproduced JSON
+  cross-chunk grouping mismatch and requested-row overrun before fixing them.
+  Stream aggregation now calls VecGroupChecker; its integer direct-column
+  comparison is shared with window/shuffle. Go SQL oracle and 197 targeted
+  Rust tests pass (76 aggregate, 14 checker, 15 merge/stream session, 68 window,
+  24 shuffle). Entire dependent aggregate package inventoried but unaccepted;
+  remaining error/memory/failpoint and merge-integration audits stay open.
+- [ ] (2026-09-21, original fragment-test coverage audit) The untracked
+  fragment.rs draft is NOT declared in lib.rs and references missing CTE
+  sink/source variants and ExchangeSender.tasks. Its two test-shaped bodies
+  correspond to original fragment_test.go cases but are not compiled or run.
+  Do not count them as original-test coverage or integrate this partial draft.
+- [x] (2026-09-21, window partition identity and group-checker evaluation)
+  Reproduced JSON 1/1.0 cross-chunk partition merging absent from Go. Both
+  window schedulers now consume the existing group's exact encoded boundary
+  identity and adjacent comparison ranges. Go/Rust agree for 32- and 64-row
+  chunks under both modes. A second regression exposed 32 versus Go's two
+  conversion warnings: checker now evaluates endpoints before its single-group
+  shortcut and scans columns only when needed, with a reusable row mask.
+  Original Go checker tests passed; Rust source ports now call production
+  chunk evaluation. Four-artifact dependent-package inventory added; stream
+  aggregation's separate implementation still needs reconciliation.
+- [x] (2026-09-21, RANGE evaluation and temporal diagnostics) Go's exhausted
+  bound cursor skips calculation; Rust evaluated unused bounds and incorrectly
+  raised BIGINT overflow. Moved evaluation into each actual comparison, in Go
+  operand order. Twelve integer result cases and two overflow controls match
+  Go. Temporal RANGE exposed dropped DATE_ADD overflow warnings; the shared
+  calendar evaluator now applies statement policy to arithmetic overflow.
+  Four window warning cases and 14 ordinary interval cases plus strict/IGNORE
+  writes match Go. Broader 67 window, 13 boundary, 9 temporal, 4 read-cast and
+  202 expression tests passed; the expression selection has 15 ignored tests.
+- [x] (2026-09-21, approximate aggregate reachability) Current Go accepts
+  approximate DISTINCT/OVER forms formerly rejected by stale session tests.
+  A 20-record Go oracle established moving/empty-window and ordinary aggregate
+  results. Rust incorrectly deduplicated APPROX_PERCENTILE(DISTINCT ...):
+  [1,1,1,9] at 75% returned 9 instead of Go's 1. Both aggregate builders now
+  ignore this modifier for percentile. SQL red/green and descriptor execution
+  checks pass, alongside 15 JSON, 65 window and 70 hash-aggregation tests.
+  This is dependency evidence, not acceptance of aggfuncs or windows.
+- [x] (2026-09-21, window aggregate/parser integration) All eight original
+  Go windows tests passed again. A new 36-case Go aggregate-window oracle
+  exposed obsolete Rust rejection of APPROX_COUNT_DISTINCT OVER. Removed the
+  old approximate-only grammar path, matching current Go's shared aggregate
+  modifiers/multiple-argument/OVER parser. Independent Go parser oracle proves
+  36 accepted forms and two empty-argument rejections. New SQL matrix is green;
+  all 734 Rust parser tests pass. Broader window-suite final result below.
+- [x] (2026-09-21, exact TPC-H SF1 differential) Current Rust and production
+  Go completed all 22 pinned queries with byte-identical full batch outputs,
+  including headers, decimal text and row order. No query errors; unchanged
+  binary hashes. Session 98737 exited 0 and owned cluster cleanup is verified.
+  Artifacts /tmp/tidb-tpch-exact-mocjafvl. This closes the exact-output gate for
+  this SF1 dataset only; field metadata, warnings and performance remain open.
+- [x] (2026-09-21, MPP session boundary) A SQL SET regression reproduced
+  stale enforcement after allowMPP was disabled. Statement snapshots now
+  capture allowMPP and derive enforcement as allowMPP && enforceMPP, matching
+  Go. The executor planner bridge passes the captured allow flag into existing
+  TopN/Expand enumeration gates. All 12 statement, 29 dispatch and 36 cost
+  tests pass. MPP warning routing and complete TiFlash execution remain open.
+- [x] (2026-09-21, native uint64 bounds) Reproduced debug-build overflow
+  panics in LIMIT candidate generation, TopN cost and LIMIT/TopN cop pushdown.
+  Five sums now explicitly use Go's wrapping uint64 arithmetic. Three new
+  regressions and the 53 physical, 18 task and 36 cost-golden tests pass.
+  Ordinary SQL construction clips excessive LIMIT values in Go; this closes
+  an internal planner contract gap, not a demonstrated SQL crash or speedup.
+- [ ] Current warning audit: MaxOneRow still lacks Go's enforced-MPP warning.
+  The correct integration requires both normal EXPLAIN warnings and extra
+  warnings for other statements, gated by allowMPP && enforceMPP. Do not
+  approximate it by always appending a normal warning. See receipt below.
+- [x] (2026-09-21, YCSB RPC attribution) Four additional 50,000-operation
+  changing-value samples passed exact cross-engine reads and storage checks.
+  TiKV prewrite means (3.59–4.45ms) explain most of aggregate UPDATE latency
+  (4.32–5.24ms); Go client prewrite means were 3.74/4.61ms. This supports a
+  storage/RPC bottleneck, not a proven client scheduling defect. Metric flush
+  boundaries and background requests prevent exact per-request attribution.
+  No speculative optimization or performance acceptance. Owned cluster cleaned.
+- [x] (2026-09-21, changing-value YCSB and profiles) Six 100,000-operation
+  read/update runs passed persisted-change, exact cross-engine table-read and
+  storage checks. Unprofiled Rust durations 54.53/62.99s, Go 64.16/60.72s are
+  preliminary, not a proven improvement. Rust active SQL threads spent about
+  93% of sampled wall observations in prewrite completion; investigate RPC/
+  storage latency before changing SQL execution. Invalid cross-process Python
+  monotonic timestamps were explicitly discarded. Owned cluster cleaned up.
+- [x] (2026-09-21, YCSB A–F integrity smoke) Both current-source engines
+  completed all six mixes on independent 1000-row fixtures with four clients.
+  Verified 12,000 loaded rows, 12,000 logical operations, 194 inserted rows,
+  exact full-table reads through both engines after every phase, and all
+  12 storage checks. Cleanup completed. Integrity-mode updates can be no-ops;
+  random-value write benchmarks and full-package acceptance remain open.
+- [x] (2026-09-21, TPC-H SF1 reference checks) Built current Go with normal
+  production tags/link flags. Loaded/analyzed SF1 and ran all 22 queries once
+  through each engine using the pinned go-tpc answer checker. Both covered
+  Q1–Q22 without reported check failures; owned cluster cleanup is verified.
+  Numeric tolerances and a single fixed run order preclude exact-result or
+  performance-equivalence acceptance. YCSB and controlled comparisons remain.
+- [x] (2026-09-21, current-source TPC-C smoke) Built Go at the Rust audit
+  revision and installed pinned benchmark tools. On one fresh warehouse,
+  both engines passed all 12 preparation checks and all 11 normal post-run
+  checks after 5,000 total transactions (2,000 Rust). A Go-only control
+  confirmed --check-all's extra preparation condition is invalid after
+  deliveries. Owned cluster cleanup completed. This proves a smoke scenario,
+  not performance equivalence, workload optimization or whole-package parity.
+- [x] (2026-09-21, original shuffle scenarios) Added Go's exact 13-row
+  VARCHAR range-splitter fixture and a deterministic executor-level analogue
+  of TestShuffleExit's combined caller error, delayed source panic and worker
+  panics. All 24 shuffle tests pass, including cleanup and replay. Injection
+  exists only under cfg(test). The original SQL-level failpoint path and
+  whole-package acceptance remain open.
+- [x] (2026-09-21, shuffle group-key encoding) Replaced generic datum hashing
+  with Go's field-type-aware HashGroupKey encoding and GetGroupKey enum/decimal
+  adjustments. Captured Go bytes and worker assignments for unsigned, enum and
+  decimal inputs. The unsigned regression failed before the fix; all 22
+  shuffle tests pass. Encoding appends into reused row buffers, removing the
+  previous temporary Vec per key part. No workload speedup is claimed.
+- [x] (2026-09-21, shuffle native startup failure) Replaced infallible OS
+  thread startup with fallible startup that retains executor ownership until
+  the thread exists. Failure cancels and joins started work, restores original
+  source/worker order and reports an execution error. The five-position
+  regression is red/green; all 21 shuffle and 64 window tests pass. Join SQL
+  and lint verification are recorded in the checkpoint receipt below.
+- [x] (2026-09-21, shuffle receiver identity) Added a distinct receiver stub
+  with a statement-allocated ID and separately owned data source. Receiver
+  boundaries are installed after physical rewrites, without cloning sources
+  or exposing them as normal worker children. Runtime rows aggregate across
+  workers at the receiver ID. The missing-EXPLAIN-row regression is red/green;
+  64 window, 60 EXPLAIN, 52 physical-tree tests and builder/reopen pass.
+  Whole-package, original failure coverage and workload acceptance remain open.
+- [x] (2026-09-21, shuffle runtime counters) Fixed EXPLAIN ANALYZE retaining
+  only the last worker's row/call counters. Workers now share their physical
+  node's accumulator, with row updates serialized under the existing call
+  lock. Added Go's ShuffleConcurrency execution-info field. Both regressions
+  failed before their fixes and pass afterward; all 60 EXPLAIN tests pass.
+  Separate receiver-stub identities and their display/statistics remain open.
+- [x] (2026-09-21, shuffled SQL and ownership) Captured five Go join/aggregate
+  plans and result sets and verified Rust serial/parallel execution against
+  them. Preserved shuffle-referenced projections across post-optimization;
+  the missing-boundary regression is red before and green after. Shuffled
+  window input also exposed unsafe TopN appends into aliased input chunks;
+  matched Go chunk.List's fresh-buffer rule, with a deterministic regression.
+  Validation passes: 52 physical-tree tests, builder/reopen, 14 merge-join
+  tests, 51 TopN tests, and 63 window SQL tests. Whole-package and performance
+  acceptance remain open.
+- [x] (2026-09-21, shuffle selection) Connected resolved session concurrency
+  and group-NDV skew settings to window/stream-aggregate/merge-join selection.
+  Added Go's sort and NDV gates after property enforcement. A Go oracle
+  confirmed unordered window shuffle and ordered non-shuffle behavior. Fixed
+  nominal-sort child rewrapping that invalidated ORDER BY. All 63 window SQL
+  tests, the 12-case selection matrix, and 29 dispatcher tests pass. Full
+  operator/package and workload acceptance remain pending.
+- [x] (2026-09-21, shuffle node and builder) Added the physical enum node,
+  source-schema index binding, explain metadata, task attachment, memory
+  accounting, deep-copy metadata, and Go's exact plan-cache refusal. Builder
+  constructs sources once and substitutes owned receivers in worker copies.
+  All 51 physical-tree tests and the new builder/reopen test pass. The
+  optimizer rewrite/session-concurrency wiring remain absent, so ordinary
+  SQL planning does not select shuffle yet. No package acceptance is claimed.
+- [x] (2026-09-21, shuffle scheduler) Replaced the standalone sequential
+  scheduler with owned source/worker threads, bounded holder channels that
+  recycle chunks, cancellation, joins, and source/worker panic recovery.
+  The backpressure regression failed before the change (101 fetches before
+  first output) and passes afterward. All 20 focused shuffle tests pass.
+  This remains seed evidence inside the ongoing complete-package work;
+  production planner/builder integration and upstream validation are pending.
+- [x] (2026-09-21, current source inventory) Inventoried all 57 physicalop
+  artifacts at the pulled HEAD, plus direct generation/module inputs, with
+  source hashes. A Python hashlib check independently verified all 62 hashes
+  against worktree bytes and exact package file-set equality; `git diff
+  --check` passed. `git diff be35d4c762f4a8252c059ab0eedc24b310270b8c HEAD
+  -- pkg/planner/core/operator/physicalop` was empty. This checkpoint changes
+  documentation only, so it adds no runtime validation claim. Every artifact
+  remains pending whole-package acceptance.
+- [ ] Current integration audit found no PhysicalShuffle plan variant or
+  production builder path; optimizeByShuffle is explicitly omitted. The
+  standalone Rust shuffle executor was sequential at that checkpoint; the
+  subsequent scheduler checkpoint above replaces that implementation. Entries claiming
+  shuffle integration are superseded by this current-tree finding. Complete
+  the planner/executor path and its Go behavior validation before acceptance.
+- [x] (2026-09-21, chunk/precision matrix) Expanded the wrapped-frame
+  regression from 28 to 192 independently observed Go cases: eight aggregate
+  expressions, two bounds, three chunk sizes, two precision modes, and two
+  execution modes. Rust matches every result/error without further production
+  changes. This strengthens the boundary evidence, not package acceptance.
+- [x] (2026-09-21, wrapped sliding frames) Captured 28 upstream Go SQL
+  outcomes for seven aggregate expressions, two unsigned-wrap frame bounds,
+  and normal/pipelined modes. Fixed Rust's backward-frame recomputation to
+  preserve Go's sliding evaluation order and recovered bounds error. All 62
+  SQL window tests and 23 selected unit tests pass; wider combinations and
+  the full dependency/integration audit remain pending.
+- [x] (2026-09-21, ranking evaluation order) Removed eager per-row peer
+  metadata. Each ranking function now advances its own result-time cursor,
+  matching Go RANK/DENSE_RANK/PERCENT_RANK/CUME_DIST comparison order. The
+  trace regression failed before the change and passes in normal/pipelined
+  execution and after reopen. All 61 SQL window tests and 13 executor
+  source/boundary tests pass; whole-package acceptance remains pending.
+- [x] (2026-09-21, write profiling) Rebuilt release and ran fixed-seed
+  Rust/Go/Go/Rust write-only samples on a fresh shared cluster, then a separate
+  native sampling run. Rust averaged 4.17/4.19 ms per transaction; Go averaged
+  4.18/4.12 ms. The former large Rust-specific gap did not reproduce. About
+  71% of sampled SQL-thread stacks waited for prewrite replies. This guides
+  further investigation but does not establish full performance parity.
+- [x] (2026-09-21, aggregate test recovery) Migrated the stale hash-join probe
+  tests to the owned-fetcher API and restored the DDL suite to the aggregate
+  target because ALTER tests import its helpers. Fixed a reproduced race that
+  replaced worker panic errors with input-disconnection errors. All 31
+  hash-join source tests and 102 DDL/ALTER tests pass in the aggregate binary.
+- [x] (2026-09-21, live verification) Rebuilt release at aba629bb45 plus
+  the recorded worktree and reran the fresh Go/TiKV sysbench ladder. All eight
+  Rust cells, eight Go cells, 24 SQL checks, and six concurrent-DDL checks
+  passed. Go's notifier SELECT/ADMIN CHECK TABLE succeeded; no notifier
+  decoding errors appeared. Owned cluster cleanup completed. Write-heavy
+  timings were slower than Go in this single sample and need profiling;
+  this is compatibility evidence, not performance acceptance.
+- [x] (2026-09-21, notifier handle encoding) Reproduced integer row-ID keys
+  being written into a clustered notifier table. Selected the existing row
+  writer from stored TableInfo and stopped allocating row IDs for clustered
+  tables. The byte-level regression and all 89 catalog DDL tests pass. Live
+  Go decoding and the full sysbench ladder still need rerunning.
+- [x] (2026-09-21, schema cache identity) Fixed catalog metadata version
+  collisions across rebuilt catalogs and divergent clones. The cross-session
+  prepared UPDATE regression now passes, as do point/range SELECT checks
+  across ADD/DROP COLUMN. Prepared-cache, catalog snapshot, and temporary-table
+  validation receipts are below. The live concurrent-DDL workload rerun and
+  independent notifier interoperability failure remain pending.
+- [x] (2026-09-21, workload diagnosis) Built the current Rust release and ran
+  the owned-cluster sysbench ladder. All eight single-thread cells passed,
+  but concurrent DDL broke prepared UPDATE and Go could not decode the DDL
+  notifier table. Added an embedded-store regression reproducing stale UPDATE
+  width after cross-session ADD COLUMN. This regression is intentionally red;
+  the production fix and subsequent workload rerun remain pending.
+- [x] (2026-09-21, current window checkpoint) Mapped original Go test actions,
+  passed all eight original Go window tests with Go 1.26.0, and verified
+  unsigned LEAD/ROWS edge cases against live Go SQL execution. Fixed ordinary
+  frame-less input evaluation counts, update/result error ordering, ignored
+  frame notes, and unnecessary peer construction for non-ranking functions.
+  Current Rust validation: 61 session window tests, 23 selected executor unit
+  tests, and 12 executor boundary/source tests pass. Exact receipts follow.
+- [ ] Accept complete windows/physicalop packages only after the remaining
+  production/dependency audit and integration gates; measure sysbench,
+  TPC-C, TPC-H, and YCSB before making current performance claims.
+
+- [x] (2026-09-21, pipelined implementation) Added the actual pipelined
+  scheduler using retained chunk ranges, strict frame lookahead, pending
+  partition groups, persistent partial results, and `accumulated <= dropped`
+  output-alias release. Wired the session flag through both statement-context
+  paths, all four planner-builder bridges, and physical executor selection.
+  Added forced-pipelined OrderedWindowExec. The streaming-before-child-error
+  regression failed against normal Window and passes through the new path.
+  All 52 SQL window tests and 23 selected executor unit tests pass. Full
+  original-Go test mapping and package acceptance are still open.
+- [x] (2026-09-21, pipeline row-retention prerequisite) Replaced the ordinary
+  Window executor's copied partition Chunk with owned ranges of child chunks.
+  Aggregate frame evaluators now accept ranges spanning chunks and keep
+  absolute row indexes when prefixes expire. The six executor tests pass,
+  including output reset, shared chunks across partitions, and reopen. Three
+  new ownership tests prove selected-row indexing, error short-circuiting,
+  prefix expiry, release of an input chunk after its last range expires, and
+  continued sliding updates after prefix expiry.
+  The buffer is used by ordinary execution; the actual pipelined state machine
+  and its selection remain unfinished.
+- [x] (2026-09-21, extrema/XOR sliding prerequisite) Reproduced Go's newest
+  collation-equal MIN/MAX value rule: Rust returned older `A` for `[A,a]`
+  under `utf8mb4_general_ci`, while Go's deque retains `a`. Added typed
+  monotonic MIN/MAX state and BIT_XOR inverse updates. The source regression
+  now passes. All 51 SQL window tests and six executor boundary tests pass;
+  typed coverage includes unsigned BIGINT, FLOAT, DOUBLE, DECIMAL, DATE,
+  DATETIME, TIMESTAMP, TIME, and BIT. True pipelined/ordered execution and
+  whole-package acceptance remain unfinished.
+- [x] (2026-09-21, continuation) Revalidated the actual `task.rs` and found
+  that the historical OriginSchema completion entry did not describe this
+  checkout: double reads and index merges still rejected `NeedExtraProj`.
+  Restored the task-carried original schema and Go's projection placement
+  below root conditions for table, double-read, and index-merge readers.
+  Both new regressions failed before the implementation and pass afterward;
+  all 69 tests selected by `task::` pass. The table/double-read HashAgg and
+  StreamAgg exception is covered by a four-case regression.
+- [x] (2026-09-21, continuation) Updated obsolete constructors in the existing
+  untracked Expand and Window test files so the aggregate executor harness
+  compiles. Generated-column SQL checks pass (11 running tests; one existing
+  ignored DDL concurrency case). The expanded ordinary-query regression
+  covers root virtual-column filters with both table and index-lookup access;
+  it passes. The Expand source regression also passes.
+- [x] (2026-09-21, Window continuation) Reproduced the ready-chunk-before-error
+  failure, then replaced the full-child drain with Go's per-child result queue
+  and complete-partition processing. Passthrough columns alias the input using
+  the resolved output indexes; the Rust-owned frame buffer retains only the
+  current partition. Four source regressions pass, including chunk boundaries,
+  NULL partition keys, peers, duplicate/reordered outputs, output reset, and
+  reopen. All 48 existing session window tests pass.
+- [ ] Complete the entire `pkg/executor/windows` package and its required
+  `pkg/executor/aggfuncs` consumers. Ordinary chunk readiness is corrected;
+  pipelined/ordered execution is now implemented and under audit. Remaining
+  aggregate state, complete original-test mapping, concurrency/integration
+  checks, and required Go/benchmark gates remain open.
+  The historical Window completion entry is not current acceptance evidence.
+- [x] (2026-09-21, sliding prerequisite) Added COUNT partial-result state with
+  Go's departing-before-arriving evaluation order, initialized only after a
+  nonempty frame and reset at ordinary output-chunk/partition boundaries.
+  The 100-row/10-row-frame regression failed with 955 evaluations before the
+  change and passes with 190 afterward. Six executor source tests now pass;
+  the added matrix covers NULLs, COUNT(*), empty and disjoint frames, four
+  chunk sizes, two partitions, and reopen. Other sliding aggregates and the
+  actual pipelined executor remain unfinished.
+- [x] (2026-09-21, numeric sliding prerequisite) Reproduced the ignored
+  `windowing_use_high_precision=OFF` setting with SUM/AVG over a two-row
+  moving frame containing `1e16, 1, 1`. Before the change OFF returned the
+  high-precision final values 2 and 1; Go's add-before-subtract order returns
+  0 and 0. The ON/OFF/ON SQL regression now passes. Wired the statement
+  snapshot through StmtContext and Columns, and implemented decimal SUM/AVG
+  sliding plus Go's real-valued precision choice. All 49 window SQL tests and
+  four focused numeric tests pass. Other sliding functions and the pipelined
+  executor remain open; this is not package acceptance.
+- [x] (2026-09-21) Pulled `origin/hparser-integration` to `be35d4c762`
+  and revalidated the physicalop source boundary. It now has 57 artifacts:
+  the previous 55 plus `single_scan_index_join.go` and
+  `storage_engine_usage.go`. `BUILD.bazel` and `physical_utils_test.go` also
+  changed. There is no `doc.go` or platform-specific source in this package.
+- [x] (2026-09-21) Reproduced two IndexMergeReader resolution failures before
+  changing production code: generated-column dependencies retained stale index
+  77, and partial scans were modified before the table-plan error. Implemented
+  Go's generated-column binding and table-before-partials traversal. Both
+  regressions pass, as do all 61 `physical::` unit tests. Ordinary planning
+  calls this resolver in `tidb-executor/src/driver/planner_bridge.rs`. The
+  existing cached physical index-merge executor integration test also passes.
+  Schemas without generated columns are not copied by the new binding step.
+- [ ] Audit the current-baseline additions and all prior unchecked behavior;
+  finish ordered IndexMergeReader handle representation and resolution.
+  The two new helper files have Rust implementations in
+  `tidb-planner/src/storage_engine_usage.rs`, but a source search found no
+  production callers; their optimizer integration remains unverified.
+- [x] (2026-09-01) Enumerated the pinned package: 55 artifacts, comprising
+  `BUILD.bazel`, 51 hand-written production Go files, one generated production
+  Go file, two test files, and no package fixtures or platform variants.
+- [x] (2026-09-01) Read the pinned task, task-base, enforcer, fragment,
+  exchange sender/receiver, Sequence, UnionAll, and index-lookup task sources
+  before accepting their Rust implementations.
+- [x] (2026-09-01) Replaced Rust's `CopTask.OriginSchema` refusal with Go's
+  column-only extra projection for table, double-read, and index-merge readers;
+  two focused regressions pass.
+- [x] (2026-09-01) Removed the ignored `max_count`/`min_count` physicalop test
+  copied from newer `master`; those aggregate names are absent from the pinned
+  commit and implementing them would add non-Go behavior to this baseline.
+- [x] (2026-09-01) Implemented the pinned fragment singleton matrix and
+  task-address-local CTE sink/source counts as running tests, including real
+  `PhysicalCTESink` and `PhysicalCTESource` variants in the closed plan tree.
+- [x] (2026-09-01) Ported Go's MPP CTE-reader enumeration, Sequence producer
+  status matrix, and distinct child-bearing `PhysicalCTEStorage`; focused
+  enumeration and attachment tests pass.
+- [x] (2026-09-01) Replaced the logical Window and UnionScan dispatcher
+  refusals with physical candidates, task attachment, and explain coverage.
+  Focused physical and attachment tests pass. The ordinary executor now uses
+  Go's current-partition consumption, monotone RANGE cursors, and sliding
+  aggregate processors. The session's `windowing_use_high_precision` value now
+  selects Go's non-sliding FLOAT SUM/AVG shape when ON and sliding shape when
+  OFF; TiPB completion remains open. Pinned Go does not clone Window for plan
+  cache, so the former Rust cache-expression support was removed.
+- [x] (2026-09-01) Restored `buildDataSource`'s pinned UnionScan creation
+  gate for transaction-dirty, local-temporary, and cached tables. Dynamic
+  partition reads now append `_tidb_tid` before wrapping the DataSource, and
+  focused tests distinguish local from global temporary tables.
+- [x] (2026-09-01) Wired ordinary `PhysicalUnionScan` construction through
+  Go's reader-shape matrix. Rust's transaction-private catalog scan already
+  performs the snapshot/staged-row merge, so the physical node is an identity
+  execution boundary rather than a second overlay; conditions, index order,
+  and distinct runtime-plan identity have focused regressions.
+- [x] (2026-09-01) Ported pinned `PhysicalShuffle` representation, explain,
+  session concurrency plumbing, the Window/StreamAgg/
+  MergeJoin `optimizeByShuffle` rewrite, and ordinary executor construction
+  over the existing Shuffle executor. Cross-crate WIP checks and the focused
+  planner rewrite regression pass. The focused builder regression is written,
+  but the executor test target is currently blocked by an unrelated existing
+  `tidb_model::distance_metric` test-compilation error. Pinned Go does not
+  clone Shuffle for plan cache, so no cache traversal is retained.
+- [x] (2026-09-01) Audited all 55 pinned artifacts against the shared Rust
+  worktree and recorded their owning crates. Restored Go's exact recursive
+  `CloneForPlanCache` admission matrix and removed cache rebuild handling for
+  unsupported Apply, CTE, Expand, Window, Exchange, and Shuffle families; the
+  focused admission regression passes.
+- [x] (2026-09-01) Replaced the enum-wide infallible ordinary physical clone
+  with pinned Go's operator support matrix and recursive child failure. The
+  prepared SELECT and DML caches now retain immutable admitted templates,
+  clone one private tree per hit, and run range rebuilding on that clone as
+  Go does. Focused clone/admission regressions and cross-crate checks pass.
+- [x] (2026-09-01) Restored `CopTask.FinishIndexPlan`'s statistics-version
+  pin: the table scan adopts index cardinality but retains the original table
+  `StatsVersion`, exactly as pinned Go does. Removed the obsolete ignored
+  UnionScan/Fragment gap documentation and added the running
+  Selection-Projection UnionScan attachment regression.
+- [x] (2026-09-01) Restored Go task-carried DataSource statistics for
+  `CopTask.handleRootTaskConds` and `MppTask.GetTblColHists`. Root-side
+  conditions now use the available column NDVs instead of always taking the
+  0.8 error fallback; MPP exchange, Sequence, and CTE-storage transitions
+  retain the source profile while UnionAll deliberately clears it as Go does.
+  Focused selectivity and task checks pass.
+- [x] (2026-09-18) Reconciled the post-pull physical dispatcher with the
+  pinned Go behavior and wired every physical-enumeration session input through
+  the ordinary statement context: MPP permission, skew/three-stage aggregate
+  switches, late materialization, partial-order TopN, prefer-range scan,
+  Window/MergeJoin/StreamAgg concurrency, and fixes 45132/56318. A focused
+  session regression changes all values and observes the exact planner
+  snapshot; planner/executor/session checks pass.
+- [x] (2026-09-01) Ported pinned prefix-index partial-order TopN end to end:
+  session `COST` gating, candidate-first enumeration, projection remapping,
+  exact access-path matching, task-carried match state, prefix-aware pushed
+  Limit, and root TopN metadata. Candidate, projection, attachment, and full
+  DataSource-to-reader regressions pass.
+- [x] (2026-09-01) Ported pinned TiFlash predicate-order planning: dispatch
+  grouping/order, heavy/simple classification, inverted-index preference and
+  hints, forced-index behavior, and late-materialization scan state. Focused
+  tests and planner/executor/session checks pass; broader statistics fidelity
+  remains package-external follow-up evidence, not a physicalop completion
+  claim.
+- [x] (2026-09-01) Removed the stale ignored heavy-function TopN gap and
+  replaced it with a running pinned-shape regression: when the heavy vector
+  expression is the second by-item, the pushed projection evaluates it once
+  and both local/global TopN operators use the same generated column without
+  disturbing the earlier light item. Restored pinned fix-control `56318` and
+  TiKV `AllowProjectionPushDown` gating; the disabled path now keeps the
+  pushed heavy expression unrewritten, while MPP retains Go's independent
+  projection behavior.
+- [ ] (2026-09-01) Porting pinned package-wide `ResolveIndices`: common unary
+  operators, aggregation/window/scan/lock, Shuffle-owned sources, hash/merge/
+  index joins, Apply, and reader-owned hidden plans now compile; focused
+  Shuffle and null-aware HashJoin regressions pass. Projection-neighbour
+  refinement, complete generated-column fallback, DML, prefix columns, and
+  remaining exact reader handle representations are still open, so this item
+  is deliberately not complete.
+- [x] (2026-09-01) Removed two obsolete ignored-gap tests which still claimed
+  Window/stream-count cloning and ExchangeSender index resolution were absent.
+  They are now running ports of pinned Go's clone and independent-schema
+  resolution assertions; all four tests in that source pass with zero ignores.
+- [x] (2026-09-01) Ported pinned `avoidColumnEvaluatorForProjBelowUnion` at
+  the physical task boundary: direct Projection children of root and MPP
+  UnionAll are marked, nested/ordinary projections remain unmarked. Removed
+  the obsolete ignored gap and added a running tree-shape regression.
+- [x] (2026-09-01) Restored `PhysicalTableScan.ExtractCorrelatedCols` over
+  `LateMaterializationFilterCondition`, removed its now-false ignored gap,
+  and added a running correlated-column regression.
+- [ ] (2026-09-01) Porting pinned `PhysicalExpand`: exact Root/MPP candidate
+  enumeration, `LevelExprs`/extra-name representation, index resolution,
+  cloning, ordinary task attachment, and the pinned serial `ExpandExec` path
+  now have focused passing regressions. Legacy nested `GroupingSets` and
+  TiFlash `Expand`/`Expand2` serialization remain open, so this item is not
+  complete.
+- [ ] (2026-09-01) Consolidating plan cost on the wired Ver2 dispatcher:
+  removed the unused generic Ver1/free-operator and Ver2/TODO methods plus
+  the false table-scan PB-refusal test. The production coster now dispatches
+  pinned Apply, UnionAll, IndexMergeReader, ExchangeReceiver, CTE, PointGet,
+  and BatchPointGet formulas. Point plans now retain Go's `AccessCols == nil`
+  distinction, so fast plans cost zero while optimizer-created point plans use
+  one-row or estimated-cardinality network cost. Focused regressions pass;
+  selectable Ver1 and remaining session/cache/trace semantics remain open.
+- [ ] Read and map every remaining pinned production and generated file to its
+  owning Rust implementation and consumer.
+- [ ] Reconcile both pinned test files (`fragment_test.go` and
+  `physical_utils_test.go`) with running Rust tests.
+- [ ] Remove every package-owned Rust refusal, narrowing, disconnected shell,
+  and behavior policy not present in pinned Go.
+- [ ] Implement every package-owned Go branch absent from Rust, including its
+  planner/executor integration where behavior would otherwise remain inert.
+- [ ] Create `rust/testport/receipts/planner_core_operator_physicalop.md` with
+  the complete artifact and behavioral inventory.
+- [ ] Pass the isolated index-only test gate, the pinned Go package test, the
+  Rust package/integration tests, `make lint`, formatting, and diff checks.
+- [ ] Commit and push the complete package as one batch to
+  `origin/hparser-integration`.
+
+## Surprises & Discoveries
+
+- Shuffle used group_key_part's generic datum encoding despite Go using
+  aggregate.GetGroupKey. For unsigned max, Rust emitted uint flag 9 and a
+  ten-byte uvarint; Go emitted signed-int flag 8 and zigzag byte 1. The same
+  generic path omitted GetGroupKey's enum numeric and decimal flen adjustments.
+  Evidence: /tmp/tidb-shuffle-keys-go.log and /tmp/tidb-shuffle-keys-red.log.
+
+- Native shuffle thread startup could panic after taking executors out of the
+  parent, discarding unstarted executors without Close. Go goroutine creation
+  has no corresponding recoverable OS-thread API. A five-position injected
+  startup-failure test exposed the panic before the fix; native ownership
+  restoration must accompany the existing Go cancellation/close contract.
+
+- Observation: the current Window builder located function result types after
+  the full child schema, while Go locates them after the passthrough portion
+  of the output schema. This differs when columns are pruned or duplicated.
+  The builder now uses `output_schema.len() - window_func_descs.len()`, and
+  `fetch_child` maps each passthrough column using its bound index, as Go's
+  `copyChk` does. The direct regression exercises duplicate and reordered
+  columns with five child chunk sizes and reopen cycles.
+
+- Observation: old plan checkboxes do not establish current implementation
+  parity. At the current baseline, `task.rs` lacked `origin_schema`, contained
+  two explicit NeedExtraProj refusals, and placed virtual-column cleanup above
+  root conditions. These were corrected in the continuation, rather than
+  trusting the earlier completion text.
+
+- Observation: the original untracked Window test also made an incorrect
+  assumption about Go's chunk boundary. Go `WindowExec.Next` waits until all
+  rows in its first result chunk are ready (`preparedChunkAvailable`), so a
+  completed partition occupying only part of that chunk is insufficient.
+  The corrected test emits two separate one-row child chunks, then an error;
+  Go can return the first chunk after seeing the second partition, while
+  Rust's current full-child drain fails before returning it. The mock explicitly
+  splits the rows because `MemTableSourceExec` emits its entire table at once.
+  Evidence: `pkg/executor/windows/window.go:55-122` and the running corrected
+  test in `rust/crates/tidb-executor/tests/window_executor_source.rs`.
+
+- Observation: the old inventory is incomplete for the freshly pulled Go
+  tree. The delta is two new helpers, two new tests in the existing test file,
+  and Bazel metadata. The IndexMergeReader resolution source is unchanged
+  between the historical and current baselines.
+  Evidence: `git diff --stat e2788410d8d696605e8cb002585877a063ccc909
+  be35d4c762 -- pkg/planner/core/operator/physicalop` reports four changed
+  files and 239 insertions; `git ls-tree` enumerates 57 package artifacts.
+
+- Observation: Go lint currently cannot bootstrap its required tool.
+  Evidence: `make lint` fails at `go install github.com/mgechev/revive@v1.2.1`
+  with "module ... found, but does not contain package ..." before linting.
+  The installed `tools/bin/revive -version` reports exactly `version 1.2.1`.
+  `make -o tools/bin/revive lint` subsequently passed: this skips the phony
+  reinstall target and executes the unchanged revive and dashboard lint recipes.
+  Plain `make lint` still has the installer failure; do not report it as passing.
+
+- Observation: the existing Rust work is not a complete package despite broad
+  MPP support. `task.rs` still explicitly refused valid `NeedExtraProj` tasks
+  because `OriginSchema` was absent.
+  Evidence: pinned `task_base.go:551-557,594-600` and
+  `physical_indexlookup_reader.go:295-313` build a `PhysicalProjection`; the
+  pre-change Rust branches returned `PlanError`.
+
+- Observation: this package crosses native Rust crate boundaries. Physical
+  representation and task attachment live primarily in `tidb-planner`, TiPB
+  conversion also uses `tidb-proto` and `tidb-exec`, and direct executor
+  construction lives in `tidb-executor`.
+  Evidence: the current physical tree, request DAG, and executor builder all
+  own parts of one Go physicalop behavior path.
+
+- Observation: legacy testport evidence is not necessarily evidence for the
+  pinned baseline. The ignored MaxCount/MinCount split test cited newer
+  `master`, while a pinned-tree search finds no such aggregate name.
+  Evidence: `git grep -n 'AggFuncMaxCount\|AggFuncMinCount'` at the pinned
+  commit returns no match.
+
+- Observation: the local branch can lag the shared remote while the worktree
+  contains unrelated uncommitted work. Package commits must therefore be
+  validated as an index-only overlay and integrated onto the current remote in
+  a clean temporary checkout before push.
+
+- Observation: the pinned `physical_utils_test.go` contains only the list and
+  tree flatten tests. The ignored BatchPointGet and Max/Min MPP entries in the
+  old gap catalog cite files/tests absent from this package at the pin.
+  Evidence: the full pinned file is 84 lines and ends after
+  `TestFlattenTreePushDownPlan`; both flatten behaviors already have running
+  Rust tests.
+
+- Observation: exchange representation alone was insufficient for Go's MPP
+  fragment behavior. The closed Rust plan had neither CTE sink/source variants
+  nor a fragment owner, so local CTE counts could not be serialized or consumed.
+  Evidence: both pinned `fragment_test.go` tests were ignored placeholders
+  before `fragment.rs` and the two physical variants were added.
+
+- Observation: Rust had complete logical Window and UnionScan types but the
+  physical dispatcher still rejected them. UnionScan also needs Go's
+  projection pull-up rewrite at attachment time; merely adding an enum arm
+  would create an executor-invalid `UnionScan -> Projection` tree.
+  Evidence: pinned `physical_union_scan.go` and `core/task.go:82-123`; the new
+  focused attachment test asserts `Projection -> UnionScan -> child`.
+
+- Observation: physical Window now has representation, enumeration, task
+  attachment, and ordinary root executor construction. Pinned Go also
+  serializes it to TiPB, which remains the outstanding consumer.
+  Evidence: pinned `physical_window.go:287-349`; Rust
+  `tidb-executor/src/driver/physical_builder.rs::build_window`.
+
+- Observation: Go's Shuffle plan deliberately aliases `Tails` and
+  `DataSources` into its child tree and mutates the tail children once per
+  worker during executor construction. Rust's owned tree cannot express that
+  alias safely; cloning the head per worker and replacing nodes by stable plan
+  ID preserves the same worker/source topology without an unsafe executor
+  pointer.
+  Evidence: pinned `physical_shuffle.go` and `executorBuilder.buildShuffle`;
+  Rust `physical_builder.rs::install_shuffle_receivers` performs the native
+  ownership translation.
+
+- Observation: the initial ordinary Window executor materialized the complete
+  child and recomputed aggregate frames per output row, which differed from
+  Go's current-partition consumption and sliding aggregate processors both in
+  error timing and asymptotic work.
+  Evidence: the rewritten executor returns a completed partition before a
+  later child error, advances monotone RANGE cursors, and uses moving
+  COUNT/SUM/AVG/MIN/MAX/BIT_XOR state. Focused latency and moving-frame tests
+  pass; the inline O(n) instrumentation test is presently blocked before
+  execution by an unrelated pre-existing cfg(test) compile error in
+  `kv_table.rs`. Go's high-precision session flag now reaches aggregate
+  construction through the statement snapshot and disables sliding only for
+  FLOAT SUM/AVG while it is ON.
+
+- Observation: Go's reader flattenings alias the pushed-down plan nodes, while
+  Rust owns flattened copies. After resolving the authoritative hidden plan,
+  Rust must regenerate `IndexPlans`/`TablePlans`; resolving only the copies or
+  only the root would leave executor metadata stale.
+  Evidence: pinned reader `ResolveIndices` bodies mutate aliased plan objects;
+  Rust `PhysicalIndexLookUpReader::resolve_indices` now rebuilds both flattened
+  arrays from the resolved roots.
+
+- Observation: although `buildExpand` initially copies projection concurrency,
+  the pinned `ExpandExec.Open` unconditionally sets `numWorkers` to zero because
+  its parallel evaluator is not implemented. A serial Rust executor is exact
+  pinned behavior, not a performance-policy narrowing.
+  Evidence: pinned `pkg/executor/builder.go:2264-2296` and
+  `pkg/executor/expand.go:53-58`; the focused Rust integration test exercises
+  one cached child chunk through every level projection.
+
+- Observation: `PhysicalPlan::get_plan_cost_ver1`,
+  `PhysicalPlan::get_plan_cost_ver2`, and its blanket `to_pb` were disconnected
+  seed APIs after the planner acquired the common Ver2 coster and DAG request
+  serializer. The generic cost path priced real operators as free or returned
+  a TODO, while the blanket PB path made a table scan take Go's base error
+  instead of its override.
+  Evidence: repository-wide call search found only self-tests for those
+  methods; `find_best_task::coster::Ver2Coster` is the production comparison
+  path and `tidb-exec::dag_request` is the wired TiKV serialization path.
+
+- Observation: Go's physical cacheability walk is followed by a distinct,
+  recursive `CloneForPlanCache` gate. Rust's generic deep clone had admitted
+  CTE, Expand, Window, and Shuffle-family plans that the pinned Go base clone
+  refuses.
+  Evidence: pinned `plan_cache.go:289` and `plan_clone_generated.go`; Rust now
+  applies the exact generated/manual operator matrix only after the physical
+  cacheability walk succeeds.
+
+- Observation: old testport gap catalogs are not reliable current-state
+  inventories. They still called Fragment and UnionScan attachment absent
+  after both had running implementations, and `FinishIndexPlan` still named
+  `StatsVersion` as unavailable after `StatsInfo` gained the field.
+  Evidence: the stale ignored UnionScan function was removed in favor of the
+  running task regression; `count_reads_whichever_half_the_cop_task_has_open`
+  now asserts cardinality adoption and table-version retention together.
+
+- Observation: `PhysicalProperty::CloneEssentialFields` correctly retained
+  `PartialOrderInfo`, but `LogicalProjection::TryToGetChildProp` did not
+  transform it through projection expressions. That could let a prefix-index
+  candidate compare output-column IDs directly with child-column IDs and die
+  despite Go accepting it, or survive a computed expression Go rejects.
+  Evidence: pinned `logical_projection.go:524-591`; the Rust projection now
+  independently transforms ordinary and partial-order sort items and the
+  end-to-end prefix-index TopN regression reaches the pushed index-side Limit.
+
+- Observation: the heavy-function TopN port had hard-coded the shipped
+  `Fix56318` default even though Rust already carried the session optimizer
+  fix-control map. It also omitted Go's TiKV-only
+  `AllowProjectionPushDown` gate.
+  Evidence: pinned `pkg/planner/core/task.go::getPushedDownTopN`; physical
+  TopN candidates now retain the evaluated session gates and focused tests
+  distinguish the rewrite-enabled and fix-disabled shapes.
+
+- Observation: the package-wide audit found four P0 integration groups still
+  open: general TiKV/TiFlash physical-tree protobuf lowering, selectable Ver1
+  plus remaining Ver2 point costs, ordinary Lock/Show executor construction,
+  and field-exact plan-cache cloning. P1 groups include missing
+  task state, runtime filters, TiFlash predicate reordering/prefetch, ordinary
+  clone semantics, and specialized memory/probe accounting.
+  Evidence: complete pinned-symbol and Rust-consumer searches over all 55
+  artifacts; these groups remain explicit completion gates below.
+
+## Decision Log
+
+- Decision: represent TestShuffleExit's delayed source panic with a test-only
+  channel gate, releasing it after Next returns its injected caller error.
+  Rationale: preserves the failure ordering without Go's timing-dependent
+  100 ms sleep. Worker panic injection remains before its cancellation check,
+  matching shuffleWorkerRun. Date/Author: 2026-09-21, Codex.
+
+- Decision: shuffle resolves field metadata once per grouping expression,
+  applies Go's EnumSetAsInt and decimal flen=0 adjustments, and appends directly
+  with tidb_codec::append_hash_group_key_in_timezone into retained row buffers.
+  Rationale: generic datum encoding is not Go's aggregate key encoding; reuse
+  also avoids an allocated intermediate byte vector for every row/key part.
+  Date/Author: 2026-09-21, Codex.
+
+- Decision: transfer each shuffle job through a one-element startup channel
+  only after std::thread::Builder::spawn succeeds. On failure, cancel/join the
+  started prefix, then restore the failed job and unstarted suffix in order.
+  Rationale: dropping a failed spawn closure must not drop an owned executor
+  before Close can release its resources. This is native Rust error handling,
+  not an additional SQL feature. Date/Author: 2026-09-21, Codex.
+
+- Decision: normal and pipelined Window share typed function evaluation and
+  frame comparison, but retain separate scheduling loops and aggregate-state
+  lifetimes. Rationale: Go resets normal framed aggregate states between
+  output chunks, whereas the pipeline preserves them across chunks and caches
+  unchanged frame results. Pipelined CURRENT ROW bounds discover peers from
+  retained rows; they must not require a whole-partition peer table.
+  Date/Author: 2026-09-21 / Codex.
+
+- Decision: retain `Arc<Chunk>` per contiguous input range and expose
+  `FrameRows` to aggregate evaluators. Rationale: Go's pipelined release rule
+  requires stable row indexes and the ability to drop old input chunks.
+  Copying an entire partition cannot meet that rule. Typed aggregate readers
+  still bind once per contiguous chunk range, rather than once per row.
+  Ordinary execution now drops all frame references after materializing the
+  partition's results and before returning mutable output aliases.
+  Date/Author: 2026-09-21 / Codex.
+
+- Decision: use `VecDeque<(usize, Datum)>` for the typed production MIN/MAX
+  partial state. Rationale: it preserves Go's newest-equal eviction and
+  constant-time front expiry while allowing statement collation and typed
+  evaluation errors. The isolated `tidb-exec::minmax_deque` test helper is
+  still seed evidence, not a production package-integration claim; do not
+  introduce the reverse crate dependency. Date/Author: 2026-09-21 / Codex.
+
+- Decision: numeric windows own their SUM/AVG state in
+  `hash_agg/window_numeric.rs`, without changing ordinary grouped aggregates.
+  Rationale: Go's decimal SUM retains a NULL counter and rounds the partial
+  sum in place; both SUM and AVG add arriving rows before removing departing
+  rows. Float inverse updates must obey the session precision switch.
+  Date/Author: 2026-09-21 / Codex.
+
+- Decision: implement sliding aggregate state before wiring the pipelined
+  session control. Rationale: selecting the existing full-partition evaluator
+  would not implement Go's pipelined behavior or its precision policy. The
+  first prerequisite is COUNT; no new execution mode or completion claim is
+  introduced. Date/Author: 2026-09-21 / Codex.
+
+- Decision: continue the entire unfinished physicalop package against the
+  freshly pulled Go checkout, retaining old evidence only as historical.
+  Rationale: parity with current Go cannot exclude new package artifacts or
+  count a successful focused regression as package completion.
+  Date/Author: 2026-09-21 / Codex.
+
+- Decision: use the complete pinned `physicalop` package as the next commit
+  boundary, not a hand-picked MPP or task subset.
+  Rationale: the dirty changes jointly implement physical nodes, task
+  attachment, exchange, aggregation, pushdown, and serialization; none is a
+  complete smaller Go package claim.
+  Date/Author: 2026-09-01 / Codex.
+
+- Decision: transcreate `OriginSchema` into the task and build the ordinary
+  physical projection.
+  Rationale: an executor-side trim or continued refusal would differ from Go's
+  physical tree and cache semantics.
+  Date/Author: 2026-09-01 / Codex.
+
+- Decision: do not commit partial milestones from this plan.
+  Rationale: repository policy and the user require whole-package parity as
+  the atomic completion unit.
+  Date/Author: 2026-09-01 / Codex.
+
+## Outcomes & Retrospective
+
+The original shuffle scenario checkpoint adds the exact upstream range fixture
+and executor-level combined failure ordering. It proves joining and reopening
+under that ordering, but does not replace the original TestShuffleExit SQL
+execution/failpoint harness. No production options or behavior were added.
+
+The shuffle key checkpoint corrects captured byte and partition mismatches for
+unsigned, enum and decimal values. It reuses the existing timezone-aware codec
+implementation. SQL warning/error routing, all field-type variants, upstream
+failure cases and performance measurements remain part of package acceptance.
+
+The native shuffle startup-failure checkpoint now preserves executor ownership
+and supports close/reopen at every launch position. It does not prove every
+upstream failure branch or whole-package parity; no performance result follows
+from this cleanup change. Startup adds one short-lived handoff channel per
+thread, whose cost still needs workload measurement.
+
+The package remains in progress. The 2026-09-21 work additionally corrects
+IndexMergeReader generated-column binding and error traversal order, with
+failing-before/passing-after regressions. No package-completion claim is valid
+until the full inventory, integration, receipt, and Ready gate are complete.
+The continuation restores OriginSchema conversion, enables the existing
+executor test harness, and corrects the Window readiness failure it exposed.
+Executor package acceptance is still not achieved: the pipelined implementation,
+sliding aggregate processors, full original-test inventory and complete gates
+remain pending.
+No sysbench, TPC-C, TPC-H, or YCSB performance improvement has been measured in
+this continuation. The COUNT evaluation regression demonstrates reduced work
+for a moving frame, not a workload throughput result.
+
+## Context and Orientation
+
+The authoritative Go source for this audit is the exact checkout recorded
+above. The complete package inventory is obtained with:
+
+    git ls-tree -r --name-only be35d4c762f4a8252c059ab0eedc24b310270b8c pkg/planner/core/operator/physicalop
+
+Reconcile the earlier pin before accepting any historical receipt:
+
+    git diff e2788410d8d696605e8cb002585877a063ccc909 be35d4c762f4a8252c059ab0eedc24b310270b8c -- pkg/planner/core/operator/physicalop
+
+The main Rust ownership surfaces are:
+
+- `rust/crates/tidb-planner/src/physical/mod.rs` for the closed physical-plan
+  tree and operator-specific enumeration;
+- `rust/crates/tidb-planner/src/task.rs` for Root, coprocessor, and MPP tasks
+  plus physical attachment;
+- `rust/crates/tidb-planner/src/enforce.rs` for Sort and exchange enforcement;
+- `rust/crates/tidb-planner/src/final_mode_agg.rs` for partial/final and MPP
+  aggregation transformation;
+- `rust/crates/tidb-planner/src/pushdown.rs` for store admission and TiPB
+  lowering decisions;
+- `rust/crates/tidb-executor/src/driver/physical_builder.rs` for ordinary
+  executor construction from the physical tree;
+- `rust/crates/tidb-exec/src/dag_request.rs` and
+  `rust/crates/tidb-proto/proto/select.proto` for distributed request shape.
+
+A coprocessor task is a physical subtree executed by TiKV or TiFlash. An MPP
+task is a TiFlash parallel fragment with a partition contract. An enforcer is
+a physical Sort or exchange inserted because a candidate does not already
+satisfy the required property. A narrowing is an intentionally omitted Go
+state or branch; narrowings are evidence of incompleteness for this plan.
+
+## Plan of Work
+
+Read each pinned Go artifact in package order. For every declared type,
+function, method, generated clone branch, test, and build input, record the
+owning Rust symbol or an explicit missing behavior. Validate representation
+only through its consumers: an operator is not complete if it exists but is
+not enumerated, attached, serialized, cache-rebuilt, or executable where Go
+uses it.
+
+For each mismatch, first add or identify a focused regression that expresses
+the pinned Go behavior. Remove Rust-specific thresholds, policies, fallback
+routes, and cache-only execution paths rather than preserving them beside the
+Go path. Implement the Go behavior through the shared physical tree, extending
+multiple Rust crates when necessary. Rerun the smallest WIP gate after each
+coherent change.
+
+After all mappings are implemented, create the package receipt with all 57
+artifacts, integration decisions, exact tests, and residual representation-only
+differences. Materialize the staged index over the then-current remote branch
+in a clean temporary checkout and rerun the complete gate. Only then commit and
+push the package.
+
+## Concrete Steps
+
+Run source inventory and comparison commands from repository root:
+
+    git show be35d4c762f4a8252c059ab0eedc24b310270b8c:pkg/planner/core/operator/physicalop/<file.go>
+    rg -n "TODO|REFUSED|unported|not ported|narrow" rust/crates/tidb-planner/src rust/crates/tidb-executor/src/driver/physical_builder.rs
+    git diff --check
+
+Use WIP validation while implementing:
+
+    cd rust
+    cargo fmt --all -- --check
+    cargo test --locked -p tidb-planner <focused-test-filter> -- --nocapture
+    cargo check --locked -p tidb-planner -p tidb-exec -p tidb-executor
+
+Latest Shuffle integration check:
+
+    cd rust
+    cargo check --locked -p tidb-planner -p tidb-executor -p tidb-session
+    cargo test --locked -p tidb-planner stream_agg_shuffle_matches_go_ndv_and_session_concurrency -- --nocapture
+
+Latest ResolveIndices WIP checks:
+
+    cd rust
+    cargo check --locked -p tidb-planner
+    cargo test --locked -p tidb-planner shuffle_resolves_by_items_against_each_owned_data_source -- --nocapture
+    cargo test --locked -p tidb-planner hash_join_resolve_indices_matches_go_join_inputs_and_output_schema -- --nocapture
+
+Latest Expand WIP checks:
+
+    cd rust
+    cargo check --locked -p tidb-executor -p tidb-planner
+    cargo test --locked -p tidb-planner logical_expand_enumerates_the_pinned_go_task_matrix_and_level_exprs -- --nocapture
+    cargo test --locked -p tidb-executor --test all cached_child_chunk_is_evaluated_once_per_expand_level -- --nocapture
+
+Latest cost-path WIP checks:
+
+    cd rust
+    cargo check --locked -p tidb-planner
+    cargo test --locked -p tidb-planner package_specific_ver2_operators_do_not_fall_back_to_child_sum -- --nocapture
+
+The following focused executor test was attempted but did not reach the test
+because the dirty worktree's unrelated `kv_table.rs` test code does not compile
+(`tidb_model::distance_metric` is not exported at that path):
+
+    cargo test --locked -p tidb-executor physical_shuffle_builds_one_receiver_chain_per_worker -- --nocapture
+
+The final Ready gate must also include the pinned Go package test, the two
+mapped Go test families, all affected Rust integration tests, and repository
+lint. The exact final list belongs in the receipt once the changed-path audit
+is stable.
+
+## Validation and Acceptance
+
+Acceptance requires authoritative evidence for every artifact and behavior,
+not merely compilation. The pinned Go package test must pass. Every Rust test
+mapped from the two Go test files must run rather than remain ignored. Focused
+regressions must cover every removed refusal or policy. Physical plans must be
+constructible through ordinary planning and executor paths, not only by unit
+test constructors. `cargo fmt --all -- --check`, required crate checks,
+`make lint`, and `git diff --check` must pass on the isolated staged result.
+
+No Ready result may be used to claim repository-wide planner parity; it proves
+only this package boundary.
+
+## Idempotence and Recovery
+
+All source reads, formatting checks, and tests are safe to rerun. Preserve
+unrelated dirty changes and stage mixed files hunk by hunk. Before committing,
+clone the committed branch into an exact temporary directory, apply only the
+staged diff, and validate there. If the shared remote advances, cherry-pick the
+validated package commit onto its new head in a clean temporary checkout,
+resolve only overlapping hunks with the package behavior authoritative, rerun
+the focused gate, and push normally. Do not force-push or destructively reset
+the user's dirty worktree.
+
+## Artifacts and Notes
+
+Current-baseline IndexMergeReader evidence (2026-09-21), from `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib index_merge_resolve_indices
+    # Before production fix: 2 failed; after: 2 passed, zero ignored.
+    cargo test --offline --locked -j12 -p tidb-planner --lib physical::
+    # 61 passed; 0 failed; 0 ignored.
+    cargo test --offline --locked -j12 -p tidb-executor --lib cached_physical_index_merge_builds_from_retained_partial_trees
+    # 1 passed; 0 failed; 0 ignored.
+    cargo fmt --all -- --check
+    # Fails on pre-existing workspace formatting drift; no broad reformat applied.
+
+Continuation checks, also from `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib origin_
+    # Before fix: both failed; after fix: both passed.
+    cargo test --offline --locked -j12 -p tidb-planner --lib task::
+    # 69 passed, zero failures or ignores.
+    cargo test --offline --locked -j12 -p tidb-executor --test all generated_column
+    # Initially blocked by obsolete untracked test constructors; after adapting
+    # those calls: 11 passed, one existing ignored DDL concurrency test.
+    cargo test --offline --locked -j12 -p tidb-executor --lib virtual_dependency_expansion_preserves_reader_output
+    # Passes, including root filters over virtual columns through both access paths.
+    cargo test --offline --locked -j12 -p tidb-executor --test all physical_expand_source
+    # One passed, no ignored tests.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # At this checkpoint, moving COUNT passed and readiness failed. The later
+    # Window continuation below fixes that failure and adds two more regressions.
+
+From repository root:
+
+    make lint
+    # Fails while installing revive, before linting starts.
+    tools/bin/revive -version
+    # version 1.2.1, the exact Makefile requirement.
+    make -o tools/bin/revive lint
+    # Passes the same lint recipes with that installed binary; skips only reinstall.
+    git diff --check
+    # Passes.
+
+Only Rust sources changed; the pull also changed no Go, Bazel, or Go-module
+inputs relative to the previous local HEAD, so `make bazel_prepare` is not
+required for these WIP checks. Rust tests require no Go failpoint toggling.
+Workload benchmarks and the complete Go/Rust package gates are still pending.
+
+Current focused evidence:
+
+    cd rust
+    cargo test --locked -p tidb-planner need_extra_proj -- --nocapture
+    # 2 passed; 0 failed
+
+    cargo test --locked -p tidb-planner fragment::tests -- --nocapture
+    # 2 passed; 0 failed; 0 ignored
+
+    cargo test --locked -p tidb-planner 'a_union_scan_' -- --nocapture
+    # 2 passed; 0 failed; 0 ignored
+
+    cargo test --locked -p tidb-planner 'a_window_enumerates_' -- --nocapture
+    # 1 passed; 0 failed; 0 ignored
+
+The initial run failed to compile only because one new regression referenced a
+helper private to a sibling test module. A local fixture fixed the test scope;
+the production implementation was unchanged by that correction.
+
+## Interfaces and Dependencies
+
+`CopTask` retains `origin_schema: Option<tidb_expr::schema::Schema>`. When
+`need_extra_proj` is true, conversion creates a `PhysicalProjection` whose
+expressions are the origin schema's columns, whose schema is that origin
+schema, whose stats match the reader, and whose child is the table,
+index-lookup, or index-merge reader. As in Go, a pushed HashAgg or StreamAgg
+suppresses this compatibility projection.
+
+Other interfaces must be specified here as their audit decisions become
+final. No new interface is acceptable solely for Rust convenience when pinned
+Go has no equivalent behavior.
+
+## Dependent whole-package unit: executor/windows
+
+The current Go package has exactly six artifacts at the recorded checkout:
+`pkg/executor/windows/BUILD.bazel`, `builder.go`, `window.go`,
+`pipelined_window.go`, `window_executor_test.go`, and `window_sql_test.go`.
+There is no package-level `doc.go`, generated input, platform variant, or
+fixture directory. Confirm this inventory with:
+
+    git ls-tree -r --name-only be35d4c762f4a8252c059ab0eedc24b310270b8c pkg/executor/windows
+
+Its production ownership is `rust/crates/tidb-executor/src/window.rs` and
+`src/driver/physical_builder.rs`, with aggregate state in `src/hash_agg.rs`
+and session controls owned by `tidb-session`. The normal Go WindowExec and
+PipelinedWindowExec are distinct algorithms; success for the normal executor
+cannot stand in for the pipelined branch. `BuildOrdered` must retain its forced
+pipelined behavior. `Build` must select the session-requested implementation,
+and the precision setting must select the same floating-point sliding policy.
+
+The current normal-executor milestone uses a `VecDeque<WindowResult>` where
+each entry owns a chunk and its count of unfinished rows, corresponding to
+Go's `resultChunks` and `remainingRowsInChunk`. Child chunks are replaced,
+never reset while their output columns are aliased. `window/rows.rs` retains
+owned child-chunk ranges for frame evaluation without copying partition data.
+The normal executor materializes all results for a partition and releases its
+frame ranges before returning output aliases. Prefix expiry preserves logical
+row indexes for the future pipelined executor. Complete original-test mapping
+must account for every test in both Go test files, including the ordered
+builder, pipelined/concurrency matrix, data-reference reuse, sliding windows,
+precision cases, and variance. The existing 48 Rust session tests are useful
+coverage, not a substitute for that mapping.
+
+Window continuation evidence, from `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-executor --test all completed_output_chunk_precedes_later_child_error
+    # Failed on the pre-fix full-child drain.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # After fix: four passed, zero failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # 48 passed, zero failures/ignores.
+
+These are WIP gates. No window-package receipt, benchmark improvement, or
+package integration commit is justified until the complete six-artifact unit
+and all required validation are finished.
+
+Sliding COUNT continuation: `hash_agg::WindowAggState` replaces the stateless
+`AggFunc::window_frame_value` helper. Ordinary Window owns these states for one
+partition and resets them at Go's `appendResult2Chunk` boundary. COUNT uses the
+existing typed evaluator for departing and entering rows; unsupported sliding
+aggregates still reset and fold the complete frame. The historical function
+receipt referencing `window_frame_value` is not current package acceptance.
+The correctness/evaluation-count checks are:
+
+    cargo test --offline --locked -j12 -p tidb-executor --test all moving_count_evaluates_only_entering_and_leaving_rows
+    # Before implementation: failed, actual 955 vs expected 190 evaluations.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # After implementation: six passed, no failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # After COUNT state changes: 48 passed, no failures/ignores.
+
+From the repository root, the continuation also ran:
+
+    make lint
+    # Failed at revive v1.2.1 reinstall: module does not contain package.
+    make -o tools/bin/revive lint
+    # Passed using the existing required-version revive binary.
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/window.rs rust/crates/tidb-executor/tests/window_executor_source.rs
+    git diff --check
+    # Both passed. No whole-workspace formatting churn was applied.
+
+Logs: `/tmp/tidb-window-count-before.log`,
+`/tmp/tidb-window-count-after.log`, `/tmp/tidb-session-window-count.log`,
+`/tmp/tidb-window-count-lint.log`, and
+`/tmp/tidb-window-count-lint-installed.log`. This step changed
+`hash_agg.rs`, `window.rs`, `tests/window_executor_source.rs`, and this plan.
+The Go package tests, full-package acceptance gates, and the four workload
+benchmarks were not run in this step. Floating-point sliding/precision and
+pipelined execution remain compatibility risks in the unfinished package.
+
+The remaining sliding implementations must follow their own Go update orders,
+NULL counters, precision policy, and min/max deque behavior; COUNT's inverse
+update must not be generalized to them without that source audit.
+
+Numeric sliding continuation (2026-09-21): SUM/AVG now use their own state in
+`rust/crates/tidb-executor/src/hash_agg/window_numeric.rs`. Decimal arithmetic
+uses bounded `add_mysql`/`sub_mysql` and preserves source overflow/truncation
+errors. SUM rounds the retained decimal sum; AVG divides with the statement's
+division precision and rounds only its output. Float SUM/AVG refold when high
+precision is ON and slide when OFF. The existing system-variable definition
+is unchanged; its typed statement snapshot is now carried through
+`tidb-session/src/stmt_ctx.rs`, `tidb-executor/src/stmt_context.rs`, and
+`tidb-expr/src/context.rs`. Both statement-context construction branches set
+the flag. The SQL test toggles ON/OFF/ON to check snapshot invalidation.
+
+Additional changed files are `hash_agg.rs`, `window.rs`,
+`tidb-executor/tests/window_executor_source.rs`, and
+`tidb-session/src/tests_window/aggregates.rs`. The executor matrix now includes
+SUM and AVG with an integer-arithmetic result oracle across five frames, four
+chunk sizes, NULL inputs, two partitions, and reopen. A direct numeric test
+checks 190 evaluations rather than 955 for a 100-row/10-row moving frame.
+The maximum-width overflow fixture uses SUM: AVG can report truncation while
+dividing that first full-width input, before the sliding transition of interest.
+
+Validation commands from `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib window_real_sum_avg_honor_precision_setting
+    # Failed before production changes: OFF incorrectly returned 2 and 1.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # 49 passed, no failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window_numeric
+    # Four passed: NULL/empty transitions, operation count, retained rounding, overflow order.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Six passed, including the extended COUNT/SUM/AVG boundary matrix.
+
+Additional root checks passed:
+
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/hash_agg/window_numeric.rs rust/crates/tidb-executor/src/window.rs rust/crates/tidb-executor/tests/window_executor_source.rs rust/crates/tidb-session/src/tests_window/aggregates.rs
+    git diff --check
+
+Logs are `/tmp/tidb-window-precision-before.log`,
+`/tmp/tidb-window-numeric-after.log`, `/tmp/tidb-window-numeric-unit.log`,
+and `/tmp/tidb-window-numeric-executor.log`. Root `make lint` still fails at
+the revive reinstall; `make -o tools/bin/revive lint` passes with the installed
+required-version binary (`/tmp/tidb-window-numeric-lint-installed.log`). Go
+package tests and workload benchmarks have not run in this continuation.
+The next work still includes min/max and bit-XOR sliding state, true
+pipelined/ordered execution, full original-test mapping, and package gates.
+
+Extrema/XOR continuation (2026-09-21): the MIN/MAX and BIT_XOR prerequisite
+above is now implemented. `hash_agg/window_extremum.rs` owns the typed deque;
+it enqueues arrivals before expiring earlier indices, evicts older equal
+values, preserves Go's NaN and signed-zero ordering, and rounds a copied
+decimal result without mutating its deque input. FLOAT results retain the
+Float32 datum representation required by the chunk's four-byte column.
+ENUM, SET, JSON, and vector MIN/MAX remain on Go's non-sliding branch.
+BIT_XOR uses the existing evaluator, visiting departures before arrivals.
+
+The six-test executor matrix now also verifies MIN/MAX and BIT_XOR across
+five frame shapes, four chunk sizes, NULLs, two partitions, and reopen.
+Direct state tests check disjoint/empty frames, NaNs, signed zero, and
+evaluation counts: 100 for each extremum and 190 for XOR over the 100-row,
+10-row frame, rather than 955 full-frame evaluations. Typed SQL regression
+coverage includes all eight Go sliding MIN/MAX evaluator classes, plus BIT's
+string evaluator. BIT's HEX expectation follows Go `hexFunctionClass`'s
+ETInt path, so its values are `2`/`1`, not padded byte hex `02`/`01`.
+
+This continuation changed `hash_agg.rs`, the new `hash_agg/window_extremum.rs`,
+`window.rs`, `tests/window_executor_source.rs`, the session window
+`aggregates.rs`/`collation.rs` tests, and this plan. Commands from `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib window_min_max_keep_latest_collation_equal_value
+    # Before production changes: failed, older A returned instead of a.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # Final: 51 passed, no failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window_extremum
+    # Three passed before the FLOAT representation correction.
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg::window
+    # Final combined sliding-state check: seven passed, no failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Six passed with MIN/MAX/BIT_XOR added to the boundary matrix.
+
+From root, `make lint` again fails at the revive reinstall, while
+`make -o tools/bin/revive lint` passes. `git diff --check` and this scoped
+format check pass:
+
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/hash_agg/window_extremum.rs rust/crates/tidb-executor/tests/window_executor_source.rs rust/crates/tidb-session/src/tests_window/aggregates.rs rust/crates/tidb-session/src/tests_window/collation.rs
+
+Logs are `/tmp/tidb-window-extremum-before.log`,
+`/tmp/tidb-window-extremum-after.log`, `/tmp/tidb-window-extremum-unit.log`,
+`/tmp/tidb-window-extremum-executor.log`, and
+`/tmp/tidb-window-extremum-lint-installed.log`. No Go package gate or workload
+benchmark has run. Full aggfuncs integration still needs an audit, including
+the internal `sumInt`/`sumUint` sliding implementations in `func_sum_int.go`,
+which have no explicit AggKind counterpart. Do not interpret the implemented
+common sliding states as full aggfuncs or windows package parity. Next:
+implement the actual pipelined/ordered Window state machine and its selection,
+then finish the complete original-test and dependent-package mapping.
+
+Retained-row continuation (2026-09-21): `window/rows.rs` replaces the normal
+executor's owned partition copy with a deque of input chunk ranges. Each
+contiguous range keeps one Arc owner, and binary search resolves absolute row
+indexes across ranges. Prefix expiry releases complete chunks and trims a
+partially retained range without moving its row data or renumbering live rows.
+The buffer honors a child chunk's selection vector. `FrameRows::visit_chunks`
+lets COUNT/XOR and non-sliding folds bind typed readers once per contiguous
+input range; numeric and extremum states access the same retained rows.
+
+The ordinary executor releases its frame ranges after producing all results
+for a partition. It still waits for complete partitions; this change alone
+does not implement the pipelined state machine or its input-dropping policy.
+The source-owned queue/result readiness behavior remains unchanged. Tests
+cover resetting returned output aliases and continuing into partitions sharing
+the same child chunk. Dedicated ownership tests use weak chunk references to
+prove release and run COUNT/SUM/MIN/MAX while repeatedly dropping old prefixes.
+No unsafe row references or partition data copies were introduced.
+
+Files changed in this step: `tidb-executor/src/window.rs`, new
+`tidb-executor/src/window/rows.rs`, `tidb-executor/src/hash_agg.rs`,
+`tidb-executor/src/hash_agg/window_numeric.rs`,
+`tidb-executor/src/hash_agg/window_extremum.rs`, and this plan. Commands from
+`rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Six passed, no failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    # 21 selected tests passed, including numeric/extremum and ownership checks.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window::rows
+    # Three passed after adding sliding updates across expired prefixes.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # 51 passed, no failures/ignores.
+
+Root `make lint` failed at the revive reinstall, and
+`make -o tools/bin/revive lint` passed with the installed required-version
+binary. Scope formatting and whitespace checks:
+
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/window.rs rust/crates/tidb-executor/src/window/rows.rs rust/crates/tidb-executor/src/hash_agg/window_numeric.rs rust/crates/tidb-executor/src/hash_agg/window_extremum.rs
+    git diff --check
+
+Logs: `/tmp/tidb-window-retained-executor.log`,
+`/tmp/tidb-window-retained-unit.log`, `/tmp/tidb-window-retained-session.log`,
+`/tmp/tidb-window-retained-expiry.log`, and
+`/tmp/tidb-window-retained-lint-installed.log`. The whole-package Go/Rust gates
+and workload benchmarks remain unverified. The next implementation must use
+this retained-row buffer to reproduce Go's `accumulated <= dropped` output
+release test, strict start/end lookahead, partition transitions, and forced
+ordered-window selection. Do not select this normal executor under the
+pipelined setting and count that as a pipelined implementation.
+
+Pipelined implementation continuation (2026-09-21):
+`window/pipelined.rs` now implements the scheduler described above. Input
+groups are staged separately from the active partition, allowing the previous
+partition to finish before a staged group is consumed. The output queue
+retains cumulative input-row ends. A result can be returned only when all its
+values exist and its cumulative input end is no greater than the dropped-row
+counter. Prefix expiry occurs after producing into one output chunk, using
+Go's minimum of current position and the previous frame bounds. Empty-frame
+transitions reset partial results; unchanged frames reuse their partial
+results. Rank/percent-rank/cume-dist prepare full-partition peer geometry only
+when the whole partition is available, while streaming RANGE CURRENT ROW uses
+the comparison cursor over incoming rows.
+
+The default session path now selects PipelinedWindowExec when
+`tidb_enable_pipelined_window_function` is ON and ordinary WindowExec when OFF.
+The same snapshot reaches PlanBuilder's ROW_NUMBER default-frame rule, in all
+four planner bridges. OrderedWindowExec wraps the pipelined executor and
+ignores the ordinary session choice, matching Go BuildOrdered. A repository
+source search finds Go BuildOrdered called only by its package test at this
+checkout; no additional production ordered-plan dispatch is implied.
+
+This step changed `tidb-executor/src/window.rs`, new
+`tidb-executor/src/window/pipelined.rs`,
+`tidb-executor/src/driver/physical_builder.rs`,
+`tidb-executor/src/driver/planner_bridge.rs`,
+`tidb-executor/src/stmt_context.rs`, `tidb-session/src/stmt_ctx.rs`,
+`tidb-executor/tests/window_executor_source.rs`,
+`tidb-session/src/tests_window/aggregates.rs`, and this plan. The executor
+frame/chunk/partition/reopen matrices now exercise both scheduling modes.
+The SQL switch test runs 150 rows through 32-row chunks, repeatedly changes
+OFF/ON/OFF/ON, and covers ROWS, RANGE, ranking, position, and value functions.
+The unit retention test runs 1,000 rows twice, returns before EOF, bounds live
+input rows to 26 for a ten-row frame with eight-row child chunks, bounds queued
+results to four chunks, and resets every returned output chunk.
+
+Commands from `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-executor --test all pipelined_ready_chunk_precedes_later_same_partition_error
+    # Before implementation, normal Window failed with the later child error.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # Final: 52 passed, no failures/ignores. Initial RANGE peer-table failures fixed.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    # 23 selected tests passed, including bounded input retention and reopen.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Final: seven passed, including normal/pipelined matrices and forced ordered execution.
+
+Root `make lint` still fails at revive reinstall. The identical recipes using
+the installed required-version binary passed with
+`make -o tools/bin/revive lint`. Scoped formatting and whitespace checks passed:
+
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/window.rs rust/crates/tidb-executor/src/window/pipelined.rs rust/crates/tidb-executor/tests/window_executor_source.rs rust/crates/tidb-session/src/tests_window/aggregates.rs
+    git diff --check
+
+Evidence logs: `/tmp/tidb-pipelined-before.log`,
+`/tmp/tidb-pipelined-matrix.log`, `/tmp/tidb-pipelined-session.log`,
+`/tmp/tidb-pipelined-unit.log`, and `/tmp/tidb-pipelined-lint-installed.log`.
+These tests validate the new implementation, not whole-package parity. Next,
+map and run every original Go window test/support artifact, audit evaluator
+error/warning ordering and frame-less processors, audit the dependent aggfuncs
+surface (including internal integer SUM), and complete required package and
+workload validation. No throughput improvement or package-completion receipt
+has been claimed.
+
+Revision note (2026-09-01): created after the complete physicalop package was
+selected as the next atomic parity boundary and the first confirmed task gap
+was fixed.
+
+Revision note (2026-09-21): refreshed the Go baseline after the requested pull,
+recorded the inventory delta, and added verified IndexMergeReader resolution
+progress. The package and overall parity/performance goal remain incomplete.
+
+Revision note (2026-09-21, Window continuation): corrected normal Window chunk
+readiness and output-index mapping, recorded the complete dependent-package
+inventory, and verified four executor plus 48 session window tests. Pipelined
+and sliding semantics and full-package acceptance remain open. Verified lint
+using the installed required-version tool while retaining the plain-command
+bootstrap failure as a tooling limitation.
+
+
+### Window original-test coverage and ignored-frame notes (2026-09-21)
+
+The complete six-artifact Go windows package remains the atomic claim unit;
+this update adds source-test evidence and fixes one discovered integration
+mismatch. It does not accept the package or the workload-performance goal.
+
+`rust/scripts/generate-go-window-tests.py` extracts 198 literal actions from
+five helpers in `pkg/executor/windows/window_sql_test.go`, recording source
+line numbers and the source SHA-256 in generated `upstream.json`. It rejects
+unrecognized MustExec/MustQuery, direct chunk-size, and nullability actions.
+`--check` checks reproducibility without rewriting the fixture. Deferred
+window-enable cleanup runs at helper exit, not at its lexical position.
+The Rust runner preserves Go's `<nil>` rendering and sorts before comparing
+only where the Go test calls Sort. Direct one/two-row MaxChunkSize assignments
+use the existing internal session-variable restore path, bypassing the SQL
+minimum exactly as the original test does; the runner checks the resulting
+executor context's actual maximum.
+
+Original-test mapping:
+
+| Go test/support function | Rust evidence |
+| --- | --- |
+| TestWindowFunctions / doTestWindowFunctions | upstream_window_functions: all literal actions, pipelined 0/1 × concurrency 1/4 |
+| TestWindowFunctionsDataReference | upstream_window_data_reference: all actions, max chunk 2, both execution modes |
+| TestSlidingWindowFunctions / baseTestSlidingWindowFunctions | upstream_sliding_window_functions: all actions, pipelined 0/1 × FLOAT/DOUBLE × precision ON/OFF, including prepared reversed extents |
+| TestIssue45964And46050 / testReturnColumnNullableAttribute | upstream_window_nullable_and_empty_input: all 25 function nullability assertions |
+| TestVarSampAsAWindowFunction | upstream_window_nullable_and_empty_input: both empty-input statements |
+| TestWindowExecutorsBasic | upstream_window_executor_basic_and_nullable: both exact SQL/results, pipelined 0/1 |
+| TestWindowReturnColumnNullableAttribute | upstream_window_executor_basic_and_nullable: original four-row fixture and five flag assertions |
+| TestBuildOrderedWindowExec / physicalWindowForTest | upstream_ordered_window_partitioned_row_number: same schema, partition/order, current-row frame, input/output, explicit ordered type and disabled session pipelining |
+
+The imported SHOW WARNINGS assertion failed before the fix: no Note 3599 was
+reported for ROW_NUMBER with an explicit ignored frame. PlanBuilder now emits
+that source-defined note through Columns::append_note and StmtContext's
+existing leveled warning collector. Named windows preserve their declared
+name; function spelling is lower-case as in Go. Additional SQL checks cover
+two functions sharing a mixed-case named window, note order, and absence of
+notes for implicit frames or frame-sensitive functions. The seeded RAND
+FIRST_VALUE/LAST_VALUE source assertion already passed before implementation:
+its arguments are materialized by the planner; no speculative runtime change
+was made for that case.
+
+Files changed in this step: expr/context.rs, executor/stmt_context.rs,
+planner/plan_builder/window.rs, session/tests_window.rs,
+session/tests_window/specs.rs, new session/tests_window/upstream.rs and
+upstream.json, executor/tests/window_executor_source.rs, the new generator,
+and this living plan. All paths above are beneath rust/crates unless stated.
+Rust-only changes do not trigger bazel_prepare or Go failpoint setup.
+
+Validation commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window::upstream
+    # Before: SHOW WARNINGS mismatch. After: all four original SQL test groups passed.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # Final: 58 passed, no failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-planner --lib plan_builder::window_tests
+    # 51 passed, no failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Eight passed, including the exact original ordered-window example.
+
+Repository-root validation:
+
+    python3 rust/scripts/generate-go-window-tests.py --check
+    git diff --check
+    make lint
+    # Failed at revive v1.2.1 installation, before lint recipes.
+    make -o tools/bin/revive lint
+    # Passed actual lint recipes using the already installed required version.
+
+Logs: /tmp/tidb-window-upstream.log (red SHOW WARNINGS case),
+/tmp/tidb-window-upstream-after.log, /tmp/tidb-window-upstream-session.log,
+/tmp/tidb-window-upstream-planner.log, /tmp/tidb-window-upstream-executor.log,
+/tmp/tidb-window-upstream-lint.log, and
+/tmp/tidb-window-upstream-lint-installed.log.
+
+Remaining gates: this mapping runs the original assertions in Rust, not the
+original Go test binaries. Concurrency variable matrices establish result
+compatibility, not equivalent parallel scheduling. Go package/build/support
+validation, the full dependent aggfuncs audit, frame-less processor evaluation
+and error ordering, memory-accounting integration, and sysbench/TPC-C/TPC-H/
+YCSB benchmark receipts remain open. No performance gain is claimed here.
+
+
+### Frame-less partition evaluation (2026-09-21)
+
+Go builder.go selects aggWindowProcessor when PhysicalWindow.Frame is nil;
+that processor consumes a partition once and repeats its partial results
+across result chunks. Rust previously converted nil to an explicit unbounded
+frame, losing this distinction. Non-sliding aggregates then refolded the same
+partition for each output row, and frame value functions reevaluated their
+selected argument. Sliding aggregate state also restarted at chunk boundaries.
+
+WindowExec now accepts an optional frame (existing explicit-frame callers
+remain supported). Physical construction preserves a missing frame, and the
+ordinary executor retains aggregate/value results until the partition ends.
+Position-dependent functions continue advancing per row. Explicit frame
+processors retain their existing chunk-reset/evaluation rules; the pipelined
+executor continues using its existing unchanged-frame result retention.
+
+The new partition_aggregates_are_evaluated_once_across_chunks regression uses
+three four-row partitions crossing three-row child chunks, BIT_OR and
+FIRST_VALUE instrumented arguments, and two open/drain/close cycles. Before
+the fix, the no-frame case evaluated its arguments 60 times rather than Go's
+15. Afterward it evaluates exactly 15 times per execution; the explicit-frame
+control still evaluates 60 times and all output values/chunk sizes agree.
+This is direct operation-count evidence, not a workload throughput claim.
+
+Changed this step: rust/crates/tidb-executor/src/window.rs,
+rust/crates/tidb-executor/src/driver/physical_builder.rs,
+rust/crates/tidb-executor/tests/window_executor_source.rs, and this plan.
+Validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-executor --test all partition_aggregates_are_evaluated_once_across_chunks
+    # Red: 60 actual evaluations versus 15 required.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Green: nine passed, including the explicit-frame control and reopen.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # 58 passed, including the complete imported Go SQL action sequences.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    # 23 selected tests passed.
+
+Repository-root checks:
+
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/window.rs rust/crates/tidb-executor/tests/window_executor_source.rs
+    git diff --check
+    make lint
+    # Still fails installing revive v1.2.1 before lint.
+    make -o tools/bin/revive lint
+    # Actual lint recipes pass with installed required-version revive.
+
+Logs: /tmp/tidb-window-partition-before.log,
+/tmp/tidb-window-partition-after.log, /tmp/tidb-window-partition-session.log,
+/tmp/tidb-window-partition-unit.log, /tmp/tidb-window-partition-lint.log,
+and /tmp/tidb-window-partition-lint-installed.log.
+
+This closes repeated partition aggregate/value evaluation, not all
+frame-less processor semantics: cross-function UpdatePartialResult versus
+AppendFinalResult error/warning ordering and LEAD/LAG argument evaluation
+still need source auditing. All previously recorded whole-package and
+benchmark acceptance gates remain open; no atomic package receipt is issued.
+
+
+### Partition update/result ordering (2026-09-21)
+
+Source audit of aggfuncs/func_lead_lag.go confirms that UpdatePartialResult
+only retains rows; LEAD/LAG evaluates its selected argument/default during
+AppendFinalResult2Chunk. Ordinary aggWindowProcessor updates every function
+before appending any result, whereas PipelinedWindowExec.produce updates and
+appends one function at a time. Rust previously evaluated the first LEAD result
+before a later FIRST_VALUE or aggregate had consumed the partition.
+
+The trace regression failed before the fix: ordinary execution produced
+argument calls [0,1,2,2,0] instead of source order [1,2,2,0,0]. Aggregate window
+states now expose separate update_frame and finish operations, including
+numeric and deque extrema states. Frame-less ordinary execution consumes all
+aggregate/value inputs before emitting any result. Aggregate finalization
+runs at each output as in Go, so the prior step's whole-result aggregate cache
+is superseded; retained partial states still eliminate repeated input scans.
+Value functions retain their selected value, while LEAD/LAG remains lazy at
+result append. Explicit-frame and pipelined call paths still combine update
+and finish per function, preserving their source ordering.
+
+A second regression verifies error precedence: a maximum-width decimal AVG
+can consume its input but fail while dividing at finalization; a later
+FIRST_VALUE argument also fails. Ordinary execution reports the later update
+error first, and pipelined execution reports the earlier AVG finalization
+error first. Both return zero output rows on error. The earlier operation-count
+regression still passes (15 input evaluations for frame-less processing versus
+60 for its explicit-frame control, including reopen and chunk boundaries).
+
+Files changed this step: rust/crates/tidb-executor/src/window.rs,
+rust/crates/tidb-executor/src/hash_agg.rs,
+rust/crates/tidb-executor/src/hash_agg/window_numeric.rs,
+rust/crates/tidb-executor/src/hash_agg/window_extremum.rs,
+rust/crates/tidb-executor/tests/window_executor_source.rs, and this plan.
+Rust-only scope still does not require bazel_prepare or failpoint setup.
+
+Validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-executor --test all partition_update_precedes_lead_lag_result_evaluation
+    # Red: wrong ordinary argument evaluation order.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Final: 11 passed, including both scheduling modes and error precedence.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    # 23 selected tests passed, including numeric/sliding state coverage.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # 58 passed, including original Go SQL sequences and nullable/metadata checks.
+
+Repository-root validation:
+
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/window.rs rust/crates/tidb-executor/src/hash_agg/window_numeric.rs rust/crates/tidb-executor/src/hash_agg/window_extremum.rs rust/crates/tidb-executor/tests/window_executor_source.rs
+    git diff --check
+    make lint
+    # Same revive v1.2.1 installation failure, before actual lint recipes.
+    make -o tools/bin/revive lint
+    # Passed actual recipes with installed required-version revive.
+
+Evidence: /tmp/tidb-window-update-order-before.log,
+/tmp/tidb-window-update-order-after.log, /tmp/tidb-window-update-order-unit.log,
+/tmp/tidb-window-update-order-session.log, /tmp/tidb-window-update-order-lint.log,
+and /tmp/tidb-window-update-order-lint-installed.log.
+
+The source audit and regressions close the identified update/finalization
+ordering defect. Whole-package acceptance remains open: original Go binaries
+and build artifacts have not been validated; eager peer comparison, extreme
+unsigned frame/LEAD offset arithmetic, dependent aggfuncs behavior and memory
+accounting still need auditing. No workload benchmark was run, and no package
+completion or sysbench/TPC-C/TPC-H/YCSB performance claim is made.
+
+
+### Original Go package validation and LEAD unsigned offsets (2026-09-21)
+
+Re-inventoried pkg/executor/windows: exactly BUILD.bazel, builder.go,
+pipelined_window.go, window.go, window_executor_test.go, and window_sql_test.go.
+The package has eight top-level tests. All eight original tests now pass on
+darwin/arm64 with the cached Go 1.26.0 toolchain, using intest,deadlock tags
+and count=1. This supersedes earlier entries saying that no original Go test
+binary had run. No package-local platform/generated source variants exist.
+This validates the original Go package through go test; it is not a Bazel
+execution, Linux/race validation, or a whole Rust-package acceptance receipt.
+
+Applied the tidb-failpoint-test-runner skill and testing-flow decision checks:
+no failpoint., testfailpoint., or failpoint BUILD dependency occurs in the
+windows package. No failpoint enable/disable was needed. Changes remain
+Rust-only, so no bazel_prepare trigger applies. The first Go invocation was
+blocked by sandbox access to the shared build cache; the authorized escalation
+resolved that. The installed Go 1.27 then failed because pkg/util/hack has
+checkMapABI implementations restricted to Go 1.25/1.26. Reusing the cached
+Go 1.26.0 toolchain fixed the build without changing Go source or dependencies.
+
+Exact successful command from pkg/executor/windows/:
+
+    GOTOOLCHAIN=go1.26.0 go test -run '^(TestWindowFunctions|TestWindowFunctionsDataReference|TestSlidingWindowFunctions|TestIssue45964And46050|TestVarSampAsAWindowFunction|TestWindowExecutorsBasic|TestBuildOrderedWindowExec|TestWindowReturnColumnNullableAttribute)$' -tags=intest,deadlock -count=1
+
+Log: /tmp/tidb-go-windows-package-go126.log (PASS, package time 4.064s after
+compilation). The initial Go 1.27 failure is in
+/tmp/tidb-go-windows-package.log.
+
+Source inspection found that GetUint64FromConstant accepts the complete
+unsigned range for LEAD/LAG offsets. Go lead.AppendFinalResult2Chunk adds
+uint64 curIdx and offset before checking partition bounds. Rust used a checked
+native-index addition, yielding defaults on overflow. The new SQL regression
+failed before the fix for UINT64_MAX and UINT64_MAX-1. LEAD now explicitly
+wraps in u64 and converts to usize only afterward; LAG retains checked
+subtraction. There is no unchecked Rust indexing or signed overflow.
+
+The expectation was also verified against the real Go SQL executor with a
+temporary test outside the repository. For rows (id,v)=(1,10),(2,20),(3,30),
+the query below returns (-1,-1,-1), (10,-1,-1), (20,10,-1) in both ordinary
+and pipelined modes:
+
+    SELECT LEAD(v,18446744073709551615,-1) OVER (ORDER BY id),
+           LEAD(v,18446744073709551614,-1) OVER (ORDER BY id),
+           LAG(v,18446744073709551615,-1) OVER (ORDER BY id) FROM t
+
+Oracle command from repository root:
+
+    GOTOOLCHAIN=go1.26.0 go test -tags=intest,deadlock -run '^TestLeadUnsignedOffsetOracle$' -count=1 /tmp/tidb_window_offset_oracle_test.go
+
+It passed; output is /tmp/tidb-go-window-offset-oracle.log. No temporary Go
+file was added to the worktree. Changed files in this step are
+rust/crates/tidb-executor/src/window.rs,
+rust/crates/tidb-session/src/tests_window/value_functions.rs, and this plan.
+
+Rust validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib window_lead_unsigned_offset_wraps_before_partition_check
+    # Red before fix: all defaults, including wrapped in-range targets.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # Final: 59 passed, no failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Final: 11 passed.
+
+Repository-root checks:
+
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/window.rs rust/crates/tidb-session/src/tests_window/value_functions.rs
+    git diff --check
+    make lint
+    # Still fails in revive reinstall before actual lint.
+    make -o tools/bin/revive lint
+    # Actual lint recipes passed using installed required-version tool.
+
+Logs: /tmp/tidb-window-offset-before.log, /tmp/tidb-window-offset-after.log,
+/tmp/tidb-window-offset-executor.log, /tmp/tidb-window-offset-lint.log, and
+/tmp/tidb-window-offset-lint-installed.log.
+
+Remaining audit includes extreme unsigned ROWS frame arithmetic (ordinary and
+pipelined source formulas differ), eager peer comparisons, dependent aggfuncs
+and memory accounting, concurrency integration, and workload benchmarking.
+The original Go test gate is now verified locally, while whole-package parity
+and sysbench/TPC-C/TPC-H/YCSB performance remain unproven.
+
+
+### Unsigned ROWS bounds and released-input errors (2026-09-21)
+
+A live Go oracle confirmed that ordinary rowFrameWindowProcessor and
+PipelinedWindowExec differ at UINT64_MAX FOLLOWING: ordinary execution adds
+the offset, clamps to partition size, then adds the exclusive-end one;
+pipelined execution adds both in uint64 before clamping. Rust saturated these
+operations, producing different results. Both paths now perform the source
+uint64 arithmetic, with explicit wrapping, and apply their own clamping order.
+Conversion to native indexes follows the partition-size clamp. Reversed frame
+bounds stay reversed so pipelined release accounting sees the original end.
+
+For input (id,v)=(1,10),(2,20),(3,30), the oracle captured FIRST_VALUE(v) OVER
+(ORDER BY id ROWS BETWEEN <bounds>):
+
+| Bounds | Ordinary | Pipelined |
+| --- | --- | --- |
+| CURRENT ROW AND 18446744073709551615 FOLLOWING | 10,NULL,NULL | NULL,NULL,NULL |
+| 18446744073709551615 FOLLOWING AND UNBOUNDED FOLLOWING | NULL,10,20 | NULL,10,20 |
+| 18446744073709551615 PRECEDING AND CURRENT ROW | 10,10,10 | 10,10,10 |
+
+The Rust regression failed before the arithmetic fix (first row-frame case
+returned 10,20,30). The full six-case SQL matrix now passes. An additional Go
+oracle run with MaxChunkSize=1 showed that the wrapped following start can
+reference a released row: Go recovers a slice-bounds panic as the query error
+`runtime error: slice bounds out of range [18446744073709551615:2]`.
+The corresponding Rust regression initially panicked inside WindowRows.
+Pipelined production now checks that range before indexing released storage
+and returns the source-shaped SQL 1105 error explicitly. No unsafe indexing
+or Rust panic is needed to preserve this observed behavior.
+
+Temporary oracle source: /tmp/tidb_window_frame_oracle_test.go (not added to
+the repository). Exact command from repository root, with authorized access
+to the shared build cache and the source-compatible cached Go toolchain:
+
+    GOTOOLCHAIN=go1.26.0 go test -tags=intest,deadlock -run '^TestUnsignedRowsFrameOracle$' -v -count=1 /tmp/tidb_window_frame_oracle_test.go
+
+Both oracle iterations passed. Logs:
+/tmp/tidb-go-window-frame-oracle.log (six value results) and
+/tmp/tidb-go-window-frame-oracle-small.log (also the released-input error).
+No Go source/build/dependency files changed, and the prior package-local
+failpoint decision remains applicable.
+
+Files changed in this step: rust/crates/tidb-executor/src/window.rs,
+rust/crates/tidb-executor/src/window/pipelined.rs,
+rust/crates/tidb-session/src/tests_window/frames.rs, and this plan.
+Validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib window_unsigned_rows_bounds_match_go_execution_mode
+    # Red before fix: incorrect saturating behavior.
+    cargo test --offline --locked -j12 -p tidb-session --lib window_wrapped_frame_released_input_returns_go_error
+    # Red before guard: panic indexing already released input.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # Final: 61 passed, no failures/ignores.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    # 23 selected tests passed, including bounded retention and sliding states.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Final: 11 passed.
+
+Repository-root checks:
+
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/window.rs rust/crates/tidb-executor/src/window/pipelined.rs rust/crates/tidb-session/src/tests_window/frames.rs
+    git diff --check
+    make lint
+    # Same revive-install failure before lint recipes.
+    make -o tools/bin/revive lint
+    # Actual lint recipes passed using installed required-version tool.
+
+Rust evidence logs: /tmp/tidb-window-rows-before.log,
+/tmp/tidb-window-released-before.log, /tmp/tidb-window-rows-final.log,
+/tmp/tidb-window-rows-unit.log, /tmp/tidb-window-rows-executor.log,
+/tmp/tidb-window-rows-lint.log, and /tmp/tidb-window-rows-lint-installed.log.
+
+These tests cover the captured boundary cases, not every sliding aggregate's
+behavior when unsigned wrap makes frames move backward. That remains part of
+the whole-package audit, together with eager peer comparisons, dependent
+aggfuncs, memory/concurrency integration, and workload benchmarks. No atomic
+package receipt or sysbench/TPC-C/TPC-H/YCSB performance claim is issued.
+
+
+### Avoid unused peer tables (2026-09-21)
+
+Go aggfuncs/builder.go installs order-column row comparers for RANK/DENSE_RANK,
+PERCENT_RANK, and CUME_DIST. COUNT and ROW_NUMBER do not compare these keys.
+The ordinary Rust executor nevertheless built a full peer table for every
+partition. The new two-partition, 100-row regression observed 196 ordering-key
+evaluations where Go requires zero; it failed before the fix.
+
+prepare_peers now returns after clearing old metadata unless one of those
+ranking functions is present. Non-ranking execution avoids both the key scans
+and the three-usize tuple per input row (24 bytes per row on this 64-bit host).
+RANGE bounds use the existing monotonic cursor comparison path, including
+CURRENT ROW. The SQL suite verifies its values, NULLs, interval/descending
+frames, and ordinary/pipelined mode switches after this change. The new
+instrumented test confirms zero extra key evaluations and correct COUNT and
+ROW_NUMBER results in both modes. No benchmark throughput gain is inferred
+from operation counts or allocation removal.
+
+Changed files: rust/crates/tidb-executor/src/window.rs,
+rust/crates/tidb-executor/tests/window_executor_source.rs, and this plan.
+Validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-executor --test all nonranking_windows_do_not_compare_order_keys
+    # Red: 196 actual ordering-key evaluations versus zero required.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Final: 12 passed.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # 61 passed, including RANGE cursor regressions and original Go assertions.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    # 23 selected tests passed.
+
+Repository-root checks:
+
+    rustfmt --edition 2024 --check rust/crates/tidb-executor/src/window.rs rust/crates/tidb-executor/tests/window_executor_source.rs
+    git diff --check
+    make lint
+    # Unchanged revive-install failure before actual lint.
+    make -o tools/bin/revive lint
+    # Actual lint recipes passed with installed required-version tool.
+
+Logs: /tmp/tidb-window-peers-before.log, /tmp/tidb-window-peers-after.log,
+/tmp/tidb-window-peers-session.log, /tmp/tidb-window-peers-unit.log,
+/tmp/tidb-window-peers-lint.log, and
+/tmp/tidb-window-peers-lint-installed.log.
+
+The performance reference rust/docs/perf-parity-2026-09-17.md is historical:
+its different shared VM/commit/cluster measurements do not validate this
+worktree. Current workload throughput remains unmeasured. Ranking's eager
+peer metadata and comparison timing, extreme backward-moving sliding frames,
+and remaining dependency/integration surfaces still require audit before an
+atomic package receipt. The full original goal remains active.
+
+
+### Current-worktree sysbench and prepared schema regression (2026-09-21)
+
+The first current-worktree smoke benchmark used HEAD be35d4c762 plus the
+uncommitted parity work. Its complete evidence directory is
+/tmp/tidb-parity-sysbench.EgHa7J. worktree-sha256.json records source hashes;
+rust-server-sha256.txt records the built binary. No sources changed during
+that build/run. Subsequent user-requested `git pull --ff-only` advanced HEAD
+to aba629bb45, changing only tidb-distsql/src/cop_paging/cop_iterator.rs.
+The old release measurements therefore do not validate the newly pulled file.
+
+Commands, from rust/ then repository root respectively:
+
+    cargo build --offline --locked -j12 --release -p tidb-server --bin tidb-server
+    bash -n rust/scripts/run-sysbench-ladder.sh
+    SYSBENCH_RUST_SERVER=/Users/qiliu/projects/tidb/rust/target/release/tidb-server SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST='%' SYSBENCH_SAMPLES=1 SYSBENCH_OUT_DIR=/tmp/tidb-parity-sysbench.EgHa7J bash rust/scripts/run-sysbench-ladder.sh
+
+Build passed. The ladder used 1,000 rows, one thread, ten seconds per cell,
+text/binary protocols, and point-select/read-only/write-only/read-write
+workloads. All eight Rust cells and eight Go cells completed without client
+errors. The 24 hand-driven SQL checks passed, including Go ADMIN CHECK TABLE
+following Rust index creation/deletion and matching cross-server checksums.
+The owned TiUP tag sysbench-ladder-60932-1789983437 was cleaned up; its data
+directory was confirmed absent after the harness exited. The harness exits
+zero even when a rung fails, so exit status is not acceptance evidence.
+
+Two correctness failures take priority over throughput optimization. Under
+8-thread write load, Go's five concurrent DDL statements committed, but Rust
+prepared UPDATE failed with error 1105: `a physical write child returned 4
+columns, expected at least 5`. See rung8-load.log and ladder.log (five checks
+passed, one failed). Independently, Go's notifier worker reported unsupported
+data type 128. A direct Go SELECT of ddl_job_id/sub_job_id from
+mysql.tidb_ddl_notifier reproduced the decoding error; go-notifier-probe.log
+also captures the clustered composite primary key definition. The encoding
+cause is not yet proven. Preserve the row-width guard while fixing the stale
+plan; do not suppress the notifier error or infer correct encoding from a
+Rust-only round trip.
+
+The reference Go binary is f964e38b07cb310ff2fbd1821d92ffaf259498c8, not this
+repository revision. One sample, different commits, and background notifier
+errors make this compatibility smoke insufficient for a performance claim.
+TPC-C/TPC-H/YCSB and statistically valid same-revision measurements remain
+unverified.
+
+After the pull, the new test
+prepared_update_replans_after_another_session_adds_a_column in
+rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs uses two
+connections to the existing embedded-store fixture. It warms a prepared
+UPDATE, adds a defaulted column from the second connection, reexecutes the
+same prepared handle, then intends to repeat after DROP COLUMN. The test
+fails at the first execution after ADD COLUMN: two columns returned, three
+required. The DROP assertion has not been reached.
+
+    cd rust
+    cargo test --offline --locked -j12 -p tidb-server --lib prepared_update_replans_after_another_session_adds_a_column
+
+The sandboxed attempt failed earlier at fixture initialization because macOS
+sysctl hw.memsize was unavailable. The approved unsandboxed rerun reaches the
+actual regression and fails as described (0 passed, 1 failed, 453 filtered).
+Log: /tmp/tidb-prepared-schema-before.log. This is red regression evidence,
+not a passing check or whole-package acceptance. No production fix was made
+in this checkpoint.
+
+The traced cache lookup in driver/dml.rs uses Catalog::metadata_version.
+cluster_session_catalog_with_templates rebuilds a Catalog from default and
+increments that version while registering databases/tables; column changes
+can preserve the registration count. rebuild_catalog_now replaces the old
+Catalog but leaves prepared handles alive. Go plan_cache.go instead checks
+InfoSchema.SchemaMetaVersion and table revisions before reuse. The next step
+is to represent catalog schema identity consistently across replacement,
+transaction snapshots, and temporary-table overlays, covering SELECT and
+point-get cache users as well as DML. Merely relaxing the width guard or
+invalidating only this one prepared statement would leave correctness gaps.
+
+Repository-root `make lint` again failed installing revive v1.2.1 (module
+found but package absent), before running lint recipes. `make -o tools/bin/revive lint` passed using the installed required-version
+tool; its output is /tmp/tidb-prepared-schema-lint-installed.log.
+`git diff --check` passed. Self-review confirmed the new regression is the
+only change in the server test file; its existing adjacent test documentation
+remains attached to the original test.
+No atomic package completion or end-to-end workload parity is claimed.
+
+
+### Catalog identity prevents stale prepared plans (2026-09-21)
+
+The previous checkpoint's failing UPDATE regression now passes. The defect
+was a cache identity collision: fresh catalogs counted their registrations
+from zero, so rebuilding a table with different columns but the same number
+of tables preserved the old cache key. Divergent clones could similarly make
+different metadata changes and arrive at the same count. Go instead compares
+InfoSchema versions/table revisions (pkg/planner/core/plan_cache.go).
+
+Decision: retain the existing u64 internal metadata cache key, but allocate
+its values from a process-local atomic sequence on Catalog construction and
+schema metadata mutation. Clones and CatalogSnapshot retain the value;
+ordinary DML does not advance it. This identifies the Rust catalog image
+without changing persisted cluster schema versions or introducing a SQL
+feature. The existing equality gates for DML, SELECT, point-get, row-decoder,
+and statement-context caches all see the corrected identity. Allocation
+uses relaxed ordering because it supplies uniqueness, not synchronization
+of catalog contents; checked increment prevents silent wraparound/reuse.
+No per-row or ordinary-DML atomic operation is added.
+
+Changed production file: rust/crates/tidb-executor/src/driver/catalog.rs.
+Its new regression first failed with two divergent catalogs both reporting
+version 34. After the change it passes, also verifying clone/snapshot reuse,
+unchanged metadata identity after INSERT, and a distinct rebuilt catalog.
+The existing server regression passes through both ADD and DROP COLUMN;
+an additional server test warms prepared equality and range SELECT handles
+and checks the complete row shape across both changes. Tests live in the
+existing catalog module and
+rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs.
+
+Exact validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-executor --lib schema_versions_distinguish_rebuilt_and_divergent_catalogs
+    # Red before fix, green after fix.
+    cargo test --offline --locked -j12 -p tidb-server --lib replans_after_another_session
+    # 2 passed; approved sysctl access required by embedded-store fixture.
+    cargo test --offline --locked -j12 -p tidb-executor --lib prepared
+    # 36 passed.
+    cargo test --offline --locked -j12 -p tidb-session --lib prepared
+    # 111 passed, 2 preexisting ignored cases.
+    cargo test --offline --locked -j12 -p tidb-executor --lib planner_view_tests
+    # 4 passed.
+    cargo test --offline --locked -j12 -p tidb-session --lib temporary
+    # 27 passed.
+
+The ignored prepared cases are a process-global metrics check requiring
+serial execution and a Go testing.B benchmark excluded by its original test
+gate. Neither was executed. Logs are /tmp/tidb-catalog-epoch-before.log,
+/tmp/tidb-catalog-epoch-after.log, /tmp/tidb-prepared-schema-after.log,
+/tmp/tidb-epoch-executor-prepared.log, /tmp/tidb-epoch-session-prepared.log,
+/tmp/tidb-epoch-catalog.log, and /tmp/tidb-epoch-temporary.log.
+
+Repository-root `git diff --check` passed. `make lint` failed before lint at
+the same revive v1.2.1 installation error; `make -o tools/bin/revive lint`
+passed using the installed required-version tool. Logs:
+/tmp/tidb-epoch-lint.log and /tmp/tidb-epoch-lint-installed.log. Self-review
+kept formatting confined to new code in the large existing files.
+
+The process-local cache identity is not a persisted schema version and must
+not be serialized as one. The source audit found existing metadata_version
+consumers using it for local cache identity/equality. Compatibility evidence
+is the retained prepared SQL behavior, not numeric agreement with Go's
+cluster version. Performance remains unmeasured after this fix. Rebuild and
+rerun the owned-cluster concurrent-DDL ladder before claiming its failure is
+resolved end to end; diagnose the independent Go notifier decoding failure
+before accepting interoperability. No whole-package completion is claimed.
+
+
+### Respect the notifier table's clustered handle (2026-09-21)
+
+append_schema_change_mutations in tidb-exec/src/cluster_ddl.rs unconditionally
+allocated a hidden row ID and called system_row_write::insert_row. That
+helper explicitly writes integer row-ID keys. The smoke cluster's persisted
+notifier table instead declares a clustered composite primary key on
+(ddl_job_id, sub_job_id). Go expects each signed integer in that common
+handle to start with codec intFlag 3 (pkg/util/codec/codec.go); the old writer
+started the handle with comparable-integer byte 128, matching the observed
+Go decoding failure. The prior fixture used ClusteredIndexDefMode::IntOnly
+and only tested the nonclustered shape.
+
+The new clustered_notifier_events_use_the_composite_primary_key regression
+adapts the existing notifier metadata to common-handle version 1, plans CREATE
+TABLE, and compares the complete record key against independently assembled
+Go flag/integer bytes. It also requires no row-ID allocator mutation. Before
+the fix, its actual handle was integer 1 while expected was job ID 118 and
+sub-job ID -1, each datum-encoded. The regression then passed after selecting
+system_row_write::store_clustered_row for clustered tables. Existing
+nonclustered encoding and its allocator update remain covered by
+create_table_stages_the_go_notifier_row_in_the_catalog_transaction.
+
+This changes the record/index mutations within the existing DDL transaction;
+it does not change job scheduling, state transitions, schema publication,
+rollback, or notifier delivery semantics. docs/agents/ddl/README.md was read
+and its job-based guidance checked against this existing mutation path; no
+change to that documented framework is made. No extra feature is added.
+
+The first aggregate test attempt failed compilation in unrelated
+hash_join_v2_source.rs: ProbeStage::new now expects a mutable boxed executor
+slot, next no longer accepts the source argument, and two event matches omit
+FetcherError/FetcherDone. The catalog DDL suite now has its own Cargo test
+target and aggregate-test: standalone marker, using the repository's existing
+aggregation exclusion mechanism. All 89 tests remain enabled under ordinary
+Cargo test discovery, and can be run without compiling unrelated test modules.
+The aggregate hash-join compile errors are still unresolved, not waived.
+
+Changed files: rust/crates/tidb-exec/src/cluster_ddl.rs,
+rust/crates/tidb-exec/tests/cluster_ddl_source.rs,
+rust/crates/tidb-exec/Cargo.toml, and this plan. Validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-exec --test all clustered_notifier_events_use_the_composite_primary_key
+    # Blocked at unrelated hash-join test compile errors.
+    cargo test --offline --locked -j12 -p tidb-exec --test cluster_ddl_source clustered_notifier_events_use_the_composite_primary_key
+    # Red before the production fix: integer key versus expected common key.
+    cargo test --offline --locked -j12 -p tidb-exec --test cluster_ddl_source notifier
+    # 4 passed after the fix, covering both handle layouts.
+    cargo test --offline --locked -j12 -p tidb-exec --test cluster_ddl_source
+    # 89 passed.
+
+Logs: /tmp/tidb-notifier-clustered-before.log,
+/tmp/tidb-notifier-clustered-after.log, /tmp/tidb-notifier-ddl-suite.log.
+The first attempt to name cluster_ddl_source before adding its target exited
+with target-not-found; it did not execute tests. Formatting was confined to
+the added test, and self-review checked handle selection and preservation of
+the existing nonclustered allocator path. `git diff --check` passed.
+`make lint` again failed at revive installation before actual lint; the
+`make -o tools/bin/revive lint` fallback passed with the installed required-version
+tool; output is /tmp/tidb-notifier-lint-installed.log.
+
+Both failures from the live smoke now have production fixes and targeted
+regressions. Neither is yet proven resolved against a live Go/TiKV cluster.
+Next rebuild the release server and rerun the owned-cluster ladder, including
+a direct Go notifier-table read. Existing malformed rows are not repaired by
+this writer fix. No package receipt or benchmark performance claim is made.
+
+
+### Live smoke after schema identity and notifier fixes (2026-09-21)
+
+Built the release server at aba629bb45 with all current uncommitted parity
+work. Evidence directory: /tmp/tidb-parity-fixed-sqhbaxlt. Source hashes in
+worktree-sha256.json were rechecked after completion and were unchanged.
+head.txt and rust-server-sha256.txt pin the tested tree/binary. Build command
+from rust/ passed in 1m16s:
+
+    cargo build --offline --locked -j12 --release -p tidb-server --bin tidb-server
+
+Build log: /tmp/tidb-fixed-workload-build.log. The run used a temporary copy
+of rust/scripts/run-sysbench-ladder.sh with its RUST_ROOT fixed to the actual
+workspace and a final Go SELECT/ADMIN CHECK TABLE plus Go-log capture added
+before the original cleanup trap. The workload/configuration itself was not
+changed. The exact copy is run-with-notifier-probe.sh in the evidence directory.
+Command from repository root:
+
+    SYSBENCH_RUST_SERVER=/Users/qiliu/projects/tidb/rust/target/release/tidb-server SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST='%' SYSBENCH_SAMPLES=1 SYSBENCH_OUT_DIR=/tmp/tidb-parity-fixed-sqhbaxlt bash /tmp/tidb-parity-fixed-sqhbaxlt/run-with-notifier-probe.sh
+
+All eight Rust text/prepared workload cells and all eight Go cells completed.
+Prepared-dataset checksums agreed at 1000/500500/501715/1/1000; the hand-driven
+transaction's final checksum agreed at 1000/500500/505171. All 24 rung-7 SQL
+checks passed, including Go ADMIN CHECK TABLE for Rust-created/dropped indexes.
+Under eight-thread Rust load, all five Go DDL statements committed within
+one second and the workload completed without the former prepared-update
+width error. Rung 8 reports six passed, zero failed.
+
+Before cleanup, Go executed:
+
+    SELECT ddl_job_id, sub_job_id, processed_by_flag FROM mysql.tidb_ddl_notifier LIMIT 20;
+    ADMIN CHECK TABLE mysql.tidb_ddl_notifier;
+
+Both succeeded (probe exit 0). go-notifier-probe.log is empty because no rows
+remained by then; do not describe it as a captured nonempty row round trip.
+The full captured go-server.log contains no unsupported-data-type or notifier
+processing errors, unlike the previous run. One router context-canceled ERROR
+occurred at startup, outside the notifier path. These observations plus the
+independent key-byte regression support resolution of the observed defect,
+without claiming exhaustive notifier interoperability.
+
+The owned TiUP tag sysbench-ladder-68894-1789984751 was cleaned up successfully;
+its data directory was confirmed absent. The harness's cleanup port checks
+passed and its process completed with exit 0. No cluster/process remains
+owned by this run. go-version.txt records reference Go commit
+f964e38b07cb310ff2fbd1821d92ffaf259498c8; it is still different from the current
+source revision.
+
+Performance is not accepted. smoke-metrics.json preserves per-cell timings.
+Prepared Rust versus Go microseconds per statement were: point read 89.44 vs
+83.92, read-only 117.22 vs 156.92, write-only 1731.18 vs 139.61, and read-write
+565.64 vs 161.29. This single sequential sample shows a write-heavy slowdown
+worth investigating; do not infer the schema fix caused it or discard it
+because correctness passed. The previous run had a broken notifier worker,
+so it is not a clean performance baseline. Next establish repeatable timings
+and profile write/commit time with comparable workload state and pinned Go.
+TPC-C, TPC-H, YCSB, whole-package dependency audits, and the unrelated aggregate
+hash-join test compilation remain outstanding. This checkpoint changed only
+this living plan; it does not issue an atomic package completion receipt.
+
+
+### Restore aggregate tests and original probe errors (2026-09-21)
+
+The stale hash_join_v2_source fixture used the pre-fetcher ProbeStage API.
+Migrated it to transfer Box<dyn Executor> through an Option to new(), call
+next() with only the output, and capture source call/allocation/required-row
+observations through shared synchronized state. Observations are read after
+joining the fetcher. Drop-without-Close remains covered separately, and
+repeated Close, bounded fetch counts, empty-build skipping, required-row
+propagation, source/worker panic, cancellation, and build-memory release
+assertions remain active. Direct-worker tests explicitly reject fetcher events
+because those fixtures do not instantiate a fetcher.
+
+The temporary standalone cluster_ddl_source target from the preceding
+checkpoint broke cluster_ddl_alter_source's import of its shared helpers.
+Removed the standalone marker and Cargo target, restoring the original
+aggregate topology. Cargo.toml is now back to its pre-checkpoint contents.
+This corrects the earlier decision; do not use the superseded standalone
+command for current validation.
+
+Running the now-compiling hash-join matrix exposed a real error-order race:
+mode 3, concurrency 5, Inner join returned Internal("probe worker input
+channel disconnected") instead of the injected worker panic. On unwind a
+worker drops its input receiver before its wrapper reports the recovered
+panic; the fetcher could win the race with a secondary disconnection error.
+Go hash_join_v2.go's worker recovery (around lines 856/862) sends the recovered
+error to joinResultCh. The existing Rust direct-send stage path also ignores
+a disconnected input and waits for worker completion/error.
+
+Changed ProbeFetcher::send_input in
+rust/crates/tidb-executor/src/hash_join_v2/probe_stage.rs to stop feeding a
+closed worker input and allow the worker's original result/error event to
+reach the consumer. The panic assertion was retained, with mode/concurrency
+context added; it was not relaxed to accept the wrong error. Red evidence is
+/tmp/tidb-probe-migration-detail.log. The matrix passes after the fix.
+
+Changed files in this checkpoint: the probe stage production file,
+rust/crates/tidb-exec/tests/hash_join_v2_source.rs, restoration of the DDL
+aggregate marker/Cargo target, and this plan. Source formatting changes were
+confined to new lines. Validation commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-exec --test all native_probe_stage_next_close_and_error_source
+    # Compiled after migration; exposed the panic/disconnection race.
+    cargo test --offline --locked -j12 -p tidb-exec --test all hash_join_v2_source
+    # Final: 31 passed, 776 filtered.
+    cargo test --offline --locked -j12 -p tidb-exec --test all cluster_ddl
+    # 102 passed, 705 filtered; includes notifier and ALTER dependencies.
+
+Logs: /tmp/tidb-probe-migration.log, /tmp/tidb-probe-migration-after.log,
+/tmp/tidb-probe-migration-detail.log, /tmp/tidb-probe-migration-final.log,
+and /tmp/tidb-restored-ddl-tests.log. Repository-root `git diff --check`
+passed. `make lint` hit the same revive installation failure;
+`make -o tools/bin/revive lint` passed with the installed required-version
+tool; its log is /tmp/tidb-probe-lint-installed.log.
+The aggregate binary compiles all its modules, but only the two named suites
+were executed; this is not a full 807-test run or a package completion claim.
+The live workload was not repeated for this error-path change. The latest
+write-performance slowdown still needs controlled profiling and optimization.
+
+
+### Alternating write-only samples and native profile (2026-09-21)
+
+The previous smoke's large write-only gap did not reproduce in an alternating
+run. This checkpoint changes measurement evidence, not production behavior.
+Evidence is /tmp/tidb-write-profile-am4h954u, containing run.sh, complete logs,
+source-sha256.json, rust-server-sha256.txt, and rust-sample.txt. Source hashes
+were unchanged throughout the build/run. Rebuilt current release, including
+the latest hash-join error-path fix:
+
+    cd rust
+    cargo build --offline --locked -j12 --release -p tidb-server --bin tidb-server
+
+Build passed; log /tmp/tidb-profile-build.log. The temporary run.sh retains
+the existing sysbench ladder's owned-cluster startup, auth, preparation,
+checksum validation, and cleanup. It replaces subsequent ladder phases with
+four ten-second oltp_write_only cells in Rust/Go/Go/Rust order, then a separate
+15-second profiled Rust cell. Each uses one thread, prepared statements,
+1,000 rows, and --rand-seed=42 against the same table. Command from repo root:
+
+    SYSBENCH_RUST_SERVER=/Users/qiliu/projects/tidb/rust/target/release/tidb-server SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST='%' SYSBENCH_SAMPLES=1 SYSBENCH_OUT_DIR=/tmp/tidb-write-profile-am4h954u bash /tmp/tidb-write-profile-am4h954u/run.sh
+
+The four unprofiled means were 4.17 ms (Rust), 4.18 ms (Go), 4.12 ms (Go), and
+4.19 ms (Rust) per transaction. Corresponding transactions/s were 239.56,
+238.87, 242.32, 238.64. All workloads succeeded. Go ADMIN CHECK TABLE sbtest.sbtest1
+succeeded after the profiled run. These two samples per implementation are
+not a statistical equivalence test; data evolves between runs and the Go
+reference remains the packaged f964e38b07 build rather than current source.
+The previous slow Rust sample remains valid historical evidence, but is not
+reproducible evidence of a specific Rust regression.
+
+During only the separate profiled cell, the script executed:
+
+    /usr/bin/sample "$RUST_PID" 8 1 -file "$OUT_DIR/rust-sample.txt"
+
+Sampling succeeded. The active tidb-sql-connection-13 thread had 5,106
+observations. 3,641 observations descended through commit_explicit,
+RealPessimisticTransaction::commit, publish_prewrites, and BatchReply::complete;
+3,640 of those ended in semaphore_timedwait_trap through wait_with_call.
+That is approximately 71.3% of sampled wall-clock stacks, not 71% CPU usage.
+The thread was predominantly waiting for prewrite completion. This alone
+does not distinguish TiKV processing, network, or Rust response scheduling,
+and does not justify removing waits, weakening durability, or changing
+transaction semantics. The next useful measurements are RPC/server latency
+breakdowns and a pinned Go reference, before optimizing this path.
+
+Cleanup completed with exit 0, and the owned TiUP directory for
+sysbench-ladder-73472-1789985505 was confirmed absent. The script's owned-port
+checks passed. No processes remain owned by this run. No production files
+changed; only this living plan was updated and `git diff --check` passed.
+TPC-C/TPC-H/YCSB and atomic package acceptance remain open. No performance
+improvement or full equivalence claim is made.
+
+
+### Ranking comparisons happen during result append (2026-09-21)
+
+Reviewed complete ranking implementations in Go aggfuncs/func_rank.go,
+func_percent_rank.go, and func_cume_dist.go, and the result loop in
+windows/window.go. Go's RANK/DENSE_RANK/PERCENT_RANK retain partition rows
+without comparing during update; append of the first result needs no
+comparison, and subsequent rows compare the preceding/current pair.
+CUME_DIST independently compares its current row with its forward cursor,
+including the initial self-comparison. Each function owns its own state.
+Rust instead eagerly computed one shared peer table before updating any
+function and before returning any result.
+
+The new ranking_comparisons_follow_result_evaluation_order regression uses
+instrumented ordering/value expressions to expose the schedule. With two
+equal rows, RANK followed by a zero-offset LEAD requires parameter access
+trace [1,0,0,1]. The old implementation produced [0,0,1,1], failing before
+any production edit. CUME_DIST requires [0,0,0,0,1,1]. The test covers all four
+ranking functions, ordinary/pipelined execution, and close/open reuse.
+The expression hooks observe the executor schedule; actual SQL values and
+RANGE behavior are independently covered by the session window suite.
+
+Replaced prepare_peers and its three-usize tuple per row with one usize
+cursor per function. window_value updates that cursor while appending each
+result. Ordinary execution creates fresh function cursors per partition;
+pipelined execution resets them on partition changes and open. CUME_DIST
+keeps its forward boundary independently of the RANK/PERCENT_RANK state.
+RANGE CURRENT ROW uses the existing monotonic bound cursors, no longer a
+precomputed ranking table. This removes 24 bytes of peer metadata per row
+on this host; partition row storage is still required. No workload throughput
+improvement is inferred from that allocation reduction.
+
+Changed files: rust/crates/tidb-executor/src/window.rs,
+rust/crates/tidb-executor/src/window/pipelined.rs,
+rust/crates/tidb-executor/tests/window_executor_source.rs, and this plan.
+Exact commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-executor --test all ranking_comparisons_follow_result_evaluation_order
+    # Red before fix: eager trace [0,0,1,1] instead of [1,0,0,1].
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # Final: 13 passed, including reopen after cursor reset.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # 61 passed, including original Go assertions and RANGE frames.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    # 23 selected tests passed.
+
+Logs: /tmp/tidb-ranking-order-before.log, /tmp/tidb-ranking-order-after.log,
+/tmp/tidb-ranking-final.log, /tmp/tidb-ranking-session.log,
+/tmp/tidb-ranking-unit.log. Ran rustfmt --edition 2024 on the three changed
+Rust files and repository-root git diff --check (passed). make lint again
+failed installing revive before running lint; `make -o tools/bin/revive lint`
+passed with the installed required-version tool. Log:
+/tmp/tidb-ranking-lint-installed.log. Self-review checked partition/open
+reset paths and independent function state. Extreme backward-moving sliding
+frames, remaining aggfuncs/dependency coverage, shuffle integration, and
+whole-package inventory gates remain open. This is parity progress, not an
+atomic windows package receipt or a benchmark result.
+
+
+### Sliding offsets preserve unsigned wrap and error order (2026-09-21)
+
+Used a temporary Go test overlay (no repository Go edits) to execute
+SUM(integer), AVG(integer), SUM(double), COUNT, MIN, MAX, and BIT_XOR over
+three rows (10,20,30), with windowing_use_high_precision=0. For CURRENT ROW
+through uint64::MAX FOLLOWING, ordinary execution initializes the first
+nonempty frame, then wraps shiftEnd and recovers an index-out-of-range error
+at row 3. Pipelined execution has three empty frames instead, producing NULL
+or zero for COUNT/BIT_XOR. For uint64::MAX FOLLOWING through UNBOUNDED
+FOLLOWING, both modes produce an initial empty result then whole-partition
+and two-row suffix results. All 28 outcomes were captured successfully.
+
+Go oracle command, from pkg/executor/windows, using cached Go 1.26.0:
+
+    GOTOOLCHAIN=go1.26.0 go test -overlay=/tmp/tidb-window-sliding-overlay.json -run '^TestWrappedSlidingOracle$' -tags=intest,deadlock -count=1 -v
+
+The overlay substitutes window_sql_test.go with a copy plus the oracle test;
+its JSON and source are /tmp/tidb-window-sliding-overlay.json and
+/tmp/tidb-window-sliding-oracle.go. The final oracle passed in 0.426s; log is
+/tmp/tidb-window-sliding-oracle.log. An initial attempt used the wrong session
+variable prefix and failed before the queries; the corrected run uses Go's
+actual windowing_use_high_precision name. No failpoint setup or Bazel change
+was needed for this existing package and temporary overlay.
+
+The Rust regression first failed because ordinary SUM returned rows instead
+of Go's recovered error. NumericWindowState, inverse COUNT/BIT_XOR, and the
+MIN/MAX deque previously reset/recomputed when bounds moved backward. They
+now preserve initialized sliding state. FrameRows exposes logical row count
+and helpers to visit the still-valid suffix of a wrapped shift, then return
+an explicit ExecError with Go's recovered index/length message. This avoids
+iterating uint64::MAX times or panicking in Rust, while retaining expression
+errors encountered before the invalid row. SUM/AVG/MIN/MAX arrivals precede
+departures; COUNT/BIT_XOR departures precede arrivals as in Go. MIN/MAX expire
+by the new boundary instead of evaluating departing rows, matching its deque
+Slide implementation. Uninitialized empty frames remain empty.
+
+Changed files: rust/crates/tidb-executor/src/window/rows.rs,
+rust/crates/tidb-executor/src/hash_agg.rs,
+rust/crates/tidb-executor/src/hash_agg/window_numeric.rs,
+rust/crates/tidb-executor/src/hash_agg/window_extremum.rs,
+rust/crates/tidb-session/src/tests_window/frames.rs, and this plan.
+Commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib window_wrapped_sliding_end_preserves_go_error
+    # Red before fix; final expanded 28-case regression passes.
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    # 62 passed after production fix.
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    # 23 selected tests passed.
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+    # 13 passed.
+
+Logs: /tmp/tidb-sliding-wrap-before.log, /tmp/tidb-sliding-wrap-after.log,
+/tmp/tidb-sliding-wrap-final.log, /tmp/tidb-sliding-wrap-unit.log,
+/tmp/tidb-sliding-wrap-executor.log. Ran rustfmt --edition 2024 on the four
+small edited Rust files, avoiding whole-file formatting of hash_agg.rs, and
+git diff --check passed. make lint hit the existing revive installation
+failure; `make -o tools/bin/revive lint` passed with the installed
+required-version tool. Output: /tmp/tidb-sliding-wrap-lint-installed.log. Self-review checked initialized
+versus empty frames, addition/removal order, and explicit error construction.
+
+This proves the captured default-chunk SQL cases, not every wrapped bound,
+chunk boundary, released-row interaction, aggregate type, or precision mode.
+Those remain part of the complete windows/aggfuncs dependency audit. No whole
+package receipt or workload throughput improvement is claimed.
+
+
+### Wrapped frames across chunks and precision modes (2026-09-21)
+
+Expanded the Go oracle to eight aggregate expressions (adding AVG(double)),
+two wrapped bounds, chunk sizes 1/2/1024, windowing_use_high_precision OFF/ON,
+and pipelined OFF/ON: 192 cases. Go's SessionVars.MaxChunkSize was assigned
+directly, matching its original tests rather than bypassing SQL validation
+in production. The oracle logged one JSON result/error record per case and
+passed in 0.505s. Temporary artifacts:
+/tmp/tidb-window-matrix-oracle.go, /tmp/tidb-window-matrix-overlay.json,
+/tmp/tidb-window-matrix-oracle.log. From pkg/executor/windows:
+
+    GOTOOLCHAIN=go1.26.0 go test -overlay=/tmp/tidb-window-matrix-overlay.json -run '^TestWrappedSlidingMatrixOracle$' -tags=intest,deadlock -count=1 -v
+
+The matrix establishes that ordinary one-row output chunks reset sliding
+state before the wrapped shift, producing the initial whole-frame aggregate
+then two empty outputs. At chunk sizes 2/1024, initialized sliding variants
+return the recovered index error instead. High-precision floating SUM/AVG
+are not sliding variants and return the recomputed results. With the wrapped
+start and unbounded end, pipelined one-row chunks fail with Go's exact released
+slice error; larger chunks preserve the initial-empty/whole/suffix sequence.
+COUNT/BIT_XOR use zero for empty frames; the remaining functions use NULL.
+
+Updated the existing Rust window_wrapped_sliding_end_preserves_go_error test
+in rust/crates/tidb-session/src/tests_window/frames.rs to execute the entire
+192-case matrix with exact rows, error code 1105, and messages. It passes
+without any production edit. All configurations include chunk/precision/
+execution context in assertion failures. Direct vars.restore_system mirrors
+the Go test-only small chunk assignment, and the Session is local to the test.
+
+Validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib window_wrapped_sliding_end_preserves_go_error
+    # 1 matrix test passed, covering all 192 cases.
+
+Log: /tmp/tidb-window-matrix-rust.log. Repository-root rustfmt --edition 2024
+--check rust/crates/tidb-session/src/tests_window/frames.rs and git diff --check
+passed. make lint again failed installing revive;
+`make -o tools/bin/revive lint` passed with the installed required-version
+tool. Output: /tmp/tidb-window-matrix-lint-installed.log. The broader 62-test SQL
+suite was not rerun for this test-only expansion; its preceding pass remains
+the production-change evidence. Only the test and this plan changed.
+
+Remaining work is the complete package/dependency inventory and integration
+audit, further untested frame/type combinations, and all requested benchmark
+performance acceptance. These observations do not prove arbitrary wrapped
+frames or whole-package parity, and no completion receipt is issued.
+
+### Shuffle scheduler checkpoint — 2026-09-21
+
+Current source: `rust/crates/tidb-executor/src/shuffle.rs`; upstream behavior
+reference: `pkg/executor/shuffle.go`. The prior scheduler fetched every source
+into unbounded queues before driving any worker. A counting-source regression
+observed 101 fetches (100 input chunks plus EOF) before the first returned chunk.
+
+Each source and worker now owns its executor on a thread. Each source/worker
+pair has one recycled input buffer; each worker has one recycled output buffer.
+The shared output channel is sized to workers plus sources, as in Go. Receiver
+reads block on input or cancellation. Close broadcasts cancellation, joins all
+threads, recovers executor ownership in original order, then closes workers and
+sources while retaining the first close error. Drop also cancels and joins to
+avoid detached execution. Source and worker panic payloads reach Next as errors.
+Expression evaluation uses one mutex-protected context because Rust's Columns
+trait permits non-Sync implementations; this preserves shared warning state
+without unsafe sharing. This serialization needs evaluation when production
+multi-source shuffle is connected.
+
+Focused tests cover bounded fetching, input cancellation, panic recovery while
+sources may be waiting on buffers, early drop, multi-source delivery, partition
+membership, per-source order, first close error, and reopen. Inter-worker output
+order is intentionally unspecified. No claim is made that these tests replace
+original upstream SQL/failpoint coverage or discharge the enclosing Go package.
+
+Validation from repository root:
+
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib shuffle_returns_output_before_draining_its_source`
+  failed before implementation: `fetched 101 chunks before first output`.
+  Log: `/tmp/tidb-shuffle-red.log`.
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib shuffle::tests`
+  passed all 20 tests after implementation. Log: `/tmp/tidb-shuffle-green.log`.
+- `rustfmt --edition 2021 --check rust/crates/tidb-executor/src/shuffle.rs`
+  and `git diff --check` passed.
+- `make lint` failed before recipes while installing revive v1.2.1: module
+  found but does not contain package. Log: `/tmp/tidb-shuffle-lint.log`.
+- `make -o tools/bin/revive lint` passed using the existing installed binary.
+  Log: `/tmp/tidb-shuffle-lint-existing.log`. This is not a claim that the
+  unmodified make invocation passed.
+
+No Go/Bazel files or dependency manifests changed in this checkpoint. No
+production SQL path invokes ShuffleExec yet; PhysicalShuffle/receiver planning,
+optimizeByShuffle, builder substitution, upstream error/failpoint validation,
+and workload performance verification remain open. Native thread startup failure
+and runtime statistics integration also need explicit audit before acceptance.
+The source inventory was updated to distinguish the repaired standalone
+scheduler from the still-missing production integration.
+
+### Shuffle physical node and builder checkpoint — 2026-09-21
+
+Added `physical/shuffle.rs` and the `PhysicalPlan::Shuffle` variant. Go's
+Tails/DataSources pointers are represented by plan IDs into the owned child
+tree, avoiding detached copies that could keep stale schemas after rewrites.
+By-item expressions resolve against each referenced source after child
+resolution. The node carries explain metadata, clone metadata, native owned
+memory accounting, and base root-task attachment. The cacheability checker
+returns Go's exact `get a Shuffle plan` refusal.
+
+The executor builder constructs each data source once, then builds each worker
+with owned receiver substitutions keyed by source plan ID. This replaces Go's
+unsafe receiver pointers and mutation of tail children during executor build.
+Existing source IDs are used for receiver metadata for now; Go allocates stub
+IDs, so runtime-statistics/EXPLAIN ANALYZE identity remains an explicit audit
+obligation. Tail-reference validation and native memory-accounting behavior
+also remain to be compared as part of the complete physicalop package audit.
+
+Validation from repository root:
+
+- `cargo check --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor`
+  passed (`/tmp/tidb-shuffle-builder-check.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner --lib shuffle_resolves`
+  passed. The test distinguishes source column offset 1 from worker output
+  offset 0, checks boundary lookup after deep copy, explain IDs, and cache
+  refusal (`/tmp/tidb-shuffle-plan-tests.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner --lib physical::tests`
+  passed all 51 tests (`/tmp/tidb-shuffle-physical-tests.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib physical_shuffle_builds`
+  passed: three worker copies receive two shared inputs without duplicate
+  rows, including reopen (`/tmp/tidb-shuffle-builder-test.log`). The initial
+  fixture incorrectly requested more than one row from TableDual and was
+  corrected to its zero/one-row contract before accepting the result.
+- `rustfmt --edition 2021 --check rust/crates/tidb-planner/src/physical/shuffle.rs`
+  and `git diff --check` passed. Only newly added snippets were formatted in
+  large files with pre-existing formatting differences.
+- `make lint` again failed installing revive v1.2.1 before recipes;
+  `make -o tools/bin/revive lint` passed using the existing binary. Logs:
+  `/tmp/tidb-shuffle-plan-lint.log` and
+  `/tmp/tidb-shuffle-plan-lint-existing.log`.
+
+Files changed in this checkpoint: planner physical module, new shuffle module,
+resolve_indices, physical tests, physical_plan_cache, task attachment;
+executor physical_builder and explain; this plan and the source inventory.
+No Go sources, generated Go outputs, Bazel metadata, or dependencies changed.
+
+Next: wire Window/StreamAgg/MergeJoin concurrency from session state through
+StmtContext and DispatchContext; implement the three Go optimizeByShuffle
+branches with their sort/NDV gates at the same task-selection point. Then
+validate actual SQL plan selection, receiver identity/runtime stats, upstream
+error/failpoint cases, and all four requested workloads. This is WIP within
+whole-package work, not acceptance of a node/file as a transcreated package.
+
+### Shuffle automatic selection checkpoint — 2026-09-21
+
+Added `physical/shuffle_optimize.rs`, implementing Go's window, stream aggregate,
+and merge join rewrite from `core/plan.go`. All branches require concurrency
+above one and sorted child inputs. Window/stream aggregation use the existing
+multi-column NDV estimator with the resolved group-NDV skew ratio, skip NDV <= 1,
+and cap concurrency to integer NDV. Merge join retains the requested concurrency.
+The rewrite is called after property enforcement for unordered non-MPP tasks.
+Session options flow through CostSessionOpts/StmtContext to DispatchContext;
+window's unset value inherits executor concurrency, while stream aggregation and
+merge join preserve their session defaults of one.
+
+The first active SQL run exposed nine ordering regressions. A column-only
+NominalSort returns its child task directly in Rust. Re-running shuffle selection
+at this point wrapped that already-ordered child and lost the discharged ORDER
+BY requirement. The dispatcher now excludes this nominal-sort return path. This
+is an explicit native integration adjustment, supported by the pinned Go oracle:
+`SELECT g,v,SUM(v) OVER(PARTITION BY g ORDER BY v) FROM t` uses Shuffle at
+concurrency 4; adding `ORDER BY g,v` produces Window/Sort without Shuffle and
+ordered rows. All original ordering assertions remain unchanged and pass after
+the adjustment; no output was sorted merely to conceal those failures.
+The new unordered SQL regression compares row multisets, which is appropriate
+because the query deliberately has no final ORDER BY, and asserts plan selection
+at concurrency 1, 4, then 1 again.
+
+Validation from repository root:
+
+- `GOTOOLCHAIN=go1.26.0 go test -overlay=/tmp/tidb-shuffle-order-overlay.json -run '^TestShuffleOrderOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows`
+  passed. Temporary Go overlay only; repository Go sources were unchanged.
+  `/tmp/tidb-shuffle-order-go.log` records both Go plans and rows.
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_window`
+  initially failed 9 ordering assertions (`/tmp/tidb-shuffle-sql.log`), then
+  passed all 63 tests including the new selection check
+  (`/tmp/tidb-shuffle-sql-fixed.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner --lib shuffle_selection_preserves`
+  passed the 12-case window/stream/merge sort and NDV matrix
+  (`/tmp/tidb-shuffle-selection-test.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner --lib find_best_task::dispatch::tests`
+  passed all 29 dispatcher tests (`/tmp/tidb-shuffle-dispatch-tests.log`).
+- `rustfmt --edition 2021 --check rust/crates/tidb-planner/src/physical/shuffle_optimize.rs`
+  and `git diff --check` passed.
+- `make lint` failed at the revive installation step as before;
+  `make -o tools/bin/revive lint` passed. Logs:
+  `/tmp/tidb-shuffle-selection-lint.log` and
+  `/tmp/tidb-shuffle-selection-lint-existing.log`.
+
+Files: new shuffle optimizer module, physical module export, dispatcher,
+CostSessionOpts, executor planner bridge, session statement context, window spec
+regression, source inventory, and this ExecPlan. No generated or Go/Bazel files
+changed. Tests select shuffle in actual window SQL now; merge-join/stream-agg SQL,
+receiver IDs/runtime-statistics/EXPLAIN ANALYZE, tail references after physical
+rewrites, original failpoint surfaces, and all four workload measurements remain
+required. No package or performance acceptance is claimed.
+
+### Shuffled join/aggregation and retained input ownership — 2026-09-21
+
+Captured pinned Go plans and rows for inner, left, and right merge joins,
+column-grouped stream aggregation, and expression-grouped aggregation. The
+first four use Shuffle at concurrency 4; the fifth uses HashAgg in both Go and
+Rust despite STREAM_AGG(), so its fallback is asserted instead of forcing a
+non-Go feature. New Rust tests compare serial and parallel results to independent
+captured Go row sets, including duplicate keys and NULLs.
+
+Projection elimination initially removed an identity projection referenced as
+a shuffle DataSource, leaving its ID unresolved. Go's pointer retains that node
+even after removal from ordinary child links. Rust now retains shuffle boundary
+nodes in the owned tree until receiver substitution, while still rewriting
+descendants and preserving Go's child-projection schema update. The regression
+failed with `shuffle boundary plan 101 is absent`, then passed; a builder test
+also executes/reopens a source projection after elimination.
+
+A subsequent window-suite run exposed a TopN panic in key_at with shuffled
+chunks. Go chunk.List.AppendRow starts a new chunk when the previous chunk was
+accepted by Add (`chkIdx == consumedIdx`). Rust incorrectly appended directly
+to that accepted chunk when it still had capacity. Accepted chunks can have
+aliased columns: appending then increases physical row counts more than once
+while only one sort key is added. TopN now tracks whether its tail was allocated
+for appending, clears that state on Add/Clear/compaction, and allocates a fresh
+buffer as Go does. The deterministic aliased-input regression failed before
+with pointer `(0,2)` instead of `(1,0)` and passes after. This fixes the input
+ownership contract, not the symptom by skipping invalid pointers.
+
+Validation from repository root:
+
+- `GOTOOLCHAIN=go1.26.0 go test -overlay=/tmp/tidb-shuffle-joinagg-overlay.json -run '^TestShuffleJoinAggOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows`
+  passed; five captured plans/row sets in `/tmp/tidb-shuffle-joinagg-go.log`.
+  Go inputs remained in a temporary overlay, not repository source changes.
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner --lib shuffle_keeps_source_projection`
+  failed before fix (`/tmp/tidb-shuffle-source-red.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner --lib physical::tests`
+  passed all 52 tests (`/tmp/tidb-shuffle-source-green.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib physical_shuffle_builds`
+  passed (`/tmp/tidb-shuffle-source-builder.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join`
+  passed all 14 tests (`/tmp/tidb-shuffle-source-join.log`), including the five
+  new Go comparisons. The focused `shuffled_join_and_stream` run also passed.
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib append_after_added_chunk`
+  failed before the TopN fix (`/tmp/tidb-topn-add-red.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib topn`
+  passed all 51 tests, including spill and parallel workers
+  (`/tmp/tidb-topn-add-green.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_window`
+  exposed the TopN panic (`/tmp/tidb-shuffle-source-window.log`), then passed
+  all 63 tests after the fix (`/tmp/tidb-shuffle-topn-window.log`).
+- `make lint` still fails installing revive; `make -o tools/bin/revive lint`
+  passes. Final logs: `/tmp/tidb-topn-add-lint.log` and
+  `/tmp/tidb-topn-add-lint-existing.log`. `git diff --check` passed.
+
+Files changed this checkpoint: physical/mod.rs, physical/tests.rs, executor
+physical_builder.rs test, topn_chunk_heap.rs, session tests_explain_merge_join.rs,
+and this ExecPlan. No Go/Bazel or generated files changed. Retained-boundary
+behavior for other physical rewrites, receiver identity/runtime statistics,
+full original failpoint coverage and workload measurements remain unverified.
+The fixes/tests are ongoing whole-package evidence, not partial-package acceptance.
+
+### Shuffle runtime counter aggregation — 2026-09-21
+
+EXPLAIN ANALYZE for an eight-row partitioned window returned Shuffle actRows=8
+but Window/Sort actRows=0. BuildState::meter inserted new counters for every
+worker at the same physical-node key, discarding earlier workers' counters.
+Go's BasicRuntimeStats are shared by executor ID (runtime_stats.go explicitly
+prohibits cloning them), and its merge contract sums loop/time/row counts.
+The Rust builder now reuses the existing accumulator. The shared calls mutex
+also serializes RowCount's read/modify/write, avoiding lost updates between
+workers. This affects instrumented execution only; ordinary execution installs
+no metering wrapper.
+
+The EXPLAIN renderer now includes `ShuffleConcurrency:N` when the executed
+Shuffle has runtime statistics, matching ShuffleExec.Close's registered
+RuntimeStatsWithConcurrencyInfo. The row-count and concurrency-field assertions
+were independently red before their respective changes.
+
+Validation from repository root:
+
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib shuffled_window_runtime_rows`
+  failed on Window actRows=0 before counter reuse
+  (`/tmp/tidb-shuffle-stats-red.log`), then passed
+  (`/tmp/tidb-shuffle-stats-green.log`). After extending the same regression,
+  it failed on the missing ShuffleConcurrency field
+  (`/tmp/tidb-shuffle-concurrency-red.log`) and passed after rendering it
+  (`/tmp/tidb-shuffle-concurrency-green.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_explain`
+  passed all 60 EXPLAIN tests (`/tmp/tidb-shuffle-stats-explain.log`).
+- `make lint` failed at the unchanged revive installation step;
+  `make -o tools/bin/revive lint` passed with the installed binary. Logs:
+  `/tmp/tidb-shuffle-stats-lint.log` and
+  `/tmp/tidb-shuffle-stats-lint-existing.log`.
+- `git diff --check` passed; the new test snippet was formatted separately to
+  avoid pre-existing formatting churn in large files.
+
+Files changed: executor driver/physical_builder.rs, executor explain.rs,
+session tests_window/specs.rs, and this plan. No Go/Bazel/dependency changes.
+Still missing: actual ShuffleReceiver node IDs and their EXPLAIN/statistics
+rows, comprehensive original failure coverage, full-package acceptance and
+all requested workload performance verification. No timing equality or
+performance improvement is inferred from EXPLAIN's elapsed-time values.
+
+### Shuffle receiver identity and source ownership — 2026-09-21
+
+Go buildShuffle creates one PhysicalShuffleReceiverStub per data source, reuses
+its ID across workers, and replaces the tail child with that stub. DataSource
+is a separate plan reference, not an ordinary physical child. Rust now models
+that boundary with PhysicalShuffleReceiverStub owning a boxed data source and
+an empty normal-child list. The builder supplies each worker's receiver through
+its existing scoped receiver map; no unsafe executor pointer is needed.
+
+Final physical-plan preparation installs these stubs using the statement's
+PlanIdAllocator after projection rewrites. Repeating preparation allocates no
+new IDs. Source lookup traverses receiver-owned sources; execution preparation
+and EXPLAIN's CTE, scan, process-field and statistics walks also visit them.
+This preserves source ownership, execution once per source, and receiver
+runtime counters shared across workers. EXPLAIN renders the source beneath
+its receiver, matching the captured Go plan. Preparation timing and all nested
+plan variants still need the broader package audit; this is not acceptance.
+
+Validation from repository root:
+
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib shuffled_window_runtime_rows`
+  failed because ShuffleReceiver was absent before the change
+  (`/tmp/tidb-shuffle-receiver-red.log`) and passed afterward
+  (`/tmp/tidb-shuffle-receiver-green.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_window`
+  passed all 64 tests with the final separate-source ownership model
+  (`/tmp/tidb-shuffle-receiver-window.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_explain`
+  passed all 60 tests, including shuffled join/aggregate comparisons
+  (`/tmp/tidb-shuffle-receiver-explain.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner --lib physical::tests`
+  passed all 52 tests, including source preservation, receiver empty children,
+  ID uniqueness and preparation idempotence
+  (`/tmp/tidb-shuffle-receiver-physical-final.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib physical_shuffle_builds`
+  passed the multiple-source builder/reopen test
+  (`/tmp/tidb-shuffle-receiver-builder-final.log`).
+- `make lint` failed before lint recipes while installing revive v1.2.1
+  (`/tmp/tidb-shuffle-receiver-lint-final.log`).
+  `make -o tools/bin/revive lint` passed all lint recipes with the installed
+  binary (`/tmp/tidb-shuffle-receiver-lint-existing-final.log`).
+- `rustfmt --edition 2024 --check rust/crates/tidb-planner/src/physical/shuffle.rs`
+  and `git diff --check` passed. New snippets in large files were formatted
+  separately to avoid unrelated baseline churn.
+
+Files changed this checkpoint: planner physical/shuffle.rs, physical/mod.rs,
+physical/resolve_indices.rs, physical/tests.rs, physical_plan_cache.rs, task.rs;
+executor driver/planner_bridge.rs, driver/physical_builder.rs, explain.rs;
+session tests_window/specs.rs; this plan and the physicalop inventory. No Go,
+Bazel, dependency or generated-code changes. Native thread-spawn failure,
+original failpoint coverage, all physicalop methods/variants, and the requested
+sysbench/TPC-C/TPC-H/YCSB performance comparison remain unverified. No speedup
+or completed-package claim is made.
+
+### Native shuffle startup failure — 2026-09-21
+
+Inspected current shuffle.rs and pinned Go shuffle.go. std::thread::spawn
+panicked on native thread-creation failure while sources/workers were moved
+into closures and temporary iterators. Fallible Builder::spawn now starts the
+thread before ownership transfers through a bounded startup channel. Failure
+restores the failed job and remaining suffix after canceling/joining the started
+prefix. Next reports an execution error; Close keeps its existing first-error
+and close-all behavior. Test-only injection does not add a session option or
+production failpoint. SQL scheduling and partitioning are unchanged.
+
+The deterministic regression injects creation failure at each of two source and
+three worker positions. It checks source/worker object identity and order,
+empty join-handle lists, Close, successful Open and all six rows on replay.
+The pre-fix run reproduced the panic using the injected OS-error boundary and
+the existing panic-on-spawn-failure behavior, without exhausting host threads.
+Actual host resource exhaustion was not induced.
+
+Validation from repository root:
+
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib shuffle_thread_start_failure`
+  failed before the fix (`/tmp/tidb-shuffle-spawn-red.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib shuffle::tests`
+  passed all 21 tests (`/tmp/tidb-shuffle-spawn-green.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_window`
+  passed all 64 tests (`/tmp/tidb-shuffle-spawn-window.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join`
+  passed all 14 tests (`/tmp/tidb-shuffle-spawn-join.log`).
+- `make lint` failed at the unchanged revive installation step
+  (`/tmp/tidb-shuffle-spawn-lint.log`); `make -o tools/bin/revive lint`
+  passed the lint recipes (`/tmp/tidb-shuffle-spawn-lint-existing.log`).
+- `rustfmt --edition 2024 --check rust/crates/tidb-executor/src/shuffle.rs`
+  and `git diff --check` passed.
+
+Files changed this checkpoint: rust/crates/tidb-executor/src/shuffle.rs and this
+ExecPlan. No Go/Bazel/dependency/generated-code changes. Complete physicalop
+method/variant coverage, upstream shuffle failure/failpoint cases, and the
+requested four-workload performance measurements remain open. This native
+cleanup correction is evidence within the ongoing whole-package work, not an
+independent transcreated-package acceptance.
+
+### Shuffle aggregate key bytes — 2026-09-21
+
+Pinned Go partitionHashSplitter calls aggregate.GetGroupKey, which uses declared
+field types, numeric enum values, flen=0 decimal precision and the statement
+zone. Rust instead called group_key_part, a generic datum hash helper. A local
+Go oracle produced independent expected bytes and murmur3 worker numbers:
+unsigned [MAX_UINT64,1] -> [[8,1],[8,2]], workers [5,5]; enum values [0,1] with
+both names empty -> [[8,0],[8,2]], workers [6,5]; decimal(2,2) input [1.20,12.30]
+-> [[6,3,2,129,20],[6,4,2,140,30]], workers [6,2], at concurrency 7. The decimal
+inputs specifically verify GetGroupKey resets flen instead of rejecting values
+that exceed the declared precision. These fixtures are retained in shuffle.rs.
+
+The splitter now appends through the existing timezone-aware group-key codec
+with Go's enum/decimal field adjustments. It resolves zone once per chunk and
+field metadata once per expression. Row-key buffers retain capacity, and no
+temporary group-key Vec is allocated per value. Expression evaluation remains
+row-based; vectorized evaluation parity and error-context warning routing need
+separate coverage. No benchmark improvement is inferred from this change.
+
+Validation from repository root:
+
+- `GOTOOLCHAIN=go1.26.0 GOPROXY=off go run /tmp/tidb-shuffle-keys.go`
+  captured the pinned Go implementation's keys and assignments
+  (`/tmp/tidb-shuffle-keys-go.log`). No repository Go files were changed.
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib hash_splitter_uses_go`
+  failed before the fix: generic unsigned key bytes differed from Go
+  (`/tmp/tidb-shuffle-keys-red.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib shuffle::tests`
+  passed all 22 tests including the expanded three-type Go fixture
+  (`/tmp/tidb-shuffle-keys-green.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_window`
+  passed all 64 tests (`/tmp/tidb-shuffle-keys-window.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join`
+  passed all 14 tests (`/tmp/tidb-shuffle-keys-join.log`).
+- `make lint` failed installing revive (`/tmp/tidb-shuffle-keys-lint.log`);
+  `make -o tools/bin/revive lint` passed the lint recipes
+  (`/tmp/tidb-shuffle-keys-lint-existing.log`).
+- `rustfmt --edition 2024 --check rust/crates/tidb-executor/src/shuffle.rs`
+  and `git diff --check` passed.
+
+Files changed: rust/crates/tidb-executor/src/shuffle.rs and this ExecPlan. No
+Go/Bazel/generated/dependency changes. Remaining scope includes complete
+physicalop and executor package artifacts, all original failure scenarios,
+field-type/warning parity, and sysbench/TPC-C/TPC-H/YCSB measurements. This is
+ongoing whole-package evidence, not acceptance of a partial package.
+
+Next original-test audit targets found during this checkpoint:
+pkg/executor/shuffle_test.go::TestPartitionRangeSplitter uses a 13-row VARCHAR
+fixture absent from the current four-integer Rust analogue;
+pkg/executor/executor_failpoint_test.go::TestShuffleExit combines an immediate
+Next error, delayed source panic and worker panic during a window SQL query.
+The existing isolated Rust panic tests do not establish that combined original
+scenario. Preserve these as explicit outstanding validation, not covered claims.
+
+### Original shuffle fixtures and combined failure ordering — 2026-09-21
+
+Reviewed pkg/executor/shuffle_test.go::TestPartitionRangeSplitter and
+pkg/executor/executor_failpoint_test.go::TestShuffleExit against current Rust.
+The original 13 VARCHAR values and 13 worker-index expectations now appear
+verbatim as data in range_splitter_matches_original_varchar_fixture.
+
+For TestShuffleExit, unit-only injection points now match Go's positions:
+Shuffle.Next errors immediately after preparation, the source panics inside
+its recovery boundary after a channel gate opens, and each worker panics inside
+its recovery boundary before consulting cancellation. The test releases the
+source after observing the original Next error, calls Close, verifies every
+join handle was consumed and every executor restored, disables injection and
+verifies all four rows after reopening. This covers concurrent recovery during
+early caller failure, which isolated source/worker tests did not prove. No bug
+was newly observed: both original-scenario assertions pass with the existing
+scheduler. This is additional validation, not a red/green bug fix.
+
+Validation from repository root:
+
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib shuffle::tests`
+  passed all 24 tests (`/tmp/tidb-shuffle-original-tests.log`).
+- `cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-session --lib shuffled_window_runtime_rows`
+  passed with the executor compiled without test-only injection fields
+  (`/tmp/tidb-shuffle-original-session.log`).
+- `make lint` failed at revive installation (`/tmp/tidb-shuffle-original-lint.log`);
+  `make -o tools/bin/revive lint` passed lint recipes
+  (`/tmp/tidb-shuffle-original-lint-existing.log`).
+- `rustfmt --edition 2024 --check rust/crates/tidb-executor/src/shuffle.rs`
+  and `git diff --check` passed.
+
+Files changed: rust/crates/tidb-executor/src/shuffle.rs and this plan. No Go,
+Bazel, generated, dependency or production runtime-option changes. Go tests
+were inspected but not rerun this checkpoint. The combined-failure test uses
+fixture executors, not the original SQL query and global failpoint framework;
+that end-to-end route remains unverified. Full physicalop/executor inventories,
+warning and type variants, and four-workload performance acceptance remain
+open. The prior checkpoint's outstanding exact range-fixture item is now
+covered; the original SQL-level TestShuffleExit item remains open.
+
+### Current release preparation — started 2026-09-21
+
+The release binary predates the accumulated window and shuffle fixes, so new
+workload measurements require rebuilding it. Started from rust/:
+
+    cargo build --offline --locked -j12 --release -p tidb-server --bin tidb-server
+
+Build passed in 1m14s; log /tmp/tidb-parity-current-release.log. Command session
+11744 is terminal. Source/binary hashes were captured in
+/tmp/tidb-parity-current-source-sha256.json. No benchmark cluster
+has been started in this checkpoint. Benchmark harness review found
+rust/scripts/compare-tpcc.py and existing seed patches; the installed bench
+binary path in older notes, ~/.tiup/components/bench/v1.12.0/go-tpc,
+is absent on this host. The installed components contain no bench package.
+The tiup wrapper attempts to write execution history even for --help and was
+sandbox-denied; no cluster was started. Discover the installed playground
+executable directly or request the required sandbox access for cluster use. The sysbench ladder defaults to a packaged Go build, which is not a
+matching-source parity baseline. A current-source Go build and explicit harness
+binary selection are needed before claiming current-revision performance.
+
+### Matching-source benchmark preparation — 2026-09-21
+
+The previous turn was progress: added original shuffle coverage and produced
+the current Rust release binary. This checkpoint builds an unmodified Go
+reference at aba629bb455 and prepares a current TPC-C correctness smoke.
+
+Commands from repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go build -o /tmp/tidb-go-aba629bb455 ./cmd/tidb-server
+    tiup install bench:v1.12.0
+
+Both passed. The first build attempt needed sandbox access to the existing Go
+cache and was rerun with approved escalation. Logs: /tmp/tidb-go-current-build.log
+and /tmp/tidb-bench-install.log. `go version -m` records vcs.revision
+aba629bb455dc09d6a5d98b3c39a542bb1189b9d; no Go/mod/sum files are modified.
+The plain Go build lacks Makefile's codes tag and version link flags, so its
+-V output has placeholder release metadata. This is an exact-source
+correctness reference, not yet a standard production-build performance baseline.
+Do not misreport the packaged nightly as this build.
+
+Temporary harnesses reuse the existing sysbench ladder's startup, fixture auth,
+TLS/client checks and mandatory owned-cluster cleanup, selecting Go through
+playground --db.binpath /tmp/tidb-go-aba629bb455. TPC-C uses one warehouse,
+stock go-tpc v1.12.0, Go preparation, --check-all on both implementations,
+then four 1000-transaction, one-thread samples in Rust/Go/Go/Rust order only
+if correctness checks pass. Inputs are unseeded and data evolves; these samples
+cannot prove performance equivalence. Binary hashes and source revision are
+stored alongside each run's logs and exact run.sh.
+
+Two initial attempts failed in harness setup and cleaned up their clusters:
+/tmp/tidb-current-tpcc-zjo96ret omitted the Rust fixture password;
+/tmp/tidb-current-tpcc-91x5mbre used an empty array rejected by macOS Bash under
+set -u. Neither is a Rust TPC-C behavior failure. Fixed explicit per-engine
+password arguments and tested the nonempty --password= array under Bash.
+
+Third run: /tmp/tidb-current-tpcc-21joa4dp, session 39871 is terminal. Invocation:
+
+    SYSBENCH_RUST_SERVER=/Users/qiliu/projects/tidb/rust/target/release/tidb-server SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST='%' SYSBENCH_SAMPLES=1 SYSBENCH_OUT_DIR=/tmp/tidb-current-tpcc-21joa4dp bash /tmp/tidb-current-tpcc-21joa4dp/run.sh
+
+The harness traps exit to stop every owned server and verify its ports are closed.
+No repository production code changed in this benchmark checkpoint.
+
+The third run passed initial Go/Rust --check-all and completed four complete
+1000-transaction samples, but is NOT accepted: the final --check-all reported
+condition 3.3.2.11 failure with exit status 0. The harness incorrectly printed
+success because its last check inspected only exit status. Raw logs remain
+preserved and summary.json explicitly marks post-check-failed-do-not-accept.
+
+Fetched the exact installed go-tpc source revision from binary Go build info:
+d05fdf8aaddcd5ae30e02333eba3760c37219c05 (go-tpc 1.0.9 packaged as TiUP bench
+v1.12.0). /tmp/tidb-gotpc-check.go is the pinned tpcc/check.go. CheckPrepare
+passes checkAll=true; ordinary Check defaults to false and omits condition
+3.3.2.11. That condition enforces initial order_count - new_order_count = 2100;
+delivery changes it. The fourth harness records a Go-only transaction/control
+check before any Rust transactions, retains all 12 initial checks, then uses
+ordinary 11-condition post-run checks through both engines. Every required
+check inspects output for reported errors as well as process status.
+
+Fourth run is /tmp/tidb-current-tpcc-m6_ho_2c, terminal session 31487, using the same
+invocation above with SYSBENCH_OUT_DIR and script path changed to that directory.
+It adds a Go-only 1000-transaction control, captures the diagnostic --check-all
+output, and retains the four alternating samples. Its pinned checker source,
+exact script, binary hashes, source revision, logs and eventual outcome are
+kept in that directory. Session 31487 completed with exit 0; validation below
+checks output contents in addition to shell status.
+
+Fourth-run outcome: passed the correctness smoke. Initial --check-all covered
+12 distinct conditions through each engine. After the Go-only 1000-transaction
+control, the diagnostic --check-all reproduced 3.3.2.11 failure without any
+Rust transaction, confirming it is the preparation-only invariant. Four
+subsequent samples each completed exactly 1000 transactions, all five
+transaction categories, no reported error/panic. Normal post-run checks covered
+all 11 intended conditions through each engine and reported no failures.
+summary.json contains exact counts, raw timing fields, check identities and
+performance_acceptance=false. The Go control reported 24 deliveries; their
+removal of NEW_ORDER rows explains the preparation-invariant failure.
+
+Validation additionally rehashed all three binaries against binaries.json,
+verified complete transaction counts, scanned required check outputs for
+reported failures, and confirmed the owned TiUP directory
+sysbench-ladder-23720-1789990979 no longer exists. The harness cleanup also
+verified its five owned ports were closed. No benchmark processes remain.
+The first summary-extraction attempt referenced an absent go-server.log;
+corrected it to the retained playground.log, then all assertions passed.
+
+Files changed this checkpoint: this ExecPlan only. Exact build/install/run
+commands and test artifacts are above. `bash -n` passed for each corrected
+script; `git diff --check` passed. No production edits, new Go files, imports,
+Bazel changes or dependency changes were made, so no new lint/Bazel run was
+required. The latest implementation's targeted tests and lint fallback remain
+recorded in preceding checkpoints. Remaining measurement obligations include
+standard Go production build flags, seeded/repeated controls, current-source
+sysbench, TPC-H and YCSB, and optimization justified by observed profiles.
+Whole-package acceptance remains open.
+
+### TPC-H current-source answer-check run — 2026-09-21
+
+The previous goal turn was progress: current-source TPC-C correctness smoke
+passed after fixing benchmark setup and validating the checker's intended
+post-run conditions. Next, built the Go reference with the repository's normal
+production tags and link flags, rather than the earlier plain go build:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off make server TARGET=/tmp/tidb-go-aba629bb455-production
+
+Build passed; /tmp/tidb-go-production-build.log contains the expanded command
+with -tags codes and version metadata. Binary -V reports revision aba629bb455,
+branch hparser-integration and the expected git-describe dirty version (Rust
+WIP only; no Go/go.mod/go.sum changes). The cached Go1.26 toolchain remains the
+native-build workaround noted in prior oracle receipts.
+
+TPC-H harness /tmp/tidb-current-tpch-kdjf441z/run.sh reuses the validated cluster
+startup, fixture credentials, standard Go binary selection and cleanup.
+It prepares SF1 through Go using stock go-tpc 1.0.9 from bench v1.12.0, with
+--analyze and four load workers, then runs all 22 queries once per engine with
+one query thread, --count 22 --check, Go first then Rust. Preparation is bounded
+by --time 15m and each query sequence by --time 20m. Checks inspect output as
+well as exit status. It retains Go server logs before owned-cluster cleanup.
+Raw timings are exploratory; one run cannot prove performance equivalence.
+
+Command from repository root:
+
+    SYSBENCH_RUST_SERVER=/Users/qiliu/projects/tidb/rust/target/release/tidb-server SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST='%' SYSBENCH_SAMPLES=1 SYSBENCH_OUT_DIR=/tmp/tidb-current-tpch-kdjf441z bash /tmp/tidb-current-tpch-kdjf441z/run.sh
+
+Session 3780 completed with exit 0 after mandatory cluster cleanup.
+Binary hashes, Go metadata, source revision, full
+commands and copied pinned go-tpc workload.go are in the run directory.
+Inspected pinned go-tpc Run: QueryContext is followed by scanQueryResult; its
+reported operation latency is measured before scanning all rows, so it is not
+necessarily end-to-end query latency. Count/result coverage must be verified
+after execution. No production sources changed this checkpoint.
+
+TPC-H outcome: preparation generated SF1 and successfully analyzed all eight
+tables. Each run log contains exactly one summary for each Q1 through Q22,
+Finished, and no error/failed/panic text. Required query coverage and unchanged
+binary SHA256 values were independently asserted after the run. summary.json
+records the two 22-query results, exact_parity_proven=false and
+performance_acceptance=false. The owned TiUP directory
+sysbench-ladder-25826-1789991214 is absent; the harness also verified all five
+owned ports closed. Go and Rust server logs were retained before cleanup.
+
+Additional checker inspection: fetched pinned tpch/check.go into the run
+directory. It compares row count/order and selected fields exactly, permits
+$100 differences for SUM fields and its own numeric tolerance for averages/
+ratios, and does not explicitly call rows.Err after iteration. Passing this
+checker is therefore benchmark-reference coverage, not the user's strict
+no-gaps result parity. A future exact differential harness must collect full
+rows and stream errors, with explicit numeric semantics. Tool latency is taken
+before scanQueryResult consumes the full stream; no end-to-end speedup is
+inferred from these reported times.
+
+Files changed this checkpoint: this ExecPlan only. The repository's Go and
+Rust production sources are unchanged. `bash -n` on the temporary harness and
+`git diff --check` passed; prior code-validation gates still apply. No new
+lint/Bazel preparation was required. Remaining work includes exact Go/Rust
+result comparisons, YCSB, repeated seeded and balanced performance controls,
+profile-justified optimization, and the full package-by-package acceptance
+inventory. The standard current-source Go binary is now available for those
+follow-ups at /tmp/tidb-go-aba629bb455-production.
+
+### YCSB current-source integrity smoke — 2026-09-21
+
+The preceding goal turn was progress: TPC-H SF1 completed all 22 pinned answer
+checks through both engines. This turn runs YCSB A–F on current-source Go
+production and Rust release binaries. Installed bench v1.12.0 provides go-ycsb;
+its exact SHA256 is recorded even though Go build info has no source revision.
+Inspected official current MySQL driver code only for usage guidance, not as a
+pinned behavioral oracle. Both mysql.db and mysql.dbname name the same fresh
+database; actual tables and complete rows in that database are independently
+queried, so an ignored property cannot silently redirect accepted results.
+
+Temporary harness: /tmp/tidb-current-ycsb-gwl6r81b/run.sh. It reuses the validated
+owned-cluster lifecycle with /tmp/tidb-go-aba629bb455-production and the current
+Rust binary. For each A–F mix and engine, it creates an independent database,
+loads 1000 rows with ten 100-byte fields, and executes 1000 operations using
+four clients. dataintegrity=true, constant field length, readallfields=true;
+A/B/C/E/F use uniform requests, D uses latest. Mixes: A half reads/updates;
+B 95% reads/5% updates; C reads; D 95% reads/5% inserts; E 95% scans/5% inserts;
+F half reads/read-modify-writes. maxscanlength=100. Random inputs are unseeded,
+so cross-engine operation mixes need not be identical and timing equivalence
+is not inferred.
+
+After both load and run, full sorted table contents are read through BOTH
+servers and compared byte-for-byte. Each load must contain exactly 1000 rows.
+Go ADMIN CHECK TABLE verifies each completed fixture. Commands and all output
+are retained; every benchmark command is checked for reported errors as well
+as exit status. Required final operation counts and insert-induced row growth
+must still be independently verified after completion.
+
+Command from repository root:
+
+    SYSBENCH_RUST_SERVER=/Users/qiliu/projects/tidb/rust/target/release/tidb-server SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST='%' SYSBENCH_SAMPLES=1 SYSBENCH_OUT_DIR=/tmp/tidb-current-ycsb-gwl6r81b bash /tmp/tidb-current-ycsb-gwl6r81b/run.sh
+
+Session 62489 completed with exit 0. All A–F fixtures completed, and the
+harness cleaned its owned processes/data and checked all five ports on exit.
+No repository production edits.
+
+Performance caveats established from actual evidence: SHOW FULL PROCESSLIST
+on the owned cluster captured YCSB loading blocked in ANALYZE TABLE usertable;
+Go load time includes about 40 seconds after inserts complete. That load OPS
+is not insert throughput. Complete before/after table files for both engines'
+A/B fixtures are identical despite successful updates: integrity mode rewrites
+deterministic values. It does not validate general value-changing update
+performance. Use ordinary random payloads and explicit persisted-write checks
+for the subsequent write benchmark. This smoke remains scoped integrity and
+operation-path evidence, not whole-package or workload optimization acceptance.
+
+YCSB final validation: parsed each final histogram, requiring 1000 INSERTs on
+every load and 1000 logical operations on every run. F instrumentation counts
+READ for both standalone reads and RMW operations; READ must equal 1000 and
+UPDATE must equal READ_MODIFY_WRITE, avoiding double-counting. Full sorted table
+outputs match through both engines after all 24 load/run phases, with eleven
+columns per row. Post-run row counts equal 1000 + successful INSERT count.
+Across twelve fixtures: 12,000 loaded rows, 12,000 logical run operations and
+194 additional inserted rows. All 12 Go ADMIN CHECK TABLE commands passed.
+summary.json records per-fixture counts, row hashes and explicit performance
+limitations. Binary SHA256 values were rechecked unchanged. Owned TiUP directory
+sysbench-ladder-30801-1789992002 is absent, and no owned benchmark process remains.
+
+Files changed this checkpoint: this ExecPlan only. `bash -n` and
+`git diff --check` passed; no production edit required new compilation, lint
+or Bazel preparation. This is live workload-path and stored-data evidence,
+not exact operation-sequence differential testing or package completion.
+The next meaningful YCSB performance run must disable deterministic integrity
+payloads, prove persisted values actually change, balance engine order, run
+longer samples and use profiles to justify any optimization. Existing current
+TPC-C/TPC-H/YCSB smoke coverage does not remove the whole-package inventory,
+warning/type, full original-test and exact-result obligations.
+
+### YCSB changing-value comparison and profiles — 2026-09-21
+
+The prior goal turn made progress: A–F integrity smoke validated all twelve
+fixtures and cleanup. This checkpoint addresses the observed no-op-update
+limitation before drawing performance conclusions. No production code changed.
+
+Temporary harness: /tmp/tidb-ycsb-changing-2j8ohvcn/run.sh. It reuses current
+production-tagged Go and current Rust release binaries on a fresh owned cluster.
+It loads one shared 1000-row table (ten 100-byte fields), dataintegrity=false,
+and uses a 50/50 read/update mix, uniform keys, four clients and 100,000 logical
+operations per sample. The first four samples run Rust/Go/Go/Rust; two separate
+profiled samples follow, Rust then Go. Inputs are unseeded, data evolves and
+there are only two unprofiled samples per engine, so formal performance
+acceptance is not implied. Reuse existing binary hashes to verify identity.
+
+Each sample must finish without reported errors, yield exactly 1000 rows,
+produce identical full-table output through both servers, change persisted
+values compared with the prior snapshot, and pass Go ADMIN CHECK TABLE.
+The harness records monotonic wall times separately from tool histograms.
+macOS sample records Rust stacks for eight seconds during sample 5; Go's
+pprof endpoint records an eight-second CPU profile during sample 6. Samples 5/6
+are excluded from the timing comparison. Wall-clock stack samples and Go CPU
+profile samples are different measurements; do not compare their percentages
+as if they were the same denominator.
+
+Command from repository root:
+
+    SYSBENCH_RUST_SERVER=/Users/qiliu/projects/tidb/rust/target/release/tidb-server SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST='%' SYSBENCH_SAMPLES=1 SYSBENCH_OUT_DIR=/tmp/tidb-ycsb-changing-2j8ohvcn bash /tmp/tidb-ycsb-changing-2j8ohvcn/run.sh
+
+Session 35560 is terminal with exit 0 after all six samples and cleanup.
+Owned workload PID is included in cleanup; the existing cluster trap stops
+servers, removes owned data and checks its ports. Exact scripts, logs, binary
+hashes, snapshots and profiles will remain in the run directory. `bash -n`
+passed before execution. The full package-parity objective remains unchanged.
+
+Measurement correction during live run: wall-times.tsv is INVALID and must not
+be used. This host's Python3.9 macOS time.monotonic_ns uses process-relative
+origins: a single-process probe increased from ~5ms to ~55ms across a 50ms
+sleep, while a new process restarted around ~4ms. The harness erroneously
+subtracted readings from two processes, producing even negative differences.
+Use only go-ycsb's within-process `Run finished, takes ...` duration for this
+exploratory comparison. It is a different defined metric, not a repaired
+end-to-end wall-time value. Future wall timing needs one persistent clock
+owner. This does not invalidate operation counts, stored-data checks or the
+separate profiles. Sample 1 Rust and sample 2 Go both completed with changed
+stored values, cross-engine reads matching, and storage checks passing;
+sample 3 Go is running in the same live session 35560.
+
+Final changing-value run: all six samples completed exactly 100,000 operations
+(READ + UPDATE), every one of the 1000 stored rows changed in each sample,
+full sorted table output through both servers matched, and all six Go ADMIN
+CHECK TABLE checks passed. Binary hashes remain unchanged. summary.json contains
+counts, within-process tool durations, row hashes, explicit rejection of
+wall-times.tsv and performance_acceptance=false. Unprofiled order/durations:
+Rust 54.534845208s, Go 64.157735875s, Go 60.715194708s, Rust 62.988015417s.
+These do not establish a reliable Rust performance gain or regression: two
+samples per engine, unseeded mixes, evolving shared data and no variance model.
+No production optimization was made on the basis of this small comparison.
+
+Rust profile evidence: four active SQL threads each had 5673 observations.
+Direct publish_prewrites totals were 5300, 5280, 5280 and 5288; their largest
+semaphore wait branches were 5298, 5277, 5278 and 5274. Thus 93.1–93.4% of
+sampled wall observations were in the prewrite path, mostly awaiting batch
+completion. rust-profile-summary.json retains these counts. This is not CPU
+percentage and does not distinguish TiKV service time, network delay or client
+response scheduling. It does not justify relaxing durability or transaction
+semantics. The next useful performance evidence is client/server RPC latency
+breakdown, not speculative expression/planner micro-optimization.
+
+Go CPU profile was captured separately for 7.84s with 2.94s reported samples.
+The top report is dominated by runtime/kernel functions (rawsyscalln, kevent,
+pthread_cond_signal/wait); it does not identify a SQL-specific hotspot.
+Commands/evidence:
+
+    /usr/bin/sample "$RUST_PID" 8 1 -file "$OUT_DIR/rust-profile.txt"
+    curl -fsS --max-time 15 "http://127.0.0.1:${GO_STATUS_PORT}/debug/pprof/profile?seconds=8"
+
+The Go profile body was saved as go-profile.pb.gz. Cached Go1.26 has no pprof
+tool. Running the repository-pinned google/pprof CLI from the repo first hit
+unrelated offline module resolution, then its own module lacked two cached
+dependencies. After fetching only its pinned dependencies, this command passed
+from /Users/qiliu/go/pkg/mod/github.com/google/pprof@v0.0.0-20250903194437-c28834ac2320:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=https://proxy.golang.org go run -mod=readonly . -top -nodecount=20 /tmp/tidb-go-aba629bb455-production /tmp/tidb-ycsb-changing-2j8ohvcn/go-profile.pb.gz
+
+Output: go-profile-top.txt in the run directory. No go.mod/go.sum changes.
+The profiled samples are excluded from timings above. Owned TiUP directory
+sysbench-ladder-34407-1789992514 is absent and cleanup checked all five ports.
+No benchmark or profile process remains.
+
+Files changed: this ExecPlan only. `bash -n`, output/count/data/hash validation
+and `git diff --check` passed. No new compile/lint/Bazel gate was needed for
+unchanged production sources. Whole-package parity, original test/variant
+coverage, exact TPC-H differential results and validated performance
+optimizations remain open; the goal is active.
+
+
+### 2026-09-21: existing RPC metrics narrow YCSB write latency
+
+No production code changed in this checkpoint. On the same current-source
+production Go and release Rust binaries, ran four clients against 1000 rows,
+10 changing 100-byte fields, uniform keys, 50% reads / 50% updates, 50,000
+operations per sample in Rust/Go/Go/Rust order. Exact command from repo root:
+
+    SYSBENCH_RUST_SERVER=/Users/qiliu/projects/tidb/rust/target/release/tidb-server SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST='%' SYSBENCH_SAMPLES=1 SYSBENCH_OUT_DIR=/tmp/tidb-ycsb-rpc-wc1la0bu bash /tmp/tidb-ycsb-rpc-wc1la0bu/run.sh
+
+Session 31977 exited 0. All four samples completed exactly 50,000 READ+UPDATE
+operations with no reported errors. All 1000 rows changed after each sample,
+sorted full-table output from Go and Rust matched byte for byte, and Go ADMIN
+CHECK TABLE passed after every sample. Binary SHA256 values are unchanged.
+The cleanup trap checked all five ports; owned TiUP data directory
+sysbench-ladder-40957-1789993285 is absent. No cluster remains from this run.
+
+The harness read the single owned store's status address from PD, and scraped
+existing TiKV and Go HTTP metrics immediately before/after each isolated
+sample. It added no Rust instrumentation. `summary.json`, raw .prom snapshots,
+logs, table snapshots, source revision and hashes remain in the run directory.
+Validation and aggregation command:
+
+    python3 /tmp/tidb-ycsb-rpc-wc1la0bu/summarize.py
+
+| Sample | Tool duration (s) | UPDATE count | UPDATE mean (ms) | TiKV prewrite count | TiKV prewrite mean (ms) | Go external_Update prewrite mean (ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Rust 1 | 33.0889 | 24998 | 4.864 | 24707 | 4.198 | unavailable |
+| Go 2 | 35.4477 | 24850 | 5.236 | 24722 | 4.446 | 4.613 |
+| Go 3 | 29.6267 | 24918 | 4.322 | 24943 | 3.593 | 3.737 |
+| Rust 4 | 31.1557 | 24941 | 4.551 | 24874 | 3.841 | unavailable |
+
+TiKV mean is the delta sum/count of tikv_grpc_msg_duration_seconds with
+`type="kv_prewrite"` across priorities. Go uses
+`tidb_tikvclient_source_request_seconds` with `type="Prewrite"` and
+`source="external_Update"`. Scheduler prewrite means were 4.170, 4.410,
+3.586, 3.797ms; latch-wait means only 0.0025–0.0039ms. Thus aggregate evidence
+places most update latency in TiKV prewrite service/completion, consistent
+with the previous Rust wall profile. It does not prove all Rust client wait
+is TiKV service time: these are unpaired means, background writes/retries
+exist, and buffered metric flushes cross scrape boundaries (counts differ
+from UPDATE totals). Go's external_Update prewrite counts 24868/24936 also
+exceed logical updates. Do not subtract these means as exact per-request
+network or scheduling costs.
+
+A diagnostic difference remains: Rust samples primarily increment TiKV's
+priority="unknown" RPC series, Go priority="medium". Both checked-in Rust
+and pinned Go protobuf definitions encode CommandPri Normal=0, Low=1, High=2;
+that label alone is not evidence of wrong protobuf priority or a safe tuning
+opportunity. Its attribution still needs TiKV's exact metric implementation.
+No protocol or priority change was made from this observation.
+
+Run duration uses only go-ycsb's within-process timer; no invalid cross-process
+monotonic subtraction was reused. Two samples per engine, unseeded mixes and
+evolving shared data do not establish a speedup. Do not trade durability or
+transaction semantics for benchmark throughput. Continue whole-package parity
+and use stronger workload/profile evidence for any optimization.
+
+Files changed in this checkpoint: this ExecPlan only. `bash -n` before run,
+the aggregation checks above and `git diff --check` passed. Production source
+is unchanged, so no new compile/lint/Bazel run was necessary. Exact TPC-H
+numeric differentials, original test/variant coverage, package acceptance and
+validated performance optimization remain open; goal remains active.
+
+
+### 2026-09-21: physical row-bound arithmetic and MPP warning audit
+
+Previous goal turn was progress: collected RPC metrics changed the next
+performance action, showing most update time within TiKV prewrite. This turn
+returned to package source auditing; package completion remains atomic/open.
+Current tree and Go sources were re-read before editing.
+
+Five source-exact additions used Rust's checked-in-debug `+` on u64 instead of
+Go's wrapping uint64 operation. Updated physical/mod.rs candidate generation
+for LogicalLimit and getPhysLimits, plan_cost_ver2.rs top_n_cost, and task.rs
+LIMIT/TopN cop pushdown to wrapping_add. No saturation or new limits were
+introduced. Root operators retain the original offset/count, pushed operators
+use offset zero and the wrapped sum. Source anchors: physical_limit.go
+ExhaustPhysicalPlans4LogicalLimit/getPhysLimits, core/plan_cost_ver2.go line563,
+and core/task.go LIMIT/TopN attachment helpers.
+
+New tests in physical/tests.rs, task.rs and plan_cost_ver2/golden_tests.rs
+cover normal and boundary values, candidate count/properties, preserved root
+bounds, pushed bounds and cost-floor behavior. Red command (from rust/):
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib uint64_row
+
+/tmp/tidb-limit-overflow-red.log records three failing tests with arithmetic
+overflow panics (candidate, costing, LIMIT pushdown). After the LIMIT fix,
+TopN pushdown independently reproduced its overflow with:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib cop_pushdown_wraps_uint64
+
+/tmp/tidb-topn-push-overflow-red.log records that failure. The first TopN test
+fixture lacked a column ordering expression and therefore intentionally did
+not push; it was corrected to exercise Go's actual pushdown gate. After all
+five changes the first command passed all three tests; evidence is
+/tmp/tidb-limit-overflow-green.log. Broader required checks, from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib physical::tests
+    cargo test --offline --locked -j12 -p tidb-planner --lib task::tests
+    cargo test --offline --locked -j12 -p tidb-planner --lib plan_cost_ver2::golden_tests
+
+Results: 53, 18 and 36 passing tests respectively, no failures/ignores in
+these selections. Logs /tmp/tidb-overflow-{physical-tests,task-tests,
+plan_cost_ver2-golden_tests}.log. Only new test snippets were rustfmt-ed;
+large existing files were not broadly reformatted. `git diff --check` passed.
+
+The ordinary SQL builder in pinned logical_plan_builder.go:2586 clips count
+to MaxUint64-offset before producing LogicalLimit. Thus these native API tests
+must not be presented as an ordinary SQL crash reproduction. Other unchecked
+row-bound arithmetic in logical UNION/join/CTE rewrites remains to audit with
+its own source and reachability conditions. No performance improvement claimed;
+normal-range arithmetic results are unchanged. Existing release benchmark
+binary predates these new code edits and is not current validation evidence.
+
+Warning audit: physical_max_one_row.go calls RaiseWarningWhenMPPEnforced on
+sorted or MPP property rejection. Rust physical/mod.rs documents its omission.
+Go SessionVars.IsMPPEnforced checks allowMPP && enforceMPP; RaiseWarningWhenMPPEnforced
+uses AppendWarning for InExplainStmt and AppendExtraWarning otherwise. Rust's
+statement warning buffer and physical dispatch have no equivalent complete
+routing path; planner_bridge currently does not pass allowMPP to dispatch,
+even though dispatch offers with_mpp_allowed and session sysvars exist.
+These are explicit follow-up integration gaps. No warning-only callback or
+incorrect SHOW WARNINGS behavior was added. Existing ignored MPP integration
+tests cannot be used as coverage; their stale descriptions need reconciliation
+as full MPP integration is completed.
+
+Files changed in this checkpoint: the five Rust files above (including tests
+in task.rs) and this ExecPlan. No Go/Bazel/module changes; bazel_prepare and
+Go failpoint mutation are not required for these Rust unit tests. `make lint`
+was attempted and failed installing revive v1.2.1 (module does not contain
+package). Existing-tool lint result is recorded below after completion.
+No real TiFlash, full SQL integration, full Go package tests, workload rerun,
+or whole-package acceptance was established by these scoped regressions.
+
+Final lint result: `make -o tools/bin/revive lint` completed exit 0, including
+revive and dashboard recipes, using the existing required-version binary.
+Log /tmp/tidb-overflow-lint-existing.log. This does not make the separate
+`make lint` installation failure a pass. Final `git diff --check` passed.
+Whole-package parity and validated workload optimizations remain active work.
+
+
+### 2026-09-21: preserve Go MPP session gates through physical planning
+
+Previous goal turn was progress (five native arithmetic fixes plus red/green
+regressions). This turn re-read current source and fixed the concrete session
+integration gap found during that audit; no package completion is claimed.
+
+Go SessionVars.IsMPPEnforced (pkg/sessionctx/variable/session.go:2099) returns
+allowMPPExecution && enforceMPPExecution. Its setter permits disabling allow
+while the stored enforce value remains ON. Rust's session optimizer_cost_env
+previously copied only tidb_enforce_mpp, so it continued applying enforcement
+cost discounts after MPP was disabled. The regression uses SQL SET to enable
+both, capture a context, disable allow, and check the new context. It failed
+at the expected assertion before the fix:
+
+    cd rust
+    cargo test --offline --locked -j12 -p tidb-session --lib mpp_enforcement_requires_both_session_switches
+
+Red evidence /tmp/tidb-mpp-settings-red.log; green evidence
+/tmp/tidb-mpp-settings-green.log. The final test covers all four switch pairs,
+re-enabling allow with the retained enforce value, and immutability of the
+previously captured statement context. No session-variable validation or
+stored value is changed.
+
+Implementation: CostSessionOpts now includes mpp_allowed (default true, as
+Go). Session::optimizer_cost_env resolves both flags and stores effective
+mpp_enforced as their conjunction. physical_plan_for_logical passes captured
+mpp_allowed through DispatchContext::with_mpp_allowed, so existing TopN and
+Expand candidate gates receive the actual session value rather than default
+true. The boolean lives in the same owned statement snapshot as costing and
+other optimizer settings; no new feature or alternate policy was added.
+
+Files changed in this checkpoint:
+
+- rust/crates/tidb-planner/src/plan_cost_ver2.rs
+- rust/crates/tidb-session/src/stmt_ctx.rs (implementation and regression)
+- rust/crates/tidb-executor/src/driver/planner_bridge.rs
+- this ExecPlan
+
+Broader validation, from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib stmt_ctx::tests
+    cargo test --offline --locked -j12 -p tidb-planner --lib find_best_task::dispatch::tests
+    cargo test --offline --locked -j12 -p tidb-planner --lib plan_cost_ver2::golden_tests
+
+All 12, 29 and 36 tests passed respectively (77 total). Logs are
+/tmp/tidb-mpp-{statement,dispatch,cost}-tests.log. This verifies statement
+capture, existing dispatch behavior and cost goldens, not live TiFlash
+execution. `git diff --check` passed. No Go/Bazel/dependency changes; no
+bazel_prepare or Go failpoint mutation required. `make lint` again fails
+installing revive1.2.1 before its recipes; /tmp/tidb-mpp-lint.log records it.
+The existing-binary lint command is being completed separately.
+
+Remaining acceptance risks: complete enforced-MPP normal/extra-warning routing,
+other physical operator MPP gates and tasks, original integration fixtures,
+and whole-package coverage. No workload speedup is claimed. The prior release
+benchmark binary predates this and the arithmetic checkpoint; it must be
+rebuilt before new performance measurements. Full goal remains active.
+
+Existing-tool lint completed: `make -o tools/bin/revive lint` exited 0, log
+/tmp/tidb-mpp-lint-existing.log. This bypasses only the failed installation
+prerequisite, not the lint recipes. Final diff whitespace check passed.
+
+
+### 2026-09-21: MPP dependency audit and direct TPC-H comparison
+
+Previous turn was progress: session MPP gates now retain Go semantics and
+77 scoped tests pass. Current source was re-read before this audit. LIMIT's
+MPP candidate is still missing. Adding it alone does not complete the path:
+attach2Task4PhysicalLimit still rejects MPP, and MppTask.ConvertToRootTaskImpl
+still rejects construction of ExchangeSender/TableReader. The Go conversion
+also expands virtual columns, collects per-scan partition pruning metadata,
+retains single-table PlanPartInfo, validates root-filter placement and derives
+selection statistics. Rust MppTask lacks HashCols/TblColHists; its table reader
+lacks the complete partition metadata path. This requires cohesive integration,
+not merely enabling another candidate. No partial MPP path was added here.
+
+To strengthen outstanding workload correctness evidence meanwhile, rebuilt:
+
+    cd rust
+    cargo build --offline --locked -j12 --release -p tidb-server --bin tidb-server
+
+Passed in 56.36s; /tmp/tidb-tpch-exact-build.log. Retrieved query.go from pinned
+go-tpc d05fdf8aaddcd5ae30e02333eba3760c37219c05. Initial guessed queries.go path
+returned 404; then the pinned GitHub directory listing located query.go.
+All 22 qN raw SQL definitions match that revision's mysql map. Source is
+retained as /tmp/tidb-tpch-exact-mocjafvl/query-source.go, with q1.sql–q22.sql.
+Q15 retains the benchmark's CREATE VIEW/query/DROP VIEW sequence.
+
+Fresh-cluster exact-output harness uses the existing owned TiUP lifecycle and
+current-source production Go binary, prepares/analyzes SF1, then runs each
+query through Go and Rust using the same stock MySQL client in batch mode.
+Headers and escaped field text are retained, as are stderr and failure markers.
+Query errors/differences do not stop coverage of later queries. Comparison is
+byte-for-byte first; differing decimals, formatting or ties must be inspected
+before claiming semantic failure. This is stronger than go-tpc's tolerance
+checker but is not automatic proof of type/warning parity. No timed speedup
+is claimed from this Go-first diagnostic order.
+
+Launch (repo root, approved local cluster execution):
+
+    SYSBENCH_RUST_SERVER=/Users/qiliu/projects/tidb/rust/target/release/tidb-server SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST='%' SYSBENCH_SAMPLES=1 SYSBENCH_OUT_DIR=/tmp/tidb-tpch-exact-mocjafvl bash /tmp/tidb-tpch-exact-mocjafvl/run.sh
+
+Live unified-exec session: 98737, confirmed running by write_stdin. Startup,
+handshake and fixture creation passed; SF1 prepare/analyze is in progress.
+Do not restart on an observation timeout. Poll this handle, inspect console.log
+and prepare.log, then classify all 22 outputs/errors, verify pinned binary
+hashes in binaries.json, and verify terminal cleanup before reporting results.
+The cleanup trap owns Rust/playground servers and data and checks its ports.
+
+Files changed this checkpoint: this ExecPlan only; no production changes.
+`bash -n /tmp/tidb-tpch-exact-mocjafvl/run.sh` passed. Build passed. Full result
+comparison and cleanup are pending. Whole-package and workload goals remain
+active without narrowing their acceptance criteria.
+
+
+### 2026-09-21: verified live TPC-H wait and original fragment coverage
+
+Resumed existing session 98737 (no duplicate cluster). write_stdin confirms
+it remains live. SF1 loading completed; analysis progressed through lineitem,
+partsupp and supplier, and is currently on part. No query output is available
+yet. This is a verified wait, not completion or a blocker. The existing
+cleanup trap remains responsible for owned processes/data. Continue polling
+this same session; /tmp/tidb-tpch-exact-mocjafvl is the authoritative run.
+
+Prepared /tmp/tidb-tpch-exact-mocjafvl/summarize.py, which records all 22
+queries as pending until outputs exist, separates execution failures, header
+differences, row-order differences and value differences, and checks binary
+hashes. It records exact text matches only, never automatically promotes
+numeric formatting or reordered rows to semantic parity. Because files may
+be partial while a query runs, final classification must wait for the terminal
+session and completed-query markers. Current summary is 22 pending and
+unchanged binaries. No result acceptance yet.
+
+Independent source audit checked both original fragment_test.go tests against
+the pre-existing untracked rust/crates/tidb-planner/src/fragment.rs draft.
+It mirrors the singleton exchange matrix and local CTE task-count scenario,
+but lib.rs has no fragment module declaration. The draft refers to CTESink,
+CTESource and ExchangeSender.tasks, absent from the actual physical enum and
+sender. Thus these bodies were never included in the scoped test binaries.
+They remain incomplete seed evidence, not tests passed or package integration.
+This confirms an original-test coverage gap that must be closed together with
+the package's real MPP/CTE representation and fragment-generation integration.
+No draft source was silently integrated or deleted.
+
+Only this ExecPlan changed. `git diff --check` passes. No production change
+or new compilation was performed in this waiting/audit checkpoint. Whole
+package acceptance, exact TPC-H comparison and workload optimization stay open.
+
+
+### 2026-09-21: exact SF1 TPC-H differential completed
+
+Previous turn was a verified wait plus an original-test coverage audit. This
+turn resumed confirmed-live session 98737, observed analysis completing and
+all queries executing, then verified terminal exit 0 and cleanup. No restart,
+new cluster or production source change was made.
+
+All 22 SQL definitions from pinned go-tpc commit
+ d05fdf8aaddcd5ae30e02333eba3760c37219c05 completed on both servers. Each pair's
+full stock-MySQL batch output is byte-identical, including column headers,
+decimal digit strings and row ordering. No tolerance, numeric normalization,
+sorting or dropped columns were used to obtain equality. Q15's view lifecycle
+also completed through both engines. Per-query row counts (excluding headers):
+
+    Q1 4; Q2 100; Q3 10; Q4 5; Q5 5; Q6 1; Q7 4; Q8 2;
+    Q9 175; Q10 20; Q11 838; Q12 2; Q13 42; Q14 1; Q15 1;
+    Q16 18333; Q17 1; Q18 9; Q19 1; Q20 184; Q21 100; Q22 4.
+
+Validation command from repo root:
+
+    python3 /tmp/tidb-tpch-exact-mocjafvl/summarize.py
+    git diff --check
+
+Follow-up assertions independently verified 22 EXACT completion markers in
+console.log, no .failed files, no ERROR/failed/panic in any of 44 query stderr
+files, all binary SHA256 values still matching binaries.json, terminal exit 0,
+and absence of owned TiUP directory sysbench-ladder-51469-1789994537. The
+harness cleanup checks all five ports after stopping its own servers. The
+final summary.json includes these assertions, query row counts and full-output
+hashes. It deliberately keeps full_parity_proven=false and
+performance_acceptance=false. No benchmark process remains from this run.
+
+Artifacts: /tmp/tidb-tpch-exact-mocjafvl/{query-source.go,qN.sql,qN-go.tsv,
+qN-rust.tsv,qN-go.err,qN-rust.err,summary.json,binaries.json,run.sh,console.log}.
+The preceding build and launch commands remain in the previous checkpoint.
+This result supersedes the earlier tolerance-only SF1 check for this dataset,
+but not every TPC-H data scale, parameter set or session mode. MySQL batch
+output does not prove complete wire field metadata or warnings. This Go-first
+correctness run was not a controlled performance comparison. No speedup claim.
+
+Only this ExecPlan changed in this checkpoint, so no additional compilation,
+lint or Bazel gate was needed. The current release was rebuilt immediately
+before the run and includes the arithmetic and MPP-setting fixes. Whole
+physicalop/original-test/variant acceptance and validated sysbench/TPC-C/
+TPC-H/YCSB performance optimization remain outstanding. Goal stays active.
+
+
+### 2026-09-21: windows package closure audit finds approximate OVER gap
+
+Previous turn was progress: exact SF1 TPC-H output verification completed.
+This turn returned to the complete six-artifact windows package at aba629bb455.
+Re-read builder.go and normal/pipelined scheduling, row-bound, partial-result,
+chunk-alias and reset paths. No build tags/platform-generated variants or
+failpoint/testfailpoint calls/dependencies occur in the six package artifacts.
+The failpoint-test-runner workflow therefore selects an ordinary tagged run;
+no Go/Bazel/module source changed, so bazel_prepare is not triggered.
+
+Full original Go package test set, from repo root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -run '^(TestWindowFunctions|TestWindowFunctionsDataReference|TestSlidingWindowFunctions|TestIssue45964And46050|TestVarSampAsAWindowFunction|TestWindowExecutorsBasic|TestBuildOrderedWindowExec|TestWindowReturnColumnNullableAttribute)$' -tags=intest,deadlock -count=1 ./pkg/executor/windows
+
+All eight original tests passed in 3.433s; log
+/tmp/tidb-windows-acceptance-go.log. Rust validation before new changes (rust/):
+
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    cargo test --offline --locked -j12 -p tidb-executor --lib window::
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+
+64, 4 and 13 tests passed respectively. The four `window::` tests cover retained
+row storage; they must not be described as the whole executor window surface.
+Logs /tmp/tidb-windows-acceptance-{session,unit,boundary}.log. From repo root:
+
+    python3 rust/scripts/generate-go-window-tests.py --check
+
+Verified all 198 original extracted actions without fixture edits.
+
+Additional dependency audit exercised JSON_ARRAYAGG, JSON_OBJECTAGG,
+APPROX_COUNT_DISTINCT, BIT_AND/OR/XOR over three moving ROWS frames and both
+pipeline modes (36 queries, four output rows each). A temporary Go test
+overlay preserved the tracked Go package and printed exact JSON-encoded rows:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-window-closure-overlay.json -run '^TestWindowAggregateClosureOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Passed; /tmp/tidb-window-closure-oracle.log retains 36 oracle records, with
+identical results between both scheduler modes. Rows include NULL input,
+duplicate JSON object keys, empty leading/trailing frames and bitwise defaults.
+A matching Rust SQL matrix failed before executing approximate-count windows:
+/tmp/tidb-window-closure-rust.log records a parse error at OVER. JSON cases had
+already passed. This is an actual SQL integration gap, not an invented window
+feature or a scheduler failure.
+
+Pinned Go pkg/parser/expr_func_parser.go parseAggregateFuncCall uses the same
+argument modifiers for approximate aggregates and parseFuncCall wraps OVER.
+Rust still had an older SumExpr-specific branch forbidding modifiers and OVER.
+Removed that branch and admitted multiple args in the shared arity switch.
+Both APPROX_COUNT_DISTINCT and APPROX_PERCENTILE now follow the current Go
+parser. Type/argument/window legality remains the existing planner's decision.
+An old session test expecting a syntax error was replaced with the current
+DISTINCT-window planner refusal; the successful SQL matrix covers OVER.
+
+Independent Go parser oracle:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go run /tmp/tidb-window-approx-parser-oracle.go
+
+Confirmed 36 forms across both names, DISTINCT, DISTINCTROW, ALL, star,
+per-argument ALL, DISTINCT ALL, and absent/inline/named OVER; both empty-arg
+forms rejected. /tmp/tidb-window-approx-parser-oracle.log. Matching Rust parser
+matrix failed red (/tmp/tidb-window-approx-parser-red.log), then passed green.
+Final parser command (rust/):
+
+    cargo test --offline --locked -j12 -p tidb-parser --lib
+
+734 passed; /tmp/tidb-window-closure-parser-all.log. The new session matrix
+passed all 36 oracle comparisons after the fix. It was renamed from
+window_non_sliding_aggregate_frames_match_go to
+window_aggregate_frame_matrix_matches_go because BIT_XOR uses inverse sliding.
+The test retains 18 expected result sets and exercises each under both modes;
+no tolerance or unordered comparison. The broader 65-test session run first
+found the obsolete syntax-error expectation above; its final rerun is recorded
+below. No Go fixture was rewritten to accommodate Rust.
+
+Files changed: rust/crates/tidb-parser/src/{expr/window.rs,tests/expr.rs},
+rust/crates/tidb-session/src/tests_window/{aggregates.rs,specs.rs}, and this
+ExecPlan. Only new/modified test snippets were formatted. make lint still fails
+installing revive1.2.1; the existing-binary lint recipe result is recorded below.
+The Rust parser change does not require Go parser generation Make targets.
+
+This closes a real windows integration gap but does not accept the entire
+parser or windows package. Remaining dependency/type/error/warning contracts
+and package validation must be audited as a whole, with full source/support
+inventory. Approximate percentile execution and all wire metadata were not
+proved by this count/JSON/bitwise matrix. No performance change is claimed;
+release binaries and previous workload results predate this parser fix.
+
+Final broader window validation passed: `cargo test --offline --locked -j12
+-p tidb-session --lib tests_window` selected 65 tests, all passing, no ignores
+or failures (/tmp/tidb-window-closure-session-all.log). Existing-tool lint
+`make -o tools/bin/revive lint` exited 0; log
+/tmp/tidb-window-closure-lint-existing.log. This does not convert the separate
+make lint bootstrap failure into a pass. Final `git diff --check` passed.
+No test or cluster process remains from this checkpoint. Goal remains active.
+
+
+### 2026-09-21: approximate percentile DISTINCT and reachable window results
+
+
+Continued the windows dependency audit at aba629bb455. The parser correction
+made ordinary approximate DISTINCT and approximate OVER queries reachable, but
+rust/crates/tidb-session/src/tests_json.rs still asserted the older syntax
+rejection. Checked current Go pkg/executor/aggfuncs/builder.go:
+buildApproxPercentile never consults HasDistinct, and its supported numeric and
+temporal accumulators rank every input row. Unsupported input evaluation types
+return NULL. This behavior is preserved even though DISTINCT syntax might
+suggest otherwise; changing Go semantics would violate this goal.
+
+Used a temporary overlay of the existing windows test file, without changing
+tracked Go/Bazel sources. From repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-approx-reachability-overlay.json -run '^TestApproximateAggregateReachabilityOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Passed in 0.417s. /tmp/tidb-approx-reachability-oracle.log retains 20
+REACHABILITY_ORACLE records (10 queries under both pipeline settings), and
+/tmp/tidb-approx-reachability-oracle.go retains the source. Results include
+case-insensitive approximate distinct counts, ordinary DISTINCT percentile,
+cumulative and moving approximate count/percentile frames, empty trailing
+frames, and string percentile NULLs. Existing failpoint audit still applies;
+no Go/Bazel dependency or file change requires bazel_prepare.
+
+On [1,1,1,9], Go returns [1,1] for ordinary and DISTINCT percentiles at 75%.
+New Rust SQL test approximate_aggregate_distinct_modifier_matches_go_builder
+failed with [1,9]; /tmp/tidb-approx-distinct-red.log. A first local change to
+AggFunc::from_descriptor alone did not fix SQL: production physical_builder
+constructs AggFunc separately. Its intermediate failure also occupied
+/tmp/tidb-approx-distinct-green.log; that file now contains the final pass.
+The original red log is retained. Both builders now clear effective DISTINCT
+only for ApproxPercentile. Approximate count keeps its existing correct
+collation behavior. No generic aggregate, spill or partial-state policy was
+changed.
+
+Changed rust/crates/tidb-executor/src/hash_agg/builder.rs and
+rust/crates/tidb-executor/src/driver/physical_builder.rs. Extended
+hash_agg.rs::approx_percentile_uses_ordinal_selection to build descriptors
+with/without DISTINCT and execute real HashAggExec rows, proving the helper
+path independently. It is compiled but has no production callers today; do
+not describe it as another wired SQL path. Updated tests_json.rs obsolete
+syntax expectations to exact Go results and the actual DISTINCT-window
+planner refusal, added the duplicate regression, and exercised six window
+queries under both schedulers. Only these modified test functions were
+formatted, avoiding unrelated file churn.
+
+Validation, from rust/ (all passed):
+
+    cargo test --offline --locked -j12 -p tidb-session --lib approximate_aggregate_distinct_modifier_matches_go_builder
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_json::
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg::
+    cargo test --offline --locked -j12 -p tidb-executor --lib approx_percentile_uses_ordinal_selection
+
+Counts were 1, 15, 65, 70, and 1 respectively. The final descriptor extension
+was added after the 70-test run and passed its selected test. Logs:
+/tmp/tidb-approx-distinct-green.log, /tmp/tidb-approx-json-tests.log,
+/tmp/tidb-approx-window-tests.log, /tmp/tidb-approx-hash-agg-tests.log,
+/tmp/tidb-approx-descriptor-tests.log. The session test formatting happened
+after the JSON run; no executable test behavior changed during formatting.
+
+The complete windows/aggfuncs/physicalop package acceptance remains open:
+this work closes a concrete compatibility gap and supplies dependency
+regressions, not a new package-completion claim. Release binaries and all
+previous workload samples predate these approximate-parser/executor changes.
+No benchmark speedup, wire metadata equivalence, or full partial/distributed
+aggregate execution is claimed. Goal remains active.
+
+Final repository validation (repository root):
+
+    make lint
+    make -o tools/bin/revive lint
+    git diff --check
+
+make lint exited 2 at the known revive1.2.1 installation error (module found
+but package absent), /tmp/tidb-approx-reachability-lint.log. The existing-tool
+lint recipe exited 0, /tmp/tidb-approx-reachability-lint-existing.log; this is
+reported separately and does not turn the bootstrap failure into a pass.
+git diff --check passed. Self-review confirmed only percentile changes its
+effective modifier, preserving existing DISTINCT handling for other aggregates.
+No cluster or test process remains from this checkpoint.
+
+
+### 2026-09-21: RANGE cursor evaluation and temporal overflow diagnostics
+
+
+Previous checkpoint was verified progress: approximate percentile DISTINCT
+now matches Go. Re-audited windows/window.go, pipelined_window.go and builder.go
+at aba629bb455, together with Rust window.rs, window/pipelined.rs, and the
+physical builder. Go getStartOffset/getEndOffset and getStart/getEnd evaluate
+comparison operands only inside the candidate-row loop. Rust range_bound
+instead eagerly evaluated a Vec of every target, even after its monotonic
+cursor reached the partition end. It also evaluated all keys before the
+first unequal-key short circuit.
+
+Reproduced with BIGINT keys [1,9223372036854775807] and upper RANGE offset
+9223372036854775806 FOLLOWING. The first row consumes the entire upper-bound
+search; Go skips the next overflowing addition. Rust incorrectly returned
+1690. New test window_range_exhausted_cursor_skips_boundary_evaluation failed
+red (/tmp/tidb-range-exhausted-red.log), then passed green
+(/tmp/tidb-range-exhausted-green.log). Evaluation now happens per candidate,
+left operand first as in Go CompareInt/CompareTime and other comparison
+functions; end bounds evaluate CalcFuncs first, start bounds CompareCols first.
+The eager temporary target vector is gone, but no performance gain is claimed.
+
+A temporary Go test overlay of window_sql_test.go supplies three independent
+window oracles. Tracked Go/Bazel/module files were unchanged. Source:
+/tmp/tidb-range-exhausted-oracle.go; overlay:
+/tmp/tidb-range-exhausted-overlay.json. From repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-range-exhausted-overlay.json -run '^TestRange(ExhaustedBound|BoundDirections)Oracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-range-exhausted-overlay.json -run '^TestRangeBoundaryWarningsOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Both passed; /tmp/tidb-range-directions-oracle.log (0.762s) and
+/tmp/tidb-range-warnings-oracle.log (0.419s). The first has twelve exact result
+cases across both schedulers: exhausted lower/upper bounds, signed/unsigned
+keys and descending order. Two controls still raise 1690 for a needed bound.
+An initial unsigned fixture used an offset above MaxInt64; Go rejected it at
+planning with 3586, so the final execution fixture uses unsigned keys near
+MaxUint64 with legal offset 1. No Rust expectation was invented for the
+rejected query. Another initial testkit helper checked compile-time error
+rather than draining runtime rows; QueryToErr captured the actual 1690.
+
+For DATETIME keys [9999-12-30,9999-12-31,9999-12-31], one-day FOLLOWING reaches
+the upper cursor end before overflow: counts [3,2,2], no warnings. Two-day
+FOLLOWING yields [0,0,0], three warnings in normal mode and six in pipelined
+mode. Rust's counts were correct but warnings were absent, reproduced in
+/tmp/tidb-range-warnings-rust.log. The calendar helper returned NULL on actual
+arithmetic overflow without consulting a warning context.
+
+Threaded the existing Columns context from scalar_function.rs into the
+shared calendar evaluator and composite interval evaluator. Arithmetic
+out-of-range results now use Go baseDateArithmetical.addDate's 1441 diagnostic
+and truncation-group policy: Warn records the diagnostic and returns NULL,
+Error preserves the registered datatype error, Ignore suppresses it. SQL NULL
+operands and operand-parsing failures do not automatically become overflow
+warnings. The sessionless public date_add_interval helper retains its read
+policy via NoColumns. No new SQL function or statement setting was added.
+Other operand-parsing diagnostics remain an expression-package audit surface;
+this is not whole DATE_ADD or whole expression-package acceptance.
+
+Independent Go policy oracle, same overlay (repository root):
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-range-exhausted-overlay.json -run '^TestDateArithmeticOverflowPolicyOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Passed; /tmp/tidb-date-overflow-policy-oracle.log. Fourteen interval cases
+cover DAY/WEEK/MONTH/QUARTER/YEAR/HOUR/MINUTE/SECOND/MICROSECOND, composite
+YEAR_MONTH/DAY_HOUR, and MaxInt64 DAY/HOUR/YEAR. All produce NULL with one 1441
+warning. Strict INSERT SELECT returns 1441; INSERT IGNORE stores NULL with
+one warning. Rust test date_arithmetic_overflow_uses_statement_error_policy
+matches all cases and checks 22008 SQLSTATE and NULL-operand non-warning
+controls; /tmp/tidb-date-overflow-policy-rust.log. Window warning regression
+now passes (/tmp/tidb-range-warnings-green.log) including exact warning counts.
+
+Files changed this checkpoint:
+rust/crates/tidb-executor/src/window.rs,
+rust/crates/tidb-expr/src/{scalar_function.rs,time_fn/calendar.rs},
+rust/crates/tidb-session/src/tests_window/frames.rs,
+rust/crates/tidb-session/src/tests_core/temporal_types.rs, and this ExecPlan.
+Modified function regions were formatted without whole-file churn. Existing
+unrelated worktree changes were preserved.
+
+Final Rust validation from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib window_range_exhausted_cursor_skips_boundary_evaluation
+    cargo test --offline --locked -j12 -p tidb-session --lib window_range_boundary_warning_evaluation_matches_go
+    cargo test --offline --locked -j12 -p tidb-session --lib date_arithmetic_overflow_uses_statement_error_policy
+    cargo test --offline --locked -j12 -p tidb-expr --lib time
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_core::temporal_types
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_read_cast
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+
+All three focused regressions passed. Broader counts: 202 expression passed
+with 15 ignored, 67 window passed, 9 temporal session passed, 4 read-cast
+passed, 13 executor boundary passed. Logs /tmp/tidb-range-temporal-expr-tests.log,
+/tmp/tidb-range-window-suite.log, /tmp/tidb-range-temporal-session-tests.log,
+/tmp/tidb-range-read-cast-tests.log, /tmp/tidb-range-window-boundary-tests.log.
+The ignored expression entries include benchmark exclusions and explicit
+parity gaps (cache/vectorization/etc.); they are not passing evidence and
+were not silently enabled or removed.
+
+Repository-root gates:
+
+    python3 rust/scripts/generate-go-window-tests.py --check
+    make lint
+    make -o tools/bin/revive lint
+    git diff --check
+
+All 198 extracted original window actions remain unchanged. make lint failed
+at the known revive1.2.1 installation bootstrap (/tmp/tidb-range-lint.log);
+existing-tool lint exited 0 (/tmp/tidb-range-lint-existing.log). The two lint
+outcomes remain separate. git diff --check passed. No Go/Bazel/module changes
+triggered bazel_prepare, and the windows failpoint audit still requires no
+failpoint toggling. Self-review checked evaluation ordering, NULL-vs-overflow
+classification, existing statement policy use and the scoped diff.
+
+No package integration/acceptance claim, release rebuild, wire-metadata gate,
+or workload performance comparison was performed here. Original windows
+source remains the same six-artifact atomic unit; required dependency and
+whole-package acceptance is still open. No cluster was started and every test
+and lint process from this checkpoint is terminal. Goal remains active.
+
+
+### 2026-09-21: window partition identity and group-checker evaluation
+
+
+Previous turn made verified progress on RANGE evaluation and temporal warning
+policy. Current checkout remains aba629bb455. Audited windows package
+lifecycle, group consumption, and the complete four-artifact dependent package
+pkg/executor/internal/vecgroupchecker. Its production source, original test
+file, main test harness and BUILD.bazel are now inventoried with SHA-256 hashes
+in physicalop-source-inventory.md. No doc.go, platform/build tags, generated
+inputs or extra fixtures exist in that package at this pin. The whole package
+remains the minimum acceptance unit, and is not yet accepted.
+
+Go VecGroupChecker distinguishes encoded first/last chunk keys from adjacent
+row comparison. Numeric JSON values 1 and 1.0 compare equal within a chunk but
+retain different encoded keys across chunks. Windows used its own generic
+comparison everywhere and lost this Go behavior. Independent SQL oracle
+created 32 JSON integer 1 rows followed by JSON floating 1.0, ordered by id.
+With tidb_max_chunk_size=32, Go returns partition counts 32 for rows 1..32 and
+1 for row 33. With size=64, all counts are 33. Both ordinary and pipelined
+windows agree on each scenario. The new Rust SQL regression failed red with
+33 for every row in the size=32 case; /tmp/tidb-window-json-boundary-red.log.
+
+Go oracle source /tmp/tidb-window-json-boundary-oracle.go, overlay
+/tmp/tidb-window-json-boundary-overlay.json. Repository-root command:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-window-json-boundary-overlay.json -run '^TestWindowJSONPartitionBoundaryOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+All four scenarios passed; /tmp/tidb-window-json-boundary-oracle-final.log.
+Normal Window now retains a VecGroupChecker and collects whole adjacent ranges,
+using encoded-key continuation when it fetches another child chunk. Pipelined
+Window uses the same checker and Go's retained-row/new-partition decision.
+Removed its separate partition-key vector and per-row partition comparison.
+Ranking peer comparisons remain their own Go contract. Open recreates the
+checker for native executor reuse; retained rows and queued output aliases
+retain their existing ownership rules.
+
+The shared checker itself still evaluated every row before considering Go's
+single-group shortcut. This changes observable warnings, not just performance.
+Casting 32 copies of '1bad' to integer produces two warnings in Go (first and
+last rows), versus 32 in the previous Rust implementation. A new native
+regression reproduced the 32-versus-2 failure; /tmp/tidb-group-boundary-red.log.
+An initial test compile failed because ScalarFunction needed its module path;
+this was corrected before capturing the behavioral red result.
+
+Checker split_into_groups now evaluates first/last operands in Go's per-item
+order, encodes them, and returns early if they are equal. Otherwise it evaluates
+one key column at a time and reuses a boolean row mask. This removes the
+Vec allocation per input row and the clone of the collation array. Appending
+a final '2bad' row requires the full pass and produces 35 warnings (two
+endpoints plus 33 rows) in both Go vectorization modes and Rust. No measured
+sysbench/TPC-C/TPC-H/YCSB speedup is claimed from this structural reduction.
+
+Go package oracle uses a temporary overlay preserving tracked sources:
+/tmp/tidb-group-boundary-oracle.go and
+/tmp/tidb-group-boundary-overlay.json. Repository-root command:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-boundary-overlay.json -run '^(TestGroupCheckerBoundaryEvaluationOracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+
+Passed all four original tests plus the new oracle in 0.034s;
+/tmp/tidb-group-boundary-oracle-final.log. Read the failpoint-runner skill and
+its decision playbook for this newly audited package: no failpoint. or
+testfailpoint. calls or Bazel failpoint dependency occur. main_test.go's
+client failpoint registration is part of the original harness, not a test
+requiring injected failpoints. No toggling was needed. No Go/Bazel/module
+source edit triggers bazel_prepare.
+
+Original source ports in tests_executor_internal_source.rs previously bypassed
+production expression/chunk evaluation through split_evaluated. Updated datum
+ownership, collation/padding and reset tests to exercise real chunks and
+split_into_groups. Their native owned-data and fixed-plan-metadata choices
+are documented in the inventory. The six count-matrix scenarios already
+exercise production chunks. The older pre-evaluated fixtures are now compiled
+only for tests; they are supplementary evidence, not acceptance of the runtime
+entrypoint.
+
+Files changed this checkpoint:
+rust/crates/tidb-executor/src/{window.rs,window/pipelined.rs,vec_group_checker.rs,tests_executor_internal_source.rs},
+rust/crates/tidb-session/src/tests_window/collation.rs,
+and both physicalop ExecPlan/inventory documents. Existing unrelated worktree
+changes were preserved. Only modified function regions were formatted.
+
+Rust commands, from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib window_json_partition_boundary_uses_encoded_identity
+    cargo test --offline --locked -j12 -p tidb-executor --lib equal_boundary_keys_skip_interior_evaluation_warnings
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib issue_53867
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle::
+    cargo test --offline --locked -j12 -p tidb-executor --lib window::
+    cargo test --offline --locked -j12 -p tidb-executor --test all window_executor_source
+
+Final results: four-scenario JSON regression passes; 13 checker-selected tests
+and the separately selected original reset test pass; 68 session window,
+24 shuffle, four retained-row/pipeline unit, and 13 window executor boundary
+tests pass. No selected tests ignored. Logs:
+/tmp/tidb-window-json-boundary-final.log,
+/tmp/tidb-window-grouping-checker-final.log,
+/tmp/tidb-group-checker-reset-tests.log,
+/tmp/tidb-window-grouping-session-final.log,
+/tmp/tidb-window-grouping-shuffle.log,
+/tmp/tidb-window-grouping-unit-final.log,
+/tmp/tidb-window-grouping-boundary-final.log.
+An initial shell invocation used the repository root instead of rust/ and
+failed to locate Cargo.toml; no test ran until the corrected command above.
+The final source-port and test-only-helper edits were followed by the checker,
+reset and JSON regression selections; the final warning-count extension was
+followed by checker/window unit/boundary selections. Broader window/shuffle
+results correspond to the same production algorithm before formatting.
+
+Repository gates:
+
+    python3 rust/scripts/generate-go-window-tests.py --check
+    make lint
+    make -o tools/bin/revive lint
+    git diff --check
+
+Fixture check confirms 198 actions unchanged. make lint still fails at the
+revive1.2.1 install bootstrap; /tmp/tidb-window-grouping-lint.log. Existing-tool
+lint passes separately; /tmp/tidb-window-grouping-lint-existing.log. Diff check
+passes. Self-review checked the group-checker reset, prior encoded key lifetime,
+first/last shortcut, pending group ownership and constructor/reopen behavior.
+
+No cluster was started; all oracle/test/lint processes are terminal. Neither
+windows nor vecgroupchecker receives whole-package acceptance: grouped stream
+aggregation retains its own checker algorithm, and remaining complete-package
+integration and validation decisions are open. No release rebuild or workload
+performance result was produced. Goal remains active.
+
+
+## Stream aggregation shared checker follow-up (2026-09-21)
+
+The whole vecgroupchecker package remains unaccepted while auditing its stream
+aggregation caller. Go StreamAggExec calls the shared checker; Rust's
+GroupedStreamAggExec duplicates it using hash grouping encoding. A temporary
+Go windows-package SQL oracle confirms JSON 1 and 1.0 group together within
+one 64-row chunk but split into counts 32 and 1 across a 32-row boundary.
+The plan contains root StreamAgg in both cases. The session regression must
+fail before replacing the duplicate implementation with VecGroupChecker.
+Preserve the native integer-column fast path by moving it into the shared
+checker, including NULL and selected-row behavior. Validate stream aggregation,
+all checker consumers, and repository lint. No whole aggregate-package claim
+is implied; memory, error ordering, failpoints and other package artifacts
+remain subject to the atomic inventory and acceptance gates.
+
+
+### Stream follow-up results and decisions
+
+Go oracle command, repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-stream-json-overlay.json -run '^TestStreamJSONBoundaryOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Passed in 0.433s. /tmp/tidb-stream-json-oracle.log records root StreamAgg
+plans and exact result rows [[1,32],[33,1]] at chunk size 32, [[1,33]] at 64.
+The temporary overlay appends the oracle to the unchanged Go windows test
+source. No tracked Go/build/module artifacts changed and no bazel_prepare
+trigger was introduced. The windows package's previously audited failpoint
+prerequisite remains unchanged; no aggregate-package injected-failure test
+was run or counted.
+
+Regression stream_aggregate_json_boundary_uses_encoded_identity failed
+before implementation: Rust [[1,33]] versus Go [[1,32],[33,1]], in
+/tmp/tidb-stream-json-red.log. It passes after GroupedStreamAggExec calls the
+shared checker. Both chunk sizes are permanent SQL regression scenarios and
+assert the physical plan actually contains StreamAgg.
+
+A second regression, grouped_stream_agg_stops_at_required_rows_at_a_chunk_boundary,
+failed with req.num_rows() > required_rows using input chunks [1,1] and [2,3]
+and requested output size one; /tmp/tidb-stream-required-red.log. Go's
+StreamAggExec.Next consumes/emits one group per loop and checks req.IsFull.
+Rust previously emitted the previous chunk's group and the next chunk's first
+group in the same iteration. It now returns when the prior group fills the
+request, preserving the fetched chunk and deferring the next group's state
+initialization. The final counts are 2,1,1 in three one-row requests.
+
+Decision: remove the independent stream group algorithm rather than maintain
+two encodings. Keep integer direct-column comparison by moving it into the
+shared checker. It compares physical selected-row indices and NULL bits, avoids
+per-row datum allocation, and uses the generic evaluator for other expressions.
+The new selected-row/null fixture exercises all six existing integer type
+codes and continuation into the next chunk. No new operator or SQL feature.
+This preserves the existing stream integer optimization and makes it available
+to window/shuffle; no measured workload speedup is claimed.
+
+Changed this checkpoint: rust/crates/tidb-executor/src/hash_agg.rs,
+rust/crates/tidb-executor/src/vec_group_checker.rs,
+rust/crates/tidb-session/src/tests_explain_merge_join.rs, this ExecPlan and
+physicalop-source-inventory.md. Unrelated preexisting work remains intact.
+The inventory now lists all ten artifacts of dependent package executor/aggregate
+with explicit open audit/validation decisions, not partial-package acceptance.
+
+Validation commands, from rust/ unless stated:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib stream_aggregate_json_boundary_uses_encoded_identity
+    cargo test --offline --locked -j12 -p tidb-executor --lib grouped_stream_agg_stops_at_required_rows_at_a_chunk_boundary
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle::
+
+After the requested-row fix, the following also passed from repository root:
+
+    cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor --lib grouped_stream_agg
+
+Four stream unit tests passed there. The broader final aggregate selection
+passed all 76 tests, including that same regression, from rust/. Final suite
+logs: /tmp/tidb-stream-{checker,session,hashagg,window,shuffle}-final.log,
+with 14,15,76,68,24 tests respectively; none ignored. Separate green logs are
+/tmp/tidb-stream-json-green.log and /tmp/tidb-stream-grouped-final.log.
+An initial green command accidentally ran without a manifest from the repo
+root and found no Cargo.toml; no test was counted until the corrected run.
+
+Repository gates:
+
+    make lint
+    make -o tools/bin/revive lint
+    git diff --check
+
+make lint exits 2 in the preexisting revive1.2.1 installation step (module
+found but missing the requested package); /tmp/tidb-stream-lint.log. Lint
+recipes pass with the existing binary via the second command;
+/tmp/tidb-stream-lint-existing.log. Diff check passes. Self-review covered
+shared mask reset, selected-row integer comparison, group continuation,
+required-row suspension, final group flush, and preserving unrelated changes.
+
+Not verified here: complete aggregate/vecgroupchecker/physicalop package
+acceptance, aggregate memory/failure/error ordering, full merge-join group
+integration, release rebuilds, or new sysbench/TPC-C/TPC-H/YCSB measurements.
+All test/lint processes are terminal and no cluster was started. Goal active.
+
+
+## User-requested publication checkpoint (2026-09-21)
+
+The user explicitly instructed: "do not forget to commit and push code".
+This authorizes a progress checkpoint on origin/hparser-integration, superseding
+the earlier plan decision to defer every commit until package acceptance.
+Whole-package completion criteria remain unchanged and unmet. Preserve the
+existing unconnected fragment.rs and vs_helper.rs drafts locally; neither is
+declared by its crate and neither belongs in the validated checkpoint.
+The checkpoint includes the accumulated connected Rust parity work, its
+regression tests, generated window fixtures and generation script, and both
+package audit documents. Validate the staged-only tree independently before
+pushing normally. Do not force-push. Existing lint bootstrap and package gaps
+must be disclosed in the commit and final report. The goal remains active.
+
+
+Publication validation passed on the isolated staged-only checkout at
+/private/tmp/tidb-parity-publish-aba629bb, based on aba629bb45. All 56 staged
+files were verified byte-for-byte against that checkout before testing.
+Excluded fragment.rs and vs_helper.rs are absent there. Commands:
+
+    # Isolated repository root:
+    python3 rust/scripts/generate-go-window-tests.py --check
+    git diff --check
+    # Isolated rust/ directory, reusing only build artifacts:
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo check --offline --locked -j12 -p tidb-exec -p tidb-executor -p tidb-expr -p tidb-parser -p tidb-planner -p tidb-server -p tidb-session
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib stream_aggregate_json_boundary_uses_encoded_identity
+    # Original repository, staged tree:
+    git diff --cached --check
+
+All seven affected crates compile (31.82s); the isolated regression passes
+(1m02s build, 0.04s test); 198 generated actions match. Logs are
+/tmp/tidb-parity-publish-check.log and /tmp/tidb-parity-publish-test.log.
+Existing warnings were emitted. This publication step adds no production
+changes, package-acceptance claims, or benchmark claims. The only post-test
+staged edit is this validation receipt. Earlier 197-test evidence and the
+make lint bootstrap limitation remain applicable to the same source tree.

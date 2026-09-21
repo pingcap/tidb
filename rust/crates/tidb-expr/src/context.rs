@@ -762,6 +762,11 @@ pub trait Columns {
         let _ = (code, message);
     }
 
+    /// Records a statement note, preserving Go `StmtCtx.AppendNote`'s level.
+    fn append_note(&self, code: u16, message: &str) {
+        let _ = (code, message);
+    }
+
     /// Number of warnings currently held by the statement evaluator.
     ///
     /// Go's `NewFunctionTryFold` bookmarks this count before evaluating a
@@ -892,6 +897,12 @@ pub trait Columns {
     /// TiDB's session `default_week_format`.
     fn default_week_format(&self) -> i64 {
         0
+    }
+
+    /// Go `AggFuncBuildContext.GetWindowingUseHighPrecision`: floating-point
+    /// window SUM/AVG refold frames when enabled instead of inverse updates.
+    fn windowing_use_high_precision(&self) -> bool {
+        true
     }
 
     /// TiDB's session `div_precision_increment`.

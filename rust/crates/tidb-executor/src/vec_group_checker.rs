@@ -33,6 +33,7 @@ pub(crate) struct VecGroupChecker {
     collations: Vec<Collation>,
     previous_last_key: Option<Vec<u8>>,
     group_offsets: Vec<usize>,
+    same_group: Vec<bool>,
     next_group_id: usize,
 }
 
@@ -46,6 +47,7 @@ impl VecGroupChecker {
             collations,
             previous_last_key: None,
             group_offsets: Vec::new(),
+            same_group: Vec::new(),
             next_group_id: 0,
         }
     }
@@ -70,20 +72,57 @@ impl VecGroupChecker {
             return Ok(true);
         }
 
-        let mut keys = Vec::with_capacity(rows);
-        for row_index in 0..rows {
-            let row = chunk.get_row(row_index);
-            let mut key = Vec::with_capacity(self.group_by_items.len());
-            for item in &self.group_by_items {
-                key.push(item.eval(ctx, row)?);
-            }
-            keys.push(key);
+        // Go evaluates each item's first and last row before considering
+        // any interior row. Equal encoded boundaries skip the vector pass.
+        let mut first = Vec::with_capacity(self.group_by_items.len());
+        let mut last = Vec::with_capacity(self.group_by_items.len());
+        for item in &self.group_by_items {
+            first.push(item.eval(ctx, chunk.get_row(0))?);
+            last.push(item.eval(ctx, chunk.get_row(rows - 1))?);
         }
-        self.split_evaluated(&keys, &self.collations.clone())
+        let first_encoded = encode_boundary_key(&first, &self.collations)?;
+        let last_encoded = encode_boundary_key(&last, &self.collations)?;
+        let continues_previous = self.previous_last_key.as_ref() == Some(&first_encoded);
+        let one_group = first_encoded == last_encoded;
+        self.previous_last_key = Some(last_encoded);
+        if one_group {
+            self.group_offsets.push(rows);
+            return Ok(continues_previous);
+        }
+
+        // Resolve one key column at a time, retaining only the prior datum
+        // and a reusable row mask instead of allocating a key Vec per row.
+        self.same_group.resize(rows, true);
+        self.same_group[0] = false;
+        for (item, collation) in self.group_by_items.iter().zip(&self.collations) {
+            if resolve_integer_column(item, chunk, &mut self.same_group) {
+                continue;
+            }
+            let mut previous = item.eval(ctx, chunk.get_row(0))?;
+            for row in 1..rows {
+                let current = item.eval(ctx, chunk.get_row(row))?;
+                if self.same_group[row]
+                    && !tidb_expr::compare_datums_with_collation(&previous, &current, *collation)?
+                        .is_eq()
+                {
+                    self.same_group[row] = false;
+                }
+                previous = current;
+            }
+        }
+        self.group_offsets.extend(
+            self.same_group
+                .iter()
+                .enumerate()
+                .skip(1)
+                .filter_map(|(row, same)| (!same).then_some(row)),
+        );
+        self.group_offsets.push(rows);
+        Ok(continues_previous)
     }
 
-    /// Splits already-evaluated adjacent keys. Window execution uses this
-    /// after its ORDER BY expressions have been evaluated once for sorting.
+    /// Splits already-evaluated adjacent keys for source-contract fixtures.
+    #[cfg(test)]
     pub(crate) fn split_evaluated(
         &mut self,
         keys: &[Vec<Datum>],
@@ -92,6 +131,7 @@ impl VecGroupChecker {
         self.split_key_iter(keys.iter().map(Vec::as_slice), collations)
     }
 
+    #[cfg(test)]
     fn split_key_iter<'a, I>(
         &mut self,
         keys: I,
@@ -170,6 +210,7 @@ impl VecGroupChecker {
     /// Clears current-chunk state while retaining the previous chunk's key.
     pub(crate) fn reset(&mut self) {
         self.group_offsets.clear();
+        self.same_group.clear();
         self.next_group_id = 0;
     }
 
@@ -178,6 +219,49 @@ impl VecGroupChecker {
     pub(crate) fn group_count(&self) -> usize {
         self.group_offsets.len()
     }
+}
+
+/// Bare integer columns already have Go's ETInt representation. Compare their
+/// cells directly without allocating temporary datums; respect chunk selection.
+fn resolve_integer_column(expr: &Expression, chunk: &Chunk, same_group: &mut [bool]) -> bool {
+    if let Expression::Column(column) = expr {
+        let is_int = column.get_static_type().is_some_and(|field_type| {
+            matches!(
+                field_type.code(),
+                tidb_datatype::FieldTypeCode::Tiny
+                    | tidb_datatype::FieldTypeCode::Short
+                    | tidb_datatype::FieldTypeCode::Int24
+                    | tidb_datatype::FieldTypeCode::Long
+                    | tidb_datatype::FieldTypeCode::LongLong
+                    | tidb_datatype::FieldTypeCode::Year
+            )
+        });
+        if let Some(index) = is_int
+            .then(|| usize::try_from(column.index).ok())
+            .flatten()
+            .filter(|index| *index < chunk.num_cols())
+        {
+            let cells = chunk.column(index);
+            if cells.type_size() == 8 {
+                let mut previous = chunk.get_row(0).idx();
+                for (row, same) in same_group.iter_mut().enumerate().skip(1) {
+                    let physical = chunk.get_row(row).idx();
+                    if *same {
+                        let (previous_null, null) =
+                            (cells.is_null(previous), cells.is_null(physical));
+                        if previous_null != null
+                            || (!null && cells.get_int64(previous) != cells.get_int64(physical))
+                        {
+                            *same = false;
+                        }
+                    }
+                    previous = physical;
+                }
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn encode_boundary_key(values: &[Datum], collations: &[Collation]) -> Result<Vec<u8>, EvalError> {
@@ -196,6 +280,7 @@ fn encode_boundary_key(values: &[Datum], collations: &[Collation]) -> Result<Vec
         .map_err(|_| EvalError::Unsupported("group boundary key cannot be encoded"))
 }
 
+#[cfg(test)]
 fn keys_equal(
     left: &[Datum],
     right: &[Datum],
@@ -232,6 +317,34 @@ mod tests {
     }
 
     #[test]
+    fn integer_column_groups_follow_selected_rows_and_nulls() {
+        for code in [
+            FieldTypeCode::Tiny,
+            FieldTypeCode::Short,
+            FieldTypeCode::Int24,
+            FieldTypeCode::Long,
+            FieldTypeCode::LongLong,
+            FieldTypeCode::Year,
+        ] {
+            let field = FieldType::new(code);
+            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 7);
+            for value in [Some(7), None, Some(2), Some(2), None, Some(1), Some(1)] {
+                match value {
+                    Some(value) => chunk.append_int64(0, value),
+                    None => chunk.append_null(0),
+                }
+            }
+            chunk.set_sel(Some(vec![4, 1, 5, 6, 2, 3, 0]));
+            let mut checker = VecGroupChecker::new(vec![column(0, field)]);
+            assert!(!checker.split_into_groups(&NoColumns, &chunk).unwrap());
+            assert_eq!(ranges(&mut checker), vec![(0, 2), (2, 4), (4, 6), (6, 7)]);
+            chunk.set_sel(Some(vec![0]));
+            assert!(checker.split_into_groups(&NoColumns, &chunk).unwrap());
+            assert_eq!(ranges(&mut checker), vec![(0, 1)]);
+        }
+    }
+
+    #[test]
     fn groups_continue_across_chunk_boundaries() {
         let field = FieldType::new(FieldTypeCode::LongLong);
         let mut checker = VecGroupChecker::new(vec![column(0, field.clone())]);
@@ -249,6 +362,44 @@ mod tests {
         }
         assert!(checker.split_into_groups(&NoColumns, &next).unwrap());
         assert_eq!(ranges(&mut checker), [(0, 1), (1, 3)]);
+    }
+
+    #[test]
+    fn equal_boundary_keys_skip_interior_evaluation_warnings() {
+        #[derive(Default)]
+        struct Warnings(std::cell::RefCell<Vec<(u16, String)>>);
+        impl Columns for Warnings {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.0.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+        let field = FieldType::new(FieldTypeCode::Varchar);
+        let expr = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+            tidb_ast::CiString::new("cast_signed"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![column(0, field.clone())],
+        ));
+        let mut chunk = Chunk::new_with_capacity(&[field], 32);
+        for _ in 0..32 {
+            chunk.append_string(0, "1bad");
+        }
+        let context = Warnings::default();
+        let mut checker = VecGroupChecker::new(vec![expr]);
+        assert!(!checker.split_into_groups(&context, &chunk).unwrap());
+        assert_eq!(ranges(&mut checker), [(0, 32)]);
+        assert_eq!(context.0.borrow().len(), 2);
+        assert!(context.0.borrow().iter().all(|(code, _)| *code == 1292));
+
+        // Different boundaries require a complete column evaluation after
+        // the two endpoint evaluations, including rows already compared.
+        context.0.borrow_mut().clear();
+        chunk.append_string(0, "2bad");
+        assert!(checker.split_into_groups(&context, &chunk).unwrap());
+        assert_eq!(ranges(&mut checker), [(0, 32), (32, 33)]);
+        assert_eq!(context.0.borrow().len(), 35);
     }
 
     #[test]

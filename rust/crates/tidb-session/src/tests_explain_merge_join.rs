@@ -452,3 +452,118 @@ fn a_derived_table_with_order_by_or_group_by_offers_no_order() {
         );
     }
 }
+
+#[test]
+fn stream_aggregate_json_boundary_uses_encoded_identity() {
+    let mut session = Session::new();
+    session
+        .run("SET tidb_streamagg_concurrency=1, tidb_init_chunk_size=32")
+        .unwrap();
+    session
+        .run("CREATE TABLE boundary_json(id INT, j JSON)")
+        .unwrap();
+    for id in 1..=32 {
+        session
+            .run(&format!("INSERT INTO boundary_json VALUES ({id},'1')"))
+            .unwrap();
+    }
+    session
+        .run("INSERT INTO boundary_json VALUES (33,'1.0')")
+        .unwrap();
+    let sql = "SELECT /*+ STREAM_AGG() */ MIN(id),COUNT(*) FROM boundary_json GROUP BY j ORDER BY MIN(id)";
+    // Go compares JSON values within a chunk but encoded keys between chunks.
+    for size in [32, 64] {
+        session
+            .run(&format!("SET tidb_max_chunk_size={size}"))
+            .unwrap();
+        assert!(plan(&mut session, &format!("EXPLAIN {sql}"))
+            .iter()
+            .any(|row| row.contains("StreamAgg")));
+        let expected = if size == 32 {
+            vec![vec!["1", "32"], vec!["33", "1"]]
+        } else {
+            vec![vec!["1", "33"]]
+        };
+        assert_eq!(row_text(session.run(sql)), expected, "chunk size {size}");
+    }
+}
+
+#[test]
+fn shuffled_join_and_stream_aggregate_match_serial_results() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE sa (k INT, v INT)").unwrap();
+    session.run("CREATE TABLE sb (k INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO sa VALUES (1,10),(1,20),(2,30),(3,40),(NULL,50)")
+        .unwrap();
+    session
+        .run("INSERT INTO sb VALUES (1,4),(2,5),(2,6),(4,7),(NULL,8)")
+        .unwrap();
+    for (case, sql) in [
+        "SELECT /*+ MERGE_JOIN(sa,sb) */ sa.k,sa.v,sb.v FROM sa JOIN sb ON sa.k=sb.k",
+        "SELECT /*+ MERGE_JOIN(sa,sb) */ sa.k,sa.v,sb.v FROM sa LEFT JOIN sb ON sa.k=sb.k",
+        "SELECT /*+ MERGE_JOIN(sa,sb) */ sa.k,sa.v,sb.v FROM sa RIGHT JOIN sb ON sa.k=sb.k",
+        "SELECT /*+ STREAM_AGG() */ k,COUNT(v),SUM(v) FROM sa GROUP BY k",
+        "SELECT /*+ STREAM_AGG() */ k+1,COUNT(v),SUM(v*2) FROM sa GROUP BY k+1",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        session
+            .run("SET tidb_merge_join_concurrency=1, tidb_streamagg_concurrency=1")
+            .unwrap();
+        let mut expected = row_text(session.run(sql));
+        expected.sort();
+        // Independently captured from the pinned Go oracle, including NULLs.
+        let mut go_rows = match case {
+            0 => vec![
+                vec!["1", "10", "4"],
+                vec!["1", "20", "4"],
+                vec!["2", "30", "5"],
+                vec!["2", "30", "6"],
+            ],
+            1 => vec![
+                vec!["1", "10", "4"],
+                vec!["1", "20", "4"],
+                vec!["2", "30", "5"],
+                vec!["2", "30", "6"],
+                vec!["3", "40", "NULL"],
+                vec!["NULL", "50", "NULL"],
+            ],
+            2 => vec![
+                vec!["1", "10", "4"],
+                vec!["1", "20", "4"],
+                vec!["2", "30", "5"],
+                vec!["2", "30", "6"],
+                vec!["NULL", "NULL", "7"],
+                vec!["NULL", "NULL", "8"],
+            ],
+            3 => vec![
+                vec!["1", "2", "30"],
+                vec!["2", "1", "30"],
+                vec!["3", "1", "40"],
+                vec!["NULL", "1", "50"],
+            ],
+            _ => vec![
+                vec!["2", "2", "60"],
+                vec!["3", "1", "60"],
+                vec!["4", "1", "80"],
+                vec!["NULL", "1", "100"],
+            ],
+        };
+        go_rows.sort();
+        assert_eq!(expected, go_rows, "serial {sql}");
+        session
+            .run("SET tidb_merge_join_concurrency=4, tidb_streamagg_concurrency=4")
+            .unwrap();
+        let plan = row_text(session.run(&format!("EXPLAIN {sql}")));
+        assert_eq!(
+            plan.iter().flatten().any(|value| value.contains("Shuffle")),
+            case != 4,
+            "{sql}: {plan:?}"
+        );
+        let mut actual = row_text(session.run(sql));
+        actual.sort();
+        assert_eq!(actual, expected, "{sql}");
+    }
+}

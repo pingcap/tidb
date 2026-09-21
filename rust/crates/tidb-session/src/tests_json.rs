@@ -256,10 +256,9 @@ fn json_and_approximate_aggregates() {
         row_text(session.run("SELECT APPROX_COUNT_DISTINCT(i) FROM t WHERE id < 0")),
         [["0"]]
     );
-    // Go's approximate aggregate grammar rejects DISTINCT before planning.
-    assert_approximate_aggregate_parse_error(
-        &mut session,
-        "SELECT APPROX_COUNT_DISTINCT(DISTINCT i) FROM t",
+    assert_eq!(
+        row_text(session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT i) FROM t")),
+        [["4"]]
     );
 
     // APPROX_PERCENTILE ranks the group's values at ordinal rank
@@ -310,9 +309,9 @@ fn json_and_approximate_aggregates() {
         row_text(session.run("SELECT APPROX_PERCENTILE(i, 50) FROM p WHERE g = 99")),
         [["NULL"]]
     );
-    assert_approximate_aggregate_parse_error(
-        &mut session,
-        "SELECT APPROX_PERCENTILE(DISTINCT i, 50) FROM p WHERE g = 1",
+    assert_eq!(
+        row_text(session.run("SELECT APPROX_PERCENTILE(DISTINCT i, 50) FROM p WHERE g = 1")),
+        [["2"]]
     );
     // The percentage is validated at PLAN time, against [1, 100].
     assert!(matches!(
@@ -408,23 +407,82 @@ fn json_and_approximate_aggregates() {
             ["6", "{\"a\": 30, \"c\": 40}"],
         ]
     );
-    for sql in [
-        "SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id) FROM t ORDER BY id",
-        "SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t ORDER BY id",
-        "SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i) FROM p WHERE g = 1 ORDER BY i",
-        "SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM p WHERE g = 1 ORDER BY i",
-        "SELECT APPROX_COUNT_DISTINCT(DISTINCT i) OVER () FROM t",
-    ] {
-        assert_approximate_aggregate_parse_error(&mut session, sql);
+    for pipeline in [0, 1] {
+        session
+            .run(&format!(
+                "SET tidb_enable_pipelined_window_function={pipeline}"
+            ))
+            .unwrap();
+        assert_eq!(
+            row_text(
+                session.run(
+                    "SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id) FROM t ORDER BY id"
+                )
+            ),
+            [
+                ["1", "1"],
+                ["2", "2"],
+                ["3", "2"],
+                ["4", "3"],
+                ["5", "3"],
+                ["6", "4"]
+            ]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t ORDER BY id")),
+            [["1", "1"], ["2", "2"], ["3", "1"], ["4", "1"], ["5", "1"], ["6", "2"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i) FROM p WHERE g = 1 ORDER BY i")),
+            [["1", "1"], ["2", "1"], ["3", "2"], ["4", "2"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM p WHERE g = 1 ORDER BY i")),
+            [["1", "1"], ["2", "1"], ["3", "2"], ["4", "3"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT i, APPROX_PERCENTILE(i, 50) OVER (ORDER BY i ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING) FROM p WHERE g = 1 ORDER BY i")),
+            [["1", "2"], ["2", "3"], ["3", "4"], ["4", "NULL"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT i, APPROX_PERCENTILE(s, 50) OVER (ORDER BY i ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM p WHERE g = 1 ORDER BY i")),
+            [["1", "NULL"], ["2", "NULL"], ["3", "NULL"], ["4", "NULL"]]
+        );
     }
+    assert!(matches!(
+        session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT i) OVER () FROM t"),
+        Err(DriverError::NotSupportedYet(ref feature)) if feature == "<window function>(DISTINCT ..)"
+    ));
 }
 
-fn assert_approximate_aggregate_parse_error(session: &mut Session, sql: &str) {
-    let error = session.run(sql).unwrap_err();
-    assert!(matches!(&error, DriverError::Parse(_)), "{sql}: {error:?}");
-    let diagnostic = error.to_mysql_error();
-    assert_eq!(diagnostic.code, 1064, "{sql}");
-    assert_eq!(diagnostic.state, *b"42000", "{sql}");
+#[test]
+fn approximate_aggregate_distinct_modifier_matches_go_builder() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE duplicates(v INT)").unwrap();
+    session
+        .run("INSERT INTO duplicates VALUES (1),(1),(1),(9)")
+        .unwrap();
+    session
+        .run("CREATE TABLE letters(v VARCHAR(8) COLLATE utf8mb4_general_ci)")
+        .unwrap();
+    session
+        .run("INSERT INTO letters VALUES ('a'),('A')")
+        .unwrap();
+    assert_eq!(
+        row_text(
+            session.run(
+                "SELECT APPROX_COUNT_DISTINCT(v),APPROX_COUNT_DISTINCT(DISTINCT v) FROM letters"
+            )
+        ),
+        [["1", "1"]]
+    );
+    // Go's percentile builder ignores HasDistinct and counts every input row.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT APPROX_PERCENTILE(v,75),APPROX_PERCENTILE(DISTINCT v,75) FROM duplicates"
+        )),
+        [["1", "1"]]
+    );
 }
 
 /// `JSON_ARRAYAGG`/`JSON_OBJECTAGG` over a BINARY-charset value: Go wraps it

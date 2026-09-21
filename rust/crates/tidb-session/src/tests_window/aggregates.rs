@@ -425,3 +425,216 @@ fn window_bit_and_variance_aggregates() {
         [["0"], ["0"], ["4"]]
     );
 }
+
+#[test]
+fn window_real_sum_avg_honor_precision_setting() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE window_precision (id INT, v DOUBLE)")
+        .unwrap();
+    session
+        .run("INSERT INTO window_precision VALUES (1, 10000000000000000), (2, 1), (3, 1)")
+        .unwrap();
+    for (setting, expected) in [("ON", ["2", "1"]), ("OFF", ["0", "0"]), ("ON", ["2", "1"])] {
+        session
+            .run(&format!("SET windowing_use_high_precision = {setting}"))
+            .unwrap();
+        let rows = row_text(session.run(
+            "SELECT SUM(v) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), \
+                    AVG(v) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) \
+             FROM window_precision ORDER BY id",
+        ));
+        // Go's low-precision Slide adds the incoming 1 to 1e16 before
+        // subtracting 1e16, losing both unit values. High precision refolds.
+        assert_eq!(rows[2], expected, "windowing_use_high_precision={setting}");
+    }
+}
+
+#[test]
+fn window_sliding_extrema_preserve_typed_results() {
+    // Source buildMaxMinInWindowFunction selects each of these typed sliding
+    // states. With a > b, the frames [a], [a,b], [b,NULL] yield a/b/b minima.
+    for (ty, a, b, high, low, hex) in [
+        (
+            "BIGINT UNSIGNED",
+            "18446744073709551615",
+            "1",
+            "18446744073709551615",
+            "1",
+            false,
+        ),
+        ("FLOAT", "1.5", "1.25", "1.5", "1.25", false),
+        ("DOUBLE", "1.5", "1.25", "1.5", "1.25", false),
+        ("DECIMAL(10,2)", "2.50", "1.25", "2.50", "1.25", false),
+        (
+            "DATE",
+            "'2020-01-02'",
+            "'2020-01-01'",
+            "2020-01-02",
+            "2020-01-01",
+            false,
+        ),
+        (
+            "DATETIME",
+            "'2020-01-02 01:02:03'",
+            "'2020-01-01 01:02:03'",
+            "2020-01-02 01:02:03",
+            "2020-01-01 01:02:03",
+            false,
+        ),
+        (
+            "TIMESTAMP",
+            "'2020-01-02 01:02:03'",
+            "'2020-01-01 01:02:03'",
+            "2020-01-02 01:02:03",
+            "2020-01-01 01:02:03",
+            false,
+        ),
+        (
+            "TIME",
+            "'01:30:00'",
+            "'00:30:00'",
+            "01:30:00",
+            "00:30:00",
+            false,
+        ),
+        ("BIT(8)", "b'00000010'", "b'00000001'", "2", "1", true),
+    ] {
+        let mut session = Session::new();
+        session
+            .run(&format!("CREATE TABLE typed_extrema (id INT, v {ty})"))
+            .unwrap();
+        session
+            .run(&format!(
+                "INSERT INTO typed_extrema VALUES (1,{a}),(2,{b}),(3,NULL)"
+            ))
+            .unwrap();
+        let expression = |func| {
+            let window =
+                format!("{func}(v) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)");
+            if hex {
+                format!("HEX({window})")
+            } else {
+                window
+            }
+        };
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT {}, {} FROM typed_extrema ORDER BY id",
+                expression("MIN"),
+                expression("MAX")
+            ))),
+            [[high, high], [low, high], [low, low]],
+            "type={ty}"
+        );
+    }
+}
+
+#[test]
+fn window_session_switch_preserves_rows_range_and_partition_results() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE pipeline_modes (id INT, p INT, k INT, v INT)")
+        .unwrap();
+    let rows = (0..150)
+        .map(|i| {
+            format!(
+                "({i},{},{},{})",
+                i / 50,
+                i % 9,
+                if i % 7 == 0 {
+                    "NULL".to_owned()
+                } else {
+                    i.to_string()
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO pipeline_modes VALUES {rows}"))
+        .unwrap();
+    session.run("SET tidb_max_chunk_size=32").unwrap();
+    let queries = [
+        "SELECT id, SUM(v) OVER w, COUNT(v) OVER w, MIN(v) OVER w, MAX(v) OVER w FROM pipeline_modes WINDOW w AS (PARTITION BY p ORDER BY k RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) ORDER BY id",
+        "SELECT id, SUM(v) OVER w, FIRST_VALUE(v) OVER w, LAST_VALUE(v) OVER w, NTH_VALUE(v,2) OVER w FROM pipeline_modes WINDOW w AS (PARTITION BY p ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 3 FOLLOWING) ORDER BY id",
+        "SELECT id, ROW_NUMBER() OVER w, RANK() OVER w, DENSE_RANK() OVER w, PERCENT_RANK() OVER w, CUME_DIST() OVER w, NTILE(3) OVER w, LAG(v) OVER w, LEAD(v) OVER w FROM pipeline_modes WINDOW w AS (PARTITION BY p ORDER BY k,id) ORDER BY id",
+    ];
+    let mut baseline = Vec::new();
+    for enabled in [false, true, false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_pipelined_window_function={}",
+                u8::from(enabled)
+            ))
+            .unwrap();
+        assert_eq!(
+            session
+                .statement_context(false)
+                .enable_pipelined_window_exec(),
+            enabled
+        );
+        assert_eq!(
+            session
+                .statement_context(true)
+                .enable_pipelined_window_exec(),
+            enabled
+        );
+        for (index, query) in queries.iter().enumerate() {
+            let actual = row_text(session.run(query));
+            assert_eq!(actual.len(), 150);
+            if baseline.len() < queries.len() {
+                baseline.push(actual);
+            } else {
+                assert_eq!(actual, baseline[index], "pipeline={enabled}, query={index}");
+            }
+        }
+    }
+}
+
+/// Captured from Go windows/Build on aba629bb455: aggregate partial results
+/// must reset over empty and moving frames in both scheduling modes.
+#[test]
+fn window_aggregate_frame_matrix_matches_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE closure_rows(id INT, k VARCHAR(8), v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO closure_rows VALUES (1,'a',1),(2,'a',NULL),(3,'b',3),(4,'a',1)")
+        .unwrap();
+    let cases = [
+("select id,json_arrayagg(v) over(order by id rows between 1 preceding and current row) from closure_rows order by id",[["1","[1]"],["2","[1, null]"],["3","[null, 3]"],["4","[3, 1]"]]),
+("select id,json_arrayagg(v) over(order by id rows between 1 following and 2 following) from closure_rows order by id",[["1","[null, 3]"],["2","[3, 1]"],["3","[1]"],["4","NULL"]]),
+("select id,json_arrayagg(v) over(order by id rows between 2 preceding and 1 preceding) from closure_rows order by id",[["1","NULL"],["2","[1]"],["3","[1, null]"],["4","[null, 3]"]]),
+("select id,json_objectagg(k,v) over(order by id rows between 1 preceding and current row) from closure_rows order by id",[["1","{\"a\": 1}"],["2","{\"a\": null}"],["3","{\"a\": null, \"b\": 3}"],["4","{\"a\": 1, \"b\": 3}"]]),
+("select id,json_objectagg(k,v) over(order by id rows between 1 following and 2 following) from closure_rows order by id",[["1","{\"a\": null, \"b\": 3}"],["2","{\"a\": 1, \"b\": 3}"],["3","{\"a\": 1}"],["4","NULL"]]),
+("select id,json_objectagg(k,v) over(order by id rows between 2 preceding and 1 preceding) from closure_rows order by id",[["1","NULL"],["2","{\"a\": 1}"],["3","{\"a\": null}"],["4","{\"a\": null, \"b\": 3}"]]),
+("select id,approx_count_distinct(v) over(order by id rows between 1 preceding and current row) from closure_rows order by id",[["1","1"],["2","1"],["3","1"],["4","2"]]),
+("select id,approx_count_distinct(v) over(order by id rows between 1 following and 2 following) from closure_rows order by id",[["1","1"],["2","2"],["3","1"],["4","0"]]),
+("select id,approx_count_distinct(v) over(order by id rows between 2 preceding and 1 preceding) from closure_rows order by id",[["1","0"],["2","1"],["3","1"],["4","1"]]),
+("select id,bit_and(v) over(order by id rows between 1 preceding and current row) from closure_rows order by id",[["1","1"],["2","1"],["3","3"],["4","1"]]),
+("select id,bit_and(v) over(order by id rows between 1 following and 2 following) from closure_rows order by id",[["1","3"],["2","1"],["3","1"],["4","-1"]]),
+("select id,bit_and(v) over(order by id rows between 2 preceding and 1 preceding) from closure_rows order by id",[["1","-1"],["2","1"],["3","1"],["4","3"]]),
+("select id,bit_or(v) over(order by id rows between 1 preceding and current row) from closure_rows order by id",[["1","1"],["2","1"],["3","3"],["4","3"]]),
+("select id,bit_or(v) over(order by id rows between 1 following and 2 following) from closure_rows order by id",[["1","3"],["2","3"],["3","1"],["4","0"]]),
+("select id,bit_or(v) over(order by id rows between 2 preceding and 1 preceding) from closure_rows order by id",[["1","0"],["2","1"],["3","1"],["4","3"]]),
+("select id,bit_xor(v) over(order by id rows between 1 preceding and current row) from closure_rows order by id",[["1","1"],["2","1"],["3","3"],["4","2"]]),
+("select id,bit_xor(v) over(order by id rows between 1 following and 2 following) from closure_rows order by id",[["1","3"],["2","2"],["3","1"],["4","0"]]),
+("select id,bit_xor(v) over(order by id rows between 2 preceding and 1 preceding) from closure_rows order by id",[["1","0"],["2","1"],["3","1"],["4","3"]]),
+    ];
+    for pipeline in [0, 1] {
+        session
+            .run(&format!(
+                "SET tidb_enable_pipelined_window_function={pipeline}"
+            ))
+            .unwrap();
+        for (sql, expected) in &cases {
+            assert_eq!(
+                row_text(session.run(sql)),
+                *expected,
+                "pipeline={pipeline}: {sql}"
+            );
+        }
+    }
+}

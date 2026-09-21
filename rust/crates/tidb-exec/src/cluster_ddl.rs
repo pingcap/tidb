@@ -9971,16 +9971,23 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
     let schema_change_column = column_id("schema_change")?;
     let processed_by_column = column_id("processed_by_flag")?;
     let row_id_key = key::auto_table_id_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID, table.id);
-    let mut row_id = snapshot
-        .get(&row_id_key)?
-        .map(|stored| value::parse_int_value(&stored))
-        .transpose()
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .unwrap_or(0);
+    let needs_row_id = !table.pk_is_handle && !table.is_common_handle;
+    let mut row_id = if needs_row_id {
+        snapshot
+            .get(&row_id_key)?
+            .map(|stored| value::parse_int_value(&stored))
+            .transpose()
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+            .unwrap_or(0)
+    } else {
+        0
+    };
     for (sub_job_id, event) in events {
-        row_id = row_id
-            .checked_add(1)
-            .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+        if needs_row_id {
+            row_id = row_id
+                .checked_add(1)
+                .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+        }
         let mut values = crate::system_row_write::RowValues::new();
         values.insert(ddl_job_id_column, Datum::Int(ddl_job_id));
         values.insert(sub_job_id_column, Datum::Int(*sub_job_id));
@@ -9992,15 +9999,21 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
             ),
         );
         values.insert(processed_by_column, Datum::UInt(0));
-        writes.extend(
+        // Go inserts through the table's stored handle layout. Existing clusters
+        // can use a clustered primary key even when our bootstrap uses row IDs.
+        let mutations = if needs_row_id {
             crate::system_row_write::insert_row(table, row_id, &values)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        );
+        } else {
+            crate::system_row_write::store_clustered_row(table, None, &values)
+        };
+        writes.extend(mutations.map_err(|error| DdlPlanError::Encode(error.to_string()))?);
     }
-    writes.push(OptimisticMutation::meta_put(
-        row_id_key,
-        value::encode_int_value(row_id),
-    )?);
+    if needs_row_id {
+        writes.push(OptimisticMutation::meta_put(
+            row_id_key,
+            value::encode_int_value(row_id),
+        )?);
+    }
     Ok(())
 }
 

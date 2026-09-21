@@ -190,6 +190,9 @@ pub struct TopNChunkHeap {
     /// The evaluated by-item keys, indexed exactly as `row_chunks` is, so one
     /// [`RowPtr`] addresses a row and its key.
     keys: Vec<Vec<Vec<Datum>>>,
+    /// Go chunk.List's last chunk is appendable only while not consumed.
+    /// Whole chunks accepted by Add may contain aliased output columns.
+    appendable_tail: bool,
     /// Go `rowPtrs`.
     row_ptrs: Vec<RowPtr>,
     /// Go `isInitialized`.
@@ -223,6 +226,7 @@ impl TopNChunkHeap {
             max_chunk_size: 0,
             row_chunks: Vec::new(),
             keys: Vec::new(),
+            appendable_tail: false,
             row_ptrs: Vec::new(),
             is_initialized: false,
             is_row_ptrs_init: false,
@@ -283,6 +287,7 @@ impl TopNChunkHeap {
     /// Go `clear`: drops every stored row and un-initializes the heap.
     pub fn clear(&mut self) {
         self.row_chunks.clear();
+        self.appendable_tail = false;
         self.keys.clear();
         self.row_ptrs.clear();
         self.is_row_ptrs_init = false;
@@ -295,6 +300,7 @@ impl TopNChunkHeap {
     pub fn add_chunk(&mut self, chunk: Chunk, keys: Vec<Vec<Datum>>) {
         debug_assert_eq!(chunk.num_rows(), keys.len());
         self.row_chunks.push(chunk);
+        self.appendable_tail = false;
         self.keys.push(keys);
     }
 
@@ -303,7 +309,7 @@ impl TopNChunkHeap {
     pub fn append_row(&mut self, row: Row<'_>, key: Vec<Datum>) -> RowPtr {
         let need_new = match self.row_chunks.last() {
             None => true,
-            Some(last) => last.num_rows() >= last.capacity(),
+            Some(last) => !self.appendable_tail || last.num_rows() >= last.capacity(),
         };
         if need_new {
             self.row_chunks.push(Chunk::new(
@@ -312,6 +318,7 @@ impl TopNChunkHeap {
                 self.max_chunk_size,
             ));
             self.keys.push(Vec::new());
+            self.appendable_tail = true;
         }
         let chk_idx = self.row_chunks.len() - 1;
         let row_idx = self.row_chunks[chk_idx].num_rows();
@@ -483,6 +490,7 @@ impl TopNChunkHeap {
     /// data this runs `log(n)` times.
     pub fn do_compaction(&mut self) {
         let old_chunks = std::mem::take(&mut self.row_chunks);
+        self.appendable_tail = false;
         let old_keys = std::mem::take(&mut self.keys);
         let old_ptrs = std::mem::take(&mut self.row_ptrs);
         let mut new_ptrs = Vec::with_capacity(old_ptrs.len());
@@ -594,6 +602,28 @@ mod tests {
         let mut heap = TopNChunkHeap::new();
         heap.init(by, fields, 32, 32, limit, 0);
         heap
+    }
+
+    #[test]
+    fn append_after_added_chunk_uses_a_fresh_row_buffer() {
+        let fields = vec![long(), long()];
+        let mut heap = heap_of(2, fields.clone(), asc(0, long()));
+        let mut input = Chunk::new(&fields, 8, 8);
+        input.append_int64(0, 9);
+        input.append_int64(0, 8);
+        input.make_ref(0, 1);
+        heap.add_chunk(input, vec![vec![Datum::Int(9)], vec![Datum::Int(8)]]);
+        let mut incoming = Chunk::new(&fields, 8, 8);
+        incoming.append_int64(0, 1);
+        incoming.append_int64(1, 1);
+        let ptr = heap.append_row(incoming.get_row(0), vec![Datum::Int(1)]);
+        // Go chunk.List's consumedIdx marks an Add chunk as closed to appends.
+        assert_eq!(ptr, (1, 0));
+        assert_eq!(heap.stored_len(), 3);
+        heap.init_ptrs();
+        heap.sort_row_ptrs_ascending(0).unwrap();
+        assert_eq!(heap.row_at(0).get_int64(0), 1);
+        assert_eq!(heap.row_at(0).get_int64(1), 1);
     }
 
     /// Feeds `vals` through the Go phase order: fill to the bound, heapify,

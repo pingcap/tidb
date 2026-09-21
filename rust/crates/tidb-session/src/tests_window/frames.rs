@@ -5,6 +5,129 @@
 use crate::tests_support::*;
 use crate::*;
 
+#[test]
+fn window_range_exhausted_cursor_skips_boundary_evaluation() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(k BIGINT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1),(9223372036854775807)")
+        .unwrap();
+    for sql in [
+        "CREATE TABLE start_signed(k BIGINT)",
+        "INSERT INTO start_signed VALUES (9223372036854775805),(9223372036854775806)",
+        "CREATE TABLE start_unsigned(k BIGINT UNSIGNED)",
+        "INSERT INTO start_unsigned VALUES (18446744073709551613),(18446744073709551614)",
+        "CREATE TABLE end_unsigned(k BIGINT UNSIGNED)",
+        "INSERT INTO end_unsigned VALUES (18446744073709551614),(18446744073709551615)",
+        "CREATE TABLE end_desc(k BIGINT)",
+        "INSERT INTO end_desc VALUES (-1),(-9223372036854775808)",
+        "CREATE TABLE needed_bound(k BIGINT)",
+        "INSERT INTO needed_bound VALUES (2),(9223372036854775807)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for pipeline in [0, 1] {
+        session
+            .run(&format!(
+                "SET tidb_enable_pipelined_window_function={pipeline}"
+            ))
+            .unwrap();
+        for (start, last_count) in [("UNBOUNDED PRECEDING", "2"), ("CURRENT ROW", "1")] {
+            // The first upper bound reaches the partition end. Go never
+            // evaluates the second row's overflowing addition afterward.
+            let sql = format!(
+                "SELECT k,COUNT(*) OVER (ORDER BY k RANGE BETWEEN {start} AND \
+                 9223372036854775806 FOLLOWING) FROM t ORDER BY k"
+            );
+            assert_eq!(
+                row_text(session.run(&sql)),
+                [["1", "2"], ["9223372036854775807", last_count]],
+                "pipeline={pipeline}, {start}"
+            );
+        }
+        for (sql, expected) in [
+            (
+                "SELECT k,COUNT(*) OVER (ORDER BY k RANGE BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING) FROM start_signed ORDER BY k",
+                [["9223372036854775805", "0"], ["9223372036854775806", "0"]],
+            ),
+            (
+                "SELECT k,COUNT(*) OVER (ORDER BY k RANGE BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING) FROM start_unsigned ORDER BY k",
+                [["18446744073709551613", "0"], ["18446744073709551614", "0"]],
+            ),
+            (
+                "SELECT k,COUNT(*) OVER (ORDER BY k RANGE BETWEEN CURRENT ROW AND 1 FOLLOWING) FROM end_unsigned ORDER BY k",
+                [["18446744073709551614", "2"], ["18446744073709551615", "1"]],
+            ),
+            (
+                "SELECT k,COUNT(*) OVER (ORDER BY k DESC RANGE BETWEEN CURRENT ROW AND 9223372036854775807 FOLLOWING) FROM end_desc ORDER BY k DESC",
+                [["-1", "2"], ["-9223372036854775808", "1"]],
+            ),
+        ] {
+            assert_eq!(row_text(session.run(sql)), expected, "pipeline={pipeline}, {sql}");
+        }
+        // A boundary that is still needed must continue to report overflow.
+        let error = session.run(
+            "SELECT COUNT(*) OVER (ORDER BY k RANGE BETWEEN CURRENT ROW AND 9223372036854775806 FOLLOWING) FROM needed_bound"
+        ).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1690, "pipeline={pipeline}");
+        assert_eq!(error.state, *b"22003");
+    }
+}
+
+#[test]
+fn window_range_boundary_warning_evaluation_matches_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(k DATETIME)").unwrap();
+    session
+        .run("INSERT INTO t VALUES ('9999-12-30'),('9999-12-31'),('9999-12-31')")
+        .unwrap();
+    for pipeline in [0, 1] {
+        session
+            .run(&format!(
+                "SET tidb_enable_pipelined_window_function={pipeline}"
+            ))
+            .unwrap();
+        for days in [1, 2] {
+            let sql = format!(
+                "SELECT k,COUNT(*) OVER (ORDER BY k RANGE BETWEEN CURRENT ROW AND \
+                 INTERVAL {days} DAY FOLLOWING) FROM t ORDER BY k"
+            );
+            let counts = if days == 1 { ["3", "2", "2"] } else { ["0"; 3] };
+            assert_eq!(
+                row_text(session.run(&sql)),
+                [
+                    ["9999-12-30 00:00:00", counts[0]],
+                    ["9999-12-31 00:00:00", counts[1]],
+                    ["9999-12-31 00:00:00", counts[2]],
+                ],
+                "pipeline={pipeline}, days={days}"
+            );
+            let warnings = row_text(session.run("SHOW WARNINGS"));
+            // The one-day bound exhausts the cursor before any overflow.
+            // Go's pipelined lookahead evaluates a needed bound twice.
+            let count = if days == 1 {
+                0
+            } else if pipeline == 0 {
+                3
+            } else {
+                6
+            };
+            assert_eq!(
+                warnings,
+                vec![
+                    [
+                        "Warning",
+                        "1441",
+                        "Datetime function: datetime field overflow"
+                    ];
+                    count
+                ],
+                "pipeline={pipeline}, days={days}"
+            );
+        }
+    }
+}
+
 /// `RANGE BETWEEN N PRECEDING/FOLLOWING`: the boundary is a VALUE of the
 /// single `ORDER BY` key, so ties share a frame and a gap in the key
 /// SHRINKS the frame rather than shifting it.
@@ -768,4 +891,155 @@ fn window_range_interval_over_dates_and_nulls() {
         )),
         [["10"], ["10"], ["10"], ["10"]]
     );
+}
+
+/// Captured from Go's ordinary and pipelined executors: their unsigned
+/// FOLLOWING end arithmetic differs because clamping occurs at different times.
+#[test]
+fn window_unsigned_rows_bounds_match_go_execution_mode() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (id INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    for pipelined in [0, 1] {
+        session
+            .run(&format!(
+                "SET tidb_enable_pipelined_window_function={pipelined}"
+            ))
+            .unwrap();
+        for (bounds, expected) in [
+            (
+                "CURRENT ROW AND 18446744073709551615 FOLLOWING",
+                if pipelined == 0 {
+                    [["10"], ["NULL"], ["NULL"]]
+                } else {
+                    [["NULL"], ["NULL"], ["NULL"]]
+                },
+            ),
+            (
+                "18446744073709551615 FOLLOWING AND UNBOUNDED FOLLOWING",
+                [["NULL"], ["10"], ["20"]],
+            ),
+            (
+                "18446744073709551615 PRECEDING AND CURRENT ROW",
+                [["10"], ["10"], ["10"]],
+            ),
+        ] {
+            let sql =
+                format!("SELECT FIRST_VALUE(v) OVER (ORDER BY id ROWS BETWEEN {bounds}) FROM t");
+            assert_eq!(
+                row_text(session.run(&sql)),
+                expected,
+                "pipelined={pipelined}: {sql}"
+            );
+        }
+    }
+}
+
+/// Go recovers getRows' unsigned slice-bound panic when a wrapped FOLLOWING
+/// frame reaches a released input chunk. Rust returns that error without panic.
+#[test]
+fn window_wrapped_frame_released_input_returns_go_error() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (id INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    session
+        .run("SET tidb_enable_pipelined_window_function=1")
+        .unwrap();
+    session
+        .vars
+        .restore_system(vec![("tidb_max_chunk_size".into(), Some("1".into()))]);
+    let error = session.run("SELECT FIRST_VALUE(v) OVER (ORDER BY id ROWS BETWEEN 18446744073709551615 FOLLOWING AND UNBOUNDED FOLLOWING) FROM t").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "runtime error: slice bounds out of range [18446744073709551615:2]"
+    );
+}
+
+/// Results and recovered errors verified against the Go window executor at
+/// chunk sizes 1, 2, and 1024, in both execution and precision modes.
+#[test]
+fn window_wrapped_sliding_end_preserves_go_error() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id INT, v INT, f DOUBLE)")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,10,10),(2,20,20),(3,30,30)")
+        .unwrap();
+    for chunk_size in [1, 2, 1024] {
+        // Match Go's direct SessionVars.MaxChunkSize assignment; the SQL SET
+        // validator intentionally rejects the tiny sizes used by its tests.
+        session.vars.restore_system(vec![(
+            "tidb_max_chunk_size".into(),
+            Some(chunk_size.to_string()),
+        )]);
+        for precision in [0, 1] {
+            session
+                .run(&format!("SET windowing_use_high_precision={precision}"))
+                .unwrap();
+            for pipelined in [0, 1] {
+                session
+                    .run(&format!(
+                        "SET tidb_enable_pipelined_window_function={pipelined}"
+                    ))
+                    .unwrap();
+                for (function, empty, whole, suffix) in [
+                    ("SUM(v)", "NULL", "60", "50"),
+                    ("AVG(v)", "NULL", "20.0000", "25.0000"),
+                    ("SUM(f)", "NULL", "60", "50"),
+                    ("AVG(f)", "NULL", "20", "25"),
+                    ("COUNT(v)", "0", "3", "2"),
+                    ("MIN(v)", "NULL", "10", "20"),
+                    ("MAX(v)", "NULL", "30", "30"),
+                    ("BIT_XOR(v)", "0", "0", "10"),
+                ] {
+                    for following_start in [false, true] {
+                        let bounds = if following_start {
+                            "18446744073709551615 FOLLOWING AND UNBOUNDED FOLLOWING"
+                        } else {
+                            "CURRENT ROW AND 18446744073709551615 FOLLOWING"
+                        };
+                        let sql = format!(
+                            "SELECT {function} OVER (ORDER BY id ROWS BETWEEN {bounds}) FROM t"
+                        );
+                        let context = format!(
+                            "chunk={chunk_size} precision={precision} pipelined={pipelined}: {sql}"
+                        );
+                        let error = if following_start && pipelined == 1 && chunk_size == 1 {
+                            Some(
+                                "runtime error: slice bounds out of range [18446744073709551615:2]",
+                            )
+                        } else if !following_start
+                            && pipelined == 0
+                            && chunk_size > 1
+                            && !(precision == 1 && function.ends_with("(f)"))
+                        {
+                            Some("runtime error: index out of range [3] with length 3")
+                        } else {
+                            None
+                        };
+                        if let Some(expected) = error {
+                            let error = session.run(&sql).unwrap_err().to_mysql_error();
+                            assert_eq!(error.code, 1105, "{context}");
+                            assert_eq!(error.message, expected, "{context}");
+                        } else {
+                            let expected = if following_start {
+                                [[empty], [whole], [suffix]]
+                            } else if pipelined == 0 {
+                                [[whole], [empty], [empty]]
+                            } else {
+                                [[empty], [empty], [empty]]
+                            };
+                            assert_eq!(row_text(session.run(&sql)), expected, "{context}");
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

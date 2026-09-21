@@ -876,3 +876,26 @@ fn window_lag_lets_a_wrapped_temporal_argument_narrow_the_result() {
         );
     }
 }
+
+/// Go GetUint64FromConstant accepts unsigned offsets through UINT64_MAX;
+/// lead.AppendFinalResult2Chunk performs its addition in that same domain.
+#[test]
+fn window_lead_unsigned_offset_wraps_before_partition_check() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (id INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    for pipelined in [0, 1] {
+        session
+            .run(&format!(
+                "SET tidb_enable_pipelined_window_function={pipelined}"
+            ))
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT LEAD(v,18446744073709551615,-1) OVER (ORDER BY id), LEAD(v,18446744073709551614,-1) OVER (ORDER BY id), LAG(v,18446744073709551615,-1) OVER (ORDER BY id) FROM t")),
+            [["-1", "-1", "-1"], ["10", "-1", "-1"], ["20", "10", "-1"]],
+            "pipelined={pipelined}",
+        );
+    }
+}

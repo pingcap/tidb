@@ -34,8 +34,6 @@
 //!
 //! * `checkOpSelfSatisfyPropTaskTypeRequirement` and the MPP property
 //!   fields the enforcer branch resets: no TiFlash tier.
-//! * `optimizeByShuffle`: the TiDB-side parallel shuffle rewrite is an
-//!   executor-parallelism optimization, absent here.
 //! * The task map is keyed by the property's ESSENTIAL fields
 //!   ([`prop_key`]) per plan id, standing in for Go's `prop.HashCode()`
 //!   over fields this port does not carry.
@@ -127,6 +125,8 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.HashJoinConcurrency()`, stamped onto every hash-join
     /// candidate by `NewPhysicalHashJoin`.
     pub hash_join_concurrency: usize,
+    /// Resolved session settings for the shuffle rewrite.
+    pub shuffle_options: crate::physical::shuffle_optimize::ShuffleOptions,
     /// Go `SessionVars.UseHashJoinV2`; see `CostSessionOpts::use_hash_join_v2`.
     pub use_hash_join_v2: bool,
     /// Go `SessionVars.MemQuotaApplyCache`, used by
@@ -194,6 +194,7 @@ impl<'a> DispatchContext<'a> {
             limit_push_down_threshold: 5_000,
             enable_paging: true,
             hash_join_concurrency: 5,
+            shuffle_options: Default::default(),
             use_hash_join_v2: true,
             apply_cache_capacity: 0,
             index_join_probe_row_count_fix: false,
@@ -3621,6 +3622,19 @@ fn enumerate_physical_plans_4_task(
             }
             if add_enforcer {
                 cur_task = enforce_property(prop, cur_task, ctx.allocator)?;
+            }
+            // A column-only NominalSort returns its ordered child task directly.
+            // Rewriting that child here would invalidate the ORDER BY contract
+            // whose enforcement the nominal node has just discharged.
+            if !matches!(pp, PhysicalPlan::NominalSort(_))
+                && !matches!(cur_task, Task::Mpp(_))
+                && prop.is_sort_item_empty()
+            {
+                cur_task = crate::physical::shuffle_optimize::optimize_by_shuffle(
+                    cur_task,
+                    ctx.shuffle_options,
+                    ctx.allocator,
+                )?;
             }
             if hint_applicable {
                 if hint_task.invalid() || compare_task_cost(ctx.coster, &cur_task, &hint_task)? {
