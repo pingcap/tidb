@@ -166,7 +166,7 @@
 ### Tests
 - `pkg/statistics/handle/usage/index_usage_integration_test.go` - statistics/handle/usage: Tests GC index usage.
 - `pkg/statistics/handle/usage/predicate_column_test.go` - statistics/handle/usage: Tests cleanup predicate columns.
-- `pkg/statistics/handle/usage/session_stats_collect_test.go` - statistics/handle/usage: Tests predicate usage persistence and stats delta flushing, including synchronized overlapping dumps that preserve the earliest InitTime.
+- `pkg/statistics/handle/usage/session_stats_collect_test.go` - statistics/handle/usage: Tests predicate usage first touch creates row.
 
 ## pkg/statistics/handle/usage/collector
 
