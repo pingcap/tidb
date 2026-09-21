@@ -1462,9 +1462,11 @@ func TestHandleBatchCopResponse(t *testing.T) {
 	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
 	t.Run("rebuilds a store batch after a Region cache miss", testHandleStoreBatchRegionCacheMiss)
 	t.Run("picks the store batch RPC timeout", testStoreBatchCopRPCTimeout)
+	t.Run("backs off when TiKV ignores lock hints", testCoprocessorBacksOffWhenTiKVIgnoresLockHint)
+	t.Run("stops after repeated ignored lock hints", testCoprocessorStopsAfterRepeatedIgnoredLockHint)
 }
 
-func TestCoprocessorBacksOffWhenTiKVIgnoresLockHint(t *testing.T) {
+func testCoprocessorBacksOffWhenTiKVIgnoresLockHint(t *testing.T) {
 	const lockTS = uint64(42)
 	for _, test := range []struct {
 		name      string
@@ -1499,7 +1501,7 @@ func TestCoprocessorBacksOffWhenTiKVIgnoresLockHint(t *testing.T) {
 	}
 }
 
-func TestCoprocessorStopsAfterRepeatedIgnoredLockHint(t *testing.T) {
+func testCoprocessorStopsAfterRepeatedIgnoredLockHint(t *testing.T) {
 	client := &ignoredLockHintCopClient{
 		lockTS:       42,
 		alwaysLocked: true,
