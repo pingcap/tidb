@@ -24,6 +24,7 @@ go_test(
     timeout = "long",
     srcs = [
         "add_index_test.go",
+        "backend_cleanup_test.go",
         "concurrent_ddl_test.go",
         "failpoints_test.go",
         "integration_test.go",

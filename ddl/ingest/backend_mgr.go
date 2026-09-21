@@ -18,9 +18,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/util/generic"
@@ -31,6 +36,7 @@ import (
 
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
+	CleanupSortPath(ctx context.Context, currentJobID int64) error
 	CheckAvailable() (bool, error)
 	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client) (BackendCtx, error)
 	Unregister(jobID int64)
@@ -38,6 +44,9 @@ type BackendCtxMgr interface {
 }
 
 type litBackendCtxMgr struct {
+	// Serialize directory creation, publication, and removal so cleanup cannot
+	// delete a backend that Register has created but has not published yet.
+	lifecycleMu sync.Mutex
 	generic.SyncMap[int64, *litBackendCtx]
 	memRoot  MemRoot
 	diskRoot DiskRoot
@@ -79,6 +88,9 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 
 // Register creates a new backend and registers it to the backend context.
 func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client) (BackendCtx, error) {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
@@ -96,6 +108,8 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 			logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
 		}
+
+		failpoint.Inject("afterCreateLocalBackend", nil)
 
 		bcCtx := newBackendContext(ctx, jobID, bd, cfg.Lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
 		m.Store(jobID, bcCtx)
@@ -146,6 +160,9 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
 
 // Unregister removes a backend context from the backend context manager.
 func (m *litBackendCtxMgr) Unregister(jobID int64) {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+
 	bc, exist := m.SyncMap.Load(jobID)
 	if !exist {
 		return
@@ -201,4 +218,50 @@ func EncodeBackendTag(jobID int64) string {
 // DecodeBackendTag decodes the backend tag to job ID.
 func DecodeBackendTag(name string) (int64, error) {
 	return strconv.ParseInt(name, 10, 64)
+}
+
+// CleanupSortPath is used to clean up the temp data of the previous jobs.
+// Because we don't remove all the files after the support of checkpoint,
+// there maybe some stale files in the sort path if TiDB is killed during the backfill process.
+func (m *litBackendCtxMgr) CleanupSortPath(ctx context.Context, currentJobID int64) error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+
+	sortPath := ConfigSortPath()
+	err := os.MkdirAll(sortPath, 0700)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	entries, err := os.ReadDir(sortPath)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot read sort path", zap.Error(err))
+		return errors.Trace(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		jobID, err := DecodeBackendTag(entry.Name())
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
+			continue
+		}
+		if _, ok := m.Load(jobID); ok {
+			// The job is still running, skip it.
+			logutil.BgLogger().Warn("[ddl-ingest] the job is still running, skip removing it",
+				zap.Int64("running job ID", jobID))
+			continue
+		}
+		// Remove all the temp data of the previous done jobs.
+		if jobID < currentJobID {
+			logutil.BgLogger().Info("[ddl-ingest] remove stale temp index data",
+				zap.Int64("jobID", jobID), zap.Int64("currentJobID", currentJobID))
+			err := os.RemoveAll(filepath.Join(sortPath, entry.Name()))
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
+				return nil
+			}
+		}
+	}
+	return nil
 }
