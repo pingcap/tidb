@@ -96,6 +96,7 @@ go_test(
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",
+        "//pkg/store/driver/error",
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",
         "//pkg/util/paging",

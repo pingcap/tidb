@@ -110,8 +110,13 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20260929035212-5f06ec672bb6
 	github.com/tikv/pd/client v0.0.0-20260514095636-e99988475b0c
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20260921040125-5f38569c8cc0
+	github.com/tikv/pd/client v0.0.0-20260805103528-afa43111d149
+>>>>>>> ead9d38239a (store: back off when TiKV ignores cop lock hints (#71446))
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
