@@ -561,7 +561,7 @@ func TestPlanReplayerLoadIgnoresLowResolutionTSO(t *testing.T) {
 
 	// Loading applies the dumped variables before creating the schema. DDL is
 	// rejected under tidb_low_resolution_tso, so the variable must be ignored or
-	// the load fails on `use` with "Unknown database".
+	// the load fails while creating the database.
 	loadStore := testkit.CreateMockStore(t)
 	loadTK := testkit.NewTestKit(t, loadStore)
 	loadTK.MustExec(fmt.Sprintf("plan replayer load '%s'", strings.ReplaceAll(filepath.Join(tempDir, filePath), "'", "''")))
