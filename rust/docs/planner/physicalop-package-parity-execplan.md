@@ -30,6 +30,13 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, deferred/correlated grouping) Go-oracle regressions
+  reproduced duplicate batch warnings and correlated string key mismatches.
+  Typed correlated evaluation and deferred forwarding to literal/correlated/
+  same-domain column leaves now match Go, including the scalar-only decimal
+  rounding error. Sixteen field cases cover all eight domains, NULL rebinding,
+  selection and continuation in both modes. Final gates are recorded below;
+  scalar-function vectorization and whole-package acceptance remain open.
 - [x] (2026-09-21, typed constants and string grouping) Restored typed lazy
   conversion, current parameter types, decimal warning/error order and plain
   constant vector evaluation counts. The original GetType independence test
@@ -509,6 +516,14 @@ their recorded stage. The latest verified state is summarized first.
 
 ## Surprises & Discoveries
 
+Deferred/correlated grouping (2026-09-21): Go's Constant.VecEvalXxx forwards the
+requested evaluation domain to its deferred child, using the child's own
+metadata for conversions. CorrelatedColumn.VecEvalXxx broadcasts one typed
+binding read. A decimal child column containing an 81-digit interior value
+succeeds in vector mode, but scalar evaluation pads it to the outer constant's
+scale and fails with 1265. This difference is source behavior, not a reason to
+normalize the modes. The oracle and native regression retain both outcomes.
+
 Typed constant grouping (2026-09-21): generic Constant.Eval is not equivalent
 to EvalXxx. It fits deferred values to the declared type, while typed decimal
 evaluation preserves extra scale and ignores declared precision. String
@@ -712,6 +727,15 @@ batch; scalar mode emits one per row. The final receipt includes Go evidence.
   artifacts; these groups remain explicit completion gates below.
 
 ## Decision Log
+
+- Decision: expose the requested typed Constant domain and implement correlated
+  typed evaluation in the expression owner. Unwrap vectorized deferred chains
+  only to supported constant/correlated/same-domain column leaves; retain the
+  outer expression for scalar mode and scalar-function leaves.
+  Rationale: vector forwarding must preserve the child's metadata and one-read
+  warning semantics. Scalar-function batch behavior still requires a complete
+  expression-vectorization audit and must not be inferred from scalar success.
+  Date/Author: 2026-09-21, Codex.
 
 - Decision: keep typed Constant evaluation and contextual ToDecimal in their
   expression/datatype owners, and let the checker call the typed path. Borrow
@@ -4561,3 +4585,117 @@ Changed files: `tidb-datatype/src/datum/convert.rs`;
 `tidb-executor/benches/pipeline.rs`; this plan, physicalop-source-inventory.md
 and types-datatype-divergence-audit.md. This checkpoint records progress and
 measured local improvement, not completion of the user's parity/performance goal.
+
+
+## Deferred and correlated grouping checkpoint (2026-09-21)
+
+Previous checkpoint b9d2314d3e is pushed. The prior turn was concrete progress:
+typed constants, diagnostics and measured string-key allocation changes are
+committed. This checkpoint continues the same complete checker-package audit;
+it does not redefine acceptance around an expression subset.
+
+Read the entire checker production file and the Constant/CorrelatedColumn
+scalar/vectorized entrypoints at the unchanged Go pin. The temporary overlay
+`/tmp/tidb-group-lazy-overlay.json` retains all original checker tests and prior
+oracles, adding deferred/nested/correlated warning/type cases, correlated
+coverage across the 16-field matrix, and a deferred decimal-column case.
+The first native regression failed on five mismatches: two correlated string
+key encodings and three vectorized warning counts (six instead of three).
+Red evidence: `/tmp/tidb-group-lazy-red.log`; the earlier root-directory Cargo
+invocation did not run a test and is excluded. Go evidence is in
+`/tmp/tidb-group-lazy-go.log` and `-go-expanded.log`.
+
+`Constant::eval_typed_as_on_row` accepts the requested Go EvalXxx domain while
+retaining the child's own FieldType for conversion and decimal padding.
+`CorrelatedColumn::eval_typed` snapshots the live binding, applies hybrid
+integer conversion and ToString, and preserves native temporal/decimal/JSON/
+vector payloads. It does not borrow Constant's decimal padding semantics.
+The conversion warning adapter is shared inside tidb-expr. The checker follows
+Go deferred wrappers in vector mode, broadcasting literal/correlated leaves
+once and using matching-domain child columns directly. Scalar mode retains
+outer constant conversion on each row. Repeated NaN still compares unequal.
+
+The expanded source oracle asserts exact correlated keys, offsets, continuation
+and rebinding to/from NULL for 16 fields in both modes (32 records, all eight
+evaluation domains). Ten lazy-batch records assert source-observed warnings
+and keys. The deferred decimal fixture succeeds with three groups in vector
+mode and returns fatal1265/no warnings in scalar mode. An initial hand-written
+Go fixture accidentally had 87 digits and failed in the fixture constructor;
+it was corrected to 81 digits before the successful oracle run. No product
+claim is based on that fixture error. Native tests use repeat(81).
+
+Exact Go commands from root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-lazy-overlay.json -run '^TestGroupCheckerLazyBatchOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-lazy-overlay.json -run '^TestGroupChecker(TypedBoundary|LazyBatch|DeferredColumn)Oracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-group-lazy-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 ./pkg/executor/internal/vecgroupchecker
+
+The checker package source and BUILD.bazel have no failpoint injection/dependency;
+no failpoint enable/disable is needed for this package. The overlay does not
+change tracked Go or Bazel/module inputs; bazel_prepare is not required.
+
+Remaining acceptance work includes scalar-function typed/vectorized evaluation,
+deferred domain-mismatched column contracts, remaining codec errors and complete
+dependency/consumer package receipts. These changes do not prove full expression
+parity, and the five existing ignored constant-related tests remain excluded.
+No end-to-end workload or new performance comparison was run at this checkpoint;
+the previous commit's grouping microbenchmark remains historical evidence.
+
+
+Validation scope covers the changed expression owners, the complete checker
+module and its shared stream aggregation, merge join, shuffle and window
+consumers. Final main-checkout commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib constant
+    cargo test --offline --locked -j12 -p tidb-expr --lib column::tests
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib issue_53867
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    cargo test --offline --locked -j12 -p tidb-session --lib correlated
+
+All passed, respectively: 66, 15, 25, 1, 76, 76, 26, 23, 16, 68 and 23.
+The constant filter has five ignored tests, as detailed in the previous receipt;
+all other listed runs have none. Overlapping filters do not add distinct
+coverage. An initial session filter `tests_correlated` matched zero tests;
+it is excluded and replaced by `correlated`, which ran 23 tests. Logs:
+`/tmp/tidb-group-lazy-validation-*.log`. The red and initial focused green test
+used `cargo test --offline --locked -j12 -p tidb-executor --lib lazy_batch_grouping`.
+The final accumulated Go race gate passed 13 test functions (four original
+checker tests plus nine differential oracles), log
+`/tmp/tidb-group-lazy-go-race.log`.
+
+From root, `make lint` failed the existing revive1.2.1 bootstrap (exit 2).
+`make -o tools/bin/revive lint` passed the actual recipes with the existing
+binary. `git diff --check` and
+`rustfmt --check --edition 2021 rust/crates/tidb-executor/src/vec_group_checker.rs`
+pass; the new expression-owner region was formatted without whole-file churn.
+Logs: `/tmp/tidb-group-lazy-lint{,-existing}.log`.
+
+
+Publication validation used `/private/tmp/tidb-parity-publish-aba629bb` at
+published b9d2314d3e. Its prior changes were compared against that commit before
+resetting the disposable worktree; only the old final plan receipt differed.
+Copied the five current tracked changes, excluding both unconnected drafts.
+From isolated rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib constant
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib column::tests
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib correlated
+
+All passed: 66 (five explicit ignores), 15, 25 and 23. Logs:
+`/tmp/tidb-group-lazy-isolated-*.log`. Byte comparison verifies the three code
+files match the isolated checkout; this final receipt was appended afterward.
+Fetch confirmed origin/hparser-integration still matched b9d2314d3e. All
+processes are terminal; no cluster or failpoint lifecycle was started.
+
+Files changed: `tidb-expr/src/{constant,column}.rs`,
+`tidb-executor/src/vec_group_checker.rs`, this plan and the physicalop source
+inventory. Correctness evidence is scoped to the typed/batch contracts above;
+full package acceptance, scalar-function vectorization and workload performance
+remain open. The user's goal remains active.

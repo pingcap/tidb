@@ -133,17 +133,35 @@ impl VecGroupChecker {
         self.same_group.resize(rows, true);
         self.same_group[0] = false;
         for (item, collation) in self.group_by_items.iter().zip(&self.collations) {
+            let target = match item {
+                Expression::Constant(constant) => constant.get_type(ctx)?.eval_type(),
+                _ => item
+                    .static_type()
+                    .ok_or(EvalError::Unsupported(
+                        "group expression has no result type",
+                    ))?
+                    .eval_type(),
+            };
+            let item = if ctx.enable_vectorized_expression() {
+                vectorized_group_source(item, target)
+            } else {
+                item
+            };
             if ctx.enable_vectorized_expression() {
-                if let Expression::Constant(constant) = item {
-                    if constant.deferred_expr.is_none() {
-                        // genVecFromConstExpr evaluates once and repeats the
-                        // value. Still compare it with itself: NaN is unequal.
-                        let value = eval_group_item(item, ctx, chunk.get_row(0), *collation)?;
-                        if !same_group_value(&value, &value, *collation)? {
-                            self.same_group.fill(false);
-                        }
-                        continue;
+                let repeated = match item {
+                    Expression::Constant(constant) if constant.deferred_expr.is_none() => {
+                        Some(constant.eval_typed_as_on_row(ctx, chunk.get_row(0), target)?)
                     }
+                    Expression::CorrelatedColumn(column) => Some(column.eval_typed(ctx, target)?),
+                    _ => None,
+                };
+                if let Some(value) = repeated {
+                    // genVecFromConstExpr evaluates once and repeats the
+                    // value. Still compare it with itself: NaN is unequal.
+                    if !same_group_value(&value, &value, *collation)? {
+                        self.same_group.fill(false);
+                    }
+                    continue;
                 }
             }
             if resolve_integer_column(item, chunk, &mut self.same_group)
@@ -318,6 +336,30 @@ fn resolve_integer_column(expr: &Expression, chunk: &Chunk, same_group: &mut [bo
     false
 }
 
+/// Constant.VecEvalXxx delegates directly through deferred wrappers. Constant
+/// and correlated leaves generate a repeated value; a column copies its cells.
+/// Keep scalar-function wrappers intact until their vector evaluator is used.
+fn vectorized_group_source(item: &Expression, target: tidb_datatype::EvalType) -> &Expression {
+    let mut source = item;
+    while let Expression::Constant(constant) = source {
+        let Some(deferred) = constant.deferred_expr.as_deref() else {
+            return source;
+        };
+        source = deferred;
+    }
+    match source {
+        Expression::CorrelatedColumn(_) => source,
+        Expression::Column(column)
+            if column
+                .get_static_type()
+                .is_some_and(|field| field.eval_type() == target) =>
+        {
+            source
+        }
+        _ => item,
+    }
+}
+
 /// Ordinary string columns can borrow their cells for the whole pass. Keep
 /// one collation key per row, as Go's string loop does, without Datum clones.
 fn resolve_string_column(
@@ -390,6 +432,15 @@ fn eval_group_item(
 ) -> Result<Datum, EvalError> {
     if let Expression::Constant(constant) = item {
         return constant.eval_typed_on_row(ctx, row);
+    }
+    if let Expression::CorrelatedColumn(column) = item {
+        let target = column
+            .get_static_type()
+            .ok_or(EvalError::Unsupported(
+                "correlated column has no result type",
+            ))?
+            .eval_type();
+        return column.eval_typed(ctx, target);
     }
     let value = item.eval(ctx, row)?;
     Ok(
@@ -585,6 +636,143 @@ mod tests {
             assert_eq!(warnings.len(), if vectorized { 3 } else { 6 });
             assert!(warnings.iter().all(|(_, code, message)| *code == 1292
                 && message == "Truncated incorrect DOUBLE value: '12tail'"));
+        }
+    }
+
+    #[test]
+    fn lazy_batch_grouping_matches_go_warning_counts_and_types() {
+        use tidb_expr::column::CorrelatedColumn;
+        use tidb_expr::constant::Constant;
+        let mut mismatches = Vec::new();
+        for vectorized in [false, true] {
+            for kind in [
+                "deferred",
+                "nested",
+                "correlated_bit",
+                "correlated_string",
+                "correlated_decimal",
+            ] {
+                let field = FieldType::new(FieldTypeCode::LongLong);
+                let item = match kind {
+                    "deferred" | "nested" => {
+                        let child = Expression::Constant(Constant::new(
+                            Datum::new_string("12tail"),
+                            FieldType::new(FieldTypeCode::VarString),
+                        ));
+                        let mut outer = Constant::new(Datum::Int(0), field.clone());
+                        outer.deferred_expr = Some(Box::new(child));
+                        if kind == "nested" {
+                            let mut wrapper = Constant::new(Datum::Int(0), field.clone());
+                            wrapper.deferred_expr = Some(Box::new(Expression::Constant(outer)));
+                            outer = wrapper;
+                        }
+                        Expression::Constant(outer)
+                    }
+                    "correlated_bit" => Expression::CorrelatedColumn(CorrelatedColumn::with_value(
+                        tidb_expr::column::Column::new(
+                            1,
+                            FieldType::new(FieldTypeCode::Bit).with_flen(72),
+                        ),
+                        Datum::Bit(tidb_datatype::BinaryLiteral::from(vec![1; 9])),
+                    )),
+                    "correlated_string" => {
+                        Expression::CorrelatedColumn(CorrelatedColumn::with_value(
+                            tidb_expr::column::Column::new(
+                                1,
+                                FieldType::new(FieldTypeCode::VarString)
+                                    .with_collation(Collation::Utf8Mb4GeneralCi),
+                            ),
+                            Datum::Int(42),
+                        ))
+                    }
+                    _ => Expression::CorrelatedColumn(CorrelatedColumn::with_value(
+                        tidb_expr::column::Column::new(
+                            1,
+                            FieldType::new(FieldTypeCode::NewDecimal).with_decimal(1),
+                        ),
+                        Datum::Decimal(Decimal::from_literal("1.234")),
+                    )),
+                };
+                let ctx = crate::stmt_context::StmtContext::default()
+                    .with_enable_vectorized_expression(vectorized)
+                    .with_truncate_level(tidb_expr::ErrorLevel::Warn);
+                let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+                for value in [1, 1, 2, 2] {
+                    chunk.append_int64(0, value);
+                }
+                let mut checker = VecGroupChecker::new(vec![item, column(0, field)]);
+                assert!(!checker.split_into_groups(&ctx, &chunk).unwrap());
+                assert_eq!(ranges(&mut checker), [(0, 2), (2, 4)]);
+                let prefix = match kind {
+                    "correlated_bit" => "037fffffffffffffff",
+                    "correlated_string" => "010034003200000000fb",
+                    "correlated_decimal" => "0604038100ea",
+                    _ => "03800000000000000c",
+                };
+                let key = checker
+                    .previous_last_key
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                let expected_key = format!("{prefix}038000000000000002");
+                if key != expected_key {
+                    mismatches.push(format!(
+                        "{kind}/{vectorized}: key {key}, expected {expected_key}"
+                    ));
+                }
+                let message = match kind {
+                    "correlated_bit" => {
+                        Some("Truncated incorrect BINARY value: '0x010101010101010101'")
+                    }
+                    "deferred" | "nested" => Some("Truncated incorrect DOUBLE value: '12tail'"),
+                    _ => None,
+                };
+                let expected = message
+                    .map(|message| vec![(1292, message.to_owned()); if vectorized { 3 } else { 6 }])
+                    .unwrap_or_default();
+                let warnings = ctx
+                    .take_warnings()
+                    .into_iter()
+                    .map(|(_, code, message)| (code, message))
+                    .collect::<Vec<_>>();
+                if warnings != expected {
+                    mismatches.push(format!(
+                        "{kind}/{vectorized}: warnings {warnings:?}, expected {expected:?}"
+                    ));
+                }
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+
+    #[test]
+    fn deferred_decimal_column_vectorization_preserves_child_scale() {
+        use tidb_expr::constant::Constant;
+        let child_type = FieldType::new(FieldTypeCode::NewDecimal);
+        let mut constant = Constant::new(Datum::Null, child_type.clone().with_decimal(3));
+        constant.deferred_expr = Some(Box::new(column(0, child_type.clone())));
+        let mut chunk = Chunk::new_with_capacity(&[child_type], 3);
+        for text in ["0", &"9".repeat(81), "1"] {
+            chunk.append_datum(0, &Datum::Decimal(Decimal::from_literal(text)));
+        }
+        for vectorized in [false, true] {
+            let ctx = crate::stmt_context::StmtContext::default()
+                .with_enable_vectorized_expression(vectorized);
+            let mut checker = VecGroupChecker::new(vec![Expression::Constant(constant.clone())]);
+            let result = checker.split_into_groups(&ctx, &chunk);
+            if vectorized {
+                assert!(!result.unwrap());
+                assert_eq!(ranges(&mut checker), [(0, 1), (1, 2), (2, 3)]);
+            } else {
+                let Err(EvalError::Conversion(error)) = result else {
+                    panic!("expected Go rounding error: {result:?}");
+                };
+                assert_eq!(error.to_sql_error().code, 1265);
+                assert_eq!(checker.group_count(), 0);
+            }
+            assert!(ctx.take_warnings().is_empty());
         }
     }
 
@@ -1232,7 +1420,7 @@ mod tests {
             for value in &values {
                 chunk.append_datum(0, value);
             }
-            let mut checker = VecGroupChecker::new(vec![column(0, field)]);
+            let mut checker = VecGroupChecker::new(vec![column(0, field.clone())]);
             match checker.split_into_groups(&ctx, &chunk) {
                 Ok(continues) => assert!(!continues, "{name}"),
                 Err(error) => {
@@ -1260,6 +1448,50 @@ mod tests {
             chunk.append_datum(0, &values[2]);
             assert!(checker.split_into_groups(&ctx, &chunk).unwrap(), "{name}");
             assert_eq!(ranges(&mut checker), [(0, 1)], "{name}");
+            for vectorized in [false, true] {
+                use tidb_expr::column::CorrelatedColumn;
+                let ctx = ctx.clone().with_enable_vectorized_expression(vectorized);
+                let correlated = CorrelatedColumn::with_value(
+                    tidb_expr::column::Column::new(1, field.clone()),
+                    values[2].clone(),
+                );
+                let integer = FieldType::new(FieldTypeCode::LongLong);
+                let mut input = Chunk::new_with_capacity(std::slice::from_ref(&integer), 4);
+                for value in [1, 1, 2, 2] {
+                    input.append_int64(0, value);
+                }
+                let mut checker = VecGroupChecker::new(vec![
+                    Expression::CorrelatedColumn(correlated.clone()),
+                    column(0, integer),
+                ]);
+                assert!(
+                    !checker.split_into_groups(&ctx, &input).unwrap(),
+                    "{name}/{vectorized}"
+                );
+                assert_eq!(
+                    ranges(&mut checker),
+                    [(0, 2), (2, 4)],
+                    "{name}/{vectorized}"
+                );
+                let encoded = checker
+                    .previous_last_key
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                assert_eq!(
+                    encoded,
+                    format!("{expected_key}038000000000000002"),
+                    "{name}/{vectorized}"
+                );
+                input.set_sel(Some(vec![3]));
+                assert!(checker.split_into_groups(&ctx, &input).unwrap());
+                correlated.bind(Datum::Null);
+                assert!(!checker.split_into_groups(&ctx, &input).unwrap());
+                correlated.bind(values[2].clone());
+                assert!(!checker.split_into_groups(&ctx, &input).unwrap());
+            }
         }
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
     }

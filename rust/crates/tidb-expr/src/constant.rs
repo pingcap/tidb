@@ -145,6 +145,17 @@ impl Constant {
         ctx: &dyn crate::Columns,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<Datum, EvalError> {
+        self.eval_typed_as_on_row(ctx, row, self.get_type(ctx)?.eval_type())
+    }
+
+    /// Calls the requested typed entrypoint, which can differ from this
+    /// constant's own type when a deferred parent forwards vector evaluation.
+    pub fn eval_typed_as_on_row(
+        &self,
+        ctx: &dyn crate::Columns,
+        row: tidb_chunk::row::Row<'_>,
+        target: tidb_datatype::EvalType,
+    ) -> Result<Datum, EvalError> {
         use tidb_datatype::EvalType;
         let field = self.get_type(ctx)?;
         let value = if let Some(marker) = self.param_marker {
@@ -177,7 +188,7 @@ impl Constant {
             }
             Ok(converted.value)
         };
-        match field.eval_type() {
+        match target {
             EvalType::Int => match value {
                 Datum::Bit(value) | Datum::BinaryLiteral(value) => {
                     let (value, error) = value.to_int_with_context(&context);
@@ -426,7 +437,7 @@ fn constant_decimal_error(error: tidb_datatype::DecimalError) -> EvalError {
 }
 
 /// Borrow the active evaluator's warning sink; no per-conversion warning store.
-struct ConversionWarnings<'a, C: ?Sized>(&'a C);
+pub(crate) struct ConversionWarnings<'a, C: ?Sized>(pub(crate) &'a C);
 
 impl<C: crate::Columns + ?Sized> tidb_datatype::ConversionWarningAppender
     for ConversionWarnings<'_, C>
