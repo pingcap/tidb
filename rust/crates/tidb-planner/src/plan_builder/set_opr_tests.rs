@@ -755,6 +755,11 @@ fn union_unsigned_widening_uses_the_in_union_cast_signature() {
     };
     assert_eq!(cast.func_name.original(), "cast_unsigned_in_union");
     assert!(cast.get_static_type().is_some_and(FieldType::is_unsigned));
+    assert_eq!(cast.get_static_type().unwrap().flen(), 20);
+    let [tidb_expr::expression::Expression::Column(source)] = cast.get_args() else {
+        panic!("the widening cast must retain its source column");
+    };
+    assert_eq!(source.ret_type.as_ref().unwrap().flen(), 5);
 }
 
 #[test]

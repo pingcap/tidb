@@ -181,6 +181,20 @@ pub fn no_precision_loss_cast_compatible(cast: &FieldType, arg_col: &FieldType) 
     }
 }
 
+// These are the native signatures for the integer and VARCHAR families
+// admitted by noPrecisionLossCastCompatible; Go names each one ast.Cast.
+fn is_lossless_cast_candidate(function: &ScalarFunction) -> bool {
+    matches!(
+        function.func_name.lowercase(),
+        "cast"
+            | "cast_signed"
+            | "cast_unsigned"
+            | "cast_unsigned_in_union"
+            | "cast_char"
+            | "cast_binary"
+    )
+}
+
 /// Go `unwrapCast` (`util.go:957`): removes a `CAST` from one side of a
 /// comparison when the other side is a constant and the cast is lossless.
 ///
@@ -199,7 +213,7 @@ fn unwrap_cast(
     let Expression::ScalarFunction(cast) = &args[cast_offset] else {
         return None;
     };
-    if cast.func_name.lowercase() != "cast" {
+    if !is_lossless_cast_candidate(cast) {
         return None;
     }
     let cast_type = cast.ret_type.as_ref()?;
@@ -297,7 +311,7 @@ fn eliminate_cast_function(expr: &Expression, builder: &dyn FunctionBuilder) -> 
             let Some(Expression::ScalarFunction(cast)) = args.first() else {
                 return (expr.clone(), false);
             };
-            if cast.func_name.lowercase() != "cast" {
+            if !is_lossless_cast_candidate(cast) {
                 return (expr.clone(), false);
             }
             let Some(cast_type) = cast.ret_type.as_ref() else {
@@ -349,4 +363,122 @@ pub fn eliminate_no_precision_loss_cast(
     builder: &dyn FunctionBuilder,
 ) -> Expression {
     eliminate_cast_function(expr, builder).0
+}
+
+#[cfg(test)]
+mod native_cast_tests {
+    use super::*;
+    use crate::{column::Column, constant::Constant, expr_util::RealFunctionBuilder, NoColumns};
+    use tidb_datatype::{Datum, FieldTypeCode, FieldTypeFlags};
+
+    #[test]
+    fn lossless_cast_elimination_recognizes_native_signature_names() {
+        let builder = RealFunctionBuilder::new(&NoColumns);
+        for (source_code, target_code, source_unsigned, target_unsigned, removable) in [
+            (
+                FieldTypeCode::Long,
+                FieldTypeCode::LongLong,
+                false,
+                false,
+                true,
+            ),
+            (
+                FieldTypeCode::Long,
+                FieldTypeCode::LongLong,
+                true,
+                true,
+                true,
+            ),
+            (
+                FieldTypeCode::Long,
+                FieldTypeCode::LongLong,
+                false,
+                true,
+                false,
+            ),
+            (
+                FieldTypeCode::LongLong,
+                FieldTypeCode::Long,
+                false,
+                false,
+                false,
+            ),
+        ] {
+            let mut source = FieldType::new(source_code);
+            let mut target = FieldType::new(target_code);
+            if source_unsigned {
+                source.add_flags(FieldTypeFlags::UNSIGNED);
+            }
+            if target_unsigned {
+                target.add_flags(FieldTypeFlags::UNSIGNED);
+            }
+            let cast = crate::aggregation::wrap_cast::build_cast_to_in_union(
+                Expression::Column(Column::new(1, source)),
+                target,
+            )
+            .unwrap();
+            for op in ["gt", "in", "ne"] {
+                let args = vec![
+                    cast.clone(),
+                    Expression::Constant(Constant::new(
+                        Datum::Int(1),
+                        FieldType::new(FieldTypeCode::LongLong),
+                    )),
+                ];
+                let parent = builder.new_function(op, None, args).unwrap();
+                let result = eliminate_no_precision_loss_cast(&parent, &builder);
+                let Expression::ScalarFunction(function) = result else {
+                    panic!("column predicate")
+                };
+                assert_eq!(
+                    matches!(function.args[0], Expression::Column(_)),
+                    removable && op != "ne",
+                    "{source_code:?} {target_code:?} {source_unsigned} {target_unsigned} {op}"
+                );
+            }
+        }
+        for (charset, source_collation, target_collation, target_width, removable) in [
+            ("utf8mb4", "utf8mb4_bin", "utf8mb4_bin", 10, true),
+            ("utf8mb4", "utf8mb4_bin", "utf8mb4_bin", 3, false),
+            ("utf8mb4", "utf8mb4_bin", "utf8mb4_general_ci", 10, false),
+            ("binary", "binary", "binary", 10, true),
+        ] {
+            let mut source = FieldType::new(FieldTypeCode::VarString);
+            source.set_flen(5);
+            source.set_charset_name(charset);
+            source.set_collation_name(source_collation);
+            let mut target = source.clone();
+            target.set_flen(target_width);
+            target.set_collation_name(target_collation);
+            let cast = crate::aggregation::wrap_cast::build_cast_to_in_union(
+                Expression::Column(Column::new(1, source)),
+                target.clone(),
+            )
+            .unwrap();
+            for op in ["gt", "in"] {
+                let parent = builder
+                    .new_function(
+                        op,
+                        None,
+                        vec![
+                            cast.clone(),
+                            Expression::Constant(Constant::new(
+                                Datum::new_string("x"),
+                                target.clone(),
+                            )),
+                        ],
+                    )
+                    .unwrap();
+                let result = eliminate_no_precision_loss_cast(&parent, &builder);
+                let Expression::ScalarFunction(function) = result else {
+                    panic!("column predicate")
+                };
+                assert_eq!(
+                    matches!(function.args[0], Expression::Column(_)),
+                    removable,
+                    "{source_collation} {target_collation} width={target_width} {op}"
+                );
+            }
+        }
+    }
 }

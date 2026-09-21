@@ -6907,3 +6907,128 @@ remain untouched and outside the isolated build and publication. Whole-package
 acceptance, ignored native tests and the four complete workload runs are not
 verified by these checks. This remains dependency progress with no acceptance
 claim for pkg/expression or pkg/planner/core/operator/physicalop.
+
+## Continuing expression construction audit
+
+
+Checkpoint 19a0cfced7 is committed, pushed and remote-verified. The next pull
+was current. Source review found that new_function_impl folds comparisons
+without running compareFunctionClass refinement; RealFunctionBuilder then
+refines after folding. Go instead refines in getFunction, before its callback
+and fold mode. This can leave an otherwise constant predicate unfurled and
+makes direct NewFunction/Base/TryFold callers bypass source semantics.
+
+Move comparison refinement into shared construction before collation,
+callback and folding; remove the duplicate builder pass. First record Go
+construction results for folding modes, callback-visible arguments and warning
+counts, and add a failing native regression. Validate all native expression
+and relevant rewrite/planner/session consumers and lint; record any uncovered
+differences instead of weakening assertions. This continues the existing
+atomic pkg/expression audit, not acceptance of a partial package. Commit and
+push the validated progress as requested. Complete four-workload performance
+and source package artifact gates remain required for eventual acceptance.
+
+The complete native planner suite exposed one failure already present on
+published 19a0cfced7: union_unsigned_widening_uses_the_in_union_cast_signature.
+The disposable checkout reproduced it with unchanged published expression
+construction, then restored its patched files. Log:
+/tmp/tidb-construction-planner-baseline.log. The earlier Rust shortcut treated
+equal EvalType as sufficient to skip UNION casts, although Go
+buildProjection4Union compares full FieldType equality and BuildCastFunction4Union
+retains a nonconstant integer cast for differing display widths. Remove that
+shortcut and extend the existing failing test to pin source width 5 and cast
+width 20. This is a discovered dependency correction within the existing
+expression/core package audit, not a package acceptance claim.
+
+The corrected UNION constructor exposed the missing follow-on source phase:
+Go deriveStats4DataSource calls EliminateNoPrecisionLossCast on PushedDownConds
+before range/selectivity derivation. Rust's existing helper was unwired and
+recognized only a literal `cast` name, whereas the native builder emits
+cast_signed/cast_unsigned/cast_unsigned_in_union/cast_char/cast_binary.
+Keep the full UNION cast, admit those signatures to the existing guarded
+helper, and pass the live RuleContext FunctionBuilder into the statistics fold.
+Do not remove casts from arbitrary projections or incompatible/narrowing
+conversions. New native helper coverage first fails for Long -> LongLong GT;
+its controls retain signedness changes, narrowing casts and NE predicates.
+
+Go's SQL oracle confirms that the eliminated constant UNION term disappears,
+the survivor's projection retains cast(b AS bigint(11)), the scan filter is
+GT(b,0), and pseudo estimated rows are 3333.33. Extend the session regression
+to check the retained projection, unwrapped filter, estimate and returned row
+[3,1]. This avoids restoring the old shortcut merely to make EXPLAIN pass.
+
+Final construction/cast validation receipt
+
+Go source remains unchanged from aba629bb455dc09d6a5d98b3c39a542bb1189b9d in
+pkg/expression and the owning core stats/UNION builder files. The oracle tests
+run through a temporary windows-package overlay with SELECT-style truncation
+warnings; the strict mock default is separately observed and is not confused
+with that session policy. All four Go oracles pass under the race detector:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-construction-overlay.json -run '^Test(ComparisonConstructionOracle|ConstructionCallbackReplacementOracle|UnionCastWidthOracle|UnionPredicateCastOracle)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Log: /tmp/tidb-construction-go.log. Comparison construction covers normal,
+base, try-fold and callback entry points with unsigned, truncated-string and
+decimal-string operands. Both callback observations and final warning counts
+match. Callback replacement retains binary metadata after replacing CONCAT
+with integer addition. The UNION oracle retains a cast from unsigned BIGINT
+width 5 to width 20, and the SQL oracle pins the surviving projection/filter,
+pseudo estimate and result rows.
+
+Native red evidence: /tmp/tidb-construction-red.log (callback saw -1 instead
+of refined zero); /tmp/tidb-construction-callback-red.log (replacement acquired
+the old CONCAT charset); /tmp/tidb-construction-cast-red.log (native signed
+cast was not eliminated). The existing UNION widening regression also failed
+on the published baseline, as recorded above. An attempted temporary baseline
+replacement in the main checkout was rejected by automatic approval review;
+the callback baseline test instead ran in the disposable checkout, preserving
+all primary working changes. No blocked action remains.
+
+Final native validation in /private/tmp/tidb-parity-publish-aba629bb/rust,
+with CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-planner --lib
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_compare_refinement
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_sysbench_access
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_in_list_full_evaluation
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_datetime_year_compare
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_collation
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_json
+    cargo test --offline --locked -j12 -p tidb-session --lib index_join
+    cargo test --offline --locked -j12 -p tidb-session --lib index_probe
+    cargo test --offline --locked -j12 -p tidb-session --lib union
+    cargo test --offline --locked -j12 -p tidb-session --lib set_op
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_recursive_cte
+
+All pass: expression 1,203 with 97 existing ignored; planner 959; session
+comparison 9, prepared cache 45, EXPLAIN 64, sysbench access 15, IN 6,
+datetime/YEAR 3, collation 13, JSON 15, index join 14 with one existing ignored,
+index probe 3, UNION 27, set operations 8, recursive CTE 13. Filters overlap;
+these counts are not a distinct-test total. Logs:
+/tmp/tidb-construction-final-<crate>-<filter>.log. The native lossless-cast test
+also adds VARCHAR width/collation and binary-string controls, rerun with:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib lossless_cast_elimination_recognizes_native
+
+Required repository checks:
+
+    GOTOOLCHAIN=go1.26.0 make lint
+    git diff --check
+
+Lint passes (/tmp/tidb-construction-final-lint.log). No Go source/import,
+Bazel or module changes require bazel_prepare. Changed files are expression
+new_function and expr_util builder/push_not; planner logical/rewrite and
+plan_builder set_opr/set_opr_tests; session tests_union_all_predicate_push_down;
+and this plan. Isolated tracked content is checked against the primary tree;
+the two unrelated untracked drafts are excluded and remain untouched.
+
+This fixes construction semantics and permits source-defined predicate cast
+removal before range estimation; it does not claim measured throughput gains.
+Complete sysbench/TPC-C/TPC-H/YCSB performance runs, ignored native tests,
+original whole-Go-package tests and build/generated/platform/support artifact
+gates remain open. Whole pkg/expression and dependent core/physicalop package
+inventories are still unaccepted. This checkpoint is progress, not completion
+of the user's goal.

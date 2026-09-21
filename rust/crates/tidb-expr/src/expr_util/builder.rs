@@ -246,18 +246,12 @@ impl<C: crate::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> 
         // `Unspecified` type with the inferred one, so that is the right
         // spelling for `None`.
         let ret_type = ret_type.unwrap_or_else(|| FieldType::new(FieldTypeCode::Unspecified));
-        let mut expression = crate::new_function::new_function(self.ctx, func_name, ret_type, args)
-            .map_err(|err| FunctionBuildError {
-                func_name: func_name.to_owned(),
-                reason: format!("{err:?}"),
-            })?;
-        crate::builtin_compare::refine_comparison(&mut expression, self.ctx).map_err(|err| {
+        crate::new_function::new_function(self.ctx, func_name, ret_type, args).map_err(|err| {
             FunctionBuildError {
                 func_name: func_name.to_owned(),
                 reason: format!("{err:?}"),
             }
-        })?;
-        Ok(expression)
+        })
     }
 
     fn build_cast(

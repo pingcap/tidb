@@ -2426,6 +2426,7 @@ pub fn split_cnf(predicates: &[Expression]) -> Vec<Expression> {
 ///   `DefTiDBOptJoinReorderThreshold` is `0`, which is what
 ///   [`LogicalPlan::recursive_derive_stats`] passes.
 struct DeriveStatsFold<'a> {
+    builder: &'a dyn tidb_expr::expr_util::FunctionBuilder,
     /// The first failure, per the module header's first-failure discipline.
     failure: RewriteFailure,
     /// Go `SCtx().GetSessionVars().TiDBOptJoinReorderThreshold`, read by
@@ -2553,6 +2554,14 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                     if let Some(stats) = op.base.base.stats_info().cloned() {
                         StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
                     } else {
+                        // Go preprocesses pushed predicates before deriving
+                        // ranges and selectivity, retaining casts in projections.
+                        for condition in &mut op.pushed_down_conds {
+                            *condition = tidb_expr::expr_util::eliminate_no_precision_loss_cast(
+                                condition,
+                                self.builder,
+                            );
+                        }
                         // Go `deriveStats4DataSource`: `ds.stats =
                         // deriveStatsByFilter(ds, ds.PushedDownConds, nil)`.
                         let schema_ids: Vec<i64> = self_schema
@@ -2860,6 +2869,7 @@ pub fn recursive_derive_stats(
         64 * 1024 * 1024,
         crate::cost_factors::SELECTION_FACTOR,
         None,
+        &tidb_expr::expr_util::RealFunctionBuilder::new(&tidb_expr::NoColumns),
     )
 }
 
@@ -2876,6 +2886,7 @@ pub fn recursive_derive_stats_with_context(
         context.range_max_size,
         context.selectivity_factor,
         context.range_fallback_handler,
+        context.builder,
     )
 }
 
@@ -2886,8 +2897,10 @@ fn recursive_derive_stats_with_range_quota(
     range_max_size: i64,
     selectivity_factor: f64,
     range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
+    builder: &dyn tidb_expr::expr_util::FunctionBuilder,
 ) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
     let mut fold = DeriveStatsFold {
+        builder,
         failure: RewriteFailure::default(),
         join_reorder_threshold,
         range_max_size,

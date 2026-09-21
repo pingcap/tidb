@@ -88,6 +88,24 @@ fn a_constant_term_folds_to_a_table_dual() {
         text.contains("gt(test.u.b, 0)"),
         "the other term still filters on its own column:\n{text}"
     );
+    assert!(
+        text.contains("cast_signed(test.u.b)"),
+        "the projection retains the UNION cast:\n{text}"
+    );
+    let selection = rows
+        .iter()
+        .find(|row| row.contains("Selection") && row.contains("gt(test.u.b, 0)"))
+        .unwrap();
+    assert_eq!(selection.split('|').nth(1), Some("3333.33"), "{text}");
+    session
+        .run("insert into u values(1,-1),(2,0),(3,1)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "select * from (select a, 0 c from u union all select a, b from u) x where c > 0"
+        )),
+        [["3", "1"]]
+    );
 }
 
 /// Go's `Conds2TableDual` is not union-specific: a constant-false `WHERE`

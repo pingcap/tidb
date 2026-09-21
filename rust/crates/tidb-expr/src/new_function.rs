@@ -65,6 +65,9 @@
 //!     retType = builtinRetTp }`; the Rust rule is the same statement with
 //!     "the table produced an answer" standing in for "the signature's
 //!     `getRetTp` is not `TypeUnspecified`".
+//!   - Comparison argument refinement and signature casts run at this shared
+//!     construction boundary before collation, callbacks and constant folding.
+//!     This includes direct Base/TryFold callers and planner rebuilds.
 //!   - Collation derivation and `HandleBinaryLiteral` wrapping run here in the
 //!     same order as Go's `newBaseBuiltinFuncWithTp` for string-bearing calls:
 //!     derive the result charset first, then wrap non-legacy string arguments
@@ -332,6 +335,25 @@ pub fn new_function_impl(
         })
         .unwrap_or(ret_type);
 
+    let function = ScalarFunction::new(
+        CiString::new(if matches!(registered_name, "date_add" | "date_sub") {
+            func_name
+        } else {
+            registered_name
+        }),
+        ret_type,
+        func_args,
+    );
+    // Go getFunction refines comparison arguments before collation, the
+    // construction callback and the selected constant-folding mode.
+    let mut expression = Expression::ScalarFunction(function);
+    crate::builtin_compare::refine_comparison(&mut expression, ctx)?;
+    let Expression::ScalarFunction(mut function) = expression else {
+        unreachable!("comparison refinement preserves the function node")
+    };
+    let ret_type = function.ret_type.as_ref().expect("constructed return type");
+    let func_args = &function.args;
+
     // Collation participates in Go's construction-time conversion only when
     // the call produces a string or consumes one. Numeric-only rebuilds (for
     // example constant propagation's `gt(INT, INT)`) deliberately keep the
@@ -346,33 +368,23 @@ pub fn new_function_impl(
     let derived = if derive_collation {
         Some(crate::collation_derive::derive_collation_with_connection(
             func_name,
-            &func_args,
+            func_args,
             ret_type.eval_type(),
             ctx.connection_charset_info(),
         )?)
     } else {
         None
     };
-    let func_args = match &derived {
-        Some(derived) => crate::rewriter::wrap_binary_literals(
+    if let Some(derived) = &derived {
+        function.args = crate::rewriter::wrap_binary_literals(
             func_name,
             &derived.charset,
-            func_args,
+            std::mem::take(&mut function.args),
             |expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
-        ),
-        None => func_args,
-    };
-
-    let mut function = ScalarFunction::new(
-        CiString::new(if matches!(registered_name, "date_add" | "date_sub") {
-            func_name
-        } else {
-            registered_name
-        }),
-        ret_type,
-        func_args,
-    );
+        );
+    }
     function.prepare_numeric_arguments(ctx);
+
     // Go's grouping signature marks its result as an unsigned BIGINT because
     // the returned bits encode multiple grouping flags.
     if func_name == "grouping" {
@@ -380,15 +392,16 @@ pub fn new_function_impl(
             ret_type.add_flags(FieldTypeFlags::UNSIGNED);
         }
     }
-    let function = match check_or_init {
-        Some(callback) => callback(function)?,
-        None => function,
-    };
-
     let mut expr = Expression::ScalarFunction(function);
     if let Some(derived) = &derived {
         crate::collation_derive::apply_derived_collation(&mut expr, derived);
         crate::rewriter::restore_function_result_charset(&mut expr)?;
+    }
+    if let Some(callback) = check_or_init {
+        let Expression::ScalarFunction(function) = expr else {
+            unreachable!("collation derivation preserves the function node")
+        };
+        expr = Expression::ScalarFunction(callback(function)?);
     }
     fold_constant_in_mode(&mut expr, ctx, fold);
     Ok(expr)
@@ -650,6 +663,127 @@ mod tests {
         )
         .expect("plus over two constants builds");
         assert_eq!(as_func(&unfolded).func_name.lowercase(), "plus");
+    }
+
+    #[test]
+    fn comparison_refinement_precedes_callback_and_all_folding_modes() {
+        use crate::constant_fold::ConstantFoldMode;
+        #[derive(Default)]
+        struct Warnings(std::cell::RefCell<Vec<String>>);
+        impl Columns for Warnings {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.0.borrow_mut().push(format!("{code} {message}"));
+            }
+            fn warning_count(&self) -> usize {
+                self.0.borrow().len()
+            }
+            fn truncate_warnings(&self, count: usize) {
+                self.0.borrow_mut().truncate(count);
+            }
+        }
+        for mode in [
+            ConstantFoldMode::Normal,
+            ConstantFoldMode::Disabled,
+            ConstantFoldMode::Try,
+        ] {
+            for kind in ["unsigned", "truncated", "decimal"] {
+                let ctx = Warnings::default();
+                let mut field = FieldType::new(FieldTypeCode::LongLong);
+                let constant = match kind {
+                    "unsigned" => {
+                        field.add_flags(FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
+                        int_constant(-1)
+                    }
+                    _ => Expression::Constant(Constant::new(
+                        Datum::new_string(if kind == "truncated" { "10ab" } else { "10.5" }),
+                        FieldType::new(FieldTypeCode::VarString),
+                    )),
+                };
+                let callback_called = std::cell::Cell::new(false);
+                let callback = |function: ScalarFunction| {
+                    callback_called.set(true);
+                    let Expression::Constant(right) = &function.args[1] else {
+                        panic!("refined constant")
+                    };
+                    assert_eq!(
+                        right.value,
+                        Datum::Int(if kind == "unsigned" { 0 } else { 10 }),
+                        "{kind} {mode:?}"
+                    );
+                    assert_eq!(
+                        right.ret_type.as_ref().unwrap().eval_type(),
+                        tidb_datatype::EvalType::Int
+                    );
+                    assert_eq!(ctx.warning_count(), if kind == "truncated" { 2 } else { 0 });
+                    if kind == "unsigned" {
+                        let Expression::Constant(left) = &function.args[0] else {
+                            panic!("refined unsigned column")
+                        };
+                        assert_eq!(left.value, Datum::Int(1));
+                    }
+                    Ok(function)
+                };
+                let result = super::new_function_impl(
+                    &ctx,
+                    mode,
+                    "gt",
+                    FieldType::new(FieldTypeCode::Tiny),
+                    Some(&callback),
+                    vec![Expression::Column(Column::new(1, field)), constant],
+                )
+                .unwrap();
+                assert!(callback_called.get());
+                assert_eq!(ctx.warning_count(), if kind == "truncated" { 2 } else { 0 });
+                if kind == "unsigned" && mode != ConstantFoldMode::Disabled {
+                    let Expression::Constant(value) = result else {
+                        panic!("comparison must fold")
+                    };
+                    assert_eq!(value.value, Datum::Int(1));
+                } else {
+                    assert!(matches!(result, Expression::ScalarFunction(_)));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn construction_callback_preserves_replacement_metadata() {
+        let mut text = FieldType::new(FieldTypeCode::VarString);
+        text.set_charset_name("utf8mb4");
+        text.set_collation_name("utf8mb4_bin");
+        let replacement = new_function_base(
+            &NoColumns,
+            "plus",
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![
+                Expression::Column(Column::new(2, FieldType::new(FieldTypeCode::LongLong))),
+                int_constant(1),
+            ],
+        )
+        .unwrap();
+        let expected = replacement.static_type().unwrap().clone();
+        let callback = |function: ScalarFunction| {
+            let field = function.ret_type.as_ref().unwrap();
+            assert_eq!(field.charset_name(), "utf8mb4");
+            assert_eq!(field.collation_name(), "utf8mb4_bin");
+            let Expression::ScalarFunction(function) = replacement.clone() else {
+                unreachable!()
+            };
+            Ok(function)
+        };
+        let actual = new_function_with_init(
+            &NoColumns,
+            "concat",
+            text.clone(),
+            &callback,
+            vec![Expression::Column(Column::new(1, text))],
+        )
+        .unwrap();
+        assert_eq!(actual.static_type().unwrap(), &expected);
+        assert_eq!(as_func(&actual).func_name.lowercase(), "plus");
     }
 
     /// NEW COVERAGE: a non-constant argument keeps the node unfolded even in
