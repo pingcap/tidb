@@ -101,6 +101,22 @@ where
         let mut possibly_prewrite_keys = Vec::<Vec<u8>>::new();
         let mut min_commit_ts = self.start_ts.saturating_add(1);
         let mut protocol = self.attempted_protocol(&mutations, &primary_key);
+        // client-go `execute` (`2pc.go:1795-1858`): when async commit or 1PC
+        // may be attempted, `calculateMaxCommitTS` runs the schema check at
+        // the synthetic current timestamp BEFORE prewrite, because no PD
+        // commit timestamp will be taken later to check at.
+        if protocol.use_async_commit || protocol.use_one_pc {
+            if let Err(error) = self.check_schema_valid(self.current_ts()) {
+                return Ok(self.rollback_after_failure(
+                    receipt,
+                    &possibly_prewrite_keys,
+                    TransactionCause::SchemaLease {
+                        code: error.code,
+                        message: error.message,
+                    },
+                ));
+            }
+        }
         let mut queue = match group_mutations(&self.runtime, &mutations) {
             Ok(batches) => {
                 protocol.observe_batch_count(batches.len());
@@ -481,6 +497,20 @@ where
                 return Ok(self.rollback_after_failure(receipt, &possibly_prewrite_keys, error));
             }
         };
+        // client-go `execute` (`2pc.go:1991-1996`): a normal two-phase commit
+        // checks the schema at the commit timestamp it just took, with every
+        // key prewritten and nothing committed yet -- a refusal rolls the
+        // prewrite back (Go's deferred `cleanup`).
+        if let Err(error) = self.check_schema_valid(commit_ts) {
+            return Ok(self.rollback_after_failure(
+                receipt,
+                &possibly_prewrite_keys,
+                TransactionCause::SchemaLease {
+                    code: error.code,
+                    message: error.message,
+                },
+            ));
+        }
         receipt.commit_ts = commit_ts;
 
         self.state
@@ -517,11 +547,10 @@ where
         // Go's committer forgets the primary batch (forgetPrimary) and commits
         // the rest; a linear scan of the primary batch per mutation would make
         // this O(mutations x batch keys) memcmp on large transactions.
-        let committed_primary_keys: std::collections::HashSet<&[u8]> =
-            committed_primary_batch_keys
-                .iter()
-                .map(Vec::as_slice)
-                .collect();
+        let committed_primary_keys: std::collections::HashSet<&[u8]> = committed_primary_batch_keys
+            .iter()
+            .map(Vec::as_slice)
+            .collect();
         let secondary_keys = mutations
             .iter()
             .filter(|mutation| !committed_primary_keys.contains(mutation.key()))

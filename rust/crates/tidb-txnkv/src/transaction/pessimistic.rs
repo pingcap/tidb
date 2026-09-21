@@ -790,6 +790,12 @@ where
         self.two_pc.commit(mutations, call)
     }
 
+    /// Carries the session's schema lease check into this commit; see
+    /// [`RealOptimisticTransaction::set_schema_lease`].
+    pub fn set_schema_lease(&mut self, lease: super::SchemaLease) {
+        self.two_pc.set_schema_lease(lease);
+    }
+
     /// Borrows the underlying two-phase commit transaction for snapshot reads.
     pub fn snapshot(&mut self) -> &mut RealOptimisticTransaction<C, L, T> {
         &mut self.two_pc

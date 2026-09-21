@@ -93,9 +93,7 @@ where
     /// top. Bounding the commit timestamp is what keeps a schema version valid
     /// for the whole life of the commit even though no PD timestamp is taken.
     fn max_commit_ts(&self) -> u64 {
-        let elapsed_ms = u64::try_from(self.opened_at.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let current_ts = (elapsed_ms << TSO_LOGICAL_BITS).saturating_add(self.start_ts);
-        (ASYNC_COMMIT_SAFE_WINDOW_MS << TSO_LOGICAL_BITS).saturating_add(current_ts)
+        (ASYNC_COMMIT_SAFE_WINDOW_MS << TSO_LOGICAL_BITS).saturating_add(self.current_ts())
     }
 
     /// Builds one region's Prewrite request and context without publishing it.

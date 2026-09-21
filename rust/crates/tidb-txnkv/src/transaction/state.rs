@@ -18,6 +18,16 @@ use crate::rpc::TransactionBatchPublication;
 /// Typed error identity used by executor/server mapping and receipts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TransactionCause {
+    /// The session's schema lease check refused the commit: the schema the
+    /// transaction was planned against changed, or the lease vouching for it
+    /// ran out (client-go `checkSchemaValid`; Go `ErrInfoSchemaChanged` /
+    /// `ErrInfoSchemaExpired`).
+    SchemaLease {
+        /// The MySQL error code, 8028 or 8027.
+        code: u16,
+        /// The client-visible message.
+        message: String,
+    },
     /// Insert assertion observed an existing encoded key.
     AlreadyExists {
         /// Exact encoded existing key.
@@ -95,6 +105,7 @@ impl std::fmt::Display for TransactionCause {
             | Self::Transport { detail }
             | Self::Timestamp { detail }
             | Self::InvalidResponse { detail } => formatter.write_str(detail),
+            Self::SchemaLease { message, .. } => formatter.write_str(message),
             Self::SharedLockLost { start_ts, key } => write!(
                 formatter,
                 "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS={start_ts}, key={key}"

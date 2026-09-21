@@ -74,6 +74,7 @@ use tidb_executor::cluster_storage::{
 };
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::rpc::UnaryCallContext;
+use tidb_txnkv::transaction::SchemaLeaseChecker;
 use tidb_txnkv::transaction::{
     LockKeepAlive, LockWaitTime, PessimisticLockFailure, RealPessimisticTransaction,
 };
@@ -175,6 +176,19 @@ pub trait ClusterTransactions: Send + Sync {
         resource_group: &str,
     ) -> Result<(), SqlQueryError>;
 
+    /// [`Self::commit`] with the session's schema lease checker bound to the
+    /// publication (Go `SetOptionsBeforeCommit`); a tier with no validator
+    /// publishes unchecked.
+    fn commit_with_schema_lease(
+        &self,
+        buffer: &MutationBuffer,
+        read_ts: Option<u64>,
+        resource_group: &str,
+        _schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
+    ) -> Result<(), SqlQueryError> {
+        self.commit(buffer, read_ts, resource_group)
+    }
+
     /// Publishes one restricted-session write plan at the snapshot timestamp
     /// that produced it.
     fn commit_optimistic_mutations(
@@ -269,6 +283,13 @@ pub trait OpenClusterTransaction: Send {
     /// Rebinds all subsequent requests to the statement's resolved resource
     /// group while retaining the transaction and its timestamp.
     fn set_resource_group_name(&self, name: &str) -> Result<(), String>;
+
+    /// Go `SetOptionsBeforeCommit`'s `kv.SchemaChecker` option
+    /// (`base.go:606-615`): the session's schema lease checker, asked at
+    /// commit whether the schema this transaction was planned against is
+    /// still in force. A tier with no validator commits unchecked, as Go
+    /// does without the option.
+    fn set_schema_lease_checker(&mut self, _checker: Arc<dyn SchemaLeaseChecker>) {}
 
     /// One statement's read handle. Dropping it ends the statement, never the
     /// transaction.
@@ -1139,6 +1160,16 @@ where
         read_ts: Option<u64>,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
+        self.commit_with_schema_lease(buffer, read_ts, resource_group, None)
+    }
+
+    fn commit_with_schema_lease(
+        &self,
+        buffer: &MutationBuffer,
+        read_ts: Option<u64>,
+        resource_group: &str,
+        schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
+    ) -> Result<(), SqlQueryError> {
         // Go's autocommit `finishStmt` on a statement that staged nothing
         // publishes nothing; skip the opener and protocol lookups too.
         if buffer.is_empty() {
@@ -1151,6 +1182,7 @@ where
             read_ts,
             self.timeout,
             tidb_exec::session_commit_protocol::session_commit_protocol(),
+            schema_lease_checker,
         )
         .map(|_| ())
         .map_err(sql_error)
@@ -1248,6 +1280,10 @@ where
 
     fn set_resource_group_name(&self, name: &str) -> Result<(), String> {
         SessionTransaction::set_resource_group_name(self, name).map_err(|error| error.to_string())
+    }
+
+    fn set_schema_lease_checker(&mut self, checker: Arc<dyn SchemaLeaseChecker>) {
+        SessionTransaction::set_schema_lease_checker(self, checker);
     }
 
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {

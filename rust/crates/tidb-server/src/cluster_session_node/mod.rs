@@ -195,6 +195,7 @@ use tidb_exec::real_tikv_analyze::prepare_cluster_analyze_parsed;
 use tidb_exec::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_parsed;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
+use tidb_exec::schema_validator::SchemaValidator;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{
@@ -210,6 +211,7 @@ use tidb_session::{
     GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange,
     TableStorageStatistics, TableStorageStatsProvider,
 };
+use tidb_txnkv::transaction::SchemaLeaseChecker;
 
 use tidb_exec::cluster_table_storage::LockKeysOutcome;
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
@@ -325,6 +327,7 @@ mod boot;
 mod ddl;
 mod ddl_notifier;
 mod record_set;
+pub(crate) mod schema_lease;
 pub(crate) mod schema_sync;
 mod statistics;
 mod transactions;
@@ -1005,6 +1008,10 @@ pub struct ClusterSessionFactory {
     /// a Go DDL owner this node has the new schema. See
     /// [`schema_sync::SchemaPinRegistry`].
     schema_pins: Arc<schema_sync::SchemaPinRegistry>,
+    /// The node's schema validator (Go `Domain.SchemaValidator`), which
+    /// every commit asks whether its schema version is still in force. `None`
+    /// is a tier with no cluster schema to follow, which commits unchecked.
+    schema_validator: Option<Arc<SchemaValidator>>,
     /// One live planner view over the domain's canonical statistics.
     statistics_view: Arc<tidb_executor::driver::StatisticsView>,
     /// Go Domain starts one statistics-load pool, shared by user and internal sessions.
@@ -1128,6 +1135,7 @@ impl ClusterSessionFactory {
             spill_storage: None,
             mem_arbitrator: None,
             schema_pins: Arc::new(schema_sync::SchemaPinRegistry::default()),
+            schema_validator: None,
             stats_load_workers: std::sync::OnceLock::new(),
             session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
             workload_repository: std::sync::OnceLock::new(),
@@ -1814,6 +1822,13 @@ impl ClusterSessionFactory {
     #[must_use]
     pub(crate) fn with_schema_pins(mut self, pins: Arc<schema_sync::SchemaPinRegistry>) -> Self {
         self.schema_pins = pins;
+        self
+    }
+
+    /// Binds the node's schema validator, so every session's commit carries
+    /// Go's schema lease check.
+    pub(crate) fn with_schema_validator(mut self, validator: Arc<SchemaValidator>) -> Self {
+        self.schema_validator = Some(validator);
         self
     }
 
@@ -3188,6 +3203,7 @@ impl ClusterSessionFactory {
             schema_pins: Arc::clone(&self.schema_pins),
             connection_id: connection_id,
             transaction_pin: None,
+            schema_validator: self.schema_validator.clone(),
             historical_stats_worker: Arc::clone(&self.historical_stats_worker),
         })
     }
@@ -4298,6 +4314,8 @@ pub struct ClusterServerSession {
     /// nothing newer than this transaction's catalog to a Go DDL owner --
     /// Go's metadata lock, at transaction scope.
     transaction_pin: Option<schema_sync::SchemaPinGuard>,
+    /// The node's schema validator; see [`ClusterSessionFactory`].
+    schema_validator: Option<Arc<SchemaValidator>>,
     /// The domain-global mailbox successful ANALYZE results enqueue into.
     historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
 }
@@ -5218,7 +5236,10 @@ impl ClusterServerSession {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
                 .take();
-            if let Some(transaction) = transaction {
+            if let Some(mut transaction) = transaction {
+                if let Some(checker) = self.schema_lease_checker() {
+                    transaction.set_schema_lease_checker(checker);
+                }
                 let bindings_changed = self.binding_records_changed();
                 return match transaction.commit(&self.buffer) {
                     Ok(()) => {
@@ -5282,6 +5303,20 @@ impl ClusterServerSession {
         }
     }
 
+    /// Go `SetOptionsBeforeCommit` (`base.go:560-616`): the checker a commit
+    /// carries -- the node's validator and the schema version this
+    /// transaction was planned against (`GetTxnInfoSchema().SchemaMetaVersion()`:
+    /// the version pinned at `BEGIN`, or the autocommit statement's own).
+    /// The physical tables it wrote and the MDL switch are read at commit.
+    fn schema_lease_checker(&self) -> Option<Arc<dyn SchemaLeaseChecker>> {
+        self.schema_validator.as_ref().map(|validator| {
+            Arc::new(schema_lease::SessionSchemaLeaseChecker::new(
+                Arc::clone(validator),
+                self.schema_version,
+            )) as Arc<dyn SchemaLeaseChecker>
+        })
+    }
+
     /// Publishes one autocommit statement's staged writes as its own
     /// transaction, at the timestamp the statement read at. A failed
     /// publication discards them, which is what a failed COMMIT does.
@@ -5295,10 +5330,12 @@ impl ClusterServerSession {
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
         let bindings_changed = self.binding_records_changed();
-        match self
-            .transactions
-            .commit(&self.buffer, read_ts, resource_group)
-        {
+        match self.transactions.commit_with_schema_lease(
+            &self.buffer,
+            read_ts,
+            resource_group,
+            self.schema_lease_checker(),
+        ) {
             Ok(()) => {
                 self.refresh_committed_bindings(bindings_changed);
                 Ok(())
@@ -5320,13 +5357,16 @@ impl ClusterServerSession {
         self.savepoints.clear();
         self.session.current_tso().clear();
         self.transaction_pin = None;
-        let Some(transaction) = self.explicit.take() else {
+        let Some(mut transaction) = self.explicit.take() else {
             // No transaction and no statement read: the buffer can only hold
             // what a previous statement already published, so there is nothing
             // to publish and no timestamp to publish it at.
             let resource_group = self.session.current_resource_group().to_owned();
             return self.commit_autocommit_buffer(None, &resource_group);
         };
+        if let Some(checker) = self.schema_lease_checker() {
+            transaction.set_schema_lease_checker(checker);
+        }
         let bindings_changed = self.binding_records_changed();
         let write_details = self.buffer_write_details();
         match transaction.commit(&self.buffer) {
@@ -7280,9 +7320,10 @@ pub fn build_tiflash_mpp_source(
         return None;
     }
     match tidb_pd_client::PdClient::connect_seeds(pd_endpoints.to_vec(), Duration::from_secs(10)) {
-        Ok(client) => {
-            Some(tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource::new(client, schema_version))
-        }
+        Ok(client) => Some(tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource::new(
+            client,
+            schema_version,
+        )),
         Err(error) => {
             eprintln!("{{\"event\":\"tiflash_mpp_pd_unreachable\",\"error\":\"{error}\"}}");
             None
@@ -7307,7 +7348,10 @@ where
     let Some(endpoint) = pd_endpoints.first() else {
         return None;
     };
-    match tidb_pd_client::PdClient::connect_seeds(pd_endpoints.to_vec(), std::time::Duration::from_secs(10)) {
+    match tidb_pd_client::PdClient::connect_seeds(
+        pd_endpoints.to_vec(),
+        std::time::Duration::from_secs(10),
+    ) {
         Ok(pd) => Some(
             tidb_exec::tiflash_replica_manager::TiFlashReplicaManager::new(
                 opener,

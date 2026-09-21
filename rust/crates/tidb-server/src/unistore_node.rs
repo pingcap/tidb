@@ -40,7 +40,9 @@ use tidb_txnkv::{SharedReadAuthority, SharedReadOpener};
 use tidb_unistore::client::InProcessClient;
 use tidb_unistore::kv_handler::KvHandler;
 use tidb_unistore::mvcc_store::MvccStore;
-use tidb_unistore::region_loader::{InProcessRegionLoader, IN_PROCESS_CLUSTER_ID, IN_PROCESS_STORE_ID};
+use tidb_unistore::region_loader::{
+    InProcessRegionLoader, IN_PROCESS_CLUSTER_ID, IN_PROCESS_STORE_ID,
+};
 use tidb_unistore::tso::InProcessPd;
 
 use crate::node_config::NodeConfig;
@@ -480,7 +482,7 @@ pub(crate) fn unistore_cluster_session_stack(
     // production boot's own order.
     crate::real_tikv_node::load_cluster_startup_variables(&users, &opener)?;
 
-    let (catalog, reloader) =
+    let (catalog, reloader, schema_validator) =
         crate::real_tikv_node::spawn_catalog_reloader(startup, opener.clone(), config.schema_lease)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     let (stats, stats_reloader, async_stats_loader) = crate::real_tikv_node::spawn_node_stats(
@@ -544,6 +546,7 @@ pub(crate) fn unistore_cluster_session_stack(
             None,
             Arc::clone(&server_info),
             None,
+            Arc::clone(&schema_validator),
             config.run_ddl,
         )
         .map_err(|error| {

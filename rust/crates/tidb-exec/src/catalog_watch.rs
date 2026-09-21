@@ -29,15 +29,15 @@
 //! never observes a partially applied catalog either (see
 //! [`crate::catalog_reload`]).
 //!
-//! What this tier does NOT do, and Go does: Go pairs the reload loop with a
-//! *schema validator* holding a lease. A transaction that started at schema
-//! version `v` and commits after a conflicting DDL is rejected with
-//! `ErrInfoSchemaChanged`/`ErrInfoSchemaExpired` (error 8027) rather than
-//! silently committing against a stale plan. This tier has no validator: a
-//! statement that began just before a DDL runs to completion against its own
-//! snapshot's catalog. That is safe for the read path (the snapshot's data
-//! matches the snapshot's schema) and is a real gap for writes, which is why
-//! error 8027 is deliberately deferred rather than approximated.
+//! Go pairs the reload loop with a *schema validator* holding a lease: a
+//! transaction that started at schema version `v` and commits after a
+//! conflicting DDL, or after the node lost contact with the schema for longer
+//! than the lease, is refused with `ErrInfoSchemaChanged` (8028) or
+//! `ErrInfoSchemaExpired` (8027) rather than committing against a stale
+//! plan. The validator is [`crate::schema_validator`]; the node's reload
+//! pass renews its lease on every pass and records each diff's changed
+//! tables, and the transaction tier asks it at commit
+//! (`tidb_txnkv::transaction::SchemaLeaseChecker`).
 //!
 //! # Watch-triggered reload
 //!
@@ -205,6 +205,9 @@ struct ReloadSignal {
     nudged: bool,
 }
 
+/// A borrow-free reader of a reloader's [`CatalogReloadStats`].
+pub type CatalogReloadStatsSource = Arc<dyn Fn() -> CatalogReloadStats + Send + Sync>;
+
 /// One reload pass, as the caller performs it.
 ///
 /// The closure is handed the currently published catalog and answers what to
@@ -331,6 +334,15 @@ impl CatalogReloader {
     #[must_use]
     pub fn stats(&self) -> CatalogReloadStats {
         self.stats.snapshot()
+    }
+
+    /// A handle that answers [`Self::stats`] without borrowing the reloader,
+    /// for a thread that must wait for a reload pass to succeed (the schema
+    /// syncer's restart sequence).
+    #[must_use]
+    pub fn stats_source(&self) -> CatalogReloadStatsSource {
+        let stats = Arc::clone(&self.stats);
+        Arc::new(move || stats.snapshot())
     }
 
     /// Stops the thread and waits for it, reporting a panicking worker.

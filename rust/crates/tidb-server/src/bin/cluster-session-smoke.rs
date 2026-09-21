@@ -192,6 +192,7 @@ fn run_autocommit(
         read_ts,
         TIMEOUT,
         tidb_exec::session_commit_protocol::session_commit_protocol(),
+        None,
     ) {
         Ok(None) => {
             println!("commit: nothing staged");

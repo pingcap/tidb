@@ -103,8 +103,8 @@ mod session_time_zone;
 
 pub(crate) use query_observability::complete_real_tikv_query;
 pub(crate) use schema_following::{
-    connect_schema_notifier, spawn_catalog_reloader, spawn_node_stats, spawn_privilege_watch,
-    spawn_schema_version_watch, spawn_sysvar_watch,
+    connect_schema_notifier, note_reload, spawn_catalog_reloader, spawn_node_stats,
+    spawn_privilege_watch, spawn_schema_version_watch, spawn_sysvar_watch,
 };
 pub(crate) use session_time_zone::{
     parse_set_time_zone, time_zone_sql_error, RealTiKvSessionTimeZone,
@@ -328,7 +328,7 @@ impl RealTiKvSessionFactory {
         let schema_notifier = connect_schema_notifier(config);
         let (catalog, watcher, reloader, stats, stats_reloader, async_stats_loader) = match loaded {
             Some(catalog) => {
-                let (catalog, reloader) = spawn_catalog_reloader(
+                let (catalog, reloader, _schema_validator) = spawn_catalog_reloader(
                     catalog,
                     authority.transaction_opener(),
                     config.schema_lease,
@@ -1947,7 +1947,7 @@ pub(crate) fn connect_loaded_catalog_authority(
             let (catalog, watcher, reloader, stats, stats_reloader, async_stats_loader) =
                 match loaded {
                     Some(catalog) => {
-                        let (catalog, reloader) = spawn_catalog_reloader(
+                        let (catalog, reloader, _schema_validator) = spawn_catalog_reloader(
                             catalog,
                             authority.transaction_opener(),
                             config.schema_lease,

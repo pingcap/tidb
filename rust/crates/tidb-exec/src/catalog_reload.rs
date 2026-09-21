@@ -45,6 +45,7 @@ use crate::cluster_catalog::{
     load_cluster_catalog, load_database_tables, normalize_diff_loaded_table_info, ClusterCatalog,
     ClusterCatalogError, LoadedDatabase, MetaSnapshot,
 };
+use crate::schema_validator::RelatedSchemaChange;
 
 /// Go `issyncer.LoadSchemaDiffVersionGapThreshold`: past this many versions a
 /// full load is cheaper (and less failure-prone) than replaying every diff.
@@ -136,6 +137,10 @@ pub enum ReloadedCatalog {
         catalog: ClusterCatalog,
         /// How many non-empty diffs were applied.
         applied: usize,
+        /// The physical tables the diffs changed and the action that changed
+        /// each (Go `tryLoadSchemaDiffs`'s `RelatedSchemaChange`,
+        /// `loader.go:378-401`), for the schema validator.
+        changes: RelatedSchemaChange,
     },
     /// The whole catalog was re-read at this snapshot.
     Full {
@@ -251,6 +256,7 @@ fn apply_diff_range<S: MetaSnapshot>(
 ) -> Result<Result<ReloadedCatalog, FullReloadReason>, ClusterCatalogError> {
     let mut catalog = current.clone();
     let mut applied = 0usize;
+    let mut changes = RelatedSchemaChange::default();
     for version in (loaded + 1)..=needed {
         let Some(diff) = read_schema_diff(snapshot, version)? else {
             // Go skips an empty diff: the version-bumping transaction committed
@@ -261,16 +267,38 @@ fn apply_diff_range<S: MetaSnapshot>(
         if diff.regenerate_schema_map {
             return Ok(Err(FullReloadReason::RegenerateSchemaMap { version }));
         }
-        if let Err(reason) = apply_schema_diff(snapshot, &mut catalog, &diff)? {
-            return Ok(Err(reason));
-        }
+        let ids = match apply_schema_diff(snapshot, &mut catalog, &diff)? {
+            Ok(ids) => ids,
+            Err(reason) => return Ok(Err(reason)),
+        };
         // Go `Builder.SetSchemaVersion(diff.Version)`; the stored diff's own
         // version field and its key agree, and the key is authoritative.
         catalog.schema_version = version;
         applied += 1;
+        // Go `canSkipSchemaCheckerDDL` (`loader.go:624-630`): a TiFlash
+        // replica change never invalidates a transaction.
+        if !matches!(
+            diff.action_type,
+            ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS
+                | ActionType::ACTION_SET_TI_FLASH_REPLICA
+        ) {
+            let action = u64::from(diff.action_type.0);
+            changes
+                .action_types
+                .extend(std::iter::repeat_n(action, ids.len()));
+            changes.phy_tbl_ids.extend(ids);
+        }
     }
-    Ok(Ok(ReloadedCatalog::Diffs { catalog, applied }))
+    Ok(Ok(ReloadedCatalog::Diffs {
+        catalog,
+        applied,
+        changes,
+    }))
 }
+
+/// One applied diff: the physical table IDs it touched (Go `ApplyDiff`'s
+/// `[]int64`), or why it could not be applied incrementally.
+type AppliedDiff = Result<Result<Vec<i64>, FullReloadReason>, ClusterCatalogError>;
 
 /// Applies one diff, or names why it cannot be applied incrementally.
 ///
@@ -288,11 +316,16 @@ fn apply_diff_range<S: MetaSnapshot>(
 /// temporary-table set (in-memory caches). A full load reads none of those
 /// either, so applying their diffs as no-ops is the same catalog a full load
 /// would produce, not a guess.
+///
+/// The IDs answered are Go's, case for case: the tables (and partitions,
+/// `appendAffectedIDs`) the diff dropped or (re)created, which the schema
+/// validator records against the version so a transaction planned before it
+/// can be refused at commit.
 fn apply_schema_diff<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
     diff: &SchemaDiff,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+) -> AppliedDiff {
     let version = diff.version;
     match diff.action_type {
         // Go `applyCreateSchema` (`builder.go:698-712`): the database read
@@ -309,12 +342,23 @@ fn apply_schema_diff<S: MetaSnapshot>(
                 info,
                 tables: Vec::new(),
             });
-            Ok(Ok(()))
+            Ok(Ok(Vec::new()))
         }
-        // Go `applyDropSchema` (`builder.go:747-771`): absent is a no-op.
+        // Go `applyDropSchema` (`builder.go:747-771`): absent is a no-op;
+        // every table of the database is answered as dropped.
         ActionType::ACTION_DROP_SCHEMA => {
+            let mut ids = Vec::new();
+            if let Some(database) = catalog
+                .databases
+                .iter()
+                .find(|db| db.info.id == diff.schema_id)
+            {
+                for table in &database.tables {
+                    affected_ids(table, &mut ids);
+                }
+            }
             catalog.databases.retain(|db| db.info.id != diff.schema_id);
-            Ok(Ok(()))
+            Ok(Ok(ids))
         }
         ActionType::ACTION_RECOVER_SCHEMA => recover_schema(snapshot, catalog, diff),
         ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE => modify_schema(
@@ -349,12 +393,14 @@ fn apply_schema_diff<S: MetaSnapshot>(
         | ActionType::ACTION_DROP_RESOURCE_GROUP
         | ActionType::ACTION_CREATE_MASKING_POLICY
         | ActionType::ACTION_ALTER_MASKING_POLICY
-        | ActionType::ACTION_DROP_MASKING_POLICY => Ok(Ok(())),
+        | ActionType::ACTION_DROP_MASKING_POLICY => Ok(Ok(Vec::new())),
         // Go `applyTruncateTableOrPartition`, `applyDropTableOrPartition`,
         // `applyRecoverTable` and `applyReorganizePartition`
         // (`builder.go:260-320`, `:397-410`): one `applyTableUpdate`, then
         // bundle bookkeeping only. `AffectedOpts` name partitions there, for
-        // the bundles -- they are not tables to reload.
+        // the bundles -- they are not tables to reload; a truncated
+        // partition's old ID is still answered as changed
+        // (`builder.go:275-281`).
         ActionType::ACTION_TRUNCATE_TABLE_PARTITION
         | ActionType::ACTION_TRUNCATE_TABLE
         | ActionType::ACTION_DROP_TABLE
@@ -363,7 +409,18 @@ fn apply_schema_diff<S: MetaSnapshot>(
         | ActionType::ACTION_REORGANIZE_PARTITION
         | ActionType::ACTION_REMOVE_PARTITIONING
         | ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
-            apply_table_update(snapshot, catalog, diff)
+            let mut ids = match apply_table_update(snapshot, catalog, diff)? {
+                Ok(ids) => ids,
+                Err(reason) => return Ok(Err(reason)),
+            };
+            if diff.action_type == ActionType::ACTION_TRUNCATE_TABLE_PARTITION {
+                for affected in diff.affected_options.iter_handles() {
+                    let affected =
+                        affected.expect("nil affected option in truncate-partition schema diff");
+                    ids.push(affected.read().old_table_id);
+                }
+            }
+            Ok(Ok(ids))
         }
         // Go `applyCreateTables` (`builder.go:117-119`): every created table
         // is an `AffectedOption`, each replayed as its own `CreateTable`.
@@ -379,23 +436,39 @@ fn apply_schema_diff<S: MetaSnapshot>(
         }
         // Go returns `[]int64{-1}` and changes nothing: a flashback whose
         // diff demands the whole map be rebuilt carries `RegenerateSchemaMap`
-        // and never reaches here.
-        ActionType::ACTION_FLASHBACK_CLUSTER => Ok(Ok(())),
+        // and never reaches here. `-1` is the "every table" ID the validator
+        // matches against any transaction.
+        ActionType::ACTION_FLASHBACK_CLUSTER => Ok(Ok(vec![-1])),
         ActionType::ACTION_REFRESH_META => refresh_meta(snapshot, catalog, diff),
         // Go `applyDefaultAction` (`builder.go:471-478`): the diff's own
         // table, then every `AffectedOption` replayed with the same action.
         _ => {
-            if let Err(reason) = apply_table_update(snapshot, catalog, diff)? {
-                return Ok(Err(reason));
-            }
-            apply_affected_opts(
+            let mut ids = match apply_table_update(snapshot, catalog, diff)? {
+                Ok(ids) => ids,
+                Err(reason) => return Ok(Err(reason)),
+            };
+            match apply_affected_opts(
                 snapshot,
                 catalog,
                 diff,
                 diff.action_type,
                 "nil affected option in schema diff",
-            )
+            )? {
+                Ok(more) => ids.extend(more),
+                Err(reason) => return Ok(Err(reason)),
+            }
+            Ok(Ok(ids))
         }
+    }
+}
+
+/// Go `appendAffectedIDs` (`builder.go:688-696`): the table's ID and, for a
+/// partitioned table, every partition's.
+fn affected_ids(table: &tidb_model::table_info::TableInfo, into: &mut Vec<i64>) {
+    into.push(table.id);
+    if let Some(partition) = table.get_partition_info() {
+        let definitions = partition.read().definitions.snapshot();
+        into.extend(definitions.iter().map(|definition| definition.id));
     }
 }
 
@@ -409,7 +482,8 @@ fn apply_affected_opts<S: MetaSnapshot>(
     diff: &SchemaDiff,
     action: ActionType,
     nil_message: &'static str,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+) -> AppliedDiff {
+    let mut ids = Vec::new();
     for affected in diff.affected_options.iter_handles() {
         let affected = affected.expect(nil_message);
         let affected_diff = {
@@ -424,11 +498,12 @@ fn apply_affected_opts<S: MetaSnapshot>(
                 ..SchemaDiff::default()
             }
         };
-        if let Err(reason) = apply_schema_diff(snapshot, catalog, &affected_diff)? {
-            return Ok(Err(reason));
+        match apply_schema_diff(snapshot, catalog, &affected_diff)? {
+            Ok(more) => ids.extend(more),
+            Err(reason) => return Ok(Err(reason)),
         }
     }
-    Ok(Ok(()))
+    Ok(Ok(ids))
 }
 
 /// Go `tableIDIsValid`.
@@ -489,11 +564,15 @@ fn table_ids<S: MetaSnapshot>(
 /// and added. Everything else Go does there (`updateBundleForTableUpdate`,
 /// `copySortedTables`, kept auto-ID allocators, the masking-policy cache
 /// reset) maintains caches this catalog does not have.
+///
+/// The IDs answered are Go's `tblIDs`: the dropped table's (`applyDropTable`,
+/// only when it was loaded) then the created table's (`applyCreateTable`,
+/// except for a truncated partition, `builder.go:836-838`).
 fn apply_table_update<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
     diff: &SchemaDiff,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+) -> AppliedDiff {
     let version = diff.version;
     if !catalog
         .databases
@@ -506,6 +585,7 @@ fn apply_table_update<S: MetaSnapshot>(
         )));
     }
     let (old_table_id, new_table_id) = table_ids(snapshot, diff)?;
+    let mut ids = Vec::new();
     if table_id_is_valid(old_table_id) {
         let is_rename = matches!(
             diff.action_type,
@@ -516,17 +596,22 @@ fn apply_table_update<S: MetaSnapshot>(
         } else {
             diff.schema_id
         };
-        if let Err(reason) = drop_table(catalog, version, drop_from, old_table_id)? {
-            return Ok(Err(reason));
+        match drop_table(catalog, version, drop_from, old_table_id)? {
+            Ok(dropped) => ids.extend(dropped),
+            Err(reason) => return Ok(Err(reason)),
         }
     }
     if table_id_is_valid(new_table_id) {
-        if let Err(reason) = create_table(snapshot, catalog, version, diff.schema_id, new_table_id)?
-        {
-            return Ok(Err(reason));
+        match create_table(snapshot, catalog, version, diff.schema_id, new_table_id)? {
+            Ok(created) => {
+                if diff.action_type != ActionType::ACTION_TRUNCATE_TABLE_PARTITION {
+                    ids.extend(created);
+                }
+            }
+            Err(reason) => return Ok(Err(reason)),
         }
     }
-    Ok(Ok(()))
+    Ok(Ok(ids))
 }
 
 /// Go `Builder.applyRecoverSchema` (`builder.go:774-788`): the database must
@@ -534,12 +619,13 @@ fn apply_table_update<S: MetaSnapshot>(
 /// diff always sets `ReadTableFromMeta` (`schema_version.go:280`), which has
 /// Go list the database's tables from the store instead of trusting the
 /// diff's `AffectedOpts`; the listing here is the same one the full load
-/// uses, at this snapshot.
+/// uses, at this snapshot. Every table that comes back is answered as
+/// created, as Go's `applyCreateTables` over the listing answers.
 fn recover_schema<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
     diff: &SchemaDiff,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+) -> AppliedDiff {
     let version = diff.version;
     if catalog
         .databases
@@ -557,15 +643,19 @@ fn recover_schema<S: MetaSnapshot>(
             format!("database {}", diff.schema_id),
         )));
     };
-    let tables = if diff.read_table_from_meta {
-        load_database_tables(snapshot, info.id)?
-    } else {
-        Vec::new()
-    };
-    catalog.databases.push(LoadedDatabase { info, tables });
     if diff.read_table_from_meta {
-        return Ok(Ok(()));
+        let tables = load_database_tables(snapshot, info.id)?;
+        let mut ids = Vec::new();
+        for table in &tables {
+            affected_ids(table, &mut ids);
+        }
+        catalog.databases.push(LoadedDatabase { info, tables });
+        return Ok(Ok(ids));
     }
+    catalog.databases.push(LoadedDatabase {
+        info,
+        tables: Vec::new(),
+    });
     apply_affected_opts(
         snapshot,
         catalog,
@@ -577,14 +667,14 @@ fn recover_schema<S: MetaSnapshot>(
 
 /// Go `applyModifySchemaCharsetAndCollate` / `applyModifySchemaDefaultPlacement`
 /// (`builder.go:714-745`): re-read the `DBInfo` and copy the changed fields
-/// onto the loaded one.
+/// onto the loaded one. No table is answered as changed.
 fn modify_schema<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
     version: i64,
     db_id: i64,
     apply: impl FnOnce(&mut tidb_model::db::DBInfo, tidb_model::db::DBInfo),
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+) -> AppliedDiff {
     let Some(fresh) = read_database(snapshot, db_id)? else {
         return Ok(Err(missing(version, format!("database {db_id}"))));
     };
@@ -592,21 +682,22 @@ fn modify_schema<S: MetaSnapshot>(
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
     };
     apply(&mut database.info, fresh);
-    Ok(Ok(()))
+    Ok(Ok(Vec::new()))
 }
 
 /// Go `applyExchangeTablePartition` (`builder.go:322-395`): the non-partitioned
-/// table and the partitioned table are each one `applyTableUpdate`. The
-/// auto-ID levelling it ends with (`updateAutoIDForExchangePartition`) is a
-/// store write this reader does not make: it is the same idempotent write
-/// every node performs, the DDL-running Go nodes included, and this catalog
-/// keeps no allocator state for it to feed. A full load would not make it
-/// either.
+/// table and the partitioned table are each one `applyTableUpdate`, and the
+/// partitioned table's IDs are answered first (`append(ptIDs, ntIDs...)`).
+/// The auto-ID levelling it ends with (`updateAutoIDForExchangePartition`)
+/// is a store write this reader does not make: it is the same idempotent
+/// write every node performs, the DDL-running Go nodes included, and this
+/// catalog keeps no allocator state for it to feed. A full load would not
+/// make it either.
 fn exchange_table_partition<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
     diff: &SchemaDiff,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+) -> AppliedDiff {
     let first_affected = |diff: &SchemaDiff| {
         diff.affected_options.iter_handles().next().map(|affected| {
             let affected = affected.expect("nil affected option in exchange-partition schema diff");
@@ -621,14 +712,15 @@ fn exchange_table_partition<S: MetaSnapshot>(
     // Not yet public: the diff names one table in place, and the partitioned
     // table only if the first option carries its database.
     if diff.old_table_id == diff.table_id && diff.old_schema_id == diff.schema_id {
-        if let Err(reason) = apply_table_update(snapshot, catalog, diff)? {
-            return Ok(Err(reason));
-        }
+        let nt_ids = match apply_table_update(snapshot, catalog, diff)? {
+            Ok(ids) => ids,
+            Err(reason) => return Ok(Err(reason)),
+        };
         let Some((_, pt_id, pt_schema_id)) = first_affected(diff) else {
-            return Ok(Ok(()));
+            return Ok(Ok(nt_ids));
         };
         if pt_schema_id == 0 {
-            return Ok(Ok(()));
+            return Ok(Ok(nt_ids));
         }
         let pt_diff = SchemaDiff {
             action_type: diff.action_type,
@@ -639,7 +731,13 @@ fn exchange_table_partition<S: MetaSnapshot>(
             old_schema_id: pt_schema_id,
             ..SchemaDiff::default()
         };
-        return apply_table_update(snapshot, catalog, &pt_diff);
+        return Ok(match apply_table_update(snapshot, catalog, &pt_diff)? {
+            Ok(mut pt_ids) => {
+                pt_ids.extend(nt_ids);
+                Ok(pt_ids)
+            }
+            Err(reason) => Err(reason),
+        });
     }
     let nt_schema_id = diff.old_schema_id;
     let nt_id = diff.old_table_id;
@@ -666,15 +764,22 @@ fn exchange_table_partition<S: MetaSnapshot>(
         current.old_table_id = nt_id;
         current.old_schema_id = nt_schema_id;
     }
-    if let Err(reason) = apply_table_update(snapshot, catalog, &current)? {
-        return Ok(Err(reason));
-    }
+    let nt_ids = match apply_table_update(snapshot, catalog, &current)? {
+        Ok(ids) => ids,
+        Err(reason) => return Ok(Err(reason)),
+    };
     // Then the partitioned table, re-read whole.
     current.table_id = pt_id;
     current.schema_id = pt_schema_id;
     current.old_table_id = pt_id;
     current.old_schema_id = pt_schema_id;
-    apply_table_update(snapshot, catalog, &current)
+    Ok(match apply_table_update(snapshot, catalog, &current)? {
+        Ok(mut pt_ids) => {
+            pt_ids.extend(nt_ids);
+            Ok(pt_ids)
+        }
+        Err(reason) => Err(reason),
+    })
 }
 
 /// Go `equalPlacementPolicy` (`builder.go:122-130`).
@@ -694,18 +799,18 @@ fn equal_placement_policy(
 
 /// Go `applyRefreshMeta` (`builder.go:137-258`), BR's PITR path: each diff
 /// names one database or one table, and the store decides whether it is
-/// dropped, created or updated.
+/// dropped, created or updated. A database operation answers no table.
 fn refresh_meta<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
     diff: &SchemaDiff,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+) -> AppliedDiff {
     let (schema_id, table_id) = (diff.schema_id, diff.table_id);
     if table_id == 0 {
         let Some(fresh) = read_database(snapshot, schema_id)? else {
             // Gone from the store: drop it (absent is a no-op, as in Go).
             catalog.databases.retain(|db| db.info.id != schema_id);
-            return Ok(Ok(()));
+            return Ok(Ok(Vec::new()));
         };
         match catalog
             .databases
@@ -730,12 +835,12 @@ fn refresh_meta<S: MetaSnapshot>(
                 }
             }
         }
-        return Ok(Ok(()));
+        return Ok(Ok(Vec::new()));
     }
     // A table under a database this catalog does not have: the database is
     // gone, so its tables are too.
     if !catalog.databases.iter().any(|db| db.info.id == schema_id) {
-        return Ok(Ok(()));
+        return Ok(Ok(Vec::new()));
     }
     let stored = snapshot
         .get(&key::table_kv_key(schema_id, table_id))?
@@ -754,13 +859,9 @@ fn refresh_meta<S: MetaSnapshot>(
         is_refresh_meta: true,
         ..SchemaDiff::default()
     };
-    if stored {
-        // Go `applyDefaultAction` with `AffectedOpts` unset.
-        apply_table_update(snapshot, catalog, &synthetic)
-    } else {
-        // Go `applyDropTableOrPartition`.
-        apply_table_update(snapshot, catalog, &synthetic)
-    }
+    // Present: Go `applyDefaultAction` with `AffectedOpts` unset; absent: Go
+    // `applyDropTableOrPartition`. Both are one `applyTableUpdate`.
+    apply_table_update(snapshot, catalog, &synthetic)
 }
 
 const fn missing(version: i64, detail: String) -> FullReloadReason {
@@ -780,14 +881,15 @@ fn read_database<S: MetaSnapshot>(
 }
 
 /// Go `applyCreateTable`'s catalog effect: the table read from the store
-/// replaces any loaded copy with the same ID in that database.
+/// replaces any loaded copy with the same ID in that database. Answers the
+/// created table's affected IDs.
 fn create_table<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &mut ClusterCatalog,
     version: i64,
     db_id: i64,
     table_id: i64,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+) -> AppliedDiff {
     let Some(database) = catalog.databases.iter_mut().find(|db| db.info.id == db_id) else {
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
     };
@@ -800,22 +902,33 @@ fn create_table<S: MetaSnapshot>(
     let mut table = value::parse_table_info(&stored, db_id)
         .map_err(|error| ClusterCatalogError::Decode(format!("TableInfo {table_id}: {error}")))?;
     normalize_diff_loaded_table_info(&mut table);
+    let mut ids = Vec::new();
+    affected_ids(&table, &mut ids);
     database.tables.retain(|existing| existing.id != table.id);
     database.tables.push(table);
-    Ok(Ok(()))
+    Ok(Ok(ids))
 }
 
-/// Go `applyDropTable`'s catalog effect; an absent table is a no-op, an
-/// absent database is Go's `ErrDatabaseNotExists`.
+/// Go `applyDropTable`'s catalog effect; an absent table is a no-op that
+/// answers nothing (`builder.go:969-971`), an absent database is Go's
+/// `ErrDatabaseNotExists`.
 fn drop_table(
     catalog: &mut ClusterCatalog,
     version: i64,
     db_id: i64,
     table_id: i64,
-) -> Result<Result<(), FullReloadReason>, ClusterCatalogError> {
+) -> AppliedDiff {
     let Some(database) = catalog.databases.iter_mut().find(|db| db.info.id == db_id) else {
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
     };
-    database.tables.retain(|existing| existing.id != table_id);
-    Ok(Ok(()))
+    let mut ids = Vec::new();
+    if let Some(index) = database
+        .tables
+        .iter()
+        .position(|existing| existing.id == table_id)
+    {
+        let dropped = database.tables.remove(index);
+        affected_ids(&dropped, &mut ids);
+    }
+    Ok(Ok(ids))
 }

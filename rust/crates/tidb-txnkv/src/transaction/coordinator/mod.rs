@@ -54,6 +54,7 @@ use crate::{PdRegionLoader, SharedReadRuntime};
 use super::command_client::TransactionCommandClient;
 use super::mutation::{validate_plan, MutationSetError};
 use super::region_batches::{RegionKeyBatch, RegionMutationBatch};
+use super::schema_lease::{SchemaLease, SchemaLeaseError};
 use super::state::{
     CoordinatorState, OptimisticTransactionReceipt, TransactionAttemptPhase,
     TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
@@ -223,6 +224,10 @@ pub struct RealOptimisticTransaction<C, L, T> {
     /// primary, for its whole life — that invariant is the entire basis of
     /// lock recovery.
     pinned_primary_key: Option<Vec<u8>>,
+    /// The session's schema lease check, asked at client-go's three
+    /// `checkSchemaValid` sites. `None` commits unchecked ("Schema check is
+    /// not mandatory since MDL is introduced", `2pc.go:2155-2165`).
+    schema_lease: Option<SchemaLease>,
     /// The store-wide txn safe point every read from this transaction is
     /// validated against once TiKV has answered.
     gc_state: Arc<GcStateCache>,
@@ -371,6 +376,7 @@ where
             cleanup_backoff: RegionBackoffBudget::new(CLEANUP_MAX_BACKOFF),
             pessimistic: None,
             pinned_primary_key: None,
+            schema_lease: None,
             gc_state,
             protocol: CommitProtocol::two_phase_only(),
             detached_commit_observer: None,
@@ -469,6 +475,28 @@ where
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
         self.start_ts
+    }
+
+    /// Carries the session's schema lease check into this commit (Go
+    /// `txn.SetOption(kv.SchemaChecker, ...)`, `base.go:606-615`).
+    pub fn set_schema_lease(&mut self, lease: SchemaLease) {
+        self.schema_lease = Some(lease);
+    }
+
+    /// client-go `checkSchemaValid` (`2pc.go:2149-2168`): a transaction
+    /// without a checker passes.
+    pub(super) fn check_schema_valid(&self, check_ts: u64) -> Result<(), SchemaLeaseError> {
+        match &self.schema_lease {
+            Some(lease) => lease.check(check_ts),
+            None => Ok(()),
+        }
+    }
+
+    /// client-go `calculateMaxCommitTS`'s synthetic "now": the elapsed wall
+    /// time since the transaction opened, on top of `start_ts`.
+    pub(super) fn current_ts(&self) -> u64 {
+        let elapsed_ms = u64::try_from(self.opened_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        (elapsed_ms << TSO_LOGICAL_BITS).saturating_add(self.start_ts)
     }
 
     /// Shared process authority identity used by reads and writes.

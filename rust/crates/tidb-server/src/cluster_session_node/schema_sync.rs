@@ -36,13 +36,16 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use tidb_exec::catalog_watch::SharedCatalog;
+use tidb_exec::catalog_watch::{
+    CatalogReloadStats, CatalogReloadStatsSource, CatalogReloadWaker, SharedCatalog,
+};
 use tidb_exec::mdl_info_load::{load_mdl_jobs, MdlJob};
+use tidb_exec::schema_validator::{SchemaValidator, Validator as _};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::new_etcd_syncer;
-use tidb_schemaver::{Context as SchemaVersionContext, Syncer as SchemaVersionSyncer};
+use tidb_schemaver::{Context as SchemaVersionContext, Recv, Syncer as SchemaVersionSyncer};
 use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
 };
@@ -266,6 +269,9 @@ impl SchemaSyncAck {
         etcd: Arc<EtcdClient>,
         ddl_id: String,
         server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+        schema_validator: Arc<SchemaValidator>,
+        reload_waker: CatalogReloadWaker,
+        reload_stats: CatalogReloadStatsSource,
         tick: Duration,
         timeout: Duration,
     ) -> Result<Self, String>
@@ -313,6 +319,9 @@ impl SchemaSyncAck {
                     &pins,
                     ack_syncer.as_ref(),
                     &ack_context,
+                    &schema_validator,
+                    &reload_waker,
+                    &reload_stats,
                     tick,
                     timeout,
                     &stop_seen,
@@ -362,6 +371,9 @@ fn run_ack_loop<C, L, P>(
     pins: &SchemaPinRegistry,
     syncer: &dyn SchemaVersionSyncer,
     syncer_context: &SchemaVersionContext,
+    validator: &SchemaValidator,
+    reload_waker: &CatalogReloadWaker,
+    reload_stats: &CatalogReloadStatsSource,
     tick: Duration,
     timeout: Duration,
     stop: &AtomicBool,
@@ -378,6 +390,28 @@ fn run_ack_loop<C, L, P>(
     let mut reported_loaded_version: Option<i64> = None;
     let mut owed = false;
     while !stop.load(Ordering::SeqCst) {
+        // Go `SyncLoop`'s `<-syncer.Done()` arm (`issyncer/syncer.go:327-353`):
+        // the etcd session that registered this node is gone, so the owner
+        // no longer waits for it and may already have published versions it
+        // never acknowledged. Until the node re-registers and reloads, no
+        // transaction may commit.
+        if matches!(
+            syncer.done().recv_timeout(Duration::ZERO),
+            Recv::Item(()) | Recv::Closed
+        ) {
+            if !recover_schema_syncer(
+                syncer,
+                syncer_context,
+                validator,
+                reload_waker,
+                reload_stats,
+                catalog,
+                stop,
+            ) {
+                return;
+            }
+            continue;
+        }
         let loaded = catalog.load().schema_version;
 
         // Go's domain reload path reports every newly loaded version with
@@ -440,9 +474,152 @@ fn emit_warning(event: &str, error: &impl std::fmt::Display) {
     eprintln!("{{\"event\":\"{event}\",\"error\":\"{error}\"}}");
 }
 
+/// How long one requested reload pass is given before it is asked for again.
+const MUST_RELOAD_PASS_WAIT: Duration = Duration::from_secs(5);
+
+/// Go `SyncLoop`'s recovery after `<-syncer.Done()`
+/// (`issyncer/syncer.go:327-353`): stop the validator, restart the syncer
+/// until it takes (`mustRestartSyncer`, one second apart), reload until it
+/// succeeds (`mustReload`), then restart the validator at the reloaded
+/// version so a transaction still holding an older one is refused at commit.
+/// `false` means the node is stopping.
+fn recover_schema_syncer(
+    syncer: &dyn SchemaVersionSyncer,
+    syncer_context: &SchemaVersionContext,
+    validator: &SchemaValidator,
+    reload_waker: &CatalogReloadWaker,
+    reload_stats: &CatalogReloadStatsSource,
+    catalog: &SharedCatalog,
+    stop: &AtomicBool,
+) -> bool {
+    eprintln!("{{\"event\":\"schema_syncer_session_lost\"}}");
+    validator.stop();
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return false;
+        }
+        match syncer.restart(syncer_context) {
+            Ok(()) => break,
+            Err(error) => {
+                emit_warning("schema_syncer_restart_failed", &error);
+                sleep_sliced(Duration::from_secs(1), stop);
+            }
+        }
+    }
+    if !must_reload(reload_waker, reload_stats, stop) {
+        return false;
+    }
+    let version = catalog.load().schema_version;
+    validator.restart(version);
+    eprintln!("{{\"event\":\"schema_syncer_restarted\",\"schema_version\":{version}}}");
+    true
+}
+
+/// Go `mustReload` (`issyncer/syncer.go:385-401`) against the reload thread:
+/// ask for a pass and wait for one to succeed; a pass that fails is asked
+/// for again 200 ms later, until one succeeds or the node stops.
+fn must_reload(
+    reload_waker: &CatalogReloadWaker,
+    reload_stats: &CatalogReloadStatsSource,
+    stop: &AtomicBool,
+) -> bool {
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return false;
+        }
+        let before = reload_stats();
+        reload_waker.nudge();
+        let deadline = Instant::now() + MUST_RELOAD_PASS_WAIT;
+        loop {
+            if stop.load(Ordering::SeqCst) {
+                return false;
+            }
+            let now = reload_stats();
+            if successful_passes(&now) > successful_passes(&before) {
+                return true;
+            }
+            if now.failures > before.failures || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        sleep_sliced(Duration::from_millis(200), stop);
+    }
+}
+
+const fn successful_passes(stats: &CatalogReloadStats) -> u64 {
+    stats.passes.saturating_sub(stats.failures)
+}
+
+/// A sleep in small slices so a shutdown never waits it out.
+fn sleep_sliced(total: Duration, stop: &AtomicBool) {
+    let mut remaining = total;
+    while !stop.load(Ordering::SeqCst) && !remaining.is_zero() {
+        let slice = remaining.min(Duration::from_millis(50));
+        std::thread::sleep(slice);
+        remaining = remaining.saturating_sub(slice);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_exec::catalog_watch::{CatalogReloadPass, CatalogReloader};
+    use tidb_exec::cluster_catalog::ClusterCatalog;
+
+    /// Go `mustReload`: a reload that fails is asked for again until one
+    /// succeeds -- here the pass fails twice before it answers.
+    #[test]
+    fn must_reload_waits_out_failed_passes_until_one_succeeds() {
+        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+            schema_version: 7,
+            databases: Vec::new(),
+        }));
+        let mut failures_left = 2;
+        let reloader = CatalogReloader::spawn(
+            catalog,
+            Duration::from_secs(3600),
+            Box::new(move |_| {
+                if failures_left > 0 {
+                    failures_left -= 1;
+                    Err("store unreachable".to_owned())
+                } else {
+                    Ok(CatalogReloadPass::Unchanged)
+                }
+            }),
+        )
+        .expect("reloader");
+        let stop = AtomicBool::new(false);
+        assert!(must_reload(
+            &reloader.waker(),
+            &reloader.stats_source(),
+            &stop
+        ));
+        let stats = reloader.stats();
+        assert_eq!(stats.failures, 2);
+        assert!(stats.unchanged >= 1);
+    }
+
+    /// A node that is stopping gives up instead of waiting forever.
+    #[test]
+    fn must_reload_gives_up_when_the_node_stops() {
+        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+            schema_version: 7,
+            databases: Vec::new(),
+        }));
+        let reloader = CatalogReloader::spawn(
+            catalog,
+            Duration::from_secs(3600),
+            Box::new(|_| Err("store unreachable".to_owned())),
+        )
+        .expect("reloader");
+        let stop = AtomicBool::new(true);
+        assert!(!must_reload(
+            &reloader.waker(),
+            &reloader.stats_source(),
+            &stop
+        ));
+    }
 
     fn job(job_id: i64, version: i64, table_ids: &[i64]) -> MdlJob {
         MdlJob {

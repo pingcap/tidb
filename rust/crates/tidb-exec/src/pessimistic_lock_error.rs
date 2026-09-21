@@ -206,6 +206,13 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
         TransactionCause::SharedLockLost { start_ts, key } => {
             shared_lock_lost_to_sql_error(*start_ts, key)
         }
+        // The session's own error, rendered by the checker (Go
+        // `ErrInfoSchemaChanged` 8028 / `ErrInfoSchemaExpired` 8027).
+        TransactionCause::SchemaLease { code, message } => LockSqlError {
+            code: *code,
+            state: DEFAULT_SQL_STATE,
+            message: message.clone(),
+        },
         other => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,

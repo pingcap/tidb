@@ -3469,3 +3469,100 @@ filter is a no-op on real data; `GetTable`'s `checkDBExists` failure and
 this port's absent-table-key `MissingObject` both end in the full load.
 Not mirrored, deliberately: repair-mode filtering on the full load
 (`RepairInfo`), a feature this node does not have.
+
+## 2026-09-20: the schema validator is wired -- a commit whose schema is
+## stale, or whose node lost its schema lease, is refused like Go's
+
+The biggest gap found in this sweep was one the earlier authors had
+deferred on purpose (`catalog_watch.rs`'s old module doc: "This tier has no
+validator ... a real gap for writes, which is why error 8027 is
+deliberately deferred"). Go pairs the reload loop with a schema validator
+holding a lease, and client-go asks it at commit (`checkSchemaValid`,
+`2pc.go:2149-2168`): a transaction planned at version `v` that commits
+after a conflicting DDL is `ErrInfoSchemaChanged` (8028); one on a node
+whose validator is stopped (etcd session lost, so the owner no longer waits
+for it) or whose lease ran out (no successful reload for a whole lease) is
+`ErrInfoSchemaExpired` (8027) after `SchemaOutOfDateRetryTimes` retries.
+The validator (`tidb-exec/src/schema_validator.rs`) and the checker's retry
+loop (`tidb-domain/src/schema_checker.rs`) were both already ported; nothing
+called either. Now:
+
+- **txnkv** (`transaction/schema_lease.rs`, `coordinator/{mod,commit,prewrite}.rs`):
+  a `SchemaLeaseChecker` trait (Go `kv.SchemaChecker`) a transaction
+  carries via `set_schema_lease`, asked at client-go's sites -- before
+  prewrite at the synthetic current timestamp when async commit or 1PC may
+  be attempted (`calculateMaxCommitTS`, `2pc.go:1795-1858`), and after the
+  PD commit timestamp for a normal 2PC (`:1991-1996`); a refusal rolls the
+  prewrite back with the new `TransactionCause::SchemaLease`, which the
+  session renders with the checker's own code and message. No checker
+  commits unchecked ("Schema check is not mandatory since MDL is
+  introduced"). Not mirrored: `checkSchemaOnAssertionFail` (`:571-580`),
+  the re-check on a pessimistic-lock assertion failure -- this port has no
+  TiDB-side assertion path for it to guard.
+- **exec** (`cluster_table_storage.rs`): `SessionTransaction` and
+  `commit_staged_buffer` take the session's checker and supply the physical
+  table IDs the commit writes from its own mutation keys (Go
+  `TxnCtx.TableDeltaMap`'s keys, `base.go:585-596`). `catalog_reload.rs`
+  now answers Go `ApplyDiff`'s `[]int64` case for case (`appendAffectedIDs`,
+  partitions included; `-1` for a flashback; an in-place `ALTER` answers its
+  table twice, as Go's `applyTableUpdate` does) and `Diffs` carries the
+  `RelatedSchemaChange` `tryLoadSchemaDiffs` builds, TiFlash replica actions
+  skipped (`canSkipSchemaCheckerDDL`). `reload_catalog_from_cluster` reports
+  the timestamp it read at: Go's lease grant.
+- **server**: the reload closure (`schema_following.rs::note_reload`) is
+  Go `Syncer.Reload`'s tail (`issyncer/syncer.go:436-495`): reset on a full
+  load, `Update(lease_grant_ts, old, new, changes)` on every pass, the
+  cache hit's `oldSchemaVersion` of 0 included; the DDL executor's own
+  reload does the same. `cluster_session_node/schema_lease.rs` is Go
+  `SetOptionsBeforeCommit`: the checker over the node's validator, the
+  version pinned at `BEGIN` (or the autocommit statement's), the MDL switch
+  read at commit; every commit site (autocommit, prefetched write
+  transaction, explicit `COMMIT`) carries it. The ack loop
+  (`schema_sync.rs`) grows `SyncLoop`'s `<-syncer.Done()` arm
+  (`:327-353`): validator `Stop`, `mustRestartSyncer` (one second apart),
+  `mustReload` (the reload thread nudged until a pass succeeds, 200 ms
+  between attempts), `Restart(version)`.
+
+**Tests.** `schema_lease.rs`: behind-the-latest commits under MDL; a
+changed table refuses 8028 with Go's message without MDL and an untouched
+table commits; a stopped validator expires 8027; a version below the
+restart floor is refused. `schema_sync.rs`: `must_reload` waits out two
+failed passes; gives up on stop. `catalog_reload_source.rs`: the
+`RelatedSchemaChange` across two passes (create, in-place alter twice,
+skipped TiFlash action, drop, partitioned create, flashback `-1`), and
+`TRUNCATE`/`DROP DATABASE`/policy IDs. Every touched module's suites:
+`cargo test -p tidb-server --lib -- schema_lease schema_sync` 13/13,
+`-- cluster_session_node::tests` 251/251 (the trait defaults keep every
+mock unchanged), `cargo test -p tidb-exec --test catalog_reload_source`
+37/37, `-p tidb-exec --lib -- catalog schema_validator` 15/15,
+`-p tidb-txnkv --lib -- coordinator schema_lease` 23/23; `rustfmt` on every
+touched file; clippy clean on every touched line.
+
+**Live proof on the rebuilt binary** (`scratchpad/schema-lease-check.sh`,
+fresh playground, Go owner on :4000, this node on :4001). Ordinary writes
+through this node -- autocommit `INSERT`/`UPDATE`, an explicit optimistic
+transaction, a `BEGIN PESSIMISTIC` one -- all commit. With
+`tidb_enable_metadata_lock=OFF` (set on the Go node; this node observed it
+through its sysvar cache), a transaction that staged an `INSERT` before the
+Go node ran `ALTER TABLE ... ADD COLUMN` on the same table was refused at
+`COMMIT`:
+
+```
+ERROR 8028 (HY000) at line 2: [domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]
+```
+
+and the row it staged is not in the table (the prewrite was rolled back).
+With MDL back on, the same sequence commits and the `ALTER` completes only
+after the `COMMIT` (the owner waits for the transaction's pin instead) --
+Go's own two outcomes. The DDL acknowledgement path is unchanged by the
+wiring: 40 back-to-back DDL statements, 0 full reloads, 106 acks, 0.64 s
+per-group maximum. Not exercised live: the 8027 leg (a lost etcd session
+or a reload stalled past the lease), which is unit-tested through the
+checker and the recovery loop but needs PD or etcd to be taken away from a
+running node to see end to end.
+
+**Environment note.** PD had died again during this round's disk-full
+episode (`rm` of the fully regenerable `target/{debug,release}/build`
+trees -- this workspace keeps every artifact under `build/`, so purging
+them is a full rebuild, 10 minutes for the bench profile); the playground
+was restarted on its data once more.

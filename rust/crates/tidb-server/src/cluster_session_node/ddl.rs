@@ -29,16 +29,15 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use tidb_txnkv::PdRegionLoader;
 
 use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer, Syncer};
-use tidb_exec::catalog_reload::ReloadedCatalog;
-use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_exec::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
 use tidb_exec::cluster_ddl::{
     CheckConstraintValidation, DdlStatement, ExchangePartitionValidation, IndexBackfill,
 };
 use tidb_exec::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
+use tidb_exec::ddl_job_table::DdlJobTable;
 use tidb_exec::ddl_systable::MinJobIdRefresher;
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
-use tidb_exec::ddl_job_table::DdlJobTable;
 use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs_cached,
     load_history_persisted_ddl_job, load_min_persisted_ddl_job_id_cached,
@@ -50,6 +49,7 @@ use tidb_exec::real_tikv_ddl::{
     ClusterDdlReport, ExchangePartitionValidator, IndexBackfiller, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_exec::schema_validator::SchemaValidator;
 use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
 use tidb_executor::{RowDecodeContext, StmtContext};
 use tidb_pd_client::EtcdClient;
@@ -100,6 +100,9 @@ where
 {
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     catalog: Arc<SharedClusterCatalog>,
+    /// The node's schema validator, renewed by this reload like the reload
+    /// thread's own passes renew it.
+    schema_validator: Arc<SchemaValidator>,
     timeout: Duration,
     notifier: Option<Arc<EtcdClient>>,
     schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
@@ -543,6 +546,7 @@ where
         notifier: Option<Arc<EtcdClient>>,
         server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
         schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
+        schema_validator: Arc<SchemaValidator>,
         campaign_owner: bool,
     ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
@@ -582,6 +586,7 @@ where
         let schema_sync = Arc::new(ClusterSchemaSync {
             opener: Arc::clone(&opener),
             catalog: Arc::clone(&catalog),
+            schema_validator,
             timeout,
             notifier: notifier.clone(),
             schema_version_syncer,
@@ -797,11 +802,12 @@ where
 {
     fn reload_catalog(&self) -> Result<(), String> {
         let current = self.catalog.load();
-        match reload_catalog_from_cluster(&self.opener, self.timeout, &current)
-            .map_err(|error| error.to_string())?
+        let at = reload_catalog_from_cluster(&self.opener, self.timeout, &current)
+            .map_err(|error| error.to_string())?;
+        match crate::real_tikv_node::note_reload(&self.schema_validator, current.schema_version, at)
         {
-            ReloadedCatalog::Unchanged { .. } => {}
-            ReloadedCatalog::Diffs { catalog, .. } | ReloadedCatalog::Full { catalog, .. } => {
+            CatalogReloadPass::Unchanged => {}
+            CatalogReloadPass::Diffs(catalog) | CatalogReloadPass::Full(catalog) => {
                 self.catalog.store(catalog);
             }
         }

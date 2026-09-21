@@ -76,8 +76,8 @@ use tidb_txnkv::transaction::{
     CommitProtocol, LockKeepAlive, LockWaitTime, OptimisticCommitOutcome,
     OptimisticCoordinatorError, OptimisticMutation, PessimisticLockFailure,
     RealOptimisticTransaction, RealOptimisticTransactionOpener, RealPessimisticTransaction,
-    StorePdCapability, StoreWriteClient, StoreWriteLoader, TransactionCause,
-    MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    SchemaLease, SchemaLeaseChecker, StorePdCapability, StoreWriteClient, StoreWriteLoader,
+    TransactionCause, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::Key;
 use tidb_txnkv::PdRegionLoader;
@@ -758,6 +758,10 @@ where
     /// the locking transaction when the lazy pessimistic state is promoted
     /// (Go `OnPessimisticStmtStart` -> `KVTxn.StartFairLocking`).
     fair_locking: bool,
+    /// The session's schema lease checker, carried into the commit together
+    /// with the physical tables the commit writes (Go
+    /// `SetOptionsBeforeCommit`, `base.go:560-616`).
+    schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
 }
 
 enum SessionTransactionState<C, L, P: StorePdCapability> {
@@ -904,6 +908,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             timeout,
             pessimistic: false,
             fair_locking: false,
+            schema_lease_checker: None,
         })
     }
 
@@ -930,6 +935,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             timeout,
             pessimistic: false,
             fair_locking: false,
+            schema_lease_checker: None,
         })
     }
 
@@ -958,6 +964,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             timeout,
             pessimistic: true,
             fair_locking: false,
+            schema_lease_checker: None,
         })
     }
 
@@ -1002,6 +1009,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             timeout,
             pessimistic: true,
             fair_locking: false,
+            schema_lease_checker: None,
         })
     }
 
@@ -1239,6 +1247,14 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         self.commit_with(buffer, Vec::new())
     }
 
+    /// Binds the session's schema lease checker to this transaction's commit
+    /// (Go `txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(...))`,
+    /// `base.go:606-615`). The physical tables the checker is asked about are
+    /// taken from the mutations at commit time.
+    pub fn set_schema_lease_checker(&mut self, checker: Arc<dyn SchemaLeaseChecker>) {
+        self.schema_lease_checker = Some(checker);
+    }
+
     /// Publishes the staged writes together with `extra`, as one transaction at
     /// this transaction's own `start_ts`.
     ///
@@ -1259,6 +1275,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
         let (mut mutations, _) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
         mutations.extend(extra);
+        let schema_lease = schema_lease_for(self.schema_lease_checker.clone(), &mutations);
         if mutations.is_empty() {
             let mut state = self
                 .state
@@ -1276,21 +1293,35 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         };
         let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
         let outcome = match state {
-            SessionTransactionState::Optimistic(transaction) => {
+            SessionTransactionState::Optimistic(mut transaction) => {
+                if let Some(lease) = schema_lease {
+                    transaction.set_schema_lease(lease);
+                }
                 transaction.commit(mutations, &call)
             }
             SessionTransactionState::PessimisticPending {
                 transaction,
                 opened_at,
                 ..
-            } => RealPessimisticTransaction::from_transaction(transaction, opened_at)
-                .and_then(|transaction| transaction.commit(mutations, &call)),
+            } => RealPessimisticTransaction::from_transaction(transaction, opened_at).and_then(
+                |mut transaction| {
+                    if let Some(lease) = schema_lease {
+                        transaction.set_schema_lease(lease);
+                    }
+                    transaction.commit(mutations, &call)
+                },
+            ),
             SessionTransactionState::Pessimistic {
-                transaction,
+                mut transaction,
                 opener: _opener,
                 keep_alive: _keep_alive,
                 ..
-            } => transaction.commit(mutations, &call),
+            } => {
+                if let Some(lease) = schema_lease {
+                    transaction.set_schema_lease(lease);
+                }
+                transaction.commit(mutations, &call)
+            }
             SessionTransactionState::Finished => {
                 return Err(engine_sql_error(
                     "the transaction is already finished".to_owned(),
@@ -1900,6 +1931,7 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     read_ts: Option<u64>,
     timeout: Duration,
     commit_protocol: CommitProtocol,
+    schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
 ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
     // An autocommit buffer is no longer needed by the session after this
     // boundary. Move its entries into the mutation set, matching Go's
@@ -1919,6 +1951,9 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     // `@@tidb_enable_1pc` at execute time (`checkAsyncCommit` / `checkOnePC`);
     // the same eligibility decision then runs at commit.
     transaction.set_commit_protocol(commit_protocol);
+    if let Some(lease) = schema_lease_for(schema_lease_checker, &mutations) {
+        transaction.set_schema_lease(lease);
+    }
     let call = UnaryCallContext::with_timeout(timeout.max(TRANSACTION_END_TIMEOUT));
     let outcome = transaction
         .commit(mutations, &call)
@@ -1927,6 +1962,34 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     commit_outcome_to_sql_error_with_hint(&outcome, duplicate_hint.as_ref())?;
     buffer.reset();
     Ok(Some(outcome))
+}
+
+/// Go `SetOptionsBeforeCommit` (`base.go:585-596`): the physical table (or
+/// partition) IDs a commit writes, which is what the schema lease check is
+/// asked about. Go reads them off `TxnCtx.TableDeltaMap`, filled per DML
+/// statement with the physical ID of every table written; here the same
+/// set is the table prefix of every mutation key, which is by construction
+/// the physical ID. A key outside the table space (`decode_table_id` answers
+/// `0`) is not a table and is skipped, as Go's map never held it.
+pub fn physical_table_ids(mutations: &[OptimisticMutation]) -> Vec<i64> {
+    let mut ids: Vec<i64> = mutations
+        .iter()
+        .map(|mutation| tidb_codec::decode_table_id(mutation.key()))
+        .filter(|id| *id > 0)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn schema_lease_for(
+    checker: Option<Arc<dyn SchemaLeaseChecker>>,
+    mutations: &[OptimisticMutation],
+) -> Option<SchemaLease> {
+    checker.map(|checker| SchemaLease {
+        checker,
+        related_physical_table_ids: physical_table_ids(mutations),
+    })
 }
 
 /// The generic client-visible failure of a commit that never reached TiKV's

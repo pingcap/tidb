@@ -315,10 +315,11 @@ pub fn reload_catalog_from_cluster<
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     current: &ClusterCatalog,
-) -> Result<ReloadedCatalog, ClusterCatalogError> {
+) -> Result<ReloadedCatalogAt, ClusterCatalogError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+    let lease_grant_ts = transaction.start_ts();
     let reloaded = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         reload_cluster_catalog(&mut snapshot, current)?
@@ -326,7 +327,22 @@ pub fn reload_catalog_from_cluster<
     transaction
         .finish_without_writes()
         .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
-    Ok(reloaded)
+    Ok(ReloadedCatalogAt {
+        lease_grant_ts,
+        reloaded,
+    })
+}
+
+/// One reload pass's result together with the timestamp it was read at.
+#[derive(Clone, Debug)]
+pub struct ReloadedCatalogAt {
+    /// The PD timestamp the pass read at: Go's `version` in
+    /// `Syncer.Reload` (`issyncer/syncer.go:420-425`), which is also the
+    /// schema validator's lease grant (`schemaValidator.Update(version, ...)`,
+    /// `:494`).
+    pub lease_grant_ts: u64,
+    /// What the pass did.
+    pub reloaded: ReloadedCatalog,
 }
 
 /// Loads the whole cluster catalog through one fresh client-rust transaction.

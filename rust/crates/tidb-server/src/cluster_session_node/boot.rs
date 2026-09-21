@@ -137,7 +137,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // Its persisted boot image was installed synchronously above, before this
     // reloader and, crucially, before bind. This is independent of
     // privilege-cache policy.
-    let (catalog, reloader) =
+    let (catalog, reloader, schema_validator) =
         spawn_catalog_reloader(startup, authority.transaction_opener(), config.schema_lease)
             .map_err(|error| {
                 RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
@@ -198,9 +198,9 @@ pub(crate) fn run_cluster_session_node_with_spill(
             move || catalog.load().schema_version,
         );
         match tiflash_mpp {
-            Some(source) => Arc::new(
-                CopScanSource::new(authority.transport_factory()).with_tiflash_mpp(source),
-            ),
+            Some(source) => {
+                Arc::new(CopScanSource::new(authority.transport_factory()).with_tiflash_mpp(source))
+            }
             None => Arc::new(CopScanSource::new(authority.transport_factory())),
         }
     };
@@ -289,6 +289,9 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 etcd,
                 server_info.local_server_info().static_info.id,
                 Arc::clone(&server_info),
+                Arc::clone(&schema_validator),
+                reloader.waker(),
+                reloader.stats_source(),
                 super::schema_sync::MDL_CHECK_LOOK_DURATION,
                 CONTROL_PLANE_TIMEOUT,
             )
@@ -311,6 +314,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             crate::real_tikv_node::connect_schema_notifier(&config),
             Arc::clone(&server_info),
             schema_version_syncer,
+            Arc::clone(&schema_validator),
             config.run_ddl,
         )
         .map_err(|error| {
@@ -376,6 +380,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     .with_server_info(Arc::clone(&server_info))
     .with_stats_owner(stats_owner)
     .with_schema_pins(schema_pins)
+    .with_schema_validator(Arc::clone(&schema_validator))
     .with_spill_storage(spill_storage);
     let factory = match memory_arbitrator {
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
@@ -670,7 +675,7 @@ mod status_tests {
                 // registration alone; `tidb_server_connections` gains its
                 // series only once a connection has existed, exactly as
                 // Go's GaugeVec does.
-                                assert!(response.contains("tidb_monitor_time_jump_back_total"));
+                assert!(response.contains("tidb_monitor_time_jump_back_total"));
             }
         }
     }

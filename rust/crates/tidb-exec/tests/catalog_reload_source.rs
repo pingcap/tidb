@@ -172,6 +172,7 @@ fn a_create_materialized_view_log_diff_adds_exactly_that_table() {
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
+        ..
     } = reloaded
     else {
         panic!("expected a diff reload, got {reloaded:?}");
@@ -207,6 +208,7 @@ fn a_create_materialized_view_diff_adds_exactly_that_table() {
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
+        ..
     } = reloaded
     else {
         panic!("expected a diff reload, got {reloaded:?}");
@@ -240,6 +242,7 @@ fn a_create_table_diff_adds_exactly_that_table() {
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
+        ..
     } = reloaded
     else {
         panic!("expected a diff reload, got {reloaded:?}");
@@ -308,6 +311,7 @@ fn a_rename_table_diff_within_the_same_database_renames_in_place() {
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
+        ..
     } = reloaded
     else {
         panic!("expected an incremental diff reload, got {reloaded:?}");
@@ -348,6 +352,7 @@ fn a_rename_table_diff_across_databases_moves_the_table() {
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
+        ..
     } = reloaded
     else {
         panic!("expected an incremental diff reload, got {reloaded:?}");
@@ -402,6 +407,7 @@ fn a_rename_tables_diff_moves_every_affected_table() {
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
+        ..
     } = reloaded
     else {
         panic!("expected an incremental diff reload, got {reloaded:?}");
@@ -704,8 +710,131 @@ fn old_table_infos_are_normalized_on_load_like_gos_builder() {
     );
 }
 
+/// Go `tryLoadSchemaDiffs` (`loader.go:378-401`) collects, per applied
+/// diff, the physical table IDs `ApplyDiff` answered and the diff's action
+/// for each -- the `RelatedSchemaChange` the schema validator records --
+/// skipping only the TiFlash replica actions (`canSkipSchemaCheckerDDL`).
+/// A partitioned table answers its partitions too (`appendAffectedIDs`); a
+/// flashback answers `-1`, the every-table ID.
+#[test]
+fn diff_reloads_report_the_changed_physical_tables_and_actions() {
+    let (mut snapshot, catalog) = started_cluster();
+    // v101: CREATE TABLE 78 -> [78]
+    snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+    snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_TABLE, 3, 78));
+    // v102: ADD COLUMN on 77 -> [77] (reloaded in place)
+    snapshot.put(
+        key::table_kv_key(3, 77),
+        go_table_with_extra_column(77, "Rows", "rows", 3, "note"),
+    );
+    snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_ADD_COLUMN, 3, 77));
+    // v103: SET TIFLASH REPLICA on 77 -> skipped entirely
+    snapshot.commit_diff(
+        103,
+        &diff_json(103, ActionType::ACTION_SET_TI_FLASH_REPLICA, 3, 77),
+    );
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Diffs {
+        catalog,
+        applied,
+        changes,
+    } = reloaded
+    else {
+        panic!("expected an incremental diff reload, got {reloaded:?}");
+    };
+    assert_eq!(applied, 3);
+    // An in-place ALTER answers its table twice: Go's `applyTableUpdate`
+    // appends the dropped table's ID (`applyDropTable`) and then the
+    // re-created one's (`applyCreateTable`), and both are 77.
+    assert_eq!(changes.phy_tbl_ids, vec![78, 77, 77]);
+    assert_eq!(
+        changes.action_types,
+        vec![
+            u64::from(ActionType::ACTION_CREATE_TABLE.0),
+            u64::from(ActionType::ACTION_ADD_COLUMN.0),
+            u64::from(ActionType::ACTION_ADD_COLUMN.0),
+        ]
+    );
+
+    // A second pass, so the drop below does not make v101's create fall to
+    // the full load (its table would already be gone at the snapshot).
+    // v104: DROP TABLE 78, key gone -> [78]
+    snapshot.remove(&key::table_kv_key(3, 78));
+    snapshot.commit_diff(104, &diff_json(104, ActionType::ACTION_DROP_TABLE, 3, 78));
+    // v105: CREATE TABLE 79, partitioned -> [79, 791, 792]
+    snapshot.put(
+        key::table_kv_key(3, 79),
+        go_table(79, "Parted", "parted").replace(
+            r#","index_info":null"#,
+            r#","partition":{"type":1,"expr":"`id`","columns":null,"enable":true,"definitions":[{"id":791,"name":{"O":"p0","L":"p0"},"less_than":["10"]},{"id":792,"name":{"O":"p1","L":"p1"},"less_than":["MAXVALUE"]}],"num":0},"index_info":null"#,
+        ),
+    );
+    snapshot.commit_diff(105, &diff_json(105, ActionType::ACTION_CREATE_TABLE, 3, 79));
+    // v106: FLASHBACK CLUSTER (not regenerating) -> [-1]
+    snapshot.commit_diff(
+        106,
+        &diff_json(106, ActionType::ACTION_FLASHBACK_CLUSTER, 0, -1),
+    );
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Diffs {
+        applied, changes, ..
+    } = reloaded
+    else {
+        panic!("expected an incremental diff reload, got {reloaded:?}");
+    };
+    assert_eq!(applied, 3);
+    assert_eq!(changes.phy_tbl_ids, vec![78, 79, 791, 792, -1]);
+    assert_eq!(
+        changes.action_types,
+        vec![
+            u64::from(ActionType::ACTION_DROP_TABLE.0),
+            u64::from(ActionType::ACTION_CREATE_TABLE.0),
+            u64::from(ActionType::ACTION_CREATE_TABLE.0),
+            u64::from(ActionType::ACTION_CREATE_TABLE.0),
+            u64::from(ActionType::ACTION_FLASHBACK_CLUSTER.0),
+        ]
+    );
+}
+
+/// `TRUNCATE TABLE` answers the old and the new ID (`applyTableUpdate`:
+/// the dropped table's, then the created one's); `DROP DATABASE` answers
+/// every table it held; a schema-level or policy diff answers none.
+#[test]
+fn drop_schema_and_truncate_diffs_answer_gos_ids() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.put(key::table_kv_key(3, 90), go_table(90, "Rows", "rows"));
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":3,"table_id":90,"old_table_id":77,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":null}}"#,
+            ActionType::ACTION_TRUNCATE_TABLE.0
+        ),
+    );
+    snapshot.commit_diff(
+        102,
+        &diff_json(102, ActionType::ACTION_CREATE_PLACEMENT_POLICY, 99, 0),
+    );
+    snapshot.commit_diff(103, &diff_json(103, ActionType::ACTION_DROP_SCHEMA, 3, 0));
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Diffs { changes, .. } = reloaded else {
+        panic!("expected an incremental diff reload, got {reloaded:?}");
+    };
+    assert_eq!(changes.phy_tbl_ids, vec![77, 90, 90]);
+    assert_eq!(
+        changes.action_types,
+        vec![
+            u64::from(ActionType::ACTION_TRUNCATE_TABLE.0),
+            u64::from(ActionType::ACTION_TRUNCATE_TABLE.0),
+            u64::from(ActionType::ACTION_DROP_SCHEMA.0),
+        ]
+    );
+}
+
 fn diffs_reload(reloaded: ReloadedCatalog, what: &str) -> ClusterCatalog {
-    let ReloadedCatalog::Diffs { catalog, applied } = reloaded else {
+    let ReloadedCatalog::Diffs {
+        catalog, applied, ..
+    } = reloaded
+    else {
         panic!("expected an incremental diff reload for {what}, got {reloaded:?}");
     };
     assert_eq!(applied, 1, "{what}");
@@ -1072,6 +1201,7 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
         let ReloadedCatalog::Diffs {
             catalog: next,
             applied,
+            ..
         } = reloaded
         else {
             panic!("expected an incremental diff reload for {action}, got {reloaded:?}");
@@ -1127,6 +1257,7 @@ fn a_common_alter_table_diff_also_reloads_every_affected_table() {
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
+        ..
     } = reloaded
     else {
         panic!("expected an incremental diff reload, got {reloaded:?}");
@@ -1210,6 +1341,7 @@ fn an_empty_diff_in_the_middle_only_advances_the_version() {
     let ReloadedCatalog::Diffs {
         catalog: next,
         applied,
+        ..
     } = reloaded
     else {
         panic!("expected a diff reload");

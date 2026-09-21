@@ -20,6 +20,7 @@ mod mutation;
 mod mutation_buffer;
 mod pessimistic;
 mod region_batches;
+mod schema_lease;
 mod state;
 mod ttl;
 
@@ -44,6 +45,7 @@ pub use pessimistic::{
     RealPessimisticTransaction,
 };
 pub use region_batches::RegionMutationBatch;
+pub use schema_lease::{SchemaLease, SchemaLeaseChecker, SchemaLeaseError};
 pub use state::{
     CleanupBatchFailure, CleanupFailedTransaction, CommittedProtocol, CommittedTransaction,
     OptimisticCommitOutcome, OptimisticTransactionReceipt, OptimisticTransactionState,
