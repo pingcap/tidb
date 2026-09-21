@@ -92,6 +92,13 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
+	var taskMetaView struct {
+		Summary *struct {
+			IndexKVSize uint64 `json:"index_kv_size"`
+		} `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMetaView))
+	require.Nil(t, taskMetaView.Summary)
 	for i, par := range tblInfo.Partition.Definitions {
 		var subTask ddl.BackfillSubTaskMeta
 		require.NoError(t, json.Unmarshal(metas[i], &subTask))
@@ -274,29 +281,74 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 
 	// update meta, same as import into.
 	sortStepMeta := &ddl.BackfillSubTaskMeta{
-		MetaGroups: []*globalsort.SortedKVMeta{{
-			StartKey:    []byte("ta"),
-			EndKey:      []byte("tc"),
-			TotalKVSize: 12,
-			MultipleFilesStats: []simplesst.MultipleFilesStat{
-				{
-					Filenames: [][2]string{
-						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+		EleIDs: []int64{10, 20},
+		MetaGroups: []*globalsort.SortedKVMeta{
+			{
+				StartKey:    []byte("ta"),
+				EndKey:      []byte("tc"),
+				TotalKVSize: 12,
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+						},
 					},
 				},
 			},
-		}},
+			{
+				StartKey:    []byte("td"),
+				EndKey:      []byte("tf"),
+				TotalKVSize: 30,
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{"gs://sort-bucket/data/2", "gs://sort-bucket/data/2.stat"},
+						},
+					},
+				},
+			},
+		},
 	}
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
 	}
+
+	// Write-and-ingest planning can be retried out of sequence. A failed attempt
+	// must not mutate the task meta, while a retry records the read-index total.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGlobalSortIngestPlanErr", "1*return()")
+	originalTaskMeta := append([]byte(nil), task.Meta...)
+	var taskMetaView struct {
+		EleIDs          []int64 `json:"ele_ids"`
+		CloudStorageURI string  `json:"cloud_storage_uri"`
+		Summary         *struct {
+			IndexKVSize uint64 `json:"index_kv_size"`
+		} `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal(originalTaskMeta, &taskMetaView))
+	originalEleIDs := append([]int64(nil), taskMetaView.EleIDs...)
+	originalCloudStorageURI := taskMetaView.CloudStorageURI
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, proto.BackfillStepWriteAndIngest)
+	require.EqualError(t, err, "mock global-sort ingest planning error")
+	require.Empty(t, subtaskMetas)
+	require.Equal(t, originalTaskMeta, task.Meta)
+
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, proto.BackfillStepWriteAndIngest)
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 1)
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMetaView))
+	require.Equal(t, originalEleIDs, taskMetaView.EleIDs)
+	require.Equal(t, originalCloudStorageURI, taskMetaView.CloudStorageURI)
+	require.NotNil(t, taskMetaView.Summary)
+	require.Equal(t, uint64(42), taskMetaView.Summary.IndexKVSize)
+
 	// 2. to merge-sort stage.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
-	require.Len(t, subtaskMetas, 1)
+	require.Len(t, subtaskMetas, 2)
 	nextStep = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepMergeSort, nextStep)
 
@@ -310,30 +362,37 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	task.Step = nextStep
 	gotSubtasks, err = mgr.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
-	mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
-		MetaGroups: []*globalsort.SortedKVMeta{{
-			StartKey:    []byte("ta"),
-			EndKey:      []byte("tc"),
-			TotalKVSize: 12,
-			MultipleFilesStats: []simplesst.MultipleFilesStat{
-				{
-					Filenames: [][2]string{
-						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+	require.Len(t, gotSubtasks, 2)
+	mergeTotals := []uint64{17, 23}
+	for i, s := range gotSubtasks {
+		mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
+			EleIDs: []int64{int64((i + 1) * 10)},
+			MetaGroups: []*globalsort.SortedKVMeta{{
+				StartKey:    []byte("ta"),
+				EndKey:      []byte("tc"),
+				TotalKVSize: mergeTotals[i],
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{fmt.Sprintf("gs://sort-bucket/merged/%d", i), fmt.Sprintf("gs://sort-bucket/merged/%d.stat", i)},
+						},
 					},
 				},
-			},
-		}},
-	}
-	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
-	require.NoError(t, err)
-	for _, s := range gotSubtasks {
+			}},
+		}
+		mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
+		require.NoError(t, err)
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, mergeSortStepMetaBytes))
 	}
 	// 3. to write&ingest stage.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)")
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMetaView))
+	require.Equal(t, originalEleIDs, taskMetaView.EleIDs)
+	require.Equal(t, originalCloudStorageURI, taskMetaView.CloudStorageURI)
+	require.NotNil(t, taskMetaView.Summary)
+	require.Equal(t, uint64(40), taskMetaView.Summary.IndexKVSize)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepWriteAndIngest, task.Step)
 	// 4. to done stage.
@@ -469,10 +528,30 @@ func TestBackfillTaskMetaVersion(t *testing.T) {
 	// Test the default version.
 	meta := &ddl.BackfillTaskMeta{}
 	require.Equal(t, ddl.BackfillTaskMetaVersion0, meta.Version)
+	metaBytes, err := json.Marshal(meta)
+	require.NoError(t, err)
+	var zeroMetaView struct {
+		Summary json.RawMessage `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal(metaBytes, &zeroMetaView))
+	require.Nil(t, zeroMetaView.Summary)
 
 	// Test the new version.
 	meta = &ddl.BackfillTaskMeta{
 		Version: ddl.BackfillTaskMetaVersion1,
 	}
 	require.Equal(t, ddl.BackfillTaskMetaVersion1, meta.Version)
+
+	// Optional fields are decode-compatible without a task-meta version bump.
+	require.NoError(t, json.Unmarshal([]byte(`{"summary":{"index_kv_size":0}}`), meta))
+	metaBytes, err = json.Marshal(meta)
+	require.NoError(t, err)
+	var summaryMetaView struct {
+		Summary map[string]json.RawMessage `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal(metaBytes, &summaryMetaView))
+	require.NotNil(t, summaryMetaView.Summary)
+	indexKVSize, ok := summaryMetaView.Summary["index_kv_size"]
+	require.True(t, ok)
+	require.JSONEq(t, "0", string(indexKVSize))
 }

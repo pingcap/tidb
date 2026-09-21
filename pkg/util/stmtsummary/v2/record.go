@@ -15,7 +15,6 @@
 package stmtsummary
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"strings"
@@ -181,20 +180,19 @@ type StmtRecord struct {
 // statistics of the StmtExecInfo into the StmtRecord.
 func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	// Use "," to separate table names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range info.StmtCtx.Tables {
+	var tableNames strings.Builder
+	for _, value := range info.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		buffer.WriteString(strings.ToLower(value.DB))
-		buffer.WriteString(".")
-		buffer.WriteString(strings.ToLower(value.Table))
-		if i < len(info.StmtCtx.Tables)-1 {
-			buffer.WriteString(",")
+		if tableNames.Len() > 0 {
+			tableNames.WriteByte(',')
 		}
+		tableNames.WriteString(strings.ToLower(value.DB))
+		tableNames.WriteByte('.')
+		tableNames.WriteString(strings.ToLower(value.Table))
 	}
-	tableNames := buffer.String()
 	planDigest := info.PlanDigest
 	if len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
@@ -216,8 +214,8 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		Digest:        info.Digest,
 		PlanDigest:    planDigest,
 		StmtType:      info.StmtCtx.StmtType,
-		NormalizedSQL: info.NormalizedSQL,
-		TableNames:    tableNames,
+		NormalizedSQL: formatSQL(info.NormalizedSQL),
+		TableNames:    tableNames.String(),
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
 		BindingDigest: bindingDigest,
@@ -466,7 +464,7 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	// Networks
 	r.StmtNetworkTrafficSummary.Add(&tikvExecDetails)
 	// RU
-	r.StmtRUSummary.Add(info.RUDetail, info.TotalRUV2)
+	r.StmtRUSummary.Add(info.RUDetail)
 
 	r.StorageKV = info.StmtCtx.IsTiKV.Load()
 	r.StorageMPP = info.StmtCtx.IsTiFlash.Load()
@@ -747,7 +745,6 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		KeyspaceID:        1,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
-		TotalRUV2:         12345,
 		TiKVExecDetails:   &util.ExecDetails{},
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 		LazyInfo:          &mockLazyInfo{},

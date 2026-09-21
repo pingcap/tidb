@@ -18,7 +18,6 @@
 package stmtstats
 
 import (
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/tikv/client-go/v2/util"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -51,9 +50,7 @@ type RUKey struct {
 // ExecutionContext stores RU sampling state for one active SQL execution.
 type ExecutionContext struct {
 	RUDetails   *util.RUDetails
-	RUV2Metrics *execdetails.RUV2Metrics
 	Key         RUKey
-	RUV2Weights execdetails.RUV2Weights
 	LastRUTotal float64
 	RUVersion   rmclient.RUVersion
 }

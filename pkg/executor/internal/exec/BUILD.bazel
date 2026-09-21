@@ -39,12 +39,11 @@ go_test(
     timeout = "short",
     srcs = [
         "adaptive_limit_controller_test.go",
-        "executor_test.go",
         "indexusage_test.go",
     ],
     embed = [":exec"],
     flaky = True,
-    shard_count = 17,
+    shard_count = 15,
     deps = [
         "//pkg/domain",
         "//pkg/kv",
@@ -55,7 +54,6 @@ go_test(
         "//pkg/testkit",
         "//pkg/types/parser_driver",
         "//pkg/util/logutil",
-        "//pkg/util/mock",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",

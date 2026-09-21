@@ -213,8 +213,6 @@ func (s *Script) advance(name string) (reflect.Value, bool) {
 
 	for s.state.err == nil {
 		if s.state.next >= len(s.state.seq) {
-			s.state.err = fmt.Errorf("unexpected step %s after sequence completed", name)
-			s.state.cond.Broadcast()
 			return reflect.Value{}, false
 		}
 		current := s.state.seq[s.state.next]

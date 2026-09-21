@@ -138,6 +138,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 	}()
 
 	se := newTableSession(rawSe, t.tbl, t.expire)
+	sqlCtx := session.WithJobContext(ctx, t.jobID)
 	for len(leftRows) > 0 && ctx.Err() == nil {
 		maxBatch := vardef.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
@@ -173,7 +174,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		tracer.EnterPhase(metrics.PhaseOther)
 
 		sqlStart := time.Now()
-		_, needRetry, err := se.ExecuteSQLWithCheck(ctx, sql)
+		_, needRetry, err := se.ExecuteSQLWithCheck(sqlCtx, sql)
 		sqlInterval := time.Since(sqlStart)
 		if err != nil {
 			metrics.DeleteErrorDuration.Observe(sqlInterval.Seconds())

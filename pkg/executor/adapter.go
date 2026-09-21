@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrs "errors"
 	"fmt"
 	"math"
 	"runtime/trace"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -73,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -86,8 +89,11 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvtrace "github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -293,12 +299,30 @@ func (a *recordSet) Finish() error {
 }
 
 func (a *recordSet) Close() error {
+	return a.close(nil)
+}
+
+func (a *recordSet) close(lastErr error) error {
 	err := a.Finish()
 	if err != nil {
 		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
 	}
-	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(a.lastErrs...))
+	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(errors.Join(a.lastErrs...), lastErr))
 	return err
+}
+
+// CloseRecordSetWithError closes an executor-owned record set and passes the
+// execution error to statement completion, including slow logs and RU accounting.
+func CloseRecordSetWithError(rs sqlexec.RecordSet, lastErr error) error {
+	switch rs := rs.(type) {
+	case *recordSet:
+		return rs.close(lastErr)
+	case *chunkRowRecordSet:
+		rs.execStmt.CloseRecordSet(rs.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, lastErr)
+		return nil
+	default:
+		return rs.Close()
+	}
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -485,7 +509,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.Text()
-		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
+		maxExecutionTime := a.getMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -513,6 +537,44 @@ func (a *ExecStmt) OriginText() string {
 // Text returns utf8 encoded statement as a string.
 func (a *ExecStmt) Text() string {
 	return a.StmtNode.Text()
+}
+
+// getMaxExecutionTime returns the timeout that applies to the current statement.
+// max_execution_time keeps its MySQL-compatible SELECT-only semantics, while
+// tidb_dml_max_execution_time applies to transactional DML and COMMIT.
+// Call it after building the executor so the actual DML transaction mode is known.
+func (a *ExecStmt) getMaxExecutionTime() uint64 {
+	vars := a.Ctx.GetSessionVars()
+	if vars.DMLMaxExecutionTime == 0 {
+		return vars.GetMaxExecutionTime()
+	}
+	stmtCtx := vars.StmtCtx
+	if stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt {
+		// Non-transactional and batch DML can commit incrementally.
+		// Autocommit EXPLAIN ANALYZE DML commits before its result set is consumed.
+		batchDML := vars.BatchCommit || vardef.EnableBatchDML.Load() && vars.DMLBatchSize > 0 && !vars.InTxn() &&
+			((stmtCtx.InInsertStmt && vars.BatchInsert) ||
+				(stmtCtx.InDeleteStmt && vars.BatchDelete))
+		if vars.InNonTransactionalDML || batchDML || stmtCtx.InExplainStmt {
+			return 0
+		}
+		if vars.BulkDMLEnabled {
+			// Txn(false) only reads the existing transaction without activating it.
+			// Keep the timeout when bulk mode falls back to a regular transaction.
+			txn, _ := a.Ctx.Txn(false)
+			if txn != nil && txn.Valid() && txn.IsPipelined() {
+				return 0
+			}
+		}
+		return vars.DMLMaxExecutionTime
+	}
+	// Both ordinary and prepared COMMIT have a Simple plan at this point.
+	if simple, ok := a.Plan.(*plannercore.Simple); ok {
+		if _, isCommit := simple.Statement.(*ast.CommitStmt); isCommit && !vars.BatchCommit {
+			return vars.DMLMaxExecutionTime
+		}
+	}
+	return vars.GetMaxExecutionTime()
 }
 
 // IsPrepared returns true if stmt is a prepare statement.
@@ -589,7 +651,23 @@ func IsFastPlan(p base.Plan) bool {
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function. If the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
-func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
+func (a *ExecStmt) Exec(ctx context.Context) (rs sqlexec.RecordSet, err error) {
+	sctx := a.Ctx
+	sc := sctx.GetSessionVars().StmtCtx
+	defer func() {
+		// If a record set is returned, its Close method detaches the trackers.
+		// Otherwise, clean up here, including failures before executor Open.
+		// Run after panic recovery so cleanup sees the recovered error.
+		if rs == nil {
+			// Detaching the tracker resets SQLKiller, so preserve its error first.
+			err = NormalizeStmtCancellationError(sctx.GetSessionVars(), err)
+			sc.DetachMemDiskTracker()
+			if cteErr := resetCTEStorageMap(sctx); err == nil {
+				// Only overwrite err when it's nil.
+				err = cteErr
+			}
+		}
+	}()
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -647,7 +725,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 		}
 	})
-	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBBuildStatsConcurrency)
@@ -726,16 +803,17 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	if pi != nil {
 		sql := a.getSQLForProcessInfo()
-		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
+		maxExecutionTime := a.getMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
-		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
-			maxExecutionTime = 0
-		}
 		pi.SetProcessInfo(sql, execStartTime, cmd, maxExecutionTime)
+	}
+	// SetProcessInfo preserves the start time recorded before plan compilation.
+	// Reject an expired statement before Open or Next can start work with side effects.
+	if err = checkMaxExecutionTimeExceeded(sctx); err != nil {
+		return nil, err
 	}
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
@@ -782,6 +860,27 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		txnStartTS: txnStartTS,
 		traceID:    traceID,
 	}, nil
+}
+
+// NormalizeStmtCancellationError maps context and gRPC cancellation errors to SQLKiller errors.
+// Success, undetermined outcomes, and non-cancellation errors are preserved.
+func NormalizeStmtCancellationError(sessVars *variable.SessionVars, err error) error {
+	if err == nil || terror.ErrResultUndetermined.Equal(err) {
+		return err
+	}
+	if sessVars.SQLKiller.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
+		return err
+	}
+	cause := errors.Cause(err)
+	code := status.Code(cause)
+	if !stderrs.Is(cause, context.Canceled) && !stderrs.Is(cause, context.DeadlineExceeded) &&
+		code != codes.Canceled && code != codes.DeadlineExceeded {
+		return err
+	}
+	if killErr := sessVars.SQLKiller.HandleSignal(); killErr != nil {
+		return killErr
+	}
+	return err
 }
 
 func (a *ExecStmt) inheritContextFromExecuteStmt() {
@@ -971,22 +1070,7 @@ func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
 	return nil
 }
 
-func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
-	sc := a.Ctx.GetSessionVars().StmtCtx
-	defer func() {
-		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
-		// done in the `defer` function. If the rs is not nil, the detachment will be done in
-		// `rs.Close` in `handleStmt`
-		if handled && sc != nil && rs == nil {
-			sc.DetachMemDiskTracker()
-			cteErr := resetCTEStorageMap(a.Ctx)
-			if err == nil {
-				// Only overwrite err when it's nil.
-				err = cteErr
-			}
-		}
-	}()
-
+func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimistic bool) (bool, sqlexec.RecordSet, error) {
 	toCheck := e
 	isExplainAnalyze := false
 	if explain, ok := e.(*ExplainExec); ok {
@@ -999,7 +1083,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimi
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if toCheck.Schema().Len() == 0 {
-		handled = !isExplainAnalyze
+		handled := !isExplainAnalyze
 		if isPessimistic {
 			err := a.handlePessimisticDML(ctx, toCheck)
 			return handled, nil, err
@@ -1134,6 +1218,8 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e exec.Exe
 			break
 		}
 		if req.NumRows() == 0 {
+			// The returned record set only drains buffered rows; execution ends here.
+			a.recordStatementRURootEOF()
 			return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
@@ -1175,9 +1261,10 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := a.Plan.(*plannercore.Analyze); ok {
-		// ANALYZE is a no-delay statement: its only Next call completes the
-		// root executor, so there is no RecordSet EOF callback to record later.
+	switch classifyStatementRUPlan(a.Plan).kind {
+	case statementRUPlanAnalyze, statementRUPlanWrite, statementRUPlanCommit:
+		// These targets complete in their only Next call. Any EXPLAIN result
+		// set reports work that has already finished executing.
 		a.recordStatementRURootEOF()
 	}
 	err = a.handleStmtForeignKeyTrigger(ctx, e)
@@ -1722,11 +1809,11 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
-	a.finishStatementRU(err)
+	statementRUTotal := a.finishStatementRU(err)
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.LogSlowQuery(txnTS, succ, hasMoreResults)
-	a.SummaryStmt(succ)
-	a.observeStmtFinishedForTopProfiling()
+	a.LogSlowQuery(txnTS, succ, hasMoreResults, statementRUTotal)
+	a.SummaryStmt(succ, statementRUTotal)
+	a.observeStmtFinishedForTopProfiling(statementRUTotal)
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
@@ -1736,7 +1823,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 	}
 	a.updatePrevStmt()
-	a.recordLastQueryInfo(err)
+	a.recordLastQueryInfo(err, statementRUTotal)
 	a.recordAffectedRows2Metrics()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := sessVars.GetExecuteDuration()
@@ -1808,35 +1895,13 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
-func recordDMLRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowCount, columnCount int64) {
-	if rowCount <= 0 || columnCount <= 0 {
-		return
-	}
-
-	rowsColMultiply := rowCount * columnCount
-	if rowCount > math.MaxInt64/columnCount {
-		rowsColMultiply = math.MaxInt64
-	}
-	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddExecutorL5InsertRows(rowsColMultiply)
-	}
-}
-
-func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
-	recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)
-}
-
-// finalizeStatementRUV2Metrics is the sole drain of raw RUv2 counters. In-flight
-// TopRU samples see ResourceManager{Read,Write}Cnt as zero until this runs;
-// per-statement totals telescope correctly across the post-finalize sample.
+// finalizeStatementRUV2Metrics transfers pending TiKV coprocessor response bytes
+// into statement metrics before RUv2 calculation.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
 	}
-
-	execDetail := sessVars.StmtCtx.GetExecDetails()
-	execdetails.UpdateRUV2MetricsFromCommitDetails(sessVars.RUV2Metrics, execDetail.CommitDetail)
 
 	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
 	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
@@ -1844,34 +1909,44 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 		return
 	}
 	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
-
-	weights := sessVars.RUV2Weights()
-	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
-
-	dctx := a.Ctx.GetDistSQLCtx()
-	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
-		return
-	}
-	tikvRU := ruDetail.TiKVRUV2()
-	tiflashRU := ruDetail.TiflashRU()
-	if tikvRU > 0 || tidbRU > 0 || tiflashRU > 0 {
-		dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, tikvRU, tidbRU, tiflashRU)
-	}
 }
 
-func calculateStatementTotalRUV2(metrics *execdetails.RUV2Metrics, weights execdetails.RUV2Weights, ruDetail *util.RUDetails) float64 {
-	var tiKVRU, tiFlashRU float64
-	if ruDetail != nil {
-		tiKVRU = ruDetail.TiKVRUV2()
-		tiFlashRU = ruDetail.TiflashRU()
+func firstStatementRUTotal(statementRUTotal []float64) float64 {
+	if len(statementRUTotal) == 0 {
+		return 0
 	}
-	if metrics == nil {
-		return tiKVRU + tiFlashRU
-	}
-	return metrics.TotalRU(weights, tiKVRU, tiFlashRU)
+	return statementRUTotal[0]
 }
 
-func (a *ExecStmt) recordLastQueryInfo(err error) {
+// ruDetailsForStatementLog selects the RU values exposed by slow logs and
+// statement summaries without changing the shared execution accounting.
+func (a *ExecStmt) ruDetailsForStatementLog(ruDetails *util.RUDetails, statementRUTotal []float64) *util.RUDetails {
+	do := domain.GetDomain(a.Ctx)
+	if do == nil || do.GetRUVersion() != rmclient.RUVersionV2 {
+		return ruDetails
+	}
+	// Cursor fetches can emit slow logs before the statement RU total is finalized.
+	if len(statementRUTotal) == 0 {
+		return ruDetails
+	}
+
+	totalRU := statementRUTotal[0]
+	consumption := rmpb.Consumption{RRU: totalRU}
+	kind := classifyStatementRUPlan(a.Plan).kind
+	if kind == statementRUPlanWrite || kind == statementRUPlanCommit {
+		// Explicit transactions account for their committed write payload on COMMIT.
+		consumption.RRU, consumption.WRU = 0, totalRU
+	}
+	var waitDuration time.Duration
+	if ruDetails != nil {
+		waitDuration = ruDetails.RUWaitDuration()
+	}
+	logRUDetails := util.NewRUDetails()
+	logRUDetails.Update(&consumption, waitDuration)
+	return logRUDetails
+}
+
+func (a *ExecStmt) recordLastQueryInfo(err error, statementRUTotal float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	// Record diagnostic information for DML statements
 	recordLastQuery := false
@@ -1892,10 +1967,11 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 		})
 		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
 		sessVars.LastQueryInfo = sessionstates.QueryInfo{
-			TxnScope:      sessVars.CheckAndGetTxnScope(),
-			StartTS:       sessVars.TxnCtx.StartTS,
-			ForUpdateTS:   sessVars.TxnCtx.GetForUpdateTS(),
-			RUConsumption: lastRUConsumption,
+			TxnScope:        sessVars.CheckAndGetTxnScope(),
+			StartTS:         sessVars.TxnCtx.StartTS,
+			ForUpdateTS:     sessVars.TxnCtx.GetForUpdateTS(),
+			RUConsumption:   lastRUConsumption,
+			RUV2Consumption: statementRUTotal,
 		}
 		if err != nil {
 			sessVars.LastQueryInfo.ErrMsg = err.Error()
@@ -1925,6 +2001,7 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
+	failpoint.InjectCall("observeCloseRecordSetForTest", a, &lastErr)
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
@@ -1974,7 +2051,7 @@ func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cfg := config.GetGlobalConfig()
@@ -2013,6 +2090,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		slowItems = &variable.SlowQueryLogItems{}
 	}
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
+	slowItems.RUDetails = a.ruDetailsForStatementLog(slowItems.RUDetails, statementRUTotal)
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			if !slowItems.IsSyncStatsFailed {
@@ -2215,7 +2293,7 @@ func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.Dump
 }
 
 // SummaryStmt collects statements for information_schema.statements_summary
-func (a *ExecStmt) SummaryStmt(succ bool) {
+func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	var userString string
 	if sessVars.User != nil {
@@ -2317,8 +2395,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.Prepared = a.isPreparedStmt
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
-	stmtExecInfo.RUDetail = ruDetail
-	stmtExecInfo.TotalRUV2 = calculateStatementTotalRUV2(sessVars.RUV2Metrics, sessVars.RUV2Weights(), ruDetail)
+	stmtExecInfo.RUDetail = a.ruDetailsForStatementLog(ruDetail, statementRUTotal)
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
@@ -2462,8 +2539,6 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 		}
 		if topRU {
 			beginInfo.Ctx = a.GoCtx
-			beginInfo.RUV2Metrics = vars.RUV2Metrics
-			beginInfo.RUV2Weights = vars.RUV2Weights()
 			if vars.User != nil {
 				beginInfo.User = vars.User.String()
 			}
@@ -2527,7 +2602,7 @@ func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
 	a.Ctx.GetSessionVars().PlanCacheValue = nil // reset
 }
 
-func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
+func (a *ExecStmt) observeStmtFinishedForTopProfiling(statementRUTotal ...float64) {
 	vars := a.Ctx.GetSessionVars()
 	if vars == nil {
 		return
@@ -2549,6 +2624,7 @@ func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
 		TopRUEnabled:    topRU,
 	}
 	if topRU {
+		finishInfo.TotalRUV2 = firstStatementRUTotal(statementRUTotal)
 		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
 			finishInfo.RUDetails, _ = ruDetailRaw.(*util.RUDetails)
 		}

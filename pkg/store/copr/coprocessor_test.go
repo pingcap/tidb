@@ -22,7 +22,9 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
@@ -34,6 +36,10 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
+	pdgc "github.com/tikv/pd/client/clients/gc"
+	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/pkg/caller"
 )
 
 type recordingRunawayChecker struct {
@@ -1257,12 +1263,123 @@ func testHandleBatchCopResponseMergedAndUnansweredTasks(t *testing.T) {
 	require.Equal(t, uint64(1), fallback.Load())
 }
 
+type apiV2StoreBatchLockClient struct {
+	tikv.Client
+	copResponse              *tikvrpc.Response
+	checkTxnStatusPrimaryKey []byte
+}
+
+func (c *apiV2StoreBatchLockClient) SendRequest(
+	ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration,
+) (*tikvrpc.Response, error) {
+	switch req.Type {
+	case tikvrpc.CmdCop:
+		return c.copResponse, nil
+	case tikvrpc.CmdCheckTxnStatus:
+		c.checkTxnStatusPrimaryKey = append([]byte(nil), req.CheckTxnStatus().GetPrimaryKey()...)
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+type apiV2KeyspacePDClient struct {
+	pd.Client
+	meta *keyspacepb.KeyspaceMeta
+}
+
+func (c *apiV2KeyspacePDClient) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return c.meta, nil
+}
+
+func (c *apiV2KeyspacePDClient) WithCallerComponent(caller.Component) pd.Client {
+	// Keep this wrapper when client-go tags the PD client with its caller.
+	return c
+}
+
+func (c *apiV2KeyspacePDClient) GetGCStatesClient(uint32) pdgc.GCStatesClient {
+	// The mock PD implements GC state only for the legacy null keyspace. The
+	// safe point value, not its keyspace ID, is relevant to this test.
+	return c.Client.GetGCStatesClient(constants.NullKeyspaceID)
+}
+
+func testHandleBatchCopResponseResolvesAPIV2ChildLock(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithSingleStore(cluster)
+
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+		Name:     "test-keyspace",
+		State:    keyspacepb.KeyspaceState_ENABLED,
+	}
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+	require.NoError(t, err)
+	child := &copTask{taskID: 1}
+	primaryKey := []byte("primary")
+	rawClient := &apiV2StoreBatchLockClient{
+		Client: mockClient,
+		copResponse: &tikvrpc.Response{Resp: &coprocessor.Response{
+			BatchResponses: []*coprocessor.StoreBatchTaskResponse{
+				{
+					TaskId: child.taskID,
+					Locked: &kvrpcpb.LockInfo{
+						Key:         codec.EncodeKey([]byte("key")),
+						PrimaryLock: codec.EncodeKey(primaryKey),
+						LockVersion: 1,
+						// Keep lock cleanup synchronous with the test.
+						LockType: kvrpcpb.Op_PessimisticLock,
+					},
+				},
+			},
+		}},
+	}
+	tikvStore, err := tikv.NewTestKeyspaceTiKVStore(
+		rawClient,
+		&apiV2KeyspacePDClient{Client: pdClient, meta: keyspaceMeta},
+		nil, nil, 0, *keyspaceMeta,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+
+	decodedResp, err := tikvStore.GetTiKVClient().SendRequest(
+		context.Background(), "store1",
+		&tikvrpc.Request{
+			Type: tikvrpc.CmdCop,
+			Req: &coprocessor.Request{Tasks: []*coprocessor.StoreBatchTask{
+				{TaskId: child.taskID},
+			}},
+		},
+		time.Second,
+	)
+	require.NoError(t, err)
+
+	var resolvedLocks, committedLocks tikvutil.TSSet
+	worker := &copIteratorWorker{
+		req: &kv.Request{StartTs: 10},
+		kvclient: txnsnapshot.NewClientHelper(
+			tikvStore, &resolvedLocks, &committedLocks, false,
+		),
+		storeBatchedNum:         &atomic.Uint64{},
+		storeBatchedFallbackNum: &atomic.Uint64{},
+	}
+	_, _, err = worker.handleBatchCopResponse(
+		backoff.NewBackofferWithVars(context.Background(), 3000, nil),
+		nil,
+		decodedResp.Resp.(*coprocessor.Response),
+		map[uint64]*batchedCopTask{child.taskID: {task: child}},
+	)
+	require.NoError(t, err)
+	// Lock resolution must encode the decoded primary exactly once.
+	require.Equal(t, codec.EncodeKey(primaryKey), rawClient.checkTxnStatusPrimaryKey)
+}
+
 func TestHandleBatchCopResponse(t *testing.T) {
 	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
+	t.Run("resolves an API V2 child lock", testHandleBatchCopResponseResolvesAPIV2ChildLock)
 	t.Run("handles merged and unanswered tasks", testHandleBatchCopResponseMergedAndUnansweredTasks)
 	t.Run("updates child buckets on version mismatch", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
 	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
 	t.Run("rebuilds a store batch after a Region cache miss", testHandleStoreBatchRegionCacheMiss)
+	t.Run("picks the store batch RPC timeout", testStoreBatchCopRPCTimeout)
 }
 
 func testHandleStoreBatchRegionCacheMiss(t *testing.T) {
@@ -1515,4 +1632,85 @@ func testHandleBatchCopResponseFallbackCountersAfterRegionSplit(t *testing.T) {
 	// but counts as exactly one fallback.
 	require.Zero(t, storeBatchedNum.Load())
 	require.Equal(t, uint64(1), storeBatchedFallbackNum.Load())
+}
+
+// copTimeoutRecorder records the timeout of every coprocessor RPC and answers
+// it with an empty response.
+type copTimeoutRecorder struct {
+	tikv.Client
+	copTimeouts []time.Duration
+}
+
+func (c *copTimeoutRecorder) SendRequest(
+	ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration,
+) (*tikvrpc.Response, error) {
+	if req.Type != tikvrpc.CmdCop {
+		return c.Client.SendRequest(ctx, addr, req, timeout)
+	}
+	c.copTimeouts = append(c.copTimeouts, timeout)
+	return &tikvrpc.Response{Resp: &coprocessor.Response{}}, nil
+}
+
+func testStoreBatchCopRPCTimeout(t *testing.T) {
+	// Four Regions on one store build one primary task carrying three batched
+	// children, so the RPC holds four tasks in total.
+	const batchedChildren = 3
+	sendStoreBatch := func(t *testing.T, tweak func(req *kv.Request)) time.Duration {
+		mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+		require.NoError(t, err)
+		testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+		recorder := &copTimeoutRecorder{Client: mockClient}
+		tikvStore, err := tikv.NewTestTiKVStore(recorder, pdClient, nil, nil, 0)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+		copStore, err := NewStore(tikvStore, nil)
+		require.NoError(t, err)
+		t.Cleanup(copStore.Close)
+
+		ctx := context.Background()
+		req := &kv.Request{
+			Tp:                      kv.ReqTypeAnalyze,
+			StoreType:               kv.TiKV,
+			KeyRanges:               kv.NewNonPartitionedKeyRanges(BuildKeyRanges("a", "z")),
+			StoreBatchSize:          batchedChildren,
+			AllowBatchTaskDataMerge: true,
+		}
+		tweak(req)
+		it, errRes := (&CopClient{store: copStore}).BuildCopIterator(ctx, req, kv.NewVariables(nil), &kv.ClientSendOption{})
+		require.Nil(t, errRes)
+		require.Len(t, it.tasks, 1)
+		require.Len(t, it.tasks[0].batchTaskList, batchedChildren)
+
+		_, err = newCopIteratorWorker(it, nil).handleTaskOnce(backoff.NewBackofferWithVars(ctx, 3000, nil), it.tasks[0])
+		require.NoError(t, err)
+		require.Len(t, recorder.copTimeouts, 1)
+		return recorder.copTimeouts[0]
+	}
+
+	coprReqTimeout := config.GetGlobalConfig().TiKVClient.CoprReqTimeout
+	require.Positive(t, coprReqTimeout)
+
+	t.Run("serial batch gets the per-task budget for every task", func(t *testing.T) {
+		// TiKV runs a serial store batch under the top task's deadline, which
+		// client-go derives from this RPC timeout.
+		timeout := sendStoreBatch(t, func(req *kv.Request) {
+			req.ExecuteBatchTasksSerially = true
+		})
+		require.Equal(t, coprReqTimeout*(batchedChildren+1), timeout)
+	})
+
+	t.Run("serial batch scales tikv_client_read_timeout", func(t *testing.T) {
+		timeout := sendStoreBatch(t, func(req *kv.Request) {
+			req.ExecuteBatchTasksSerially = true
+			req.TiKVClientReadTimeout = 500
+		})
+		require.Equal(t, 500*time.Millisecond*(batchedChildren+1), timeout)
+	})
+
+	t.Run("concurrent batch keeps the single-request timeout", func(t *testing.T) {
+		// Concurrently executed children each get their own deadline on TiKV,
+		// so the RPC budget must not grow with the batch.
+		timeout := sendStoreBatch(t, func(*kv.Request) {})
+		require.Equal(t, coprReqTimeout, timeout)
+	})
 }

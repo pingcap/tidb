@@ -532,6 +532,7 @@ const (
 	version286 = 286
 
 	// version287 materializes adaptive LIMIT scan as OFF for upgraded clusters when no persisted value exists.
+	// version287 adds scan_index_id to mysql.tidb_ttl_task for index-ordered TTL scans.
 	version287 = 287
 )
 
@@ -2349,6 +2350,7 @@ func upgradeToVer286(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer287(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS scan_index_id bigint DEFAULT NULL")
 	// Fresh clusters persist ON during initial bootstrap. Preserve old executor
 	// behavior for upgraded clusters without overwriting an explicit value.
 	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)

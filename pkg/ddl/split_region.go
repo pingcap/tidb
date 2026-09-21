@@ -52,16 +52,16 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 	var regionIDs []uint64
 	if hasSplitPolicies(tbInfo) {
 		regionIDs = append(regionIDs,
-			applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID)...)
+			applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID, scatterScope)...)
 		for _, def := range parts {
 			regionIDs = append(regionIDs,
-				applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, def.ID)...)
+				applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, def.ID, scatterScope)...)
 		}
-	} else if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
+	} else if hasExplicitRegionSplitConfig(tbInfo) {
 		regionIDs = make([]uint64, 0, len(parts)*(len(tbInfo.Indices)+1))
-		scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
+		scatter, scatterGroupID := getScatterConfig(scatterScope, tbInfo.ID)
 		// Try to split global index region here.
-		regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tableID)...)
+		regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tbInfo.ID, scatterGroupID)...)
 		for _, def := range parts {
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
 		}
@@ -83,8 +83,8 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 
 	var regionIDs []uint64
 	if hasSplitPolicies(tbInfo) {
-		regionIDs = applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID)
-	} else if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
+		regionIDs = applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID, scatterScope)
+	} else if hasExplicitRegionSplitConfig(tbInfo) {
 		regionIDs = preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatterScope)
 	} else {
 		regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, tbInfo.ID, tbInfo.ID, scatterScope))
@@ -149,13 +149,13 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 		splitTableKeys = append(splitTableKeys, key)
 	}
-	scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
-	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter, &tableID)
+	scatter, scatterGroupID := getScatterConfig(scatterScope, tbInfo.ID)
+	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter, &scatterGroupID)
 	if err != nil {
 		logutil.DDLLogger().Warn("pre split some table regions failed",
 			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
-	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, physicalID)...)
+	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, physicalID, scatterGroupID)...)
 	return regionIDs
 }
 
@@ -174,7 +174,7 @@ func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTa
 	return 0
 }
 
-func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatter bool, physicalTableID int64) []uint64 {
+func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatter bool, physicalTableID, scatterGroupID int64) []uint64 {
 	splitKeys := make([][]byte, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
 		if tblInfo.GetPartitionInfo() != nil &&
@@ -199,7 +199,7 @@ func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatte
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, id)
 		splitKeys = append(splitKeys, indexPrefix)
 	}
-	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, &physicalTableID)
+	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, &scatterGroupID)
 	if err != nil {
 		logutil.DDLLogger().Warn("pre split some table index regions failed",
 			zap.Stringer("table", tblInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
@@ -233,12 +233,15 @@ func hasSplitPolicies(tbInfo *model.TableInfo) bool {
 	return false
 }
 
-func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalTableID int64) []uint64 {
+func hasExplicitRegionSplitConfig(tbInfo *model.TableInfo) bool {
+	return hasSplitPolicies(tbInfo) || (shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0)
+}
+
+func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalTableID int64, scatterScope string) []uint64 {
 	var regionIDs []uint64
 
 	sc := sctx.GetSessionVars().StmtCtx
-	svars := sctx.GetSessionVars() //nolint:forbidigo
-	scatter, tableID := getScatterConfig(svars.ScatterRegion, tbInfo.ID)
+	scatter, scatterGroupID := getScatterConfig(scatterScope, tbInfo.ID)
 
 	// apply table policy
 	if policy := tbInfo.TableSplitPolicy; policy != nil {
@@ -263,7 +266,7 @@ func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, st
 			goto index
 		}
 
-		ids, err := store.SplitRegions(ctx, keys, scatter, &tableID)
+		ids, err := store.SplitRegions(ctx, keys, scatter, &scatterGroupID)
 		if err != nil {
 			logutil.DDLLogger().Warn("split regions failed", zap.Error(err))
 			goto index
@@ -315,7 +318,7 @@ index:
 			continue
 		}
 
-		ids, err := store.SplitRegions(ctx, keys, scatter, &tableID)
+		ids, err := store.SplitRegions(ctx, keys, scatter, &scatterGroupID)
 		if err != nil {
 			logutil.DDLLogger().Warn("split regions failed", zap.Error(err))
 			continue
