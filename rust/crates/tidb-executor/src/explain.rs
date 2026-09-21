@@ -213,6 +213,7 @@ fn join_info(
     left_keys: &[tidb_expr::column::Column],
     right_keys: &[tidb_expr::column::Column],
     is_null_eq: &[bool],
+    equal_conditions: &[tidb_expr::scalar_function::ScalarFunction],
     na_equal_conditions: &[tidb_expr::scalar_function::ScalarFunction],
     left_conditions: &[tidb_expr::expression::Expression],
     right_conditions: &[tidb_expr::expression::Expression],
@@ -234,6 +235,21 @@ fn join_info(
         if !right_keys.is_empty() {
             parts.push(format!("right key:{}", columns_text(right_keys)));
         }
+    } else if !equal_conditions.is_empty() {
+        // Go `PhysicalHashJoin.explainInfo` (`physical_hash_join.go:243-256`):
+        // `equal:[...]` renders `EqualConditions` -- the ORIGINAL eq scalar
+        // functions whose argument order is the SQL text order -- not the
+        // child-aligned `left_keys`/`right_keys`, so a reordered join keeps
+        // the direction the query wrote.
+        let equal = equal_conditions
+            .iter()
+            .map(|condition| {
+                expression_text(&tidb_expr::expression::Expression::ScalarFunction(
+                    condition.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        parts.push(format!("equal:[{}]", equal.join(" ")));
     } else if !na_equal_conditions.is_empty() {
         // Go `PhysicalHashJoin.explainInfo` (`physical_hash_join.go:257-271`):
         // a NAAJ's `NAEqualConditions` render like `EqualConditions` --
@@ -659,12 +675,24 @@ fn index_join_decided_by_text_for_scan(
     context: &IndexJoinExplainContext<'_>,
     _scan: &tidb_planner::physical::PhysicalTableScan,
 ) -> String {
-    let single_pk = context.outer_keys.len() == 1 && context.access_conditions.is_empty();
-    if single_pk {
-        index_join_int_pk_decided_by_text(context)
-    } else {
-        index_join_decided_by_text(*context)
-    }
+    // A live Go master IndexHashJoin int-PK probe explains its inner
+    // TableRangeScan as `range: decided by [eq(inner, outer)]` -- the eq-pair
+    // form `indexJoinPathRangeInfo` builds -- and the list carries only the
+    // join-key pairs, never the residual access filters (q21's
+    // `ne(l_suppkey, l_suppkey)` stays out of Go's decided-by text).
+    let decided = context
+        .inner_keys
+        .iter()
+        .zip(context.outer_keys)
+        .map(|(inner, outer)| {
+            format!(
+                "eq({}, {})",
+                expression_text(&tidb_expr::expression::Expression::Column(inner.clone())),
+                expression_text(&tidb_expr::expression::Expression::Column(outer.clone()))
+            )
+        })
+        .collect::<Vec<_>>();
+    format!("range: decided by [{}]", decided.join(" "))
 }
 
 fn columns_text(columns: &[tidb_expr::column::Column]) -> String {
@@ -846,7 +874,13 @@ fn physical_operator_info(
     index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
     match plan {
-        PhysicalPlan::Selection(selection) => expressions_text(&selection.conditions),
+        PhysicalPlan::Selection(selection) => {
+            // Go `PhysicalSelection.ExplainInfo` renders through
+            // `expression.SortedExplainExpressionList`: the conditions are
+            // sorted by their rendered text, so the operator text is stable
+            // regardless of the CNF extraction order.
+            sorted_expressions_text(&selection.conditions)
+        }
         PhysicalPlan::Projection(projection) => {
             projection_text(&projection.exprs, projection.base.base.schema())
         }
@@ -868,6 +902,7 @@ fn physical_operator_info(
                 &join.left_join_keys,
                 &join.right_join_keys,
                 &join.is_null_eq,
+                &join.equal_conditions,
                 &join.na_equal_conditions,
                 &join.left_conditions,
                 &join.right_conditions,
@@ -883,6 +918,7 @@ fn physical_operator_info(
             &join.left_join_keys,
             &join.right_join_keys,
             &join.is_null_eq,
+            &[],
             &[],
             &join.left_conditions,
             &join.right_conditions,
@@ -980,6 +1016,7 @@ fn physical_operator_info(
             &apply.hash_join.left_join_keys,
             &apply.hash_join.right_join_keys,
             &apply.hash_join.is_null_eq,
+            &apply.hash_join.equal_conditions,
             &apply.hash_join.na_equal_conditions,
             &apply.hash_join.left_conditions,
             &apply.hash_join.right_conditions,
