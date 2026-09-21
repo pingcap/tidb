@@ -431,36 +431,34 @@ pub fn manual_analyze_total_succ() -> Counter {
 
 
 /// Go `AutoAnalyzeHistogram` (`pkg/metrics/stats.go`).
-pub static AUTO_ANALYZE_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
-    let metric = HistogramVec::new(
+pub static AUTO_ANALYZE_HISTOGRAM: LazyLock<Histogram> = LazyLock::new(|| {
+    let metric = Histogram::with_opts(
         HistogramOpts::new(
             "tidb_statistics_auto_analyze_duration_seconds",
             "Bucketed histogram of processing time (s) of auto analyze.",
         )
         .buckets(prometheus::exponential_buckets(0.01, 2.0, 24).expect("valid buckets")),
-        &["type"],
     )
-    .expect("valid auto analyze histogram");
+    .expect("valid AUTO_ANALYZE_HISTOGRAM histogram");
     prometheus::default_registry()
         .register(Box::new(metric.clone()))
-        .expect("auto analyze histogram is registered once");
+        .expect("AUTO_ANALYZE_HISTOGRAM is registered once");
     metric
 });
 
 /// Go `ReadStatsHistogram` (`pkg/metrics/stats.go`).
-pub static READ_STATS_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
-    let metric = HistogramVec::new(
+pub static READ_STATS_HISTOGRAM: LazyLock<Histogram> = LazyLock::new(|| {
+    let metric = Histogram::with_opts(
         HistogramOpts::new(
             "tidb_statistics_read_stats_latency_millis",
             "Bucketed histogram of latency time (ms) of stats read during sync-load.",
         )
         .buckets(prometheus::exponential_buckets(1.0, 2.0, 22).expect("valid buckets")),
-        &["type"],
     )
-    .expect("valid read stats histogram");
+    .expect("valid READ_STATS_HISTOGRAM histogram");
     prometheus::default_registry()
         .register(Box::new(metric.clone()))
-        .expect("read stats histogram is registered once");
+        .expect("READ_STATS_HISTOGRAM is registered once");
     metric
 });
 
@@ -482,53 +480,50 @@ pub static STATS_DELTA_UPDATE_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(
 });
 
 /// Go `StatsInaccuracyRate` (`pkg/metrics/stats.go`).
-pub static STATS_INACCURACY_RATE: LazyLock<HistogramVec> = LazyLock::new(|| {
-    let metric = HistogramVec::new(
+pub static STATS_INACCURACY_RATE: LazyLock<Histogram> = LazyLock::new(|| {
+    let metric = Histogram::with_opts(
         HistogramOpts::new(
             "tidb_statistics_stats_inaccuracy_rate",
             "Bucketed histogram of stats inaccuracy rate.",
         )
         .buckets(prometheus::exponential_buckets(0.01, 2.0, 14).expect("valid buckets")),
-        &["type"],
     )
-    .expect("valid stats inaccuracy rate histogram");
+    .expect("valid STATS_INACCURACY_RATE histogram");
     prometheus::default_registry()
         .register(Box::new(metric.clone()))
-        .expect("stats inaccuracy rate histogram is registered once");
+        .expect("STATS_INACCURACY_RATE is registered once");
     metric
 });
 
 /// Go `StatsUsageUpdateHistogram` (`pkg/metrics/stats.go`).
-pub static STATS_USAGE_UPDATE_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
-    let metric = HistogramVec::new(
+pub static STATS_USAGE_UPDATE_HISTOGRAM: LazyLock<Histogram> = LazyLock::new(|| {
+    let metric = Histogram::with_opts(
         HistogramOpts::new(
             "tidb_statistics_stats_usage_update_duration_seconds",
             "Bucketed histogram of processing time for the background stats usage update job",
         )
         .buckets(prometheus::exponential_buckets(0.01, 2.0, 24).expect("valid buckets")),
-        &["type"],
     )
-    .expect("valid stats usage update histogram");
+    .expect("valid STATS_USAGE_UPDATE_HISTOGRAM histogram");
     prometheus::default_registry()
         .register(Box::new(metric.clone()))
-        .expect("stats usage update histogram is registered once");
+        .expect("STATS_USAGE_UPDATE_HISTOGRAM is registered once");
     metric
 });
 
 /// Go `SyncLoadHistogram` (`pkg/metrics/stats.go`).
-pub static SYNC_LOAD_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
-    let metric = HistogramVec::new(
+pub static SYNC_LOAD_HISTOGRAM: LazyLock<Histogram> = LazyLock::new(|| {
+    let metric = Histogram::with_opts(
         HistogramOpts::new(
             "tidb_statistics_sync_load_latency_millis",
             "Bucketed histogram of latency time (ms) of sync load.",
         )
         .buckets(prometheus::exponential_buckets(1.0, 2.0, 22).expect("valid buckets")),
-        &["type"],
     )
-    .expect("valid sync load histogram");
+    .expect("valid SYNC_LOAD_HISTOGRAM histogram");
     prometheus::default_registry()
         .register(Box::new(metric.clone()))
-        .expect("sync load histogram is registered once");
+        .expect("SYNC_LOAD_HISTOGRAM is registered once");
     metric
 });
 
@@ -544,16 +539,16 @@ pub fn init_dashboard_series() {
     LazyLock::force(&SYNC_LOAD_TOTAL);
     LazyLock::force(&SYNC_LOAD_TIMEOUT_TOTAL);
     LazyLock::force(&SYNC_LOAD_DEDUP_TOTAL);
-    let _ = AUTO_ANALYZE_HISTOGRAM.with_label_values(&["auto"]);
+    LazyLock::force(&AUTO_ANALYZE_HISTOGRAM);
     let _ = MANUAL_ANALYZE_COUNTER.with_label_values(&["succ"]);
-    let _ = READ_STATS_HISTOGRAM.with_label_values(&["load"]);
+    LazyLock::force(&READ_STATS_HISTOGRAM);
     LazyLock::force(&STATS_DELTA_UPDATE_HISTOGRAM);
     // A label-less histogram vec: the zero-arity child must be created
     // explicitly for the family to export (Go's registry emits the family
     // header for registered vecs even before the first observation).
     let no_labels: [&str; 0] = [];
     let _ = STATS_DELTA_UPDATE_HISTOGRAM.with_label_values(&no_labels);
-    let _ = STATS_INACCURACY_RATE.with_label_values(&["rate"]);
-    let _ = STATS_USAGE_UPDATE_HISTOGRAM.with_label_values(&["usage"]);
-    let _ = SYNC_LOAD_HISTOGRAM.with_label_values(&["load"]);
+    LazyLock::force(&STATS_INACCURACY_RATE);
+    LazyLock::force(&STATS_USAGE_UPDATE_HISTOGRAM);
+    LazyLock::force(&SYNC_LOAD_HISTOGRAM);
 }
