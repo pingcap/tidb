@@ -251,7 +251,7 @@ fn dedicated_builder_refusal(func_name: &str) -> Option<EvalError> {
 /// - [`EvalError::WrongParameterCount`] (1582) for a bad argument count.
 /// - whatever `check_or_init` returns.
 pub fn new_function_impl(
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
     fold: ConstantFoldMode,
     func_name: &str,
     ret_type: FieldType,
@@ -347,7 +347,7 @@ pub fn new_function_impl(
     // Go getFunction refines comparison arguments before collation, the
     // construction callback and the selected constant-folding mode.
     let mut expression = Expression::ScalarFunction(function);
-    crate::builtin_compare::refine_comparison(&mut expression, ctx)?;
+    crate::builtin_compare::refine_comparison_dyn(&mut expression, ctx)?;
     let Expression::ScalarFunction(mut function) = expression else {
         unreachable!("comparison refinement preserves the function node")
     };
@@ -414,7 +414,7 @@ pub fn new_function_impl(
 ///
 /// See [`new_function_impl`].
 pub fn new_function(
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
     func_name: &str,
     ret_type: FieldType,
     args: Vec<Expression>,

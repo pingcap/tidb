@@ -30,6 +30,13 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, typed comparison boundaries) Go-oracle and red/green
+  evidence covers exact DECIMAL rounding above 2^53, signed-min conversion,
+  subquery references, and contextual unsigned diagnostics. Full datatype,
+  expression, planner and targeted numeric/cache/subquery checks pass, as does
+  lint. A verified narrow-integer projection improves 2.87x in calibrated
+  component timing; full package and workload acceptance remain open.
+
 - [x] (2026-09-21, mutable-constant failure state) Source oracle and red/green
   regressions establish Go's stored Datum, retained DeferredExpr, cleared
   parameter marker, traversal stop and retry behavior. The implementation
@@ -7234,3 +7241,162 @@ package audit. No throughput improvement is claimed. Full sysbench/TPC-C/TPC-H/
 YCSB performance runs, original whole-Go-package tests, ignored native tests,
 and platform/build/generated/support artifact gates remain unverified; package
 inventories remain unaccepted. The overall goal is still active.
+
+
+## Continuing typed integer-comparison refinement audit
+
+
+Checkpoint 60bdd00f3e is pushed and the next pull is current. The current
+RefineComparedConstant shortcut rounds every input through f64, losing DECIMAL
+precision above 2^53 and ignoring Go's typed CEIL/FLOOR result and subsequent
+ETInt short circuit. Audit the complete helper's evaluation, conversion,
+overflow, metadata and warning paths against Go, including narrow integer
+targets and large signed/unsigned values. Add red unit and SQL regressions,
+reuse native typed construction, validate affected consumers and lint, then
+commit/push. This is work inside the whole expression package audit; all
+package and full workload acceptance gates remain open.
+
+Typed refinement implementation findings
+
+RefineComparedConstant now evaluates the current constant and uses the live
+conversion flags/location/warning sink, with negative-to-unsigned wrapping
+disabled only for the initial conversion as Go does. CEIL/FLOOR construction
+uses new_function with its normal typed result and fold, then the same ETInt
+short circuit or conversion as tryToConvertConstantInt. NewFunction's shared
+entry points accept a context trait object so planner rewrites can use this
+construction path. Converted constants preserve deferred/parameter fields;
+overflow drops SubqueryRefID, successful conversion retains it. Constant
+folding now preserves the first positive input subquery reference for immutable
+results, matching the ordinary Go foldConstant arm.
+
+The exact boundary work exposes two datatype dependencies. Decimal.round_to_i64
+must parse an unsigned magnitude to admit i64::MIN, including half-up rounding
+onto it. Contextual integer conversions must report numeric overflow instead
+of treating its diagnostic as unported. The unsigned scanner now retains
+prefix, parser and width error precedence and warnings; an out-of-range negative
+exponent string continues through unsigned validation to produce zero, matching
+Go. Signed decimal overflow retains the source's unformatted ErrOverflow when
+MyDecimal.ToInt itself overflows. Temporal/JSON/binary-literal diagnostic arms
+not covered by this change remain explicitly unported; no whole types package
+acceptance is claimed.
+
+Source receipts: /tmp/tidb-refine-precision-go-final.log contains 77 refinement
+cases, five SQL queries, three subquery-reference folds and eleven signed-limit
+conversions; /tmp/tidb-refine-unsigned-go.log contains 32 unsigned conversions
+across TINYINT/BIGINT and strict/warning modes. Commands from repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-refine-precision-overlay.json -run '^TestRefine(Precision(SQL)?|FoldReference|DecimalLimit)Oracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-refine-precision-overlay.json -run '^TestRefineUnsignedDiagnosticsOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Both pass, with no failpoint dependency in the temporary harness. No original
+Go expression or types source changed relative to the pinned aba629bb tree.
+Native red evidence is in /tmp/tidb-refine-precision-red.log (LE boundary rounded
+one integer too high), /tmp/tidb-refine-precision-sql-red.log (missing the row
+9007199254740994), /tmp/tidb-refine-fold-reference-red.log (lost reference 77),
+/tmp/tidb-refine-decimal-limit-red.log (valid i64::MIN rejected), and
+/tmp/tidb-refine-context-red.log (unsigned overflow returned Unsupported).
+Each corresponding regression passes after the implementation. The SQL test
+checks five predicates with automatic, forced-index and table-scan access.
+
+Typed refinement final validation and performance receipt
+
+Run native commands from /private/tmp/tidb-parity-publish-aba629bb/rust with
+CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target. Red commands use the
+same directory/target and the relevant test filter:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib decimal_refinement_preserves_exact
+    cargo test --offline --locked -j12 -p tidb-session --lib decimal_comparison_refinement_keeps_large
+    cargo test --offline --locked -j12 -p tidb-expr --lib folding_preserves_first_positive
+    cargo test --offline --locked -j12 -p tidb-datatype --lib decimal_round_to_i64_accepts_negative_limit
+    cargo test --offline --locked -j12 -p tidb-datatype --lib contextual_integer_conversion_reports_numeric_overflow
+
+Final complete and targeted commands:
+
+    cargo test --offline --locked -j12 -p tidb-datatype --lib
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-planner --lib
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_compare_refinement
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_in_list_full_evaluation
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_sysbench_access
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_datetime_year_compare
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_collation
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib unsigned
+    cargo test --offline --locked -j12 -p tidb-session --lib decimal
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_subquery
+
+All pass: datatype 426, expression 1,209 (97 existing ignored), planner 959;
+session comparison 11, prepared cache 45, IN 6, EXPLAIN 64, sysbench access 15,
+YEAR 3, collation 13, numeric domain 16, unsigned 23, decimal 7 (2 existing
+ignored), subquery 23. These overlapping filters are not a distinct-test total.
+Initial session filters tests_arithmetic and tests_unsigned each selected zero
+tests; they are not validation evidence and were replaced by the actual numeric
+module/name filters above. Logs: /tmp/tidb-refine-precision-datatype.log and
+/tmp/tidb-refine-final-<crate>-<filter or all>.log.
+
+The new pipeline benchmark checks TINYINT-column < 127.1 through
+EvaluatorSuite, with every expected result and NULL checked before timing.
+Go's CEIL result 128 is already ETInt, so preserving it avoids the prior
+per-row decimal comparison. TINYINT-column < 126.1 is the in-range control.
+Both baseline and changed binaries use the identical new benchmark code and
+bench profile. The before production sources are exactly 60bdd00f3e; they were
+installed only in the isolated checkout during its build and restored from the
+primary tree in a finally block before the changed build. Primary source files
+were never replaced. Build command for each snapshot, in the directory above:
+
+    cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run --message-format=json
+
+Three alternating pairs then run:
+
+    BENCH_ONLY=integer_refinement /tmp/tidb-refine-before-pipeline
+    BENCH_ONLY=integer_refinement /tmp/tidb-refine-after-pipeline
+
+All result assertions pass. Median outside-range timing changes from 211.9 to
+74.1 ns/row, and calibrated units from 426.8157 to 148.9068: 2.866x faster.
+The control changes from 74.3 to 74.1 ns/row and 150.8311 to 149.1130 calibrated
+units (about 1.2%, near noise). Logs /tmp/tidb-refine-bench-{before,after}-[0-2].log;
+build logs use the same prefix without the run number. This is a component
+improvement, not a claim about complete sysbench/TPC-C/TPC-H/YCSB throughput.
+
+Required root checks:
+
+    GOTOOLCHAIN=go1.26.0 make lint
+    git diff --check
+    git diff --numstat aba629bb455dc09d6a5d98b3c39a542bb1189b9d -- pkg/expression pkg/types
+
+Lint passes (/tmp/tidb-refine-precision-lint.log), whitespace is clean, and the
+Go source comparison is empty. No Go/import/Bazel/module edits require
+bazel_prepare. Changed files: datatype convert.rs, datum_convert.rs,
+datum_convert/diagnostics.rs, decimal/mod.rs, decimal_tests.rs; expression
+builtin_compare.rs, constant_fold.rs, new_function.rs; session
+ tests_compare_refinement.rs; executor benches/pipeline.rs; and this plan.
+The tests' stale description of the '10ab' warning path is corrected to match
+Go's early exact-value return. Isolated tracked validation content is compared
+byte-for-byte with primary content before publication. The two unrelated
+untracked drafts remain excluded and untouched.
+
+Whole expression, types and dependent planner package inventories remain
+unaccepted. Original whole-Go-package tests, ignored native tests, remaining
+platform/build/generated/support artifacts, and complete four-workload
+performance gates are still open. Another visible audit candidate remains
+numeric-constant-to-datetime refinement: its native reads_column check and
+context-free conversion are narrower than the source's non-Constant and live
+context rules. It needs source evidence and regressions before any claim that
+those paths match. This checkpoint does not mark the user's goal complete.
+
+Publication integration note
+
+The first push was rejected because origin advanced to 3cc8829218, adding only
+one planner joinorder test. Fetch and rebase integrated it without conflicts.
+No production code changed in that upstream commit, so the component benchmark
+and expression/datatype evidence remain applicable. The full planner suite was
+rerun against the combined isolated tree and passes 960 tests:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib
+
+Log /tmp/tidb-refine-rebase-planner.log. GOTOOLCHAIN=go1.26.0 make lint also
+passes after rebase (/tmp/tidb-refine-rebase-lint.log). All 23 tracked validation
+paths match the combined primary tree byte-for-byte. Publication uses an
+ordinary (non-force) push.

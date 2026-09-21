@@ -117,18 +117,255 @@ mod tests {
     }
 
     #[test]
-    fn contextual_conversion_does_not_drop_unported_diagnostics() {
+    fn unsigned_contextual_conversion_matches_go_diagnostics() {
+        // Captured TestRefineUnsignedDiagnosticsOracle: strict/warning modes,
+        // parser errors, narrow-width overflow precedence and warning retention.
+        for (input, code, warn, expected, error) in [
+            (
+                "12tail",
+                1,
+                false,
+                12_u64,
+                Some("[types:1292]Truncated incorrect DOUBLE value: '12tail'"),
+            ),
+            (
+                "255.1tail",
+                1,
+                false,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '255.1'"),
+            ),
+            (
+                "256tail",
+                1,
+                false,
+                255_u64,
+                Some("[types:1690]constant 256 overflows tinyint"),
+            ),
+            (
+                "3.5tail",
+                1,
+                false,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '3.5'"),
+            ),
+            (
+                "-1",
+                1,
+                false,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '-1'"),
+            ),
+            (
+                "-1e100",
+                1,
+                false,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '-9223372036854775808'"),
+            ),
+            (
+                "1e100",
+                1,
+                false,
+                255_u64,
+                Some("[types:1690]constant 18446744073709551615 overflows tinyint"),
+            ),
+            (
+                "18446744073709551616",
+                1,
+                false,
+                255_u64,
+                Some("[types:1690]constant 18446744073709551615 overflows tinyint"),
+            ),
+            (
+                "12tail",
+                8,
+                false,
+                12_u64,
+                Some("[types:1292]Truncated incorrect DOUBLE value: '12tail'"),
+            ),
+            (
+                "255.1tail",
+                8,
+                false,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '255.1'"),
+            ),
+            (
+                "256tail",
+                8,
+                false,
+                256_u64,
+                Some("[types:1292]Truncated incorrect DOUBLE value: '256tail'"),
+            ),
+            (
+                "3.5tail",
+                8,
+                false,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '3.5'"),
+            ),
+            (
+                "-1",
+                8,
+                false,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '-1'"),
+            ),
+            (
+                "-1e100",
+                8,
+                false,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '-9223372036854775808'"),
+            ),
+            (
+                "1e100",
+                8,
+                false,
+                18446744073709551615_u64,
+                Some("[types:1690]BIGINT value is out of range in '1e100'"),
+            ),
+            (
+                "18446744073709551616",
+                8,
+                false,
+                18446744073709551615_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'"),
+            ),
+            ("12tail", 1, true, 12_u64, None),
+            ("255.1tail", 1, true, 255_u64, None),
+            (
+                "256tail",
+                1,
+                true,
+                255_u64,
+                Some("[types:1690]constant 256 overflows tinyint"),
+            ),
+            ("3.5tail", 1, true, 4_u64, None),
+            (
+                "-1",
+                1,
+                true,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '-1'"),
+            ),
+            (
+                "-1e100",
+                1,
+                true,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '-9223372036854775808'"),
+            ),
+            (
+                "1e100",
+                1,
+                true,
+                255_u64,
+                Some("[types:1690]constant 18446744073709551615 overflows tinyint"),
+            ),
+            (
+                "18446744073709551616",
+                1,
+                true,
+                255_u64,
+                Some("[types:1690]constant 18446744073709551615 overflows tinyint"),
+            ),
+            ("12tail", 8, true, 12_u64, None),
+            ("255.1tail", 8, true, 255_u64, None),
+            ("256tail", 8, true, 256_u64, None),
+            ("3.5tail", 8, true, 4_u64, None),
+            (
+                "-1",
+                8,
+                true,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '-1'"),
+            ),
+            (
+                "-1e100",
+                8,
+                true,
+                0_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '-9223372036854775808'"),
+            ),
+            (
+                "1e100",
+                8,
+                true,
+                18446744073709551615_u64,
+                Some("[types:1690]BIGINT value is out of range in '1e100'"),
+            ),
+            (
+                "18446744073709551616",
+                8,
+                true,
+                18446744073709551615_u64,
+                Some("[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'"),
+            ),
+        ] {
+            let warnings = Warnings::default();
+            let context = ConversionContext::new(
+                DEFAULT_STATEMENT_FLAGS.with_truncate_as_warning(warn),
+                ConversionLocation::UTC,
+                &warnings,
+            );
+            let target = FieldType::new(FieldTypeCode::from_mysql_type(code)).with_unsigned(true);
+            let converted = Datum::new_string(input)
+                .convert_to_in_context(&target, &context, &SessionTimeZone::utc())
+                .unwrap();
+            assert_eq!(
+                converted.value,
+                Datum::UInt(expected),
+                "{input} / {code} / {warn}"
+            );
+            assert_eq!(
+                converted.error.as_ref().map(ToString::to_string).as_deref(),
+                error,
+                "{input} / {code} / {warn}"
+            );
+            let expected_warnings = if warn && input.ends_with("tail") {
+                vec![format!(
+                    "[types:1292]Truncated incorrect DOUBLE value: '{input}'"
+                )]
+            } else {
+                vec![]
+            };
+            assert_eq!(
+                *warnings.0.borrow(),
+                expected_warnings,
+                "{input} / {code} / {warn}"
+            );
+        }
+    }
+
+    #[test]
+    fn contextual_integer_conversion_reports_numeric_overflow() {
         let context = ConversionContext::strict();
-        let target = FieldType::new(FieldTypeCode::Tiny).with_added_flags(FieldTypeFlags::UNSIGNED);
-        let result =
-            Datum::Int(256).convert_to_in_context(&target, &context, &SessionTimeZone::utc());
-        assert!(matches!(
-            result,
-            Err(crate::DatumValueError::Unsupported(
-                _,
-                "conversion diagnostic"
-            ))
-        ));
+        let zone = SessionTimeZone::utc();
+        for (input, target, expected) in [
+            (
+                Datum::Int(256),
+                FieldType::new(FieldTypeCode::Tiny).with_added_flags(FieldTypeFlags::UNSIGNED),
+                Datum::UInt(255),
+            ),
+            (
+                Datum::Decimal(crate::Decimal::parse_mysql("-0.1").0),
+                FieldType::new(FieldTypeCode::Tiny).with_added_flags(FieldTypeFlags::UNSIGNED),
+                Datum::UInt(0),
+            ),
+            (
+                Datum::Decimal(crate::Decimal::parse_mysql("9223372036854775808.1").0),
+                FieldType::new(FieldTypeCode::LongLong),
+                Datum::Int(i64::MAX),
+            ),
+        ] {
+            let result = input
+                .convert_to_in_context(&target, &context, &zone)
+                .unwrap();
+            assert_eq!(result.value, expected);
+            assert_eq!(result.error.unwrap().code().value(), 1690);
+        }
     }
 
     #[test]
@@ -210,13 +447,13 @@ impl<'a, 'w> Diagnostics<'a, 'w> {
         Ok(converted)
     }
 
-    pub(super) fn error(&mut self, make: impl FnOnce() -> TerrorError) {
+    pub(crate) fn error(&mut self, make: impl FnOnce() -> TerrorError) {
         if self.context.is_some() && self.error.is_none() {
             self.error = Some(make());
         }
     }
 
-    pub(super) fn replace_error(&mut self, make: impl FnOnce() -> TerrorError) {
+    pub(crate) fn replace_error(&mut self, make: impl FnOnce() -> TerrorError) {
         if self.context.is_some() {
             self.error = Some(make());
         }

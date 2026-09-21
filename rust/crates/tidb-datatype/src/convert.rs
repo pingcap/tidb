@@ -747,9 +747,27 @@ pub(crate) fn str_to_uint_with_truncate_policy(
     is_function_cast: bool,
     truncate_as_warning: bool,
 ) -> Converted<u64> {
+    str_to_uint_reported(
+        input,
+        is_function_cast,
+        truncate_as_warning,
+        &mut crate::datum_convert::diagnostics::Diagnostics::new(None),
+    )
+}
+
+pub(crate) fn str_to_uint_reported(
+    input: &str,
+    is_function_cast: bool,
+    truncate_as_warning: bool,
+    diagnostics: &mut crate::datum_convert::diagnostics::Diagnostics<'_, '_>,
+) -> Converted<u64> {
     let input = input.trim();
     let float = valid_float_prefix(input, is_function_cast);
+    if float.truncated() {
+        diagnostics.truncated_numeric_input(input);
+    }
     let mut function_cast_consumed_all = true;
+    let mut prefix_error = None;
     let integer = if is_function_cast {
         let (prefix, consumed_all) = function_cast_integer_prefix(input);
         function_cast_consumed_all = consumed_all;
@@ -760,16 +778,23 @@ pub(crate) fn str_to_uint_with_truncate_policy(
         match float_string_to_integer_string(float.value(), input) {
             Ok(value) => value,
             Err((value, error)) => {
-                return Converted {
-                    value: value.parse().unwrap_or(u64::MAX),
-                    event: Some(ScalarConversionEvent::Overflow(error)),
-                };
+                diagnostics.error(|| {
+                    crate::ERR_OVERFLOW
+                        .generate(format!("BIGINT value is out of range in '{input}'"))
+                });
+                prefix_error = Some(ScalarConversionEvent::Overflow(error));
+                value
             }
         }
     };
     let unsigned = integer.strip_prefix('+').unwrap_or(&integer);
     if let Some(magnitude) = unsigned.strip_prefix('-') {
         if magnitude.bytes().any(|byte| byte != b'0') {
+            diagnostics.replace_error(|| {
+                crate::ERR_OVERFLOW.generate(format!(
+                    "BIGINT UNSIGNED value is out of range in '{integer}'"
+                ))
+            });
             return Converted {
                 value: 0,
                 event: Some(ScalarConversionEvent::Overflow(overflow(
@@ -786,20 +811,33 @@ pub(crate) fn str_to_uint_with_truncate_policy(
     }
     match unsigned.parse::<u64>() {
         Ok(value) if float.truncated() || (is_function_cast && !function_cast_consumed_all) => {
-            Converted::truncated(value)
+            Converted {
+                value,
+                event: prefix_error.or(Some(ScalarConversionEvent::Truncated)),
+            }
         }
-        Ok(value) => Converted::exact(value),
-        Err(error) => Converted {
-            value: if matches!(error.kind(), std::num::IntErrorKind::PosOverflow) {
-                u64::MAX
-            } else {
-                0
-            },
-            event: Some(ScalarConversionEvent::Overflow(overflow(
-                &integer,
-                FieldTypeCode::LongLong,
-            ))),
+        Ok(value) => Converted {
+            value,
+            event: prefix_error,
         },
+        Err(error) => {
+            diagnostics.replace_error(|| {
+                crate::ERR_OVERFLOW.generate(format!(
+                    "BIGINT UNSIGNED value is out of range in '{unsigned}'"
+                ))
+            });
+            Converted {
+                value: if matches!(error.kind(), std::num::IntErrorKind::PosOverflow) {
+                    u64::MAX
+                } else {
+                    0
+                },
+                event: Some(ScalarConversionEvent::Overflow(overflow(
+                    &integer,
+                    FieldTypeCode::LongLong,
+                ))),
+            }
+        }
     }
 }
 

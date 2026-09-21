@@ -38,20 +38,20 @@
 //!
 //! `RefineComparedConstant` first converts the constant to the column's type
 //! (:1585-1598). That conversion is warning one. It then compares the
-//! converted value against the original (:1600): when they are equal the int
-//! is exact and is returned as-is. When they differ -- '10ab' converts to 10
-//! but 10 != '10ab' -- the operator decides the rounding direction:
+//! converted value against the original (:1600), raising warning two for
+//! '10ab'. Its numeric value equals 10, so refinement returns immediately.
+//! When values differ, as with 3.5, the operator decides the rounding direction:
 //!
 //! ```text
 //! case opcode.LT, opcode.GE:   ast.Ceil    builtin_compare.go:1613-1614
 //! case opcode.LE, opcode.GT:   ast.Floor   builtin_compare.go:1618-1619
 //! ```
 //!
-//! `a > '10ab'` is GT, so it takes the `Floor` fold, and the fold's own
-//! string->double coercion is warning two. `tryToConvertConstantInt`
-//! (:1516-1564) then turns the folded constant into the column's int type.
-//! Two conversions, both at build time, and the comparison that survives is
-//! `gt(a, 10)` -- int to int, so no row ever coerces a string.
+//! CEIL/FLOOR preserve the input's numeric domain, avoiding loss of DECIMAL
+//! precision above 2^53. `tryToConvertConstantInt` retains an ETInt result
+//! unchanged; other result types convert to the column's integer type.
+//! A partial fractional string such as '3.5abc' warns a third time during
+//! rounding. All these conversions happen at construction, not per row.
 //!
 //! TiDB's own recording shows exactly that plan
 //! (`tests/integrationtest/r/executor/partition/partition_with_expression.result`
@@ -704,4 +704,61 @@ fn derived_cast_substitution_matches_go_warnings_and_charset() {
         vec!["1292 Truncated incorrect INTEGER value: '12ab'"; 6]
     );
     assert_eq!(session.wire_warning_count(), 6);
+}
+
+#[test]
+fn decimal_comparison_refinement_keeps_large_integer_rows() {
+    let mut session = Session::new();
+    session
+        .run("create table precise(a bigint, key(a))")
+        .unwrap();
+    session.run("insert into precise values(9007199254740992),(9007199254740993),(9007199254740994),(9007199254740995),(-9007199254740994),(-9007199254740993),(null)").unwrap();
+    for access in ["", "force index(a)", "ignore index(a)"] {
+        for (predicate, expected) in [
+            (
+                "a > 9007199254740993.1",
+                vec![9007199254740994_i64, 9007199254740995],
+            ),
+            (
+                "a <= 9007199254740993.1",
+                vec![
+                    -9007199254740994,
+                    -9007199254740993,
+                    9007199254740992,
+                    9007199254740993,
+                ],
+            ),
+            (
+                "9007199254740993.1 >= a",
+                vec![
+                    -9007199254740994,
+                    -9007199254740993,
+                    9007199254740992,
+                    9007199254740993,
+                ],
+            ),
+            (
+                "a >= -9007199254740993.1",
+                vec![
+                    -9007199254740993,
+                    9007199254740992,
+                    9007199254740993,
+                    9007199254740994,
+                    9007199254740995,
+                ],
+            ),
+            ("a < -9007199254740993.1", vec![-9007199254740994]),
+        ] {
+            let sql = format!("select a from precise {access} where {predicate} order by a");
+            assert_eq!(
+                row_text(session.run(&sql)),
+                expected
+                    .iter()
+                    .map(|value| vec![value.to_string()])
+                    .collect::<Vec<_>>(),
+                "{sql}"
+            );
+            assert!(session.warnings().is_empty(), "{sql}");
+        }
+    }
 }

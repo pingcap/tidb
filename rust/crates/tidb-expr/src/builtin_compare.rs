@@ -42,7 +42,7 @@ use crate::constant::Constant;
 use crate::context::{Columns, EvalError};
 use crate::expression::Expression;
 use tidb_datatype::{
-    Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags, ScalarConversionEvent,
+    Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags,
 };
 
 /// The result `FieldType` Go's `compareFunctionClass.getFunction` derives, for
@@ -167,130 +167,119 @@ fn refine_compared_constant(
     con: &Constant,
     op: &str,
 ) -> Option<(Constant, bool)> {
-    // `:1580-1582`: a BIT column is refined against LONGLONG instead.
-    let target = if matches!(target.code(), FieldTypeCode::Bit) {
+    let value = con.eval_in(ctx).ok()?;
+    let target = if target.code() == FieldTypeCode::Bit {
         &FieldType::new(FieldTypeCode::LongLong)
     } else {
         target
     };
-
-    // `:1585-1587`: AllowNegativeToUnsigned off, so an underflow saturates at
-    // 0 instead of wrapping.
-    let flags = tidb_datatype::DEFAULT_STATEMENT_FLAGS
-        .with_allow_negative_to_unsigned(false)
-        .with_truncate_as_warning(true);
-    let converted = con.value.convert_to(target, flags).ok()?;
-    if matches!(converted.event, Some(ScalarConversionEvent::Overflow(_))) {
-        let mut refined = con.clone();
-        refined.value = converted.value;
-        refined.ret_type = Some(target.clone());
-        return Some((refined, true));
+    // Go disables negative-to-unsigned wrapping only for the initial probe.
+    let (integer, exceptional) = convert_refinement_constant(
+        ctx,
+        target,
+        con,
+        &value,
+        ctx.type_flags().with_allow_negative_to_unsigned(false),
+    )?;
+    if exceptional {
+        return Some((integer, true));
     }
-    // The FIRST warning: the string->int conversion runs the float-prefix
-    // scan (`getValidIntPrefix`'s non-cast arm), which raises 1292.
-    note_string_truncation(ctx, &con.value).ok()?;
-    let int_datum = converted.value;
-
-    // Go carries `DeferredExpr`/`ParamMarker`/`SubqueryRefID` across onto the
-    // refined constant (`:1602-1608`); only the value and type change.
-    let int_constant = |value: Datum| {
-        let mut refined = Constant::new(value, target.clone());
-        refined.deferred_expr = con.deferred_expr.clone();
-        refined.param_marker = con.param_marker;
-        refined.subquery_ref_id = con.subquery_ref_id;
-        refined
-    };
-
-    // `:1600-1609`: an exact constant is already the answer.
-    let ordering = compare_int_with_constant(ctx, &int_datum, &con.value).ok()?;
-    if ordering == std::cmp::Ordering::Equal {
-        return Some((int_constant(int_datum), false));
+    if compare_int_with_constant(ctx, &integer.value, &con.value).ok()? == std::cmp::Ordering::Equal
+    {
+        return Some((integer, false));
     }
-
     match op {
-        // `:1613-1619`: the operator picks the rounding direction, so that
-        // `a < 1.1` and `a >= 1.1` mean `a < 2`/`a >= 2` while `a <= 1.1`
-        // and `a > 1.1` mean `a <= 1`/`a > 1`.
         "lt" | "ge" | "le" | "gt" => {
-            let value = con.value.to_f64().ok()?.value;
-            // Reading the string as a double is the fold's own coercion, and
-            // it raises the truncation once more when the string is partial.
-            note_string_truncation(ctx, &con.value).ok()?;
-            let folded = if matches!(op, "lt" | "ge") {
-                value.ceil()
+            // Go builds and folds the typed CEIL/FLOOR signature. Decimal
+            // inputs must retain their precision, including values above 2^53.
+            let name = if matches!(op, "lt" | "ge") {
+                "ceil"
             } else {
-                value.floor()
+                "floor"
             };
-            // Go `tryToConvertConstantInt` (`:1516`): the folded REAL becomes
-            // the column's int type, and an overflow there leaves the
-            // comparison unrefined for the same reason as above.
-            let folded = Datum::Real(folded).convert_to(target, flags).ok()?;
-            if folded.event.is_some() {
+            let Expression::Constant(folded) = crate::new_function::new_function(
+                ctx,
+                name,
+                FieldType::new(FieldTypeCode::Unspecified),
+                vec![Expression::Constant(con.clone())],
+            )
+            .ok()?
+            else {
                 return None;
+            };
+            // tryToConvertConstantInt returns an existing ETInt unchanged,
+            // even when it lies outside the narrower column's integer range.
+            if folded.get_type(ctx).ok()?.eval_type() == EvalType::Int {
+                return Some((folded, false));
             }
-            Some((int_constant(folded.value), false))
+            let value = folded.eval_in(ctx).ok()?;
+            convert_refinement_constant(ctx, target, &folded, &value, ctx.type_flags())
         }
-        // `:1622-1657`: Go's `EQ`/`NullEQ` case switches on the CONSTANT's
-        // own eval type, and the two halves are not the same rule.
-        //
-        // ```go
-        // case opcode.NullEQ, opcode.EQ:
-        //     switch con.GetType(ctx.GetEvalCtx()).EvalType() {
-        //     case types.ETReal, types.ETDecimal:
-        //         return con, true
-        //     case types.ETString:
-        //         ...
-        //         doubleDatum, err = dt.ConvertTo(evalCtx.TypeCtx(), types.NewFieldType(mysql.TypeDouble))
-        //         if err != nil { return con, false }
-        //         if doubleDatum.GetFloat64() != math.Trunc(doubleDatum.GetFloat64()) {
-        //             return con, true
-        //         }
-        //         return &Constant{Value: intDatum, RetType: &targetFieldType, ...}, false
-        //     }
-        // ```
-        //
-        // A REAL/DECIMAL constant is Go's `isExceptional` -- `int = 1.1` is
-        // definitely false for a NOT NULL operand. A STRING constant is NOT:
-        // when the string reads as a WHOLE double it is refined to
-        // `intDatum`, and Go's own comment says which target that arm exists
-        // for:
-        //
-        // ```text
-        // 2. When `targetFieldType.GetType()` is `TypeYear`, we can not compare `doubleDatum` with `intDatum` directly,
-        //    because we'll convert values in the ranges '0' to '69' and '70' to '99' to YEAR values in the ranges
-        //    2000 to 2069 and 1970 to 1999.
-        // 3. Suppose the value of `con` is 2, when `targetFieldType.GetType()` is `TypeYear`, the value of `doubleDatum`
-        //    will be 2.0 and the value of `intDatum` will be 2002 in this case.
-        // ```
-        //
-        // On an ordinary INT target the arm is unreachable for a whole
-        // string: `intDatum` and the string then compare EQUAL and
-        // `RefineComparedConstant` has already returned above. A YEAR target
-        // is the case where they differ WITHOUT the constant being inexact,
-        // because `convert_to_year` applied the two-digit window -- `y = '18'`
-        // converts to 2018 while the string reads as 18.0.
         "eq" | "nulleq" => {
-            // A `None` ret_type is a nil `*types.FieldType`, which Go never
-            // builds here; it takes the unrefined answer.
-            match con.ret_type.as_ref().map(FieldType::eval_type) {
-                Some(EvalType::Real | EvalType::Decimal) => return Some((con.clone(), true)),
-                Some(EvalType::String) => {}
+            match con.get_type(ctx).ok()?.eval_type() {
+                EvalType::Real | EvalType::Decimal => return Some((con.clone(), true)),
+                EvalType::String => {}
                 _ => return None,
             }
-            // The fold's own string->double coercion, raising the truncation
-            // once more when the string is partial -- the same second warning
-            // the `Floor`/`Ceil` arm above raises.
-            let value = con.value.to_f64().ok()?.value;
-            note_string_truncation(ctx, &con.value).ok()?;
-            if value != value.trunc() {
-                return Some((con.clone(), true));
+            let warnings = crate::constant::ConversionWarnings(ctx);
+            let zone = ctx.time_zone();
+            let context = tidb_datatype::ConversionContext::new(
+                ctx.type_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &warnings,
+            );
+            let converted = value
+                .convert_to_in_context(&FieldType::new(FieldTypeCode::Double), &context, &zone)
+                .ok()?;
+            if converted.error.is_some() {
+                return None;
             }
-            Some((int_constant(int_datum), false))
+            let Datum::Real(value) = converted.value else {
+                return None;
+            };
+            if value != value.trunc() {
+                Some((con.clone(), true))
+            } else {
+                Some((integer, false))
+            }
         }
-        // Go's switch has no `NE` arm: a `!=` whose constant is inexact
-        // falls through to `return con, false`.
         _ => None,
     }
+}
+
+/// Shared Datum.ConvertTo and Constant construction from Go's refinement
+/// helpers. Overflow preserves the saturated boundary but drops SubqueryRefID;
+/// successful conversion retains it. Other errors leave the caller unchanged.
+fn convert_refinement_constant(
+    ctx: &dyn Columns,
+    target: &FieldType,
+    con: &Constant,
+    value: &Datum,
+    flags: tidb_datatype::ConversionFlags,
+) -> Option<(Constant, bool)> {
+    let warnings = crate::constant::ConversionWarnings(ctx);
+    let zone = ctx.time_zone();
+    let context = tidb_datatype::ConversionContext::new(
+        flags,
+        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+        &warnings,
+    );
+    let converted = value.convert_to_in_context(target, &context, &zone).ok()?;
+    let exceptional = if let Some(error) = converted.error {
+        if !tidb_datatype::ERR_OVERFLOW.equal(Some(&error)) {
+            return None;
+        }
+        true
+    } else {
+        false
+    };
+    let mut refined = Constant::new(converted.value, target.clone());
+    refined.deferred_expr = con.deferred_expr.clone();
+    refined.param_marker = con.param_marker;
+    if !exceptional {
+        refined.subquery_ref_id = con.subquery_ref_id;
+    }
+    Some((refined, exceptional))
 }
 
 /// Whether `expr` reads a column, i.e. is NOT a constant expression.
@@ -1274,6 +1263,128 @@ mod tests {
             Datum::new_string(text),
             FieldType::new(FieldTypeCode::Varchar),
         ))
+    }
+
+    #[test]
+    fn decimal_refinement_preserves_exact_boundaries_and_go_result_types() {
+        // TestRefinePrecisionOracle: 11 source cases across all seven operators.
+        for (text, target_code, unsigned, floor, ceil, exceptional) in [
+            (
+                "9007199254740993.1",
+                FieldTypeCode::LongLong,
+                false,
+                "9007199254740993",
+                "9007199254740994",
+                false,
+            ),
+            (
+                "-9007199254740993.1",
+                FieldTypeCode::LongLong,
+                false,
+                "-9007199254740994",
+                "-9007199254740993",
+                false,
+            ),
+            (
+                "9223372036854775806.1",
+                FieldTypeCode::LongLong,
+                false,
+                "9223372036854775806",
+                "9223372036854775807",
+                false,
+            ),
+            (
+                "-9223372036854775807.1",
+                FieldTypeCode::LongLong,
+                false,
+                "-9223372036854775808",
+                "-9223372036854775807",
+                false,
+            ),
+            (
+                "18446744073709551614.1",
+                FieldTypeCode::LongLong,
+                true,
+                "18446744073709551614",
+                "18446744073709551615",
+                false,
+            ),
+            ("127.1", FieldTypeCode::Tiny, false, "127", "128", false),
+            ("-128.1", FieldTypeCode::Tiny, false, "-129", "-128", false),
+            ("255.1", FieldTypeCode::Tiny, true, "255", "256", false),
+            ("-0.1", FieldTypeCode::Tiny, true, "0", "0", true),
+            (
+                "9007199254740993.0",
+                FieldTypeCode::LongLong,
+                false,
+                "9007199254740993",
+                "9007199254740993",
+                false,
+            ),
+            (
+                "9223372036854775808.1",
+                FieldTypeCode::LongLong,
+                false,
+                "9223372036854775807",
+                "9223372036854775807",
+                true,
+            ),
+        ] {
+            let source = FieldType::new(FieldTypeCode::NewDecimal)
+                .with_flen((text.trim_start_matches('-').len() - 1) as i64)
+                .with_decimal(1);
+            let mut constant = Constant::new(
+                Datum::Decimal(tidb_datatype::Decimal::parse_mysql(text).0),
+                source,
+            );
+            constant.subquery_ref_id = 77;
+            let target = FieldType::new(target_code).with_unsigned(unsigned);
+            for op in ["lt", "le", "gt", "ge", "eq", "ne", "nulleq"] {
+                let sink = Sink::default();
+                let (actual, is_exceptional) =
+                    refine_compared_constant(&sink, &target, &constant, op)
+                        .unwrap_or_else(|| (constant.clone(), false));
+                let unchanged =
+                    !exceptional && !text.ends_with(".0") && matches!(op, "eq" | "ne" | "nulleq");
+                let expected = if unchanged {
+                    text
+                } else if matches!(op, "lt" | "ge") {
+                    ceil
+                } else {
+                    floor
+                };
+                assert_eq!(actual.value.sql_string().unwrap(), expected, "{text} {op}");
+                assert_eq!(
+                    is_exceptional,
+                    exceptional || (unchanged && op != "ne"),
+                    "{text} {op}"
+                );
+                assert_eq!(
+                    actual.ret_type.as_ref().unwrap().code(),
+                    if unchanged {
+                        FieldTypeCode::NewDecimal
+                    } else if exceptional {
+                        target_code
+                    } else {
+                        FieldTypeCode::LongLong
+                    },
+                    "{text} {op}"
+                );
+                assert_eq!(
+                    matches!(actual.value, Datum::UInt(_)),
+                    !unchanged
+                        && unsigned
+                        && (exceptional || target_code == FieldTypeCode::LongLong),
+                    "{text} {op}"
+                );
+                assert_eq!(
+                    actual.subquery_ref_id,
+                    if exceptional { 0 } else { 77 },
+                    "{text} {op}"
+                );
+                assert!(sink.warnings.borrow().is_empty());
+            }
+        }
     }
 
     #[test]

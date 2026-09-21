@@ -1337,20 +1337,23 @@ impl Decimal {
     /// decimal-to-integer conversion rule for bitwise/shift operators (which
     /// operate on integers, not decimals). `None` on overflow past `i64`.
     pub fn round_to_i64(&self) -> Option<i64> {
-        if self.storage_scale == 0 {
-            let mag: i64 = self.digits.parse().ok()?;
-            return Some(if self.negative { -mag } else { mag });
-        }
         let split = self.digits.len() - self.storage_scale as usize;
         let int_part = if split == 0 {
             "0"
         } else {
             &self.digits[..split]
         };
-        let round_up = self.digits.as_bytes()[split] >= b'5';
-        let mag: i64 = int_part.parse().ok()?;
-        let mag = if round_up { mag.checked_add(1)? } else { mag };
-        Some(if self.negative { -mag } else { mag })
+        // The negative signed limit has magnitude i64::MAX + 1. Parse the
+        // magnitude unsigned, then check the signed range after rounding.
+        let mut magnitude: u64 = int_part.parse().ok()?;
+        if self.storage_scale != 0 && self.digits.as_bytes()[split] >= b'5' {
+            magnitude = magnitude.checked_add(1)?;
+        }
+        if self.negative && magnitude == i64::MIN.unsigned_abs() {
+            return Some(i64::MIN);
+        }
+        let magnitude = i64::try_from(magnitude).ok()?;
+        Some(if self.negative { -magnitude } else { magnitude })
     }
 
     /// Source `MyDecimal.ToInt`: truncates toward zero and reports a non-zero

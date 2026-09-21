@@ -127,8 +127,7 @@ impl Datum {
             | FieldTypeCode::Long
             | FieldTypeCode::LongLong => {
                 if target.is_unsigned() {
-                    diagnostics
-                        .unreported(self.convert_to_unsigned(target.code(), flags))
+                    self.convert_to_unsigned_reported(target.code(), flags, diagnostics)
                         .map(map_converted(Self::UInt))
                 } else {
                     self.convert_to_signed_reported(target.code(), flags, zone, diagnostics)
@@ -378,6 +377,13 @@ impl Datum {
                     ))
                 });
             }
+            Self::Decimal(value) if converted.event.is_some() => {
+                if value.round_to_i64().is_none() {
+                    diagnostics.error(|| ERR_OVERFLOW.clone());
+                } else {
+                    diagnostics.numeric_overflow(converted.event.as_ref());
+                }
+            }
             _ => diagnostics.unhandled(converted.event.as_ref()),
         }
         Ok(converted)
@@ -388,6 +394,15 @@ impl Datum {
         target: FieldTypeCode,
         flags: ConversionFlags,
     ) -> Result<Converted<u64>, DatumValueError> {
+        self.convert_to_unsigned_reported(target, flags, &mut Diagnostics::new(None))
+    }
+
+    fn convert_to_unsigned_reported(
+        &self,
+        target: FieldTypeCode,
+        flags: ConversionFlags,
+        diagnostics: &mut Diagnostics<'_, '_>,
+    ) -> Result<Converted<u64>, DatumValueError> {
         let upper = integer_unsigned_upper_bound(target);
         let converted = match self {
             Self::Int(value) => numeric_outcome(convert_int_to_uint(flags, *value, upper, target)),
@@ -395,9 +410,37 @@ impl Datum {
             Self::Real(value) | Self::Float32(value) => {
                 numeric_outcome(convert_float_to_uint(flags, *value, upper, target))
             }
-            Self::String(value) => string_to_unsigned(value.as_utf8()?, upper, target, flags),
-            Self::Bytes(value) => {
-                string_to_unsigned(std::str::from_utf8(value)?, upper, target, flags)
+            Self::String(_) | Self::Bytes(_) => {
+                let text = match self {
+                    Self::String(value) => value.as_utf8()?,
+                    Self::Bytes(value) => std::str::from_utf8(value)?,
+                    _ => unreachable!(),
+                };
+                let parsed = crate::convert::str_to_uint_reported(
+                    text,
+                    false,
+                    flags.truncate_as_warning() || flags.ignore_truncate_err(),
+                    diagnostics,
+                );
+                let bounded = numeric_outcome(convert_uint_to_uint(parsed.value, upper, target));
+                // Go unsigned conversion gives a width error precedence over
+                // the prefix/parser error, while preserving any warning.
+                if let Some(ScalarConversionEvent::Overflow(ScalarConversionError::Overflow {
+                    value,
+                    target,
+                })) = &bounded.event
+                {
+                    diagnostics.replace_error(|| {
+                        ERR_OVERFLOW.generate(format!(
+                            "constant {value} overflows {}",
+                            crate::type_str(*target)
+                        ))
+                    });
+                }
+                Converted {
+                    value: bounded.value,
+                    event: prefer_event(parsed.event, bounded.event),
+                }
             }
             Self::Time(value) => decimal_to_unsigned(&value.to_number(), upper, target),
             Self::Duration(value) => decimal_to_unsigned(&value.to_number(), upper, target),
@@ -441,6 +484,19 @@ impl Datum {
                 ))
             }
         };
+        match self {
+            Self::String(_) | Self::Bytes(_) => {}
+            Self::Int(_)
+            | Self::UInt(_)
+            | Self::Real(_)
+            | Self::Float32(_)
+            | Self::Decimal(_)
+            | Self::Enum(..)
+            | Self::Set(..) => {
+                diagnostics.numeric_overflow(converted.event.as_ref());
+            }
+            _ => diagnostics.unhandled(converted.event.as_ref()),
+        }
         Ok(converted)
     }
 
@@ -1292,24 +1348,6 @@ fn increment_for_reverse(value: Datum, target: &FieldType) -> Datum {
             }
         }
         other => other,
-    }
-}
-
-fn string_to_unsigned(
-    text: &str,
-    upper: u64,
-    target: FieldTypeCode,
-    flags: ConversionFlags,
-) -> Converted<u64> {
-    let parsed = crate::convert::str_to_uint_with_truncate_policy(
-        text,
-        false,
-        flags.truncate_as_warning() || flags.ignore_truncate_err(),
-    );
-    let bounded = numeric_outcome(convert_uint_to_uint(parsed.value, upper, target));
-    Converted {
-        value: bounded.value,
-        event: prefer_event(parsed.event, bounded.event),
     }
 }
 

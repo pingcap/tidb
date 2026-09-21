@@ -153,6 +153,20 @@ fn fold_current_value_in(
         }
     }
     let mut folded = crate::constant::Constant::new(value, ret_type);
+    // Go keeps the first positive subquery reference only for an immutable
+    // folded result; deferred results retain their dependency expression.
+    if !is_deferred_const && !deferred_self {
+        folded.subquery_ref_id = func
+            .args
+            .iter()
+            .find_map(|arg| match arg {
+                Expression::Constant(constant) if constant.subquery_ref_id > 0 => {
+                    Some(constant.subquery_ref_id)
+                }
+                _ => None,
+            })
+            .unwrap_or(0);
+    }
     // Go FoldConstant preserves the expression's collation on replacement.
     folded.collation = func.collation.clone();
     Some((folded, is_deferred_const || deferred_self))
@@ -488,6 +502,35 @@ mod deferred_function_tests {
         }
         fn now(&self) -> Option<(i64, u32, i32)> {
             Some((self.0 as i64, 0, 0))
+        }
+    }
+
+    #[test]
+    fn folding_preserves_first_positive_subquery_reference() {
+        for (references, expected) in [([77, 88], 77), ([-7, 77], 77), ([-7, 0], 0)] {
+            let args = references
+                .into_iter()
+                .map(|reference| {
+                    let mut constant = crate::constant::Constant::new(
+                        Datum::Int(1),
+                        FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    );
+                    constant.subquery_ref_id = reference;
+                    Expression::Constant(constant)
+                })
+                .collect();
+            let folded = crate::new_function::new_function(
+                &NoColumns,
+                "plus",
+                FieldType::new(tidb_datatype::FieldTypeCode::Unspecified),
+                args,
+            )
+            .unwrap();
+            let Expression::Constant(constant) = folded else {
+                panic!("unfolded sum")
+            };
+            assert_eq!(constant.value, Datum::Int(2));
+            assert_eq!(constant.subquery_ref_id, expected);
         }
     }
 

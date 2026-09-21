@@ -2263,3 +2263,24 @@ fn the_fold_coefficient_declines_hidden_division_digits() {
     let plain = Decimal::parse_mysql("1.500").0;
     assert_eq!(plain.fold_coefficient_i128(), Some((1500, 3)));
 }
+
+#[test]
+fn decimal_round_to_i64_accepts_negative_limit() {
+    for (text, expected) in [
+        ("-9223372036854775808", Some(i64::MIN)),
+        ("-9223372036854775808.0", Some(i64::MIN)),
+        ("-9223372036854775808.4", Some(i64::MIN)),
+        ("-9223372036854775807.5", Some(i64::MIN)),
+        ("-9223372036854775808.5", None),
+        ("-9223372036854775809", None),
+        ("9223372036854775807.4", Some(i64::MAX)),
+        ("9223372036854775807.5", None),
+        ("9223372036854775808", None),
+        ("-0.5", Some(-1)),
+        ("0.5", Some(1)),
+    ] {
+        let (value, error) = Decimal::parse_mysql(text);
+        assert!(error.is_none());
+        assert_eq!(value.round_to_i64(), expected, "{text}");
+    }
+}

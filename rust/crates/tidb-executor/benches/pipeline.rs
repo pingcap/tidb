@@ -668,6 +668,65 @@ fn bench_unsigned_comparison_projection() {
     }
 }
 
+/// Go's typed CEIL refinement keeps a decimal boundary outside TINYINT's
+/// range as a BIGINT constant. The nearby in-range boundary is a control.
+fn bench_integer_refinement_projection() {
+    use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite, NoColumns};
+    for (label, text, boundary) in [
+        ("integer_refinement_outside_tiny", "127.1", 128),
+        ("integer_refinement_inside_tiny", "126.1", 127),
+    ] {
+        let field = FieldType::new(FieldTypeCode::Tiny);
+        let result_field = FieldType::new(FieldTypeCode::LongLong);
+        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&field), CHUNK);
+        for row in 0..CHUNK {
+            input.append_datum(
+                0,
+                &if row % 13 == 0 {
+                    Datum::Null
+                } else {
+                    Datum::Int((row % 128) as i64)
+                },
+            );
+        }
+        let constant = Constant::new(
+            Datum::Decimal(tidb_datatype::Decimal::parse_mysql(text).0),
+            FieldType::new(FieldTypeCode::NewDecimal)
+                .with_flen(4)
+                .with_decimal(1),
+        );
+        let expression = tidb_expr::new_function::new_function(
+            &NoColumns,
+            "lt",
+            result_field.clone(),
+            vec![column(0, &field), Expression::Constant(constant)],
+        )
+        .unwrap();
+        let suite = EvaluatorSuite::new(vec![expression], false);
+        let mut output = Chunk::new_with_capacity(std::slice::from_ref(&result_field), CHUNK);
+        suite.run(&NoColumns, &mut input, &mut output).unwrap();
+        for row in 0..CHUNK {
+            let expected = if row % 13 == 0 {
+                Datum::Null
+            } else {
+                Datum::Int(i64::from((row % 128) < boundary))
+            };
+            assert_eq!(output.get_row(row).get_datum(0, &result_field), expected);
+        }
+        let mut pass = || {
+            output.reset();
+            suite.run(&NoColumns, &mut input, &mut output).unwrap();
+            assert_eq!(black_box(output.num_rows()), CHUNK);
+        };
+        let result = best_of_blocks(&mut [(label, &mut pass)])[0];
+        println!(
+            "{label} ns_per_row {:.1}",
+            result.0.as_secs_f64() * 1e9 / CHUNK as f64
+        );
+        println!("{label} cal_per_row {:.4}", result.1 / CHUNK as f64);
+    }
+}
+
 /// Explicit string-to-JSON casts as arithmetic operands, through the same
 /// EvaluatorSuite used by projection. Inputs are valid, so timing excludes
 /// warning collection while retaining JSON parsing and numeric conversion.
@@ -823,6 +882,9 @@ fn main() {
     if wanted("numeric_projection") {
         bench_numeric_projection();
         bench_json_numeric_projection();
+    }
+    if wanted("integer_refinement") {
+        bench_integer_refinement_projection();
     }
     if wanted("unsigned_comparison") {
         bench_unsigned_comparison_projection();
