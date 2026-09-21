@@ -302,15 +302,17 @@ impl Constant {
         self.eval_lazy_in(ctx, |expression| {
             crate::eval_expression_once(expression, ctx)
         })
+        .map_err(|(_, error)| error)
     }
 
-    /// Runtime evaluation keeps the caller's row, as Go `getLazyDatum` does.
-    /// It must not construct a new empty chunk at every deferred node.
-    pub(crate) fn eval_on_row(
+    /// Go Constant.Eval returns a saved or unconverted Datum alongside an error.
+    /// Rewrites that mutate Value must retain it without evaluating twice.
+    /// Keep the caller's row, avoiding a new empty chunk at every deferred node.
+    pub(crate) fn eval_on_row_with_error_value(
         &self,
         ctx: &dyn crate::Columns,
         row: tidb_chunk::row::Row<'_>,
-    ) -> Result<Datum, EvalError> {
+    ) -> Result<Datum, (Datum, EvalError)> {
         self.eval_lazy_in(ctx, |expression| expression.eval(ctx, row))
     }
 
@@ -318,22 +320,30 @@ impl Constant {
         &self,
         ctx: &dyn crate::Columns,
         evaluate_deferred: impl FnOnce(&Expression) -> Result<Datum, EvalError>,
-    ) -> Result<Datum, EvalError> {
+    ) -> Result<Datum, (Datum, EvalError)> {
         let value = if let Some(marker) = self.param_marker {
-            let order = usize::try_from(marker.order)
-                .map_err(|_| EvalError::Unsupported("unbound prepared parameter"))?;
-            ctx.param_value(order)?
+            let order = usize::try_from(marker.order).map_err(|_| {
+                (
+                    self.value.clone(),
+                    EvalError::Unsupported("unbound prepared parameter"),
+                )
+            })?;
+            ctx.param_value(order)
+                .map_err(|error| (self.value.clone(), error))?
         } else if let Some(deferred) = self.deferred_expr.as_deref() {
-            evaluate_deferred(deferred)?
+            evaluate_deferred(deferred).map_err(|error| (self.value.clone(), error))?
         } else {
             return Ok(self.value.clone());
         };
         if self.deferred_expr.is_none() || value.is_null() {
             return Ok(value);
         }
-        let target = self.ret_type.as_ref().ok_or(EvalError::Unsupported(
-            "deferred constant has no result type",
-        ))?;
+        let target = self.ret_type.as_ref().ok_or_else(|| {
+            (
+                value.clone(),
+                EvalError::Unsupported("deferred constant has no result type"),
+            )
+        })?;
         if let Datum::Decimal(value) = value {
             // Go adjustDecimal only pads a short fraction. It neither
             // narrows precision nor rounds away existing fractional digits.
@@ -355,10 +365,15 @@ impl Constant {
         let converted = value
             .convert_to_in_context(target, &context, &zone)
             .map_err(|_| {
-                EvalError::Unsupported("deferred conversion diagnostic routing is not yet ported")
+                (
+                    value.clone(),
+                    EvalError::Unsupported(
+                        "deferred conversion diagnostic routing is not yet ported",
+                    ),
+                )
             })?;
         if let Some(error) = converted.error {
-            return Err(EvalError::Conversion(error));
+            return Err((value, EvalError::Conversion(error)));
         }
         Ok(converted.value)
     }

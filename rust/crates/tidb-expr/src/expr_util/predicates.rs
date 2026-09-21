@@ -421,14 +421,25 @@ pub fn maybe_over_optimized_4_plan_cache(use_cache: bool, exprs: &[Expression]) 
 ///
 /// # Errors
 ///
-/// Returns the evaluation error from a deferred expression.
+/// Returns the evaluation error from a deferred expression, preserving that
+/// expression for retry and storing the Datum returned alongside the error.
+/// Previously visited nodes stay immutable; later nodes remain untouched.
 pub fn remove_mutable_const(exprs: &mut [Expression], ctx: &dyn Columns) -> Result<(), EvalError> {
     for expr in exprs {
         match expr {
             Expression::Constant(constant) => {
                 constant.param_marker = None;
-                if let Some(deferred) = constant.deferred_expr.take() {
-                    constant.value = crate::eval_expression_once(&deferred, ctx)?;
+                if let Some(deferred) = constant.deferred_expr.as_deref() {
+                    let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+                    dual.set_num_virtual_rows(1);
+                    match deferred.eval_with_error_value(ctx, dual.get_row(0)) {
+                        Ok(value) => constant.value = value,
+                        Err((value, error)) => {
+                            constant.value = value;
+                            return Err(error);
+                        }
+                    }
+                    constant.deferred_expr = None;
                 }
             }
             Expression::ScalarFunction(function) => {
@@ -516,4 +527,128 @@ pub fn is_const_null(expr: &Expression) -> bool {
         Some(Expression::Constant(constant))
             if constant.value.is_null() && constant.deferred_expr.is_none()
     )
+}
+
+#[cfg(test)]
+mod mutable_constant_tests {
+    use super::*;
+    use crate::constant::{Constant, ParamMarker};
+    use crate::expression::ScalarFunction;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    struct Strict;
+    impl Columns for Strict {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn truncate_level(&self) -> crate::context::ErrorLevel {
+            crate::context::ErrorLevel::Error
+        }
+    }
+
+    fn literal(value: Datum) -> Expression {
+        Expression::Constant(Constant::new(
+            value,
+            FieldType::new(FieldTypeCode::LongLong),
+        ))
+    }
+
+    fn deferred(expression: Expression) -> Expression {
+        let mut constant = Constant::new(Datum::Int(99), FieldType::new(FieldTypeCode::LongLong));
+        constant.param_marker = Some(ParamMarker { order: 0 });
+        constant.deferred_expr = Some(Box::new(expression));
+        Expression::Constant(constant)
+    }
+
+    fn constant(expression: &Expression) -> &Constant {
+        let Expression::Constant(value) = expression else {
+            panic!("expected constant")
+        };
+        value
+    }
+
+    #[test]
+    fn remove_mutable_const_preserves_go_error_value_and_traversal() {
+        let overflow = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("plus"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![literal(Datum::Int(i64::MAX)), literal(Datum::Int(1))],
+        ));
+        let mut nested_overflow = constant(&deferred(overflow.clone())).clone();
+        nested_overflow.param_marker = None;
+        let mut conversion = constant(&deferred(literal(Datum::new_string("12ab")))).clone();
+        conversion.param_marker = None;
+        for (source, expected) in [
+            (overflow, Datum::Null),
+            (Expression::Constant(nested_overflow), Datum::Int(99)),
+            (Expression::Constant(conversion), Datum::new_string("12ab")),
+        ] {
+            let mut root = [
+                Expression::ScalarFunction(ScalarFunction::new(
+                    tidb_ast::CiString::new("plus"),
+                    FieldType::new(FieldTypeCode::LongLong),
+                    vec![deferred(literal(Datum::Int(7))), deferred(source)],
+                )),
+                deferred(literal(Datum::Int(8))),
+            ];
+            let error = remove_mutable_const(&mut root, &Strict).unwrap_err();
+            if expected == Datum::new_string("12ab") {
+                assert!(matches!(error, EvalError::Conversion(_)), "{error:?}");
+            } else {
+                assert!(
+                    matches!(error, EvalError::DataOutOfRange { .. }),
+                    "{error:?}"
+                );
+            }
+            let last = constant(&root[1]);
+            assert_eq!(last.value, Datum::Int(99));
+            assert!(last.param_marker.is_some() && last.deferred_expr.is_some());
+            let Expression::ScalarFunction(function) = &mut root[0] else {
+                unreachable!()
+            };
+            let first = constant(&function.args[0]);
+            assert_eq!(first.value, Datum::Int(7));
+            assert!(first.param_marker.is_none() && first.deferred_expr.is_none());
+            let failed = constant(&function.args[1]);
+            assert_eq!(failed.value, expected);
+            assert!(failed.param_marker.is_none());
+            assert!(failed.deferred_expr.is_some());
+            // After correcting the dependency, retry resumes freezing nodes.
+            let Expression::Constant(failed) = &mut function.args[1] else {
+                unreachable!()
+            };
+            failed.deferred_expr = Some(Box::new(literal(Datum::Int(11))));
+            remove_mutable_const(&mut root, &Strict).unwrap();
+            let Expression::ScalarFunction(function) = &root[0] else {
+                unreachable!()
+            };
+            for (arg, expected) in function
+                .args
+                .iter()
+                .chain(std::iter::once(&root[1]))
+                .zip([7, 11, 8])
+            {
+                let value = constant(arg);
+                assert_eq!(value.value, Datum::Int(expected));
+                assert!(value.param_marker.is_none() && value.deferred_expr.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn remove_mutable_const_keeps_null_and_saved_parameter_values() {
+        let mut parameter = Constant::new(Datum::Int(99), FieldType::new(FieldTypeCode::LongLong));
+        parameter.param_marker = Some(ParamMarker { order: 0 });
+        let mut args = [
+            deferred(literal(Datum::Null)),
+            Expression::Constant(parameter),
+        ];
+        remove_mutable_const(&mut args, &Strict).unwrap();
+        assert_eq!(constant(&args[0]).value, Datum::Null);
+        assert_eq!(constant(&args[1]).value, Datum::Int(99));
+        assert!(args.iter().all(|arg| {
+            let value = constant(arg);
+            value.param_marker.is_none() && value.deferred_expr.is_none()
+        }));
+    }
 }

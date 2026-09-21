@@ -723,10 +723,32 @@ impl Expression {
     ) -> Result<tidb_datatype::Datum, crate::context::EvalError> {
         let value = match self {
             Expression::Column(c) => c.eval(row),
-            Expression::Constant(c) => c.eval_on_row(ctx, row),
+            Expression::Constant(c) => c
+                .eval_on_row_with_error_value(ctx, row)
+                .map_err(|(_, error)| error),
             Expression::CorrelatedColumn(c) => Ok(c.eval()),
             Expression::ScalarFunction(c) => c.eval(ctx, row),
         }?;
+        Ok(self.apply_enum_set_as_int(value))
+    }
+
+    /// Preserve Go's Datum/error pair for rewrites that assign the Datum even
+    /// when evaluation fails. Ordinary callers continue to use `eval`.
+    pub(crate) fn eval_with_error_value(
+        &self,
+        ctx: &dyn crate::context::Columns,
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<tidb_datatype::Datum, (tidb_datatype::Datum, crate::context::EvalError)> {
+        if let Expression::Constant(constant) = self {
+            return constant
+                .eval_on_row_with_error_value(ctx, row)
+                .map(|value| self.apply_enum_set_as_int(value));
+        }
+        self.eval(ctx, row)
+            .map_err(|error| (tidb_datatype::Datum::Null, error))
+    }
+
+    fn apply_enum_set_as_int(&self, value: tidb_datatype::Datum) -> tidb_datatype::Datum {
         // `WrapWithCastAsInt` follows Go's hybrid ENUM path by setting
         // `EnumSetAsIntFlag` on the source expression and returning it without
         // building another cast node. The row/constant seam still materializes
@@ -734,7 +756,7 @@ impl Expression {
         // `EvalInt` does.
         if let Some(field_type) = self.static_type() {
             if field_type.has_flag(tidb_datatype::FieldTypeFlags::ENUM_SET_AS_INT) {
-                return Ok(match (field_type.code(), value) {
+                return match (field_type.code(), value) {
                     (tidb_datatype::FieldTypeCode::Enum, tidb_datatype::Datum::Enum(value, _)) => {
                         tidb_datatype::Datum::UInt(value.value())
                     }
@@ -742,10 +764,10 @@ impl Expression {
                         tidb_datatype::Datum::UInt(value.value())
                     }
                     (_, value) => value,
-                });
+                };
             }
         }
-        Ok(value)
+        value
     }
 
     /// Go `Expression.GetType` without an `EvalContext`: the expression's static

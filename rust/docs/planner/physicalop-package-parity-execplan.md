@@ -30,6 +30,13 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, mutable-constant failure state) Source oracle and red/green
+  regressions establish Go's stored Datum, retained DeferredExpr, cleared
+  parameter marker, traversal stop and retry behavior. The implementation
+  preserves that pair privately; full expression/planner, targeted session
+  consumers and required lint pass. Receipt follows below. Whole-package and
+  workload gates remain open.
+
 - [x] (2026-09-21, prepared EXPLAIN and comparison construction) Current
   statement parameters reach expression rendering; deferred display/evaluation,
   string probe ranges and brief-binary evaluation counts match source rules.
@@ -7143,3 +7150,87 @@ native crate suites, all listed session filters and make lint. The pass counts
 are unchanged. The source oracle and changed-hunk review confirm no Go source
 or package inventory acceptance state changed. The checkpoint is ready for the
 user-requested commit/push; all remaining acceptance gates above stay open.
+
+
+## Continuing mutable-constant error-state audit
+
+
+Published d825ef058b is pulled and current. Audit RemoveMutableConst against
+Go util.go and Constant.Eval before altering error handling. Go clears the
+parameter marker immediately, stores the deferred evaluation's returned Datum
+even on error, retains DeferredExpr on error, and stops before later siblings.
+ScalarFunction.Eval returns NULL on error; Constant.Eval returns its saved value
+for lazy evaluation errors and the unconverted input for conversion errors.
+Preserve that pair internally in Rust without changing public Result APIs or
+reevaluating a deferred function. Add source-oracle and red regressions for
+nested constants, traversal, successful removal, and retry, then validate
+expression and its comparison/cache consumers, lint, commit and push. This
+remains work toward the whole expression package, not package acceptance.
+
+Mutable-constant implementation and validation receipt
+
+Constant's private evaluator now retains Go's error-associated Datum: its
+saved Value for lazy evaluation failures and the original input for conversion
+failures. Expression exposes this pair only to internal callers needing it;
+ordinary scalar evaluation keeps its existing Result path. Both paths share
+the existing ENUM/SET integer-flag conversion. RemoveMutableConst clears the
+marker first, evaluates once, stores the returned value even on failure, and
+clears DeferredExpr only after success. Errors stop traversal before later
+siblings. No public API, SQL feature or warning policy is added.
+
+The temporary source oracle verifies scalar overflow (NULL), nested constant
+overflow (saved 99), and deferred conversion of '12ab' (unconverted '12ab'),
+plus prior/later siblings, retry, NULL success and marker-only saved values.
+From repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-mutable-constant-overlay.json -run '^TestRemoveMutableConstantOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Pass: /tmp/tidb-mutable-constant-go.log. The temporary window harness needs no
+failpoint enabling. Go expression production sources remain identical to the
+pinned aba629bb455dc09d6a5d98b3c39a542bb1189b9d tree.
+
+The native regression fails before the fix, returning stored Int(99) instead
+of NULL; /tmp/tidb-mutable-constant-red.log retains the failure. Red command
+from repository root (after correcting test-construction spelling):
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 --manifest-path /private/tmp/tidb-parity-publish-aba629bb/rust/Cargo.toml -p tidb-expr --lib remove_mutable_const
+
+After the fix both new tests pass. The final tests also assert the error
+classes, use a valid two-argument scalar parent, and preserve later top-level
+siblings. Full final validation from the isolated checkout's rust directory,
+with CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-planner --lib
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_compare_refinement
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_in_list_full_evaluation
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_sysbench_access
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_datetime_year_compare
+
+All pass: expression 1,207 (97 existing ignored), planner 959; session
+comparison 10, prepared cache 45, IN 6, EXPLAIN 64, sysbench access 15 and
+YEAR 3. Logs /tmp/tidb-mutable-final-<crate>-<filter or all>.log. The first
+unprivileged expression run failed only because the JSON schema fixture could
+not bind localhost; the complete suite passed with localhost access and was
+repeated after the final evaluation-path adjustment.
+
+Required checks from repository root:
+
+    GOTOOLCHAIN=go1.26.0 make lint
+    git diff --check
+    git diff --numstat aba629bb455dc09d6a5d98b3c39a542bb1189b9d -- pkg/expression
+
+Lint passes (/tmp/tidb-mutable-constant-lint.log), diff whitespace is clean,
+and the source comparison is empty. No Go/import/Bazel/module changes require
+bazel_prepare. Changed files are expression constant.rs, expression.rs,
+expr_util/predicates.rs and this plan. All intended tracked content is compared
+with the isolated validation checkout before publication; the unrelated
+untracked vs_helper.rs and fragment.rs drafts remain untouched and excluded.
+
+This corrects failure-state compatibility within the ongoing whole-expression
+package audit. No throughput improvement is claimed. Full sysbench/TPC-C/TPC-H/
+YCSB performance runs, original whole-Go-package tests, ignored native tests,
+and platform/build/generated/support artifact gates remain unverified; package
+inventories remain unaccepted. The overall goal is still active.
