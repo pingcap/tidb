@@ -30,6 +30,13 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, typed constants and string grouping) Restored typed lazy
+  conversion, current parameter types, decimal warning/error order and plain
+  constant vector evaluation counts. The original GetType independence test
+  now runs. Scoped native consumers and accumulated Go race oracles pass;
+  borrowed string-column comparison removes repeated copies/key generation.
+  Final microbenchmark/publication evidence is recorded at the end. Deferred
+  vectorized and other expression domains remain open; no package acceptance.
 - [x] (2026-09-21, merge-join shared grouping) Both merge inputs now use
   VecGroupChecker, including encoded cross-chunk continuation and NULL group
   skipping. Eight SQL scenarios match Go under deterministic sort setup;
@@ -502,6 +509,13 @@ their recorded stage. The latest verified state is summarized first.
 
 ## Surprises & Discoveries
 
+Typed constant grouping (2026-09-21): generic Constant.Eval is not equivalent
+to EvalXxx. It fits deferred values to the declared type, while typed decimal
+evaluation preserves extra scale and ignores declared precision. String
+overflow can emit a 1690 conversion warning and then fail with 1265 while
+padding scale. A plain vectorized constant emits one interior warning per
+batch; scalar mode emits one per row. The final receipt includes Go evidence.
+
 - Shuffle used group_key_part's generic datum encoding despite Go using
   aggregate.GetGroupKey. For unsigned max, Rust emitted uint flag 9 and a
   ten-byte uvarint; Go emitted signed-int flag 8 and zigzag byte 1. The same
@@ -699,6 +713,14 @@ their recorded stage. The latest verified state is summarized first.
 
 ## Decision Log
 
+- Decision: keep typed Constant evaluation and contextual ToDecimal in their
+  expression/datatype owners, and let the checker call the typed path. Borrow
+  ordinary string cells and cache one key per row; preserve NaN comparisons
+  even when a vectorized constant is evaluated only once.
+  Rationale: generic conversion alters Go diagnostics/decimal shape, while
+  repeated Datum/key allocation is unnecessary for stable chunk storage.
+  Date/Author: 2026-09-21, Codex.
+
 - Decision: represent TestShuffleExit's delayed source panic with a test-only
   channel gate, releasing it after Next returns its injected caller error.
   Rationale: preserves the failure ordering without Go's timing-dependent
@@ -781,6 +803,13 @@ their recorded stage. The latest verified state is summarized first.
   Date/Author: 2026-09-01 / Codex.
 
 ## Outcomes & Retrospective
+
+The 2026-09-21 typed-constant checkpoint corrects observable key bytes,
+warnings and fatal-error order, and adds a measured stream-grouping optimization.
+It does not close the complete checker, expression, types, aggregate or join
+package claims. Deferred vectorization and scalar/correlated typed evaluation
+still require source-oracle review; workload performance must be measured
+separately from the isolated grouping benchmark.
 
 The original shuffle scenario checkpoint adds the exact upstream range fixture
 and executor-level combined failure ordering. It proves joining and reopening
@@ -4369,3 +4398,166 @@ appended after validation. Fetch confirmed origin/hparser-integration matched
 local HEAD before publication. All test/lint processes are terminal; failpoint
 cleanup is complete and no cluster was started. The two unconnected draft
 files remain excluded. This is progress evidence, not a completion claim.
+
+## Typed constant and string-path checkpoint (2026-09-21)
+
+Previous checkpoint b49c1a7e4b is pushed. The remaining checker expression-domain
+review compared all eight Constant typed entrypoints against generic Eval.
+Go's typed calls consume raw lazy values, derive parameter types at execution,
+convert numeric strings, stringify non-string values, and pad decimal scale
+without fitting declared precision or narrowing an existing fraction. A
+27-scenario literal/deferred/parameter oracle, repeated in both vector modes,
+exposes native mismatches in conversion, warnings, decimal shape and parameter
+collation. The permanent matrix failed before changes; its red log is
+/tmp/tidb-group-constant-red.log. The Go oracle is a temporary overlay; no
+tracked Go files or Bazel inputs change.
+
+Implement typed Constant evaluation at its expression owner and contextual
+ToDecimal at the datatype owner, then use them from the complete checker
+package. Keep generic Constant.Eval behavior intact. Parameter collation must
+be refreshed from the current inferred type instead of saved planning metadata.
+Add explicit strict/warn/ignore diagnostic evidence, validate the affected
+owners and consumers, and inspect the string-key allocation path. None of
+these partial dependency corrections constitutes acceptance of the complete
+expression or types Go packages. Existing whole-package inventories/receipts
+remain the required eventual acceptance unit. Performance claims require
+measurement rather than source inspection alone.
+
+
+The implementation now uses `Constant::eval_typed_on_row` and
+`Datum::to_decimal_with_context`. Generic Constant evaluation is unchanged.
+A parameter's `get_type` returns an owned, freshly inferred FieldType; the
+original `TestGetTypeThreadSafe` contract is now active in
+`constant_test_go_tables_source.rs` and proves independent mutation. Ordinary
+string/blob columns borrow `raw_cells` and retain only the previous key;
+case-insensitive keys are generated once per row, while binary keys borrow.
+Selection vectors and NULL boundaries are covered for seven field codes.
+The statement's existing vectorized-expression flag controls plain constant
+batch evaluation. NaN still splits adjacent rows because Go compares it unequal.
+
+Regression evidence preceded fixes: `/tmp/tidb-group-constant-red.log` contains
+17 domain/warning mismatches; `/tmp/tidb-group-constant_interior_warnings-red.log`
+shows six warnings instead of three; and
+`/tmp/tidb-group-constant_decimal_conversion-red.log` shows the lost overflow
+warning/rounding-error contract. Expanding diagnostics to NaN additionally
+exposed a missing error argument, corrected before final validation. These
+are incremental repairs within open whole-package acceptance units.
+
+The temporary Go overlay `/tmp/tidb-group-constant-overlay.json` maps the
+original checker test file to `/tmp/tidb-group-constant-oracle.go`, retaining
+original tests and earlier oracles. Exact new oracle commands from root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-constant-overlay.json -run '^TestGroupCheckerConstantDomainOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-constant-overlay.json -run '^TestGroupChecker(ConstantInterior|DecimalError)Oracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-group-constant-overlay.json -run '^TestGroupCheckerDecimalErrorOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-group-constant-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 ./pkg/executor/internal/vecgroupchecker
+
+All passed. The domain oracle covers nine scenarios in literal/deferred/parameter
+forms and both modes (54 records). Interior warnings are six scalar/three
+vectorized. Eight decimal scenarios across strict/warn/ignore cover prefixes,
+invalid strings, string/float overflow, JSON objects/strings, NaN and infinity.
+The accumulated race command runs 11 test functions, including four originals.
+Logs are `/tmp/tidb-group-constant-{oracle,errors-oracle-final,go-race}.log`.
+An initial probe used unsupported Go `int` instead of `int64` for CreateBinaryJSON;
+that fixture error was corrected and is not product evidence. This checker
+package has no injected failpoint calls. No tracked Go/module/Bazel edits.
+
+Successful final Rust commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-datatype --lib datum::
+    cargo test --offline --locked -j12 -p tidb-expr --lib constant
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib issue_53867
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Counts in order: 32, 66, 23, 1, 76, 76, 26, 23, 16, 68 passed; overlapping
+filters are not additional coverage. Expression constant selection has five
+ignored tests: deferred error forwarding, separate typed parameter entrypoints,
+vectorized deferred forms, upstream-self-skipped Constant2PB, and vectorized
+ILIKE. They are excluded from parity evidence. Other listed selections have
+no failures or ignores. Logs: `/tmp/tidb-group-constant-validation-*.log`.
+
+From root, `make lint` failed again at the revive1.2.1 bootstrap (exit 2,
+module found but does not contain package). `make -o tools/bin/revive lint`
+passed the actual lint recipes with the existing binary. `git diff --check`
+and `rustfmt --check --edition 2021 rust/crates/tidb-executor/src/vec_group_checker.rs`
+pass. Changed regions in larger files were formatted without unrelated churn.
+
+Remaining correctness risks: Go deferred constants delegate vector evaluation
+to their child, while the native checker still evaluates that form row by row;
+scalar/correlated typed domains and remaining codec-error contracts need audit.
+Lossy UTF-8 diagnostic conversion also needs separate evidence for raw invalid
+bytes. Whole types/expression/consumer packages remain unaccepted. No current
+sysbench/TPC-C/TPC-H/YCSB end-to-end benchmark was run at this checkpoint.
+
+
+Final isolated stream-grouping benchmark (same host, no other build/test process
+running during samples): baseline is b49c1a7e4b plus the identical new benchmark;
+final is this code including NaN error arguments. From each checkout's rust/:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+The main checkout used the same command without the redundant target override.
+The printed executable was copied to `/tmp/tidb-group-pipeline-before` before
+rebuilding, and `/tmp/tidb-group-pipeline-final` afterward. Each version ran
+three times in order before/final/final/before/before/final:
+
+    BENCH_ONLY=stream_group /tmp/tidb-group-pipeline-before
+    BENCH_ONLY=stream_group /tmp/tidb-group-pipeline-final
+
+Each sample uses five calibrated 250ms blocks, 1024 sorted rows, 32 rows/group,
+and asserts 32 output groups through production GroupedStreamAggExec. The bench
+profile uses jemallocator, no LTO and 16 codegen units; macOS ASLR remains on.
+This isolates stream grouping, not the production server or workload runtime.
+
+| Scenario | Before ns/row (3 runs) | Final ns/row (3 runs) | Median reduction | Calibrated median reduction |
+| --- | --- | --- | --- | --- |
+| utf8mb4_bin | 60.2, 61.6, 62.2 | 22.1, 22.6, 23.2 | 63.3% | 63.2% |
+| utf8mb4_general_ci | 123.1, 126.8, 128.5 | 55.5, 57.0, 58.1 | 55.0% | 54.8% |
+| utf8mb4_bin + constant | 85.2, 88.2, 87.9 | 22.2, 22.9, 23.3 | 73.9% | 73.7% |
+| utf8mb4_general_ci + constant | 148.9, 153.1, 153.6 | 55.6, 57.1, 58.2 | 62.7% | 62.2% |
+
+Calibration self-ratios span 0.9928–0.9971. Final logs are
+`/tmp/tidb-group-final-bench-{1..6}-{before|final}.log`; build logs are
+`/tmp/tidb-group-bench-{before,final}-build.log`. A preliminary six-run comparison
+showed a similar range but predates the final NaN diagnostic fix and is excluded
+from the final table. Binary SHA-256 values:
+
+    before c01b95222da10ffa234f4a966f378c2d3fcad6f4297770ca183bd0d5f3b1ec70
+    final  5a1c092cb48552fa043096093cab917344981c7bfc9a12bed0983734c7d06671
+
+These measurements justify retaining the allocation optimization. They do not
+claim end-to-end improvement for sysbench, TPC-C, TPC-H or YCSB, and do not
+substitute for any whole-package acceptance gate.
+
+
+Publication validation: `/private/tmp/tidb-parity-publish-aba629bb` at b49c1a7e4b
+contains the same eight changed code/test/benchmark files, copied from the main
+checkout; the two untracked drafts are absent and excluded. Commands from its
+rust/ directory:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-datatype --lib datum::
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib constant
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+
+All passed: 32, 66 (five explicit ignores), 23 and 16 respectively. Logs:
+`/tmp/tidb-group-constant-isolated-*.log`. Byte comparison confirms all eight
+code files match; documentation receipts were finalized afterward. The actual
+lint recipes also passed again after activating the original GetType test.
+All test/lint/benchmark processes are terminal. No cluster was started and no
+failpoints were enabled for these checker tests. Fetch confirmed the remote
+hparser-integration branch still matched b49c1a7e4b before publication.
+
+Changed files: `tidb-datatype/src/datum/convert.rs`;
+`tidb-expr/src/{constant,context}.rs` and
+`tidb-expr/src/tests/constant_test_go_tables_source.rs`;
+`tidb-executor/src/{vec_group_checker,stmt_context,shuffle}.rs` and
+`tidb-executor/benches/pipeline.rs`; this plan, physicalop-source-inventory.md
+and types-datatype-divergence-audit.md. This checkpoint records progress and
+measured local improvement, not completion of the user's parity/performance goal.

@@ -10,7 +10,9 @@ equal are listed too — that inventory tells the next reader where not to look.
 dedicated worktree can run the pinned Rust nightly test profiles; Go test
 binaries and `gorun`/`goeval` remain unavailable. Each implemented finding now
 links a focused Rust regression and its Ready-profile outcome in the receipts.
-Claims that remain source-only are called out explicitly below.
+Claims that remain source-only are called out explicitly below. This paragraph
+records the initial environment: the 2026-09-21 grouping checkpoint below now
+runs Go 1.26 oracle tests successfully and does not inherit that restriction.
 
 Standing oracle limit that motivates this audit: the integration replay
 compares rejected-vs-accepted only, never error text, and observes warnings on
@@ -1497,3 +1499,24 @@ settle:
    not one bug.
 
 F3 verification: `field_type/mod.rs:1020-1022` compares `collation_name == "binary"` (the string, matching Go `IsBinaryStr`'s `GetCollate() == charset.CollationBin` string compare), with an existing assertion (`mod.rs:1517`) covering the empty-collation case. The audit's `:898-900` enum-based predicate is gone.
+
+
+## Contextual ToDecimal grouping checkpoint (2026-09-21)
+
+`Datum::to_decimal_with_context` now models the conversion stage used by Go
+`Constant.EvalDecimal`, separately from declared-column `ConvertTo`. String
+and JSON diagnostics pass through the active truncation policy; direct floating
+conversion errors remain fatal. Binary literals use contextual integer
+conversion. The expression owner pads scale with the fixed MyDecimal buffer,
+retaining Go's conversion-warning-before-rounding-error order and preserving
+existing extra fractional digits. NaN and infinity retain their diagnostic
+arguments. This is dependency progress, not acceptance of the complete types
+package or closure of its remaining findings.
+
+Pinned Go checker overlays cover literal/deferred/parameter domains and eight
+decimal cases under strict/warn/ignore, including string and float overflow,
+JSON object/string, NaN and infinity. The Rust checker repeats those assertions;
+32 datum tests also pass. Exact commands, red/green evidence and consumer gates
+are recorded in `planner/physicalop-package-parity-execplan.md`, under the typed
+constant checkpoint. Raw invalid-UTF-8 diagnostic representation and broader
+expression-domain behavior remain unaudited.

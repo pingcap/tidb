@@ -410,9 +410,8 @@ impl PartitionRangeSplitter {
     ///
     /// boundary: Go also stores `byItems` on the splitter, but only the
     /// `VecGroupChecker` built from them is ever read, so the field is folded
-    /// into the checker here. Go's `EnableVectorizedExpression` argument to
-    /// `NewVecGroupChecker` selects an evaluation strategy, not a grouping;
-    /// this crate's `VecGroupChecker::new` takes no such switch.
+    /// into the checker here. The checker reads the expression evaluation
+    /// strategy from the statement context supplied to `split`.
     #[must_use]
     pub fn new(concurrency: usize, by_items: Vec<Expression>) -> Self {
         PartitionRangeSplitter {

@@ -495,6 +495,11 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// Whether executor expression batches use Go's vectorized path.
+    fn enable_vectorized_expression(&self) -> bool {
+        true
+    }
+
     /// Go `ParamValues.GetParamValue`: this execution's typed prepared value.
     /// Absence is an invalid/unbound marker, never SQL NULL or a cached value.
     fn param_value(&self, _order: usize) -> Result<Datum, EvalError> {

@@ -3687,6 +3687,10 @@ fn resolve_statement_clock(
 }
 
 impl Columns for StmtContext {
+    fn enable_vectorized_expression(&self) -> bool {
+        self.enable_vectorized_expression
+    }
+
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
     }

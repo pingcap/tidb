@@ -742,14 +742,36 @@ fn deferred_constant_clone_preserves_the_deferred_expression() {
 #[ignore = "go-parity-gap: deferred-constant EvalXxx forwarding needs an error-valued/mock expression seam; evaluation is reported Unsupported today"]
 fn test_deferred_expr_not_null() {}
 
-/// `pkg/expression/constant_test.go:533 TestGetTypeThreadSafe`: calling
-/// `GetType` twice on a ParamMarker-backed constant must return independent
-/// FieldType values (Go `require.NotSame`). `Constant.get_static_type` in this
-/// crate returns the STORED type and defers param-marker inference, so the
-/// allocation-freshness contract has no carrier.
+/// Go `TestGetTypeThreadSafe`: parameter types are independent on each call.
+/// Rust returns owned FieldTypes, so mutating one cannot alter another or the
+/// stored planning type; no shared mutable FieldType pointer is required.
 #[test]
-#[ignore = "go-parity-gap: param-marker GetType inference is deferred in constant.rs; no per-call FieldType derivation exists to prove thread safety on"]
-fn test_get_type_thread_safe() {}
+fn test_get_type_thread_safe() {
+    struct Parameters;
+    impl crate::Columns for Parameters {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn param_value(&self, order: usize) -> Result<Datum, crate::EvalError> {
+            assert_eq!(order, 0);
+            Ok(Datum::Int(1))
+        }
+    }
+    let mut constant = Constant::new(Datum::Null, varchar_type());
+    constant.param_marker = Some(crate::constant::ParamMarker { order: 0 });
+    let mut first = constant.get_type(&Parameters).unwrap();
+    let second = constant.get_type(&Parameters).unwrap();
+    assert!(matches!(first, std::borrow::Cow::Owned(_)));
+    assert!(matches!(second, std::borrow::Cow::Owned(_)));
+    assert_eq!(first.code(), FieldTypeCode::LongLong);
+    first.to_mut().set_flen(42);
+    assert_ne!(first.flen(), second.flen());
+    assert_eq!(
+        constant.get_static_type().unwrap().code(),
+        FieldTypeCode::VarString
+    );
+}
 
 /// `pkg/expression/constant_test.go:478 TestVectorizedConstant`: a literal
 /// Constant fills a whole output chunk -- 1024 INT rows and 1024 VARCHAR rows

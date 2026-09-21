@@ -246,6 +246,91 @@ impl Datum {
         Ok(converted)
     }
 
+    /// Go `Datum.ToDecimal` with its original conversion-stage diagnostics.
+    /// Unlike `ConvertTo(DECIMAL)`, this does not fit a declared column shape.
+    pub fn to_decimal_with_context(
+        &self,
+        context: &crate::ConversionContext<'_>,
+    ) -> Result<(Decimal, Option<tidb_error::terror::TerrorError>), DatumValueError> {
+        use crate::{MyDecimal, JSON_LITERAL_FALSE, JSON_LITERAL_NULL, JSON_TYPE_CODE_LITERAL};
+        let (parsed, float) = match self {
+            Self::String(value) => {
+                let (decimal, error) = MyDecimal::from_string(value.bytes());
+                return Ok((
+                    Decimal::from_my_decimal(&decimal),
+                    context.handle_truncate(
+                        error.map(|error| decimal_conversion_error(error, value.bytes())),
+                    ),
+                ));
+            }
+            Self::Real(value) => (MyDecimal::from_float64(*value), *value),
+            Self::Float32(value) => (
+                MyDecimal::from_float64(f64::from(*value as f32)),
+                f64::from(*value as f32),
+            ),
+            Self::BinaryLiteral(value) | Self::Bit(value) => {
+                let (integer, error) = value.to_int_with_context(context);
+                return Ok((Decimal::from_uint(integer), error));
+            }
+            Self::Json(value) => {
+                let (decimal, error) = if let Some(value) = value.as_i64() {
+                    (Decimal::from_int(value), None)
+                } else if let Some(value) = value.as_u64() {
+                    (Decimal::from_uint(value), None)
+                } else if let Some(value) = value.as_f64() {
+                    let (decimal, error) = MyDecimal::from_float64(value);
+                    (
+                        Decimal::from_my_decimal(&decimal),
+                        error.map(|error| {
+                            decimal_conversion_error(
+                                error,
+                                crate::format_float_g_shortest(value).as_bytes(),
+                            )
+                        }),
+                    )
+                } else if let Some(value) = value.as_string() {
+                    let (decimal, error) = MyDecimal::from_string(value);
+                    (
+                        Decimal::from_my_decimal(&decimal),
+                        error.map(|error| decimal_conversion_error(error, value)),
+                    )
+                } else if value.type_code() == JSON_TYPE_CODE_LITERAL
+                    && value.value()[0] != JSON_LITERAL_NULL
+                {
+                    (
+                        Decimal::from_int(i64::from(value.value()[0] != JSON_LITERAL_FALSE)),
+                        None,
+                    )
+                } else {
+                    (
+                        Decimal::from_int(0),
+                        Some(
+                            crate::ERR_TRUNCATED_WRONG_VALUE
+                                .generate(format!("Truncated incorrect DECIMAL value: '{value}'")),
+                        ),
+                    )
+                };
+                return Ok((decimal, context.handle_truncate(error)));
+            }
+            Self::Int(_)
+            | Self::UInt(_)
+            | Self::Decimal(_)
+            | Self::Time(_)
+            | Self::Duration(_)
+            | Self::Enum(..)
+            | Self::Set(..) => {
+                return Ok((self.to_decimal()?.value, None));
+            }
+            _ => return Err(DatumValueError::Unsupported(self.kind(), "decimal")),
+        };
+        Ok((
+            Decimal::from_my_decimal(&parsed.0),
+            parsed.1.map(|error| {
+                decimal_conversion_error(error, crate::format_float_g_shortest(float).as_bytes())
+            }),
+        ))
+    }
+
     /// Source `Datum.ToDecimal`.
     pub fn to_decimal(&self) -> Result<Converted<Decimal>, DatumValueError> {
         let converted = match self {
@@ -380,6 +465,34 @@ impl Datum {
             bytes: buf,
         };
         BinaryJSON::from_typed_value(&BinaryJSONValue::Opaque(opaque)).map_err(Into::into)
+    }
+}
+
+// MyDecimal keeps compact Rust errors; conversion adds Go's error identity
+// and the exact input slice used by FromString after whitespace/sign removal.
+fn decimal_conversion_error(
+    error: crate::DecimalError,
+    input: &[u8],
+) -> tidb_error::terror::TerrorError {
+    match error {
+        crate::DecimalError::Truncated => crate::ERR_TRUNCATED.clone(),
+        crate::DecimalError::Overflow => crate::ERR_OVERFLOW.clone(),
+        crate::DecimalError::BadNumber => crate::ERR_BAD_NUMBER.clone(),
+        crate::DecimalError::TruncatedWrongValue => {
+            let input = &input[input
+                .iter()
+                .position(|byte| !matches!(byte, b' ' | b'\t'))
+                .unwrap_or(0)..];
+            let input = if matches!(input.first(), Some(b'+' | b'-')) {
+                &input[1..]
+            } else {
+                input
+            };
+            crate::ERR_TRUNCATED_WRONG_VALUE.generate(format!(
+                "Truncated incorrect DECIMAL value: '{}'",
+                String::from_utf8_lossy(input)
+            ))
+        }
     }
 }
 

@@ -486,6 +486,77 @@ fn bench_aggregate() {
     }
 }
 
+/// Sorted string groups through the production checker and stream aggregate.
+/// One chunk per pass keeps the replay globally sorted, including CI ties.
+fn bench_stream_grouping() {
+    use tidb_datatype::Collation;
+    use tidb_executor::hash_agg::GroupedStreamAggExec;
+    use tidb_expr::constant::Constant;
+    for (label, collation, constant_key) in [
+        ("stream_group_bin", Collation::Utf8Mb4Bin, false),
+        ("stream_group_ci", Collation::Utf8Mb4GeneralCi, false),
+        ("stream_group_bin_constant", Collation::Utf8Mb4Bin, true),
+        (
+            "stream_group_ci_constant",
+            Collation::Utf8Mb4GeneralCi,
+            true,
+        ),
+    ] {
+        let types = vec![FieldType::new(FieldTypeCode::VarString).with_collation(collation)];
+        let mut template = Chunk::new_with_capacity(&types, CHUNK);
+        for row in 0..CHUNK {
+            let prefix = if collation == Collation::Utf8Mb4GeneralCi && row % 2 == 0 {
+                'G'
+            } else {
+                'g'
+            };
+            template.append_string(0, &format!("{prefix}{:05}", row / 32));
+        }
+        let source = || Replay {
+            meta: ExecutorMeta::new(schema_of(&types), 0, CHUNK, CHUNK),
+            template: template.clone(),
+            remaining: CHUNK,
+        };
+        let mut source_pass = || {
+            black_box(drain(&mut source()));
+        };
+        let mut total_pass = || {
+            let mut keys = vec![column(0, &types[0])];
+            if constant_key {
+                keys.insert(
+                    0,
+                    Expression::Constant(Constant::new(
+                        Datum::Int(12),
+                        FieldType::new(FieldTypeCode::LongLong),
+                    )),
+                );
+            }
+            let out = [FieldType::new(FieldTypeCode::LongLong)];
+            let mut aggregate = GroupedStreamAggExec::new(
+                ExecutorMeta::new(schema_of(&out), 1, CHUNK, CHUNK),
+                keys,
+                vec![AggFunc::new(AggKind::Count, None)],
+                vec![0],
+                Box::new(source()),
+                SerialAgg,
+            );
+            assert_eq!(black_box(drain(&mut aggregate)), CHUNK / 32);
+        };
+        let results =
+            best_of_blocks(&mut [("source", &mut source_pass), ("total", &mut total_pass)]);
+        let rows = CHUNK as f64;
+        println!(
+            "{label} total_ns_per_row {:.1}",
+            results[1].0.as_secs_f64() * 1e9 / rows
+        );
+        println!("{label} total_cal_per_row {:.4}", results[1].1 / rows);
+        println!(
+            "{label} fold_cal_per_row {:.4}",
+            (results[1].1 - results[0].1) / rows
+        );
+    }
+}
+
 fn main() {
     let (elapsed, ratio) = best_of_blocks(&mut [("calibration", &mut calibration_unit)])[0];
     // A canary, and a check on the method. The ratio is the reference over a
@@ -515,6 +586,9 @@ fn main() {
     }
     if wanted("row_copy") {
         bench_row_copy();
+    }
+    if wanted("stream_group") {
+        bench_stream_grouping();
     }
     if wanted("agg") {
         bench_aggregate();

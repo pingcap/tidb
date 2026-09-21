@@ -87,6 +87,20 @@ impl VecGroupChecker {
             return Ok(true);
         }
 
+        // A prepared parameter's collation follows its current value, just
+        // like Constant.GetType(ctx); it must not retain planning metadata.
+        for (item, collation) in self.group_by_items.iter().zip(&mut self.collations) {
+            if let Expression::Constant(constant) = item {
+                if constant.param_marker.is_some() {
+                    *collation = constant
+                        .get_type(ctx)?
+                        .runtime_collator_with_mode(true)
+                        .new_collation()
+                        .unwrap_or(Collation::Binary);
+                }
+            }
+        }
+
         // Go evaluates each item's first and last row before considering
         // any interior row. Equal encoded boundaries skip the vector pass.
         let mut first = Vec::with_capacity(self.group_by_items.len());
@@ -119,7 +133,22 @@ impl VecGroupChecker {
         self.same_group.resize(rows, true);
         self.same_group[0] = false;
         for (item, collation) in self.group_by_items.iter().zip(&self.collations) {
-            if resolve_integer_column(item, chunk, &mut self.same_group) {
+            if ctx.enable_vectorized_expression() {
+                if let Expression::Constant(constant) = item {
+                    if constant.deferred_expr.is_none() {
+                        // genVecFromConstExpr evaluates once and repeats the
+                        // value. Still compare it with itself: NaN is unequal.
+                        let value = eval_group_item(item, ctx, chunk.get_row(0), *collation)?;
+                        if !same_group_value(&value, &value, *collation)? {
+                            self.same_group.fill(false);
+                        }
+                        continue;
+                    }
+                }
+            }
+            if resolve_integer_column(item, chunk, &mut self.same_group)
+                || resolve_string_column(item, chunk, *collation, &mut self.same_group)
+            {
                 continue;
             }
             let mut previous = eval_group_item(item, ctx, chunk.get_row(0), *collation)?;
@@ -289,6 +318,67 @@ fn resolve_integer_column(expr: &Expression, chunk: &Chunk, same_group: &mut [bo
     false
 }
 
+/// Ordinary string columns can borrow their cells for the whole pass. Keep
+/// one collation key per row, as Go's string loop does, without Datum clones.
+fn resolve_string_column(
+    expr: &Expression,
+    chunk: &Chunk,
+    collation: Collation,
+    same_group: &mut [bool],
+) -> bool {
+    use tidb_datatype::FieldTypeCode;
+    let Expression::Column(column) = expr else {
+        return false;
+    };
+    if !column.get_static_type().is_some_and(|field| {
+        matches!(
+            field.code(),
+            FieldTypeCode::String
+                | FieldTypeCode::Varchar
+                | FieldTypeCode::VarString
+                | FieldTypeCode::TinyBlob
+                | FieldTypeCode::MediumBlob
+                | FieldTypeCode::LongBlob
+                | FieldTypeCode::Blob
+        )
+    }) {
+        return false;
+    }
+    let Some(index) = usize::try_from(column.index)
+        .ok()
+        .filter(|index| *index < chunk.num_cols())
+    else {
+        return false;
+    };
+    let cells = chunk.column(index);
+    if cells.is_fixed() {
+        return false;
+    }
+    let view = cells.raw_cells();
+    let key = |physical| {
+        let bytes = view.get(physical);
+        if tidb_datatype::new_collation_enabled() {
+            collation.immutable_key(bytes)
+        } else {
+            std::borrow::Cow::Borrowed(bytes)
+        }
+    };
+    let mut previous_row = chunk.get_row(0).idx();
+    let mut previous_key = key(previous_row);
+    for (row, same) in same_group.iter_mut().enumerate().skip(1) {
+        let physical = chunk.get_row(row).idx();
+        let current_key = key(physical);
+        if *same
+            && (view.is_null(previous_row) != view.is_null(physical) || previous_key != current_key)
+        {
+            *same = false;
+        }
+        previous_row = physical;
+        previous_key = current_key;
+    }
+    true
+}
+
 /// The Go checker calls EvalInt/EvalReal/EvalString, not the generic Eval.
 /// Hybrid values therefore enter the key's declared evaluation domain before
 /// either boundary encoding or adjacent comparison.
@@ -298,6 +388,9 @@ fn eval_group_item(
     row: tidb_chunk::row::Row<'_>,
     collation: Collation,
 ) -> Result<Datum, EvalError> {
+    if let Expression::Constant(constant) = item {
+        return constant.eval_typed_on_row(ctx, row);
+    }
     let value = item.eval(ctx, row)?;
     Ok(
         match (item.static_type().map(|field| field.eval_type()), value) {
@@ -435,6 +528,359 @@ mod tests {
             ranges.push(checker.get_next_group());
         }
         ranges
+    }
+
+    #[test]
+    fn string_column_groups_follow_selected_rows_and_nulls() {
+        for code in [
+            FieldTypeCode::String,
+            FieldTypeCode::Varchar,
+            FieldTypeCode::VarString,
+            FieldTypeCode::TinyBlob,
+            FieldTypeCode::MediumBlob,
+            FieldTypeCode::LongBlob,
+            FieldTypeCode::Blob,
+        ] {
+            let field = FieldType::new(code).with_collation(Collation::Utf8Mb4GeneralCi);
+            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 6);
+            for value in [Some("b"), None, Some("a "), Some("A"), None, Some("c")] {
+                if let Some(value) = value {
+                    chunk.append_string(0, value);
+                } else {
+                    chunk.append_null(0);
+                }
+            }
+            chunk.set_sel(Some(vec![1, 4, 2, 3, 0, 5]));
+            let mut checker = VecGroupChecker::new(vec![column(0, field)]);
+            assert!(!checker.split_into_groups(&NoColumns, &chunk).unwrap());
+            assert_eq!(
+                ranges(&mut checker),
+                [(0, 2), (2, 4), (4, 5), (5, 6)],
+                "{code:?}"
+            );
+            chunk.set_sel(Some(vec![5]));
+            assert!(checker.split_into_groups(&NoColumns, &chunk).unwrap());
+            assert_eq!(ranges(&mut checker), [(0, 1)]);
+        }
+    }
+
+    #[test]
+    fn constant_interior_warnings_follow_vectorization_mode() {
+        use tidb_expr::constant::Constant;
+        for vectorized in [false, true] {
+            let ctx = crate::stmt_context::StmtContext::default()
+                .with_enable_vectorized_expression(vectorized)
+                .with_truncate_level(tidb_expr::ErrorLevel::Warn);
+            let field = FieldType::new(FieldTypeCode::LongLong);
+            let constant =
+                Expression::Constant(Constant::new(Datum::new_string("12tail"), field.clone()));
+            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+            for value in [1, 1, 2, 2] {
+                chunk.append_int64(0, value);
+            }
+            let mut checker = VecGroupChecker::new(vec![constant, column(0, field)]);
+            assert!(!checker.split_into_groups(&ctx, &chunk).unwrap());
+            assert_eq!(ranges(&mut checker), [(0, 2), (2, 4)]);
+            let warnings = ctx.take_warnings();
+            assert_eq!(warnings.len(), if vectorized { 3 } else { 6 });
+            assert!(warnings.iter().all(|(_, code, message)| *code == 1292
+                && message == "Truncated incorrect DOUBLE value: '12tail'"));
+        }
+    }
+
+    #[test]
+    fn vectorized_nan_constant_keeps_unequal_adjacent_rows() {
+        use tidb_expr::constant::Constant;
+        for vectorized in [false, true] {
+            let ctx = crate::stmt_context::StmtContext::default()
+                .with_enable_vectorized_expression(vectorized);
+            let field = FieldType::new(FieldTypeCode::LongLong);
+            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+            for value in [1, 1, 2, 2] {
+                chunk.append_int64(0, value);
+            }
+            let constant = Expression::Constant(Constant::new(
+                Datum::Real(f64::NAN),
+                FieldType::new(FieldTypeCode::Double),
+            ));
+            let mut checker = VecGroupChecker::new(vec![constant, column(0, field)]);
+            assert!(!checker.split_into_groups(&ctx, &chunk).unwrap());
+            assert_eq!(ranges(&mut checker), [(0, 1), (1, 2), (2, 3), (3, 4)]);
+        }
+    }
+
+    #[test]
+    fn constant_decimal_conversion_preserves_error_order() {
+        use tidb_expr::{constant::Constant, ErrorLevel};
+        let truncated = (1265, "Data truncated for column '%s' at row %d");
+        let overflow = (1690, "%s value is out of range in '%s'");
+        let cases = [
+            (
+                "prefix",
+                Datum::new_string("1.2tail"),
+                truncated,
+                "0604038100c8",
+            ),
+            (
+                "invalid",
+                Datum::new_string(" +abc"),
+                (1292, "Truncated incorrect DECIMAL value: 'abc'"),
+                "0603038000",
+            ),
+            ("overflow", Datum::new_string("1e9999"), overflow, ""),
+            ("float_overflow", Datum::Real(1e308), overflow, ""),
+            (
+                "float_nan",
+                Datum::Real(f64::NAN),
+                (1292, "Truncated incorrect DECIMAL value: 'NaN'"),
+                "",
+            ),
+            (
+                "float_inf",
+                Datum::Real(f64::INFINITY),
+                (1292, "Truncated incorrect DECIMAL value: 'Inf'"),
+                "",
+            ),
+            (
+                "json_object",
+                Datum::Json(BinaryJSON::parse("{}").unwrap()),
+                (1292, "Truncated incorrect DECIMAL value: '{}'"),
+                "0603038000",
+            ),
+            (
+                "json_string",
+                Datum::Json(BinaryJSON::parse("\"1.2tail\"").unwrap()),
+                truncated,
+                "0604038100c8",
+            ),
+        ];
+        let mut chunk = Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], 2);
+        chunk.append_int64(0, 1);
+        chunk.append_int64(0, 2);
+        for level in [ErrorLevel::Error, ErrorLevel::Warn, ErrorLevel::Ignore] {
+            for (name, value, diagnostic, key) in &cases {
+                let ctx = crate::stmt_context::StmtContext::default().with_truncate_level(level);
+                let constant = Constant::new(
+                    value.clone(),
+                    FieldType::new(FieldTypeCode::NewDecimal).with_decimal(3),
+                );
+                let mut checker = VecGroupChecker::new(vec![Expression::Constant(constant)]);
+                let result = checker.split_into_groups(&ctx, &chunk);
+                let fatal = if level == ErrorLevel::Error || name.starts_with("float_") {
+                    Some(*diagnostic)
+                } else if *name == "overflow" {
+                    Some(truncated)
+                } else {
+                    None
+                };
+                if let Some((code, message)) = fatal {
+                    let Err(EvalError::Conversion(error)) = result else {
+                        panic!("{name}/{level:?}: expected typed error, got {result:?}");
+                    };
+                    let error = error.to_sql_error();
+                    assert_eq!(
+                        (error.code, error.message.as_str()),
+                        (code, message),
+                        "{name}/{level:?}"
+                    );
+                } else {
+                    assert!(!result.unwrap());
+                    let encoded = checker
+                        .previous_last_key
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>();
+                    assert_eq!(encoded, *key, "{name}/{level:?}");
+                }
+                let expected = if level == ErrorLevel::Warn && !name.starts_with("float_") {
+                    vec![
+                        (diagnostic.0, diagnostic.1.to_owned());
+                        if *name == "overflow" { 1 } else { 2 }
+                    ]
+                } else {
+                    vec![]
+                };
+                let actual = ctx
+                    .take_warnings()
+                    .into_iter()
+                    .map(|(_, code, message)| (code, message))
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected, "{name}/{level:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn constant_group_domains_match_go_literals_deferred_and_parameters() {
+        use tidb_expr::constant::{Constant, ParamMarker};
+        struct Context {
+            parameter: Datum,
+            warnings: std::cell::RefCell<Vec<(u16, String)>>,
+        }
+        impl Columns for Context {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn param_value(&self, _: usize) -> Result<Datum, EvalError> {
+                Ok(self.parameter.clone())
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.warnings.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+        // Captured with both Go vectorization modes. Each constant has the
+        // same value at both endpoints, so no interior evaluation is needed.
+        let cases = [
+            (
+                "int_string",
+                FieldTypeCode::LongLong,
+                -1,
+                Datum::new_string("12.4tail"),
+                "03800000000000000c",
+                "0131322e347461696cff0000000000000000f7",
+                Some((1292, "Truncated incorrect DOUBLE value: '12.4tail'")),
+            ),
+            (
+                "real_string",
+                FieldTypeCode::Double,
+                -1,
+                Datum::new_string("1.5tail"),
+                "05bff8000000000000",
+                "01312e357461696c00fe",
+                Some((1292, "Truncated incorrect DOUBLE value: '1.5tail'")),
+            ),
+            (
+                "string_int",
+                FieldTypeCode::VarString,
+                -1,
+                Datum::Int(42),
+                "010034003200000000fb",
+                "03800000000000002a",
+                None,
+            ),
+            (
+                "string_json",
+                FieldTypeCode::VarString,
+                -1,
+                Datum::Json(BinaryJSON::parse("42").unwrap()),
+                "010034003200000000fb",
+                "0a092a00000000000000",
+                None,
+            ),
+            (
+                "decimal_int",
+                FieldTypeCode::NewDecimal,
+                3,
+                Datum::Int(12),
+                "0605038c0000",
+                "03800000000000000c",
+                None,
+            ),
+            (
+                "decimal_string",
+                FieldTypeCode::NewDecimal,
+                3,
+                Datum::new_string("1.2tail"),
+                "0604038100c8",
+                "01312e327461696c00fe",
+                Some((1265, "Data truncated for column '%s' at row %d")),
+            ),
+            (
+                "decimal_pad",
+                FieldTypeCode::NewDecimal,
+                3,
+                Datum::Decimal(Decimal::from_literal("1.2")),
+                "0604038100c8",
+                "0602018102",
+                None,
+            ),
+            (
+                "decimal_preserve",
+                FieldTypeCode::NewDecimal,
+                1,
+                Datum::Decimal(Decimal::from_literal("1.234")),
+                "0604038100ea",
+                "0604038100ea",
+                None,
+            ),
+            (
+                "null_type",
+                FieldTypeCode::Null,
+                -1,
+                Datum::new_string("present"),
+                "00",
+                "0170726573656e7400fe",
+                None,
+            ),
+        ];
+        let mut chunk = Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], 2);
+        chunk.append_int64(0, 0);
+        chunk.append_int64(0, 1);
+        let mut mismatches = Vec::new();
+        for mode in ["literal", "deferred", "parameter"] {
+            for (name, code, scale, value, literal_key, parameter_key, warning) in &cases {
+                let field = FieldType::new(*code)
+                    .with_flen(2)
+                    .with_decimal(*scale)
+                    .with_collation(Collation::Utf8Mb4GeneralCi);
+                let mut constant = Constant::new(value.clone(), field);
+                if mode == "deferred" {
+                    constant.deferred_expr = Some(Box::new(Expression::Constant(Constant::new(
+                        value.clone(),
+                        FieldType::new(FieldTypeCode::VarString),
+                    ))));
+                }
+                if mode == "parameter" {
+                    constant.param_marker = Some(ParamMarker { order: 0 });
+                }
+                let ctx = Context {
+                    parameter: value.clone(),
+                    warnings: Default::default(),
+                };
+                let mut checker = VecGroupChecker::new(vec![Expression::Constant(constant)]);
+                match checker.split_into_groups(&ctx, &chunk) {
+                    Ok(continues) => {
+                        assert!(!continues);
+                        assert_eq!(ranges(&mut checker), [(0, 2)]);
+                    }
+                    Err(error) => {
+                        mismatches.push(format!("{mode}/{name}: {error:?}"));
+                        continue;
+                    }
+                }
+                let key = checker
+                    .previous_last_key
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                let expected = if mode == "parameter" {
+                    parameter_key
+                } else {
+                    literal_key
+                };
+                if key != *expected {
+                    mismatches.push(format!("{mode}/{name}: key {key}, expected {expected}"));
+                }
+                let expected_warnings = if mode == "parameter" {
+                    vec![]
+                } else {
+                    warning
+                        .map(|(code, message)| vec![(code, message.to_owned()); 2])
+                        .unwrap_or_default()
+                };
+                if *ctx.warnings.borrow() != expected_warnings {
+                    mismatches.push(format!(
+                        "{mode}/{name}: warnings {:?}, expected {expected_warnings:?}",
+                        ctx.warnings.borrow()
+                    ));
+                }
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
     }
 
     #[test]
