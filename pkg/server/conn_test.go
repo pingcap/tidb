@@ -1550,6 +1550,7 @@ func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc.SetCtx(tc)
+	defer func() { require.NoError(t, cc.getCtx().Close()) }()
 
 	data := []byte{}
 	data = append(data, "missing_user"...)
@@ -1563,6 +1564,35 @@ func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
 	require.Same(t, tc, cc.getCtx())
 	require.Equal(t, "root", cc.user)
 	require.Equal(t, "old_db", cc.dbname)
+	require.Equal(t, "root", cc.ctx.GetSessionVars().User.Username)
+
+	// A failure while resolving the new user's plugin must preserve the old session too.
+	cc.capability |= mysql.ClientPluginAuth
+	pluginData := append(append([]byte(nil), data...), []byte(mysql.AuthNativePassword+"\x00")...)
+	err = cc.handleChangeUser(context.Background(), pluginData)
+	require.Error(t, err)
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "old_db", cc.dbname)
+
+	// Rejecting a newly opened context at the connection limit must roll it back.
+	srv.cfg.Instance.MaxConnections = 1
+	srv.clients[cc.connectionID] = cc
+	err = cc.handleChangeUser(context.Background(), data)
+	delete(srv.clients, cc.connectionID)
+	srv.cfg.Instance.MaxConnections = 0
+	require.Error(t, err)
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "old_db", cc.dbname)
+
+	// A valid change on the same connection must remain possible after those failures.
+	cc.capability &^= mysql.ClientPluginAuth
+	successData := []byte("root\x00\x00test\x00\x00\x00")
+	require.NoError(t, cc.handleChangeUser(context.Background(), successData))
+	require.NotSame(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "test", cc.dbname)
 	require.Equal(t, "root", cc.ctx.GetSessionVars().User.Username)
 }
 
