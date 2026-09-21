@@ -2402,6 +2402,25 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)
 		}
+		for _, constraint := range tbl.Constraints {
+			// information_schema.CHECK_CONSTRAINTS reports only public constraints.
+			if constraint.State != model.StatePublic {
+				continue
+			}
+			if !ex.HasConstraint(constraint.Name.L) {
+				continue
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal, // CONSTRAINT_CATALOG
+				schema.O,              // CONSTRAINT_SCHEMA
+				constraint.Name.O,     // CONSTRAINT_NAME
+				schema.O,              // TABLE_SCHEMA
+				tbl.Name.O,            // TABLE_NAME
+				infoschema.CheckType,  // CONSTRAINT_TYPE
+			)
+			rows = append(rows, record)
+			e.recordMemoryConsume(record)
+		}
 	}
 	e.rows = rows
 	return nil
