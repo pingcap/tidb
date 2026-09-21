@@ -32,7 +32,7 @@ jobs:
         with:
           bazelrc: ""
           gcp_sa_key: ""
-          go-version: 1.25
+          go-version: 1.26.8
       - name: Run Bazel Prepare
         shell: bash
         run: |

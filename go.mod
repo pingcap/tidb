@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.25.12
+go 1.26.8
 
 require (
 	cloud.google.com/go/kms v1.21.0
@@ -98,7 +98,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260820070758-623e58e60fa9
+	github.com/pingcap/kvproto v0.0.0-20260903054228-107095f1d250
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/metering_sdk v0.0.0-20260814062708-9e3b68cd9adf
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
@@ -122,7 +122,7 @@ require (
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.142
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20260918070520-787f20af357c
-	github.com/tikv/pd/client v0.0.0-20260805103528-afa43111d149
+	github.com/tikv/pd/client v0.0.0-20260920071713-06d2961669dd
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -373,3 +373,7 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/tikv/pd/client v0.0.0-20260920071713-06d2961669dd => github.com/JmPotato/pd/client v0.0.0-20260920124512-fb47e16dd8d6
+
+replace github.com/pingcap/kvproto v0.0.0-20260903054228-107095f1d250 => github.com/JmPotato/kvproto v0.0.0-20260920123146-2a45fb4cd2dc
