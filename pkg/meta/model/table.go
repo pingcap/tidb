@@ -1612,6 +1612,9 @@ func (s WindowRepeatType) String() string {
 // DefaultTTLJobInterval is the default interval of TTL jobs.
 const DefaultTTLJobInterval = "24h"
 
+// StarterDefaultTTLJobInterval is the default interval of TTL jobs in starter deployment mode.
+const StarterDefaultTTLJobInterval = "15m"
+
 // OldDefaultTTLJobInterval is the default interval of TTL jobs in v8.5 and the previous versions.
 // It is used by some codes to keep compatible with the previous versions.
 const OldDefaultTTLJobInterval = "1h"

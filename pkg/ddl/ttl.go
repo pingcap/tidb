@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/extworkload"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -221,6 +222,11 @@ func checkPrimaryKeyForTTLTable(tblInfo *model.TableInfo) error {
 // if both of TTL and TTL_ENABLE are set, the `ttlInfo.Enable` will be equal with `ttlEnable`.
 // if both of TTL and TTL_JOB_INTERVAL are set, the `ttlInfo.JobInterval` will be equal with `ttlCronJobSchedule`.
 func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *string, err error) {
+	defaultJobInterval := model.DefaultTTLJobInterval
+	if deploymode.IsStarter() {
+		defaultJobInterval = model.StarterDefaultTTLJobInterval
+	}
+
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionTTL:
@@ -238,7 +244,7 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
-				JobInterval:      model.DefaultTTLJobInterval,
+				JobInterval:      defaultJobInterval,
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue
