@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -57,4 +57,71 @@ pub static COPR_CLOSEST_READ: LazyLock<CounterVec> = LazyLock::new(|| {
 pub fn init_dashboard_series() {
     let _ = COPR_CACHE.with_label_values(&["evict"]);
     let _ = COPR_CLOSEST_READ.with_label_values(&["null"]);
+}
+
+pub static DISTSQL_QUERY: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_distsql_handle_query_duration_seconds",
+            "Bucketed histogram of processing time (s) of handled queries.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
+        &["type", "sql_type", "copr_type"],
+    ))
+});
+
+pub static DISTSQL_SCAN_KEYS_NUM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_distsql_scan_keys_num",
+            "number of scanned keys for each query.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+pub static DISTSQL_PARTIAL_NUM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_distsql_partial_num",
+            "number of partial results for each query.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+pub static DISTSQL_SCAN_KEYS_PARTIAL_NUM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_distsql_scan_keys_partial_num",
+            "number of scanned keys for each partial result.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+pub static DISTSQL_COPR_RESP_SIZE: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_distsql_copr_resp_size",
+            "copr task response data size in bytes.",
+        )
+        .buckets(prometheus::exponential_buckets(1.0, 2.0, 10).expect("valid buckets")),
+        &["store"],
+    ))
+});
+
+/// The (fq name, help, kind) of every histogram family in this module,
+/// for the exposition header shim that mirrors Go's registered-family output.
+pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
+    vec![
+            ("tidb_distsql_handle_query_duration_seconds", "Bucketed histogram of processing time (s) of handled queries."),
+            ("tidb_distsql_scan_keys_num", "number of scanned keys for each query."),
+            ("tidb_distsql_partial_num", "number of partial results for each query."),
+            ("tidb_distsql_scan_keys_partial_num", "number of scanned keys for each partial result."),
+            ("tidb_distsql_copr_resp_size", "copr task response data size in bytes."),
+    ]
 }

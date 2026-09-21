@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -66,4 +66,47 @@ pub fn init_dashboard_series() {
     let _ = DDL_RUNNING_JOB_COUNT.with_label_values(&["general"]);
     let _ = JOBS_GAUGE.with_label_values(&["alter resource group"]);
     let _ = DDL_COUNTER.with_label_values(&["create_ddl_instance"]);
+}
+
+pub static DDL_HANDLE_JOB_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_ddl_handle_job_duration_seconds",
+            "Bucketed histogram of processing time (s) of handle jobs",
+        )
+        .buckets(prometheus::exponential_buckets(0.01, 2.0, 24).expect("valid buckets")),
+        &["type", "result"],
+    ))
+});
+
+pub static DDL_JOB_TABLE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_ddl_job_table_duration_seconds",
+            "Bucketed histogram of processing time (s) of the 3 DDL job tables",
+        )
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+pub static DDL_WORKER_OPERATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_ddl_worker_operation_duration_seconds",
+            "Bucketed histogram of processing time (s) of ddl worker operations",
+        )
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).expect("valid buckets")),
+        &["type", "action", "result"],
+    ))
+});
+
+/// The (fq name, help, kind) of every histogram family in this module,
+/// for the exposition header shim that mirrors Go's registered-family output.
+pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
+    vec![
+            ("tidb_ddl_handle_job_duration_seconds", "Bucketed histogram of processing time (s) of handle jobs"),
+            ("tidb_ddl_job_table_duration_seconds", "Bucketed histogram of processing time (s) of the 3 DDL job tables"),
+            ("tidb_ddl_worker_operation_duration_seconds", "Bucketed histogram of processing time (s) of ddl worker operations"),
+    ]
 }

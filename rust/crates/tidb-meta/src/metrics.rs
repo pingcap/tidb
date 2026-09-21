@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -45,4 +45,35 @@ pub static AUTOID_CLIENT_CONN_RESET: LazyLock<Counter> = LazyLock::new(|| {
 /// exported label combinations exactly.
 pub fn init_dashboard_series() {
     LazyLock::force(&AUTOID_CLIENT_CONN_RESET);
+}
+
+pub static META_OPERATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_meta_operation_duration_seconds",
+            "Bucketed histogram of processing time (s) of tidb meta data operations.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
+        &["type", "result"],
+    ))
+});
+
+pub static AUTOID_OPERATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_autoid_operation_duration_seconds",
+            "Bucketed histogram of processing time (s) of handled autoid.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
+        &["type", "result"],
+    ))
+});
+
+/// The (fq name, help, kind) of every histogram family in this module,
+/// for the exposition header shim that mirrors Go's registered-family output.
+pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
+    vec![
+            ("tidb_meta_operation_duration_seconds", "Bucketed histogram of processing time (s) of tidb meta data operations."),
+            ("tidb_autoid_operation_duration_seconds", "Bucketed histogram of processing time (s) of handled autoid."),
+    ]
 }

@@ -280,6 +280,14 @@ pub trait OpenClusterTransaction: Send {
     /// The transaction timestamp shared by every statement until it ends.
     fn start_ts(&self) -> u64;
 
+    /// The wall clock this transaction began at (Go's
+    /// `tidb_session_transaction_duration_seconds` start point).
+    fn opened_at(&self) -> std::time::Instant;
+
+    /// Statements executed inside this transaction (Go's
+    /// `tidb_session_transaction_statement_num` observation input).
+    fn statement_count(&self) -> u64;
+
     /// Rebinds all subsequent requests to the statement's resolved resource
     /// group while retaining the transaction and its timestamp.
     fn set_resource_group_name(&self, name: &str) -> Result<(), String>;
@@ -1276,6 +1284,17 @@ where
 {
     fn start_ts(&self) -> u64 {
         SessionTransaction::start_ts(self)
+    }
+
+    fn opened_at(&self) -> std::time::Instant {
+        // The exec type's INHERENT method (fields take precedence in method
+        // position, and the inherent method terminates the dispatch chain
+        // that the trait-method path form would recurse into).
+        SessionTransaction::opened_at(self)
+    }
+
+    fn statement_count(&self) -> u64 {
+        SessionTransaction::statement_count(self)
     }
 
     fn set_resource_group_name(&self, name: &str) -> Result<(), String> {

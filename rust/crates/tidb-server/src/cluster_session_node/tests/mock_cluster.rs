@@ -264,6 +264,7 @@ impl PendingClusterTransaction for MockPendingTransaction {
     fn wait(self: Box<Self>) -> Result<Box<dyn OpenClusterTransaction>, String> {
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.start_ts,
+            opened_at: std::time::Instant::now(),
             data: self.cluster.snapshot(),
             cluster: self.cluster,
             max_ts: false,
@@ -471,6 +472,7 @@ impl ClusterTransactions for MockTransactions {
         }
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.0.timestamp(),
+            opened_at: std::time::Instant::now(),
             data: self.0.snapshot(),
             cluster: Arc::clone(&self.0),
             max_ts: false,
@@ -489,11 +491,20 @@ pub(super) struct MockSessionTransaction {
     pub(super) cluster: Arc<MockCluster>,
     pub(super) max_ts: bool,
     pub(super) pessimistic: bool,
+    pub(super) opened_at: std::time::Instant,
 }
 
 impl OpenClusterTransaction for MockSessionTransaction {
     fn start_ts(&self) -> u64 {
         self.start_ts
+    }
+
+    fn opened_at(&self) -> std::time::Instant {
+        self.opened_at
+    }
+
+    fn statement_count(&self) -> u64 {
+        0
     }
 
     fn set_resource_group_name(&self, name: &str) -> Result<(), String> {

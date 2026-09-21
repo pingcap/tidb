@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -102,4 +102,59 @@ pub fn init_dashboard_series() {
     let _ = MPP_COORDINATOR_STATS.with_label_values(&["active"]);
     let _ = NETWORK_TRANSMISSION.with_label_values(&["received_tiflash_cross_zone"]);
     let _ = STATEMENT_TOTAL.with_label_values(&["", "default", "AnalyzeTable"]);
+}
+
+pub static INDEX_LOOKUP_EXECUTE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_executor_index_lookup_execute_duration_seconds",
+            "Bucketed histogram of processing time (s) in running index-lookup executor.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0001, 2.0, 30).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+pub static INDEX_LOOKUP_ROW_NUMBER: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_executor_index_lookup_row_number",
+            "Row number for each index lookup executor",
+        )
+        .buckets(prometheus::exponential_buckets(1.0, 2.0, 10).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+pub static MPP_COORDINATOR_LATENCY: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_executor_mpp_coordinator_latency",
+            "Bucketed histogram of processing time (ms) of mpp coordinator operations.",
+        )
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+pub static ONGOING_TXN_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_executor_ongoing_txn_duration_seconds",
+            "Bucketed histogram of processing time (s) of ongoing transactions.",
+        )
+        .buckets(prometheus::exponential_buckets(60.0, 2.0, 15).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+/// The (fq name, help, kind) of every histogram family in this module,
+/// for the exposition header shim that mirrors Go's registered-family output.
+pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
+    vec![
+            ("tidb_executor_index_lookup_execute_duration_seconds", "Bucketed histogram of processing time (s) in running index-lookup executor."),
+            ("tidb_executor_index_lookup_row_number", "Row number for each index lookup executor"),
+            ("tidb_executor_mpp_coordinator_latency", "Bucketed histogram of processing time (ms) of mpp coordinator operations."),
+            ("tidb_executor_ongoing_txn_duration_seconds", "Bucketed histogram of processing time (s) of ongoing transactions."),
+    ]
 }

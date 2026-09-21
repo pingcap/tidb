@@ -25,7 +25,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -100,4 +100,35 @@ pub fn init_dashboard_series() {
     LazyLock::force(&INFOSCHEMA_V2_CACHE_SIZE);
     LazyLock::force(&LEASE_EXPIRE_TIME);
     let _ = LOAD_SCHEMA_COUNTER.with_label_values(&["reset"]);
+}
+
+pub static DOMAIN_LOAD_SCHEMA_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_domain_load_schema_duration_seconds",
+            "Bucketed histogram of processing time (s) in load schema.",
+        )
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).expect("valid buckets")),
+        &["action"],
+    ))
+});
+
+pub static INFOSCHEMA_TABLE_BY_NAME_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_infoschema_table_by_name_duration_nanoseconds",
+            "infoschema v2 TableByName API duration",
+        )
+        .buckets(prometheus::exponential_buckets(1.0, 2.0, 30).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+/// The (fq name, help, kind) of every histogram family in this module,
+/// for the exposition header shim that mirrors Go's registered-family output.
+pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
+    vec![
+            ("tidb_domain_load_schema_duration_seconds", "Bucketed histogram of processing time (s) in load schema."),
+            ("tidb_infoschema_table_by_name_duration_nanoseconds", "infoschema v2 TableByName API duration"),
+    ]
 }

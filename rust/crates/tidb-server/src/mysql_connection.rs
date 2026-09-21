@@ -1702,6 +1702,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         // Go `handleQuery` parses the command ONCE and hands each
                         // node to `handleStmt`; every door below takes that node
                         // and none parses the text again.
+                        // Go `session.go`'s SessionExecuteParseDuration:
+                        // time the parse, then label it with the parsed
+                        // statement's type (general when nothing parsed).
+                        let parse_started = std::time::Instant::now();
                         let parsed = match engine.parse_statement(sql) {
                             Ok(parsed) => parsed,
                             Err(error) => {
@@ -1710,6 +1714,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 break;
                             }
                         };
+                        tidb_session::metrics::SESSION_PARSE
+                            .with_label_values(&[parsed.as_ref().map_or("general", Stmt::label)])
+                            .observe(parse_started.elapsed().as_secs_f64());
                         command_metrics.sql_type = parsed.as_ref().map_or("general", Stmt::label);
                         // Go `executor.go`: StmtNodeCounter counts every
                         // executed statement by its executor label.
@@ -1871,6 +1878,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 break;
                             }
                         }
+                        // Go `session.go`'s SessionExecuteRunDuration: the
+                        // rust engine plans and runs inside one call, so this
+                        // observes the combined compile+run time Go splits
+                        // across SessionExecuteCompile/RunDuration.
+                        let execute_started = std::time::Instant::now();
                         let mut result = match execute_statement(&mut engine, sql, parsed.as_ref())
                         {
                             Ok(result) => result,
@@ -1880,6 +1892,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 break;
                             }
                         };
+                        tidb_session::metrics::SESSION_EXECUTE
+                            .with_label_values(&[command_metrics.sql_type])
+                            .observe(execute_started.elapsed().as_secs_f64());
                         let (write_result, next_sequence) = {
                             let statement_options = framing.result_set_with_output(
                                 stamp(result.wire_status()),

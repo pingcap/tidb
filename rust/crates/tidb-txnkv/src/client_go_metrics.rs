@@ -261,6 +261,31 @@ fn materialize_dashboard_series() {
     let _ = collector_gauge_vec("TiKVMinSafeTSGapSeconds");
 }
 
+/// The (fq name, help) of every client-go histogram family under the
+/// `tidb`/`tikvclient` namespace, for the exposition header shim.
+pub fn histogram_definitions() -> Vec<(String, String)> {
+    tikv_client::metrics::CLIENT_GO_METRIC_SPECS
+        .iter()
+        .filter(|spec| {
+            matches!(
+                spec.subsystem,
+                tikv_client::metrics::MetricSubsystem::Configured
+            ) && matches!(
+                spec.kind,
+                tikv_client::metrics::MetricKind::Histogram
+                    | tikv_client::metrics::MetricKind::HistogramVec
+            )
+        })
+        .map(|spec| {
+            (
+                spec.metric_name,
+                spec.help,
+            )
+        })
+        .map(|(name, help)| ("tidb_tikvclient_".to_owned() + name, help.to_owned()))
+        .collect()
+}
+
 /// Materializes the per-store series for an embedded (in-process) store.
 /// Go's unistore deployment observes its single mock store through
 /// client-go, so the store-scoped gauges exist for it; the embedded store's
@@ -290,3 +315,32 @@ pub fn init_embedded_store_series(store_id: u64) {
         let _ = counter_vec.with_label_values(&["epoch_not_match", &store]);
     }
 }
+
+/// Every client-go family under the `tidb`/`tikvclient` namespace as
+/// (fq name, help, kind), for the exposition header shim: Go's registry
+/// emits HELP/TYPE for registered-but-childless histogram vecs, and this
+/// list lets the status server reproduce those headers.
+pub fn definitions() -> Vec<(String, String, &'static str)> {
+    tikv_client::metrics::CLIENT_GO_METRIC_SPECS
+        .iter()
+        .filter(|spec| {
+            matches!(
+                spec.subsystem,
+                tikv_client::metrics::MetricSubsystem::Configured
+            )
+        })
+        .filter_map(|spec| {
+            let kind = match spec.kind {
+                tikv_client::metrics::MetricKind::Counter => "counter",
+                tikv_client::metrics::MetricKind::CounterVec => "counter",
+                tikv_client::metrics::MetricKind::Gauge => "gauge",
+                tikv_client::metrics::MetricKind::GaugeVec => "gauge",
+                tikv_client::metrics::MetricKind::Histogram | tikv_client::metrics::MetricKind::HistogramVec => "histogram",
+                _ => return None,
+            };
+            let fq = format!("tidb_tikvclient_{}", spec.metric_name);
+            Some((fq, spec.help.to_owned(), kind))
+        })
+        .collect()
+}
+

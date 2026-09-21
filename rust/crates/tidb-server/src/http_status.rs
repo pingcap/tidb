@@ -167,6 +167,20 @@ pub fn start_status_listener_with_routes(
                                 .encode_to_string(&prometheus::gather())
                                 .expect("registered metrics encode as Prometheus text");
                             body.push_str(&tidb_txnkv::client_go_metrics::gather_text());
+                            // Go's exposition emits HELP/TYPE headers for
+                            // registered-but-childless histogram vecs;
+                            // rust-prometheus omits them. Append the family
+                            // catalog headers the gathered body lacks so
+                            // dashboards resolve the same family surface.
+                            for (fq, help) in
+                                crate::server_metrics::family_catalog()
+                            {
+                                if !body.contains(fq.as_str()) {
+                                    body.push_str(&format!(
+                                        "# HELP {fq} {help}\n# TYPE {fq} histogram\n"
+                                    ));
+                                }
+                            }
                             format!(
                                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\
                                  Content-Length: {}\r\nConnection: close\r\n\r\n{body}",

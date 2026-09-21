@@ -750,6 +750,12 @@ where
     state: Arc<Mutex<SessionTransactionState<C, L, P>>>,
     start_ts: u64,
     timeout: Duration,
+    /// Wall clock of BEGIN, Go's
+    /// `tidb_session_transaction_duration_seconds` start point.
+    opened_at: std::time::Instant,
+    /// Statements executed inside this transaction, Go's
+    /// `tidb_session_transaction_statement_num` observation input.
+    statement_count: std::cell::Cell<u64>,
     /// Whether this is a pessimistic transaction -- decided by the
     /// session's `tidb_txn_mode` at `BEGIN`, Go's `DefTiDBTxnMode`
     /// (pessimistic) being the default.
@@ -839,6 +845,22 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> fmt::Debug
 }
 
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTransaction<C, L, P> {
+    /// Wall clock of BEGIN (Go's transaction-duration start point).
+    pub fn opened_at(&self) -> std::time::Instant {
+        self.opened_at
+    }
+
+    /// Statements executed so far in this transaction.
+    pub fn statement_count(&self) -> u64 {
+        self.statement_count.get()
+    }
+
+    /// Counts one statement against this transaction (Go's
+    /// `tidb_session_transaction_statement_num` observation input).
+    pub fn note_statement(&self) {
+        self.statement_count.set(self.statement_count.get() + 1);
+    }
+
     /// Opens a locking statement at a fresh for-update timestamp, as Go's
     /// pessimistic repeatable-read provider does for non-point locking reads.
     pub fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
@@ -903,6 +925,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         transaction.set_commit_protocol(commit_protocol);
         let start_ts = transaction.start_ts();
         Ok(Self {
+            opened_at: std::time::Instant::now(),
+            statement_count: std::cell::Cell::new(0),
             state: Arc::new(Mutex::new(SessionTransactionState::Optimistic(transaction))),
             start_ts,
             timeout,
@@ -930,6 +954,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         )?;
         transaction.set_commit_protocol(commit_protocol);
         Ok(Self {
+            opened_at: std::time::Instant::now(),
+            statement_count: std::cell::Cell::new(0),
             state: Arc::new(Mutex::new(SessionTransactionState::Optimistic(transaction))),
             start_ts,
             timeout,
@@ -955,6 +981,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         )?;
         transaction.set_commit_protocol(commit_protocol);
         Ok(Self {
+            opened_at: std::time::Instant::now(),
+            statement_count: std::cell::Cell::new(0),
             state: Arc::new(Mutex::new(SessionTransactionState::PessimisticPending {
                 transaction,
                 opener,
@@ -1000,6 +1028,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         transaction.set_commit_protocol(commit_protocol);
         let start_ts = transaction.start_ts();
         Ok(Self {
+            opened_at: std::time::Instant::now(),
+            statement_count: std::cell::Cell::new(0),
             state: Arc::new(Mutex::new(SessionTransactionState::PessimisticPending {
                 transaction,
                 opener,

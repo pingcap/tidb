@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -71,5 +71,134 @@ pub fn init_dashboard_series() {
     let _ = RESOURCE_GROUP_QUERY_TOTAL.with_label_values(&["default", "default"]);
     LazyLock::force(&RESTRICTED_SQL_TOTAL);
     let _ = TRANSACTION_FAIR_LOCKING_USAGE.with_label_values(&["stmt-effective"]);
-    let _ = TXN_STATE_ENTERING_COUNT.with_label_values(&["acquiring_lock"]);
+    let _ = TXN_STATE_ENTERING_COUNT.with_label_values(&["acquiring_lock"]);    LazyLock::force(&STATEMENT_LOCK_KEYS_COUNT);
+    LazyLock::force(&STATEMENT_PESSIMISTIC_RETRY_COUNT);
+
+}
+
+pub static SESSION_PARSE: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_parse_duration_seconds",
+            "Bucketed histogram of processing time (s) in parse SQL.",
+        )
+        .buckets(prometheus::exponential_buckets(4e-05, 2.0, 28).expect("valid buckets")),
+        &["sql_type"],
+    ))
+});
+
+pub static SESSION_COMPILE: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_compile_duration_seconds",
+            "Bucketed histogram of processing time (s) in query optimize.",
+        )
+        .buckets(prometheus::exponential_buckets(4e-05, 2.0, 28).expect("valid buckets")),
+        &["sql_type"],
+    ))
+});
+
+pub static SESSION_EXECUTE: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_execute_duration_seconds",
+            "Bucketed histogram of processing time (s) in running executor.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0001, 2.0, 30).expect("valid buckets")),
+        &["sql_type"],
+    ))
+});
+
+pub static SESSION_RETRY: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_retry_num",
+            "Bucketed histogram of session retry count.",
+        )
+        .buckets(prometheus::linear_buckets(0.0, 1.0, 21).expect("valid buckets")),
+        &["scope"],
+    ))
+});
+
+pub static STATEMENT_LOCK_KEYS_COUNT: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_statement_lock_keys_count",
+            "Keys locking for a single statement",
+        )
+        .buckets(prometheus::exponential_buckets(1.0, 2.0, 21).expect("valid buckets")),
+        &[],
+    ))
+});
+
+pub static STATEMENT_PESSIMISTIC_RETRY_COUNT: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_statement_pessimistic_retry_count",
+            "Bucketed histogram of statement pessimistic retry count",
+        )
+        .buckets(prometheus::exponential_buckets(1.0, 2.0, 16).expect("valid buckets")),
+        &[],
+    ))
+});
+
+pub static STATEMENT_SHARED_LOCK_KEYS_COUNT: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_statement_shared_lock_keys_count",
+            "Keys locking for a single statement",
+        )
+        .buckets(prometheus::exponential_buckets(1.0, 2.0, 21).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+pub static TRANSACTION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_transaction_duration_seconds",
+            "Bucketed histogram of a transaction execution duration, including retry.",
+        )
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).expect("valid buckets")),
+        &["txn_mode", "type", "scope"],
+    ))
+});
+
+pub static STATEMENT_PER_TRANSACTION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_transaction_statement_num",
+            "Bucketed histogram of statements count in each transaction.",
+        )
+        .buckets(prometheus::exponential_buckets(1.0, 2.0, 16).expect("valid buckets")),
+        &["txn_mode", "type", "scope"],
+    ))
+});
+
+pub static TXN_STATE_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_session_txn_state_seconds",
+            "Bucketed histogram of different states of a transaction.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
+        &["type", "has_lock"],
+    ))
+});
+
+/// The (fq name, help, kind) of every histogram family in this module,
+/// for the exposition header shim that mirrors Go's registered-family output.
+pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
+    vec![
+            ("tidb_session_parse_duration_seconds", "Bucketed histogram of processing time (s) in parse SQL."),
+            ("tidb_session_compile_duration_seconds", "Bucketed histogram of processing time (s) in query optimize."),
+            ("tidb_session_execute_duration_seconds", "Bucketed histogram of processing time (s) in running executor."),
+            ("tidb_session_retry_num", "Bucketed histogram of session retry count."),
+            ("tidb_session_statement_lock_keys_count", "Keys locking for a single statement"),
+            ("tidb_session_statement_pessimistic_retry_count", "Bucketed histogram of statement pessimistic retry count"),
+            ("tidb_session_statement_shared_lock_keys_count", "Keys locking for a single statement"),
+            ("tidb_session_transaction_duration_seconds", "Bucketed histogram of a transaction execution duration, including retry."),
+            ("tidb_session_transaction_statement_num", "Bucketed histogram of statements count in each transaction."),
+            ("tidb_session_txn_state_seconds", "Bucketed histogram of different states of a transaction."),
+    ]
 }

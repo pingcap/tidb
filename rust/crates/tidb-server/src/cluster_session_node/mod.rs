@@ -5369,7 +5369,23 @@ impl ClusterServerSession {
         }
         let bindings_changed = self.binding_records_changed();
         let write_details = self.buffer_write_details();
-        match transaction.commit(&self.buffer) {
+        // Go `pkg/session/metrics`: transaction duration and per-transaction
+        // statement count, labeled pessimistic/optimistic x commit x general.
+        let txn_mode = if transaction.is_pessimistic() {
+            "pessimistic"
+        } else {
+            "optimistic"
+        };
+        let txn_opened_at = transaction.opened_at();
+        let txn_statement_count = transaction.statement_count() as f64;
+        let commit_result = transaction.commit(&self.buffer);
+        tidb_session::metrics::TRANSACTION_DURATION
+            .with_label_values(&[txn_mode, "commit", "general"])
+            .observe(txn_opened_at.elapsed().as_secs_f64());
+        tidb_session::metrics::STATEMENT_PER_TRANSACTION
+            .with_label_values(&[txn_mode, "ok", "general"])
+            .observe(txn_statement_count);
+        match commit_result {
             Ok(()) => {
                 self.refresh_committed_bindings(bindings_changed);
                 self.record_write_details(write_details);
@@ -5445,7 +5461,26 @@ impl ClusterServerSession {
         self.session.current_tso().clear();
         self.transaction_pin = None;
         match self.explicit.take() {
-            Some(transaction) => transaction.rollback().map_err(SqlQueryError::unknown),
+            Some(transaction) => {
+                // Go `pkg/session/metrics`: a rolled-back transaction counts
+                // as an abort, and its statement count is observed under the
+                // error result label.
+                let txn_mode = if transaction.is_pessimistic() {
+                    "pessimistic"
+                } else {
+                    "optimistic"
+                };
+                let txn_opened_at = transaction.opened_at();
+                let txn_statement_count = transaction.statement_count() as f64;
+                let result = transaction.rollback();
+                tidb_session::metrics::TRANSACTION_DURATION
+                    .with_label_values(&[txn_mode, "abort", "general"])
+                    .observe(txn_opened_at.elapsed().as_secs_f64());
+                tidb_session::metrics::STATEMENT_PER_TRANSACTION
+                    .with_label_values(&[txn_mode, "error", "general"])
+                    .observe(txn_statement_count);
+                result.map_err(SqlQueryError::unknown)
+            }
             None => Ok(()),
         }
     }

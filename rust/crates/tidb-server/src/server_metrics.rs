@@ -697,6 +697,114 @@ pub(crate) fn init_dashboard_series() {
     let _ = TIDB_SERVER_TTL_WATERMARK_DELAY.with_label_values(&["01 hour", "schedule"]);
 }
 
+
+/// Go `TTLQueryDuration` (`pkg/metrics/ttl.go`).
+pub static TTL_QUERY_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_server_ttl_query_duration",
+            "Bucketed histogram of processing time (s) of handled TTL queries.",
+        )
+        .buckets(prometheus::exponential_buckets(0.01, 2.0, 20).expect("valid buckets")),
+        &["sql_type", "result"],
+    ))
+});
+
+
+/// Aggregates every histogram-family (fq name, help) definition across the
+/// workspace's metric modules plus the vendored client-go registry. Go's
+/// exposition emits HELP/TYPE for registered-but-childless histogram vecs;
+/// rust-prometheus omits them, so the status server appends the missing
+/// headers and Prometheus/Grafana see the same family surface as against Go
+/// master.
+pub(crate) fn family_catalog() -> Vec<(String, String)> {
+    let mut catalog: Vec<(String, String)> = Vec::new();
+    for (fq, help) in tidb_session::metrics::histogram_definitions() {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    for (fq, help) in tidb_distsql::metrics::histogram_definitions() {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    for (fq, help) in tidb_ddl_session::metrics::histogram_definitions() {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    for (fq, help) in tidb_domain::metrics::histogram_definitions() {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    for (fq, help) in tidb_executor::metrics::histogram_definitions() {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    for (fq, help) in tidb_util::memory_metrics::histogram_definitions() {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    for (fq, help) in tidb_meta::metrics::histogram_definitions() {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    for (fq, help) in crate::topsql_metrics::histogram_definitions() {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    for (fq, help) in tidb_txnkv::client_go_metrics::histogram_definitions() {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    // Go `ConnIdleDurationHistogram` (server.go), childless until a
+    // connection idles between two commands.
+    catalog.push((
+        "tidb_server_conn_idle_duration_seconds".to_owned(),
+        "Bucketed histogram of connection idle time (s).".to_owned(),
+    ));
+    // These four slow-query histograms plus the two RPC-count histograms and
+    // the three IA remote-read counter vecs (server.go) stay childless until
+    // their paths run, exactly as in Go.
+    for (fq, help) in [
+        (
+            "tidb_server_slow_query_process_duration_seconds",
+            "Bucketed histogram of processing time (s) of of slow queries.",
+        ),
+        (
+            "tidb_server_slow_query_cop_duration_seconds",
+            "Bucketed histogram of all cop processing time (s) of of slow queries.",
+        ),
+        (
+            "tidb_server_slow_query_wait_duration_seconds",
+            "Bucketed histogram of all cop waiting time (s) of of slow queries.",
+        ),
+        (
+            "tidb_server_slow_query_cop_mvcc_ratio",
+            "Bucketed histogram of all cop total keys / processed keys in slow queries.",
+        ),
+        (
+            "tidb_server_query_statement_rpc_count",
+            "Bucketed histogram of execution rpc count of handled query statements.",
+        ),
+        (
+            "tidb_server_query_statement_processed_keys",
+            "Bucketed histogram of processed key count during the scan of handled query statements.",
+        ),
+        (
+            "tidb_server_ia_remote_read_segment_count",
+            "Counter of IA remote read segments observed by TiDB.",
+        ),
+        (
+            "tidb_server_ia_remote_read_segment_size_bytes",
+            "Counter of IA remote read segment bytes observed by TiDB.",
+        ),
+    ] {
+        catalog.push((fq.to_owned(), help.to_owned()));
+    }
+    // Go `pkg/metrics/ttl.go`: the TTL query duration histogram.
+    catalog.push((
+        "tidb_server_ttl_query_duration".to_owned(),
+        "Bucketed histogram of processing time (s) of handled TTL queries.".to_owned(),
+    ));
+    // Go `pkg/metrics/server.go`: PlanCacheProcessDuration lives in
+    // tidb-planner here; its children materialize with the plan cache.
+    catalog.push((
+        "tidb_server_plan_cache_process_duration_seconds".to_owned(),
+        "Bucketed histogram of processing time (s) of plan cache operations.".to_owned(),
+    ));
+    catalog
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

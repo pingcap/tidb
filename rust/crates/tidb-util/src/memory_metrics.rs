@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -101,4 +101,23 @@ pub fn init_dashboard_series() {
     let _ = ARBITRATOR_TASK_EXEC.with_label_values(&["cancel-prio-high"]);
     let _ = ARBITRATOR_WAITING_TASK.with_label_values(&["priority-high"]);
     let _ = ARBITRATOR_WORK_MODE.with_label_values(&["disable"]);
+}
+
+pub static MEMORY_ARBITRATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_memory_arbitration_duration_seconds",
+            "Bucketed histogram of mem quota arbitration time (s) in SQL execution",
+        )
+        .buckets(prometheus::exponential_buckets(5e-05, 3.77873541252838, 17).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+/// The (fq name, help, kind) of every histogram family in this module,
+/// for the exposition header shim that mirrors Go's registered-family output.
+pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
+    vec![
+            ("tidb_memory_arbitration_duration_seconds", "Bucketed histogram of mem quota arbitration time (s) in SQL execution"),
+    ]
 }
