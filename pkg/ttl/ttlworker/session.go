@@ -250,7 +250,8 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 		return nil, false, errors.New("global TTL job is disabled")
 	}
 
-	if err := s.ResetWithGlobalTimeZone(ctx); err != nil {
+	// Session setup is outside TTL job attribution; preserve cancellation and deadlines.
+	if err := s.ResetWithGlobalTimeZone(session.WithJobContext(ctx, "")); err != nil {
 		return nil, false, err
 	}
 

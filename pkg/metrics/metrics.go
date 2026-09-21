@@ -92,6 +92,7 @@ func InitMetrics() {
 	InitResourceManagerMetrics()
 	InitServerMetrics()
 	InitSessionMetrics()
+	InitRUV2Metrics()
 	InitSliMetrics()
 	InitStatsMetrics()
 	InitTelemetryMetrics()
@@ -327,6 +328,12 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindingCacheNumBindings)
 	prometheus.MustRegister(InternalSessions)
 	prometheus.MustRegister(ActiveUser)
+	prometheus.MustRegister(RUV2Total)
+	prometheus.MustRegister(RUV2TTLTotal)
+	prometheus.MustRegister(RUV2BySQLType)
+	prometheus.MustRegister(RUV2ByEngine)
+	prometheus.MustRegister(RUV2Unit)
+	prometheus.MustRegister(RUV2Statements)
 
 	prometheus.MustRegister(NetworkTransmissionStats)
 

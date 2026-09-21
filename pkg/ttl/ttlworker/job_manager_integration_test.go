@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	metrics2 "github.com/pingcap/tidb/pkg/metrics"
@@ -372,6 +373,8 @@ func TestTriggerTTLJob(t *testing.T) {
 
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	// Use a different name from the worker's initial UTC zone to force a reset.
+	tk.MustExec("set @@global.time_zone = '+00:00'")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, t timestamp) TTL=`t` + INTERVAL 1 DAY")
 	tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -394,6 +397,30 @@ func TestTriggerTTLJob(t *testing.T) {
 	tk.MustExec("insert into t values(3, ?)", expreDateStr)
 	tk.MustExec("insert into t values(4, ?)", nowDateStr)
 
+	var ruMu sync.Mutex
+	scanJobs, deleteJobs := make(map[string]int), make(map[string]int)
+	var timeZoneResets int
+	var unexpectedJobSQL []string
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest", func(stmt *executor.ExecStmt) {
+		if !stmt.Ctx.GetSessionVars().InRestrictedSQL {
+			return
+		}
+		sql := stmt.GetTextToLog(false)
+		ruMu.Lock()
+		defer ruMu.Unlock()
+		if sql == "SET @@SESSION.`time_zone`=@@GLOBAL.`time_zone`" {
+			timeZoneResets++
+		}
+		if strings.HasPrefix(sql, "SELECT LOW_PRIORITY SQL_NO_CACHE") {
+			scanJobs[stmt.Ctx.GetSessionVars().TTLJobID]++
+		} else if strings.HasPrefix(sql, "DELETE LOW_PRIORITY FROM") {
+			deleteJobs[stmt.Ctx.GetSessionVars().TTLJobID]++
+		} else if stmt.Ctx.GetSessionVars().TTLJobID != "" &&
+			!strings.HasPrefix(sql, "BEGIN ") && sql != "COMMIT" && sql != "ROLLBACK" {
+			unexpectedJobSQL = append(unexpectedJobSQL, sql)
+		}
+	})
+
 	cli := do.TTLJobManager().GetCommandCli()
 	res, err := client.TriggerNewTTLJob(ctx, cli, "test", "t")
 	require.NoError(t, err)
@@ -408,6 +435,14 @@ func TestTriggerTTLJob(t *testing.T) {
 
 	waitTTLJobFinished(t, tk, tblID, timerCli)
 	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
+	ruMu.Lock()
+	defer ruMu.Unlock()
+	require.Positive(t, timeZoneResets)
+	require.Positive(t, scanJobs[tableResult.JobID])
+	require.Positive(t, deleteJobs[tableResult.JobID])
+	require.Zero(t, scanJobs[""])
+	require.Zero(t, deleteJobs[""])
+	require.Empty(t, unexpectedJobSQL)
 }
 
 func TestTTLDeleteWithTimeZoneChange(t *testing.T) {

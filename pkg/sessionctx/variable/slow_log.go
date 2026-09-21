@@ -144,10 +144,6 @@ const (
 	SlowLogStorageFromKV = "Storage_from_kv"
 	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
 	SlowLogStorageFromMPP = "Storage_from_mpp"
-	// SlowLogRequestUnitV2 is the RU v2 total for the statement.
-	SlowLogRequestUnitV2 = "Request_unit_v2"
-	// SlowLogRequestUnitV2Detail is the RU v2 detailed metrics for the statement.
-	SlowLogRequestUnitV2Detail = "Request_unit_v2_detail"
 
 	// The following constants define the set of fields for SlowQueryLogItems
 	// that are relevant to evaluating and triggering SlowLogRules.

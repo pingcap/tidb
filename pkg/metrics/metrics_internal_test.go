@@ -54,6 +54,62 @@ func countCollectedMetrics(collector prometheus.Collector) int {
 	return count
 }
 
+func TestRUV2MetricDefinitions(t *testing.T) {
+	require.Equal(t,
+		[]string{"ddl", "read", "write", "analyze", "other"},
+		[]string{LblSQLTypeDDL, LblSQLTypeRead, LblSQLTypeWrite, LblSQLTypeAnalyze, LblSQLTypeOther},
+	)
+	require.Equal(t, []string{"tikv", "tiflash"}, []string{LblEngineTiKV, LblEngineTiFlash})
+
+	InitRUV2Metrics()
+	RUV2Total.Add(1)
+	RUV2TTLTotal.Add(1)
+	RUV2BySQLTypeDDL.Add(2)
+	RUV2ByEngineTiKV.Add(3)
+	RUV2BySQLType.WithLabelValues("select").Add(2)
+	AddRUV2Results(3, 4, 5, 12, "select")
+	RUV2Unit.WithLabelValues("tikv", "hash_agg", LblRUV2UnitCPUWork).Add(5)
+	RUV2Statements.WithLabelValues("success", "incomplete").Inc()
+
+	registry := prometheus.NewRegistry()
+	require.NoError(t, registry.Register(RUV2Total))
+	require.NoError(t, registry.Register(RUV2TTLTotal))
+	require.NoError(t, registry.Register(RUV2BySQLType))
+	require.NoError(t, registry.Register(RUV2ByEngine))
+	require.NoError(t, registry.Register(RUV2Unit))
+	require.NoError(t, registry.Register(RUV2Statements))
+	families, err := registry.Gather()
+	require.NoError(t, err)
+
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv2_ru_total"))
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv2_ttl_ru_total"))
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_ru_by_sql_type_total", LblSQLType, LblSQLTypeDDL)
+	requireMetricFamilyHasLabel(
+		t, families, "tidb_ruv2_ru_by_sql_type_total", LblSQLType, "select",
+	)
+	requireMetricFamilyHasLabel(
+		t, families, "tidb_ruv2_ru_by_engine_total", LblEngine, LblEngineTiKV,
+	)
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_ru_by_engine_total", LblEngine, "tidb")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", LblEngine, "tikv")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", "opclass", "hash_agg")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", LblRUV2Unit, LblRUV2UnitCPUWork)
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_statements_total", "status", "success")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_statements_total", "reason", "incomplete")
+}
+
+func requireMetricFamilyHasLabel(t *testing.T, families []*dto.MetricFamily, familyName, labelName, labelValue string) {
+	t.Helper()
+	family := findMetricFamily(families, familyName)
+	require.NotNil(t, family)
+	for _, metric := range family.GetMetric() {
+		if metricHasLabelValue(metric, labelName, labelValue) {
+			return
+		}
+	}
+	require.Failf(t, "missing metric label", "metric family %s has no label %s=%s", familyName, labelName, labelValue)
+}
+
 func TestStmtSummaryMetricLabels(t *testing.T) {
 	InitStmtSummaryMetrics()
 	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowRecordCount))
@@ -77,4 +133,22 @@ func TestStmtSummaryMetricLabels(t *testing.T) {
 	require.Equal(t, 2, countCollectedMetrics(StmtSummaryEvictedLogCounter))
 	require.Equal(t, 3.0, readCounterValue(t, StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultPersisted)))
 	require.Equal(t, 1.0, readCounterValue(t, StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultDropped)))
+}
+
+func findMetricFamily(families []*dto.MetricFamily, name string) *dto.MetricFamily {
+	for _, family := range families {
+		if family.GetName() == name {
+			return family
+		}
+	}
+	return nil
+}
+
+func metricHasLabelValue(metric *dto.Metric, name string, value string) bool {
+	for _, label := range metric.GetLabel() {
+		if label.GetName() == name && label.GetValue() == value {
+			return true
+		}
+	}
+	return false
 }

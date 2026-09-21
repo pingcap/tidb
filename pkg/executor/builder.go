@@ -3054,7 +3054,7 @@ func (b *executorBuilder) updateForUpdateTS() error {
 	return err
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, planID int) *analyzeTask {
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -3069,6 +3069,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3110,6 +3111,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	task plannercore.AnalyzeColumnsTask,
 	opts map[ast.AnalyzeOptionType]uint64,
 	schemaForVirtualColEval *expression.Schema,
+	planID int,
 ) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
@@ -3186,6 +3188,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3323,14 +3326,14 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			return nil
 		}
 		schema := expression.NewSchema(columns...)
-		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema))
+		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema, v.ID()))
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
 		}
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
+		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze, v.ID()))
 		if b.err != nil {
 			return nil
 		}

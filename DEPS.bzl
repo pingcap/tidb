@@ -3805,8 +3805,8 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:10OHx2/2noFfPU1K3c3QXZshsw3XvKssk/mjbLdw8DI=",
-        version = "v0.0.0-20260617071407-7c071244534b",
+        sum = "h1:jQf0oStCMU6ZXGQmz5CmOIBsAwMWutorDHI49u8tURU=",
+        version = "v0.0.0-20260908093239-fed7bc47c39d",
     )
     go_repository(
         name = "com_github_pkg_browser",
@@ -4534,8 +4534,8 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:qww+dYyn2N//6qJpJ/FA/dgIwjnYH/RU8lrBJuuY7k8=",
-        version = "v2.0.8-0.20260918080837-6ac779cf3dac",
+        sum = "h1:hrRQmqNt3fWGjko7rah7K/+/x4G4xTuxZfCCypLkBxs=",
+        version = "v2.0.8-0.20260919123404-6e3fd8a9a804",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
