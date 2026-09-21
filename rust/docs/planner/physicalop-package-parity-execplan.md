@@ -6039,3 +6039,184 @@ Final isolated SQL gates passed: numeric 14, JSON 23 and cast 33. All validation
 processes are terminal, final Rust bytes match the isolated tested patch, and
 git diff --check passes. The six-file checkpoint is ready for the requested
 commit/push. Whole-package acceptance and workload performance remain open.
+
+
+## Computed JSON arithmetic batches and diagnostics (2026-09-21)
+
+
+Published 478bf5706c is verified progress; pulled again without remote changes.
+Continue the whole-expression audit at computed operands. Go's cast-to-JSON
+vector signatures evaluate the source batch first, then JSON conversion, then
+the outer numeric conversion. Rust's arithmetic preflight currently declines
+that tree and falls back to row evaluation. Capture NULL, selection and error/
+warning ordering against Go, add red regressions, and admit only source trees
+whose ordered evaluation is implemented. Also match scalar DIV's retained-cast
+overflow text and vector DIV's value-based text. Preserve native build/runtime
+boundaries and all whole-package/workload gates; no subset acceptance claim.
+
+
+### Computed JSON source decisions and regression evidence
+
+
+The 72-case checker probe covers string-to-JSON operands across six arithmetic
+operators, scalar/vector execution, selected rows, valid strings, malformed
+left JSON and NULL-left/invalid-right rows. Go parses the entire left source
+batch before numeric conversion, then evaluates the right batch. Therefore an
+invalid second left row precedes the first numeric warning; an invalid right
+row follows all left numeric warnings but precedes right numeric warnings.
+A further 16 cases check binary opaque JSON and disabled ParseToJSONFlag.
+Both source probes passed. Their first vector invocation required the normal
+Vectorized() initialization; the temporary harness was corrected after its
+uninitialized buffer allocator panic. No Go implementation was changed.
+
+Native preflight now admits the existing string-to-JSON cast signature only
+when its source tree already has an ordered batch evaluator and is not a hybrid
+string field. Numeric, temporal and hybrid-source JSON cast vector signatures
+remain open audit work. JSON parsing and typed opaque/value conversion reuse
+the existing scalar conversion helpers after the source batch completes.
+The full preflight still runs before any evaluation; a declined tree emits no
+warnings. The 88 native scenarios match the Go reference values/error class,
+warning order, NULL short-circuit distinction, selection and parse flags.
+The pre-implementation test failed because the batch path declined JSON casts
+(/tmp/tidb-json-batch-red.log); the final focused test passed (green.log).
+
+Scalar decimal DIV now calls the same bounded decimal quotient primitive
+without consuming its operands first, so overflow rendering can use the
+already-evaluated decimal precision. Retained JSON casts render their source
+text and FieldType.String form; strict computed decimal casts show the refined
+precision. This never re-evaluates a cast to construct the error. Vector DIV
+continues to render evaluated decimal values. The SQL regression failed with
+an unqualified BIGINT overflow before the fix (sql-red.log), then passed the
+exact scalar/vector messages for CAST('1e60' AS JSON) DIV a (sql-green.log).
+Other computed function renderings and cast-node structural identity remain
+explicit open expression obligations.
+
+### Computed JSON validation and performance plan
+
+
+Changed files: rust/crates/tidb-expr/src/scalar_function.rs and its existing
+tests/go_arithmetic_values.rs, session tests_core/numeric_domain.rs, executor
+benches/pipeline.rs and this plan. No Go/import/Bazel/module files changed;
+bazel_prepare is not required. The unchanged checker/windows Go harnesses
+have no failpoint imports/calls/build dependency, as verified in the preceding
+stage. The full original expression package still needs failpoint-aware gates.
+
+The new numeric_json_real and numeric_json_intdiv controls extend the existing
+pipeline benchmark through EvaluatorSuite with valid string columns, explicit
+JSON casts and arithmetic. They measure parsing and conversion without warning
+collection. The baseline uses published 478bf5706c plus only the identical
+benchmark source; its disposable checkout was byte-verified before reset.
+The saved baseline executable is /tmp/tidb-json-batch-before-pipeline, built
+with CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target and:
+
+    cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run --message-format=json
+
+Do not time benchmarks concurrently with builds/tests. Compare alternating
+before/after processes with BENCH_ONLY=numeric_projection and retain the
+existing twelve numeric controls. Record medians and calibrated ratios; these
+component measurements cannot establish sysbench/TPC-C/TPC-H/YCSB parity.
+
+
+### Computed JSON executed validation receipt
+
+
+From rust/, the focused regressions and consumer gates passed:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib json_cast_arithmetic_batches_preserve_go_operand_passes
+    cargo test --offline --locked -j12 -p tidb-session --lib computed_json_div_overflow_matches_go_scalar_and_vector_diagnostics
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib json
+    cargo test --offline --locked -j12 -p tidb-session --lib cast
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+
+Expression: 1,198 passed, 97 existing ignored. Executor checker 28, merge 76,
+aggregate 76, shuffle 26 and window 23 passed. Session numeric 15, JSON 24,
+cast 33, merge 16 and window 68 passed. Logs are
+/tmp/tidb-json-batch-tidb-<crate>-<filter>.log. Full expression's existing HTTP
+test requires localhost access. No unresolved validation process was restarted.
+
+From repository root, source probes, the accumulated 32-function Go race gate
+and required lint passed:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-json-batch-overlay.json -run '^TestGroupCheckerJSONCastBatchOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-json-batch-overlay.json -run '^TestGroupCheckerJSONCastVariantOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-json-batch-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    make lint
+    git diff --check
+
+Go logs use prefix /tmp/tidb-json-batch- and suffixes go.log, variant-go.log
+and go-race.log; lint.log records make lint. The SQL overflow reference is
+the preceding stage's /tmp/tidb-decimal-probe-sql-go.log, captured from the
+same unchanged Go revision. Original package-wide/source-generation gates,
+remaining computed signatures, ignored native tests and all workload-level
+measurements remain open.
+
+
+### Computed JSON measured performance and isolated gate
+
+
+Both benchmark binaries use the identical pipeline.rs source. The final
+executable is /tmp/tidb-json-batch-after-pipeline, built from the working patch
+with the same release command as the baseline. Four pairs alternate order:
+before/after, after/before, before/after, after/before. Each process uses:
+
+    BENCH_ONLY=numeric_projection /tmp/tidb-json-batch-before-pipeline
+    BENCH_ONLY=numeric_projection /tmp/tidb-json-batch-after-pipeline
+
+No build/test processes ran concurrently with timing. Logs:
+/tmp/tidb-json-batch-bench-{1..4}-{before,after}.log. Machine-readable medians:
+/tmp/tidb-json-batch-bench-summary.json.
+
+| Projection | Before ns/row | After ns/row | Time change | Calibrated change |
+| --- | ---: | ---: | ---: | ---: |
+| numeric_decimal | 32.10 | 32.15 | +0.2% | -0.5% |
+| numeric_decimal_div | 252.35 | 230.75 | -8.6% | -7.5% |
+| numeric_decimal_intdiv | 108.55 | 107.90 | -0.6% | -0.5% |
+| numeric_decimal_mod | 1126.90 | 1049.55 | -6.9% | -6.2% |
+| numeric_decimal_nested | 47.15 | 47.55 | +0.8% | -0.0% |
+| numeric_int | 19.25 | 17.80 | -7.5% | -7.6% |
+| numeric_int_div | 18.65 | 17.45 | -6.4% | -6.8% |
+| numeric_int_mod | 17.90 | 16.80 | -6.1% | -6.1% |
+| numeric_int_nested | 26.85 | 25.65 | -4.5% | -5.1% |
+| numeric_json_intdiv | 562.25 | 453.95 | -19.3% | -19.8% |
+| numeric_json_real | 299.85 | 232.85 | -22.3% | -22.7% |
+| numeric_real_intdiv | 146.75 | 142.15 | -3.1% | -2.3% |
+| numeric_string | 102.70 | 100.95 | -1.7% | -1.4% |
+| numeric_string_intdiv | 103.75 | 103.95 | +0.2% | +0.3% |
+
+The measured JSON addition and DIV projections use 22.3% and 19.3% less time
+per row respectively (22.7% and 19.8% calibrated). Existing controls range
+from -8.6% to +0.8% in elapsed time; do not attribute their incidental changes
+to specific optimizations. This is component evidence only and does not prove
+performance on any complete benchmark workload or every JSON expression.
+
+The disposable checkout was reset to published 478bf5706c after byte checks,
+used for the baseline with only the benchmark change, then received exactly
+the five intended changed files. The unrelated untracked drafts are absent.
+Isolated validation commands from its rust/ directory:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib json
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib cast
+
+Logs: /tmp/tidb-json-batch-isolated-{expr,numeric_domain,json,cast}.log.
+The final remote fetch found zero divergence. Self-review checked preflight
+before side effects, full operand passes, source JSON parse/opaque semantics,
+selection vectors, exact quotient reuse and no extra evaluation in overflow
+rendering. No generated files or Go sources were edited.
+
+
+Final isolated gates passed: 1,198 expression tests (97 existing ignored),
+15 numeric SQL tests, 24 JSON tests and 33 cast tests. All build/test/timing
+processes are terminal. Final Rust bytes match the isolated tested patch and
+git diff --check passes. The five-file checkpoint is ready for the requested
+commit and push. Remaining computed signatures/diagnostics, whole-package
+acceptance and all four workload performance gates remain open.

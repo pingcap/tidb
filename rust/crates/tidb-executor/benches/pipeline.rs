@@ -606,6 +606,57 @@ fn bench_numeric_projection() {
     }
 }
 
+/// Explicit string-to-JSON casts as arithmetic operands, through the same
+/// EvaluatorSuite used by projection. Inputs are valid, so timing excludes
+/// warning collection while retaining JSON parsing and numeric conversion.
+fn bench_json_numeric_projection() {
+    use tidb_expr::{constant::Constant, evaluator::EvaluatorSuite, NoColumns};
+    for (label, op, output_code) in [
+        ("numeric_json_real", "plus", FieldTypeCode::Double),
+        ("numeric_json_intdiv", "intdiv", FieldTypeCode::LongLong),
+    ] {
+        let string = FieldType::new(FieldTypeCode::VarString);
+        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&string), CHUNK);
+        for row in 0..CHUNK {
+            input.append_datum(0, &Datum::new_string((row % 100).to_string()));
+        }
+        let mut json = FieldType::new(FieldTypeCode::Json);
+        json.set_flen(4_194_304);
+        json.set_decimal(0);
+        json.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
+        let cast = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("cast_json"),
+            json,
+            vec![column(0, &string)],
+        ));
+        let output_field = FieldType::new(output_code);
+        let expression = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new(op),
+            output_field.clone(),
+            vec![
+                cast,
+                Expression::Constant(Constant::new(
+                    Datum::Int(2),
+                    FieldType::new(FieldTypeCode::LongLong),
+                )),
+            ],
+        ));
+        let suite = EvaluatorSuite::new(vec![expression], false);
+        let mut output = Chunk::new_with_capacity(&[output_field], CHUNK);
+        let mut pass = || {
+            output.reset();
+            suite.run(&NoColumns, &mut input, &mut output).unwrap();
+            assert_eq!(black_box(output.num_rows()), CHUNK);
+        };
+        let result = best_of_blocks(&mut [(label, &mut pass)])[0];
+        println!(
+            "{label} ns_per_row {:.1}",
+            result.0.as_secs_f64() * 1e9 / CHUNK as f64
+        );
+        println!("{label} cal_per_row {:.4}", result.1 / CHUNK as f64);
+    }
+}
+
 /// Sorted string groups through the production checker and stream aggregate.
 /// One chunk per pass keeps the replay globally sorted, including CI ties.
 fn bench_stream_grouping() {
@@ -709,6 +760,7 @@ fn main() {
     }
     if wanted("numeric_projection") {
         bench_numeric_projection();
+        bench_json_numeric_projection();
     }
     if wanted("stream_group") {
         bench_stream_grouping();

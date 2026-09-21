@@ -1383,3 +1383,219 @@ fn strict_scalar_decimal_precision_probes_preserve_runtime_evaluation() {
         }
     }
 }
+
+#[test]
+fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
+    use crate::scalar_function::{try_eval_numeric_batch, ScalarFunction};
+    #[derive(Default)]
+    struct Context(std::cell::RefCell<Vec<(u16, String)>>);
+    impl crate::Columns for Context {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn truncate_level(&self) -> crate::ErrorLevel {
+            crate::ErrorLevel::Warn
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+    for kind in ["valid", "invalid", "null"] {
+        for (op, expected_values) in [
+            ("plus", ["5", "9"]),
+            ("minus", ["-1", "1"]),
+            ("mul", ["6", "20"]),
+            ("div", ["0.6666666666666666", "1.25"]),
+            ("intdiv", ["0", "1"]),
+            ("mod", ["2", "1"]),
+        ] {
+            for vectorized in [false, true] {
+                for selected in [false, true] {
+                    let context = Context::default();
+                    let string = FieldType::new(C::VarString);
+                    let cast = |index| {
+                        let mut column = crate::column::Column::new(index + 1, string.clone());
+                        column.index = index;
+                        Expression::ScalarFunction(ScalarFunction::new(
+                            tidb_ast::CiString::new("cast_json"),
+                            FieldType::new(C::Json).with_added_flags(FieldTypeFlags::PARSE_TO_JSON),
+                            vec![Expression::Column(column)],
+                        ))
+                    };
+                    let expression = crate::new_function::new_function_base(
+                        &context,
+                        op,
+                        FieldType::new(C::Double),
+                        vec![cast(0), cast(1)],
+                    )
+                    .unwrap();
+                    assert!(context.0.borrow().is_empty());
+                    let mut input =
+                        tidb_chunk::chunk::Chunk::new_with_capacity(&[string.clone(), string], 2);
+                    input.append_datum(0, &Datum::new_string(r#""2tail""#));
+                    input.append_datum(1, &Datum::new_string(r#""3tail""#));
+                    input.append_datum(
+                        0,
+                        &match kind {
+                            "invalid" => Datum::new_string("notjson"),
+                            "null" => Datum::Null,
+                            _ => Datum::new_string(r#""5tail""#),
+                        },
+                    );
+                    input.append_datum(
+                        1,
+                        &Datum::new_string(if kind == "null" {
+                            "notjson"
+                        } else {
+                            r#""4tail""#
+                        }),
+                    );
+                    if selected {
+                        input.set_sel(Some(vec![0]));
+                    }
+                    let result = if vectorized {
+                        try_eval_numeric_batch(&expression, &context, &input).map(|values| {
+                            values.expect("JSON cast arithmetic must use ordered batches")
+                        })
+                    } else {
+                        (0..input.num_rows())
+                            .map(|index| expression.eval(&context, input.get_row(index)))
+                            .collect()
+                    };
+                    let fails = !selected
+                        && (kind == "invalid"
+                            || (kind == "null" && (vectorized || matches!(op, "plus" | "mod"))));
+                    let label = format!("{kind}/{op}/{vectorized}/{selected}");
+                    if fails {
+                        assert_eq!(
+                            result,
+                            Err(crate::EvalError::Json(crate::JsonError::InvalidText)),
+                            "{label}"
+                        );
+                    } else {
+                        let values = result
+                            .unwrap()
+                            .iter()
+                            .map(|value| {
+                                if value.is_null() {
+                                    "NULL".to_owned()
+                                } else {
+                                    value.sql_string().unwrap()
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        let expected = if selected {
+                            vec![expected_values[0]]
+                        } else if kind == "null" {
+                            vec![expected_values[0], "NULL"]
+                        } else {
+                            expected_values.to_vec()
+                        };
+                        assert_eq!(values, expected, "{label}");
+                    }
+                    let inputs = if selected {
+                        vec!["2tail", "3tail"]
+                    } else if !vectorized {
+                        if kind == "valid" {
+                            vec!["2tail", "3tail", "5tail", "4tail"]
+                        } else {
+                            vec!["2tail", "3tail"]
+                        }
+                    } else {
+                        match kind {
+                            "invalid" => vec![],
+                            "null" => vec!["2tail"],
+                            _ => vec!["2tail", "5tail", "3tail", "4tail"],
+                        }
+                    };
+                    let warnings = inputs
+                        .into_iter()
+                        .map(|text| {
+                            if op == "intdiv" {
+                                (1265, "Data truncated for column '%s' at row %d".to_owned())
+                            } else {
+                                (1292, format!("Truncated incorrect DOUBLE value: '{text}'"))
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(*context.0.borrow(), warnings, "{label}");
+                }
+            }
+        }
+    }
+
+    // The same admitted string signature also handles JSON string values
+    // and binary opaque JSON; neither may be silently parsed as a document.
+    for binary in [false, true] {
+        for parse in [false, true] {
+            for op in ["plus", "intdiv"] {
+                for vectorized in [false, true] {
+                    let context = Context::default();
+                    let mut string = FieldType::new(C::VarString);
+                    if binary {
+                        string.set_charset_name("binary");
+                        string.set_collation_name("binary");
+                    }
+                    let mut column = crate::column::Column::new(1, string.clone());
+                    column.index = 0;
+                    let mut json = FieldType::new(C::Json);
+                    if parse {
+                        json.add_flags(FieldTypeFlags::PARSE_TO_JSON);
+                    }
+                    let cast = Expression::ScalarFunction(ScalarFunction::new(
+                        tidb_ast::CiString::new("cast_json"),
+                        json,
+                        vec![Expression::Column(column)],
+                    ));
+                    let right = Expression::Constant(crate::constant::Constant::new(
+                        Datum::Int(2),
+                        FieldType::new(C::LongLong),
+                    ));
+                    let expression = crate::new_function::new_function_base(
+                        &context,
+                        op,
+                        FieldType::new(C::Double),
+                        vec![cast, right],
+                    )
+                    .unwrap();
+                    let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[string], 2);
+                    input.append_datum(0, &Datum::new_string("2"));
+                    input.append_null(0);
+                    let values = if vectorized {
+                        try_eval_numeric_batch(&expression, &context, &input)
+                            .unwrap()
+                            .unwrap()
+                    } else {
+                        (0..2)
+                            .map(|index| expression.eval(&context, input.get_row(index)).unwrap())
+                            .collect()
+                    };
+                    let first = match (binary, op) {
+                        (false, "plus") => "4",
+                        (false, _) => "1",
+                        (true, "plus") => "2",
+                        _ => "0",
+                    };
+                    assert_eq!(values[0].sql_string().unwrap(), first);
+                    assert!(values[1].is_null());
+                    let warnings = if binary {
+                        vec![(
+                            1292,
+                            format!(
+                                "Truncated incorrect {} value: '\"base64:type253:Mg==\"'",
+                                if op == "intdiv" { "DECIMAL" } else { "FLOAT" }
+                            ),
+                        )]
+                    } else {
+                        vec![]
+                    };
+                    assert_eq!(
+                        *context.0.borrow(),
+                        warnings,
+                        "binary={binary}/parse={parse}/{op}/{vectorized}"
+                    );
+                }
+            }
+        }
+    }
+}

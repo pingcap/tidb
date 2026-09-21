@@ -971,3 +971,35 @@ fn json_constant_cast_arithmetic_warnings_match_go_sql() {
         }
     }
 }
+
+#[test]
+fn computed_json_div_overflow_matches_go_scalar_and_vector_diagnostics() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE json_probe(a BIGINT)").unwrap();
+    session
+        .run("INSERT INTO json_probe VALUES(1),(2),(NULL)")
+        .unwrap();
+    for vectorized in [false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        let error = session
+            .run("SELECT CAST('1e60' AS JSON) DIV a FROM json_probe ORDER BY a")
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1690);
+        let operands = if vectorized {
+            "(1000000000000000000000000000000000000000000000000000000000000 DIV 1)"
+        } else {
+            "(cast(cast(1e60, json BINARY), decimal(61,0) BINARY) DIV cast(test.json_probe.a, decimal(20,0) BINARY))"
+        };
+        assert_eq!(
+            error.message,
+            format!("BIGINT value is out of range in '{operands}'"),
+            "vectorized={vectorized}"
+        );
+    }
+}

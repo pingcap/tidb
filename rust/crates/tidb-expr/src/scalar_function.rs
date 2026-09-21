@@ -325,6 +325,9 @@ fn numeric_expression_text(
             Datum::Decimal(value) => Some(value.to_string()),
             Datum::BinaryLiteral(value) => Some(value.to_int().value().to_string()),
             Datum::Null => Some("NULL".to_owned()),
+            value @ (Datum::String(_) | Datum::Bytes(_) | Datum::Json(_)) => {
+                String::from_utf8(value.truncated_stringify().ok()?).ok()
+            }
             _ => None,
         },
         Expression::Column(column) => {
@@ -345,6 +348,16 @@ fn numeric_expression_text(
             column.column.orig_name.clone()
         }),
         Expression::ScalarFunction(function) => {
+            if function.func_name.lowercase() == "cast_json" {
+                let [argument] = function.args.as_slice() else {
+                    return None;
+                };
+                return Some(format!(
+                    "cast({}, {})",
+                    numeric_expression_text(argument, go_float_format, ctx)?,
+                    function.get_static_type()?.source_string(),
+                ));
+            }
             let op = arithmetic_symbol(binary_op_for_name(function.func_name.lowercase())?)?;
             let [left, right] = function.args.as_slice() else {
                 return None;
@@ -365,6 +378,7 @@ fn numeric_argument_text(
     expression: &Expression,
     float: bool,
     ctx: &dyn Columns,
+    decimal: Option<&tidb_datatype::Decimal>,
 ) -> Option<String> {
     let field = expression.static_type()?;
     // Binary constant casts fold in Go, so diagnostics show the value in
@@ -386,11 +400,18 @@ fn numeric_argument_text(
     if function.func_name.lowercase() != "intdiv"
         || function.numeric_operand_domain() != Some(EvalType::Decimal)
         || field.eval_type() == EvalType::Decimal
-        || expression.const_level() == crate::expression::ConstLevel::STRICT
+        || matches!(expression, Expression::Constant(constant) if constant.literal_value().is_some())
     {
         return Some(text);
     }
-    let target = numeric_decimal_cast_type(field);
+    let mut target = numeric_decimal_cast_type(field);
+    if expression.const_level() == ConstLevel::STRICT {
+        if let Some(value) = decimal {
+            let (precision, fraction) = value.precision_and_frac();
+            target.set_flen_under_limit(i64::from(precision));
+            target.set_decimal_under_limit(i64::from(fraction));
+        }
+    }
     Some(format!(
         "cast({text}, decimal({},{}){} BINARY)",
         target.flen(),
@@ -461,8 +482,8 @@ fn arithmetic_overflow_expression(
     };
     Some(format!(
         "({} {symbol} {})",
-        numeric_argument_text(function, left, go_float_format, ctx)?,
-        numeric_argument_text(function, right, go_float_format, ctx)?
+        numeric_argument_text(function, left, go_float_format, ctx, None)?,
+        numeric_argument_text(function, right, go_float_format, ctx, None)?
     ))
 }
 
@@ -1274,6 +1295,39 @@ impl ScalarFunction {
                 .is_some_and(|field| !field.is_unsigned())
         });
         let (lhs, rhs) = crate::binary_literal::cast_signed_literal_operands(op, lhs, rhs, signed);
+        if op == BinaryOp::IntDiv {
+            if let (Datum::Decimal(left), Datum::Decimal(right)) = (&lhs, &rhs) {
+                let unsigned = self
+                    .args
+                    .iter()
+                    .any(|arg| arg.static_type().is_some_and(FieldType::is_unsigned));
+                return crate::ops::decimal_integer_division(left, right, unsigned, ctx).map_err(
+                    |error| {
+                        if !matches!(error, EvalError::IntOverflow) {
+                            return error;
+                        }
+                        // Retained strict cast trees have value-refined precision
+                        // in Go. Use the already evaluated decimals so rendering
+                        // never repeats casts, warnings or side effects.
+                        let text =
+                            numeric_argument_text(self, &self.args[0], false, ctx, Some(left)).zip(
+                                numeric_argument_text(self, &self.args[1], false, ctx, Some(right)),
+                            );
+                        match text {
+                            Some((left, right)) => EvalError::DataOutOfRange {
+                                value: if unsigned {
+                                    "BIGINT UNSIGNED"
+                                } else {
+                                    "BIGINT"
+                                },
+                                expression: format!("({left} DIV {right})"),
+                            },
+                            None => error,
+                        }
+                    },
+                );
+            }
+        }
         let integer_pair =
             if op == BinaryOp::IntDiv && self.numeric_operand_domain() == Some(EvalType::Int) {
                 let integer = |value: &Datum, signed| match value {
@@ -3620,6 +3674,16 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
             }
         }),
         Expression::ScalarFunction(function) => {
+            if function.func_name.lowercase() == "cast_json" && target == EvalType::Json {
+                return function
+                    .get_static_type()
+                    .is_some_and(|field| field.eval_type() == target)
+                    && function.args.len() == 1
+                    && function.args[0].static_type().is_some_and(|field| {
+                        field.eval_type() == EvalType::String && !field.is_hybrid()
+                    })
+                    && numeric_batch_supported(&function.args[0], EvalType::String);
+            }
             function
                 .get_static_type()
                 .is_some_and(|field| field.eval_type() == target)
@@ -3797,6 +3861,32 @@ fn eval_numeric_batch_values(
         Expression::Column(_) => (0..input.num_rows())
             .map(|index| eval_numeric_row(expression, ctx, input.get_row(index), target))
             .collect(),
+        Expression::ScalarFunction(function) if function.func_name.lowercase() == "cast_json" => {
+            // Go finishes VecEvalString before parsing any JSON or running
+            // the enclosing numeric cast. This preserves errors and warnings
+            // across rows, including selection vectors and NULL operands.
+            let values =
+                eval_numeric_batch_values(&function.args[0], ctx, input, EvalType::String)?;
+            let parse_document = function
+                .get_static_type()
+                .is_some_and(|field| field.has_flag(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON));
+            values
+                .into_iter()
+                .map(|value| {
+                    if parse_document {
+                        crate::builtin_ext::cast_as_json_typed(
+                            &value,
+                            function.args[0].static_type(),
+                        )
+                    } else {
+                        crate::builtin_ext::cast_as_json_value_typed(
+                            &value,
+                            function.args[0].static_type(),
+                        )
+                    }
+                })
+                .collect()
+        }
         Expression::ScalarFunction(function)
             if function.func_name.lowercase() == "cast_decimal" =>
         {
