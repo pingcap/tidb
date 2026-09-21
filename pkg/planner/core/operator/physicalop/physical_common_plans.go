@@ -143,6 +143,9 @@ func (p *Insert) MemoryUsage() (sum int64) {
 	for _, as := range p.OnDuplicate {
 		sum += as.MemoryUsage()
 	}
+	for _, expr := range p.Returning {
+		sum += expr.MemoryUsage()
+	}
 	for _, name := range p.Names4OnDuplicate {
 		sum += name.MemoryUsage()
 	}
