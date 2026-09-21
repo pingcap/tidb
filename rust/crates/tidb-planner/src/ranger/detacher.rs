@@ -31,7 +31,10 @@
 //! consumer.
 
 use std::borrow::Cow;
-use tidb_expr::expr_util::normal_form::{flatten_cnf_conditions, flatten_dnf_conditions};
+use tidb_expr::expr_util::normal_form::{
+    flatten_cnf_conditions, flatten_cnf_conditions_ref, flatten_dnf_conditions,
+    flatten_dnf_conditions_ref,
+};
 use tidb_expr::expr_util::predicates::contains;
 use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::{compose_cnf_condition, compose_dnf_condition};
@@ -283,7 +286,7 @@ fn get_potential_eq_or_in_col_offset_in(
     let (_, collation) = f.collation.charset_and_collation();
     match f.func_name.lowercase() {
         "or" => {
-            let dnf_items = flatten_dnf_conditions(f);
+            let dnf_items = flatten_dnf_conditions_ref(f);
             let mut offset = -1;
             for dnf_item in &dnf_items {
                 let cur_offset = get_potential_eq_or_in_col_offset_in(
@@ -591,8 +594,8 @@ pub fn extract_eq_and_in_condition<'a>(
 }
 
 /// Extract the equality prefix using the current statement's constant evaluator.
-pub fn extract_eq_and_in_condition_in<'a>(
-    conditions: &'a [Expression],
+pub fn extract_eq_and_in_condition_in<'a, C: std::borrow::Borrow<Expression>>(
+    conditions: &'a [C],
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     regard_null_as_point: bool,
@@ -606,15 +609,19 @@ pub fn extract_eq_and_in_condition_in<'a>(
     let mut column_values: Vec<Option<ValueInfo>> = vec![None; cols.len()];
     let mut offsets = vec![-1_i64; conditions.len()];
     for (i, cond) in conditions.iter().enumerate() {
-        let offset =
-            get_potential_eq_or_in_col_offset_in(cond, cols, regard_null_as_point, eval_expression);
+        let offset = get_potential_eq_or_in_col_offset_in(
+            cond.borrow(),
+            cols,
+            regard_null_as_point,
+            eval_expression,
+        );
         offsets[i] = offset;
         if offset == -1 {
             continue;
         }
         let offset = offset as usize;
         if accesses[offset].is_none() {
-            accesses[offset] = Some(cond.clone());
+            accesses[offset] = Some(cond.borrow().clone());
             continue;
         }
         // Multiple eq/in for one column: intersect their points.
@@ -633,7 +640,7 @@ pub fn extract_eq_and_in_condition_in<'a>(
                 false,
             );
         }
-        let built = builder.build(cond, &new_tp, UNSPECIFIED_LENGTH, false);
+        let built = builder.build(cond.borrow(), &new_tp, UNSPECIFIED_LENGTH, false);
         points[offset] = match super::points::intersection(&points[offset], &built, collator) {
             Ok(intersected) => intersected,
             Err(_) => return EqAndInExtraction::default(),
@@ -709,7 +716,7 @@ pub fn extract_eq_and_in_condition_in<'a>(
         if *offset == -1 || accesses[*offset as usize].is_none() {
             // Borrowed: the caller's condition set outlives this extraction,
             // and cloning a whole tree here ran once per cached-plan EXECUTE.
-            new_conditions.push(Cow::Borrowed(&conditions[i]));
+            new_conditions.push(Cow::Borrowed(conditions[i].borrow()));
         }
     }
     // The equality chain is the longest all-set PREFIX. `accesses` is dead
@@ -935,9 +942,9 @@ impl RangeDetacher<'_> {
 
     /// Go `detachCNFCondAndBuildRangeForIndex` (`detacher.go:397`), both
     /// branches of `considerDNF`.
-    fn detach_cnf<'a>(
+    fn detach_cnf<C: std::borrow::Borrow<Expression>>(
         &mut self,
-        conditions: &'a [Expression],
+        conditions: &[C],
         consider_dnf: bool,
     ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
         let mut res = DetachRangeResult::default();
@@ -1241,9 +1248,9 @@ fn ranges_mem_estimate(ranges: &super::types::Ranges) -> i64 {
 
 impl RangeDetacher<'_> {
     /// Go `extractBestCNFItemRanges`.
-    fn extract_best_cnf_item_ranges(
+    fn extract_best_cnf_item_ranges<C: std::borrow::Borrow<Expression>>(
         &mut self,
-        conds: &[Expression],
+        conds: &[C],
     ) -> Result<
         (Option<CnfItemRangeResult>, Vec<Option<ValueInfo>>),
         super::points::PointBuilderError,
@@ -1254,7 +1261,7 @@ impl RangeDetacher<'_> {
         let mut best: Option<CnfItemRangeResult> = None;
         let mut column_values: Vec<Option<ValueInfo>> = vec![None; self.cols.len()];
         for (i, cond) in conds.iter().enumerate() {
-            if tidb_expr::simple_expr::extract_columns(cond).is_empty() {
+            if tidb_expr::simple_expr::extract_columns(cond.borrow()).is_empty() {
                 continue;
             }
             // Consecutive-merge OFF here: point ranges must stay points so
@@ -1274,7 +1281,8 @@ impl RangeDetacher<'_> {
                 fix_44389: self.fix_44389,
                 fix_54337: self.fix_54337,
             };
-            let res = inner.detach_cond_and_build_range_for_cols(std::slice::from_ref(cond))?;
+            let res =
+                inner.detach_cond_and_build_range_for_cols(std::slice::from_ref(cond.borrow()))?;
             if let Some(reason) = inner.skip_plan_cache_reason {
                 self.skip_plan_cache_reason.get_or_insert(reason);
             }
@@ -1295,7 +1303,7 @@ impl RangeDetacher<'_> {
                 continue;
             }
             let cur = get_cnf_item_range_result(res, i, self.regard_null_as_point);
-            best = merge_two_cnf_ranges(cond, best, Some(cur), self.fix_54337);
+            best = merge_two_cnf_ranges(cond.borrow(), best, Some(cur), self.fix_54337);
         }
         if let Some(best) = &mut best {
             best.range_result.is_dnf_cond = false;
@@ -1329,9 +1337,9 @@ impl RangeDetacher<'_> {
     /// The `considerDNF = true` continuation of
     /// `detachCNFCondAndBuildRangeForIndex`.
     #[allow(clippy::too_many_arguments)]
-    fn detach_cnf_consider_dnf<'a>(
+    fn detach_cnf_consider_dnf<'a, C: std::borrow::Borrow<Expression>>(
         &mut self,
-        conditions: &'a [Expression],
+        conditions: &'a [C],
         mut res: DetachRangeResult,
         ranges: super::types::Ranges,
         mut point_ranges: super::types::Ranges,
@@ -1360,8 +1368,16 @@ impl RangeDetacher<'_> {
                 eq_or_in_count = taken.ranges[0].low_val.len();
                 res = taken;
                 new_conditions.clear();
-                new_conditions.extend(conditions[..offset].iter().map(Cow::Borrowed));
-                new_conditions.extend(conditions[offset + 1..].iter().map(Cow::Borrowed));
+                new_conditions.extend(
+                    conditions[..offset]
+                        .iter()
+                        .map(|c| Cow::Borrowed(c.borrow())),
+                );
+                new_conditions.extend(
+                    conditions[offset + 1..]
+                        .iter()
+                        .map(|c| Cow::Borrowed(c.borrow())),
+                );
                 if eq_or_in_count == self.cols.len() || new_conditions.is_empty() {
                     res.remained_conds
                         .extend(new_conditions.into_iter().map(Cow::into_owned));
@@ -1379,8 +1395,16 @@ impl RangeDetacher<'_> {
                 taken.column_values = std::mem::take(&mut res.column_values);
                 res = taken;
                 new_conditions.clear();
-                new_conditions.extend(conditions[..offset].iter().map(Cow::Borrowed));
-                new_conditions.extend(conditions[offset + 1..].iter().map(Cow::Borrowed));
+                new_conditions.extend(
+                    conditions[..offset]
+                        .iter()
+                        .map(|c| Cow::Borrowed(c.borrow())),
+                );
+                new_conditions.extend(
+                    conditions[offset + 1..]
+                        .iter()
+                        .map(|c| Cow::Borrowed(c.borrow())),
+                );
                 res.remained_conds
                     .extend(new_conditions.into_iter().map(Cow::into_owned));
                 return Ok(res);
@@ -1516,7 +1540,7 @@ impl RangeDetacher<'_> {
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
         };
         let mut builder = PointBuilder::new(self.eval_expression);
-        let dnf_items = flatten_dnf_conditions(condition);
+        let dnf_items = flatten_dnf_conditions_ref(condition);
         let mut new_access_items = Vec::with_capacity(dnf_items.len());
         let mut min_access_conds: i64 = -1;
         let mut total_ranges = super::types::Ranges::new();
@@ -1538,7 +1562,7 @@ impl RangeDetacher<'_> {
                 let Expression::ScalarFunction(sf) = item else {
                     unreachable!("matched above");
                 };
-                let cnf_items = flatten_cnf_conditions(sf);
+                let cnf_items = flatten_cnf_conditions_ref(sf);
                 let mut res = self.detach_cnf(&cnf_items, true)?;
                 // An always-false DNF item is skipped.
                 if res.ranges.is_empty() {
@@ -1640,7 +1664,7 @@ impl RangeDetacher<'_> {
                         -1,
                     ));
                 }
-                new_access_items.push(item.clone());
+                new_access_items.push((*item).clone());
                 if i == 0 {
                     column_values[0] = extract_value_info(item);
                 } else if column_values[0].is_some() {
