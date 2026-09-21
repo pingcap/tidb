@@ -143,9 +143,9 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	tk.MustExec("set tidb_mem_arbitrator_query_reserved = default")
 
 	tk.MustExec("set global tidb_enable_resource_control=on")
-	tk.MustExec("create resource group rg1 RU_PER_SEC=111 priority=LOW")
-	tk.MustExec("create resource group rg2 RU_PER_SEC=222 priority=HIGH")
-	tk.MustExec("create resource group rg3 RU_PER_SEC=333")
+	tk.MustExec("create resource group rg1 RU_PER_SEC=111 priority=LOW BURSTABLE")
+	tk.MustExec("create resource group rg2 RU_PER_SEC=222 priority=HIGH BURSTABLE")
+	tk.MustExec("create resource group rg3 RU_PER_SEC=333 BURSTABLE")
 	tk.MustQuery("select NAME,RU_PER_SEC,PRIORITY from information_schema.resource_groups where name='rg2'").Check(testkit.Rows("rg2 222 HIGH"))
 	tk.MustQuery("select NAME,RU_PER_SEC,PRIORITY from information_schema.resource_groups where name='rg3'").Check(testkit.Rows("rg3 333 MEDIUM"))
 	tk.MustQuery("select NAME,RU_PER_SEC,PRIORITY from information_schema.resource_groups where name='rg1'").Check(testkit.Rows("rg1 111 LOW"))
