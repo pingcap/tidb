@@ -1422,6 +1422,31 @@ fn equality_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
     ids
 }
 
+// IN fixes a finite access prefix, but does not make an ordering column or
+// a unique lookup single-valued. Keep that distinction from equality_fixed_ids.
+fn index_join_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
+    use tidb_expr::expression::Expression;
+    let mut ids = equality_fixed_ids(ds);
+    for condition in &ds.pushed_down_conds {
+        let Expression::ScalarFunction(function) = condition else {
+            continue;
+        };
+        if function.func_name.lowercase() != "in" {
+            continue;
+        }
+        if let [Expression::Column(column), values @ ..] = function.args.as_slice() {
+            if !values.is_empty()
+                && values
+                    .iter()
+                    .all(|value| matches!(value, Expression::Constant(_)))
+            {
+                ids.push(column.unique_id);
+            }
+        }
+    }
+    ids
+}
+
 /// Computes Go's `indexJoinProbeAccessRowsFloor` for one admitted access
 /// prefix (`exhaust_physical_plans.go:824`).  IndexJoin's post-join row count
 /// uses every equality key, while a probe path may only build ranges from a
@@ -1611,7 +1636,7 @@ fn path_matches_index_join_runtime(
             // from its first column. Runtime join keys and equality-fixed
             // columns may jointly cover that leading run, but a later handle
             // column cannot be probed across an unfixed earlier one.
-            let fixed = equality_fixed_ids(ds);
+            let fixed = index_join_fixed_ids(ds);
             let mut matched_runtime_key = false;
             for column in &ds.common_handle_cols {
                 if inner_ids.contains(&column.unique_id) {
@@ -1629,7 +1654,7 @@ fn path_matches_index_join_runtime(
             let Some(index) = ds.indexes.get(*index) else {
                 return false;
             };
-            let fixed = equality_fixed_ids(ds);
+            let fixed = index_join_fixed_ids(ds);
             let mut matched_runtime_key = false;
             for index_column in &index.columns {
                 // `IndexColumn.Offset` indexes the TABLE's column list, not
@@ -1768,8 +1793,8 @@ fn index_join_feedback(
     ds: &crate::logical::DataSource,
     path: &crate::access_path::PossiblePath,
     runtime: &crate::physical_property::IndexJoinRuntimeProp,
-    ranges: crate::ranger::types::Ranges,
-) -> crate::task::IndexJoinInfo {
+    ctx: &DispatchContext<'_>,
+) -> Option<crate::task::IndexJoinInfo> {
     let (access_columns, idx_col_lens) = match path {
         crate::access_path::PossiblePath::TiFlashTable => (Vec::new(), Vec::new()),
         crate::access_path::PossiblePath::Table { .. } if ds.handle_is_int => (
@@ -1785,15 +1810,22 @@ fn index_join_feedback(
             let columns = source_index
                 .into_iter()
                 .flat_map(|index| &index.columns)
-                .filter_map(|column| ds.schema_column_for_index_column(column))
+                .map_while(|column| ds.schema_column_for_index_column(column))
                 .collect::<Vec<_>>();
             let lengths = source_index
-                .map(|index| index.columns.iter().map(|column| column.length).collect())
+                .map(|index| {
+                    index
+                        .columns
+                        .iter()
+                        .take(columns.len())
+                        .map(|column| column.length)
+                        .collect()
+                })
                 .unwrap_or_default();
             (columns, lengths)
         }
     };
-    let fixed = equality_fixed_ids(ds);
+    let fixed = index_join_fixed_ids(ds);
     let mut key_off2_idx_off = vec![-1; runtime.inner_join_keys.len()];
     let mut matched_runtime_key = false;
     let mut first_unmatched_index_offset = access_columns.len();
@@ -1857,8 +1889,64 @@ fn index_join_feedback(
             }
         }
     }
+    // Go's template ranges contain each static EQ/IN combination, with
+    // placeholders where the per-outer-row join keys will be substituted.
+    // Build over only static prefix columns; the ordinary scan ranges cannot
+    // describe a static column separated from the front by a runtime key.
+    let static_offsets = (0..first_unmatched_index_offset)
+        .filter(|offset| !key_off2_idx_off.contains(&(*offset as i64)))
+        .collect::<Vec<_>>();
+    let static_columns = static_offsets
+        .iter()
+        .map(|offset| access_columns[*offset].clone())
+        .collect::<Vec<_>>();
+    let static_lengths = static_offsets
+        .iter()
+        .map(|offset| {
+            idx_col_lens
+                .get(*offset)
+                .copied()
+                .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH)
+        })
+        .collect::<Vec<_>>();
+    let prefix_conditions = access_conditions
+        .iter()
+        .filter(|condition| {
+            tidb_expr::simple_expr::extract_columns(condition)
+                .iter()
+                .all(|column| {
+                    static_columns
+                        .iter()
+                        .any(|fixed| fixed.unique_id == column.unique_id)
+                })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let (ranges, range_rebuild) = if static_columns.is_empty() {
+        (vec![crate::ranger::types::Range::default()], None)
+    } else {
+        let ranges = ctx
+            .detach_index_range(&prefix_conditions, &static_columns, &static_lengths)
+            .ok()?
+            .ranges;
+        let rebuild = crate::physical_plan_cache::PointRangeRebuild::IndexJoin {
+            access: crate::physical_plan_cache::IndexRangeRebuild::new(
+                prefix_conditions,
+                static_columns,
+                static_lengths,
+            ),
+            offsets: static_offsets.clone(),
+            width: first_unmatched_index_offset,
+        };
+        (ranges, Some(rebuild))
+    };
+    let ranges = crate::physical_plan_cache::index_join_template_ranges(
+        ranges,
+        &static_offsets,
+        first_unmatched_index_offset,
+    )?;
     access_conditions.extend(last_col_access);
-    crate::task::IndexJoinInfo {
+    Some(crate::task::IndexJoinInfo {
         table_id: ds.physical_table_id,
         index_id: match path {
             crate::access_path::PossiblePath::Index { index } => {
@@ -1871,8 +1959,9 @@ fn index_join_feedback(
         idx_col_lens,
         key_off2_idx_off,
         access_conditions,
+        range_rebuild,
         compare_filters,
-    }
+    })
 }
 
 /// Go `indexJoinPathBuildColManager`: comparisons against the first index
@@ -2721,10 +2810,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     index_plan_finished: true,
                     keep_order,
                     expect_cnt: prop.expected_cnt as u64,
-                    index_join_info: prop
-                        .index_join_prop
-                        .as_ref()
-                        .map(|runtime| index_join_feedback(ds, path, runtime, ranges.clone())),
+                    index_join_info: match &prop.index_join_prop {
+                        Some(runtime) => Some(match index_join_feedback(ds, path, runtime, ctx) {
+                            Some(info) => info,
+                            None => continue 'paths,
+                        }),
+                        None => None,
+                    },
                     ..crate::task::CopTask::default()
                 })
             }
@@ -3465,10 +3557,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     index_plan_finished: false,
                     keep_order,
                     expect_cnt: prop.expected_cnt as u64,
-                    index_join_info: prop
-                        .index_join_prop
-                        .as_ref()
-                        .map(|runtime| index_join_feedback(ds, path, runtime, ranges.clone())),
+                    index_join_info: match &prop.index_join_prop {
+                        Some(runtime) => Some(match index_join_feedback(ds, path, runtime, ctx) {
+                            Some(info) => info,
+                            None => continue 'paths,
+                        }),
+                        None => None,
+                    },
                     ..crate::task::CopTask::default()
                 })
             }

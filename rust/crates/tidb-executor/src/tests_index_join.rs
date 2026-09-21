@@ -531,3 +531,38 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
         "the whole batch shares one key, so the inner side is read once"
     );
 }
+
+/// Go buildRangesForIndexJoin substitutes each dynamic key into each retained
+/// ranger tuple; static columns from different tuples must not be mixed.
+#[test]
+fn index_join_static_templates_preserve_tuple_identity() {
+    let mut table = KvTable::new(95, vec![column("a", 1), column("b", 2), column("c", 3)]);
+    table.set_common_handle_offsets(vec![0, 1, 2]);
+    for a in [1, 2] {
+        for b in [7, 8] {
+            table
+                .insert_row(
+                    &[Datum::Int(a), Datum::Int(b), Datum::Int(9)],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+    }
+    let mut source = lookup_source(&table, LookupObject::CommonHandle, 3);
+    source.set_probe_parts(vec![
+        LookupProbePart::Alternatives(vec![Datum::Int(1), Datum::Int(2)]),
+        LookupProbePart::Alternatives(vec![Datum::Int(7), Datum::Int(8)]),
+        LookupProbePart::Dynamic(0),
+    ]);
+    source.set_probes(crate::access_path::IndexJoinProbes {
+        keys: vec![vec![Datum::Int(9)]],
+        bound_values: vec![],
+    });
+    assert_eq!(
+        drain(&mut source, &[long(), long(), long()]),
+        vec![
+            vec![Datum::Int(1), Datum::Int(7), Datum::Int(9)],
+            vec![Datum::Int(2), Datum::Int(8), Datum::Int(9)]
+        ]
+    );
+}

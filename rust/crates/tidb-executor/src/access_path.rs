@@ -4336,6 +4336,9 @@ pub enum LookupObject {
 pub(crate) enum LookupProbePart {
     Dynamic(usize),
     Constant(Datum),
+    // Values at this column in each ranger template. Alternative columns
+    // share the same ordinal, preserving correlated static range tuples.
+    Alternatives(Vec<Datum>),
 }
 
 /// Which comparison one [`LookupProbeBound`] applies, always in the normalized
@@ -4494,7 +4497,7 @@ pub struct IndexJoinLookupExec {
     probe_key_types: std::sync::OnceLock<Option<Arc<[FieldType]>>>,
     /// The current outer batch's distinct probe tuples, in walk order.
     probes: Vec<Vec<Datum>>,
-    /// The next probe to open a cursor over.
+    /// The next dynamic-probe/static-template pair to open a cursor over.
     next_probe: usize,
     /// The open cursor over the current batch of probe ranges (index object
     /// only).
@@ -4850,11 +4853,23 @@ impl IndexJoinLookupExec {
     /// reads nothing at all, exactly as Go's `BuildColumnRange` answers an
     /// empty range for it.
     fn next_probe_with_bounds(&mut self) -> Option<(Vec<Datum>, Vec<Datum>)> {
+        let template_count = self
+            .probe_parts
+            .iter()
+            .find_map(|part| match part {
+                LookupProbePart::Alternatives(values) => Some(values.len()),
+                _ => None,
+            })
+            .unwrap_or(1);
+        if template_count == 0 {
+            return None;
+        }
         loop {
-            let Some(dynamic_probe) = self.probes.get(self.next_probe) else {
+            let probe_ordinal = self.next_probe / template_count;
+            let template_ordinal = self.next_probe % template_count;
+            let Some(dynamic_probe) = self.probes.get(probe_ordinal) else {
                 return None;
             };
-            let probe_ordinal = self.next_probe;
             self.next_probe += 1;
             let key = if self.probe_parts.is_empty() {
                 Some(dynamic_probe.clone())
@@ -4864,6 +4879,9 @@ impl IndexJoinLookupExec {
                     .map(|part| match part {
                         LookupProbePart::Dynamic(offset) => dynamic_probe.get(*offset).cloned(),
                         LookupProbePart::Constant(value) => Some(value.clone()),
+                        LookupProbePart::Alternatives(values) => {
+                            values.get(template_ordinal).cloned()
+                        }
                     })
                     .collect::<Option<Vec<_>>>()
                     .and_then(|probe| self.probe_in_key_domain(probe))

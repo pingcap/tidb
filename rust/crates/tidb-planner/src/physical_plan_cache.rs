@@ -254,7 +254,7 @@ impl IndexRangeRebuild {
     }
 }
 
-/// Range metadata retained by point and batch-point plans. Go rebuilds CBO
+/// Range metadata retained by point, batch-point and index-join plans. Go rebuilds CBO
 /// point plans from access conditions exactly like their originating table or
 /// index scan, then additionally verifies that the number of point ranges did
 /// not change.
@@ -264,6 +264,47 @@ pub enum PointRangeRebuild {
     Table(TableRangeRebuild),
     /// A unique-index point range.
     Index(IndexRangeRebuild),
+    /// Go mutableIndexJoinRange: static values interleaved with runtime keys.
+    IndexJoin {
+        /// EQ/IN predicates and their static columns.
+        access: IndexRangeRebuild,
+        /// Object-key positions occupied by the static columns.
+        offsets: Vec<usize>,
+        /// Complete equality-prefix width, including runtime placeholders.
+        width: usize,
+    },
+}
+
+/// Interleaves ranger static tuples with Go's runtime-key placeholders.
+/// A truncated/non-point template cannot bind all retained lookup keys.
+pub(crate) fn index_join_template_ranges(
+    mut ranges: Ranges,
+    offsets: &[usize],
+    width: usize,
+) -> Option<Ranges> {
+    if ranges.is_empty() || offsets.iter().any(|offset| *offset >= width) {
+        return None;
+    }
+    for range in &mut ranges {
+        if range.low_exclude
+            || range.high_exclude
+            || range.low_val.len() != offsets.len()
+            || range.collators.len() != offsets.len()
+            || range.low_val != range.high_val
+        {
+            return None;
+        }
+        let mut values = vec![Datum::Null; width];
+        let mut collators = vec![tidb_datatype::Collation::Binary; width];
+        for (source, target) in offsets.iter().enumerate() {
+            values[*target] = range.low_val[source].clone();
+            collators[*target] = range.collators[source];
+        }
+        range.low_val = values.clone();
+        range.high_val = values;
+        range.collators = collators;
+    }
+    Some(ranges)
 }
 
 /// An evaluator for a deferred constant such as a non-deterministic function.
@@ -438,6 +479,32 @@ fn bind_conditions(
     Ok(())
 }
 
+// Constant.StringWithCtx reads parameters but renders a deferred expression
+// without evaluating it. EXPLAIN snapshots must not add statement evaluations.
+fn bind_description(
+    expression: &mut Expression,
+    context: &CachedPlanRebuildContext<'_>,
+) -> Result<(), PlanCacheRebuildError> {
+    match expression {
+        Expression::Constant(constant) if constant.param_marker.is_some() => {
+            bind_expression(expression, context)?;
+        }
+        Expression::Constant(constant) => {
+            if let Some(deferred) = constant.deferred_expr.as_mut() {
+                bind_description(deferred, context)?;
+            }
+        }
+        Expression::ScalarFunction(function) => {
+            for argument in &mut function.args {
+                bind_description(argument, context)?;
+            }
+            function.invalidate_cached_arguments();
+        }
+        Expression::Column(_) | Expression::CorrelatedColumn(_) => {}
+    }
+    Ok(())
+}
+
 fn bind_aggregate_expressions(
     functions: &mut [tidb_expr::aggregation::AggFuncDesc],
     group_by: &mut [Expression],
@@ -496,6 +563,9 @@ fn bind_plan_expressions(
             bind_conditions(&mut join.left_conditions, context)?;
             bind_conditions(&mut join.right_conditions, context)?;
             bind_conditions(&mut join.other_conditions, context)?;
+            for condition in &mut join.inner_access_conditions {
+                bind_description(condition, context)?;
+            }
             if let Some(compare_filters) = &mut join.compare_filters {
                 bind_conditions(&mut compare_filters.args, context)?;
             }
@@ -743,6 +813,30 @@ fn rebuild_point_ranges(
                 }
                 result.ranges
             }
+        }
+        PointRangeRebuild::IndexJoin {
+            access,
+            offsets,
+            width,
+        } => {
+            bind_conditions(&mut access.access_conditions, context)?;
+            let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+                &access.access_conditions,
+                &access.index_columns,
+                &access.index_column_lengths,
+                0,
+                &|expr| context.evaluate(expr),
+            )
+            .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+            let rebuilt = index_join_template_ranges(result.ranges, offsets, *width)
+                .ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
+            if rebuilt.len() != original.len()
+                || rebuilt.first().map(|range| range.width())
+                    != original.first().map(|range| range.width())
+            {
+                return Err(PlanCacheRebuildError::UnsafeRange { plan_id });
+            }
+            rebuilt
         }
         PointRangeRebuild::Index(rebuild) => {
             if rebuild.index_columns.is_empty()

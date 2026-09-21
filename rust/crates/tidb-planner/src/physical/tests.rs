@@ -711,6 +711,48 @@ fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
 }
 
 #[test]
+fn cached_index_join_description_binds_parameters_without_evaluating_deferred_values() {
+    use crate::physical_plan_cache::CachedPlanRebuildContext;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut deferred = Constant::new(Datum::Int(17), FieldType::new(FieldTypeCode::LongLong));
+    deferred.deferred_expr = Some(Box::new(parameter_value(0)));
+    let template = PhysicalPlan::IndexJoin(PhysicalIndexJoin {
+        inner_access_conditions: vec![Expression::Constant(deferred), parameter_value(0)],
+        ..PhysicalIndexJoin::default()
+    });
+    let evaluations = AtomicUsize::new(0);
+    let evaluator = |_: &Expression| {
+        evaluations.fetch_add(1, Ordering::SeqCst);
+        Ok(Datum::Int(99))
+    };
+    let rebuilt = template
+        .rebuild_plan_for_cache(
+            &CachedPlanRebuildContext::new(&[Datum::Int(42)]).with_deferred_evaluator(&evaluator),
+        )
+        .expect("descriptive metadata can be rebound");
+    assert_eq!(evaluations.load(Ordering::SeqCst), 0);
+    let PhysicalPlan::IndexJoin(join) = rebuilt else {
+        panic!("index join");
+    };
+    let Expression::Constant(deferred) = &join.inner_access_conditions[0] else {
+        panic!("deferred constant");
+    };
+    assert_eq!(deferred.value, Datum::Int(17));
+    let Expression::Constant(nested) = deferred.deferred_expr.as_deref().unwrap() else {
+        panic!("nested parameter");
+    };
+    assert_eq!(nested.value, Datum::Int(42));
+    let Expression::Constant(parameter) = &join.inner_access_conditions[1] else {
+        panic!("parameter");
+    };
+    assert_eq!(parameter.value, Datum::Int(42));
+    template
+        .rebuild_plan_for_cache(&CachedPlanRebuildContext::new(&[Datum::Int(8)]))
+        .expect("descriptions do not require a deferred evaluator");
+}
+
+#[test]
 fn tree_construction_and_base_accessors() {
     let tree = hash_join(3, selection(2, scan(1, &[1])), scan(4, &[2]));
     assert_eq!(tree.plan_count(), 4);

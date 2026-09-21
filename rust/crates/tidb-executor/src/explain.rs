@@ -601,6 +601,7 @@ struct IndexJoinExplainContext<'a> {
     inner_keys: &'a [tidb_expr::column::Column],
     /// Go `prop.IndexJoinProp.OuterJoinKeys`, paired with `inner_keys`.
     outer_keys: &'a [tidb_expr::column::Column],
+    key_offsets: &'a [i64],
     /// Go `indexJoinResult.chosenAccess`: the conditions that extend the
     /// per-probe range past the equality keys.
     access_conditions: &'a [tidb_expr::expression::Expression],
@@ -639,11 +640,22 @@ fn is_index_join_index_range(
 /// Go `indexJoinPathRangeInfo`: `eq(inner_idx_col, outer_key)` for every
 /// matched key, then `chosenAccess`.
 fn index_join_decided_by_text(context: IndexJoinExplainContext<'_>) -> String {
-    let mut decided = context
+    let mut keys = context
         .inner_keys
         .iter()
         .zip(context.outer_keys)
-        .map(|(inner, outer)| {
+        .enumerate()
+        .collect::<Vec<_>>();
+    keys.sort_by_key(|(key, _)| {
+        context
+            .key_offsets
+            .get(*key)
+            .copied()
+            .unwrap_or(*key as i64)
+    });
+    let mut decided = keys
+        .into_iter()
+        .map(|(_, (inner, outer))| {
             format!(
                 "eq({}, {})",
                 expression_text(&tidb_expr::expression::Expression::Column(inner.clone())),
@@ -1349,6 +1361,7 @@ fn physical_explain_operator(
                             index_id: join.inner_access_index_id,
                             inner_keys: &join.inner_join_keys,
                             outer_keys: &join.outer_join_keys,
+                            key_offsets: &join.key_off2_idx_off,
                             access_conditions: &join.inner_access_conditions,
                         }),
                     PhysicalPlan::IndexJoin(_) => None,

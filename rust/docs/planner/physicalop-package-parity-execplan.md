@@ -6485,3 +6485,155 @@ expression evaluation, static/runtime precedence, propagation and explicit clone
 Ready for the requested progress commit and push. Whole-package acceptance,
 the ignored session test, and sysbench/TPC-C/TPC-H/YCSB performance gates remain
 open.
+
+
+## Index-probe key ordering and equality-prefix audit (2026-09-21)
+
+Previous turn is verified progress, published as b497d04188. Pulled the branch;
+no new upstream changes. Continue the complete physicalop/core dependency audit
+with three-column indexes, reordered join equalities, fixed-prefix gaps and IN
+prefixes. Compare both EXPLAIN and result rows against Go before deciding changes;
+lookup key mapping and execution must agree. Preserve the full package inventory
+and outstanding workload gates. No narrower package acceptance claim is made.
+
+
+### Three-column source evidence and execution correction
+
+Captured 28 Go cases: seven predicates across common handles/secondary indexes
+and INL_JOIN/INL_HASH_JOIN. Each case checks range text and sorted result rows.
+The predicates reorder three equality keys, interleave one fixed equality,
+interleave/lead with IN, leave an unfixed/pruned key gap, or add an outer-derived
+trailing bound. The native red log (/tmp/tidb-probe-keys-red.log) proves wrong
+EXPLAIN key order, rejected fixed gaps, missing IN lookup keys, and a pruned-column
+secondary-index case that incorrectly returned no rows.
+
+The selected-key map now follows the original index positions without collapsing
+pruned gaps. EXPLAIN sorts range equality pairs by that map. Index access admission
+and feedback recognize constant IN prefixes separately from single-valued equality;
+IN is not treated as a single value for ORDER BY or unique-lookup costing. The
+existing ranger builds static EQ/IN tuples over the static prefix columns. These
+are interleaved with runtime-key placeholders, preserving each complete range
+tuple. Invalid/incomplete static templates decline that access candidate instead
+of manufacturing missing values. Integer-handle descriptions remain unchanged.
+
+The lookup reader expands each dynamic probe over retained range alternatives.
+Alternative columns share a range ordinal, preserving tuple correlation instead
+of creating a new Cartesian product of column values. An execution regression
+reads a three-column common handle containing all cross combinations and proves
+that only the two retained tuples are read. The converted bound-value row remains
+indexed by its dynamic-probe ordinal during expansion. Existing cursor reset,
+remote fallback and fork-template clone paths keep that flattened cursor position.
+Go source: pkg/executor/builder.go buildRangesForIndexJoin iterates lookup content,
+then complete ranger templates, and substitutes keys through keyOff2IdxOff.
+
+### Prepared-range reconstruction
+
+The first prepared regression exposed a real stale-range result: executing the
+same fixed-prefix statement with 7 then 8 returned no rows for 8. Log
+/tmp/tidb-probe-keys-cache-rust.log is red; /tmp/tidb-probe-keys-cache-green.log
+is green after retaining static template rebuild inputs. The existing range
+rebuild enum now also represents Go mutableIndexJoinRange. Rebuilding rebinds the
+static predicates, uses the ranger without a cache-rebuild quota, reconstructs
+runtime placeholders and rejects changed range count/width as Go does. The
+EXPLAIN access snapshots are rebound too. The task consumes this metadata before
+falling back to existing scan-derived point metadata.
+
+Expanded prepared reference has ten executions: fixed equality values 7/8/7,
+interleaved IN values (7,8)/(8,9)/(7,8), and leading IN values
+(1,2)/(2,3)/(1,1)/(1,2). Rows and @@last_plan_from_cache both match Go, including
+cache rejection when duplicates shrink the range count and when it grows again.
+The native expanded gate is /tmp/tidb-probe-keys-cache-expanded-rust.log.
+
+### Commands and evidence
+
+Go reference commands from repository root, unchanged source pin:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-probe-keys-overlay.json -run '^TestProbeKeyOrderPrefixOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-probe-keys-overlay.json -run '^TestProbeKeyPrefixPreparedOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-probe-keys-overlay.json -run '^(TestProbeKeyOrderPrefixOracle|TestProbeKeyPrefixPreparedOracle|TestProbeRangeAccessExplainOracle)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+All passed. Go logs: /tmp/tidb-probe-keys-go.log,
+/tmp/tidb-probe-keys-cache-go.log, /tmp/tidb-probe-keys-cache-expanded-go.log,
+/tmp/tidb-probe-keys-go-race.log. The race run includes the previous 48-case
+access-versus-residual matrix as well as the new 28-case plan/row and ten-execution
+prepared matrices. The unchanged windows harness has no failpoint dependency.
+Tracked Go/Bazel/module/generated files are unchanged; bazel_prepare is not
+required. Required make lint passed (/tmp/tidb-probe-keys-lint.log).
+
+Native working-tree commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-session --lib index_probe_key_order_and_fixed_prefix_match_go_plans_and_rows
+    cargo test --offline --locked -j12 -p tidb-session --lib prepared_index_probe_fixed_prefix_changes_match_go
+    cargo test --offline --locked -j12 -p tidb-planner --lib index_join
+    cargo test --offline --locked -j12 -p tidb-planner --lib physical::
+    cargo test --offline --locked -j12 -p tidb-planner --lib task::attach_tests
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_join
+    cargo test --offline --locked -j12 -p tidb-executor --lib explain
+    cargo test --offline --locked -j12 -p tidb-executor --lib access_path::
+    cargo test --offline --locked -j12 -p tidb-executor --lib physical_builder
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_join_static_templates_preserve_tuple_identity
+    cargo test --offline --locked -j12 -p tidb-session --lib index_join
+    cargo test --offline --locked -j12 -p tidb-session --lib index_probe
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_prepared_plan_cache
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_sysbench_access
+
+All passed. Planner index join 19, physical 65, attachment 17; executor index join
+19 before adding the tuple regression, EXPLAIN 19, access path 39, physical builder
+13 and tuple regression 1. Session index join 12 (one existing ignored), new probe
+matrices 2, EXPLAIN 62, prepared cache 45 and sysbench access 15. Logs use
+/tmp/tidb-probe-keys-tidb-<crate>-<filter>.log and
+/tmp/tidb-probe-keys-consumer-tidb-<crate>-<filter>.log, colons replaced by
+underscores. Tuple gate: /tmp/tidb-probe-keys-tuples.log.
+
+Ten intended files: planner dispatch, physical_plan_cache, physical/tests and task;
+executor access_path, driver/physical_builder, explain and tests_index_join;
+session tests_index_join_inner_pattern; this plan. This is package dependency progress.
+Remaining full builder quota/error/warning/cost branches, source package-wide
+validation, the ignored session test, and all four workload performance gates are
+open. Sysbench tests here verify correctness, not throughput. No performance gain
+is claimed without measurement. In particular, static template construction and
+expansion need workload measurement; source range-memory fallback still requires
+its full original gate. No source inventory row is marked accepted.
+
+
+### Final review: descriptive deferred expressions
+
+
+Self-review found that rebinding inner_access_conditions with the ordinary
+execution binder would evaluate deferred expressions again. Go
+pkg/expression/constant.go Constant.StringWithCtx renders DeferredExpr instead
+of evaluating it. A new physical-plan regression first failed with one evaluator
+call instead of zero (/tmp/tidb-probe-keys-deferred-red.log). The metadata binder
+now recursively updates parameter markers without evaluating deferred constants.
+The test checks direct and nested parameters, preserves the cached deferred value,
+and proves no evaluator is required for descriptions alone.
+
+Commands from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib cached_index_join_description
+    cargo test --offline --locked -j12 -p tidb-planner --lib physical::
+
+The first command failed before the fix; the second passed 66 tests afterward
+(/tmp/tidb-probe-keys-deferred-green.log). This does not change the evaluator used
+for execution predicates or actual access-range construction. The existing
+plan_trace renderer still rejects parameter/deferred constants; auditing that
+renderer against Go remains open, and this change does not claim prepared
+EXPLAIN parity.
+
+The isolated checkout /private/tmp/tidb-parity-publish-aba629bb contains only the
+intended tracked patch over b497d04188; neither unrelated untracked draft is
+copied. The previously listed targeted gates passed there, with executor index
+join now 20 tests and session index join 14 tests plus one existing ignored.
+After final review, physical (66), index_probe (2), prepared cache (45), and
+EXPLAIN (62) passed again with the same cargo commands and this environment prefix from its
+rust/ directory:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target
+
+Logs: /tmp/tidb-probe-keys-isolated-deferred-physical.log and
+/tmp/tidb-probe-keys-isolated-deferred-<filter>.log. The final make lint retry
+initially hit sandbox DNS restrictions fetching revive; rerunning with network
+and cache permissions passed, with log /tmp/tidb-probe-keys-final-lint.log.
+No additional source-package acceptance or workload performance claim follows
+from these targeted gates.

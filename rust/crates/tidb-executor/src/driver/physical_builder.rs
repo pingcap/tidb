@@ -1926,22 +1926,24 @@ fn index_join_probe_shape(
             parts.push(LookupProbePart::Dynamic(position));
             continue;
         }
-        let mut values = join.ranges.iter().filter_map(|range| {
-            let low = range.low_val.get(index)?;
-            let high = range.high_val.get(index)?;
-            (!range.low_exclude && !range.high_exclude && low == high).then_some(low)
-        });
-        let Some(first) = values.next().cloned() else {
-            return Err(DriverError::unsupported(
-                "an index-join lookup prefix has neither a join key nor a fixed range value",
-            ));
-        };
-        if values.any(|value| value != &first) {
-            return Err(DriverError::unsupported(
-                "an index-join lookup prefix retained inconsistent fixed range values",
-            ));
+        let values = join
+            .ranges
+            .iter()
+            .map(|range| {
+                let low = range.low_val.get(index)?;
+                let high = range.high_val.get(index)?;
+                (!range.low_exclude && !range.high_exclude && low == high).then(|| low.clone())
+            })
+            .collect::<Option<Vec<_>>>()
+            .filter(|values| !values.is_empty())
+            .ok_or_else(|| {
+                DriverError::unsupported("an index-join lookup prefix has no fixed range template")
+            })?;
+        if values.iter().all(|value| value == &values[0]) {
+            parts.push(LookupProbePart::Constant(values[0].clone()));
+        } else {
+            parts.push(LookupProbePart::Alternatives(values));
         }
-        parts.push(LookupProbePart::Constant(first));
     }
     Ok((probe_keys, parts))
 }

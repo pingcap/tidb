@@ -75,6 +75,8 @@ pub struct IndexJoinInfo {
     /// Chosen range predicates used by Go to construct the scan RangeInfo.
     /// Retained as expressions for the executor renderer, not row evaluation.
     pub access_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Static template inputs for Go mutableIndexJoinRange on cache reuse.
+    pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
     /// Go `IndexJoinInfo.CompareFilters`.
     pub compare_filters: Option<crate::physical::IndexJoinCompareFilters>,
 }
@@ -2215,7 +2217,9 @@ fn complete_physical_index_join(
     join.outer_hash_keys = outer_hash_keys;
     join.inner_hash_keys = inner_hash_keys;
     join.equal_conditions.clear();
-    join.range_rebuild = index_join_range_rebuild(inner_plan);
+    join.range_rebuild = info
+        .range_rebuild
+        .or_else(|| index_join_range_rebuild(inner_plan));
     let (left, right) = if join.inner_child_idx == 0 {
         (&join.inner_join_keys, &join.outer_join_keys)
     } else {
@@ -2910,6 +2914,7 @@ mod attach_tests {
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![0, -1],
                 access_conditions: vec![],
+                range_rebuild: None,
                 compare_filters: None,
             },
             &inner,
@@ -3013,6 +3018,7 @@ mod attach_tests {
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![-1],
                 access_conditions: vec![],
+                range_rebuild: None,
                 compare_filters: None,
             },
             &inner,

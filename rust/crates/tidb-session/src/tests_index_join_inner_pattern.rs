@@ -314,3 +314,215 @@ fn probe_explain_distinguishes_range_access_from_residual_filters() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn index_probe_key_order_and_fixed_prefix_match_go_plans_and_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE key_outer(a INT NOT NULL,b INT NOT NULL,c INT NOT NULL)")
+        .unwrap();
+    session
+        .run("INSERT INTO key_outer VALUES(1,7,9),(2,7,9),(1,8,10)")
+        .unwrap();
+    session.run("CREATE TABLE key_common(a INT NOT NULL,b INT NOT NULL,c INT NOT NULL,v INT,PRIMARY KEY(a,b,c) CLUSTERED)").unwrap();
+    session.run("CREATE TABLE key_index(a INT NOT NULL,b INT NOT NULL,c INT NOT NULL,v INT,INDEX abc(a,b,c))").unwrap();
+    let cases = [
+        (
+            "p.c=o.c and p.b=o.b and p.a=o.a",
+            "[eq(test.{table}.a, test.key_outer.a) eq(test.{table}.b, test.key_outer.b) eq(test.{table}.c, test.key_outer.c)]",
+            vec![vec!["1", "1", "7", "9"], vec!["2", "2", "7", "9"], vec!["3", "1", "8", "10"]],
+        ),
+        (
+            "p.b=o.b and p.a=o.a and p.c=o.c",
+            "[eq(test.{table}.a, test.key_outer.a) eq(test.{table}.b, test.key_outer.b) eq(test.{table}.c, test.key_outer.c)]",
+            vec![vec!["1", "1", "7", "9"], vec!["2", "2", "7", "9"], vec!["3", "1", "8", "10"]],
+        ),
+        (
+            "p.c=o.c and p.a=o.a and p.b=7",
+            "[eq(test.{table}.a, test.key_outer.a) eq(test.{table}.c, test.key_outer.c) eq(test.{table}.b, 7)]",
+            vec![vec!["1", "1", "7", "9"], vec!["2", "2", "7", "9"]],
+        ),
+        (
+            "p.c=o.c and p.b=7 and p.a in (1,2)",
+            "[eq(test.{table}.c, test.key_outer.c) in(test.{table}.a, 1, 2) eq(test.{table}.b, 7)]",
+            vec![vec!["1", "1", "7", "9"], vec!["1", "2", "7", "9"], vec!["2", "1", "7", "9"], vec!["2", "2", "7", "9"]],
+        ),
+        (
+            "p.c=o.c and p.a=o.a and p.b in (7,8)",
+            "[eq(test.{table}.a, test.key_outer.a) eq(test.{table}.c, test.key_outer.c) in(test.{table}.b, 7, 8)]",
+            vec![vec!["1", "1", "7", "9"], vec!["2", "2", "7", "9"], vec!["3", "1", "8", "10"]],
+        ),
+        (
+            "p.c=o.c and p.a=o.a",
+            "[eq(test.{table}.a, test.key_outer.a)]",
+            vec![vec!["1", "1", "7", "9"], vec!["2", "2", "7", "9"], vec!["3", "1", "8", "10"]],
+        ),
+        (
+            "p.b=o.b and p.a=1 and p.c>o.c",
+            "[eq(test.{table}.b, test.key_outer.b) eq(test.{table}.a, 1) gt(test.{table}.c, test.key_outer.c)]",
+            vec![],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for table in ["key_common", "key_index"] {
+        session
+            .run(&format!(
+                "INSERT INTO {table} VALUES(1,7,9,1),(2,7,9,2),(1,8,10,3),(3,7,9,4)"
+            ))
+            .unwrap();
+        for hint in ["INL_JOIN", "INL_HASH_JOIN"] {
+            for (condition, expected_range, expected_rows) in &cases {
+                let sql = format!("SELECT /*+ {hint}(p) */ p.v,o.a,o.b,o.c FROM key_outer o JOIN {table} p ON {condition}");
+                let explanation = plan(&mut session, &format!("EXPLAIN {sql}"));
+                let actual = explanation.lines().find_map(|line| {
+                    line.split_once("range: decided by ")
+                        .map(|(_, value)| value.split_once(", keep order:").unwrap().0)
+                });
+                let expected_range = expected_range.replace("{table}", table);
+                if actual != Some(expected_range.as_str()) {
+                    failures.push(format!(
+                        "{sql}: expected range {expected_range}, got {actual:?}"
+                    ));
+                }
+                match session.run(&format!("{sql} ORDER BY p.v,o.a,o.b,o.c")) {
+                    Ok(result) => {
+                        let actual = row_text(Ok(result));
+                        if &actual != expected_rows {
+                            failures.push(format!(
+                                "{sql}: expected rows {expected_rows:?}, got {actual:?}"
+                            ));
+                        }
+                    }
+                    Err(error) => failures.push(format!("{sql}: {error:?}")),
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn prepared_index_probe_fixed_prefix_changes_match_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE pc_outer(a INT NOT NULL,b INT NOT NULL,c INT NOT NULL)")
+        .unwrap();
+    session
+        .run("INSERT INTO pc_outer VALUES(1,7,9),(2,7,9),(1,8,10)")
+        .unwrap();
+    session.run("CREATE TABLE pc_inner(a INT NOT NULL,b INT NOT NULL,c INT NOT NULL,v INT,PRIMARY KEY(a,b,c) CLUSTERED)").unwrap();
+    session
+        .run("INSERT INTO pc_inner VALUES(1,7,9,1),(2,7,9,2),(1,8,10,3),(3,7,9,4)")
+        .unwrap();
+    for (condition, runs) in [
+        (
+            "p.c=o.c and p.a=o.a and p.b=?",
+            vec![
+                (
+                    7,
+                    8,
+                    "0",
+                    vec![vec!["1", "1", "7", "9"], vec!["2", "2", "7", "9"]],
+                ),
+                (8, 9, "1", vec![vec!["3", "1", "8", "10"]]),
+                (
+                    7,
+                    8,
+                    "1",
+                    vec![vec!["1", "1", "7", "9"], vec!["2", "2", "7", "9"]],
+                ),
+            ],
+        ),
+        (
+            "p.c=o.c and p.a=o.a and p.b in (?,?)",
+            vec![
+                (
+                    7,
+                    8,
+                    "0",
+                    vec![
+                        vec!["1", "1", "7", "9"],
+                        vec!["2", "2", "7", "9"],
+                        vec!["3", "1", "8", "10"],
+                    ],
+                ),
+                (8, 9, "1", vec![vec!["3", "1", "8", "10"]]),
+                (
+                    7,
+                    8,
+                    "1",
+                    vec![
+                        vec!["1", "1", "7", "9"],
+                        vec!["2", "2", "7", "9"],
+                        vec!["3", "1", "8", "10"],
+                    ],
+                ),
+            ],
+        ),
+        (
+            "p.c=o.c and p.b=7 and p.a in (?,?)",
+            vec![
+                (
+                    1,
+                    2,
+                    "0",
+                    vec![
+                        vec!["1", "1", "7", "9"],
+                        vec!["1", "2", "7", "9"],
+                        vec!["2", "1", "7", "9"],
+                        vec!["2", "2", "7", "9"],
+                    ],
+                ),
+                (
+                    2,
+                    3,
+                    "1",
+                    vec![
+                        vec!["2", "1", "7", "9"],
+                        vec!["2", "2", "7", "9"],
+                        vec!["4", "1", "7", "9"],
+                        vec!["4", "2", "7", "9"],
+                    ],
+                ),
+                (
+                    1,
+                    1,
+                    "0",
+                    vec![vec!["1", "1", "7", "9"], vec!["1", "2", "7", "9"]],
+                ),
+                (
+                    1,
+                    2,
+                    "0",
+                    vec![
+                        vec!["1", "1", "7", "9"],
+                        vec!["1", "2", "7", "9"],
+                        vec!["2", "1", "7", "9"],
+                        vec!["2", "2", "7", "9"],
+                    ],
+                ),
+            ],
+        ),
+    ] {
+        session.run(&format!("PREPARE stmt FROM 'SELECT /*+ INL_JOIN(p) */ p.v,o.a,o.b,o.c FROM pc_outer o JOIN pc_inner p ON {condition} ORDER BY p.v,o.a,o.b,o.c'")).unwrap();
+        for (x, y, hit, expected) in runs {
+            session.run(&format!("SET @x={x},@y={y}")).unwrap();
+            let args = if condition.contains("in") {
+                "@x,@y"
+            } else {
+                "@x"
+            };
+            assert_eq!(
+                row_text(session.run(&format!("EXECUTE stmt USING {args}"))),
+                expected,
+                "{condition}/{x}/{y}"
+            );
+            assert_eq!(
+                row_text(session.run("SELECT @@last_plan_from_cache")),
+                [[hit]],
+                "{condition}/{x}/{y}"
+            );
+        }
+        session.run("DEALLOCATE PREPARE stmt").unwrap();
+    }
+}
