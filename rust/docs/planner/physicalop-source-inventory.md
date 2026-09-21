@@ -116,6 +116,13 @@ obligations include comprehensive receiver/plan traversal and clone coverage,
 complete merge-join and stream-agg SQL comparisons, upstream error/failpoint
 coverage, and workload measurements.
 
+The 2026-09-21 hybrid arithmetic audit closes observed ENUM/SET rounding and
+conversion-error gaps, signed BIT arithmetic, and binary-literal cast warning
+and diagnostic differences in the shared expression dependency. Its native
+scalar/vector/SQL fixtures and pinned Go overlays are recorded in the ExecPlan.
+This is evidence for the ongoing dependency audit; expression, datatype and
+all inventoried executor/planner packages remain unaccepted.
+
 ## Acceptance obligations
 
 - Reconcile every production method and branch, including generated clone

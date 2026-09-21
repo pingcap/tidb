@@ -71,7 +71,7 @@ fn is_constant_binary_literal(expr: &Expression) -> bool {
 
 /// Go `numericContextResultType`: the numeric evaluation type an operand takes
 /// in an arithmetic context.
-fn numeric_context_result_type(expr: &Expression) -> EvalType {
+pub(crate) fn numeric_context_result_type(expr: &Expression) -> EvalType {
     let Some(ft) = expr.static_type() else {
         // A missing type cannot happen in Go (RetType is always set); treat it
         // as real, the most general numeric context.

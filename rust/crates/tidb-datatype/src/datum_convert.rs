@@ -361,11 +361,19 @@ impl Datum {
         match self {
             Self::String(_) | Self::Bytes(_) => {}
             Self::Int(_) | Self::UInt(_) => diagnostics.numeric_overflow(converted.event.as_ref()),
-            Self::Real(value) | Self::Float32(value) if converted.event.is_some() => {
+            Self::Real(_) | Self::Float32(_) | Self::Enum(..) | Self::Set(..)
+                if converted.event.is_some() =>
+            {
+                let value = match self {
+                    Self::Real(value) | Self::Float32(value) => *value,
+                    Self::Enum(value, _) => value.to_number(),
+                    Self::Set(value, _) => value.to_number(),
+                    _ => unreachable!(),
+                };
                 diagnostics.error(|| {
                     ERR_OVERFLOW.generate(format!(
                         "constant {} overflows {}",
-                        crate::format_float_g_shortest(crate::round_float(*value)),
+                        crate::format_float_g_shortest(crate::round_float(value)),
                         crate::type_str(target),
                     ))
                 });

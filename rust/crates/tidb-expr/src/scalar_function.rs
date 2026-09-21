@@ -323,6 +323,7 @@ fn numeric_expression_text(
                 }
             }
             Datum::Decimal(value) => Some(value.to_string()),
+            Datum::BinaryLiteral(value) => Some(value.to_int().value().to_string()),
             Datum::Null => Some("NULL".to_owned()),
             _ => None,
         },
@@ -365,8 +366,23 @@ fn numeric_argument_text(
     float: bool,
     ctx: &dyn Columns,
 ) -> Option<String> {
-    let text = numeric_expression_text(expression, float, ctx)?;
     let field = expression.static_type()?;
+    // Binary constant casts fold in Go, so diagnostics show the value in
+    // the operator's domain, including signed carriers and real rounding.
+    let text = match expression {
+        Expression::Constant(constant) if is_numeric_binary_literal(expression) => {
+            let Datum::BinaryLiteral(value) = &constant.value else {
+                unreachable!()
+            };
+            let value = value.to_int().value();
+            match function.numeric_operand_domain() {
+                Some(EvalType::Int) if !field.is_unsigned() => (value as i64).to_string(),
+                Some(EvalType::Real) => tidb_datatype::format_float_g_shortest(value as f64),
+                _ => value.to_string(),
+            }
+        }
+        _ => numeric_expression_text(expression, float, ctx)?,
+    };
     if function.func_name.lowercase() != "intdiv"
         || function.numeric_operand_domain() != Some(EvalType::Decimal)
         || field.eval_type() == EvalType::Decimal
@@ -1121,8 +1137,7 @@ impl ScalarFunction {
                 return None;
             }
             if self.args.iter().all(|arg| {
-                arg.static_type()
-                    .is_some_and(|field| field.eval_type() == EvalType::Int)
+                crate::builtin_arithmetic::numeric_context_result_type(arg) == EvalType::Int
             }) {
                 EvalType::Int
             } else {
@@ -1134,13 +1149,8 @@ impl ScalarFunction {
         if (op == BinaryOp::Div && domain == EvalType::Int)
             || !matches!(domain, EvalType::Int | EvalType::Real | EvalType::Decimal)
             || self.args.iter().any(|arg| {
-                arg.static_type()
-                    .is_none_or(|field| {
-                        !numeric_argument_domain(field.eval_type(), domain)
-                            || (field.eval_type() == EvalType::String
-                                && (field.is_hybrid()
-                                    || matches!(arg, Expression::Constant(c) if matches!(c.value, Datum::BinaryLiteral(_)))))
-                    })
+                numeric_argument_source(arg, domain)
+                    .is_none_or(|source| !numeric_argument_domain(source, domain))
             })
         {
             return None;
@@ -1148,8 +1158,8 @@ impl ScalarFunction {
         Some(domain)
     }
 
-    /// Go folds an implicit cast of a strict string literal while building
-    /// arithmetic, so its warning occurs once even when a column spans rows.
+    /// Go folds an implicit cast of a strict string or binary literal while
+    /// building arithmetic, so its warning occurs once across all rows.
     pub(crate) fn fold_numeric_string_literals(&mut self, ctx: &dyn Columns) {
         let Some(domain) = self.numeric_operand_domain() else {
             return;
@@ -1170,6 +1180,11 @@ impl ScalarFunction {
             let subquery_ref_id = constant.subquery_ref_id;
             let mut target = if domain == EvalType::Decimal {
                 numeric_decimal_cast_type(field)
+            } else if domain == EvalType::Int {
+                let mut target = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+                target.set_flen(field.flen());
+                target.set_decimal(0);
+                target
             } else {
                 crate::builtin_arithmetic::real_argument_type(field).into_owned()
             };
@@ -1179,8 +1194,17 @@ impl ScalarFunction {
             target.set_collation_name("binary");
             // FoldConstant retains the cast when evaluation fails. Leave its
             // source here for the typed arithmetic evaluator to retry.
-            let Ok(value) = cast_numeric_argument(argument, value, domain, ctx) else {
+            let result = if field.is_hybrid() || matches!(value, Datum::BinaryLiteral(_)) {
+                eval_numeric_operand_row(argument, ctx, Row::empty(), domain)
+            } else {
+                cast_numeric_argument(argument, value, domain, ctx)
+            };
+            let Ok(value) = result else {
                 continue;
+            };
+            let value = match value {
+                Datum::Int(value) if target.is_unsigned() => Datum::UInt(value as u64),
+                value => value,
             };
             if !value.is_null() {
                 target.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
@@ -3204,13 +3228,59 @@ fn eval_numeric_row(
     let value = match expression {
         Expression::Constant(constant) => constant.eval_typed_as_on_row(ctx, row, target)?,
         Expression::CorrelatedColumn(column) => column.eval_typed(ctx, target)?,
-        _ => expression.eval(ctx, row)?,
+        _ => {
+            let value = expression.eval(ctx, row)?;
+            if target == EvalType::Int
+                && !value.is_null()
+                && expression.static_type().is_some_and(FieldType::is_hybrid)
+            {
+                if let Datum::Bit(value) = value {
+                    let warnings = crate::constant::ConversionWarnings(ctx);
+                    let zone = ctx.time_zone();
+                    let context = tidb_datatype::ConversionContext::new(
+                        ctx.type_flags(),
+                        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                        &warnings,
+                    );
+                    let (integer, error) = value.to_int_with_context(&context);
+                    if let Some(error) = error {
+                        return Err(EvalError::Conversion(error));
+                    }
+                    Datum::Int(integer as i64)
+                } else {
+                    convert_numeric_datum(
+                        value,
+                        &FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        ctx,
+                    )?
+                }
+            } else {
+                value
+            }
+        }
     };
     Ok(match (target, value) {
         (EvalType::Int, Datum::UInt(value)) => Datum::Int(value as i64),
         (EvalType::Real, Datum::Float32(value)) => Datum::Real(value),
         (_, value) => value,
     })
+}
+
+// Go's hybrid cast signatures read EvalInt. Binary constants are special:
+// EvalReal/EvalDecimal reads their unsigned literal value directly.
+fn numeric_argument_source(expression: &Expression, target: EvalType) -> Option<EvalType> {
+    let field = expression.static_type()?;
+    Some(if is_numeric_binary_literal(expression) {
+        target
+    } else if field.is_hybrid() {
+        EvalType::Int
+    } else {
+        field.eval_type()
+    })
+}
+
+fn is_numeric_binary_literal(expression: &Expression) -> bool {
+    matches!(expression, Expression::Constant(c) if matches!(c.value, Datum::BinaryLiteral(_)))
 }
 
 fn numeric_argument_domain(source: EvalType, target: EvalType) -> bool {
@@ -3254,7 +3324,7 @@ fn cast_numeric_argument_in_mode(
         EvalType::Decimal => tidb_datatype::FieldTypeCode::NewDecimal,
         _ => return Err(EvalError::Unsupported("numeric argument cast domain")),
     };
-    if field.eval_type() == EvalType::String {
+    if field.eval_type() == EvalType::String && !field.is_hybrid() {
         let bytes = match &value {
             Datum::String(value) => value.bytes(),
             Datum::Bytes(value) => value.as_slice(),
@@ -3302,9 +3372,14 @@ fn cast_numeric_argument_in_mode(
     } else {
         FieldType::new(code)
     };
-    // Go ProduceDecWithSpecifiedTp is a no-op when scale is unspecified.
+    // IntAsDecimal constructs the decimal before applying source metadata.
+    // ProduceDecWithSpecifiedTp is a no-op when scale is unspecified.
     if target == EvalType::Decimal && target_field.decimal() < 0 {
-        return Ok(value);
+        return Ok(match value {
+            Datum::Int(value) => Datum::Decimal(tidb_datatype::Decimal::from_int(value)),
+            Datum::UInt(value) => Datum::Decimal(tidb_datatype::Decimal::from_uint(value)),
+            value => value,
+        });
     }
     convert_numeric_datum(value, &target_field, ctx)
 }
@@ -3382,10 +3457,10 @@ fn eval_numeric_operand_row(
     row: Row<'_>,
     target: EvalType,
 ) -> Result<Datum, EvalError> {
-    let source = expression
-        .static_type()
-        .expect("numeric argument has a type")
-        .eval_type();
+    let source = numeric_argument_source(expression, target).expect("numeric argument has a type");
+    if is_numeric_binary_literal(expression) {
+        return eval_numeric_row(expression, ctx, row, target);
+    }
     cast_numeric_argument(
         expression,
         eval_numeric_row(expression, ctx, row, source)?,
@@ -3403,7 +3478,7 @@ fn eval_numeric_operand_batch(
     let field = expression
         .static_type()
         .expect("numeric argument has a type");
-    let source = field.eval_type();
+    let source = numeric_argument_source(expression, target).expect("numeric argument has a type");
     // Go casts its borrowed string column buffer directly. Preserve the full
     // operand pass while avoiding a String/Datum allocation for every cell.
     if source == EvalType::String {
@@ -3451,9 +3526,13 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
             .as_deref()
             .is_none_or(|child| numeric_batch_supported(child, target)),
         Expression::CorrelatedColumn(_) => true,
-        Expression::Column(column) => column
-            .get_static_type()
-            .is_some_and(|field| field.eval_type() == target && !field.is_hybrid()),
+        Expression::Column(column) => column.get_static_type().is_some_and(|field| {
+            if field.is_hybrid() {
+                target == EvalType::Int
+            } else {
+                field.eval_type() == target
+            }
+        }),
         Expression::ScalarFunction(function) => {
             function
                 .get_static_type()
@@ -3468,9 +3547,11 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
                 && function.args.iter().all(|arg| {
                     numeric_batch_supported(
                         arg,
-                        arg.static_type()
-                            .expect("numeric argument has a type")
-                            .eval_type(),
+                        numeric_argument_source(
+                            arg,
+                            function.numeric_operand_domain().unwrap_or(EvalType::Int),
+                        )
+                        .expect("numeric argument has a type"),
                     )
                 })
         }
@@ -3515,6 +3596,18 @@ fn eval_integer_batch(
             ])
         }
         Expression::Column(column) => {
+            if column.get_static_type().is_some_and(FieldType::is_hybrid) {
+                return (0..input.num_rows())
+                    .map(|row| {
+                        bits(eval_numeric_row(
+                            expression,
+                            ctx,
+                            input.get_row(row),
+                            EvalType::Int,
+                        )?)
+                    })
+                    .collect();
+            }
             let index = usize::try_from(column.index)
                 .map_err(|_| EvalError::Unsupported("invalid integer column index"))?;
             if index >= input.num_cols() {

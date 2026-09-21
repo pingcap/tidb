@@ -566,3 +566,77 @@ fn implicit_arithmetic_string_literal_cast_warns_once_at_build_time() {
         }
     }
 }
+
+/// Captured from Go's hybrid column and constant arithmetic SQL paths.
+#[test]
+fn hybrid_arithmetic_and_binary_literal_casts_match_go_sql() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE hybrid_arith(a BIGINT,b BIT(64),e ENUM('999','123'),s SET('999','123'))")
+        .unwrap();
+    session.run("INSERT INTO hybrid_arith VALUES(1,0xffffffffffffffff,'123','999,123'),(2,0x02,'999','123'),(NULL,NULL,NULL,NULL)").unwrap();
+    for vectorized in [false, true] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        for (left, op, first, second) in [
+            ("e", "+", "3", "3"),
+            ("e", "-", "1", "-1"),
+            ("e", "*", "2", "2"),
+            ("e", "/", "2", "0.5"),
+            ("e", "DIV", "2", "0"),
+            ("e", "MOD", "0", "1"),
+            ("s", "+", "4", "4"),
+            ("s", "-", "2", "0"),
+            ("s", "*", "3", "4"),
+            ("s", "/", "3", "1"),
+            ("s", "DIV", "3", "1"),
+            ("s", "MOD", "0", "0"),
+            ("b", "-", "18446744073709551614", "0"),
+            ("b", "*", "18446744073709551615", "4"),
+            ("b", "/", "18446744073709551615.0000", "1.0000"),
+            ("b", "DIV", "18446744073709551615", "1"),
+            ("b", "MOD", "0", "0"),
+            (
+                "0x01ffffffffffffffff",
+                "-",
+                "18446744073709551614",
+                "18446744073709551613",
+            ),
+            (
+                "0x01ffffffffffffffff",
+                "/",
+                "18446744073709551615.0000",
+                "9223372036854775807.5000",
+            ),
+            (
+                "0x01ffffffffffffffff",
+                "DIV",
+                "18446744073709551615",
+                "9223372036854775807",
+            ),
+            ("0x01ffffffffffffffff", "MOD", "0", "1"),
+        ] {
+            let sql = format!("SELECT {left} {op} a FROM hybrid_arith ORDER BY a");
+            let rows = row_text(session.run(&sql));
+            assert_eq!(rows, [["NULL"], [first], [second]], "{sql}/{vectorized}");
+            let warnings = session
+                .warnings()
+                .iter()
+                .map(|w| (w.code, w.message.as_str()))
+                .collect::<Vec<_>>();
+            let expected = if left.starts_with("0x") {
+                vec![(
+                    1292,
+                    "Truncated incorrect BINARY value: '0x01ffffffffffffffff'",
+                )]
+            } else {
+                vec![]
+            };
+            assert_eq!(warnings, expected, "{sql}/{vectorized}");
+        }
+    }
+}

@@ -30,6 +30,12 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, hybrid arithmetic) Native typed operands now preserve
+  ENUM/SET integer conversion, signed BIT carriers and unsigned binary literal
+  decimal/real values. Source overflow errors and SQL literal warning timing
+  pass 242 expression scenarios and 42 SQL queries. Broader native, Go race,
+  lint, performance-control and isolated publication checks passed as recorded
+  below. This remains dependent-package progress only.
 - [x] (2026-09-21, implicit string arithmetic) Reproduced and corrected
   scalar NULL short-circuiting, operand-batch warning/error order, and scalar
   versus vector decimal cast diagnostics for ordinary string operands. Strict
@@ -5467,3 +5473,163 @@ Isolated publication gates passed: one 72-case ordering test, one 42-case
 diagnostic test, and all ten numeric-domain SQL tests. All validation, build
 and benchmark processes are terminal. The seven-file checkpoint is ready for
 the requested commit/push; complete package and workload gates remain open.
+
+
+## Hybrid and binary arithmetic audit (2026-09-21)
+
+
+Previous 92bbac3838 checkpoint is verified progress; pulled again with no remote
+changes. Continue the entire expression dependency audit at numeric signatures
+for ENUM, SET, BIT and binary literals. Go evaluates hybrid operands through
+EvalInt before Real/Decimal casts, including SET's floating integer conversion
+and overflow. Binary constants use direct typed evaluation instead, preserving
+unsigned decimal precision even for signed bit literals. A 108-scenario Go
+matrix covers nine input families, six operators and scalar/vector modes.
+Port the observations as regressions before changing dispatch, then extend
+mixed-type, NULL/error-order and SQL coverage. Whole-package acceptance and
+workload performance requirements remain open.
+
+
+### Hybrid arithmetic discoveries and implementation decisions
+
+
+The initial 108-scenario native regression failed on SET rounding above 2^53,
+SET overflow identity, signed BIT arithmetic and oversized binary literal
+conversion (log `/tmp/tidb-hybrid-arithmetic-red.log`). The shared evaluator now
+selects Go's typed argument entrypoint: EvalInt for hybrids; direct EvalReal or
+EvalDecimal for binary constants. DIV selects its input domain using the same
+numeric-context rule as return-type inference. Batch eligibility follows those
+entrypoints, and hybrid columns respect NULLs and logical selection before
+conversion. `tidb-datatype/src/datum_convert.rs` now reports the existing
+ENUM/SET floating signed-conversion overflow rather than replacing it with an
+unsupported diagnostic error. Ordinary numeric and string paths are retained.
+
+Go comparison tests are overlays on the existing vecgroupchecker test harness:
+`/tmp/tidb-hybrid-arithmetic-oracle.go` and
+`/tmp/tidb-hybrid-arithmetic-overlay.json`. Additional captures cover 96 mixed
+Real/Decimal scenarios, 12 signed-boundary scenarios, 24 NULL/selection cases,
+and two real-overflow cases. Native fixtures live in the existing
+`go_arithmetic_values.rs`. Scalar decimal DIV overflow displays expressions;
+vector DIV displays evaluated decimal operands. That source difference is
+intentional. Binary integer diagnostics render the signed folded carrier when
+appropriate; unsigned decimal/real conversions preserve the literal value.
+
+The Go SQL overlay `/tmp/tidb-hybrid-arithmetic-sql-overlay.json` runs
+`TestHybridArithmeticSQLOracle` in `pkg/executor/windows` and captures 60
+queries. The native 42-successful-query fixture initially failed because the
+wide binary literal warned three times (once per row), while Go warns once.
+The existing implicit string-literal fold now also evaluates binary literals
+in their typed domain, preserving unsigned flags and folded decimal shape.
+The session fixture passes after the fix. Logs:
+`/tmp/tidb-hybrid-arithmetic-sql-{go,red,green}.log`.
+
+All Go production, original test/build artifacts and pinned package inventories
+are unchanged. These fixes add no SQL operators or new behavior beyond the Go
+reference. No package is accepted by this checkpoint. Remaining obligations
+include complete expression and datatype source/test mapping, temporal/JSON
+numeric paths, original package test gates and sysbench/TPC-C/TPC-H/YCSB runs.
+
+
+### Hybrid arithmetic validation receipt
+
+
+From repository `rust/`, the following gates passed (offline locked Cargo,
+12 build jobs). Expression tests used localhost permission for the pre-existing
+HTTP test. The final binary real-overflow diagnostic was separately reproduced
+red and then verified green by the focused `hybrid_arithmetic` command.
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib
+    cargo test --offline --locked -j12 -p tidb-expr --lib hybrid_arithmetic
+    cargo test --offline --locked -j12 -p tidb-datatype --lib
+    cargo test --offline --locked -j12 -p tidb-executor --lib vec_group_checker
+    cargo test --offline --locked -j12 -p tidb-executor --lib merge
+    cargo test --offline --locked -j12 -p tidb-executor --lib hash_agg
+    cargo test --offline --locked -j12 -p tidb-executor --lib shuffle
+    cargo test --offline --locked -j12 -p tidb-executor --lib window
+    cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_explain_merge_join
+    cargo test --offline --locked -j12 -p tidb-session --lib tests_window
+    cargo bench --offline --locked -j12 -p tidb-executor --bench pipeline --no-run
+
+Results: expression 1,194 passed/97 ignored; datatype 424 passed; checker 28,
+merge 76, aggregate 76, shuffle 26 and window 23 passed; session numeric 11,
+merge 16 and window 68 passed. Logs use `/tmp/tidb-hybrid-arithmetic-` followed
+by `expr-full.log`, `final-focused.log`, `datatype.log`,
+`executor-<filter>.log`, `session-<filter>.log` and `bench-build.log`.
+The two new expression fixtures pin 242 source scenarios (218 numeric/error
+observations plus 24 NULL/selection scenarios). The SQL fixture pins 42 queries.
+The real-overflow red log is `/tmp/tidb-hybrid-arithmetic-realmax-red.log`.
+
+Repository-root `make lint` passed, logged to
+`/tmp/tidb-hybrid-arithmetic-lint.log`. No tracked Go/import/Bazel/module
+changes require bazel_prepare. Go overlays are external reference probes, not
+tracked package edits. The reference harnesses do not require failpoint toggles.
+Their existing original test artifacts remain part of the package acceptance
+obligations rather than being replaced by these probes.
+
+The disposable publication checkout was byte-verified against published
+92bbac3838 before resetting it to that commit. Only the seven changed tracked
+files were then copied and byte-verified. Existing unrelated untracked
+vs_helper.rs and fragment.rs remain excluded from implementation and validation.
+The remote branch was fetched again and had zero divergence before publication.
+
+
+### Hybrid arithmetic performance and isolated publication checks
+
+
+The final benchmark compares the saved published-92bbac3838 binary
+`/tmp/tidb-string-arithmetic-pipeline-optimized` with
+`/tmp/tidb-hybrid-arithmetic-pipeline`, built from the final code. Four pairs
+alternate before/after execution order, with no concurrent tests or builds.
+Each invocation uses `BENCH_ONLY=numeric_projection`; logs are
+`/tmp/tidb-hybrid-arithmetic-bench-{1..4}-{before,after}.log` and the median
+summary is `/tmp/tidb-hybrid-arithmetic-bench-summary.json`.
+
+| Projection | Before ns/row | After ns/row | Time change | Calibrated change |
+| --- | ---: | ---: | ---: | ---: |
+| numeric_decimal | 32.70 | 32.20 | -1.5% | -2.1% |
+| numeric_decimal_div | 227.65 | 226.10 | -0.7% | -0.6% |
+| numeric_decimal_intdiv | 104.75 | 106.25 | +1.4% | +0.9% |
+| numeric_decimal_mod | 1065.80 | 1047.80 | -1.7% | -2.4% |
+| numeric_decimal_nested | 48.15 | 47.25 | -1.9% | -2.0% |
+| numeric_int | 17.30 | 17.70 | +2.3% | +1.5% |
+| numeric_int_div | 17.05 | 17.15 | +0.6% | -0.1% |
+| numeric_int_mod | 16.40 | 16.40 | +0.0% | +0.4% |
+| numeric_int_nested | 24.30 | 25.20 | +3.7% | +1.9% |
+| numeric_real_intdiv | 138.90 | 140.90 | +1.4% | +0.8% |
+| numeric_string | 100.60 | 98.75 | -1.8% | -2.3% |
+| numeric_string_intdiv | 103.50 | 104.20 | +0.7% | -0.0% |
+
+Existing numeric controls vary from -1.9% to +3.7% in time and -2.4% to +1.9%
+after calibration. No speedup is claimed for this correctness checkpoint.
+Hybrid-specific performance and full sysbench/TPC-C/TPC-H/YCSB throughput
+remain unmeasured by this component comparison.
+
+The final source reference gate includes 23 overlay oracle functions and the
+four original checker tests. From repository root:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -race -overlay=/tmp/tidb-hybrid-arithmetic-overlay.json -run '^(TestGroupChecker.*Oracle|TestVecGroupChecker.*|TestIssue53867)$' -tags=intest,deadlock -count=1 -v ./pkg/executor/internal/vecgroupchecker
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off go test -overlay=/tmp/tidb-hybrid-arithmetic-sql-overlay.json -run '^TestHybridArithmeticSQLOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+Isolated checks, from `/private/tmp/tidb-parity-publish-aba629bb/rust`:
+
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-expr --lib
+    CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --locked -j12 -p tidb-session --lib numeric_domain
+
+Logs are `/tmp/tidb-hybrid-arithmetic-isolated-{expr,sql}.log`.
+Changed tracked files are `rust/crates/tidb-datatype/src/datum_convert.rs`,
+`rust/crates/tidb-expr/src/builtin_arithmetic.rs`,
+`rust/crates/tidb-expr/src/scalar_function.rs`,
+`rust/crates/tidb-expr/src/tests/go_arithmetic_values.rs`,
+`rust/crates/tidb-session/src/tests_core/numeric_domain.rs`, this ExecPlan and
+`rust/docs/planner/physicalop-source-inventory.md`.
+
+
+Final isolated checks passed: 1,194 expression tests (97 existing ignored) and
+all 11 numeric SQL tests. All 27 Go reference/original checker test functions
+passed with the race detector, and the Go SQL probe passed. All builds, tests
+and benchmark processes are terminal. Final self-review checked typed domain
+selection, signed carriers, conversion error identity, scalar versus vector
+NULL/error ordering, binary cast fold timing and exclusion of unrelated drafts.
+`git diff --check` passes. The seven-file checkpoint is ready for the requested
+commit and push; the overall goal and whole-package acceptance remain open.
