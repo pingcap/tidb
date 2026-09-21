@@ -708,6 +708,10 @@ func TestSharedLockUpgrade(t *testing.T) {
 		tk2.MustExec("begin pessimistic")
 		tk1.MustExec("insert into child values(1, 1)")
 		tk2.MustExec("insert into child values(2, 1)")
+		txn1, err := tk1.Session().Txn(false)
+		require.NoError(t, err)
+		parentTableID := external.GetTableByName(t, tk1, "test", "parent").Meta().ID
+		upgradeKey := tablecodec.EncodeRowKeyWithHandle(parentTableID, kv.IntHandle(1))
 
 		upgraderDone := make(chan error, 1)
 		go func() {
@@ -715,6 +719,7 @@ func TestSharedLockUpgrade(t *testing.T) {
 		}()
 
 		requireTxnLockAcquiring(t, tk1)
+		requireStorageLockWait(t, store, txn1.StartTS(), upgradeKey)
 
 		tk2.MustGetErrCode("update parent set v = v + 2 where id = 1", errno.ErrLockDeadlock)
 		require.False(t, tk2.Session().GetSessionVars().InTxn())
