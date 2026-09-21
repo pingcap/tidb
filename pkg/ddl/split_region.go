@@ -244,7 +244,10 @@ func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, st
 	scatter, scatterGroupID := getScatterConfig(scatterScope, tbInfo.ID)
 
 	// apply table policy
-	if policy := tbInfo.TableSplitPolicy; policy != nil {
+	// Partitioned-table records use physical partition IDs. The logical table ID
+	// remains available for global index policies below.
+	if policy := tbInfo.TableSplitPolicy; policy != nil &&
+		(tbInfo.GetPartitionInfo() == nil || physicalTableID != tbInfo.ID) {
 		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse lower bound for table policy",
