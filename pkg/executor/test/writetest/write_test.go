@@ -21,6 +21,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -547,11 +548,21 @@ func TestInsertReturningPessimisticRetry(t *testing.T) {
 
 	session2.MustExec("begin")
 	var returned [][]any
+	done := make(chan struct{})
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
+		defer close(done)
 		returned = session2.MustQuery(
 			"insert into x values (1, 0) on duplicate key update c = c + 10 returning id, c").Rows()
 	})
+	// The insert has to be waiting for session1's lock before session1 releases it:
+	// a statement that never conflicts is never retried, and the expected row is the
+	// same either way, so without this the test would pass without covering the retry.
+	select {
+	case <-done:
+		require.FailNow(t, "the insert returned before session1 released the row lock")
+	case <-time.After(200 * time.Millisecond):
+	}
 	session1.MustExec("commit")
 	wg.Wait()
 	session2.MustExec("commit")
